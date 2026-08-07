@@ -5,6 +5,125 @@ import Testing
 
 @testable import Aster
 
+@Test("终端视图区分 OSC 8 显式链接与普通文字链接")
+@MainActor
+func terminalViewReportsDetectedLinkSource() {
+  let view = AsterTerminalView(frame: .zero)
+
+  #expect(
+    view.detectedSource(
+      for: "codex://session/123",
+      payload: "id=docs;codex://session/123"
+    ) == .osc8)
+  #expect(
+    view.detectedSource(
+      for: "codex://session/123",
+      payload: "id=other;codex://session/different"
+    ) == .plainText)
+  #expect(view.detectedSource(for: "codex://session/123", payload: nil) == .plainText)
+}
+
+@Test("目标打开协调器记住 OSC 8 非标准 scheme 的始终允许选择")
+@MainActor
+func targetOpenCoordinatorRemembersExplicitSchemePermission() {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.controls.detectAllLinkSchemes = false
+  var opened: [URL] = []
+  var confirmations: [TargetSecurityReason] = []
+  let coordinator = TerminalTargetOpenCoordinator(
+    preferences: preferences,
+    inspectFile: { _ in .missing },
+    openURL: { opened.append($0); return true },
+    confirm: { reason in confirmations.append(reason); return .always },
+    reportError: { message in Issue.record("不应报告错误：\(message)") }
+  )
+
+  let didOpen = coordinator.open(
+    "codex://session/123",
+    source: .osc8,
+    currentDirectory: "/tmp"
+  )
+
+  #expect(didOpen)
+  #expect(confirmations == [.nonStandardScheme("codex")])
+  #expect(opened == [URL(string: "codex://session/123")!])
+  #expect(preferences.configuration.controls.resolvedAllowedNonStandardLinkSchemes == ["codex"])
+}
+
+@Test("目标打开协调器拒绝未检测 scheme 和特殊文件且不调用系统打开")
+@MainActor
+func targetOpenCoordinatorRejectsUndetectedAndSpecialTargets() {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.controls.detectAllLinkSchemes = false
+  var openCount = 0
+  var errors: [String] = []
+  let coordinator = TerminalTargetOpenCoordinator(
+    preferences: preferences,
+    inspectFile: { _ in .namedPipe },
+    openURL: { _ in openCount += 1; return true },
+    confirm: { _ in Issue.record("拒绝目标不应请求确认"); return .once },
+    reportError: { errors.append($0) }
+  )
+
+  let customOpened = coordinator.open(
+    "ssh://host.example",
+    source: .plainText,
+    currentDirectory: "/tmp"
+  )
+  let pipeOpened = coordinator.open(
+    "/tmp/events.pipe",
+    source: .plainText,
+    currentDirectory: "/tmp"
+  )
+
+  #expect(!customOpened)
+  #expect(!pipeOpened)
+  #expect(openCount == 0)
+  #expect(errors.count == 2)
+}
+
+@Test("系统打开失败时不持久化始终允许选择")
+@MainActor
+func targetOpenCoordinatorDoesNotRememberFailedOpen() {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  var errors: [String] = []
+  let coordinator = TerminalTargetOpenCoordinator(
+    preferences: preferences,
+    openURL: { _ in false },
+    confirm: { _ in .always },
+    reportError: { errors.append($0) }
+  )
+
+  let didOpen = coordinator.open(
+    "codex://session/failed",
+    source: .plainText,
+    currentDirectory: "/tmp"
+  )
+
+  #expect(!didOpen)
+  #expect(preferences.configuration.controls.resolvedAllowedNonStandardLinkSchemes.isEmpty)
+  #expect(errors.count == 1)
+}
+
+@Test("配置导入保留检测设置但剥离本机安全授权")
+@MainActor
+func configurationImportStripsSecurityPermissions() {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  var imported = AsterConfiguration.default
+  imported.controls.detectAllLinkSchemes = false
+  imported.controls.customLinkSchemes = ["codex"]
+  imported.controls.allowedNonStandardLinkSchemes = ["codex"]
+
+  preferences.importConfiguration(imported)
+
+  #expect(preferences.configuration.controls.resolvedLinkSchemePolicy == .custom(["codex"]))
+  #expect(preferences.configuration.controls.resolvedAllowedNonStandardLinkSchemes.isEmpty)
+}
+
 @MainActor
 private func isolatedDefaults() -> UserDefaults {
   let suite = "AsterTests.\(UUID().uuidString)"
@@ -291,6 +410,8 @@ func terminalNormalizesReportedWorkingDirectory() {
   )
   #expect(TerminalSession.normalizeReportedWorkingDirectory("file:///tmp/Aster%20QA") == "/tmp/Aster QA")
   #expect(TerminalSession.normalizeReportedWorkingDirectory("/Users/mike") == "/Users/mike")
+  #expect(
+    TerminalSession.normalizeReportedWorkingDirectory("file://remote.example/home/mike") == "")
 }
 
 @Test("设置页从顶部开始并让导航与卡片占满可用宽度")
@@ -397,6 +518,9 @@ func settingsWiredFieldsPersistAcrossRelaunch() throws {
   preferences.configuration.general.closeTabConfirmation = .never
   preferences.configuration.shell.terminalBell = false
   preferences.configuration.controls.focusFollowsMouse = true
+  preferences.configuration.controls.detectAllLinkSchemes = false
+  preferences.configuration.controls.customLinkSchemes = ["codex"]
+  preferences.configuration.controls.allowedNonStandardLinkSchemes = ["codex"]
   preferences.configuration.editor.tabSize = 6
   preferences.configuration.agents.enabledAgents = ["claude"]
   preferences.configuration.appearance.lineHeight = 1.5
@@ -406,6 +530,8 @@ func settingsWiredFieldsPersistAcrossRelaunch() throws {
   #expect(reloaded.configuration.general.closeTabConfirmation == .never)
   #expect(reloaded.configuration.shell.terminalBell == false)
   #expect(reloaded.configuration.controls.focusFollowsMouse == true)
+  #expect(reloaded.configuration.controls.resolvedLinkSchemePolicy == .custom(["codex"]))
+  #expect(reloaded.configuration.controls.resolvedAllowedNonStandardLinkSchemes == ["codex"])
   #expect(reloaded.configuration.editor.tabSize == 6)
   #expect(reloaded.configuration.agents.enabledAgents == ["claude"])
   #expect(reloaded.configuration.appearance.lineHeight == 1.5)

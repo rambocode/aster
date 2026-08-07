@@ -95,6 +95,31 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
   public var smoothScrolling = true
   public var showLinkPreviews = true
   public var secureInputAutomatically = true
+  /// 可选字段保证 0.4.x 配置可继续解码。nil 均按 Otty 的安全默认值解释。
+  public var linkDetectionEnabled: Bool? = true
+  public var detectAllLinkSchemes: Bool? = true
+  public var customLinkSchemes: Set<String>? = []
+  public var allowedNonStandardLinkSchemes: Set<String>? = []
+
+  public var resolvedLinkDetectionEnabled: Bool { linkDetectionEnabled ?? true }
+
+  public var resolvedCustomLinkSchemes: Set<String> {
+    customLinkSchemes ?? []
+  }
+
+  public var resolvedLinkSchemePolicy: LinkSchemePolicy {
+    (detectAllLinkSchemes ?? true) ? .all : .custom(resolvedCustomLinkSchemes)
+  }
+
+  public var resolvedAllowedNonStandardLinkSchemes: Set<String> {
+    allowedNonStandardLinkSchemes ?? []
+  }
+
+  public var resolvedTargetSecurityPolicy: TargetSecurityPolicy {
+    TargetSecurityPolicy(
+      allowedNonStandardSchemes: resolvedAllowedNonStandardLinkSchemes
+    )
+  }
 }
 
 public struct EditorConfiguration: Codable, Equatable, Sendable {
@@ -189,6 +214,20 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
       result.appearance.terminalIdentity = AppearanceConfiguration().terminalIdentity
     }
     if result.general.language.utf8.count > 32 { result.general.language = "system" }
+    result.controls.customLinkSchemes = Self.normalizedSchemes(
+      result.controls.resolvedCustomLinkSchemes)
+    result.controls.allowedNonStandardLinkSchemes = Self.normalizedSchemes(
+      result.controls.resolvedAllowedNonStandardLinkSchemes)
     return result
+  }
+
+  private static func normalizedSchemes(_ schemes: Set<String>) -> Set<String> {
+    Set(
+      schemes.lazy
+        .map { $0.lowercased() }
+        .filter(LinkSchemePolicy.isSyntacticallyValid)
+        .sorted()
+        .prefix(64)
+    )
   }
 }

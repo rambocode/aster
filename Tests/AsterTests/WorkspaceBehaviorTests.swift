@@ -228,6 +228,31 @@ func terminalSessionPreservesSwiftTermTitleState() async throws {
   #expect(events.last { $0.0 == 1 }?.1 == "alpha")
 }
 
+@Test("链接检测开关实时同步到已打开终端")
+@MainActor
+func terminalSessionAppliesLinkDetectionPreference() {
+  let defaults = behaviorTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.controls.linkDetectionEnabled = false
+  let session = TerminalSession(workingDirectory: "/tmp")
+  let terminalView = session.makeTerminalView(preferences: preferences)
+  defer { session.stop(immediately: true) }
+
+  if case .none = terminalView.linkReporting {
+    // 关闭时不得让 SwiftTerm 继续进行隐式或 OSC 8 点击命中。
+  } else {
+    Issue.record("链接检测关闭后 linkReporting 应为 none")
+  }
+
+  preferences.configuration.controls.linkDetectionEnabled = true
+  session.apply(preferences: preferences)
+  if case .implicit = terminalView.linkReporting {
+    // 开启后同时恢复 OSC 8 和普通文字目标检测。
+  } else {
+    Issue.record("链接检测开启后 linkReporting 应为 implicit")
+  }
+}
+
 @Test("同一 PTY 分片中标题栈恢复后的 OSC 更新保持最后生效")
 @MainActor
 func terminalSessionPreservesTitleEventOrderWithinChunk() async throws {
@@ -250,6 +275,22 @@ func terminalSessionPreservesTitleEventOrderWithinChunk() async throws {
   #expect(session.terminalIconTitle == "gamma")
   #expect(events.last?.0 == 0)
   #expect(events.last?.1 == "gamma")
+}
+
+@Test("远端 OSC 7 不会成为本机相对文件路径基准")
+@MainActor
+func terminalSessionRejectsRemoteWorkingDirectoryForLocalLinks() async {
+  let session = TerminalSession(workingDirectory: "/tmp")
+  let source = AsterTerminalView(frame: .zero)
+
+  session.hostCurrentDirectoryUpdate(
+    source: source,
+    directory: "file://remote.example/home/remote-user"
+  )
+  await Task.yield()
+
+  #expect(!session.currentWorkingDirectoryIsLocal)
+  #expect(session.currentWorkingDirectory == "/tmp")
 }
 
 @Test("OSC 7 目录变化按设置自动学习并跨 AppModel 恢复")

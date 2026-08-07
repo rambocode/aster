@@ -533,6 +533,37 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.controls.pasteProtection = value
         },
       ]),
+      sectionTitle("文件与链接"),
+      card([
+        toggleRow(
+          "识别终端目标", "识别本地路径、URL 和 OSC 8 显式链接",
+          value: preferences.configuration.controls.resolvedLinkDetectionEnabled
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.linkDetectionEnabled = value
+        },
+        toggleRow(
+          "识别所有 URL Scheme", "关闭后仅识别 http、https、file、mailto 和自定义列表",
+          value: preferences.configuration.controls.detectAllLinkSchemes ?? true
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.detectAllLinkSchemes = value
+        },
+        textRow(
+          "自定义 Scheme", "用逗号分隔，例如 vscode,codex,ssh",
+          value: preferences.configuration.controls.resolvedCustomLinkSchemes.sorted()
+            .joined(separator: ",")
+        ) { [weak self] value in
+          let schemes = value.split(separator: ",", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter(LinkSchemePolicy.isSyntacticallyValid)
+          self?.preferences.configuration.controls.customLinkSchemes = Set(schemes.prefix(64))
+        },
+        actionRow(
+          "安全警告例外", "清除已记住的非标准 Scheme 授权",
+          title: "重置警告"
+        ) { [weak self] in
+          self?.preferences.configuration.controls.allowedNonStandardLinkSchemes = []
+        },
+      ]),
       sectionTitle("显示"),
       card([
         toggleRow(

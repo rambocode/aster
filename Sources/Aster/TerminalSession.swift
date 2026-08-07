@@ -65,7 +65,14 @@ private final class TerminalRetirementCoordinator {
 final class AsterTerminalView: LocalProcessTerminalView {
   /// SwiftTerm 在 macOS 的标题回调存在缺失和顺序差异；此回调按 PTY 原始顺序校正。
   var onObservedTitleUpdate: ((Int, String) -> Void)?
+  /// 所有链接打开请求必须先进入 Aster 的解析与授权层，禁止调用 SwiftTerm 默认的
+  /// `NSWorkspace.open` 路径绕过 scheme、可执行文件和特殊文件检查。
+  var onRequestOpenTarget: ((String, DetectedTargetSource) -> Void)?
   private var titleStackObserver = TerminalTitleStackObserver()
+  private var didForwardLinkInCurrentMouseUp = false
+  private var currentLinkClickEvent: NSEvent?
+  /// 普通文字链接的运行时检测策略；OSC 8 由 SwiftTerm 显式 payload 路径处理。
+  var linkSchemePolicy: LinkSchemePolicy = .all
 
   /// 用户配置的光标形状；nil 表示配置尚未下发，此时保持 SwiftTerm 默认行为。
   var preferredCursorStyle: SwiftTerm.CursorStyle? {
@@ -103,6 +110,144 @@ final class AsterTerminalView: LocalProcessTerminalView {
     }
   }
 
+  /// SwiftTerm 对 OSC 8 与隐式文字使用同一个回调且不暴露来源。原始 PTY 观察器维护
+  /// 有界 URL 集合，使自定义 scheme 模式下显式链接仍按协议要求被识别。
+  override func requestOpenLink(
+    source: TerminalView,
+    link: String,
+    params: [String: String]
+  ) {
+    didForwardLinkInCurrentMouseUp = true
+    let payload = currentLinkClickEvent.flatMap(explicitLinkPayload)
+    let detectedSource = detectedSource(for: link, payload: payload)
+    onRequestOpenTarget?(link, detectedSource)
+  }
+
+  /// 仅当当前单元格 payload 的 URI 与回调值完全相等时认定为 OSC 8。该纯比较 seam
+  /// 供代码测试覆盖“同 URL 普通文字不能继承历史显式来源”。
+  func detectedSource(for link: String, payload: String?) -> DetectedTargetSource {
+    guard let payload, OSC8Payload.link(from: payload) == link else { return .plainText }
+    return .osc8
+  }
+
+  /// SwiftTerm 的隐式列表只包含固定 scheme。Command-click 的文字本身若是其它合法
+  /// `scheme://`，在 mouseDown 阶段先截住，避免 TUI 收到一半鼠标序列；mouseUp 再由
+  /// Aster 的行内检测器补发。OSC 8 的显示标签通常不是 URL，仍完整交给 SwiftTerm。
+  override func mouseDown(with event: NSEvent) {
+    if case .none = linkReporting {
+      super.mouseDown(with: event.removingCommandModifier() ?? event)
+      return
+    }
+    if event.modifierFlags.contains(.command), customSchemeURL(at: event) != nil { return }
+    super.mouseDown(with: event)
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    if case .none = linkReporting {
+      super.mouseUp(with: event.removingCommandModifier() ?? event)
+      return
+    }
+    didForwardLinkInCurrentMouseUp = false
+    currentLinkClickEvent = event
+    defer { currentLinkClickEvent = nil }
+    super.mouseUp(with: event)
+    guard !didForwardLinkInCurrentMouseUp,
+      event.modifierFlags.contains(.command),
+      let link = customSchemeURL(at: event)
+    else { return }
+    onRequestOpenTarget?(link, .plainText)
+  }
+
+  /// 通过公开的终端行和单元格尺寸把点击点映射为字符偏移。前缀转换跳过宽字符的
+  /// 占位 cell，因此中文/emoji 出现在 URL 前面时仍能命中正确字符。
+  private func customSchemeURL(at event: NSEvent) -> String? {
+    guard let location = gridLocation(for: event),
+      let clickedLine = location.terminal.getLine(row: location.row),
+      let context = logicalLineContext(around: location.row, terminal: location.terminal)
+    else { return nil }
+    let prefix = clickedLine.translateToString(
+      trimRight: true,
+      startCol: 0,
+      endCol: location.column + 1,
+      skipNullCellsFollowingWide: true
+    )
+    guard !prefix.isEmpty else { return nil }
+    guard let link = InlineURLDetector.url(
+      inPhysicalLines: context.lines,
+      clickedLine: location.row - context.startRow,
+      atCharacterOffset: prefix.count - 1,
+      finalBoundaryMayContinue: context.finalBoundaryMayContinue
+    ),
+      let separator = link.firstIndex(of: ":")
+    else { return nil }
+    let scheme = String(link[..<separator]).lowercased()
+    return linkSchemePolicy.detects(scheme) ? link : nil
+  }
+
+  /// SwiftTerm 没有公开 `BufferLine.isWrapped`。其软换行行一定占用右侧最后一个 cell，
+  /// 因此在可见区内向两侧收集连续满行，最多 8 行/4096 字节；末行仍满且没有后继
+  /// 可收集时标记为可能截断，交给检测器拒绝。
+  private func logicalLineContext(
+    around clickedRow: Int,
+    terminal: Terminal
+  ) -> (lines: [String], startRow: Int, finalBoundaryMayContinue: Bool)? {
+    let lastColumn = terminal.cols - 1
+    let maximumRows = 8
+    var startRow = clickedRow
+    while startRow > 0, clickedRow - startRow + 1 < maximumRows,
+      terminal.getLine(row: startRow - 1)?.hasContent(index: lastColumn) == true
+    {
+      startRow -= 1
+    }
+
+    var endRow = clickedRow
+    while endRow < terminal.rows - 1, endRow - startRow + 1 < maximumRows,
+      terminal.getLine(row: endRow)?.hasContent(index: lastColumn) == true
+    {
+      endRow += 1
+    }
+
+    var lines: [String] = []
+    for row in startRow...endRow {
+      guard let line = terminal.getLine(row: row) else { return nil }
+      lines.append(
+        line.translateToString(trimRight: true, skipNullCellsFollowingWide: true))
+    }
+    let finalBoundaryMayContinue = terminal.getLine(row: endRow)?
+      .hasContent(index: lastColumn) == true
+    return (lines, startRow, finalBoundaryMayContinue)
+  }
+
+  private func gridLocation(
+    for event: NSEvent
+  ) -> (terminal: Terminal, row: Int, column: Int)? {
+    let point = convert(event.locationInWindow, from: nil)
+    guard bounds.contains(point) else { return nil }
+    let terminal = getTerminal()
+    guard terminal.cols > 0, terminal.rows > 0,
+      let pixelSize = cellSizeInPixels(source: terminal)
+    else { return nil }
+    let scale = max(window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1, 1)
+    let cellWidth = max(CGFloat(pixelSize.width) / scale, 1)
+    let cellHeight = max(CGFloat(pixelSize.height) / scale, 1)
+    let column = min(max(Int(point.x / cellWidth), 0), terminal.cols - 1)
+    let row = min(max(Int((bounds.height - point.y) / cellHeight), 0), terminal.rows - 1)
+    return (terminal, row, column)
+  }
+
+  private func explicitLinkPayload(at event: NSEvent) -> String? {
+    guard let location = gridLocation(for: event) else { return nil }
+    if let payload = location.terminal.getCharData(col: location.column, row: location.row)?
+      .getPayload() as? String
+    {
+      return payload
+    }
+    // 宽字符的第二个 cell 是空占位，OSC 8 payload 保存在前一个基础 cell。
+    guard location.column > 0 else { return nil }
+    return location.terminal.getCharData(col: location.column - 1, row: location.row)?
+      .getPayload() as? String
+  }
+
   /// 隐藏 SwiftTerm 的 overlay 滚动条。
   ///
   /// 它是一条 5.5pt 的灰色 `NSScroller`，贴在终端右边缘、随滚动闪现又消失，看起来
@@ -134,6 +279,26 @@ final class AsterTerminalView: LocalProcessTerminalView {
   }
 }
 
+private extension NSEvent {
+  /// SwiftTerm 在 `linkReporting = .none` 时仍会用 Command 修饰符执行链接点击查询。
+  /// 仅移除它用于链接激活的 Command 位；SwiftTerm 的终端鼠标协议只编码 Shift、
+  /// Option 和 Control，因此 TUI 收到的按下/释放序列保持一致。
+  func removingCommandModifier() -> NSEvent? {
+    guard modifierFlags.contains(.command) else { return self }
+    return NSEvent.mouseEvent(
+      with: type,
+      location: locationInWindow,
+      modifierFlags: modifierFlags.subtracting(.command),
+      timestamp: timestamp,
+      windowNumber: windowNumber,
+      context: nil,
+      eventNumber: eventNumber,
+      clickCount: clickCount,
+      pressure: pressure
+    )
+  }
+}
+
 extension SwiftTerm.CursorStyle {
   /// 同一形状的不闪烁变体。
   var nonBlinking: SwiftTerm.CursorStyle {
@@ -157,6 +322,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   @Published private(set) var isRunning = false
   @Published private(set) var currentWorkingDirectory: String
+  /// false 表示最近 OSC 7 指向其它主机；相对文件不能继续复用旧本机 CWD。
+  @Published private(set) var currentWorkingDirectoryIsLocal = true
   @Published private(set) var terminalTitle = "Shell"
   @Published private(set) var terminalIconTitle = ""
   @Published private(set) var exitCode: Int32?
@@ -174,6 +341,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var lastActivityAt = Date.distantPast
 
   private var terminalView: AsterTerminalView?
+  private var targetOpenCoordinator: TerminalTargetOpenCoordinator?
   /// OSC 0/1/2 的独立通道回调。Tab 领域状态负责固定名称、前缀与持久化。
   var onTitleUpdate: ((Int, String) -> Void)?
   /// SwiftTerm 视图一旦启动就保持在同一个 AppKit 容器中。工作区刷新只移动该容器，
@@ -204,10 +372,22 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.onObservedTitleUpdate = { [weak self] code, title in
       Task { @MainActor [weak self] in self?.handleTitleOSC(code: code, text: title) }
     }
+    let targetOpenCoordinator = TerminalTargetOpenCoordinator(preferences: preferences)
+    self.targetOpenCoordinator = targetOpenCoordinator
+    view.onRequestOpenTarget = { [weak self] rawValue, source in
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        self.targetOpenCoordinator?.open(
+          rawValue,
+          source: source,
+          currentDirectory: self.currentWorkingDirectoryIsLocal
+            ? self.currentWorkingDirectory : ""
+        )
+      }
+    }
     view.autoresizingMask = [.width, .height]
     view.allowMouseReporting = preferences.allowMouseReporting
     view.optionAsMetaKey = preferences.optionAsMeta
-    view.linkReporting = .implicit
     view.linkHighlightMode = .hoverWithModifier
     apply(preferences: preferences, to: view)
     // SwiftTerm 默认只把 OSC 0/2 作为同一个窗口标题回调，且丢弃 macOS 上的 OSC 1。
@@ -376,9 +556,18 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   static func normalizeReportedWorkingDirectory(_ reportedValue: String) -> String {
     guard !reportedValue.isEmpty else { return "" }
     if let url = URL(string: reportedValue), url.isFileURL {
+      guard isLocalFileURLHost(url.host) else { return "" }
       return url.path.removingPercentEncoding ?? url.path
     }
     return reportedValue.removingPercentEncoding ?? reportedValue
+  }
+
+  private static func isLocalFileURLHost(_ host: String?) -> Bool {
+    guard let host, !host.isEmpty else { return true }
+    let normalized = host.lowercased()
+    let machine = ProcessInfo.processInfo.hostName.lowercased()
+    let shortMachine = machine.split(separator: ".").first.map(String.init) ?? machine
+    return ["localhost", "127.0.0.1", "::1", machine, shortMachine].contains(normalized)
   }
 
   /// 同步窗口活动状态：非活动窗口停止光标闪烁。
@@ -395,6 +584,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     }
     terminalView = nil
     terminalHostView = nil
+    targetOpenCoordinator = nil
     isRunning = false
 
     // SwiftTerm 1.15 的 `terminate()` 会在发送信号后立即取消进程监视器，且自然退出
@@ -413,6 +603,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.selectedTextBackgroundColor = preferences.selectionColor
     view.optionAsMetaKey = preferences.optionAsMeta
     view.allowMouseReporting = preferences.allowMouseReporting
+    view.linkReporting = preferences.configuration.controls.resolvedLinkDetectionEnabled
+      ? .implicit : .none
+    view.linkSchemePolicy = preferences.configuration.controls.resolvedLinkSchemePolicy
     view.installColors(
       preferences.ansiColors.map {
         SwiftTerm.Color(
@@ -481,7 +674,13 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
     guard let directory, !directory.isEmpty else { return }
     Task { @MainActor [weak self] in
       let normalized = Self.normalizeReportedWorkingDirectory(directory)
-      guard let self, !normalized.isEmpty, self.currentWorkingDirectory != normalized else { return }
+      guard let self else { return }
+      guard !normalized.isEmpty else {
+        self.currentWorkingDirectoryIsLocal = false
+        return
+      }
+      self.currentWorkingDirectoryIsLocal = true
+      guard self.currentWorkingDirectory != normalized else { return }
       self.currentWorkingDirectory = normalized
     }
   }

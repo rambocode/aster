@@ -64,6 +64,35 @@ func legacyShellConfigurationDefaultsFrequentFolderRecording() throws {
   #expect(decoded.resolvedFrecencyAutoRecord)
 }
 
+@Test("旧控制配置缺少链接字段时保持默认检测与严格安全策略")
+func legacyControlConfigurationDefaultsLinkSafety() throws {
+  let data = try JSONEncoder().encode(ControlConfiguration())
+  var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+  object.removeValue(forKey: "linkDetectionEnabled")
+  object.removeValue(forKey: "detectAllLinkSchemes")
+  object.removeValue(forKey: "customLinkSchemes")
+  object.removeValue(forKey: "allowedNonStandardLinkSchemes")
+  let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+  let decoded = try JSONDecoder().decode(ControlConfiguration.self, from: legacyData)
+
+  #expect(decoded.resolvedLinkDetectionEnabled)
+  #expect(decoded.resolvedLinkSchemePolicy == .all)
+  #expect(decoded.resolvedAllowedNonStandardLinkSchemes.isEmpty)
+}
+
+@Test("导入配置会清理非法、重复和超限的链接安全例外")
+func configurationNormalizesLinkSafetyExceptions() {
+  var configuration = AsterConfiguration.default
+  configuration.controls.customLinkSchemes = ["VSCODE", "vscode", "bad scheme", "x"]
+  configuration.controls.allowedNonStandardLinkSchemes = ["CODEX", "codex", "bad:"]
+
+  let normalized = configuration.normalized()
+
+  #expect(normalized.controls.resolvedCustomLinkSchemes == ["vscode", "x"])
+  #expect(normalized.controls.resolvedAllowedNonStandardLinkSchemes == ["codex"])
+}
+
 @Test("标签栏自动隐藏只在单标签工作区生效")
 func appearanceConfigurationResolvesTabBarVisibility() {
   var appearance = AppearanceConfiguration()

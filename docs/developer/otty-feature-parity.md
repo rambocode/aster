@@ -50,7 +50,7 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 - 部分：[Window, Tab and Split](https://docs.otty.sh/user-interface/window-tab-split) — 已有递归分屏、导航、重排、三种标签布局、分组/排序/分隔线；本轮补充 OSC 独立标题、名称/前缀、新标签位置和最近关闭恢复。窗口多实例、Pin、PiP 等仍待实现。
 - 部分：[Details Panel](https://docs.otty.sh/user-interface/details-panel)
 - 不适用：[Status Bar](https://docs.otty.sh/user-interface/status-bar) — 上游页面明确标记为 Planned，没有已描述的可实现功能；Aster 现有状态栏属于自身能力。
-- 部分：[Files and Links](https://docs.otty.sh/user-interface/files-and-links)
+- 部分：[Files and Links](https://docs.otty.sh/user-interface/files-and-links) — 已实现绝对/tilde/相对/行列路径规范化、任意或自定义 scheme、OSC 8 精确来源、非标准 scheme 首次确认、可执行文件与 `.app` 每次确认、scheme 例外持久化，以及 FIFO/socket/设备拒绝；上下文动作矩阵、内置预览和编辑器行列跳转仍待实现。
 - 部分：[Drag and Drop](https://docs.otty.sh/user-interface/drag-and-drop)
 - 部分：[Find](https://docs.otty.sh/user-interface/find)
 - 待审计：[Open Quickly](https://docs.otty.sh/user-interface/open-quickly)
@@ -102,6 +102,8 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 
 `TerminalTitleState` 分离 OSC 1/2/0，清理控制字符并限制标题长度；每个 Pane 保存独立程序标题，只有聚焦 Pane 驱动标签和窗口。自定义 OSC handler 会同步回 SwiftTerm 内部状态；`TerminalTitleStackObserver` 跨 PTY 分片镜像 OSC/CSI，并补偿 macOS 端缺失或错误的 XTWINOPS 图标/窗口标题恢复回调。`NewTabPosition` 以纯函数决定插入位置；创建标签后会切换为手动显示顺序，避免时间排序覆盖目标位置。`RecentlyClosedTabs` 只保存可重建的标签快照，并在解码时约束历史容量。对应状态经 `WorkspaceTabSnapshot` 和独立 `UserDefaults` 键持久化，不保存进程身份。
 
+文件和链接统一经过 `TargetResolver`、`TargetFileInspector` 与 `TargetSecurityPolicy`；点击单元格的 OSC 8 payload 是显式来源真值，`TerminalTargetOpenCoordinator` 取代组件默认直开路径。普通文字可选择检测全部 scheme 或标准 scheme 加自定义列表；OSC 8 始终识别，但所有非标准协议、可执行文件和 `.app` 仍需确认。可执行目标不保存路径授权，配置导入也会剥离本机 scheme 例外。
+
 ## 测试与验收
 
-新增测试位于 `WorkspaceNavigationPolicyTests.swift` 与 `WorkspaceBehaviorTests.swift`。每完成一页，必须在本矩阵记录代码入口、失败路径和测试名称；界面视觉验收由用户执行。
+新增测试位于 `WorkspaceNavigationPolicyTests.swift`、`WorkspaceBehaviorTests.swift`、`DetectedTargetTests.swift`、`AsterConfigurationTests.swift` 与 `AppKitMigrationTests.swift`。每完成一页，必须在本矩阵记录代码入口、失败路径和测试名称；界面视觉验收由用户执行。
