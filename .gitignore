@@ -1,0 +1,12 @@
+# SwiftPM 构建产物与本地状态
+.build/
+.swiftpm/
+Packages/
+*.xcodeproj
+*.xcworkspace
+
+# 打包脚本输出的 .app 与 .dmg
+dist/
+
+# macOS
+.DS_Store

@@ -1,0 +1,295 @@
+import AppKit
+import Darwin
+import Foundation
+import SwiftTerm
+
+/// 集中托管已经从工作区移除、但底层进程尚未完成 `waitpid` 的终端视图。
+///
+/// 托管器由进程级单例强持有，关闭 Pane 后不会随 `TerminalSession` 一起释放。它先发送
+/// `SIGHUP`，750ms 后仍在运行则升级为 `SIGKILL`，并持续保留 View 直到 SwiftTerm 的
+/// monitor 把 `process.running` 更新为 `false`，避免后台进程或僵尸泄漏。
+@MainActor
+private final class TerminalRetirementCoordinator {
+  static let shared = TerminalRetirementCoordinator()
+
+  private var views: [ObjectIdentifier: LocalProcessTerminalView] = [:]
+
+  func retire(_ view: LocalProcessTerminalView, immediately: Bool) {
+    let identifier = ObjectIdentifier(view)
+    let processIdentifier = view.process.shellPid
+    guard view.process.running, processIdentifier > 0 else { return }
+    views[identifier] = view
+
+    if immediately {
+      if Darwin.kill(-processIdentifier, SIGKILL) != 0 {
+        _ = Darwin.kill(processIdentifier, SIGKILL)
+      }
+    } else if Darwin.kill(-processIdentifier, SIGHUP) != 0 {
+      _ = Darwin.kill(processIdentifier, SIGTERM)
+    }
+
+    // `self` 和 `view` 均被任务强持有；即使原 Session/Pane 已释放，升级信号和
+    // SwiftTerm monitor 仍能完成。SIGKILL 后轮询的唯一目的，是等待 monitor 回收。
+    Task { @MainActor [self, view] in
+      if !immediately {
+        try? await Task.sleep(for: .milliseconds(750))
+      }
+      guard views[identifier] === view else { return }
+      if view.process.running, view.process.shellPid == processIdentifier {
+        if Darwin.kill(-processIdentifier, SIGKILL) != 0 {
+          _ = Darwin.kill(processIdentifier, SIGKILL)
+        }
+      }
+
+      for _ in 0..<120 {
+        guard views[identifier] === view, view.process.running else { break }
+        try? await Task.sleep(for: .milliseconds(250))
+      }
+      views.removeValue(forKey: identifier)
+    }
+  }
+
+  func complete(_ source: TerminalView) {
+    guard let view = source as? LocalProcessTerminalView else { return }
+    views.removeValue(forKey: ObjectIdentifier(view))
+  }
+}
+
+/// 一个由 SwiftTerm 完整 VT/xterm 网格承载的本地登录 Shell。
+///
+/// Session 强持有 `LocalProcessTerminalView`，因此在标签切换或 AppKit 重排视图时，
+/// PTY、滚动历史和全屏 TUI 状态不会丢失。AppKit 视图只通过这里暴露的窄接口被
+/// 工作区操作，避免其它页面直接依赖 SwiftTerm 的进程实现。
+@MainActor
+final class TerminalSession: NSObject, ObservableObject, Identifiable {
+  let id = UUID()
+  let workingDirectory: String
+
+  @Published private(set) var isRunning = false
+  @Published private(set) var currentWorkingDirectory: String
+  @Published private(set) var terminalTitle = "Shell"
+  @Published private(set) var exitCode: Int32?
+  @Published private(set) var startupError: String?
+
+  private var terminalView: LocalProcessTerminalView?
+  /// SwiftTerm 视图一旦启动就保持在同一个 AppKit 容器中。工作区刷新只移动该容器，
+  /// 不直接反复把 Metal-backed 终端视图从 superview 拆下，避免分屏后网格停止绘制。
+  private var terminalHostView: NSView?
+
+  /// SwiftTerm 的进程对象是运行状态的权威来源。`isRunning` 负责触发 AppKit 刷新，
+  /// 但分屏恢复期间回调与视图挂载顺序可能让缓存短暂过期，状态栏必须读取真实值。
+  var statusIsRunning: Bool {
+    terminalView?.process.running ?? isRunning
+  }
+
+  init(workingDirectory: String) {
+    self.workingDirectory = workingDirectory
+    currentWorkingDirectory = workingDirectory
+    super.init()
+  }
+
+  /// 返回长期存活的终端视图；首次调用时才创建 PTY，确保 AppKit 窗口已完成初始化。
+  func makeTerminalView(preferences: AppPreferences) -> LocalProcessTerminalView {
+    if let terminalView {
+      apply(preferences: preferences, to: terminalView)
+      return terminalView
+    }
+
+    let view = LocalProcessTerminalView(frame: .zero)
+    view.processDelegate = self
+    view.autoresizingMask = [.width, .height]
+    view.allowMouseReporting = preferences.allowMouseReporting
+    view.optionAsMetaKey = preferences.optionAsMeta
+    view.linkReporting = .implicit
+    view.linkHighlightMode = .hoverWithModifier
+    apply(preferences: preferences, to: view)
+
+    var environment = ProcessInfo.processInfo.environment
+    environment["TERM"] = preferences.terminalIdentity
+    environment["COLORTERM"] = "truecolor"
+    environment["ASTER_SESSION_ID"] = id.uuidString
+    let entries = environment.map { "\($0.key)=\($0.value)" }
+    var shell = environment["SHELL"] ?? "/bin/zsh"
+    if !FileManager.default.isExecutableFile(atPath: shell) {
+      startupError = "配置的 Shell 不可执行：\(shell)。已回退到 /bin/zsh。"
+      shell = "/bin/zsh"
+    }
+    var launchDirectory = currentWorkingDirectory
+    var isDirectory: ObjCBool = false
+    if !FileManager.default.fileExists(atPath: launchDirectory, isDirectory: &isDirectory)
+      || !isDirectory.boolValue
+    {
+      launchDirectory = FileManager.default.homeDirectoryForCurrentUser.path
+      currentWorkingDirectory = launchDirectory
+      startupError = "原工作目录不可用，已回退到主目录。"
+    }
+    view.startProcess(
+      executable: shell,
+      args: Self.launchArguments(forShell: shell),
+      environment: entries,
+      currentDirectory: launchDirectory
+    )
+
+    terminalView = view
+    isRunning = view.process?.running == true
+    if !isRunning, startupError == nil {
+      startupError = "无法创建本地终端进程。"
+    }
+    return view
+  }
+
+  /// 返回长期存活的 AppKit 容器。容器和终端的父子关系在 Session 生命周期内保持不变，
+  /// 标签切换、主题刷新或递归分屏只会重新安放最外层容器。
+  func makeTerminalHost(preferences: AppPreferences) -> NSView {
+    let terminal = makeTerminalView(preferences: preferences)
+    if let terminalHostView {
+      terminalHostView.layer?.backgroundColor = preferences.terminalBackgroundColor.cgColor
+      return terminalHostView
+    }
+    let host = NSView()
+    host.wantsLayer = true
+    host.layer?.backgroundColor = preferences.terminalBackgroundColor.cgColor
+    host.addSubview(terminal)
+    terminal.pinEdges(to: host)
+    terminalHostView = host
+    return host
+  }
+
+  func apply(preferences: AppPreferences) {
+    guard let terminalView else { return }
+    apply(preferences: preferences, to: terminalView)
+  }
+
+  /// 将命令直接写入活动 PTY，供 Recipe、命令面板和自动化入口使用。
+  func send(_ command: String) {
+    guard let process = terminalView?.process, process.running else { return }
+    let bytes = Array((command + "\n").utf8)
+    process.send(data: bytes[...])
+  }
+
+  func interrupt() {
+    guard let process = terminalView?.process, process.running else { return }
+    let controlC = [UInt8(3)]
+    process.send(data: controlC[...])
+  }
+
+  func focus() {
+    guard let terminalView, let window = terminalView.window else { return }
+    window.makeFirstResponder(terminalView)
+  }
+
+  /// 在完整滚动缓冲区内查找并选中下一处匹配文本。
+  @discardableResult
+  func findNext(_ term: String, previous: Bool = false) -> Bool {
+    guard let terminalView, !term.isEmpty else { return false }
+    return previous ? terminalView.findPrevious(term) : terminalView.findNext(term)
+  }
+
+  /// 立即读取由 OSC 7 报告的工作目录。没有集成标记时保留最近一次可靠值。
+  func resolvedCurrentWorkingDirectory() -> String {
+    currentWorkingDirectory
+  }
+
+  /// 将 SwiftTerm 的 OSC 7 目录值转换为本地绝对路径。Shell 通常上报
+  /// `file://localhost/path`，也允许直接上报路径；返回空串表示值不可用。
+  static func normalizeReportedWorkingDirectory(_ reportedValue: String) -> String {
+    guard !reportedValue.isEmpty else { return "" }
+    if let url = URL(string: reportedValue), url.isFileURL {
+      return url.path.removingPercentEncoding ?? url.path
+    }
+    return reportedValue.removingPercentEncoding ?? reportedValue
+  }
+
+  /// 停止当前 Shell。关闭 Pane 时先给予 750ms 正常退出窗口；应用即将终止时必须
+  /// 立即结束进程组，因为主事件循环不会继续存活到延迟升级任务执行。
+  func stop(immediately: Bool = false) {
+    guard let view = terminalView else {
+      isRunning = false
+      return
+    }
+    terminalView = nil
+    terminalHostView = nil
+    isRunning = false
+
+    // SwiftTerm 1.15 的 `terminate()` 会在发送信号后立即取消进程监视器，且自然退出
+    // 后保留旧 PID。托管器只接受仍运行的 View，并在 Session 释放后继续负责升级
+    // 信号及等待 monitor 回收，避免僵尸进程和 PID 复用后的误杀。
+    TerminalRetirementCoordinator.shared.retire(view, immediately: immediately)
+  }
+
+  private func apply(preferences: AppPreferences, to view: LocalProcessTerminalView) {
+    view.font = preferences.terminalFont
+    view.nativeForegroundColor = preferences.terminalForegroundColor
+    view.nativeBackgroundColor = preferences.terminalBackgroundColor
+    view.caretColor = preferences.cursorColor
+    view.caretTextColor = preferences.cursorTextColor
+    view.selectedTextForegroundColor = preferences.selectionForegroundColor
+    view.selectedTextBackgroundColor = preferences.selectionColor
+    view.optionAsMetaKey = preferences.optionAsMeta
+    view.allowMouseReporting = preferences.allowMouseReporting
+    view.installColors(
+      preferences.ansiColors.map {
+        SwiftTerm.Color(
+          red: UInt16($0.red) * 257,
+          green: UInt16($0.green) * 257,
+          blue: UInt16($0.blue) * 257
+        )
+      })
+    let terminal = view.getTerminal()
+    let cursorStyle = swiftTermCursorStyle(
+      preferences.configuration.appearance.cursorStyle.rawValue,
+      blinks: preferences.configuration.appearance.cursorBlink
+    )
+    terminal.options.cursorStyle = cursorStyle
+    view.cursorStyleChanged(source: terminal, newStyle: cursorStyle)
+    view.needsDisplay = true
+  }
+
+  private func swiftTermCursorStyle(_ style: String, blinks: Bool) -> SwiftTerm.CursorStyle {
+    switch style {
+    case "bar": blinks ? .blinkBar : .steadyBar
+    case "underline": blinks ? .blinkUnderline : .steadyUnderline
+    default: blinks ? .blinkBlock : .steadyBlock
+    }
+  }
+
+  private static func launchArguments(forShell shell: String) -> [String] {
+    switch URL(fileURLWithPath: shell).lastPathComponent {
+    case "bash": ["--login", "-i"]
+    case "fish": ["--login", "--interactive"]
+    default: ["-l", "-i"]
+    }
+  }
+}
+
+extension TerminalSession: LocalProcessTerminalViewDelegate {
+  nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+
+  nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
+    Task { @MainActor [weak self] in
+      self?.terminalTitle = title.isEmpty ? "Shell" : title
+    }
+  }
+
+  nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+    guard let directory, !directory.isEmpty else { return }
+    Task { @MainActor [weak self] in
+      let normalized = Self.normalizeReportedWorkingDirectory(directory)
+      guard !normalized.isEmpty else { return }
+      self?.currentWorkingDirectory = normalized
+    }
+  }
+
+  nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
+    Task { @MainActor [weak self] in
+      // SwiftTerm 在 PTY 读端出现瞬时 EOF 时可能给出无退出码通知；若本地进程仍在
+      // 运行，该事件不是最终终止，不能把活跃分屏错误标成 session ended。
+      if let localView = source as? LocalProcessTerminalView, localView.process.running {
+        return
+      }
+      self?.exitCode = exitCode
+      self?.isRunning = false
+      TerminalRetirementCoordinator.shared.complete(source)
+    }
+  }
+}

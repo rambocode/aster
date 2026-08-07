@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+    <key>CFBundleDisplayName</key>
+    <string>Aster</string>
+    <key>CFBundleExecutable</key>
+    <string>Aster</string>
+    <key>CFBundleIconFile</key>
+    <string>AsterIcon</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.local.aster-terminal</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Aster</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.4.1</string>
+    <key>CFBundleVersion</key>
+    <string>6</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array><string>asterrecipe</string></array>
+            <key>CFBundleTypeName</key>
+            <string>Aster Recipe</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+        </dict>
+    </array>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+</dict>
+</plist>

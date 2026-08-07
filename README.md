@@ -1,0 +1,51 @@
+# Aster Terminal
+
+Aster 是一个完全使用 AppKit 构建的原生 macOS 终端工作区，采用轻量标签导航、弱化标题栏、纸张色画布和克制的苔绿色状态反馈。它使用独立品牌、图标和从零编写的工作区实现，不包含 Otty 的品牌资源或私有代码。
+
+## 能力
+
+- 完整 VT100/xterm 终端、ANSI 真彩色、鼠标、超链接和全屏 TUI
+- 多标签，垂直/顶部/底部三种标签布局
+- 左右/上下递归分屏，可混合终端、文件浏览器、编辑器和预览
+- 终端缓冲区查找、命令面板、详情面板和快捷键
+- `.asterrecipe` 工作区导入/导出及启动会话恢复
+- 通用、Shell、控制、编辑器、智能体、外观、Recipes、快捷键和高级九类设置
+- 与 Otty 1.3.1 对齐的 24 个内置主题、实时终端预览、自定义复制/编辑及安全 `.astertheme` 导入
+- 主窗口、设置、菜单、分屏、主题预览和全部交互控件均为原生 AppKit，无 SwiftUI/Hosting 桥接层
+- 独立应用图标、签名 `.app` 与 DMG 构建
+
+## 构建
+
+```bash
+swift test
+./scripts/build-app.sh
+./scripts/build-dmg.sh
+open dist/Aster.app
+```
+
+需要 macOS 14 或更高版本及 Xcode Command Line Tools。SwiftPM 会获取 SwiftTerm 依赖。
+默认构建使用本机 ad-hoc 签名，适合本机安装；正式分发时通过
+`ASTER_SIGN_IDENTITY="Developer ID Application: ..."` 提供 Developer ID，并在产物外部完成
+notarization/stapling。
+
+## 快捷键
+
+| 操作 | 快捷键 |
+| --- | --- |
+| 新建标签页 | `⌘T` |
+| 打开文件 | `⌘O` |
+| 关闭标签页 | `⌘W` |
+| 向右分屏 | `⌘D` |
+| 向下分屏 | `⇧⌘D` |
+| 关闭 Pane | `⌥⌘W` |
+| 查找 | `⌘F` |
+| 命令面板 | `⌘K` |
+| 设置 | `⌘,` |
+
+## 文档
+
+- [工作区领域与实现](docs/developer/terminal-domain.md)
+- [AppKit 界面架构](docs/developer/appkit-interface.md)
+- [外观主题领域与实现](docs/developer/theme-system.md)
+- [用户帮助](docs/user/help.md)
+- [第三方许可](THIRD-PARTY-NOTICES.md)
