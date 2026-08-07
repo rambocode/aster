@@ -13,6 +13,8 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
   @Published var documentText = ""
   @Published private(set) var documentError: String?
   @Published private(set) var isDirty = false
+  /// Read-only 是 Pane 运行态，不写入会话快照；恢复后默认重新允许输入，避免持久锁定。
+  @Published private(set) var isReadOnly = false
   private var documentBuffer: DocumentBuffer?
 
   init(descriptor: PaneDescriptor) {
@@ -36,6 +38,7 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
   }
 
   func updateDocument(_ text: String) {
+    guard !isReadOnly else { return }
     documentText = text
     documentBuffer?.updateText(text)
     isDirty = documentBuffer?.isDirty ?? !text.isEmpty
@@ -52,6 +55,11 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
     } catch {
       documentError = error.localizedDescription
     }
+  }
+
+  func toggleReadOnly() {
+    isReadOnly.toggle()
+    terminalSession?.setReadOnly(isReadOnly)
   }
 
   /// 在丢弃编辑器运行态前完成可取消的保存事务。
@@ -780,6 +788,14 @@ final class AppModel: ObservableObject {
     (selectedTab?.layout.allPanes.count ?? 0) > 1
   }
 
+  var activePaneIsReadOnly: Bool {
+    selectedTab?.activeRuntime?.isReadOnly == true
+  }
+
+  func toggleActivePaneReadOnly() {
+    selectedTab?.activeRuntime?.toggleReadOnly()
+  }
+
   func togglePalette() { isPalettePresented.toggle() }
   func toggleInspector() { isInspectorPresented.toggle() }
   func toggleFind() { isFindPresented.toggle() }
@@ -990,6 +1006,10 @@ final class AppModel: ObservableObject {
       .init(id: "save-recipe", title: "保存为 Recipe", keywords: ["workspace"]),
       .init(id: "open-recipe", title: "打开 Recipe", keywords: ["workspace"]),
       .init(id: "interrupt", title: "中断当前命令", keywords: ["control c", "stop"]),
+      .init(id: "vi-mode", title: "进入 Vi Mode", keywords: ["terminal", "keyboard", "navigate"]),
+      .init(id: "mark-mode", title: "进入 Mark Mode", keywords: ["terminal", "select", "copy"]),
+      .init(id: "hint-mode", title: "打开链接（Hint Mode）", keywords: ["terminal", "url", "path"]),
+      .init(id: "read-only", title: "切换只读模式", keywords: ["terminal", "lock", "input"]),
       .init(id: "close-pane", title: "关闭当前面板", keywords: ["pane", "close"]),
     ]
   }
@@ -1015,6 +1035,10 @@ final class AppModel: ObservableObject {
     case "save-recipe": saveRecipe()
     case "open-recipe": openRecipe()
     case "interrupt": selectedTab?.activeSession?.interrupt()
+    case "vi-mode": selectedTab?.activeSession?.enterViMode()
+    case "mark-mode": selectedTab?.activeSession?.enterMarkMode()
+    case "hint-mode": selectedTab?.activeSession?.openHintMode()
+    case "read-only": toggleActivePaneReadOnly()
     case "close-pane": closeActivePane()
     default: break
     }

@@ -276,7 +276,13 @@ final class WorkspaceViewController: NSViewController {
     // 最后渲染的那个会抢走输入焦点，用户看到的焦点框与真正接收按键的面板不一致。
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
-      if let tab = self.model.selectedTab { self.focusActivePane(in: tab) }
+      // 搜索框和命令面板各自安排 first responder；此时不能再把焦点抢回终端，
+      // 否则 Vi `/`/`?` 打开的查找栏虽然可见，却无法接收查询文本。
+      if !self.model.isFindPresented, !self.model.isPalettePresented,
+        let tab = self.model.selectedTab
+      {
+        self.focusActivePane(in: tab)
+      }
       self.updateWindowActivationOverlay()
     }
   }
@@ -287,6 +293,12 @@ final class WorkspaceViewController: NSViewController {
       tab.objectWillChange
         .sink { [weak self] _ in self?.scheduleRefresh() }
         .store(in: &tabSubscriptions)
+      for runtime in tab.runtimes.values {
+        runtime.$isReadOnly
+          .dropFirst()
+          .sink { [weak self] _ in self?.scheduleRefresh() }
+          .store(in: &tabSubscriptions)
+      }
       // 焦点切换走独立通道做局部更新：整树重建会打断终端拖选与 TUI 重绘。
       tab.activePaneChanged
         .sink { [weak self, weak tab] _ in
@@ -1027,6 +1039,9 @@ final class WorkspaceViewController: NSViewController {
     guard let session = runtime.terminalSession else {
       return makeCenteredMessage(title: "终端不可用", symbol: "terminal")
     }
+    session.onRequestFind = { [weak self] in
+      self?.model.isFindPresented = true
+    }
     let host = session.makeTerminalHost(preferences: preferences)
     host.removeFromSuperview()
     if let error = session.startupError {
@@ -1050,12 +1065,14 @@ final class WorkspaceViewController: NSViewController {
     column.spacing = 0
     let name = URL(fileURLWithPath: runtime.descriptor.resourcePath ?? "Untitled").lastPathComponent
       + (runtime.isDirty ? " •" : "")
-    column.addArrangedSubview(makePaneToolbar(title: name, symbol: "doc.text", save: runtime.saveDocument))
+    let title = runtime.isReadOnly ? "\(name)  READ ONLY" : name
+    column.addArrangedSubview(makePaneToolbar(title: title, symbol: "doc.text", save: runtime.saveDocument))
     if let error = runtime.documentError, runtime.documentText.isEmpty {
       column.addArrangedSubview(makeCenteredMessage(title: error, symbol: "exclamationmark.triangle"))
     } else {
       let textView = NSTextView()
       textView.string = runtime.documentText
+      textView.isEditable = !runtime.isReadOnly
       textView.font = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
       textView.textColor = AsterTheme.ink
       textView.backgroundColor = AsterTheme.paper

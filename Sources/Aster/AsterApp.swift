@@ -237,12 +237,16 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   @objc private func toggleSecureKeyboardEntry(_ sender: Any?) {
     SecureInputCoordinator.shared.toggleManualRequest()
   }
+  @objc private func toggleActivePaneReadOnly(_ sender: Any?) {
+    model.toggleActivePaneReadOnly()
+  }
 
   private func makeMainMenu() -> NSMenu {
     let menu = NSMenu()
     menu.addItem(appMenuItem())
     menu.addItem(fileMenuItem())
     menu.addItem(editMenuItem())
+    menu.addItem(shellModeMenuItem())
     menu.addItem(workspaceMenuItem())
     menu.addItem(windowMenuItem())
     return menu
@@ -318,6 +322,34 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(
       menuItem(
         "安全键盘输入", #selector(toggleSecureKeyboardEntry(_:)), "", modifiers: []))
+    item.submenu = submenu
+    return item
+  }
+
+  /// 终端模式命令通过 responder chain 落到当前聚焦 Pane，分屏间不共享 Read-only、
+  /// Vi 光标或 Hint 状态。只有 Vi Mode 配置默认快捷键，其余动作保留菜单与命令面板入口。
+  func shellModeMenuItem() -> NSMenuItem {
+    let item = NSMenuItem()
+    let submenu = NSMenu(title: "Shell")
+    submenu.addItem(
+      responderMenuItem(
+        "Vi Mode", #selector(AsterTerminalView.enterViMode(_:)), " ",
+        modifiers: [.control, .shift]))
+    submenu.addItem(
+      responderMenuItem(
+        "Mark Mode", #selector(AsterTerminalView.enterMarkMode(_:)), "", modifiers: []))
+    submenu.addItem(
+      responderMenuItem(
+        "打开链接（Hint Mode）", #selector(AsterTerminalView.openHintMode(_:)), "",
+        modifiers: []))
+    submenu.addItem(.separator())
+    submenu.addItem(
+      menuItem("只读模式", #selector(toggleActivePaneReadOnly(_:)), "", modifiers: []))
+    submenu.addItem(.separator())
+    submenu.addItem(
+      responderMenuItem(
+        "显示/隐藏 Vi 按键提示", #selector(AsterTerminalView.toggleViKeyHints(_:)), "/",
+        modifiers: [.command]))
     item.submenu = submenu
     return item
   }
@@ -559,6 +591,10 @@ extension AsterAppDelegate: NSMenuItemValidation {
     if action == #selector(toggleSecureKeyboardEntry(_:)) {
       menuItem.state = SecureInputCoordinator.shared.isManualRequestActive ? .on : .off
       return true
+    }
+    if action == #selector(toggleActivePaneReadOnly(_:)) {
+      menuItem.state = model.activePaneIsReadOnly ? .on : .off
+      return model.selectedTab?.activeRuntime != nil
     }
     guard Self.splitOnlySelectors.contains(action) else { return true }
     return model.selectedTabHasSplits

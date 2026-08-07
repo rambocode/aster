@@ -58,6 +58,10 @@ public enum ScrollPastFirstLineMode: Sendable {
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, TerminalDelegate {
+    /// Called by the shared send path before it clears selection or scrolls to the bottom.
+    /// Subclasses can reject user-originated input while keeping terminal protocol replies intact.
+    open func shouldSendUserData(_ data: ArraySlice<UInt8>) -> Bool { true }
+
 #if canImport(MetalKit)
     // Default to throttling Metal redraws during live-resize; set SWIFTTERM_METAL_LIVE_RESIZE_THROTTLE=0 to disable.
     private static let metalLiveResizeThrottleEnabled: Bool = {
@@ -2744,7 +2748,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return calculateMouseHit(at: point).grid
     }
     
-    public override func mouseMoved(with event: NSEvent) {
+    open override func mouseMoved(with event: NSEvent) {
         if #available(macOS 26, *) {
             // On macOS 26 movement arrives via `acceptsMouseMovedEvents`, which delivers
             // to the first responder regardless of the pointer's location. Ignore moves
@@ -2941,7 +2945,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return CGFloat(max(0, targetRow - min(buffer.rows - 1, firstContentRow))) * cellHeight
     }
 
-    public override func scrollWheel(with event: NSEvent) {
+    open override func scrollWheel(with event: NSEvent) {
         // Preserves the previous `deltaY == 0` early exit, restated against the
         // delta this method now reads. Without it a zero delta would fall into
         // the non-precise branch below and be turned into a spurious -1 line.
@@ -3144,7 +3148,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         terminalDelegate?.setTerminalTitle(source: self, title: title)
     }
     
-    public func sizeChanged(source: Terminal) {
+    open func sizeChanged(source: Terminal) {
         terminalDelegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
         updateScroller ()
     }

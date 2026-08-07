@@ -68,6 +68,18 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// 所有链接打开请求必须先进入 Aster 的解析与授权层，禁止调用 SwiftTerm 默认的
   /// `NSWorkspace.open` 路径绕过 scheme、可执行文件和特殊文件检查。
   var onRequestOpenTarget: ((String, DetectedTargetSource) -> Void)?
+  /// Hint Mode 的复制动作需要规范化 URL 或相对路径，但不能触发文件打开和权限确认。
+  var onResolveHintCopyTarget: ((String, DetectedTargetSource) -> String?)?
+  /// Read-only 拒绝用户输入时只发出一次即时反馈；测试可替换该回调避免系统声音。
+  var onInputRejected: () -> Void = { NSSound.beep() }
+  /// SwiftTerm 自动生成的 DA/DSR 等协议响应必须穿过 Read-only 锁。该观察 seam 只用于
+  /// 验证协议回包没有被误当作用户输入，生产路径默认不保存回包内容。
+  var onTerminalProtocolOutput: ((ArraySlice<UInt8>) -> Void)?
+  /// Vi 的 `/`、`?` 和 `n`/`N` 复用现有查找栏与缓冲区搜索，不复制第二套搜索实现。
+  var onRequestViSearch: ((TerminalViSearchDirection) -> Void)?
+  var onRepeatViSearch: ((Bool) -> Void)?
+  /// 进入本地模式时清除 Autocomplete ghost/panel，避免视觉上仍暗示可以把候选写入 PTY。
+  var onPaneModeActivated: (() -> Void)?
   private var titleStackObserver = TerminalTitleStackObserver()
   /// 必须先于 SwiftTerm parser 处理原始 PTY 字节；handler 层限长时组件已经缓存完整 OSC。
   private var oscStreamLimiter = TerminalOSCStreamLimiter()
@@ -119,6 +131,29 @@ final class AsterTerminalView: LocalProcessTerminalView {
   private var activityHandlersInstalled = false
   private var titleHandlersInstalled = false
   private var kittyNotificationAssembler = KittyNotificationAssembler()
+  private var paneModeState = TerminalPaneModeState()
+  private var viEngine: TerminalViEngine?
+  private var viScrollInvariantLowerBound: Int?
+  private var viUsesAlternateBuffer: Bool?
+  private var hintTargets: [HintTarget] = []
+  private var hintMatcher = TerminalHintMatcher(labels: [])
+  private var showsViKeyHints = true
+  private var isApplyingModeSelection = false
+  /// `TerminalDelegate.send` 与用户输入最终都会进入 `send(source: TerminalView, ...)`。
+  /// 仅在 SwiftTerm 自己生成协议响应时置位，避免 Read-only 把协议握手一起截断。
+  private var isForwardingTerminalProtocolResponse = false
+  private lazy var paneModeHUD = TerminalPaneModeHUD(frame: bounds)
+
+  private struct HintTarget {
+    let link: Terminal.VisibleLink
+    let label: String
+    let source: DetectedTargetSource
+  }
+
+  var navigationMode: TerminalNavigationMode { paneModeState.navigationMode }
+  var isReadOnly: Bool { paneModeState.readOnly }
+  var viCursor: TerminalBufferPoint? { viEngine?.cursor }
+  var hintTargetCount: Int { hintTargets.count }
 
   /// 用户配置的光标形状；nil 表示配置尚未下发，此时保持 SwiftTerm 默认行为。
   var preferredCursorStyle: SwiftTerm.CursorStyle? {
@@ -146,7 +181,45 @@ final class AsterTerminalView: LocalProcessTerminalView {
     setWindowActive(window?.isKeyWindow ?? true)
   }
 
+  override func layout() {
+    super.layout()
+    if paneModeHUD.superview === self {
+      paneModeHUD.frame = bounds
+      updatePaneModeHUD()
+    }
+  }
+
+  override func sizeChanged(source: Terminal) {
+    super.sizeChanged(source: source)
+    switch paneModeState.navigationMode {
+    case .normal:
+      break
+    case .hint:
+      // Reflow 会改变缓存目标的 bufferRow/range；旧标签不能继续打开错误单元格。
+      leaveHintMode()
+    case .vi:
+      // Vi 端点同样绑定旧网格。重排后没有无损映射，安全退出并清除旧选区。
+      leaveViMode(clearSelection: true)
+    }
+  }
+
+  override func scrolled(source terminal: Terminal, yDisp: Int) {
+    super.scrolled(source: terminal, yDisp: yDisp)
+    if paneModeState.navigationMode == .hint { leaveHintMode() }
+    updatePaneModeHUD()
+  }
+
   override func keyDown(with event: NSEvent) {
+    if paneModeState.navigationMode != .normal {
+      handlePaneModeKeyDown(event)
+      return
+    }
+    // Read-only 必须在 Autocomplete 和提示符删除逻辑之前生效，否则本地控制器可能先
+    // 改写建议状态。让 SwiftTerm 正常编码按键，再由统一 send gate 拒绝并反馈一次。
+    if paneModeState.readOnly {
+      super.keyDown(with: event)
+      return
+    }
     if onAutocompleteKeyDown?(event) == true { return }
     // macOS keyCode 51 is the backward Delete/Backspace key. Only consume it when OSC 133
     // proves the selection belongs to the current editable prompt; otherwise preserve TUI input.
@@ -163,16 +236,33 @@ final class AsterTerminalView: LocalProcessTerminalView {
     if !safeBytes.isEmpty {
       shellNavigationAbsoluteRow = nil
       onAutocompleteOutput?(safeBytes[...])
+      let previousMouseReporting = allowMouseReporting
+      if paneModeState.inputDecision != .forwardToProcess {
+        // SwiftTerm 的 feedPrepare/linefeed 以该开关决定是否清除选区。Read-only 与
+        // Vi/Mark 都必须在持续输出时保留用户或模式选区。
+        allowMouseReporting = false
+      }
       super.dataReceived(slice: safeBytes[...])
-      // Otty 的滚动语义：任何新输出都回到底部；用户输入则由 SwiftTerm 的 send 路径
-      // 同步复位。alternate screen 没有 scrollback，此调用只清理可能残留的视觉偏移。
-      scrollToBottom()
+      allowMouseReporting = previousMouseReporting
+      if paneModeState.navigationMode == .hint {
+        // Hint 标签绑定当前可见网格；输出一旦改变就立即失效，并恢复进入 Hint 前的
+        // Vi/普通模式，避免标签指向另一段文本。
+        leaveHintMode()
+      }
+      if case .vi = paneModeState.navigationMode {
+        reconcileViModeAfterOutput()
+      }
+      if paneModeState.navigationMode == .normal {
+        // 普通模式的新输出回到底部。Vi/Mark 则固定用户正在检查的 viewport。
+        scrollToBottom()
+      }
       let terminal = getTerminal()
       if let line = terminal.getLine(row: terminal.buffer.y) {
         onTerminalOutputActivity?(
           line.translateToString(trimRight: true, skipNullCellsFollowingWide: true)
         )
       }
+      updatePaneModeHUD()
     }
     if titleShellControlled {
       for update in titleStackObserver.consume(safeBytes) {
@@ -185,12 +275,440 @@ final class AsterTerminalView: LocalProcessTerminalView {
   }
 
   override func send(source: TerminalView, data: ArraySlice<UInt8>) {
+    if isForwardingTerminalProtocolResponse {
+      super.send(source: source, data: data)
+      return
+    }
+    switch paneModeState.inputDecision {
+    case .consumeLocally:
+      return
+    case .rejectWithFeedback:
+      onInputRejected()
+      return
+    case .forwardToProcess:
+      break
+    }
     shellNavigationAbsoluteRow = nil
     onTerminalIO?()
     onEncodedInput?(data)
     onAutocompleteInput?(data)
     onTerminalUserInput?()
     super.send(source: source, data: data)
+  }
+
+  /// SwiftTerm 在清选区和回到底部前调用该门禁。Read-only 与本地导航模式由此在任何
+  /// 副作用发生前拒绝应用命令、IME 和键盘输入；协议响应仍走 Terminal delegate 通道。
+  override func shouldSendUserData(_ data: ArraySlice<UInt8>) -> Bool {
+    switch paneModeState.inputDecision {
+    case .forwardToProcess:
+      return true
+    case .consumeLocally:
+      return false
+    case .rejectWithFeedback:
+      onInputRejected()
+      return false
+    }
+  }
+
+  /// Terminal parser 产生的设备属性、状态报告等响应也会走 TerminalViewDelegate。用
+  /// 动态作用域标记该次转发，让只读锁只拦用户动作，不破坏前台程序协议协商。
+  override func send(source: Terminal, data: ArraySlice<UInt8>) {
+    guard source.outboundDataOrigin == .protocolResponse else {
+      super.send(source: source, data: data)
+      return
+    }
+    isForwardingTerminalProtocolResponse = true
+    onTerminalProtocolOutput?(data)
+    defer { isForwardingTerminalProtocolResponse = false }
+    super.send(source: source, data: data)
+  }
+
+  // MARK: - Pane navigation and read-only modes
+
+  @objc func toggleReadOnly(_ sender: Any?) {
+    paneModeState.toggleReadOnly()
+    if paneModeState.readOnly {
+      onPaneModeActivated?()
+      ensurePaneModeHUD()
+    }
+    updatePaneModeHUD()
+  }
+
+  func setReadOnly(_ value: Bool) {
+    paneModeState.setReadOnly(value)
+    if value {
+      onPaneModeActivated?()
+      ensurePaneModeHUD()
+    }
+    updatePaneModeHUD()
+  }
+
+  @objc func enterViMode(_ sender: Any?) {
+    beginViMode(style: .vi)
+  }
+
+  @objc func enterMarkMode(_ sender: Any?) {
+    beginViMode(style: .mark)
+  }
+
+  @objc func openHintMode(_ sender: Any?) {
+    let links = getTerminal().visibleLinks(maximumCount: 26 * 26)
+    let labels = TerminalHintLabeler.labels(count: links.count)
+    guard !labels.isEmpty else {
+      onInputRejected()
+      return
+    }
+    hintTargets = zip(links, labels).map { link, label in
+      HintTarget(
+        link: link,
+        label: label,
+        source: link.isExplicit ? .osc8 : .plainText
+      )
+    }
+    hintMatcher = TerminalHintMatcher(labels: labels)
+    if paneModeState.navigationMode != .hint { paneModeState.enterHintMode() }
+    onPaneModeActivated?()
+    ensurePaneModeHUD()
+    updatePaneModeHUD()
+  }
+
+  @objc func toggleViKeyHints(_ sender: Any?) {
+    guard case .vi = paneModeState.navigationMode else { return }
+    showsViKeyHints.toggle()
+    updatePaneModeHUD()
+  }
+
+  private func beginViMode(style: TerminalViStyle) {
+    if paneModeState.navigationMode == .hint { leaveHintMode() }
+    let terminal = getTerminal()
+    let cursor = terminal.activeBufferCursorPosition
+    let snapshot = navigationSnapshot()
+    let row = min(
+      max(0, cursor.row),
+      max(0, snapshot.lines.count - 1)
+    )
+    let lineColumn = min(cursor.col, snapshot.lastNavigableColumn(at: row))
+    viEngine = TerminalViEngine(cursor: TerminalBufferPoint(column: lineColumn, row: row))
+    viScrollInvariantLowerBound = terminal.scrollInvariantLineRange.lowerBound
+    viUsesAlternateBuffer = terminal.isCurrentBufferAlternate
+    setViewportFrozen(true)
+    paneModeState.enterViMode(style: style)
+    onPaneModeActivated?()
+    if style == .mark, var engine = viEngine {
+      _ = engine.consume(.character("v"), in: snapshot)
+      viEngine = engine
+    }
+    applyViSelection()
+    ensurePaneModeHUD()
+    updatePaneModeHUD()
+  }
+
+  private func handlePaneModeKeyDown(_ event: NSEvent) {
+    if event.keyCode == 53 || event.characters?.first == "\u{1B}" {
+      if paneModeState.navigationMode == .hint {
+        leaveHintMode()
+      } else {
+        leaveViMode(clearSelection: true)
+      }
+      return
+    }
+
+    switch paneModeState.navigationMode {
+    case .normal:
+      return
+    case .hint:
+      handleHintKeyDown(event)
+    case .vi:
+      if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "/" {
+        toggleViKeyHints(nil)
+        return
+      }
+      guard let input = viInput(for: event), var engine = viEngine else { return }
+      let result = engine.consume(input, in: navigationSnapshot())
+      viEngine = engine
+      handleViResult(result)
+    }
+  }
+
+  private func viInput(for event: NSEvent) -> TerminalViInput? {
+    switch event.keyCode {
+    case 123: return .arrow(.left)
+    case 124: return .arrow(.right)
+    case 125: return .arrow(.down)
+    case 126: return .arrow(.up)
+    case 36, 76: return .enter
+    default: break
+    }
+    if let scalar = event.characters?.unicodeScalars.first?.value {
+      switch scalar {
+      case 0x02: return .controlBackward
+      case 0x04: return .controlDown
+      case 0x06: return .controlForward
+      case 0x15: return .controlUp
+      case 0x16: return .controlVisualBlock
+      default: break
+      }
+    }
+    guard !event.modifierFlags.contains(.command), let character = event.characters?.first else {
+      return nil
+    }
+    return .character(character)
+  }
+
+  private func handleViResult(_ result: TerminalViResult) {
+    switch result {
+    case .updated:
+      applyViSelection()
+      revealViCursor()
+      updatePaneModeHUD()
+    case .ignored:
+      break
+    case .copyAndExit:
+      applyViSelection()
+      copyCurrentSelection(clearAfterCopy: true)
+      leaveViMode(clearSelection: false)
+    case .search(let direction):
+      onRequestViSearch?(direction)
+      updatePaneModeHUD()
+    case .repeatSearch(let reverse):
+      onRepeatViSearch?(reverse)
+    case .enterHintMode:
+      openHintMode(nil)
+    case .exit:
+      leaveViMode(clearSelection: true)
+    }
+  }
+
+  private func handleHintKeyDown(_ event: NSEvent) {
+    guard !event.modifierFlags.contains(.command), let character = event.characters?.first else {
+      return
+    }
+    switch hintMatcher.consume(
+      character,
+      shifted: event.modifierFlags.contains(.shift)
+    ) {
+    case .pending:
+      updatePaneModeHUD()
+    case .noMatch:
+      onInputRejected()
+      updatePaneModeHUD()
+    case .selected(let index, let copies):
+      guard hintTargets.indices.contains(index) else {
+        leaveHintMode()
+        return
+      }
+      let target = hintTargets[index]
+      if copies {
+        guard let value = onResolveHintCopyTarget?(target.link.text, target.source) else {
+          onInputRejected()
+          leaveHintMode()
+          return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+      } else {
+        onRequestOpenTarget?(target.link.text, target.source)
+      }
+      leaveHintMode()
+    }
+  }
+
+  private func leaveHintMode() {
+    hintTargets.removeAll(keepingCapacity: false)
+    hintMatcher = TerminalHintMatcher(labels: [])
+    paneModeState.leaveHintMode()
+    updatePaneModeHUD()
+  }
+
+  private func leaveViMode(clearSelection: Bool) {
+    paneModeState.leaveNavigationMode()
+    viEngine = nil
+    viScrollInvariantLowerBound = nil
+    viUsesAlternateBuffer = nil
+    setViewportFrozen(false)
+    if clearSelection { selectNone() }
+    updatePaneModeHUD()
+  }
+
+  private func reconcileViModeAfterOutput() {
+    let terminal = getTerminal()
+    guard viUsesAlternateBuffer == terminal.isCurrentBufferAlternate,
+      let previousLowerBound = viScrollInvariantLowerBound
+    else {
+      // 切换 normal/alternate buffer 后原坐标没有合法映射，宁可退出也不能选中错文本。
+      leaveViMode(clearSelection: true)
+      return
+    }
+    let currentLowerBound = terminal.scrollInvariantLineRange.lowerBound
+    guard currentLowerBound >= previousLowerBound else {
+      // RIS/缓冲重建会让 scroll-invariant 基准回退，同样视为快照失效。
+      leaveViMode(clearSelection: true)
+      return
+    }
+    let droppedLines = currentLowerBound - previousLowerBound
+    viScrollInvariantLowerBound = currentLowerBound
+    guard droppedLines > 0, var engine = viEngine else { return }
+    guard engine.rebaseAfterDroppingLines(droppedLines, in: navigationSnapshot()) else {
+      leaveViMode(clearSelection: true)
+      return
+    }
+    viEngine = engine
+    applyViSelection()
+  }
+
+  /// 快照行号从 0 开始，与 SwiftTerm selection 的活动 Buffer 坐标一致。底层公开范围
+  /// 仍使用 scroll-invariant 行号，因此先读取完整历史，再减去被裁剪的 lowerBound。
+  private func navigationSnapshot() -> TerminalNavigationSnapshot {
+    let terminal = getTerminal()
+    let range = terminal.scrollInvariantLineRange
+    let cellLines: [[Character?]] = range.map { row in
+      guard let line = terminal.getScrollInvariantLine(row: row) else { return [] }
+      let lastContent = stride(from: terminal.cols - 1, through: 0, by: -1)
+        .first(where: { line.hasContent(index: $0) })
+      guard let lastContent else { return [] }
+      return (0...lastContent).map { column -> Character? in
+        // 宽字符后续 cell 的 width 为 0；保留 nil 占位后，Vi 左右移动会跨过它，
+        // 选区坐标仍直接对应 SwiftTerm 的真实网格列。
+        guard line.getWidth(index: column) != 0 else { return nil }
+        return line.hasContent(index: column) ? terminal.getCharacter(for: line[column]) : " "
+      }
+    }
+    let lower = min(max(0, terminal.buffer.yDisp), cellLines.count)
+    let upper = min(cellLines.count, lower + terminal.rows)
+    return TerminalNavigationSnapshot(
+      cellLines: cellLines,
+      columns: terminal.cols,
+      viewport: lower..<upper
+    )
+  }
+
+  private func applyViSelection() {
+    guard let selection = viEngine?.selection else {
+      isApplyingModeSelection = true
+      selectNone()
+      isApplyingModeSelection = false
+      return
+    }
+    let anchor = selection.anchor
+    let focus = selection.focus
+    let first: TerminalBufferPoint
+    let last: TerminalBufferPoint
+    if anchor.row < focus.row || (anchor.row == focus.row && anchor.column <= focus.column) {
+      first = anchor
+      last = focus
+    } else {
+      first = focus
+      last = anchor
+    }
+
+    let start: Position
+    let end: Position
+    let rectangular: Bool
+    switch selection.kind {
+    case .character:
+      start = Position(col: first.column, row: first.row)
+      end = Position(col: last.column + 1, row: last.row)
+      rectangular = false
+    case .line:
+      start = Position(col: 0, row: min(anchor.row, focus.row))
+      end = Position(col: getTerminal().cols, row: max(anchor.row, focus.row))
+      rectangular = false
+    case .block:
+      start = Position(
+        col: min(anchor.column, focus.column),
+        row: min(anchor.row, focus.row)
+      )
+      end = Position(
+        col: max(anchor.column, focus.column) + 1,
+        row: max(anchor.row, focus.row)
+      )
+      rectangular = true
+    }
+    isApplyingModeSelection = true
+    setSelection(start: start, end: end, rectangular: rectangular)
+    isApplyingModeSelection = false
+  }
+
+  private func revealViCursor() {
+    guard let cursor = viEngine?.cursor else { return }
+    let terminal = getTerminal()
+    let firstVisible = terminal.buffer.yDisp
+    let lastVisible = firstVisible + max(0, terminal.rows - 1)
+    if cursor.row < firstVisible {
+      scrollTo(row: cursor.row)
+    } else if cursor.row > lastVisible {
+      scrollTo(row: cursor.row - max(0, terminal.rows - 1))
+    }
+    setViewportFrozen(true)
+  }
+
+  private func ensurePaneModeHUD() {
+    guard paneModeHUD.superview !== self else { return }
+    paneModeHUD.frame = bounds
+    addSubview(paneModeHUD, positioned: .above, relativeTo: nil)
+  }
+
+  private func updatePaneModeHUD() {
+    let pillText: String?
+    let detail: String?
+    var showsKeyHints = false
+    switch paneModeState.navigationMode {
+    case .normal:
+      pillText = paneModeState.showsReadOnlyIndicator ? "READ ONLY" : nil
+      detail = nil
+    case .hint:
+      pillText = "HINT"
+      detail = hintMatcher.prefix.isEmpty ? nil : hintMatcher.prefix.uppercased()
+    case .vi(let style):
+      pillText = style == .mark ? "MARK MODE" : "VI MODE"
+      detail = viEngine?.pendingCount.map(String.init)
+      showsKeyHints = self.showsViKeyHints
+    }
+
+    let cursorFrame: NSRect?
+    if case .vi = paneModeState.navigationMode, let cursor = viEngine?.cursor {
+      cursorFrame = frameForCell(column: cursor.column, bufferRow: cursor.row)
+    } else {
+      cursorFrame = nil
+    }
+    let labels = hintTargets.compactMap { target -> TerminalPaneModeHUD.HintLabel? in
+      guard let frame = frameForCell(
+        column: target.link.range.lowerBound,
+        bufferRow: target.link.bufferRow
+      ) else { return nil }
+      let width = max(frame.width, CGFloat(target.label.count * 9 + 8))
+      return TerminalPaneModeHUD.HintLabel(
+        text: target.label,
+        frame: NSRect(x: frame.minX, y: frame.minY, width: width, height: frame.height)
+      )
+    }
+    paneModeHUD.update(
+      pillText: pillText,
+      detail: detail,
+      showsKeyHints: showsKeyHints,
+      cursorFrame: cursorFrame,
+      hints: labels
+    )
+  }
+
+  private func frameForCell(column: Int, bufferRow: Int) -> NSRect? {
+    let terminal = getTerminal()
+    let screenRow = bufferRow - terminal.buffer.yDisp
+    guard column >= 0, column < terminal.cols, screenRow >= 0, screenRow < terminal.rows else {
+      return nil
+    }
+    let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+    guard let pixels = cellSizeInPixels(source: terminal), pixels.width > 0, pixels.height > 0 else {
+      return nil
+    }
+    let width = CGFloat(pixels.width) / scale
+    let height = CGFloat(pixels.height) / scale
+    return NSRect(
+      x: bounds.minX + CGFloat(column) * width,
+      y: bounds.maxY - CGFloat(screenRow + 1) * height,
+      width: width,
+      height: height
+    )
   }
 
   override func bell(source: Terminal) {
@@ -222,6 +740,9 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// `scheme://`，在 mouseDown 阶段先截住，避免 TUI 收到一半鼠标序列；mouseUp 再由
   /// Aster 的行内检测器补发。OSC 8 的显示标签通常不是 URL，仍完整交给 SwiftTerm。
   override func mouseDown(with event: NSEvent) {
+    let previousMouseReporting = allowMouseReporting
+    if paneModeState.inputDecision != .forwardToProcess { allowMouseReporting = false }
+    defer { allowMouseReporting = previousMouseReporting }
     if case .none = linkReporting {
       super.mouseDown(with: event.removingCommandModifier() ?? event)
       return
@@ -246,11 +767,37 @@ final class AsterTerminalView: LocalProcessTerminalView {
     onRequestOpenTarget?(link, .plainText)
   }
 
+  override func mouseMoved(with event: NSEvent) {
+    // SwiftTerm 的 mouseMoved 路径不读取 allowMouseReporting。模式锁定时直接忽略 hover
+    // 报告，避免 Read-only、Vi 或 Hint 在用户移动指针时向 TUI 写入 CSI 序列。
+    guard paneModeState.inputDecision == .forwardToProcess else { return }
+    super.mouseMoved(with: event)
+  }
+
+  override func scrollWheel(with event: NSEvent) {
+    // 滚动本身在 Read-only 中仍可用；临时关闭报告后，SwiftTerm 会走本地 scrollback
+    // 分支，而不会把滚轮编码成前台 TUI 的按键或鼠标事件。
+    let previousViewport = getTerminal().buffer.yDisp
+    let previousMouseReporting = allowMouseReporting
+    if paneModeState.inputDecision != .forwardToProcess { allowMouseReporting = false }
+    defer { allowMouseReporting = previousMouseReporting }
+    super.scrollWheel(with: event)
+    if paneModeState.navigationMode == .hint,
+      getTerminal().buffer.yDisp != previousViewport
+    {
+      // Hint 的屏幕坐标只对进入模式时的 viewport 有效。用户滚动后立即取消，不能让
+      // 旧标签继续指向已经离开视口的 bufferRow。
+      leaveHintMode()
+      return
+    }
+    updatePaneModeHUD()
+  }
+
   /// 选择变化时同步“选中即复制”。SwiftTerm 会在拖选、单词选择和整行选择后调用该
   /// 回调；空选区不会覆盖用户原剪贴板。
   override func selectionChanged(source: Terminal) {
     super.selectionChanged(source: source)
-    guard copyOnSelect else { return }
+    guard copyOnSelect, !isApplyingModeSelection else { return }
     copyCurrentSelection(clearAfterCopy: false)
   }
 
@@ -489,6 +1036,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// 不清空选区，Cut 因而自然退化为纯复制。
   @discardableResult
   func deletePromptSelectionIfSafe() -> Bool {
+    guard permitsUserInputAction() else { return false }
     let terminal = getTerminal()
     guard !terminal.isCurrentBufferAlternate,
       let inputStart = shellCommandTimeline.currentInputStart,
@@ -529,7 +1077,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// 供菜单变体复用的窄入口。返回 false 表示空内容、保护取消或没有可写入的数据。
   @discardableResult
   func pasteText(_ text: String, forceBracketed: Bool = false) -> Bool {
-    guard !text.isEmpty else { return false }
+    guard !text.isEmpty, permitsUserInputAction() else { return false }
     let terminal = getTerminal()
     let analysis = PasteRiskAnalyzer.analyze(text)
     if PasteProtectionPolicy.requiresConfirmation(
@@ -565,6 +1113,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
   }
 
   @objc func pasteFileBase64Encoded(_ sender: Any?) {
+    guard permitsUserInputAction() else { return }
     let panel = NSOpenPanel()
     panel.title = "选择要以 Base64 粘贴的文件"
     panel.canChooseFiles = true
@@ -641,6 +1190,16 @@ final class AsterTerminalView: LocalProcessTerminalView {
       return true
     case #selector(scrollToPreviousCommand(_:)), #selector(scrollToNextCommand(_:)):
       return !shellCommandTimeline.marks.isEmpty
+    case #selector(toggleReadOnly(_:)):
+      if let menuItem = item as? NSMenuItem {
+        menuItem.state = paneModeState.readOnly ? .on : .off
+      }
+      return true
+    case #selector(enterViMode(_:)), #selector(enterMarkMode(_:)), #selector(openHintMode(_:)):
+      return true
+    case #selector(toggleViKeyHints(_:)):
+      if case .vi = paneModeState.navigationMode { return true }
+      return false
     case #selector(cut(_:)):
       return selectionActive
     case #selector(pasteSelection(_:)):
@@ -669,6 +1228,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
 
   @discardableResult
   private func sendNaturalEditing(_ action: NaturalTextEditingAction) -> Bool {
+    guard permitsUserInputAction() else { return false }
     let terminal = getTerminal()
     guard
       TerminalInputPolicy.usesNaturalTextEditing(
@@ -679,6 +1239,20 @@ final class AsterTerminalView: LocalProcessTerminalView {
     let bytes = TerminalInputEncoder.encode(action)
     send(data: bytes[...])
     return true
+  }
+
+  /// 菜单动作在编码前先调用此门禁，避免 Read-only 仍弹出粘贴确认或文件选择器。
+  /// 键盘和 IME 的最终兜底仍是 `send(source: TerminalView, ...)`，两层共同覆盖入口。
+  private func permitsUserInputAction() -> Bool {
+    switch paneModeState.inputDecision {
+    case .forwardToProcess:
+      return true
+    case .consumeLocally:
+      return false
+    case .rejectWithFeedback:
+      onInputRejected()
+      return false
+    }
   }
 
   /// 将领域层的可持久化枚举映射到 vendored SwiftTerm 的运行时滚动模式。
@@ -956,6 +1530,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var autocompleteController: TerminalAutocompleteController?
   /// OSC 0/1/2 的独立通道回调。Tab 领域状态负责固定名称、前缀与持久化。
   var onTitleUpdate: ((Int, String) -> Void)?
+  /// Vi `/` 或 `?` 请求显示现有查找栏；工作区拥有展示状态，Session 只保存方向。
+  var onRequestFind: (() -> Void)?
+  private var pendingViSearchDirection: TerminalViSearchDirection?
+  private var lastFindTerm = ""
+  private var lastFindWasPrevious = false
+  private var readOnly = false
   /// SwiftTerm 视图一旦启动就保持在同一个 AppKit 容器中。工作区刷新只移动该容器，
   /// 不直接反复把 Metal-backed 终端视图从 superview 拆下，避免分屏后网格停止绘制。
   private var terminalHostView: NSView?
@@ -997,6 +1577,20 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
             ? self.currentWorkingDirectory : ""
         )
       }
+    }
+    view.onResolveHintCopyTarget = { [weak self] rawValue, source in
+      self?.resolvedHintCopyTarget(rawValue, source: source)
+    }
+    view.setReadOnly(readOnly)
+    view.onRequestViSearch = { [weak self] direction in
+      self?.pendingViSearchDirection = direction
+      self?.onRequestFind?()
+    }
+    view.onRepeatViSearch = { [weak self] reverse in
+      self?.repeatLastFind(reverse: reverse)
+    }
+    view.onPaneModeActivated = { [weak self] in
+      self?.autocompleteController?.dismissForPaneMode()
     }
     view.onTerminalIO = { [weak self] in self?.refreshAutomaticSecureInput() }
     view.onTerminalOutputActivity = { [weak self] line in self?.receiveActivityOutput(line) }
@@ -1225,8 +1819,43 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @discardableResult
   func findNext(_ term: String, previous: Bool = false) -> Bool {
     guard let terminalView, !term.isEmpty else { return false }
-    return previous ? terminalView.findPrevious(term) : terminalView.findNext(term)
+    let resolvedPrevious: Bool
+    if previous {
+      resolvedPrevious = true
+      pendingViSearchDirection = nil
+    } else if let pendingViSearchDirection {
+      resolvedPrevious = pendingViSearchDirection == .backward
+      self.pendingViSearchDirection = nil
+    } else {
+      resolvedPrevious = false
+    }
+    let found = resolvedPrevious
+      ? terminalView.findPrevious(term)
+      : terminalView.findNext(term)
+    if found {
+      lastFindTerm = term
+      lastFindWasPrevious = resolvedPrevious
+    }
+    return found
   }
+
+  private func repeatLastFind(reverse: Bool) {
+    guard let terminalView, !lastFindTerm.isEmpty else { return }
+    let previous = reverse ? !lastFindWasPrevious : lastFindWasPrevious
+    _ = previous
+      ? terminalView.findPrevious(lastFindTerm)
+      : terminalView.findNext(lastFindTerm)
+  }
+
+  func setReadOnly(_ value: Bool) {
+    readOnly = value
+    terminalView?.setReadOnly(value)
+  }
+
+  func toggleReadOnly() { setReadOnly(!readOnly) }
+  func enterViMode() { terminalView?.enterViMode(nil) }
+  func enterMarkMode() { terminalView?.enterMarkMode(nil) }
+  func openHintMode() { terminalView?.openHintMode(nil) }
 
   /// 立即读取由 OSC 7 报告的工作目录。没有集成标记时保留最近一次可靠值。
   func resolvedCurrentWorkingDirectory() -> String {
@@ -1242,6 +1871,32 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       return url.path.removingPercentEncoding ?? url.path
     }
     return reportedValue.removingPercentEncoding ?? reportedValue
+  }
+
+  /// Hint 的 Shift 动作只复制规范化目标，不执行安全确认或系统打开。文件路径保留可选
+  /// 行列后缀，使复制结果既是绝对路径，也能继续交给编辑器或其它终端工具定位。
+  private func resolvedHintCopyTarget(
+    _ rawValue: String,
+    source: DetectedTargetSource
+  ) -> String? {
+    guard let preferences else { return nil }
+    let currentDirectory = currentWorkingDirectoryIsLocal ? currentWorkingDirectory : ""
+    guard let target = try? TargetResolver().resolve(
+      rawValue,
+      currentDirectory: currentDirectory,
+      source: source,
+      schemePolicy: preferences.configuration.controls.resolvedLinkSchemePolicy
+    ) else { return nil }
+    switch target {
+    case .url(let target):
+      return target.url.absoluteString
+    case .file(let file):
+      if let line = file.line, let column = file.column {
+        return "\(file.path):\(line):\(column)"
+      }
+      if let line = file.line { return "\(file.path):\(line)" }
+      return file.path
+    }
   }
 
   private static func isLocalFileURLHost(_ host: String?) -> Bool {

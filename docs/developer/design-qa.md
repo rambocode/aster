@@ -35,6 +35,14 @@
 - [ ] 关闭本机学习后不再出现历史/README/纠错，也不启动 help 探测；文件与内置命令仍可补全。
 - [ ] 设置页“立即更新”只在点击后联网；“清除”移除学习和固定命令但保留本地 help 规格。
 
+## Vi / Hint / Read-only 检查清单
+
+- [ ] `Control+Shift+Space` 只让当前 Pane 进入 Vi；计数移动、三类选区、复制退出和 `Escape`/`q` 退出均不向 Shell 输入字符。
+- [ ] `Command+/` 只在 Vi/Mark 中切换底部按键提示，提示不遮挡右上角模式 pill。
+- [ ] Hint 标签贴合当前可见 URL、OSC 8 链接和文件路径；普通标签键打开，Shift 最终键只复制，输出改变后旧标签立即消失。
+- [ ] Read-only pill 只出现在锁定 Pane；键盘、IME、粘贴及 TUI 鼠标报告被拒绝一次，滚动、选择、复制、查找和持续输出不受影响。
+- [ ] Read-only 中进入 Vi/Hint 会隐藏 pill，退出后 pill 与锁恢复；编辑器切换只读后不可输入，关闭重开后默认解除。
+
 ## Progress / Notifications 检查清单
 
 - [ ] OSC 9;4 百分比与不定进度同时更新终端顶部进度条和标签；成功先显示 checkmark，随后变为圆点。

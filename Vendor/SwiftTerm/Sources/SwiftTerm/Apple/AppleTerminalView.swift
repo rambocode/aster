@@ -2085,6 +2085,17 @@ extension TerminalView {
         userScrolling = isUserScrolling
         terminal.userScrolling = isUserScrolling
     }
+
+    /// Freezes the viewport while an embedder-owned navigation mode inspects scrollback.
+    /// Releasing the freeze restores the normal "follow only when already at bottom" policy.
+    public func setViewportFrozen(_ frozen: Bool) {
+        if frozen {
+            userScrolling = true
+            terminal.userScrolling = true
+        } else {
+            updateUserScrollingState(for: terminal.displayBuffer.yDisp, in: terminal.displayBuffer)
+        }
+    }
     
     public func scrollTo (row: Int, notifyAccessibility: Bool = true)
     {
@@ -2280,6 +2291,8 @@ extension TerminalView {
      */
     public func send(data: ArraySlice<UInt8>)
     {
+        // Embedders may reject user-originated input before selection and viewport side effects.
+        guard shouldSendUserData(data) else { return }
         if clearSelectionOnTyping {
             selection.selectNone()
         }
@@ -2616,8 +2629,8 @@ extension TerminalView {
     }
 
     /// Programmatic selection seam used by accessibility and embedding-level functional tests.
-    public func setSelection(start: Position, end: Position) {
-        selection.setSelection(start: start, end: end)
+    public func setSelection(start: Position, end: Position, rectangular: Bool = false) {
+        selection.setSelection(start: start, end: end, rectangular: rectangular)
     }
     
     /// Selects the entire buffer

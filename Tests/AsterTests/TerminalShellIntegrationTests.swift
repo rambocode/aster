@@ -128,6 +128,36 @@ func terminalViewTitleChangesRequirePrivilege() {
   #expect(updates[0].1 == "allowed")
 }
 
+@Test("可见目标枚举同时返回隐式路径与 OSC 8 来源")
+@MainActor
+func terminalEnumeratesVisibleHintTargets() {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  view.resize(cols: 80, rows: 4)
+  let output =
+    "README.md:12\r\n"
+    + "\u{1B}]8;;https://example.test/docs\u{7}open docs\u{1B}]8;;\u{7}\r\n"
+  view.dataReceived(slice: Array(output.utf8)[...])
+
+  let links = view.getTerminal().visibleLinks()
+  #expect(links.contains { $0.text == "README.md:12" && !$0.isExplicit })
+  #expect(links.contains { $0.text == "https://example.test/docs" && $0.isExplicit })
+  #expect(Set(links.map { "\($0.bufferRow):\($0.range.lowerBound):\($0.text)" }).count == links.count)
+}
+
+@Test("跨软换行的 OSC 8 链接只生成一个可见 Hint 目标")
+@MainActor
+func terminalDeduplicatesWrappedOSC8HintTargets() {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 320, height: 160))
+  view.resize(cols: 5, rows: 4)
+  let url = "https://example.test/wrapped"
+  let output = "\u{1B}]8;;\(url)\u{7}abcdefgh\u{1B}]8;;\u{7}"
+  view.dataReceived(slice: Array(output.utf8)[...])
+
+  let matches = view.getTerminal().visibleLinks().filter { $0.text == url }
+  #expect(matches.count == 1)
+  #expect(matches.first?.isExplicit == true)
+}
+
 @Test("命令导航按 OSC 133 提示符锚点向前和向后滚动")
 @MainActor
 func terminalViewNavigatesCommandMarks() {

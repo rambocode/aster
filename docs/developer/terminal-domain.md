@@ -142,6 +142,14 @@ SwiftTerm 1.15 的公开接口不能表达键盘扩展选区、矩形范围或�
 
 normal buffer 的虚拟滚动位置由整行 `Buffer.yDisp` 和 `viewportContentTranslationY` 组成。精确触控板手势直接累计像素，结束或取消时四舍五入到最近行；关闭平滑滚动时，残余像素累积到完整字符行才移动。滚过末尾可把最后内容行或光标行放到顶部，也可把最后内容行放到中部；滚过开头可独立把第一内容行放到底部/中部或跟随末尾策略。所有范围按实际内容、光标和视口行数计算，新输出及用户输入会复位到底部，alternate screen 会清除像素偏移并忽略越界设置。
 
+### Vi、Hint 与 Read-only Pane 模式
+
+`TerminalPaneModeState` 将互斥的 normal / Vi / Hint 导航状态与正交 Read-only 锁分开；临时进入 Hint 后恢复原导航模式，退出 Vi 也不会解除只读。`TerminalViEngine` 只依赖 `TerminalNavigationSnapshot`，以活动 Buffer 坐标实现计数移动、字符/行/矩形选区、搜索请求和 Hint 跳转。SwiftTerm 仅额外公开活动 Buffer 光标、scroll-invariant 行范围、程序化矩形选区和有界可见链接列表；Aster 不访问其内部行数组。选区更新期间抑制“选中即复制”，只有 `y` 或 `Enter` 执行显式复制。
+
+Hint 标签最多 676 个，26 个以内使用单字符，更多时全部使用双字符以消除前缀歧义。目标按可见行列稳定去重，OSC 8 来源保持显式身份；普通键走 `TerminalTargetOpenCoordinator`，Shift 最终键只用 `TargetResolver` 生成规范化复制值。任何输出都会使当前标签快照失效并退出 Hint。
+
+Read-only 先通过 SwiftTerm 的 `shouldSendUserData(_:)` 在清选区、回到底部等副作用前拒绝应用输入，再由 `AsterTerminalView.send(source:data:)` 统一覆盖键盘编码、IME、普通/变体粘贴和应用命令输入。SwiftTerm 从 `TerminalDelegate.send(source: Terminal, ...)` 产生的 DA/DSR 等协议回包使用动态作用域标记绕过门禁；OSC 52 与 Kitty 通知回包本来就直接写进程，同样不受锁影响。鼠标按下和滚轮在锁定期间临时关闭报告，保留本地选择与 normal-buffer 滚动；移动报告直接丢弃。`WorkspacePaneRuntime` 持有 Pane 级锁并同步终端或编辑器，锁不进入会话快照。
+
 ### Shell Integration 与终端身份
 
 zsh、Bash 与 fish 的静态脚本位于 `Resources/shell-integration/`，由构建脚本原样复制进签名应用。zsh 通过当前会话的 `ZDOTDIR` 加载最小 `.zshenv`，先读取用户真实 `.zshenv`；用户若在其中重定向 `ZDOTDIR` 则保留该值，否则恢复启动前状态，再在首个 prompt 延迟安装 hook。fish 通过临时 `XDG_DATA_DIRS` 加载 vendor conf，并在 source 后从环境中移除该目录。Bash 没有干净的 per-spawn 入口，因此 `ShellIntegrationInstaller` 在 `.bashrc` 与 `.bash_profile` 维护带 `TERM_PROGRAM=aster` 守卫的区块；检测到 tmux 时，zsh 与 fish 也写入仅在 `$TMUX` 内生效的区块。安装器先读取并校验全部目标，再逐文件原子替换；后续写入失败时恢复此前内容和权限。禁用会先确认，再移除所有区块，依赖设置值保留。

@@ -108,6 +108,13 @@ Aster 会在本机记录你通过终端访问的目录，并按“使用频率 +
 - 新安装默认关闭“Option 作为 Meta”，因此 Option 可继续输入重音和特殊字符；需要 Emacs/Vim 风格 Esc 前缀时可在“设置 → 控制 → 键盘”开启。
 - “自动安全输入”默认开启。当前聚焦终端进入 canonical 隐藏输入（例如密码提示）时，Aster 会在输出到达及首个按键发送前启用 macOS Secure Event Input；Vim、less 等 raw-mode TUI 不会误占用。恢复回显、失焦、进程结束或切到其它应用后自动释放。也可从“编辑 → 安全键盘输入”手动开启或关闭；手动状态在 Aster 失活时暂停，切回后恢复。
 
+### Vi、Hint 与只读模式
+
+- 按 `Control+Shift+Space` 或选择“Shell → Vi Mode”进入键盘导航，`Escape` 或 `q` 退出。使用 `h/j/k/l`、方向键、`w/b/e`、`0/$/^`、`H/M/L`、`gg/G`、`Control+U/D/B/F` 移动；动作前可输入次数。`v`、`V`、`Control+V` 分别开始字符、整行和矩形选择，`o` 交换锚点，`y` 或 `Return` 复制并退出。`Command+/` 显示或隐藏按键提示。
+- Vi 中按 `/` 或 `?` 打开正向或反向查找，`n` 重复、`N` 反向重复；按 `f` 进入 Hint Mode。也可从 Shell 菜单或 `⌘K` 命令面板直接进入 Mark / Hint。
+- Hint Mode 会给当前屏幕内的 URL、OSC 8 链接和文件路径显示短标签。输入标签会按现有安全规则打开目标；让标签最后一键带 `Shift`，则复制规范化 URL 或绝对路径而不打开。按 `Escape` 取消；终端输出改变时旧标签会自动失效。
+- “Shell → 只读模式”或 `⌘K` 命令面板按 Pane 切换只读。锁定后键盘、IME、粘贴和 TUI 鼠标报告不会到达程序；输出、滚动、选择、复制和查找仍可用。Vi/Hint 期间只读提示会暂时隐藏，退出后锁仍然有效；编辑器 Pane 也会停止接受修改。关闭并恢复工作区后只读锁不会保留。
+
 ### Autocomplete 与 Inline Suggestion
 
 在支持 Shell Integration 的 zsh、Bash 或 fish 提示符中停顿片刻，Aster 会在光标后显示灰色候选。默认按 `Tab` 接受；可在“设置 → 控制 → Autocomplete”改为 `Tab 或 →`、`Control-Space` 或关闭。候选面板默认用 `Escape` 打开：若 inline suggestion 正在显示，第一次 `Escape` 先关闭它，再按一次打开面板。用上下方向键选择，`Return` 或 `Tab` 接受，也可直接点击；面板最多同时显示 8 项。接受候选只补上剩余文字，不会替你按回车执行。

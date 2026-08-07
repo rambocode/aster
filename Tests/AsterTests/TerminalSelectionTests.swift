@@ -68,6 +68,23 @@ func rectangularSelectionNormalizesEmptyCells() {
   #expect(!view.getSelection()!.contains("\u{0}"))
 }
 
+@Test("程序化矩形选区保留矩形语义并按列复制")
+@MainActor
+func programmaticRectangularSelectionCopiesColumns() {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  view.resize(cols: 12, rows: 3)
+  view.dataReceived(slice: Array("abcd\r\nefgh\r\n".utf8)[...])
+
+  view.setSelection(
+    start: Position(col: 1, row: 0),
+    end: Position(col: 3, row: 1),
+    rectangular: true
+  )
+
+  #expect(view.isSelectionRectangular)
+  #expect(view.getSelection() == "bc\nfg")
+}
+
 @Test("输入时是否清除选区由终端设置控制")
 @MainActor
 func typingSelectionCleanupIsConfigurable() throws {

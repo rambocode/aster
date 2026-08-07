@@ -52,6 +52,10 @@ public extension Notification.Name {
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate, UIPointerInteractionDelegate {
+    /// Called by the shared send path before it clears selection or scrolls to the bottom.
+    /// Subclasses can reject user-originated input while keeping terminal protocol replies intact.
+    open func shouldSendUserData(_ data: ArraySlice<UInt8>) -> Bool { true }
+
     private enum PendingKoreanResyllabificationResult {
         case none
         case prefixReinserted

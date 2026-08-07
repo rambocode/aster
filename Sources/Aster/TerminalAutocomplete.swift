@@ -350,6 +350,12 @@ final class TerminalAutocompleteController {
     render()
   }
 
+  /// Vi、Hint 或 Read-only 接管输入时清空候选；Prompt tracker 保留当前命令行，退出
+  /// 模式后的下一次正常输入仍可从可靠状态继续刷新。
+  func dismissForPaneMode() {
+    dismiss()
+  }
+
   private func render() {
     guard let terminalView else { return }
     overlay.render(

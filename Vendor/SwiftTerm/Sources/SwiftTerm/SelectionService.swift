@@ -116,19 +116,33 @@ class SelectionService: CustomDebugStringConvertible {
         
     func clamp (_ buffer: Buffer, _ p: Position) -> Position {
         let maxRow = max(0, buffer.lines.count - 1)
-        return Position(col: min(p.col, buffer.cols - 1), row: min(p.row, maxRow))
+        return Position(
+            col: max(0, min(p.col, buffer.cols - 1)),
+            row: max(0, min(p.row, maxRow))
+        )
+    }
+
+    /// Selection ends are exclusive and may point one cell beyond the final column. Keeping that
+    /// boundary is required for line-wise and block-wise Vi selections to include the last cell.
+    func clampEnd (_ buffer: Buffer, _ p: Position) -> Position {
+        let maxRow = max(0, buffer.lines.count - 1)
+        return Position(
+            col: max(0, min(p.col, buffer.cols)),
+            row: max(0, min(p.row, maxRow))
+        )
     }
     /**
      * Sets the selection, this is validated against the
      */
-    public func setSelection (start: Position, end: Position) {
-        resetKeyboardSelection(rectangular: false)
+    public func setSelection (start: Position, end: Position, rectangular: Bool = false) {
+        resetKeyboardSelection(rectangular: rectangular)
         let buffer = terminal.displayBuffer
         let sclamped = clamp (buffer, start)
-        let eclamped = clamp (buffer, end)
+        let eclamped = clampEnd (buffer, end)
         
         self.start = sclamped
         self.end = eclamped
+        isRectangular = rectangular
         
         setActiveAndNotify()
     }

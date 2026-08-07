@@ -80,9 +80,9 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 - 待审计：[Images](https://docs.otty.sh/terminal-features/images)
 - 完成：[Progress State](https://docs.otty.sh/terminal-features/progress-state) — 完整解析 OSC 9;4（含 watch/quiet 完成扩展），保留 SwiftTerm 顶部进度条；支持可配置空白前缀自动进度、`aster watch`、CLI 直接徽章、完成闪现/未读/错误/等待输入标签状态，以及可选 Dock 动画、默认错误标红和点击跳转。等待输入要求提示停留 1.5 秒且输入立即清除。
 - 完成：[Privilege and Notifications](https://docs.otty.sh/terminal-features/notifications) — OSC 9/777/99 均映射系统通知；OSC 99 支持 urgency、base64、8 KiB 分片重组、替换 ID 和 capability query。成功/错误/watch、Shell Controlled、前台策略、Dock 弹跳、通知分类声音、BEL 与错误 beep 均独立可配；系统权限状态可刷新并直达设置。标题修改默认开、标题报告默认关，OSC 52 和 Secure Input 继续走各自安全边界。
-- 待审计：[Vi Mode](https://docs.otty.sh/terminal-features/vi-mode)
-- 待审计：[Hint Mode](https://docs.otty.sh/terminal-features/hint-mode)
-- 待审计：[Read-only Mode](https://docs.otty.sh/terminal-features/read-only-mode)
+- 完成：[Vi Mode](https://docs.otty.sh/terminal-features/vi-mode) — `Control+Shift+Space` 进入，支持计数、字符/词/行/屏幕/缓冲区/半页与整页移动，字符/整行/矩形选择、锚点交换、复制退出、`/ ? n N` 查找和 `f` 进入 Hint；`Escape`/`q` 退出，`Command+/` 切换按键提示。模式只修改本地 Buffer 选区和视口，不向 PTY 写入按键。
+- 完成：[Hint Mode](https://docs.otty.sh/terminal-features/hint-mode) — 当前可见区的 OSC 8、URL 和文件路径按稳定顺序生成无前缀歧义标签；普通最终键经过统一安全层打开，最终键带 Shift 时复制规范化 URL 或含行列的绝对路径。输出改变立即取消旧标签并恢复进入前模式。
+- 完成：[Read-only Mode](https://docs.otty.sh/terminal-features/read-only-mode) — 锁按 Pane 隔离且不持久化；终端键盘、IME、粘贴、TUI 鼠标与滚轮报告被统一拦截，协议自动回包继续发送，滚动、选择、复制、查找和输出不受影响。进入 Vi/Hint 时暂时隐藏只读 pill，但锁不会被清除；编辑器 Pane 同样停止文本改写。
 - 部分：[Shell Integration](https://docs.otty.sh/terminal-features/shell-integration) — 已提供签名 Bundle 内可读的 zsh/bash/fish 脚本，发送 OSC 133 A/B/C/D 与 OSC 7；zsh/fish 使用会话环境注入，Bash 与 tmux 子 Shell 使用幂等、可卸载且保留符号链接/用户内容的受管 rc 区块。关闭设置会确认并移除区块，`ASTER_DISABLE_INTEGRATION=1` 可按 Shell 禁用。命令时间线驱动运行状态、退出码徽标、`Command+Page Up/Down` 和安全提示符删除；SSH wrapper、`--no-integration` CLI 与进程恢复仍待对应工作流批次。
 - 部分：[$TERM and Identification](https://docs.otty.sh/terminal-features/term-value) — `auto` 默认解析为 `xterm-256color`，自定义名称经语法与真实 terminfo 校验；缺失时告警回退。Pane 注入 `TERM`、`COLORTERM`、`TERM_PROGRAM=aster`、版本、`CW_TERM=aster` 与稳定 `ASTER_PANE_ID`（保留旧 `ASTER_SESSION_ID` 别名），并优先搜索签名 Bundle terminfo。DA1/DA2、XTVERSION、DSR 5/6 与不响应 DA3 均已按品牌安全合同实现；远端 SSH 首次传输 terminfo 待 SSH 工作流。
 

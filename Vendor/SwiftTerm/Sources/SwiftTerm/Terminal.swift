@@ -598,6 +598,15 @@ open class Terminal {
     /// xterm does. Defaults to focused.
     var reportedFocusState: Bool = true
 
+    /// Classifies bytes emitted through `TerminalDelegate.send`. Parser replies are protocol
+    /// traffic, while focus and mouse reports are user interaction and must obey host input locks.
+    public enum OutboundDataOrigin: Sendable {
+        case protocolResponse
+        case userInteraction
+    }
+
+    public private(set) var outboundDataOrigin = OutboundDataOrigin.protocolResponse
+
     /// Invoke this command when the terminal receives and loses focus
     public func setTerminalFocus(_ focused: Bool) {
         reportedFocusState = focused
@@ -608,6 +617,8 @@ open class Terminal {
 
     func sendFocusReport() {
         let data: [UInt8] = cc.CSI + [reportedFocusState ? 0x49 : 0x4f]
+        outboundDataOrigin = .userInteraction
+        defer { outboundDataOrigin = .protocolResponse }
         tdel?.send(source: self, data: data[0...])
     }
     
@@ -815,6 +826,21 @@ open class Terminal {
             return nil
         }
         return buffer.lines [row-buffer.linesTop]
+    }
+
+    /// The valid row range accepted by ``getScrollInvariantLine(row:)`` for the active buffer.
+    ///
+    /// Embedders use this to take a stable text snapshot without reaching into SwiftTerm's
+    /// internal `Buffer.lines` storage. Rows remain scroll-invariant even after old history has
+    /// been trimmed; callers that need selection coordinates should subtract `lowerBound`.
+    public var scrollInvariantLineRange: Range<Int> {
+        buffer.linesTop..<(buffer.linesTop + buffer.lines.count)
+    }
+
+    /// Cursor position in active-buffer coordinates, suitable for selections and viewport math.
+    /// Unlike ``cursorAbsolutePosition``, this value intentionally excludes trimmed-history rows.
+    public var activeBufferCursorPosition: Position {
+        Position(col: buffer.x, row: buffer.yBase + buffer.y)
     }
 
     /// Returns the character at the specified column and row, these are zero-based
@@ -5812,6 +5838,8 @@ open class Terminal {
      */
     public func sendEvent (buttonFlags: Int, x: Int, y: Int, pixelX: Int, pixelY: Int)
     {
+        outboundDataOrigin = .userInteraction
+        defer { outboundDataOrigin = .protocolResponse }
         //print ("got \(mouseProtocol)")
         switch mouseProtocol {
         case .x10:
@@ -5992,6 +6020,22 @@ open class Terminal {
         case explicitAndImplicit
     }
 
+    /// One deduplicated link or file target whose first visible cell is inside the viewport.
+    /// Coordinates remain buffer-relative so selection and Hint Mode keep working while scrolled.
+    public struct VisibleLink: Equatable, Sendable {
+        public let text: String
+        public let bufferRow: Int
+        public let range: Range<Int>
+        public let isExplicit: Bool
+
+        public init(text: String, bufferRow: Int, range: Range<Int>, isExplicit: Bool) {
+            self.text = text
+            self.bufferRow = bufferRow
+            self.range = range
+            self.isExplicit = isExplicit
+        }
+    }
+
     struct LinkMatch {
         struct RowRange: Equatable {
             let row: Int
@@ -6048,6 +6092,45 @@ open class Terminal {
     public func link(at location: LinkLookupLocation, mode: LinkLookupMode) -> String?
     {
         return linkMatch(at: location, mode: mode)?.text
+    }
+
+    /// Enumerates visible OSC 8 and implicit URL/path targets in stable screen order.
+    /// The result is bounded because it is intended for short keyboard Hint labels, not indexing.
+    public func visibleLinks(maximumCount: Int = 702) -> [VisibleLink]
+    {
+        guard maximumCount > 0, !displayBuffer.lines.isEmpty, cols > 0, rows > 0 else {
+            return []
+        }
+        let firstRow = max(0, displayBuffer.yDisp)
+        let lastRow = min(displayBuffer.lines.count, firstRow + rows)
+        guard firstRow < lastRow else { return [] }
+
+        var results: [VisibleLink] = []
+        var seen: Set<String> = []
+        for row in firstRow..<lastRow {
+            for col in 0..<cols {
+                guard let match = linkMatch(
+                    at: .buffer(Position(col: col, row: row)),
+                    mode: .explicitAndImplicit
+                ) else { continue }
+                let rangeKey = match.rowRanges
+                    .map { "\($0.row):\($0.range.lowerBound)-\($0.range.upperBound)" }
+                    .joined(separator: ",")
+                let key = "\(match.isExplicit ? 1 : 0)|\(rangeKey)|\(match.text)"
+                guard seen.insert(key).inserted else { continue }
+                guard let firstVisibleRange = match.rowRanges.first(where: {
+                    $0.row >= firstRow && $0.row < lastRow
+                }) else { continue }
+                results.append(VisibleLink(
+                    text: match.text,
+                    bufferRow: firstVisibleRange.row,
+                    range: firstVisibleRange.range,
+                    isExplicit: match.isExplicit
+                ))
+                if results.count >= maximumCount { return results }
+            }
+        }
+        return results
     }
 
     func getDisplayText (start: Position, end: Position) -> String
@@ -6136,12 +6219,75 @@ open class Terminal {
         guard let payload = rawPayload, let url = parseHyperlinkPayload(payload) else {
             return nil
         }
+
+        // OSC 8 payloads remain attached to every cell when their display text soft-wraps.
+        // Build one stable multi-row identity so visibleLinks does not assign a Hint label to
+        // each physical row of the same logical hyperlink.
+        var rowRanges: [LinkMatch.RowRange] = [
+            .init(row: position.row, range: start..<end)
+        ]
+        var leadingRow = position.row
+        var leadingStart = start
+        while leadingRow > 0,
+              leadingStart == 0,
+              buffer.lines[leadingRow].isWrapped
+        {
+            let previousRow = leadingRow - 1
+            let previousLine = buffer.lines[previousRow]
+            let previousLimit = min(cols, previousLine.count)
+            guard previousLimit > 0,
+                  payloadCode(
+                    at: Position(col: previousLimit - 1, row: previousRow),
+                    in: buffer
+                  ) == payloadToken
+            else { break }
+
+            var previousStart = previousLimit - 1
+            while previousStart > 0,
+                  payloadCode(
+                    at: Position(col: previousStart - 1, row: previousRow),
+                    in: buffer
+                  ) == payloadToken
+            {
+                previousStart -= 1
+            }
+            rowRanges.insert(
+                .init(row: previousRow, range: previousStart..<previousLimit), at: 0)
+            leadingRow = previousRow
+            leadingStart = previousStart
+        }
+
+        var trailingRow = position.row
+        var trailingEnd = end
+        var trailingLimit = lineLimit
+        while trailingEnd == trailingLimit,
+              trailingRow + 1 < buffer.lines.count,
+              buffer.lines[trailingRow + 1].isWrapped
+        {
+            let nextRow = trailingRow + 1
+            let nextLine = buffer.lines[nextRow]
+            let nextLimit = min(cols, nextLine.count)
+            guard nextLimit > 0,
+                  payloadCode(at: Position(col: 0, row: nextRow), in: buffer) == payloadToken
+            else { break }
+
+            var nextEnd = 1
+            while nextEnd < nextLimit,
+                  payloadCode(at: Position(col: nextEnd, row: nextRow), in: buffer) == payloadToken
+            {
+                nextEnd += 1
+            }
+            rowRanges.append(.init(row: nextRow, range: 0..<nextEnd))
+            trailingRow = nextRow
+            trailingEnd = nextEnd
+            trailingLimit = nextLimit
+        }
         return LinkMatch(
             text: url,
             row: position.row,
             range: start..<end,
             isExplicit: true,
-            rowRanges: [.init(row: position.row, range: start..<end)]
+            rowRanges: rowRanges
         )
     }
 
@@ -6323,7 +6469,12 @@ open class Terminal {
             noTrailingColon +
             trailingSpacesAtEOL
 
-        let regex = schemeURLBranch + "|" + rootedOrRelativePathBranch + "|" + bareRelativePathBranch
+        // A filename in the current directory is still a relative path even without `./`.
+        // Keep this branch dotted so ordinary shell words, commit hashes, and IP-like numbers
+        // do not become implicit links; optional one-based line/column suffixes stay attached.
+        let bareFilenameBranch = #"(?<![\w~\/])[A-Za-z_][\w\-]*\.[A-Za-z0-9][\w.\-]*(?::[1-9][0-9]*){0,2}"#
+
+        let regex = schemeURLBranch + "|" + rootedOrRelativePathBranch + "|" + bareRelativePathBranch + "|" + bareFilenameBranch
         return try? NSRegularExpression(pattern: regex, options: [])
     }()
 
