@@ -42,6 +42,18 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     NSApp.activate(ignoringOtherApps: true)
   }
 
+  func applicationDidBecomeActive(_ notification: Notification) {
+    SecureInputCoordinator.shared.setApplicationActive(true)
+  }
+
+  func applicationDidResignActive(_ notification: Notification) {
+    SecureInputCoordinator.shared.setApplicationActive(false)
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    SecureInputCoordinator.shared.setApplicationActive(false)
+  }
+
   /// Finder 服务入口：把选中的目录/文件交给统一的 URL 打开逻辑（目录开新标签）。
   @objc func openInAster(
     _ pboard: NSPasteboard, userData: String,
@@ -191,6 +203,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   @objc private func toggleTabBarVisibility(_ sender: Any?) {
     preferences.configuration.appearance.showTabBar.toggle()
   }
+  @objc private func toggleSecureKeyboardEntry(_ sender: Any?) {
+    SecureInputCoordinator.shared.toggleManualRequest()
+  }
 
   private func makeMainMenu() -> NSMenu {
     let menu = NSMenu()
@@ -240,6 +255,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     let submenu = NSMenu(title: "编辑")
     submenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
     submenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+    submenu.addItem(textEditingMenuItem())
     submenu.addItem(.separator())
     submenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
     submenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
@@ -267,7 +283,64 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     submenu.addItem(.separator())
     submenu.addItem(menuItem("查找", #selector(find(_:)), "f"))
+    submenu.addItem(.separator())
+    submenu.addItem(
+      menuItem(
+        "安全键盘输入", #selector(toggleSecureKeyboardEntry(_:)), "", modifiers: []))
     item.submenu = submenu
+    return item
+  }
+
+  /// 这些菜单项既公开原生编辑能力，也让 AppKit 在进入 SwiftTerm 的不可覆写 keyDown
+  /// 前通过 responder chain 分发默认快捷键。终端视图会按普通屏/增强协议动态校验。
+  private func textEditingMenuItem() -> NSMenuItem {
+    let item = NSMenuItem(title: "文本编辑", action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: "文本编辑")
+    submenu.addItem(
+      responderMenuItem(
+        "移到行首", #selector(AsterTerminalView.movePromptToBeginningOfLine(_:)),
+        Self.arrowKey(NSLeftArrowFunctionKey), modifiers: [.command]))
+    submenu.addItem(
+      responderMenuItem(
+        "移到行尾", #selector(AsterTerminalView.movePromptToEndOfLine(_:)),
+        Self.arrowKey(NSRightArrowFunctionKey), modifiers: [.command]))
+    submenu.addItem(
+      responderMenuItem(
+        "向左移动一个词", #selector(AsterTerminalView.movePromptWordLeft(_:)),
+        Self.arrowKey(NSLeftArrowFunctionKey), modifiers: [.option]))
+    submenu.addItem(
+      responderMenuItem(
+        "向右移动一个词", #selector(AsterTerminalView.movePromptWordRight(_:)),
+        Self.arrowKey(NSRightArrowFunctionKey), modifiers: [.option]))
+    submenu.addItem(.separator())
+    submenu.addItem(
+      responderMenuItem(
+        "删除到行首", #selector(AsterTerminalView.deletePromptToBeginningOfLine(_:)),
+        "\u{8}", modifiers: [.command]))
+    submenu.addItem(
+      responderMenuItem(
+        "删除到行尾", #selector(AsterTerminalView.deletePromptToEndOfLine(_:)),
+        Self.arrowKey(NSDeleteFunctionKey), modifiers: [.command]))
+    submenu.addItem(
+      responderMenuItem(
+        "删除左侧词", #selector(AsterTerminalView.deletePromptWordLeft(_:)),
+        "\u{8}", modifiers: [.option]))
+    submenu.addItem(
+      responderMenuItem(
+        "删除右侧词", #selector(AsterTerminalView.deletePromptWordRight(_:)),
+        Self.arrowKey(NSDeleteFunctionKey), modifiers: [.option]))
+    item.submenu = submenu
+    return item
+  }
+
+  private func responderMenuItem(
+    _ title: String,
+    _ action: Selector,
+    _ key: String,
+    modifiers: NSEvent.ModifierFlags
+  ) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+    item.keyEquivalentModifierMask = modifiers
     return item
   }
 
@@ -386,6 +459,10 @@ extension AsterAppDelegate: NSMenuItemValidation {
 
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     guard let action = menuItem.action else { return true }
+    if action == #selector(toggleSecureKeyboardEntry(_:)) {
+      menuItem.state = SecureInputCoordinator.shared.isManualRequestActive ? .on : .off
+      return true
+    }
     guard Self.splitOnlySelectors.contains(action) else { return true }
     return model.selectedTabHasSplits
   }

@@ -86,7 +86,7 @@ public struct ShellConfiguration: Codable, Equatable, Sendable {
 }
 
 public struct ControlConfiguration: Codable, Equatable, Sendable {
-  public var optionAsMeta = true
+  public var optionAsMeta = false
   public var allowMouseReporting = true
   public var focusFollowsMouse = false
   public var copyOnSelect = false

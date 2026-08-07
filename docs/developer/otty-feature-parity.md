@@ -71,7 +71,7 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 - 部分：[Cursor and Mouse](https://docs.otty.sh/terminal-features/cursor-and-mouse)
 - 部分：[Selection](https://docs.otty.sh/terminal-features/selection)
 - 部分：[Scroll](https://docs.otty.sh/terminal-features/scroll)
-- 部分：[Input](https://docs.otty.sh/terminal-features/input)
+- 部分：[Input](https://docs.otty.sh/terminal-features/input) — SwiftTerm 已承载 IME、Kitty Keyboard Protocol、modifyOtherKeys 与应用键盘模式；Aster 新增普通 Shell 下的原生 macOS 行/词移动、行/词删除与撤销 readline 映射，并在全屏 TUI 或增强键盘协议启用时保留组件原编码。Option as Meta 新安装默认关闭。自动安全输入在终端 I/O 前后读取 PTY ECHO/ICANON，手动开关位于“编辑 → 安全键盘输入”且应用失活时暂停。Redo、Composer、Prompt Queue、Shift+Arrow 选择与可配置选择清理仍按各自批次推进。
 - 部分：[Copy and Paste](https://docs.otty.sh/terminal-features/copy-and-paste) — 已实现快捷键/菜单/右键复制粘贴、选中即复制、逐行去尾空白、复制后清选区、四类危险粘贴识别、备用屏与可信 bracketed 跳过、Paste As（选区/文件 Base64/Shell 转义/强制 bracketed）及 OSC 52 独立读写权限；“粘贴并在 Composer 中继续”已保留安全接缝，待 Composer 批次接通。
 - 待审计：[Autocomplete / Inline Suggest](https://docs.otty.sh/terminal-features/autocomplete)
 - 部分：[Unicode and Text Styles](https://docs.otty.sh/terminal-features/unicode-and-text-styles)

@@ -15,7 +15,7 @@ func defaultConfigurationMatchesReferenceWorkspace() {
   #expect(configuration.appearance.useSeparateDarkTheme)
   #expect(configuration.appearance.terminalIdentity == "xterm-256color")
   #expect(configuration.controls.allowMouseReporting)
-  #expect(configuration.controls.optionAsMeta)
+  #expect(!configuration.controls.optionAsMeta)
   #expect(!configuration.controls.trimTrailingSpaces)
   #expect(!configuration.controls.resolvedClearSelectionOnCopy)
   #expect(configuration.controls.pasteProtection)

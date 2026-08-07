@@ -85,6 +85,9 @@ final class AsterTerminalView: LocalProcessTerminalView {
   var onPasteIntoComposer: ((String) -> Void)?
   var onConfirmPaste: @MainActor (PasteAnalysis) -> Bool =
     AsterTerminalView.presentPasteConfirmation
+  /// PTY termios 变化没有独立通知；输出到达和用户输入发送前都触发一次同步，既让
+  /// 密码提示出现时立即保护，也保证首个按键写入 PTY 前已完成最终检查。
+  var onTerminalIO: (() -> Void)?
 
   /// 用户配置的光标形状；nil 表示配置尚未下发，此时保持 SwiftTerm 默认行为。
   var preferredCursorStyle: SwiftTerm.CursorStyle? {
@@ -113,6 +116,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
   }
 
   override func dataReceived(slice: ArraySlice<UInt8>) {
+    onTerminalIO?()
     // 先让 SwiftTerm 完成渲染和内部标题栈操作，再按 PTY 字节顺序重放本分片的全部
     // 标题事件。重放排在 SwiftTerm 错误、缺失或提前入队的 macOS delegate 回调之后，
     // 因此工作区最终状态既符合协议语义，也保留恢复后紧随的新 OSC 更新。
@@ -121,6 +125,11 @@ final class AsterTerminalView: LocalProcessTerminalView {
     for update in titleStackObserver.consume(safeBytes) {
       onObservedTitleUpdate?(update.code, update.title)
     }
+  }
+
+  override func send(source: TerminalView, data: ArraySlice<UInt8>) {
+    onTerminalIO?()
+    super.send(source: source, data: data)
   }
 
   /// SwiftTerm 对 OSC 8 与隐式文字使用同一个回调且不暴露来源。原始 PTY 观察器维护
@@ -192,6 +201,48 @@ final class AsterTerminalView: LocalProcessTerminalView {
   override func paste(_ sender: Any) {
     guard let text = NSPasteboard.general.string(forType: .string) else { return }
     pasteText(text)
+  }
+
+  @objc func undo(_ sender: Any?) {
+    _ = sendNaturalEditing(.undo)
+  }
+
+  @objc func movePromptToBeginningOfLine(_ sender: Any?) {
+    _ = sendNaturalEditing(.moveToBeginningOfLine)
+  }
+
+  @objc func movePromptToEndOfLine(_ sender: Any?) {
+    _ = sendNaturalEditing(.moveToEndOfLine)
+  }
+
+  @objc func movePromptWordLeft(_ sender: Any?) {
+    _ = sendNaturalEditing(.moveWordLeft)
+  }
+
+  @objc func movePromptWordRight(_ sender: Any?) {
+    _ = sendNaturalEditing(.moveWordRight)
+  }
+
+  @objc func deletePromptToBeginningOfLine(_ sender: Any?) {
+    _ = sendNaturalEditing(.deleteToBeginningOfLine)
+  }
+
+  @objc func deletePromptToEndOfLine(_ sender: Any?) {
+    _ = sendNaturalEditing(.deleteToEndOfLine)
+  }
+
+  @objc func deletePromptWordLeft(_ sender: Any?) {
+    _ = sendNaturalEditing(.deleteWordLeft)
+  }
+
+  @objc func deletePromptWordRight(_ sender: Any?) {
+    _ = sendNaturalEditing(.deleteWordRight)
+  }
+
+  /// 当前尚不能安全判断任意鼠标选区是否属于可编辑提示符；Cut 因而始终执行其无损
+  /// 降级语义——复制但不向 PTY 猜测性发送删除字节。
+  @objc func cut(_ sender: Any?) {
+    copy(sender as Any)
   }
 
   /// 供菜单变体复用的窄入口。返回 false 表示空内容、保护取消或没有可写入的数据。
@@ -289,6 +340,17 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// 通过 responder chain 定位到终端后不会把已实现动作全部置灰。
   override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
     switch item.action {
+    case #selector(undo(_:)),
+      #selector(movePromptToBeginningOfLine(_:)), #selector(movePromptToEndOfLine(_:)),
+      #selector(movePromptWordLeft(_:)), #selector(movePromptWordRight(_:)),
+      #selector(deletePromptToBeginningOfLine(_:)), #selector(deletePromptToEndOfLine(_:)),
+      #selector(deletePromptWordLeft(_:)), #selector(deletePromptWordRight(_:)):
+      return TerminalInputPolicy.usesNaturalTextEditing(
+        isAlternateScreen: getTerminal().isCurrentBufferAlternate,
+        hasEnhancedKeyboardProtocol: !getTerminal().keyboardEnhancementFlags.isEmpty
+      )
+    case #selector(cut(_:)):
+      return selectionActive
     case #selector(pasteSelection(_:)):
       return selectionActive
     case #selector(pasteFileBase64Encoded(_:)):
@@ -311,6 +373,20 @@ final class AsterTerminalView: LocalProcessTerminalView {
     item.target = self
     item.isEnabled = enabled
     return item
+  }
+
+  @discardableResult
+  private func sendNaturalEditing(_ action: NaturalTextEditingAction) -> Bool {
+    let terminal = getTerminal()
+    guard
+      TerminalInputPolicy.usesNaturalTextEditing(
+        isAlternateScreen: terminal.isCurrentBufferAlternate,
+        hasEnhancedKeyboardProtocol: !terminal.keyboardEnhancementFlags.isEmpty
+      )
+    else { return false }
+    let bytes = TerminalInputEncoder.encode(action)
+    send(data: bytes[...])
+    return true
   }
 
   private func copyCurrentSelection(clearAfterCopy: Bool) {
@@ -544,6 +620,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   // 否则 spinner 会时有时无。
   private var lastScreenHash = 0
   private var lastActivityAt = Date.distantPast
+  /// 设置关闭或 Pane 失焦时立即释放；PTY 模式由输出、输入前检查与低频兜底轮询采样。
+  private var automaticSecureInputEnabled = true
 
   private var terminalView: AsterTerminalView?
   private var targetOpenCoordinator: TerminalTargetOpenCoordinator?
@@ -590,6 +668,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         )
       }
     }
+    view.onTerminalIO = { [weak self] in self?.refreshAutomaticSecureInput() }
     view.autoresizingMask = [.width, .height]
     view.allowMouseReporting = preferences.allowMouseReporting
     view.optionAsMetaKey = preferences.optionAsMeta
@@ -681,8 +760,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         guard let process = self.terminalView?.process, process.running, process.childfd >= 0 else {
           // shell 已退出：清状态并结束轮询，避免空转任务泄漏。
           if self.hasRunningCommand { self.hasRunningCommand = false }
+          SecureInputCoordinator.shared.releaseAutomaticRequest(for: self.id)
           return
         }
+        self.updateAutomaticSecureInput(process: process)
         let foreground = tcgetpgrp(process.childfd)
         let running = foreground > 0 && foreground != process.shellPid
         // 仅在有前台命令时才计算屏幕哈希（每秒一次、只扫可见行，成本可忽略）。
@@ -756,6 +837,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   func focus() {
     guard let terminalView, let window = terminalView.window else { return }
     window.makeFirstResponder(terminalView)
+    refreshAutomaticSecureInput()
   }
 
   /// 在完整滚动缓冲区内查找并选中下一处匹配文本。
@@ -792,6 +874,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 同步窗口活动状态：非活动窗口停止光标闪烁。
   func setWindowActive(_ active: Bool) {
     terminalView?.setWindowActive(active)
+    if active {
+      refreshAutomaticSecureInput()
+    } else {
+      SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
+    }
   }
 
   /// 停止当前 Shell。关闭 Pane 时先给予 750ms 正常退出窗口；应用即将终止时必须
@@ -805,6 +892,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalHostView = nil
     targetOpenCoordinator = nil
     isRunning = false
+    foregroundPollTask?.cancel()
+    foregroundPollTask = nil
+    SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
 
     // SwiftTerm 1.15 的 `terminate()` 会在发送信号后立即取消进程监视器，且自然退出
     // 后保留旧 PID。托管器只接受仍运行的 View，并在 Session 释放后继续负责升级
@@ -831,6 +921,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.clearSelectionOnCopy = preferences.configuration.controls.resolvedClearSelectionOnCopy
     view.pasteProtectionEnabled = preferences.configuration.controls.pasteProtection
     view.pasteBracketedSafe = preferences.configuration.controls.resolvedPasteBracketedSafe
+    automaticSecureInputEnabled = preferences.configuration.controls.secureInputAutomatically
+    if automaticSecureInputEnabled {
+      refreshAutomaticSecureInput()
+    } else {
+      SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
+    }
     view.installColors(
       preferences.ansiColors.map {
         SwiftTerm.Color(
@@ -847,6 +943,37 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // 实际样式（失焦时取不闪烁变体），再同步 terminal 选项与 caret 视图。
     view.preferredCursorStyle = cursorStyle
     view.needsDisplay = true
+  }
+
+  private func refreshAutomaticSecureInput() {
+    guard let process = terminalView?.process, process.running, process.childfd >= 0 else {
+      SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
+      return
+    }
+    updateAutomaticSecureInput(process: process)
+  }
+
+  /// 从 PTY termios 读取 ECHO 与 ICANON，而不是猜测屏幕上的 “Password:” 文本。密码式
+  /// 输入通常保留 canonical 模式并关闭回显；Vim/less 等 raw-mode TUI 同时关闭
+  /// ICANON，必须排除，否则会长期占用系统级 Secure Event Input。
+  private func updateAutomaticSecureInput(process: LocalProcess) {
+    var attributes = termios()
+    guard tcgetattr(process.childfd, &attributes) == 0 else {
+      SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
+      return
+    }
+    let echoEnabled = (attributes.c_lflag & tcflag_t(ECHO)) != 0
+    let canonicalMode = (attributes.c_lflag & tcflag_t(ICANON)) != 0
+    let terminalFocused =
+      terminalView?.window?.isKeyWindow == true
+      && terminalView?.window?.firstResponder === terminalView
+    let required = TerminalSecureInputPolicy.requiresAutomaticProtection(
+      enabled: automaticSecureInputEnabled,
+      terminalFocused: terminalFocused,
+      terminalEchoEnabled: echoEnabled,
+      terminalCanonicalMode: canonicalMode
+    )
+    SecureInputCoordinator.shared.setAutomaticRequest(for: id, active: required)
   }
 
   private func handleTitleOSC(code: Int, text: String) {
@@ -919,6 +1046,7 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
       }
       self?.exitCode = exitCode
       self?.isRunning = false
+      if let self { SecureInputCoordinator.shared.releaseAutomaticRequest(for: self.id) }
       TerminalRetirementCoordinator.shared.complete(source)
     }
   }
