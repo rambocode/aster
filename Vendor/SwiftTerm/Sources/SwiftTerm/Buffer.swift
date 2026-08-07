@@ -53,6 +53,9 @@ public final class Buffer {
             _yBase = newValue
         }
     }
+    /// Current viewport-base row exposed for embedding integrations that need to correlate
+    /// protocol marks with scrollback. Mutations remain internal to the terminal engine.
+    public var yBaseForEmbedding: Int { yBase }
     /// This property tracks the first row in the `lines` array that will be displayed as the top row
     /// when scrolling takes place, this variable is updated to move the window of visible content
     public var yDisp: Int {

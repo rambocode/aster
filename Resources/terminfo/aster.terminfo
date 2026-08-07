@@ -1,0 +1,4 @@
+# Aster deliberately inherits the conservative xterm-256color capability set. Terminal-specific
+# extensions are negotiated through DA/XTVERSION and COLORTERM instead of false TERM claims.
+aster-direct|Aster direct terminal,
+  use=xterm-256color,

@@ -124,6 +124,11 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     runtimes.values.contains { $0.terminalSession?.hasRunningCommand == true }
   }
 
+  /// 活动 Pane 最近一条完整命令的退出状态；侧栏只在命令停止后显示该值。
+  var lastCommandExitStatus: Int? {
+    runtimes[activePaneID]?.terminalSession?.lastCommandExitStatus
+  }
+
   /// 目录的稳定显示名：主目录显示 `~`，其余取末级目录名。选中与未选中状态都用
   /// 它作为标签主文案，切换标签时名字不再变化。
   static func displayName(forDirectory path: String) -> String {
@@ -449,7 +454,8 @@ final class TerminalTabItem: ObservableObject, Identifiable {
         session.$isRunning.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$hasRunningCommand.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$exitCode.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
-        session.$startupError.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+        session.$startupError.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        session.$lastCommandExitStatus.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
       )
       .sink { [weak self] _ in self?.objectWillChange.send() }
       .store(in: &cancellables)

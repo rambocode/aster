@@ -93,6 +93,11 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// 观察终端编码后即将写入 PTY 的输入；功能测试用它证明原生选择不会泄漏鼠标报告。
   /// 回调只接收瞬时字节且不持久化，生产路径默认 nil。
   var onEncodedInput: ((ArraySlice<UInt8>) -> Void)?
+  /// OSC 133 命令状态的领域快照。只发布位置与退出码，不包含用户命令文本。
+  var onShellIntegrationStateChange: ((ShellCommandTimeline) -> Void)?
+  private(set) var shellCommandTimeline = ShellCommandTimeline()
+  private var shellNavigationAbsoluteRow: Int?
+  private var shellIntegrationHandlerInstalled = false
 
   /// 用户配置的光标形状；nil 表示配置尚未下发，此时保持 SwiftTerm 默认行为。
   var preferredCursorStyle: SwiftTerm.CursorStyle? {
@@ -120,6 +125,13 @@ final class AsterTerminalView: LocalProcessTerminalView {
     setWindowActive(window?.isKeyWindow ?? true)
   }
 
+  override func keyDown(with event: NSEvent) {
+    // macOS keyCode 51 is the backward Delete/Backspace key. Only consume it when OSC 133
+    // proves the selection belongs to the current editable prompt; otherwise preserve TUI input.
+    if event.keyCode == 51, deletePromptSelectionIfSafe() { return }
+    super.keyDown(with: event)
+  }
+
   override func dataReceived(slice: ArraySlice<UInt8>) {
     onTerminalIO?()
     // 先让 SwiftTerm 完成渲染和内部标题栈操作，再按 PTY 字节顺序重放本分片的全部
@@ -127,6 +139,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
     // 因此工作区最终状态既符合协议语义，也保留恢复后紧随的新 OSC 更新。
     let safeBytes = oscStreamLimiter.consume(slice)
     if !safeBytes.isEmpty {
+      shellNavigationAbsoluteRow = nil
       super.dataReceived(slice: safeBytes[...])
       // Otty 的滚动语义：任何新输出都回到底部；用户输入则由 SwiftTerm 的 send 路径
       // 同步复位。alternate screen 没有 scrollback，此调用只清理可能残留的视觉偏移。
@@ -138,6 +151,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
   }
 
   override func send(source: TerminalView, data: ArraySlice<UInt8>) {
+    shellNavigationAbsoluteRow = nil
     onTerminalIO?()
     onEncodedInput?(data)
     super.send(source: source, data: data)
@@ -300,10 +314,93 @@ final class AsterTerminalView: LocalProcessTerminalView {
     scrollToBottom()
   }
 
-  /// 当前尚不能安全判断任意鼠标选区是否属于可编辑提示符；Cut 因而始终执行其无损
-  /// 降级语义——复制但不向 PTY 猜测性发送删除字节。
+  /// 注册 OSC 133 FTCS 处理器。重复调用保持幂等，避免主题刷新或测试装配覆盖状态。
+  func installShellIntegrationHandler() {
+    guard !shellIntegrationHandlerInstalled else { return }
+    shellIntegrationHandlerInstalled = true
+    getTerminal().registerOscHandler(code: 133) { [weak self] bytes in
+      guard bytes.count <= 32,
+        let payload = String(bytes: bytes, encoding: .ascii),
+        let event = ShellIntegrationEvent(payload: payload),
+        let self
+      else { return }
+      let cursor = self.getTerminal().cursorAbsolutePosition
+      self.shellCommandTimeline.receive(
+        event,
+        at: TerminalGridPoint(column: cursor.col, row: cursor.row)
+      )
+      self.onShellIntegrationStateChange?(self.shellCommandTimeline)
+    }
+  }
+
+  /// Command+Page Up：首次从当前光标向上找最近命令，连续调用严格前进到上一锚点。
+  @objc func scrollToPreviousCommand(_ sender: Any?) {
+    let terminal = getTerminal()
+    let baseline = shellNavigationAbsoluteRow.map { $0 - 1 }
+      ?? terminal.cursorAbsolutePosition.row
+    guard let mark = shellCommandTimeline.previousCommand(beforeOrAt: baseline),
+      let row = terminal.bufferRow(forAbsoluteRow: mark.promptStart.row)
+    else { return }
+    scrollTo(row: row)
+    shellNavigationAbsoluteRow = mark.promptStart.row
+  }
+
+  /// Command+Page Down：从当前命令锚点向后移动；未导航时从视口顶部寻找下一条。
+  @objc func scrollToNextCommand(_ sender: Any?) {
+    let terminal = getTerminal()
+    let baseline = shellNavigationAbsoluteRow ?? terminal.displayAbsoluteRow
+    guard let mark = shellCommandTimeline.nextCommand(after: baseline),
+      let row = terminal.bufferRow(forAbsoluteRow: mark.promptStart.row)
+    else { return }
+    scrollTo(row: row)
+    shellNavigationAbsoluteRow = mark.promptStart.row
+  }
+
   @objc func cut(_ sender: Any?) {
-    copy(sender as Any)
+    // 先无损复制，再尝试删除。删除策略拒绝任何无法精确映射到当前提示符的选区。
+    copyCurrentSelection(clearAfterCopy: false)
+    _ = deletePromptSelectionIfSafe()
+  }
+
+  /// 删除当前提示符内可精确映射的单行 ASCII 选区。返回 false 时不发送任何字节、
+  /// 不清空选区，Cut 因而自然退化为纯复制。
+  @discardableResult
+  func deletePromptSelectionIfSafe() -> Bool {
+    let terminal = getTerminal()
+    guard !terminal.isCurrentBufferAlternate,
+      let inputStart = shellCommandTimeline.currentInputStart,
+      let selection = selectedBufferRange,
+      let selectedText = getSelection()
+    else { return false }
+    let trimmed = terminal.buffer.totalLinesTrimmed
+    let start = TerminalGridPoint(
+      column: selection.start.col,
+      row: trimmed + selection.start.row
+    )
+    let end = TerminalGridPoint(
+      column: selection.end.col,
+      row: trimmed + selection.end.row
+    )
+    let cursor = terminal.cursorAbsolutePosition
+    guard let plan = PromptSelectionDeletionPolicy.plan(
+      inputStart: inputStart,
+      cursor: TerminalGridPoint(column: cursor.col, row: cursor.row),
+      selectionStart: start,
+      selectionEnd: end,
+      selectedText: selectedText,
+      rectangular: selection.rectangular,
+      commandRunning: shellCommandTimeline.isCommandRunning
+    ) else { return false }
+
+    var bytes: [UInt8] = []
+    if plan.horizontalMovement != 0 {
+      let direction = plan.horizontalMovement < 0 ? "D" : "C"
+      bytes.append(contentsOf: "\u{1B}[\(abs(plan.horizontalMovement))\(direction)".utf8)
+    }
+    bytes.append(contentsOf: repeatElement(UInt8(127), count: plan.deleteCount))
+    send(data: bytes[...])
+    selectNone()
+    return true
   }
 
   /// 供菜单变体复用的窄入口。返回 false 表示空内容、保护取消或没有可写入的数据。
@@ -419,6 +516,8 @@ final class AsterTerminalView: LocalProcessTerminalView {
     case #selector(scrollTerminalPageUp(_:)), #selector(scrollTerminalPageDown(_:)),
       #selector(scrollTerminalToTop(_:)), #selector(scrollTerminalToBottom(_:)):
       return true
+    case #selector(scrollToPreviousCommand(_:)), #selector(scrollToNextCommand(_:)):
+      return !shellCommandTimeline.marks.isEmpty
     case #selector(cut(_:)):
       return selectionActive
     case #selector(pasteSelection(_:)):
@@ -698,6 +797,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @Published private(set) var terminalIconTitle = ""
   @Published private(set) var exitCode: Int32?
   @Published private(set) var startupError: String?
+  /// Shell Integration 已观察到至少一个合法 OSC 133 标记；用于停用进程轮询回退。
+  @Published private(set) var shellIntegrationDetected = false
+  /// 最近一条完整命令的退出状态。nil 表示尚无完整记录或 Shell 未提供状态。
+  @Published private(set) var lastCommandExitStatus: Int?
   /// 是否有前台命令正在运行且近期有输出（区别于 `isRunning` 的 shell 存活）。
   /// 由 PTY 前台进程组 + 终端缓冲活跃度轮询驱动，只在状态翻转时发布，
   /// 是侧栏运行中 spinner 的唯一业务状态源。
@@ -758,6 +861,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       }
     }
     view.onTerminalIO = { [weak self] in self?.refreshAutomaticSecureInput() }
+    view.onShellIntegrationStateChange = { [weak self] timeline in
+      self?.handleShellIntegrationTimeline(timeline)
+    }
     view.autoresizingMask = [.width, .height]
     view.allowMouseReporting = preferences.allowMouseReporting
     view.optionAsMetaKey = preferences.optionAsMeta
@@ -768,6 +874,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // 回写 SwiftTerm 自身标题状态；工作区事件由原始字节观察器按顺序统一上送，避免
     // delegate 与自定义 handler 的调度先后打乱 XTWINOPS 恢复和后续 OSC。
     let terminal = view.getTerminal()
+    view.installShellIntegrationHandler()
     for code in 0...2 {
       terminal.registerOscHandler(code: code) { [weak terminal] bytes in
         let text = String(bytes: bytes, encoding: .utf8) ?? ""
@@ -801,16 +908,31 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       view?.process.send(data: response[...])
     }
 
-    var environment = ProcessInfo.processInfo.environment
-    environment["TERM"] = preferences.terminalIdentity
-    environment["COLORTERM"] = "truecolor"
-    environment["ASTER_SESSION_ID"] = id.uuidString
-    let entries = environment.map { "\($0.key)=\($0.value)" }
-    var shell = environment["SHELL"] ?? "/bin/zsh"
+    let inheritedEnvironment = ProcessInfo.processInfo.environment
+    var shell = inheritedEnvironment["SHELL"] ?? "/bin/zsh"
     if !FileManager.default.isExecutableFile(atPath: shell) {
-      startupError = "配置的 Shell 不可执行：\(shell)。已回退到 /bin/zsh。"
+      appendStartupWarning("配置的 Shell 不可执行：\(shell)。已回退到 /bin/zsh。")
       shell = "/bin/zsh"
     }
+    let resourcesDirectory = AsterResourceLocations.resourcesDirectory()?.path
+    let launchEnvironment = TerminalLaunchEnvironmentBuilder.make(
+      inherited: inheritedEnvironment,
+      configuredTerm: preferences.terminalIdentity,
+      shellPath: shell,
+      shellIntegrationEnabled: preferences.configuration.shell.shellIntegration,
+      paneIdentifier: id.uuidString,
+      version: AsterResourceLocations.productVersion(),
+      resourcesDirectory: resourcesDirectory,
+      terminfoEntryExists: SystemTerminfoChecker.entryExists
+    )
+    if let warning = launchEnvironment.resolution.warning {
+      appendStartupWarning(warning)
+    }
+    terminal.options.termName = launchEnvironment.resolution.term
+    terminal.programIdentity = launchEnvironment.programIdentity
+    let entries = launchEnvironment.environment
+      .sorted { $0.key < $1.key }
+      .map { "\($0.key)=\($0.value)" }
     var launchDirectory = currentWorkingDirectory
     var isDirectory: ObjCBool = false
     if !FileManager.default.fileExists(atPath: launchDirectory, isDirectory: &isDirectory)
@@ -818,7 +940,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     {
       launchDirectory = FileManager.default.homeDirectoryForCurrentUser.path
       currentWorkingDirectory = launchDirectory
-      startupError = "原工作目录不可用，已回退到主目录。"
+      appendStartupWarning("原工作目录不可用，已回退到主目录。")
     }
     view.startProcess(
       executable: shell,
@@ -853,6 +975,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
           return
         }
         self.updateAutomaticSecureInput(process: process)
+        // 一旦 Shell 提供 FTCS，C/D 是命令生命周期的权威来源。轮询继续负责安全输入，
+        // 但不再用前台进程组覆盖精确状态，避免 TUI 子进程或短命令造成闪烁。
+        if self.shellIntegrationDetected { continue }
         let foreground = tcgetpgrp(process.childfd)
         let running = foreground > 0 && foreground != process.shellPid
         // 仅在有前台命令时才计算屏幕哈希（每秒一次、只扫可见行，成本可忽略）。
@@ -1082,6 +1207,27 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalTitle = state.programWindowTitle.isEmpty ? "Shell" : state.programWindowTitle
     terminalIconTitle = state.programIconName
     onTitleUpdate?(code, text)
+  }
+
+  private func handleShellIntegrationTimeline(_ timeline: ShellCommandTimeline) {
+    if shellIntegrationDetected != timeline.integrationDetected {
+      shellIntegrationDetected = timeline.integrationDetected
+    }
+    if hasRunningCommand != timeline.isCommandRunning {
+      hasRunningCommand = timeline.isCommandRunning
+    }
+    if lastCommandExitStatus != timeline.latestExitStatus {
+      lastCommandExitStatus = timeline.latestExitStatus
+    }
+  }
+
+  private func appendStartupWarning(_ warning: String) {
+    guard !warning.isEmpty else { return }
+    if let startupError, !startupError.isEmpty {
+      self.startupError = startupError + "\n" + warning
+    } else {
+      startupError = warning
+    }
   }
 
   private func swiftTermCursorStyle(_ style: String, blinks: Bool) -> SwiftTerm.CursorStyle {

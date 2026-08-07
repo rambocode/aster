@@ -21,6 +21,8 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 - **SecureInputCoordinator**：合并多 Pane 自动请求与手动请求的进程级 Secure Event Input 所有者。
 - **TerminalSelection**：由光标或指针建立锚点和焦点，支持线性范围与按列输出的矩形范围。
 - **VirtualScrollPosition**：normal buffer 的整行 `yDisp` 与单行内像素偏移之和，可在配置边界内越过首尾内容。
+- **ShellCommandTimeline**：由 OSC 133 A/B/C/D 构成的有界命令位置与退出状态序列，不保存命令文本。
+- **TerminalIdentityResolution**：`auto`、自定义 terminfo 校验与安全回退后的实际 TERM。
 
 ## 核心规则
 
@@ -41,6 +43,9 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 15. 自动安全输入只保护当前聚焦 Pane 中 `ECHO` 关闭且 `ICANON` 保持开启的密码式输入；raw-mode TUI 必须排除。多 Pane 共享引用计数，应用失活时暂停系统保护。
 16. 鼠标报告开启时，`Option` 必须强制进入原生选择，不向前台 TUI 泄漏部分鼠标序列；`Shift` 是否绕过报告遵循终端协商的捕获模式，`Option` 拖动产生矩形选区。
 17. 平滑滚动只改变 normal buffer 的视口；alternate screen 不允许首尾越界，手势结束必须回到完整字符行。
+18. Shell Integration 资源必须来自签名 Bundle；受管 rc 区块必须幂等、可卸载并保留区块外内容、权限与符号链接。所有目标先预检，后续写入失败时回滚已改目标。
+19. OSC 133 只接受 A/B/C/D 与非负退出码，不接收或持久化命令正文；命令位置使用包含已裁剪行数的绝对坐标。
+20. `TERM=auto` 解析为 `xterm-256color`；自定义名称只有真实 terminfo 存在时才能进入子进程，终端不得冒充其它产品。
 
 ## 业务流程
 
@@ -134,6 +139,26 @@ SwiftTerm 1.15 的公开接口不能表达键盘扩展选区、矩形范围或�
 
 normal buffer 的虚拟滚动位置由整行 `Buffer.yDisp` 和 `viewportContentTranslationY` 组成。精确触控板手势直接累计像素，结束或取消时四舍五入到最近行；关闭平滑滚动时，残余像素累积到完整字符行才移动。滚过末尾可把最后内容行或光标行放到顶部，也可把最后内容行放到中部；滚过开头可独立把第一内容行放到底部/中部或跟随末尾策略。所有范围按实际内容、光标和视口行数计算，新输出及用户输入会复位到底部，alternate screen 会清除像素偏移并忽略越界设置。
 
+### Shell Integration 与终端身份
+
+zsh、Bash 与 fish 的静态脚本位于 `Resources/shell-integration/`，由构建脚本原样复制进签名应用。zsh 通过当前会话的 `ZDOTDIR` 加载最小 `.zshenv`，先读取用户真实 `.zshenv`；用户若在其中重定向 `ZDOTDIR` 则保留该值，否则恢复启动前状态，再在首个 prompt 延迟安装 hook。fish 通过临时 `XDG_DATA_DIRS` 加载 vendor conf，并在 source 后从环境中移除该目录。Bash 没有干净的 per-spawn 入口，因此 `ShellIntegrationInstaller` 在 `.bashrc` 与 `.bash_profile` 维护带 `TERM_PROGRAM=aster` 守卫的区块；检测到 tmux 时，zsh 与 fish 也写入仅在 `$TMUX` 内生效的区块。安装器先读取并校验全部目标，再逐文件原子替换；后续写入失败时恢复此前内容和权限。禁用会先确认，再移除所有区块，依赖设置值保留。
+
+脚本在提示符与命令边界发送 OSC 133 A/B/C/D，并在提示符发送 OSC 7。OSC 7 主机固定为 `localhost`，路径按 UTF-8 字节完整 URL 转义，目录名中的 BEL/ESC 不能截断控制序列。`AsterTerminalView` 把标记时刻的光标转换成包含 `totalLinesTrimmed` 的绝对位置，`ShellCommandTimeline` 组成最多 1,000 条命令记录。时间线驱动运行 spinner、最近退出码和标签徽标；`Command+Page Up/Down` 在未裁剪锚点间导航。当前提示符内同一行的线性 ASCII 选区可安全映射成左右移动与 Backspace，Cut 先复制再删除；跨行、矩形、Unicode 或命令运行中的范围不发送猜测字节。
+
+`TerminalLaunchEnvironmentBuilder` 为每个 Pane 注入 `TERM`、`COLORTERM=truecolor`、`TERM_PROGRAM=aster`、应用版本、`CW_TERM=aster`、稳定 `ASTER_PANE_ID` 和兼容别名 `ASTER_SESSION_ID`。默认配置 `auto` 使用 `xterm-256color`；自定义名称先通过字符白名单，再由固定 `/usr/bin/infocmp -x` 验证。应用 Bundle 内置构建期编译的 `aster-direct` terminfo，并把其目录放在 `TERMINFO_DIRS` 首位。SwiftTerm 的 opt-in 产品身份返回 DA1 `CSI ? 6 c`、带语义版本整数的 DA2、`DCS > | aster(version) ST`、DSR 5/6，并对 DA3 保持无响应。
+
+```mermaid
+flowchart LR
+  A["签名 Shell 资源"] --> B["zsh/fish 会话注入或受管 rc"]
+  B --> C["OSC 133 A/B/C/D 与 OSC 7"]
+  C --> D["ShellCommandTimeline"]
+  D --> E["运行状态与退出徽标"]
+  D --> F["上一条/下一条命令"]
+  D --> G["提示符安全删除"]
+  H["TERM 配置"] --> I["语法与 infocmp 校验"]
+  I --> J["Pane 环境与终端协议身份"]
+```
+
 ### 进程关闭
 
 SwiftTerm 视图只在 `process.running` 为真时按当前 `shellPid` 终止进程组。进程级 `TerminalRetirementCoordinator` 会在 Pane 和 Session 释放后继续强持有 retiring View，直到 SwiftTerm 的进程 monitor 完成 `waitpid`；普通 Pane/标签关闭在 750ms 后仍未退出才升级为 `SIGKILL`。应用整体退出时事件循环不会继续等待，因此在保存快照和确认文档后立即结束进程组。自然结束的 Session 不再对保留的旧 PID 发送信号，避免 PID 复用后误杀无关进程。
@@ -152,11 +177,13 @@ SwiftTerm 视图只在 `process.running` 为真时按当前 `shellPid` 终止进
 - OSC 52 畸形、超限或被拒绝：静默忽略且不读取/写入系统剪贴板。
 - Base64 文件不是普通文件、不可读或超过 8 MiB：显示错误并停止粘贴。
 - 终端切换 alternate screen：立即丢弃 normal buffer 的越界像素偏移，不把空白区域带入 TUI。
-- Cut 无法证明选区属于可编辑 Shell 提示符：只复制，不猜测发送 Backspace；待 Shell Integration 提供命令区间后再删除。
+- Cut 无法证明选区是当前提示符内同一行 ASCII 范围：只复制，不猜测发送 Backspace。
+- Shell 集成资源缺失、rc 是特殊文件、超过 1 MiB 或 marker 损坏：在任何写入前停止；磁盘写入中途失败则回滚已更新目标，回滚自身失败时明确要求检查对应路径。
+- 自定义 TERM 不合法或缺少 terminfo：记录单行启动告警并回退 `xterm-256color`，Shell 仍可启动。
 
 ## 测试与发布
 
-测试覆盖纯 AppKit 迁移、配置编码、24 套主题真值、颜色解析、递归分屏、方向聚焦与分隔条调整、分屏面板在两个方向/两种标签栏布局下的真实 frame、⌘W 的面板优先语义、比例更新、移除节点、文档 dirty/原子保存、Recipe 往返、FIFO 和累计资源预算、恶意结构上限、会话快照、UTF-8 分块、ANSI 边界、线性/矩形选区、鼠标报告绕过、像素滚动与首尾边界、粘贴风险、括号序列、OSC 52 权限/限长、Base64 文件边界和真实 PTY 生命周期。发布前必须运行：
+测试覆盖纯 AppKit 迁移、配置编码、24 套主题真值、颜色解析、递归分屏、方向聚焦与分隔条调整、分屏面板在两个方向/两种标签栏布局下的真实 frame、⌘W 的面板优先语义、比例更新、移除节点、文档 dirty/原子保存、Recipe 往返、FIFO 和累计资源预算、恶意结构上限、会话快照、UTF-8 分块、ANSI 边界、线性/矩形选区、鼠标报告绕过、像素滚动与首尾边界、粘贴风险、括号序列、OSC 52 权限/限长、Shell 受管文件、真实 zsh/Bash FTCS、命令时间线、提示符删除、TERM 回退、DA/XTVERSION/DSR、Base64 文件边界和真实 PTY 生命周期。发布前必须运行：
 
 ```bash
 swift test

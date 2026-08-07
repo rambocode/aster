@@ -404,7 +404,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       sectionTitle("通用"),
       card([
         infoRow("登录 Shell", ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh", "系统默认"),
-        textRow("终端类型", "传递给 TUI 程序的 TERM", value: preferences.configuration.appearance.terminalIdentity) { [weak self] value in
+        textRow("终端类型", "auto 使用 xterm-256color；自定义名称必须已安装 terminfo", value: preferences.configuration.appearance.terminalIdentity) { [weak self] value in
           self?.preferences.configuration.appearance.terminalIdentity = value
         },
       ]),
@@ -414,7 +414,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           "Shell 集成", "通过终端 OSC 标记跟踪当前目录、标题与命令状态",
           value: preferences.configuration.shell.shellIntegration
         ) { [weak self] value in
-          self?.preferences.configuration.shell.shellIntegration = value
+          self?.setShellIntegrationEnabled(value)
         },
         toggleRow(
           "SSH 集成", "在 SSH 会话中保持目录与标题跟踪",
@@ -490,6 +490,37 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         },
       ]),
     ]
+  }
+
+  /// Shell 集成开关同时维护 Bash/tmux 的受管启动文件。禁用前明确确认；文件编辑失败
+  /// 时保留原配置并显示错误，避免界面宣称关闭但旧区块仍实际生效。
+  private func setShellIntegrationEnabled(_ enabled: Bool) {
+    guard enabled != preferences.configuration.shell.shellIntegration else { return }
+    if !enabled {
+      let alert = NSAlert()
+      alert.messageText = "关闭 Shell 集成？"
+      alert.informativeText = "命令导航、退出状态和精确目录跟踪将停用；相关设置会保留。"
+      alert.alertStyle = .warning
+      alert.addButton(withTitle: "关闭")
+      alert.addButton(withTitle: "取消")
+      guard alert.runModal() == .alertFirstButtonReturn else {
+        refresh()
+        return
+      }
+    }
+    guard let installer = AsterResourceLocations.shellIntegrationInstaller() else {
+      message = "找不到签名的 Shell 集成资源，设置未更改。"
+      refresh()
+      return
+    }
+    do {
+      try installer.reconcile(enabled: enabled)
+      preferences.configuration.shell.shellIntegration = enabled
+      message = enabled ? "Shell 集成已启用，新 Pane 将立即生效。" : "Shell 集成已关闭。"
+    } catch {
+      message = "Shell 集成设置失败：\(error.localizedDescription)"
+    }
+    refresh()
   }
 
   private func controlViews() -> [NSView] {

@@ -561,6 +561,7 @@ final class WorkspaceViewController: NSViewController {
           selected: tab.id == model.selectedTabID,
           horizontal: false,
           theme: theme,
+          showsExitStatus: preferences.configuration.shell.badgeExitStatus,
           action: { [weak self, weak tab] in
             guard let tab else { return }
             self?.model.select(tab)
@@ -754,6 +755,7 @@ final class WorkspaceViewController: NSViewController {
         selected: tab.id == model.selectedTabID,
         horizontal: true,
         theme: theme,
+        showsExitStatus: preferences.configuration.shell.badgeExitStatus,
         action: { [weak self, weak tab] in
           guard let tab else { return }
           self?.model.select(tab)
@@ -1236,7 +1238,14 @@ private final class TabRowButton: NSButton {
   private var tracking: NSTrackingArea?
   private var hovered = false { didSet { updateStyle() } }
 
-  init(tab: TerminalTabItem, selected: Bool, horizontal: Bool, theme: TerminalTheme, action: @escaping () -> Void) {
+  init(
+    tab: TerminalTabItem,
+    selected: Bool,
+    horizontal: Bool,
+    theme: TerminalTheme,
+    showsExitStatus: Bool,
+    action: @escaping () -> Void
+  ) {
     self.tab = tab
     self.selected = selected
     style = horizontal ? (theme.style.horizontalTab ?? theme.style.tab) : theme.style.tab
@@ -1277,6 +1286,14 @@ private final class TabRowButton: NSButton {
         spinner.isDisplayedWhenStopped = false
         spinner.startAnimation(nil)
         accessory = spinner
+      } else if showsExitStatus, let status = tab.lastCommandExitStatus {
+        accessory = makeLabel(
+          status == 0 ? "✓" : "\(status)",
+          size: 10,
+          weight: .semibold,
+          color: status == 0 ? AsterTheme.accent : AsterTheme.warning,
+          monospaced: true
+        )
       } else {
         accessory = makeLabel(
           selected

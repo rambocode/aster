@@ -194,7 +194,8 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var selection = HexColor("#B8CEF099")!
   public var cursorStyle = CursorStyle.block
   public var cursorBlink = true
-  public var terminalIdentity = "xterm-256color"
+  /// `auto` 在 Pane 启动时解析为保守的 xterm-256color；自定义值必须存在 terminfo。
+  public var terminalIdentity = "auto"
   public var showTabBar = true
   public var autoHideTabs = false
   /// 可选字段用于兼容 0.4.x 配置；缺失时等价于 Otty 的 `auto`。

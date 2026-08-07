@@ -33,6 +33,12 @@ mkdir -p "$CONTENTS_DIR/MacOS" "$RESOURCES_DIR" "$ICONSET_DIR" "$ICON_PREVIEW_DI
 cp "$BUILD_DIR/release/Aster" "$CONTENTS_DIR/MacOS/Aster"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$PROJECT_DIR/THIRD-PARTY-NOTICES.md" "$RESOURCES_DIR/THIRD-PARTY-NOTICES.md"
+cp -R "$PROJECT_DIR/Resources/shell-integration" "$RESOURCES_DIR/shell-integration"
+
+# Aster 自有 terminfo 在构建期编译进签名 Bundle。运行时只读取资源，不生成隐藏脚本
+# 或修改系统数据库；TERMINFO_DIRS 会把该目录放在系统条目前面。
+mkdir -p "$RESOURCES_DIR/terminfo"
+/usr/bin/tic -x -o "$RESOURCES_DIR/terminfo" "$PROJECT_DIR/Resources/terminfo/aster.terminfo"
 
 # SwiftPM 为 SwiftTerm 的 Metal shader 生成独立资源 Bundle。SwiftTerm 会从标准
 # `Contents/Resources` 位置探测该 Bundle；放在 .app 根目录会破坏 macOS 代码签名。

@@ -69,8 +69,8 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 ### Terminal Features（17）
 
 - 部分：[Cursor and Mouse](https://docs.otty.sh/terminal-features/cursor-and-mouse)
-- 部分：[Selection](https://docs.otty.sh/terminal-features/selection) — 已实现拖动、双击单词、三击整行、`Option` 矩形拖选、`Shift` 点击扩展，以及线性/矩形 `Shift+Arrow` 键盘扩展；`Option` 在鼠标报告期间强制原生选择，`Shift` 是否被终端捕获遵循协议模式。选中即复制、输入时清选区和复制后清选区均可配置。提示符范围要由 Shell Integration 提供，Backspace 删除选中提示符与 Cut 删除仍待该批次接入；当前 Cut 安全降级为只复制。
-- 部分：[Scroll](https://docs.otty.sh/terminal-features/scroll) — 已实现 `Shift+Page Up/Down`、`Shift+Home/End`、新输出/输入回到底部、像素级平滑滚动与手势结束行吸附，并提供滚过首尾的全部停靠模式；alternate screen 禁用越界空白。`Command+Page Up/Down` 的上一/下一命令导航依赖 OSC 133 命令区间，待 Shell Integration 批次接入。
+- 部分：[Selection](https://docs.otty.sh/terminal-features/selection) — 已实现拖动、双击单词、三击整行、`Option` 矩形拖选、`Shift` 点击扩展，以及线性/矩形 `Shift+Arrow` 键盘扩展；`Option` 在鼠标报告期间强制原生选择，`Shift` 是否被终端捕获遵循协议模式。选中即复制、输入时清选区和复制后清选区均可配置。Shell Integration 提供当前提示符边界后，Backspace 与 Cut 可删除同一输入行内能精确映射的 ASCII 选区；跨行、矩形和 Unicode 歧义范围安全降级为只复制，完整输入缓冲映射仍待后续增强。
+- 部分：[Scroll](https://docs.otty.sh/terminal-features/scroll) — 已实现 `Shift+Page Up/Down`、`Shift+Home/End`、新输出/输入回到底部、像素级平滑滚动与手势结束行吸附，并提供滚过首尾的全部停靠模式；alternate screen 禁用越界空白。OSC 133 命令锚点已接入，`Command+Page Up/Down` 可跳到上一/下一条未被 scrollback 裁剪的命令。
 - 部分：[Input](https://docs.otty.sh/terminal-features/input) — SwiftTerm 已承载 IME、Kitty Keyboard Protocol、modifyOtherKeys 与应用键盘模式；Aster 新增普通 Shell 下的原生 macOS 行/词移动、行/词删除与撤销 readline 映射，并在全屏 TUI 或增强键盘协议启用时保留组件原编码。Option as Meta 新安装默认关闭。自动安全输入在终端 I/O 前后读取 PTY ECHO/ICANON，手动开关位于“编辑 → 安全键盘输入”且应用失活时暂停。Shift+Arrow 选择和可配置选择清理已经接入；Redo、Composer 与 Prompt Queue 仍按各自批次推进。
 - 部分：[Copy and Paste](https://docs.otty.sh/terminal-features/copy-and-paste) — 已实现快捷键/菜单/右键复制粘贴、选中即复制、逐行去尾空白、复制后清选区、四类危险粘贴识别、备用屏与可信 bracketed 跳过、Paste As（选区/文件 Base64/Shell 转义/强制 bracketed）及 OSC 52 独立读写权限；“粘贴并在 Composer 中继续”已保留安全接缝，待 Composer 批次接通。
 - 待审计：[Autocomplete / Inline Suggest](https://docs.otty.sh/terminal-features/autocomplete)
@@ -83,8 +83,8 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 - 待审计：[Vi Mode](https://docs.otty.sh/terminal-features/vi-mode)
 - 待审计：[Hint Mode](https://docs.otty.sh/terminal-features/hint-mode)
 - 待审计：[Read-only Mode](https://docs.otty.sh/terminal-features/read-only-mode)
-- 部分：[Shell Integration](https://docs.otty.sh/terminal-features/shell-integration)
-- 部分：[$TERM and Identification](https://docs.otty.sh/terminal-features/term-value)
+- 部分：[Shell Integration](https://docs.otty.sh/terminal-features/shell-integration) — 已提供签名 Bundle 内可读的 zsh/bash/fish 脚本，发送 OSC 133 A/B/C/D 与 OSC 7；zsh/fish 使用会话环境注入，Bash 与 tmux 子 Shell 使用幂等、可卸载且保留符号链接/用户内容的受管 rc 区块。关闭设置会确认并移除区块，`ASTER_DISABLE_INTEGRATION=1` 可按 Shell 禁用。命令时间线驱动运行状态、退出码徽标、`Command+Page Up/Down` 和安全提示符删除；SSH wrapper、`--no-integration` CLI 与进程恢复仍待对应工作流批次。
+- 部分：[$TERM and Identification](https://docs.otty.sh/terminal-features/term-value) — `auto` 默认解析为 `xterm-256color`，自定义名称经语法与真实 terminfo 校验；缺失时告警回退。Pane 注入 `TERM`、`COLORTERM`、`TERM_PROGRAM=aster`、版本、`CW_TERM=aster` 与稳定 `ASTER_PANE_ID`（保留旧 `ASTER_SESSION_ID` 别名），并优先搜索签名 Bundle terminfo。DA1/DA2、XTVERSION、DSR 5/6 与不响应 DA3 均已按品牌安全合同实现；远端 SSH 首次传输 terminfo 待 SSH 工作流。
 
 ### Working with Agents（9）
 
@@ -104,10 +104,12 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 
 Selection 与 Scroll 需要访问 SwiftTerm 1.15 未公开的选区锚点、矩形状态和像素滚动偏移。仓库将上游 revision `dd2fb8ac5b861e7bf617c872895e338f38165648` 固定到 `Vendor/SwiftTerm`，保留 MIT 许可证，并只在终端内核边界维护补丁；来源、核验与同步步骤见 `Vendor/SwiftTerm/UPSTREAM.md`。键盘选区跨锚点收缩或反向扩展，矩形复制按行输出；像素滚动以 `yDisp + viewportContentTranslationY` 表示，边界模式只在 normal buffer 生效。
 
+Shell Integration 由 `ShellIntegrationLaunchPlan`、`ShellIntegrationInstaller` 与 `ShellCommandTimeline` 分层：启动计划只生成环境，安装器只维护带品牌守卫的 rc 区块，时间线只接受最长 32 字节且严格匹配 FTCS 的 payload。命令文本不会通过 OSC 133 持久化；OSC 7 路径按 UTF-8 字节 URL 转义，BEL/ESC 目录名不能注入控制序列；位置采用 `totalLinesTrimmed + bufferRow` 的单调坐标，scrollback 到达容量后仍能判断锚点是否已经裁剪。终端身份由 `TerminalIdentityPolicy` 与 `TerminalLaunchEnvironmentBuilder` 解析，`infocmp` 只以固定可执行文件和参数数组调用，非法配置不会进入 Shell。
+
 文件和链接统一经过 `TargetResolver`、`TargetFileInspector` 与 `TargetSecurityPolicy`；点击单元格的 OSC 8 payload 是显式来源真值，`TerminalTargetOpenCoordinator` 取代组件默认直开路径。普通文字可选择检测全部 scheme 或标准 scheme 加自定义列表；OSC 8 始终识别，但所有非标准协议、可执行文件和 `.app` 仍需确认。可执行目标不保存路径授权，配置导入也会剥离本机 scheme 例外。
 
 复制粘贴由 `PasteRiskAnalyzer`、`PasteProtectionPolicy` 与 `PasteTransmissionEncoder` 组成纯领域链路，AppKit 只负责系统剪贴板、确认和 PTY 写入；bracketed 结束标记会被中和，控制字符不会因可信模式跳过。`TerminalOSCStreamLimiter` 在 SwiftTerm parser 前对普通 OSC/OSC 52 分别实施 16/8 MiB 跨分片硬上限，自定义 handler 再执行解码后限长和动态权限；配置导入会降级无提示读取授权，Ask 有重入保护与冷却。`TerminalFilePasteEncoder` 拒绝符号链接，并在打开前后复验文件身份和变更时间，避免特殊文件读取与路径替换竞态。
 
 ## 测试与验收
 
-新增测试位于 `WorkspaceNavigationPolicyTests.swift`、`WorkspaceBehaviorTests.swift`、`DetectedTargetTests.swift`、`TerminalClipboardTests.swift`、`TerminalClipboardCoordinatorTests.swift`、`TerminalSelectionTests.swift`、`TerminalScrollTests.swift`、`AsterConfigurationTests.swift` 与 `AppKitMigrationTests.swift`。每完成一页，必须在本矩阵记录代码入口、失败路径和测试名称；界面视觉验收由用户执行。
+新增测试位于 `WorkspaceNavigationPolicyTests.swift`、`WorkspaceBehaviorTests.swift`、`DetectedTargetTests.swift`、`TerminalClipboardTests.swift`、`TerminalClipboardCoordinatorTests.swift`、`TerminalSelectionTests.swift`、`TerminalScrollTests.swift`、`ShellIntegrationTests.swift`、`ShellIntegrationInstallerTests.swift`、`TerminalIdentificationTests.swift`、`TerminalLaunchEnvironmentTests.swift`、`TerminalShellIntegrationTests.swift`、`AsterConfigurationTests.swift` 与 `AppKitMigrationTests.swift`。Shell 资源会启动真实 zsh 与 macOS Bash 3.2 验证 A/B/C/D、用户 `ZDOTDIR`、rc 回滚和控制字节路径；当前机器未安装 fish，因此 fish 只做静态资源检查，安装 fish 的环境会额外执行语法检查。每完成一页，必须在本矩阵记录代码入口、失败路径和测试名称；界面视觉验收由用户执行。

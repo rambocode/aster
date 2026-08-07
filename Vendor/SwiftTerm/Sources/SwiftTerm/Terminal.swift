@@ -10,6 +10,20 @@
 
 import Foundation
 
+/// Product identity reported to terminal clients through DA1/DA2 and XTVERSION.
+/// Embedders opt in explicitly; `nil` preserves SwiftTerm's upstream legacy replies.
+public struct TerminalProgramIdentity: Equatable, Sendable {
+    public let name: String
+    public let version: String
+    public let deviceAttributesVersion: Int
+
+    public init(name: String, version: String, deviceAttributesVersion: Int) {
+        self.name = name
+        self.version = version
+        self.deviceAttributesVersion = max(deviceAttributesVersion, 0)
+    }
+}
+
 /**
  * The terminal delegate is a protocol that must be implemented by a class
  * that would provide a user interface for the terminal, and it is used by the
@@ -301,6 +315,10 @@ public protocol TerminalImage {
  * that is provided in the constructor call.
  */
 open class Terminal {
+    /// Identity of the embedding terminal application. This state is independent from
+    /// `TerminalOptions` so view resizes cannot silently reset protocol responses.
+    public var programIdentity: TerminalProgramIdentity?
+
     public enum ProgressReportState: Int {
         case remove = 0
         case set = 1
@@ -672,6 +690,25 @@ open class Terminal {
     public func getDims () -> (cols: Int,rows: Int)
     {
         return (cols, rows)
+    }
+
+    /// Cursor position in a monotonic row space that includes lines already trimmed from the
+    /// scrollback buffer. This lets embedders keep shell-command anchors stable at the cap.
+    public var cursorAbsolutePosition: Position {
+        Position(col: buffer.x, row: buffer.totalLinesTrimmed + buffer.yBase + buffer.y)
+    }
+
+    /// First displayed row in the same monotonic coordinate space as `cursorAbsolutePosition`.
+    public var displayAbsoluteRow: Int {
+        buffer.totalLinesTrimmed + buffer.yDisp
+    }
+
+    /// Converts a monotonic protocol-mark row back to the current buffer index. A trimmed or
+    /// otherwise unavailable row returns nil instead of being silently clamped to unrelated text.
+    public func bufferRow(forAbsoluteRow row: Int) -> Int? {
+        let candidate = row - buffer.totalLinesTrimmed
+        guard candidate >= 0, candidate < buffer.lines.count else { return nil }
+        return candidate
     }
     
     public init (delegate: TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
@@ -3252,6 +3289,11 @@ open class Terminal {
     //
     func cmdSetCursorStyle (_ pars: [Int], _ collect: cstring)
     {
+        if collect == [UInt8(ascii: ">")], pars.isEmpty || pars == [0] {
+            guard let identity = programIdentity else { return }
+            sendResponse(cc.DCS, ">|\(identity.name)(\(identity.version))", cc.ST)
+            return
+        }
         if collect.count == 0 || collect != [32] { /* space */
             return
         }
@@ -4598,6 +4640,16 @@ open class Terminal {
             var safe = collect
             safe.append(0)
             log ("SendDeviceAttributes got \(pars) and \(String(cString: safe))")
+            return
+        }
+
+        if let identity = programIdentity {
+            if collect == [UInt8(ascii: ">")] {
+                sendResponse(cc.CSI, ">0;\(identity.deviceAttributesVersion);1c")
+            } else if collect.isEmpty {
+                sendResponse(cc.CSI, "?6c")
+            }
+            // DA3 and unknown forms intentionally receive no reply.
             return
         }
 

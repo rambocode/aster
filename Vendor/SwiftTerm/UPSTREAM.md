@@ -22,3 +22,8 @@ record the new version and revision here.
 - `Apple/AppleTerminalView.swift` and `Apple/Metal/MetalTerminalRenderer.swift` apply the fractional
   viewport translation to Core Graphics and Metal rendering; the iOS view provides the shared API
   with a zero translation.
+- `Terminal.swift` and `Buffer.swift` expose stable absolute buffer coordinates and an opt-in
+  embedder identity used for conservative DA1/DA2 and XTVERSION replies.
+- `Apple/AppleTerminalView.swift` exposes a read-only selection range for prompt safety checks;
+  `Mac/MacTerminalView.swift` makes `keyDown` open so Aster can consume Backspace only inside a
+  verified OSC 133 prompt range.

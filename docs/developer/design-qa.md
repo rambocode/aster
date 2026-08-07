@@ -16,6 +16,16 @@
 - [ ] 首尾四种停靠模式符合设置文案；进入 vim、less 等 alternate screen 后不出现越界空白。
 - [ ] 新输出和键盘输入会回到最新内容，设置窗口切换滚动选项时布局不抖动。
 
+## Shell Integration / Identification 检查清单
+
+- [ ] 新建 zsh、Bash、fish Pane 后，目录变化可同步，提示符不出现可见 OSC 字符。
+- [ ] `Command+Page Up / Page Down` 连续跳过多条命令，首尾没有反向跳动。
+- [ ] 命令运行时标签显示 spinner；结束后按设置显示 `✓` 或非零退出码。
+- [ ] 提示符内选择 ASCII 文本后按 Backspace 或 Cut，只删除选区；跨行或 Unicode 选区保持无损降级。
+- [ ] 关闭 Shell Integration 会显示确认并移除受管区块；重新开启不会重复追加 marker。
+- [ ] `TERM=auto` 下 `echo "$TERM_PROGRAM $TERM"` 显示 `aster xterm-256color`；DA/XTVERSION 探测工具识别为 Aster。
+
 ## 记录
 
 - 2026-08-08：新增 Selection / Scroll 验收项；尚未执行界面测试。
+- 2026-08-08：新增 Shell Integration / Identification 验收项；按用户要求仍未执行界面测试。

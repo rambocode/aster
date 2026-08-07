@@ -2607,6 +2607,18 @@ extension TerminalView {
         }
         return nil
     }
+
+    /// Active selection endpoints in buffer coordinates. The tuple is read-only so embedders
+    /// can validate prompt editing without taking ownership of SelectionService internals.
+    public var selectedBufferRange: (start: Position, end: Position, rectangular: Bool)? {
+        guard selection.active else { return nil }
+        return (selection.start, selection.end, selection.isRectangular)
+    }
+
+    /// Programmatic selection seam used by accessibility and embedding-level functional tests.
+    public func setSelection(start: Position, end: Position) {
+        selection.setSelection(start: start, end: end)
+    }
     
     /// Selects the entire buffer
     public func selectAll () {

@@ -13,7 +13,7 @@ func defaultConfigurationMatchesReferenceWorkspace() {
   #expect(configuration.appearance.themeName == "Ayu Light")
   #expect(configuration.appearance.darkThemeName == "Ayu Dark")
   #expect(configuration.appearance.useSeparateDarkTheme)
-  #expect(configuration.appearance.terminalIdentity == "xterm-256color")
+  #expect(configuration.appearance.terminalIdentity == "auto")
   #expect(configuration.controls.allowMouseReporting)
   #expect(!configuration.controls.optionAsMeta)
   #expect(!configuration.controls.trimTrailingSpaces)

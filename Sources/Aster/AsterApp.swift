@@ -23,6 +23,16 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   private var cancellables: Set<AnyCancellable> = []
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    // Bash 与 tmux 子 Shell 需要受管 rc 区块；每次启动都按当前签名 Bundle 路径幂等
+    // 刷新，应用移动或升级后不会继续 source 旧位置。失败只禁用集成，不阻塞终端窗口。
+    if let installer = AsterResourceLocations.shellIntegrationInstaller() {
+      do {
+        try installer.reconcile(enabled: preferences.configuration.shell.shellIntegration)
+      } catch {
+        preferences.configuration.shell.shellIntegration = false
+        fputs("Aster shell integration disabled: \(error.localizedDescription)\n", stderr)
+      }
+    }
     model.onTabOrderBecameManual = { [weak self] in
       self?.preferences.sidebarTabOrder = .manual
     }
@@ -424,6 +434,15 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       responderMenuItem(
         "滚动到底部", #selector(AsterTerminalView.scrollTerminalToBottom(_:)),
         Self.functionKey(NSEndFunctionKey), modifiers: [.shift]))
+    submenu.addItem(.separator())
+    submenu.addItem(
+      responderMenuItem(
+        "上一条命令", #selector(AsterTerminalView.scrollToPreviousCommand(_:)),
+        Self.functionKey(NSPageUpFunctionKey), modifiers: [.command]))
+    submenu.addItem(
+      responderMenuItem(
+        "下一条命令", #selector(AsterTerminalView.scrollToNextCommand(_:)),
+        Self.functionKey(NSPageDownFunctionKey), modifiers: [.command]))
     item.submenu = submenu
     return item
   }

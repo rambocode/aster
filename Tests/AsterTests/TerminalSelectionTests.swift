@@ -338,13 +338,20 @@ func terminalMenusExposeExactKeyboardContracts() throws {
     (3, #selector(AsterTerminalView.scrollTerminalToTop(_:)), NSHomeFunctionKey),
     (4, #selector(AsterTerminalView.scrollTerminalToBottom(_:)), NSEndFunctionKey),
   ]
-  #expect(scroll.items.count == 5)
+  #expect(scroll.items.count == 8)
   #expect(scroll.items[2].isSeparatorItem)
   for (index, action, key) in scrollContracts {
     #expect(scroll.items[index].action == action)
     #expect(scroll.items[index].keyEquivalent == functionKey(key))
     #expect(scroll.items[index].keyEquivalentModifierMask == [.shift])
   }
+  #expect(scroll.items[5].isSeparatorItem)
+  #expect(scroll.items[6].action == #selector(AsterTerminalView.scrollToPreviousCommand(_:)))
+  #expect(scroll.items[6].keyEquivalent == functionKey(NSPageUpFunctionKey))
+  #expect(scroll.items[6].keyEquivalentModifierMask == [.command])
+  #expect(scroll.items[7].action == #selector(AsterTerminalView.scrollToNextCommand(_:)))
+  #expect(scroll.items[7].keyEquivalent == functionKey(NSPageDownFunctionKey))
+  #expect(scroll.items[7].keyEquivalentModifierMask == [.command])
 }
 
 @Test("键盘选区覆盖四个方向、跨行和缓冲区边界")
