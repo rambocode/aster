@@ -55,6 +55,8 @@ flowchart LR
 
 `TerminalThemeStyle` 逐项保留 Otty 的 sidebar/titlebar/tab/horizontal-tab/container 数据。AppKit 工作区根据主题设置标签高度、活动前景和背景、顶部选中线、容器圆角、边框、阴影及不同标签方向下的外边距，不再用一套固定卡片样式近似所有主题。
 
+容器背景的解析遵循「与终端画布连续」：主题未显式声明 `container` 时回退到终端背景本身（透明 `none` 保持透明以透出玻璃材质），**不借用 panel** —— panel 是侧栏等面板的底色，借用它会让 April 这类「panel 灰绿 + 终端纯白」的主题在右侧内容区套上一层 panel 色，与终端画布视觉割裂。
+
 `TerminalSession.apply` 在每次偏好更新时同步 SwiftTerm 的默认前景/背景、选区前景/背景、光标前景/文字和 ANSI 16 色。透明终端背景通过 `renderedTerminalBackground` 使用 Otty `surface` 预合成，保留 Glass 的视觉色调且不会退化为黑色。SwiftTerm 以这 16 色派生完整 256 色调色板；光标样式和闪烁状态会更新到已经打开的终端，终端程序仍可通过 `DECSCUSR` 临时覆盖。
 
 ## 失败语义

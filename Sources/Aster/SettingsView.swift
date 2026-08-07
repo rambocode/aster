@@ -44,6 +44,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private var refreshScheduled = false
   private var retainedObjects: [AnyObject] = []
   private weak var sidebarSearchField: NSSearchField?
+  // 滚动位置保持：全量重建会丢掉 NSScrollView 状态，这里按分类分桶记录偏移。
+  private weak var contentScrollView: NSScrollView?
+  private var scrollOffsets: [Section: CGPoint] = [:]
+  private var renderedSection: Section?
 
   init(preferences: AppPreferences) {
     self.preferences = preferences
@@ -53,7 +57,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   required init?(coder: NSCoder) { nil }
 
   override func loadView() {
-    view = NSView(frame: NSRect(x: 0, y: 0, width: 940, height: 760))
+    view = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 460))
   }
 
   override func viewDidLoad() {
@@ -61,6 +65,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     preferences.objectWillChange
       .sink { [weak self] _ in self?.scheduleRefresh() }
       .store(in: &cancellables)
+    refresh()
+  }
+
+  /// 切换到指定分类并立即重建内容区；供布局测试与未来的深链入口使用。
+  func showSection(_ section: Section) {
+    selection = section
     refresh()
   }
 
@@ -73,7 +83,13 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     }
   }
 
+  /// 全量重建整个设置页视图树；重建前后按分类保存/恢复滚动位置，避免开关一次就跳回顶部。
   private func refresh() {
+    // 记录的是「当前树实际渲染的分类」而不是 selection：侧栏切换时 selection 已指向
+    // 新分类，用它做 key 会把旧页的偏移写错桶。
+    if let scroll = contentScrollView, let rendered = renderedSection {
+      scrollOffsets[rendered] = scroll.contentView.bounds.origin
+    }
     retainedObjects.removeAll()
     view.removeAllSubviews()
     view.appearance = preferences.preferredAppearance
@@ -89,10 +105,18 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     sidebar.translatesAutoresizingMaskIntoConstraints = false
     sidebar.widthAnchor.constraint(equalToConstant: 200).isActive = true
     root.addArrangedSubview(sidebar)
-    root.addArrangedSubview(makeDivider())
     root.addArrangedSubview(makeContentScroll())
     view.addSubview(root)
     root.pinEdges(to: view)
+    renderedSection = selection
+
+    // 必须先布局再恢复偏移：此时文档高度还是 0，直接 scroll(to:) 会被钳回顶部。
+    if let scroll = contentScrollView {
+      view.layoutSubtreeIfNeeded()
+      let offset = scrollOffsets[selection] ?? .zero
+      scroll.contentView.scroll(to: offset)
+      scroll.reflectScrolledClipView(scroll.contentView)
+    }
   }
 
   // MARK: - Shell
@@ -107,17 +131,21 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     // Otty 的左对齐导航和完整选中背景。
     column.alignment = .width
     column.spacing = 1
-    column.edgeInsets = NSEdgeInsets(top: 12, left: 7, bottom: 12, right: 7)
+    // 顶部内边距为透明标题栏下的红绿灯让位（全高侧栏窗口）；左右为 0，
+    // 让导航行的选中高亮整宽贴到窗口边缘（Otty 风格），搜索框单独留边。
+    column.edgeInsets = NSEdgeInsets(top: SettingsMetrics.sidebarTopInset, left: 0, bottom: 12, right: 0)
 
     let search = NSSearchField()
     search.placeholderString = "搜索"
     search.stringValue = searchText
     search.delegate = self
+    search.controlSize = .large
     sidebarSearchField = search
     search.translatesAutoresizingMaskIntoConstraints = false
-    search.heightAnchor.constraint(equalToConstant: 34).isActive = true
+    search.heightAnchor.constraint(equalToConstant: 30).isActive = true
     column.addArrangedSubview(search)
-    column.setCustomSpacing(12, after: search)
+    search.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -24).isActive = true
+    column.setCustomSpacing(14, after: search)
 
     for section in filteredSections {
       let button = SettingsSidebarButton(
@@ -129,7 +157,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         }
       )
       column.addArrangedSubview(button)
-      button.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -14).isActive = true
+      button.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
     }
     let spacer = NSView()
     column.addArrangedSubview(spacer)
@@ -179,15 +207,26 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     content.alignment = .width
     content.spacing = 16
     content.edgeInsets = NSEdgeInsets(top: 26, left: 26, bottom: 30, right: 26)
-    content.addArrangedSubview(makeLabel(selection.rawValue, size: 13, weight: .semibold, color: AsterTheme.secondaryInk))
-    for item in sectionViews() {
+    let items = sectionViews()
+    for item in items {
       content.addArrangedSubview(item)
+    }
+    // 分组节奏：标题紧贴自己的卡片（8pt），上一块内容与下一个标题拉开（28pt），
+    // 形成截图里「小标题 + 大卡片」的分组观感。
+    for (index, item) in items.enumerated() {
+      if item.identifier == Self.groupTitleIdentifier {
+        content.setCustomSpacing(8, after: item)
+        if index > 0 {
+          content.setCustomSpacing(28, after: items[index - 1])
+        }
+      }
     }
     if let message {
       content.addArrangedSubview(makeLabel("✓  \(message)", size: 10.5, color: AsterTheme.accent))
     }
     document.addSubview(content)
     scroll.documentView = document
+    contentScrollView = scroll
     content.translatesAutoresizingMaskIntoConstraints = false
     document.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
@@ -220,65 +259,427 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   // MARK: - Basic sections
 
   private func generalViews() -> [NSView] {
-    [card([
-      infoRow("语言", "界面显示语言", "简体中文"),
-      infoRow("窗口行为", "关闭窗口后保留应用进程", "标准 macOS"),
-      infoRow("关闭确认", "未保存内容会询问保存、放弃或取消", "已启用"),
-    ])]
+    [
+      sectionTitle("通用"),
+      card([
+        popupRow(
+          "语言", "界面显示语言",
+          items: Self.languageOptions.map(\.label),
+          selected: Self.languageOptions.firstIndex {
+            $0.value == preferences.configuration.general.language
+          } ?? 0
+        ) { [weak self] index in
+          self?.preferences.configuration.general.language = Self.languageOptions[index].value
+        },
+        enumPopupRow(
+          "启动时", "打开 Aster 时的初始窗口行为",
+          value: preferences.configuration.launchBehavior
+        ) { [weak self] value in
+          self?.preferences.configuration.launchBehavior = value
+        },
+        toggleRow(
+          "最后一个窗口关闭后退出", "关闭全部窗口时同时退出应用",
+          value: preferences.configuration.general.quitAfterLastWindowClosed
+        ) { [weak self] value in
+          self?.preferences.configuration.general.quitAfterLastWindowClosed = value
+        },
+        toggleRow(
+          "全部关闭后新建窗口", "点按 Dock 图标时，若没有窗口则自动新建",
+          value: preferences.configuration.general.newWindowWhenAllClosed
+        ) { [weak self] value in
+          self?.preferences.configuration.general.newWindowWhenAllClosed = value
+        },
+      ]),
+      sectionTitle("关闭确认"),
+      card([
+        enumPopupRow(
+          "关闭标签页", "何时在关闭标签页前询问",
+          value: preferences.configuration.general.closeTabConfirmation
+        ) { [weak self] value in
+          self?.preferences.configuration.general.closeTabConfirmation = value
+        },
+        enumPopupRow(
+          "关闭窗口", "何时在关闭窗口前询问",
+          value: preferences.configuration.general.closeWindowConfirmation
+        ) { [weak self] value in
+          self?.preferences.configuration.general.closeWindowConfirmation = value
+        },
+        enumPopupRow(
+          "关闭面板", "何时在关闭分屏面板前询问",
+          value: preferences.configuration.general.closePaneConfirmation
+        ) { [weak self] value in
+          self?.preferences.configuration.general.closePaneConfirmation = value
+        },
+      ]),
+      sectionTitle("系统集成"),
+      card([
+        actionRow(
+          "默认终端", "将 Aster 注册为 ssh:// 链接的默认打开方式（macOS 以链接处理器代替全局默认终端）",
+          title: "设为默认终端"
+        ) { [weak self] in self?.registerAsDefaultTerminal() },
+        actionRow(
+          "安装 CLI", "把 `aster` 命令安装到 PATH，可在终端里用它打开目录或 Recipe",
+          title: "安装 CLI"
+        ) { [weak self] in self?.installCLI() },
+        actionRow(
+          "Finder 集成", "Finder 右键菜单「服务」中的「在 Aster 中打开」；可在「系统设置 → 键盘快捷键 → 服务」中重新绑定",
+          title: "打开系统设置"
+        ) { [weak self] in
+          self?.openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts")
+        },
+        actionRow(
+          "完全磁盘访问权限", "当终端中的命令需要读写受保护目录时才需要；没有它 Aster 也能工作",
+          title: "打开系统设置"
+        ) { [weak self] in
+          self?.openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+        },
+      ]),
+    ]
+  }
+
+  // MARK: - System integration actions
+
+  /// macOS 没有全局「默认终端」概念，可注册的是 ssh:// 链接处理器；需以 .app 打包运行。
+  private func registerAsDefaultTerminal() {
+    let bundleURL = Bundle.main.bundleURL
+    guard bundleURL.pathExtension == "app" else {
+      message = "需要以 Aster.app 方式运行才能设为默认终端"
+      refresh()
+      return
+    }
+    NSWorkspace.shared.setDefaultApplication(at: bundleURL, toOpenURLsWithScheme: "ssh") { error in
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        self.message = error == nil
+          ? "已将 Aster 设为 ssh:// 链接的默认终端"
+          : "设置失败：\(error!.localizedDescription)"
+        self.refresh()
+      }
+    }
+  }
+
+  /// 安装 `aster` 命令行启动器脚本：优先 /usr/local/bin，不可写时退回 ~/.local/bin。
+  /// 脚本只是 `open -a` 包装，不需要提权或后台守护进程。
+  private func installCLI() {
+    let script = """
+      #!/bin/sh
+      # Aster CLI 启动器：把目录、文件或 .asterrecipe 交给 Aster.app 打开。
+      exec open -a "Aster" "$@"
+
+      """
+    let fileManager = FileManager.default
+    let localBin = "/usr/local/bin"
+    let fallback = (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin")
+    let targetDir = fileManager.isWritableFile(atPath: localBin) ? localBin : fallback
+    let target = (targetDir as NSString).appendingPathComponent("aster")
+    do {
+      try fileManager.createDirectory(atPath: targetDir, withIntermediateDirectories: true)
+      try script.write(toFile: target, atomically: true, encoding: .utf8)
+      try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: target)
+      let pathHint = targetDir == fallback ? "；如 PATH 未包含该目录请自行加入" : ""
+      message = "已安装 aster 命令到 \(target)\(pathHint)"
+    } catch {
+      message = "CLI 安装失败：\(error.localizedDescription)"
+    }
+    refresh()
+  }
+
+  /// 打开系统设置的指定面板（服务快捷键 / 完全磁盘访问）。
+  private func openSystemSettingsPane(_ urlString: String) {
+    guard let url = URL(string: urlString) else { return }
+    NSWorkspace.shared.open(url)
   }
 
   private func shellViews() -> [NSView] {
     [
+      sectionTitle("通用"),
       card([
         infoRow("登录 Shell", ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh", "系统默认"),
         textRow("终端类型", "传递给 TUI 程序的 TERM", value: preferences.configuration.appearance.terminalIdentity) { [weak self] value in
           self?.preferences.configuration.appearance.terminalIdentity = value
         },
       ]),
+      sectionTitle("Shell 集成"),
       card([
-        infoRow("目录与标题", "通过终端 OSC 标记跟踪当前目录和标题", "已启用"),
-        infoRow("SSH", "可直接在终端运行系统 ssh，尚无独立远程配置界面", "终端内"),
-        infoRow("工作区恢复", "恢复标签、目录和 Pane，并启动新的 Shell", "已启用"),
+        toggleRow(
+          "Shell 集成", "通过终端 OSC 标记跟踪当前目录、标题与命令状态",
+          value: preferences.configuration.shell.shellIntegration
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.shellIntegration = value
+        },
+        toggleRow(
+          "SSH 集成", "在 SSH 会话中保持目录与标题跟踪",
+          value: preferences.configuration.shell.sshIntegration
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.sshIntegration = value
+        },
+      ]),
+      sectionTitle("会话恢复"),
+      card([
+        toggleRow(
+          "恢复 tmux / screen 会话", "恢复工作区时重新附着多路复用器会话",
+          value: preferences.configuration.shell.restoreMultiplexerSessions
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.restoreMultiplexerSessions = value
+        },
+        toggleRow(
+          "恢复智能体会话", "恢复工作区时继续之前的智能体 CLI 会话",
+          value: preferences.configuration.shell.restoreAgentSessions
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.restoreAgentSessions = value
+        },
+        toggleRow(
+          "恢复运行中的进程", "恢复工作区时重新启动之前运行的命令",
+          value: preferences.configuration.shell.restoreProcesses
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.restoreProcesses = value
+        },
+      ]),
+      sectionTitle("通知"),
+      card([
+        toggleRow(
+          "命令完成时通知", "长时间命令结束后发送系统通知",
+          value: preferences.configuration.shell.notifyOnFinish
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.notifyOnFinish = value
+        },
+        toggleRow(
+          "命令出错时通知", "命令以非零状态退出时发送系统通知",
+          value: preferences.configuration.shell.notifyOnError
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.notifyOnError = value
+        },
+        toggleRow(
+          "终端铃声", "响应终端 BEL 字符",
+          value: preferences.configuration.shell.terminalBell
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.terminalBell = value
+        },
+      ]),
+      sectionTitle("标签徽章"),
+      card([
+        toggleRow(
+          "退出状态徽章", "命令失败时在标签上显示标记",
+          value: preferences.configuration.shell.badgeExitStatus
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.badgeExitStatus = value
+        },
+        toggleRow(
+          "等待输入徽章", "命令等待输入时在标签上显示标记",
+          value: preferences.configuration.shell.badgeAwaitingInput
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.badgeAwaitingInput = value
+        },
       ]),
     ]
   }
 
   private func controlViews() -> [NSView] {
-    [card([
-      toggleRow("Option 作为 Meta", "发送 Esc 前缀，兼容 Emacs 和 Shell 快捷键", value: preferences.configuration.controls.optionAsMeta) { [weak self] value in
-        self?.preferences.configuration.controls.optionAsMeta = value
-      },
-      toggleRow("允许鼠标报告", "供 vim、tmux、htop 等 TUI 使用", value: preferences.configuration.controls.allowMouseReporting) { [weak self] value in
-        self?.preferences.configuration.controls.allowMouseReporting = value
-      },
-      infoRow("复制与粘贴", "使用系统 ⌘C / ⌘V，多行输入由目标 Shell 处理", "系统行为"),
-      infoRow("链接", "识别 OSC 8 与文本 URL，按修饰键打开", "已启用"),
-    ])]
+    [
+      sectionTitle("键盘"),
+      card([
+        toggleRow("Option 作为 Meta", "发送 Esc 前缀，兼容 Emacs 和 Shell 快捷键", value: preferences.configuration.controls.optionAsMeta) { [weak self] value in
+          self?.preferences.configuration.controls.optionAsMeta = value
+        },
+      ]),
+      sectionTitle("鼠标"),
+      card([
+        toggleRow("允许鼠标报告", "供 vim、tmux、htop 等 TUI 使用", value: preferences.configuration.controls.allowMouseReporting) { [weak self] value in
+          self?.preferences.configuration.controls.allowMouseReporting = value
+        },
+        toggleRow(
+          "焦点跟随鼠标", "指针悬停的分屏面板自动获得键盘焦点",
+          value: preferences.configuration.controls.focusFollowsMouse
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.focusFollowsMouse = value
+        },
+      ]),
+      sectionTitle("复制与粘贴"),
+      card([
+        toggleRow(
+          "选中即复制", "选中文本后自动写入剪贴板",
+          value: preferences.configuration.controls.copyOnSelect
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.copyOnSelect = value
+        },
+        toggleRow(
+          "复制时去除行尾空格", "复制的每行去掉末尾的空白字符",
+          value: preferences.configuration.controls.trimTrailingSpaces
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.trimTrailingSpaces = value
+        },
+        toggleRow(
+          "粘贴保护", "粘贴多行或含控制字符的内容前先确认",
+          value: preferences.configuration.controls.pasteProtection
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.pasteProtection = value
+        },
+      ]),
+      sectionTitle("显示"),
+      card([
+        toggleRow(
+          "平滑滚动", "终端内容滚动时使用平滑动画",
+          value: preferences.configuration.controls.smoothScrolling
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.smoothScrolling = value
+        },
+        toggleRow(
+          "链接预览", "悬停链接时显示 URL 目标",
+          value: preferences.configuration.controls.showLinkPreviews
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.showLinkPreviews = value
+        },
+      ]),
+      sectionTitle("安全"),
+      card([
+        toggleRow(
+          "自动安全输入", "检测到密码输入时启用系统安全键盘",
+          value: preferences.configuration.controls.secureInputAutomatically
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.secureInputAutomatically = value
+        },
+      ]),
+    ]
   }
 
   private func editorViews() -> [NSView] {
-    [card([
-      infoRow("文本编辑", "UTF-8、自动换行、未保存标记与原子保存", "已启用"),
-      infoRow("文档预览", "从文件浏览器双击在相邻 Pane 打开", "已启用"),
-      infoRow("高级编辑选项", "行号、Vim 键位和可见空白尚未开放", "0.3 未开放"),
-    ])]
+    [
+      sectionTitle("编辑器"),
+      card([
+        toggleRow(
+          "自动换行", "对长行进行软换行，而不是水平滚动",
+          value: preferences.configuration.editor.lineWrap
+        ) { [weak self] value in
+          self?.preferences.configuration.editor.lineWrap = value
+        },
+        toggleRow(
+          "显示行号", "在文本面板左侧显示行号侧栏",
+          value: preferences.configuration.editor.showLineNumbers
+        ) { [weak self] value in
+          self?.preferences.configuration.editor.showLineNumbers = value
+        },
+        toggleRow(
+          "显示不可见字符", "把空格、Tab、换行渲染为可见符号",
+          value: preferences.configuration.editor.showVisibleWhitespace
+        ) { [weak self] value in
+          self?.preferences.configuration.editor.showVisibleWhitespace = value
+        },
+        stepperRow(
+          "Tab 宽度", "Tab 字符的视觉宽度（列数）",
+          value: Double(preferences.configuration.editor.tabSize), range: 2...8
+        ) { [weak self] value in
+          self?.preferences.configuration.editor.tabSize = Int(value)
+        },
+        toggleRow(
+          "滚动越过末尾", "允许继续向下滚动，使最后一行可位于视口顶部",
+          value: preferences.configuration.editor.scrollPastEnd
+        ) { [weak self] value in
+          self?.preferences.configuration.editor.scrollPastEnd = value
+        },
+        toggleRow(
+          "Vim 按键", "在文件 / 编辑器面板中启用模态编辑",
+          value: preferences.configuration.editor.vimKeyBindings
+        ) { [weak self] value in
+          self?.preferences.configuration.editor.vimKeyBindings = value
+        },
+      ]),
+      sectionTitle("打开文件"),
+      card([
+        toggleRow(
+          "预览富文档", "双击 Markdown 等文件时在相邻面板渲染预览",
+          value: preferences.configuration.editor.previewRichDocuments
+        ) { [weak self] value in
+          self?.preferences.configuration.editor.previewRichDocuments = value
+        },
+      ]),
+    ]
   }
 
   private func agentViews() -> [NSView] {
-    let commands = [("Codex", "codex"), ("Claude Code", "claude"), ("Kimi", "kimi")]
-    let rows = commands.map { name, command in
-      infoRow(
+    let commands = [("Claude Code", "claude"), ("Codex", "codex"), ("Kimi", "kimi")]
+    // enabledAgents 是命令名数组：开关按「包含与否」读写，保持数组内不重复。
+    let agentRows = commands.map { name, command in
+      toggleRow(
         name,
-        command,
-        executableExists(command) ? "已安装" : "未检测到"
-      )
+        "\(command) · \(executableExists(command) ? "已安装" : "未检测到")",
+        value: preferences.configuration.agents.enabledAgents.contains(command)
+      ) { [weak self] enabled in
+        guard let self else { return }
+        var agents = self.preferences.configuration.agents.enabledAgents
+        agents.removeAll { $0 == command }
+        if enabled { agents.append(command) }
+        self.preferences.configuration.agents.enabledAgents = agents
+      }
     }
-    return [card(rows), card([infoRow("运行方式", "在终端中启动已检测到的 CLI", "终端内")])]
+    return [
+      sectionTitle("已启用的智能体"),
+      card(agentRows),
+      sectionTitle("标签徽章"),
+      card([
+        toggleRow(
+          "处理中徽章", "智能体处理任务时在标签上显示标记",
+          value: preferences.configuration.agents.badgeProcessing
+        ) { [weak self] value in
+          self?.preferences.configuration.agents.badgeProcessing = value
+        },
+        toggleRow(
+          "任务完成徽章", "智能体完成任务时在标签上显示标记",
+          value: preferences.configuration.agents.badgeTaskComplete
+        ) { [weak self] value in
+          self?.preferences.configuration.agents.badgeTaskComplete = value
+        },
+        toggleRow(
+          "等待输入徽章", "智能体等待确认时在标签上显示标记",
+          value: preferences.configuration.agents.badgeAwaitingInput
+        ) { [weak self] value in
+          self?.preferences.configuration.agents.badgeAwaitingInput = value
+        },
+      ]),
+      sectionTitle("通知"),
+      card([
+        toggleRow(
+          "任务完成时通知", "智能体完成任务后发送系统通知",
+          value: preferences.configuration.agents.notifyTaskComplete
+        ) { [weak self] value in
+          self?.preferences.configuration.agents.notifyTaskComplete = value
+        },
+        toggleRow(
+          "等待输入时通知", "智能体等待确认时发送系统通知",
+          value: preferences.configuration.agents.notifyAwaitingInput
+        ) { [weak self] value in
+          self?.preferences.configuration.agents.notifyAwaitingInput = value
+        },
+      ]),
+      sectionTitle("运行"),
+      card([
+        toggleRow(
+          "处理期间阻止睡眠", "智能体处理任务时阻止系统进入睡眠",
+          value: preferences.configuration.agents.preventSleepWhileProcessing
+        ) { [weak self] value in
+          self?.preferences.configuration.agents.preventSleepWhileProcessing = value
+        },
+        toggleRow(
+          "恢复智能体会话", "恢复工作区时继续之前的智能体会话",
+          value: preferences.configuration.agents.resumeSessions
+        ) { [weak self] value in
+          self?.preferences.configuration.agents.resumeSessions = value
+        },
+      ]),
+    ]
   }
 
   private func recipeViews() -> [NSView] {
     [
-      card([infoRow("命令重放", "当前只恢复布局，不自动执行外部 Recipe 命令", "安全关闭")]),
+      sectionTitle("命令重放"),
+      card([
+        enumPopupRow(
+          "重放模式", "打开 Recipe 时如何处理其中保存的命令",
+          value: preferences.configuration.recipeReplayMode
+        ) { [weak self] value in
+          self?.preferences.configuration.recipeReplayMode = value
+        },
+      ]),
+      sectionTitle("格式"),
       card([
         infoRow("Recipe 包含", "标签页、分屏方向、目录、文件和可选命令", ".asterrecipe"),
         infoRow("安全边界", "不会保存 PID、文件描述符、令牌或临时焦点", "可移植"),
@@ -287,25 +688,30 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   }
 
   private func shortcutViews() -> [NSView] {
-    [card([
-      infoRow("新建标签页", "", "⌘ T"),
-      infoRow("打开文件", "", "⌘ O"),
-      infoRow("关闭标签页", "", "⌘ W"),
-      infoRow("向右分屏", "", "⌘ D"),
-      infoRow("向下分屏", "", "⇧ ⌘ D"),
-      infoRow("关闭面板", "", "⌥ ⌘ W"),
-      infoRow("命令面板", "", "⌘ K"),
-      infoRow("设置", "", "⌘ ,"),
-    ])]
+    [
+      sectionTitle("快捷键"),
+      card([
+        infoRow("新建标签页", "", "⌘ T"),
+        infoRow("打开文件", "", "⌘ O"),
+        infoRow("关闭标签页", "", "⌘ W"),
+        infoRow("向右分屏", "", "⌘ D"),
+        infoRow("向下分屏", "", "⇧ ⌘ D"),
+        infoRow("关闭面板", "", "⌥ ⌘ W"),
+        infoRow("命令面板", "", "⌘ K"),
+        infoRow("设置", "", "⌘ ,"),
+      ]),
+    ]
   }
 
   private func advancedViews() -> [NSView] {
     [
+      sectionTitle("运行时"),
       card([
         infoRow("终端内核", "VT100 / xterm、真彩色、鼠标、超链接与本地 PTY", "SwiftTerm"),
         infoRow("会话恢复", "保存可重建的标签与分屏结构", "已启用"),
         infoRow("界面框架", "主窗口、设置和所有控件均为原生视图", "AppKit"),
       ]),
+      sectionTitle("配置"),
       card([
         actionRow("导出配置", "保存为可备份的 JSON 文件", title: "导出") { [weak self] in self?.exportConfiguration() },
         actionRow("导入配置", "从 JSON 文件替换当前设置", title: "导入") { [weak self] in self?.importConfiguration() },
@@ -322,6 +728,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     views.append(makeLayoutChoices())
     views.append(sectionTitle("标签栏"))
     views.append(card([
+      toggleRow(
+        "显示标签栏", "关闭后隐藏标签面板，仅保留终端内容",
+        value: preferences.configuration.appearance.showTabBar
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.showTabBar = value
+      },
       popupRow(
         "新标签页位置", "新标签自动追加到当前标签之后",
         items: ["自动"], selected: 0
@@ -391,6 +803,13 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       stepperRow("字号", "终端字号", value: preferences.fontSize, range: 9...32) { [weak self] value in
         self?.preferences.fontSize = value
       },
+      sliderRow(
+        "行高", "行间距倍数",
+        value: preferences.configuration.appearance.lineHeight,
+        range: 0.8...2, suffix: "×", fractionDigits: 2
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.lineHeight = value
+      },
       textRow("字体", "终端的基础等宽字体", value: preferences.configuration.appearance.fontFamily) { [weak self] value in
         self?.preferences.configuration.appearance.fontFamily = value
       },
@@ -403,13 +822,11 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     views.append(sectionTitle("光标"))
     views.append(card([
       ThemeCursorPreviewView(theme: focusedTheme),
-      popupRow(
+      enumPopupRow(
         "光标样式", "终端程序仍可通过 DECSCUSR 临时覆盖",
-        items: ["方块", "竖线", "下划线", "空心方块"],
-        selected: CursorStyle.allCasesIndex(of: preferences.configuration.appearance.cursorStyle)
-      ) { [weak self] index in
-        let values: [CursorStyle] = [.block, .bar, .underline, .hollowBlock]
-        self?.preferences.configuration.appearance.cursorStyle = values[index]
+        value: preferences.configuration.appearance.cursorStyle
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.cursorStyle = value
       },
       toggleRow("光标闪烁", "实时同步到已打开的终端", value: preferences.configuration.appearance.cursorBlink) { [weak self] value in
         self?.preferences.configuration.appearance.cursorBlink = value
@@ -421,7 +838,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private func makeLayoutChoices() -> NSView {
     let row = NSStackView()
     row.orientation = .horizontal
-    row.spacing = 18
+    row.spacing = 14
     for layout in TabBarLayout.allCases {
       let card = LayoutChoiceButton(layout: layout, selected: preferences.tabBarLayout == layout) { [weak self] in
         self?.preferences.tabBarLayout = layout
@@ -436,19 +853,20 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let selectedName = mode == .light
       ? preferences.configuration.appearance.themeName
       : preferences.configuration.appearance.darkThemeName
-    let rows = stride(from: 0, to: themes.count, by: 4).map { start -> [NSView] in
-      var cells: [NSView] = themes[start..<min(start + 4, themes.count)].map { theme in
+    // 700pt 窗口下内容区约 448pt 宽：3 列 130pt 卡片刚好放下，4 列会横向裁切。
+    let rows = stride(from: 0, to: themes.count, by: 3).map { start -> [NSView] in
+      var cells: [NSView] = themes[start..<min(start + 3, themes.count)].map { theme in
         ThemeCardButton(theme: theme, selected: theme.name == selectedName) { [weak self] in
           self?.focusedThemeID = theme.id
           self?.preferences.selectTheme(theme)
         }
       }
-      while cells.count < 4 { cells.append(NSView()) }
+      while cells.count < 3 { cells.append(NSView()) }
       return cells
     }
     let grid = NSGridView(views: rows)
-    grid.columnSpacing = 14
-    grid.rowSpacing = 16
+    grid.columnSpacing = 12
+    grid.rowSpacing = 14
     grid.xPlacement = .fill
     let host = NSView()
     host.wantsLayer = true
@@ -597,27 +1015,33 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   // MARK: - Rows and cards
 
+  /// 大圆角设置卡片；行间不画分隔线，靠每行自身的内边距形成留白节奏（Otty 风格）。
   private func card(_ rows: [NSView]) -> NSView {
     let card = NSStackView()
     card.orientation = .vertical
     card.spacing = 0
     card.wantsLayer = true
     card.layer?.backgroundColor = AsterTheme.panel.cgColor
-    card.layer?.cornerRadius = 10
-    for (index, row) in rows.enumerated() {
-      if index > 0 { card.addArrangedSubview(makeHorizontalDivider()) }
+    card.layer?.cornerRadius = SettingsMetrics.cardCornerRadius
+    for row in rows {
       card.addArrangedSubview(row)
     }
     return card
   }
 
+  /// 所有设置行的统一底座：左侧「标题 + 可换行灰色说明」，右侧 accessory 控件。
   private func rowShell(_ title: String, _ detail: String, accessory: NSView) -> NSView {
     let host = NSView()
     host.translatesAutoresizingMaskIntoConstraints = false
-    host.heightAnchor.constraint(greaterThanOrEqualToConstant: detail.isEmpty ? 54 : 72).isActive = true
+    let detailLabel = makeLabel(detail, size: SettingsMetrics.rowDetailSize, color: AsterTheme.secondaryInk)
+    // 说明文字允许折行撑高整行；水平抗压缩降为最低，长说明被压缩换行而不是
+    // 把右侧 accessory（已 required hugging）挤出卡片。
+    detailLabel.lineBreakMode = .byWordWrapping
+    detailLabel.maximumNumberOfLines = 0
+    detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     let labels = NSStackView(views: [
-      makeLabel(title, size: 12.5, weight: .medium),
-      makeLabel(detail, size: 10.5, color: AsterTheme.secondaryInk),
+      makeLabel(title, size: SettingsMetrics.rowTitleSize, weight: .medium),
+      detailLabel,
     ])
     labels.orientation = .vertical
     labels.alignment = .leading
@@ -627,7 +1051,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     row.orientation = .horizontal
     row.alignment = .centerY
     row.spacing = 12
-    row.edgeInsets = NSEdgeInsets(top: 12, left: 15, bottom: 12, right: 15)
+    row.edgeInsets = NSEdgeInsets(
+      top: SettingsMetrics.rowVerticalInset,
+      left: SettingsMetrics.rowHorizontalInset,
+      bottom: SettingsMetrics.rowVerticalInset,
+      right: SettingsMetrics.rowHorizontalInset
+    )
     host.addSubview(row)
     row.pinEdges(to: host)
     return host
@@ -652,11 +1081,35 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     rowShell(title, detail, accessory: ClosurePopUpButton(items: items, selected: selected, action: action))
   }
 
-  private func sliderRow(_ title: String, _ detail: String, value: Double, range: ClosedRange<Double>, suffix: String, action: @escaping (Double) -> Void) -> NSView {
+  /// 枚举下拉行：菜单项与选中索引都由 `allCases` 单一来源生成，杜绝文案数组与
+  /// case 顺序两处维护导致的索引错位。
+  private func enumPopupRow<T: SettingsEnumOption>(_ title: String, _ detail: String, value: T, action: @escaping (T) -> Void) -> NSView {
+    let cases = Array(T.allCases)
+    return popupRow(
+      title, detail,
+      items: cases.map(\.settingsLabel),
+      selected: cases.firstIndex(of: value) ?? 0
+    ) { index in
+      action(cases[index])
+    }
+  }
+
+  /// 语言下拉的取值表：value 写入配置持久化，label 只用于显示。
+  private static let languageOptions: [(label: String, value: String)] = [
+    ("跟随系统", "system"),
+    ("简体中文", "zh-Hans"),
+    ("English", "en"),
+  ]
+
+  /// 滑杆行；`fractionDigits` 控制数值标签的小数位（行高倍数等非整数设置需要）。
+  private func sliderRow(_ title: String, _ detail: String, value: Double, range: ClosedRange<Double>, suffix: String, fractionDigits: Int = 0, action: @escaping (Double) -> Void) -> NSView {
     let slider = ClosureSlider(value: value, range: range, action: action)
     slider.translatesAutoresizingMaskIntoConstraints = false
     slider.widthAnchor.constraint(equalToConstant: 180).isActive = true
-    let valueLabel = makeLabel("\(Int(value)) \(suffix)", size: 10.5, color: AsterTheme.secondaryInk)
+    let text = fractionDigits == 0
+      ? "\(Int(value)) \(suffix)"
+      : String(format: "%.\(fractionDigits)f \(suffix)", value)
+    let valueLabel = makeLabel(text, size: 10.5, color: AsterTheme.secondaryInk)
     let stack = NSStackView(views: [slider, valueLabel])
     stack.orientation = .horizontal
     stack.spacing = 8
@@ -671,27 +1124,26 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     rowShell(title, detail, accessory: ActionButton(title: buttonTitle, handler: action))
   }
 
+  /// 分组小标题：灰色小号加字距，identifier 供内容栈识别并收紧「标题 → 卡片」间距。
   private func sectionTitle(_ title: String) -> NSView {
-    makeLabel(title, size: 12.5, weight: .semibold, color: AsterTheme.tertiaryInk)
+    let label = makeLabel(title, size: SettingsMetrics.groupTitleSize, weight: .medium, color: AsterTheme.tertiaryInk)
+    label.attributedStringValue = NSAttributedString(
+      string: title,
+      attributes: [
+        .font: NSFont.systemFont(ofSize: SettingsMetrics.groupTitleSize, weight: .medium),
+        .foregroundColor: AsterTheme.tertiaryInk,
+        .kern: 0.8,
+      ]
+    )
+    label.identifier = Self.groupTitleIdentifier
+    // 压低 hugging 让标题在内容栈里撑满整行：否则栈的对齐约束会把固有宽度的
+    // 标签靠边放置，导致小标题跑到卡片右上角。
+    label.setContentHuggingPriority(.init(100), for: .horizontal)
+    return label
   }
 
-  private func makeDivider() -> NSView {
-    let view = NSView()
-    view.wantsLayer = true
-    view.layer?.backgroundColor = AsterTheme.hairline.cgColor
-    view.translatesAutoresizingMaskIntoConstraints = false
-    view.widthAnchor.constraint(equalToConstant: 1).isActive = true
-    return view
-  }
-
-  private func makeHorizontalDivider() -> NSView {
-    let view = NSView()
-    view.wantsLayer = true
-    view.layer?.backgroundColor = AsterTheme.hairline.cgColor
-    view.translatesAutoresizingMaskIntoConstraints = false
-    view.heightAnchor.constraint(equalToConstant: 1).isActive = true
-    return view
-  }
+  /// 标记分组标题视图，`makeContentScroll` 据此调整标题前后的自定义间距。
+  private static let groupTitleIdentifier = NSUserInterfaceItemIdentifier("settings.group-title")
 
   private func executableExists(_ command: String) -> Bool {
     let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
@@ -727,6 +1179,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
 // MARK: - Native setting controls
 
+/// 设置侧栏导航行：整宽方角高亮（Otty 风格），图标与文字通过内部子视图留出
+/// 左侧间隙——NSButton 自身的 imageLeading 布局无法控制内容内边距。
 @MainActor
 private final class SettingsSidebarButton: NSButton {
   private let handler: () -> Void
@@ -734,20 +1188,32 @@ private final class SettingsSidebarButton: NSButton {
   init(section: SettingsViewController.Section, selected: Bool, action: @escaping () -> Void) {
     handler = action
     super.init(frame: .zero)
-    title = section.rawValue
-    image = NSImage(systemSymbolName: section.symbol, accessibilityDescription: section.rawValue)
-    imagePosition = .imageLeading
-    alignment = .left
+    title = ""
+    setAccessibilityLabel(section.rawValue)
     isBordered = false
-    font = NSFont.systemFont(ofSize: 12.5)
-    contentTintColor = selected ? AsterTheme.ink : AsterTheme.secondaryInk
     wantsLayer = true
-    layer?.backgroundColor = selected ? AsterTheme.ink.withAlphaComponent(0.065).cgColor : NSColor.clear.cgColor
-    layer?.cornerRadius = 6
+    layer?.backgroundColor = selected ? AsterTheme.ink.withAlphaComponent(0.07).cgColor : NSColor.clear.cgColor
+
+    let tint = selected ? AsterTheme.ink : AsterTheme.secondaryInk
+    let icon = NSImageView(
+      image: NSImage(systemSymbolName: section.symbol, accessibilityDescription: section.rawValue) ?? NSImage()
+    )
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+    icon.contentTintColor = tint
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    icon.widthAnchor.constraint(equalToConstant: 20).isActive = true
+    let label = makeLabel(section.rawValue, size: 13, color: tint)
+    let row = NSStackView(views: [icon, label])
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = 9
+    addSubview(row)
+    row.pinEdges(to: self, insets: NSEdgeInsets(top: 0, left: 22, bottom: 0, right: 12))
+
     target = self
     self.action = #selector(invoke)
     translatesAutoresizingMaskIntoConstraints = false
-    heightAnchor.constraint(equalToConstant: 35).isActive = true
+    heightAnchor.constraint(equalToConstant: 32).isActive = true
   }
 
   required init?(coder: NSCoder) { nil }
@@ -884,7 +1350,8 @@ private final class LayoutChoiceButton: NSButton {
     layer?.backgroundColor = AsterTheme.panel.cgColor
     layer?.cornerRadius = 12
     layer?.borderWidth = selected ? 2 : 1
-    layer?.borderColor = (selected ? NSColor.controlAccentColor : AsterTheme.hairline).cgColor
+    // 选中框走主题强调色而不是系统 accent，遵守「主题色只经由 ThemeRuntime」规则。
+    layer?.borderColor = (selected ? AsterTheme.accent : AsterTheme.hairline).cgColor
     let image = NSImageView(
       image: NSImage(systemSymbolName: data.0, accessibilityDescription: data.1) ?? NSImage()
     )
@@ -906,8 +1373,8 @@ private final class LayoutChoiceButton: NSButton {
     self.action = #selector(invoke)
     translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      widthAnchor.constraint(equalToConstant: 148),
-      heightAnchor.constraint(equalToConstant: 112),
+      widthAnchor.constraint(equalToConstant: 132),
+      heightAnchor.constraint(equalToConstant: 100),
     ])
   }
   required init?(coder: NSCoder) { nil }
@@ -926,7 +1393,8 @@ private final class ThemeCardButton: NSButton {
     wantsLayer = true
     layer?.cornerRadius = 12
     layer?.borderWidth = selected ? 2 : 0
-    layer?.borderColor = NSColor.controlAccentColor.cgColor
+    // 同上：主题卡选中描边使用主题强调色。
+    layer?.borderColor = AsterTheme.accent.cgColor
     let preview = ThemeMiniPreviewView(theme: theme)
     let label = makeLabel(theme.name, size: 11.5, color: AsterTheme.secondaryInk)
     label.alignment = .center
@@ -937,13 +1405,13 @@ private final class ThemeCardButton: NSButton {
     addSubview(stack)
     stack.pinEdges(to: self)
     preview.translatesAutoresizingMaskIntoConstraints = false
-    preview.heightAnchor.constraint(equalToConstant: 76).isActive = true
+    preview.heightAnchor.constraint(equalToConstant: 68).isActive = true
     target = self
     self.action = #selector(invoke)
     translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      widthAnchor.constraint(equalToConstant: 150),
-      heightAnchor.constraint(equalToConstant: 118),
+      widthAnchor.constraint(equalToConstant: 130),
+      heightAnchor.constraint(equalToConstant: 110),
     ])
   }
   required init?(coder: NSCoder) { nil }
@@ -1147,9 +1615,49 @@ private extension HexColor {
   }
 }
 
-private extension CursorStyle {
-  static func allCasesIndex(of value: CursorStyle) -> Int {
-    let values: [CursorStyle] = [.block, .bar, .underline, .hollowBlock]
-    return values.firstIndex(of: value) ?? 0
+/// UI 层为 AsterCore 配置枚举补充的下拉文案协议；领域层不感知任何显示字符串。
+private protocol SettingsEnumOption: CaseIterable, Equatable {
+  var settingsLabel: String { get }
+}
+
+extension CloseConfirmation: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .always: "总是询问"
+    case .runningProcess: "有运行中的进程时"
+    case .multipleTabs: "有多个标签页时"
+    case .never: "从不"
+    }
+  }
+}
+
+extension LaunchBehavior: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .newWindow: "打开新窗口"
+    case .restoreLastSession: "恢复上次会话"
+    }
+  }
+}
+
+extension RecipeReplayMode: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .automatic: "自动执行"
+    case .confirmOnce: "执行前确认一次"
+    case .oneByOne: "逐条确认"
+    case .skip: "跳过命令"
+    }
+  }
+}
+
+extension CursorStyle: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .block: "方块"
+    case .bar: "竖线"
+    case .underline: "下划线"
+    case .hollowBlock: "空心方块"
+    }
   }
 }

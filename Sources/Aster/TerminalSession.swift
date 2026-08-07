@@ -70,6 +70,17 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @Published private(set) var terminalTitle = "Shell"
   @Published private(set) var exitCode: Int32?
   @Published private(set) var startupError: String?
+  /// 是否有前台命令正在运行且近期有输出（区别于 `isRunning` 的 shell 存活）。
+  /// 由 PTY 前台进程组 + 终端缓冲活跃度轮询驱动，只在状态翻转时发布，
+  /// 是侧栏运行中 spinner 的唯一业务状态源。
+  @Published private(set) var hasRunningCommand = false
+
+  private var foregroundPollTask: Task<Void, Never>?
+  // 输出活跃度探针：可见屏幕内容哈希。Claude Code 等 TUI 思考时在原位重绘状态行
+  // （光标与滚动位置都不变，只有单元格内容变化），必须按内容而非光标位置探测，
+  // 否则 spinner 会时有时无。
+  private var lastScreenHash = 0
+  private var lastActivityAt = Date.distantPast
 
   private var terminalView: LocalProcessTerminalView?
   /// SwiftTerm 视图一旦启动就保持在同一个 AppKit 容器中。工作区刷新只移动该容器，
@@ -135,7 +146,51 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     if !isRunning, startupError == nil {
       startupError = "无法创建本地终端进程。"
     }
+    if isRunning { startForegroundPolling() }
     return view
+  }
+
+  /// 周期比较 PTY 前台进程组与 shell 自身 pgid：不一致即有命令在前台运行。
+  /// 再叠加终端缓冲活跃度（光标/滚动位置变化 = 有输出）：前台命令长时间无输出
+  /// （如等待交互输入的 TUI）时停止 spinner。轮询本身不发布任何事件，
+  /// 只有 `hasRunningCommand` 翻转时才触发 UI 刷新。
+  private func startForegroundPolling() {
+    foregroundPollTask?.cancel()
+    foregroundPollTask = Task { @MainActor [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(1))
+        guard let self else { return }
+        guard let process = self.terminalView?.process, process.running, process.childfd >= 0 else {
+          // shell 已退出：清状态并结束轮询，避免空转任务泄漏。
+          if self.hasRunningCommand { self.hasRunningCommand = false }
+          return
+        }
+        let foreground = tcgetpgrp(process.childfd)
+        let running = foreground > 0 && foreground != process.shellPid
+        // 仅在有前台命令时才计算屏幕哈希（每秒一次、只扫可见行，成本可忽略）。
+        if running, let terminal = self.terminalView?.getTerminal() {
+          var hasher = Hasher()
+          let buffer = terminal.buffer
+          hasher.combine(buffer.x)
+          hasher.combine(buffer.y)
+          hasher.combine(buffer.yDisp)
+          for row in 0..<terminal.rows {
+            if let line = terminal.getLine(row: row) {
+              hasher.combine(line.translateToString(trimRight: true))
+            }
+          }
+          let hash = hasher.finalize()
+          if hash != self.lastScreenHash {
+            self.lastScreenHash = hash
+            self.lastActivityAt = Date()
+          }
+        }
+        // 5 秒静默窗口：TUI 工作时至少每秒重绘一次状态行不会触边；真正等待输入的
+        // 静止界面在窗口过后停转。命令退出时 running 立即为 false，不受窗口影响。
+        let active = running && Date().timeIntervalSince(self.lastActivityAt) < 5
+        if self.hasRunningCommand != active { self.hasRunningCommand = active }
+      }
+    }
   }
 
   /// 返回长期存活的 AppKit 容器。容器和终端的父子关系在 Session 生命周期内保持不变，
@@ -164,6 +219,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   func send(_ command: String) {
     guard let process = terminalView?.process, process.running else { return }
     let bytes = Array((command + "\n").utf8)
+    process.send(data: bytes[...])
+  }
+
+  /// 把文本原样写入 PTY（不带回车）：用于把命令预填到提示符，执行与否由用户确认。
+  func typeText(_ text: String) {
+    guard let process = terminalView?.process, process.running else { return }
+    let bytes = Array(text.utf8)
     process.send(data: bytes[...])
   }
 
@@ -267,7 +329,11 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
 
   nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
     Task { @MainActor [weak self] in
-      self?.terminalTitle = title.isEmpty ? "Shell" : title
+      // 去重：运行中的命令（尤其 TUI 与带 starship 的 shell）会高频重发相同标题，
+      // 不去重会让整棵工作区视图树以接近每帧的频率重建，点击都无法完成。
+      let next = title.isEmpty ? "Shell" : title
+      guard let self, self.terminalTitle != next else { return }
+      self.terminalTitle = next
     }
   }
 
@@ -275,8 +341,8 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
     guard let directory, !directory.isEmpty else { return }
     Task { @MainActor [weak self] in
       let normalized = Self.normalizeReportedWorkingDirectory(directory)
-      guard !normalized.isEmpty else { return }
-      self?.currentWorkingDirectory = normalized
+      guard let self, !normalized.isEmpty, self.currentWorkingDirectory != normalized else { return }
+      self.currentWorkingDirectory = normalized
     }
   }
 

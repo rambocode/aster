@@ -108,6 +108,19 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   private(set) var runtimes: [UUID: WorkspacePaneRuntime] = [:]
   private var cancellables: Set<AnyCancellable> = []
 
+  /// 任一分屏的终端有前台命令在运行即视为「标签在运行任务」，驱动侧栏 spinner。
+  var hasRunningCommand: Bool {
+    runtimes.values.contains { $0.terminalSession?.hasRunningCommand == true }
+  }
+
+  /// 目录的稳定显示名：主目录显示 `~`，其余取末级目录名。选中与未选中状态都用
+  /// 它作为标签主文案，切换标签时名字不再变化。
+  static func displayName(forDirectory path: String) -> String {
+    if path == NSHomeDirectory() { return "~" }
+    let name = URL(fileURLWithPath: path).lastPathComponent
+    return name.isEmpty ? "~" : name
+  }
+
   init(
     id: UUID = UUID(),
     title: String,
@@ -242,11 +255,20 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     guard runtimes[descriptor.id] == nil else { return }
     let runtime = WorkspacePaneRuntime(descriptor: descriptor)
     runtimes[descriptor.id] = runtime
-    // 侧栏和状态栏观察的是 Tab，而终端运行状态属于子 Session。显式转发刷新事件，
-    // 否则首次挂载终端后父视图仍会保留创建前的 `isRunning = false` 快照。
-    runtime.terminalSession?.objectWillChange
+    // 侧栏和状态栏观察的是 Tab，而终端运行状态属于子 Session。只定向转发 UI 真正
+    // 消费的字段（运行态、spinner、退出码、启动错误）；不要转发 objectWillChange
+    // 全量事件——OSC 标题在命令运行期间高频变化，全量转发会让侧栏整树重建、
+    // spinner 每帧重启（可见闪烁）。目录变化由下方专用 sink 经 layout/title 触发刷新。
+    if let session = runtime.terminalSession {
+      Publishers.MergeMany(
+        session.$isRunning.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        session.$hasRunningCommand.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        session.$exitCode.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        session.$startupError.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+      )
       .sink { [weak self] _ in self?.objectWillChange.send() }
       .store(in: &cancellables)
+    }
     runtime.terminalSession?.$currentWorkingDirectory
       .removeDuplicates()
       .sink { [weak self] directory in
@@ -257,8 +279,10 @@ final class TerminalTabItem: ObservableObject, Identifiable {
           return updated
         }
         if self.activePaneID == descriptor.id {
-          let folder = URL(fileURLWithPath: directory).lastPathComponent
-          if !folder.isEmpty { self.title = folder }
+          // 只在名字真正变化时写回：title 的 didSet 会 markUpdated 并触发持久化，
+          // 高频写同值会造成无意义的重建与快照写入。
+          let folder = Self.displayName(forDirectory: directory)
+          if self.title != folder { self.title = folder }
         }
       }
       .store(in: &cancellables)
@@ -304,9 +328,8 @@ final class AppModel: ObservableObject {
   }
 
   func newTab(workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path) {
-    let folder = URL(fileURLWithPath: workingDirectory).lastPathComponent
     let tab = TerminalTabItem(
-      title: folder.isEmpty ? "Home" : folder,
+      title: TerminalTabItem.displayName(forDirectory: workingDirectory),
       workingDirectory: workingDirectory
     )
     tabs.append(tab)
@@ -413,12 +436,61 @@ final class AppModel: ObservableObject {
     openRecipe(from: url)
   }
 
+  /// 统一的外部打开入口：ssh 链接、目录（CLI / Finder 服务）与 .asterrecipe。
   func handleOpenURL(_ url: URL) {
-    guard url.isFileURL, url.pathExtension.lowercased() == "asterrecipe" else {
+    if url.scheme?.lowercased() == "ssh" {
+      openSSHURL(url)
+      return
+    }
+    guard url.isFileURL else {
       notice = "Aster 暂不支持该链接。"
       return
     }
+    var isDirectory: ObjCBool = false
+    if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    {
+      newTab(workingDirectory: url.path)
+      return
+    }
+    guard url.pathExtension.lowercased() == "asterrecipe" else {
+      notice = "Aster 暂不支持打开该类型文件。"
+      return
+    }
     openRecipe(from: url)
+  }
+
+  /// ssh:// 链接可写入 PTY 的保守字符集。控制字符（尤其换行）会把「预填不执行」
+  /// 变成自动执行注入命令，因此 host 只允许主机名/IP（含 IPv6 冒号），user 更严格。
+  private static func isSafeSSHComponent(_ value: String, allowColon: Bool) -> Bool {
+    let pattern = allowColon ? "^[A-Za-z0-9._:-]+$" : "^[A-Za-z0-9._-]+$"
+    return value.range(of: pattern, options: .regularExpression) != nil
+  }
+
+  /// ssh:// 链接：新建标签并把 ssh 命令预填到提示符（不自动回车）。链接可能来自
+  /// 网页等外部来源，是否执行必须由用户确认，与「不执行外部命令」的安全边界一致。
+  private func openSSHURL(_ url: URL) {
+    guard let host = url.host, !host.isEmpty, Self.isSafeSSHComponent(host, allowColon: true) else {
+      notice = "无效的 ssh 链接。"
+      return
+    }
+    var command = "ssh "
+    if let port = url.port { command += "-p \(port) " }
+    if let user = url.user, !user.isEmpty {
+      guard Self.isSafeSSHComponent(user, allowColon: false) else {
+        notice = "无效的 ssh 链接。"
+        return
+      }
+      command += "\(user)@"
+    }
+    command += host
+    newTab()
+    let tab = selectedTab
+    // PTY 在标签视图挂载后才启动，延迟片刻再写入提示符。
+    Task { @MainActor [weak tab] in
+      try? await Task.sleep(for: .milliseconds(800))
+      tab?.activeSession?.typeText(command)
+    }
   }
 
   private func openRecipe(from url: URL) {

@@ -222,16 +222,18 @@ func sidebarOrganizerAppliesGroupingAndOrdering() throws {
     }
   }
 
+  // 标签行选中与未选中都显示同一份 tab.title（目录稳定显示名），
+  // 切换标签时主文案保持不变。
   preferences.sidebarTabGrouping = .none
   preferences.sidebarTabOrder = .createdTime
   var controller = makeController()
-  #expect(primaryTabLabels(in: controller).first == "/tmp")
+  #expect(primaryTabLabels(in: controller).first == "tmp")
 
   let oldestTab = try #require(model.tabs.first)
   model.select(oldestTab)
   preferences.sidebarTabOrder = .updatedTime
   controller = makeController()
-  #expect(primaryTabLabels(in: controller).first == "~")
+  #expect(primaryTabLabels(in: controller).first == "mike")
 
   preferences.sidebarTabGrouping = .project
   controller = makeController()
@@ -259,7 +261,9 @@ func settingsLayoutUsesTopAnchoredFullWidthRows() throws {
   let defaults = isolatedDefaults()
   let preferences = AppPreferences(defaults: defaults)
   let controller = SettingsViewController(preferences: preferences)
-  let window = makeTestWindow(content: controller, size: NSSize(width: 940, height: 760))
+  // setContentViewController 会把窗口收缩到控制器视图的 700×460 默认尺寸，
+  // 断言按该尺寸（内容区 500pt、卡片约 448pt）计算。
+  let window = makeTestWindow(content: controller, size: NSSize(width: 700, height: 460))
 
   window.contentView?.layoutSubtreeIfNeeded()
 
@@ -269,20 +273,80 @@ func settingsLayoutUsesTopAnchoredFullWidthRows() throws {
   }
   let contentScroll = try #require(controller.view.descendants.compactMap { $0 as? NSScrollView }.first)
   let cards = controller.view.descendants.filter {
-    $0 is NSStackView && abs(($0.layer?.cornerRadius ?? 0) - 10) < 0.1
+    $0 is NSStackView
+      && abs(($0.layer?.cornerRadius ?? 0) - SettingsMetrics.cardCornerRadius) < 0.1
   }
+  let contentDocument = try #require(contentScroll.documentView)
+  // 只在内容滚动区内找分组标题：侧栏按钮内部也有「通用」文本，会干扰顶部锚定断言。
   let sectionTitle = try #require(
-    controller.view.descendants.compactMap { $0 as? NSTextField }.first { $0.stringValue == "通用" }
+    contentDocument.descendants.compactMap { $0 as? NSTextField }.first { $0.stringValue == "通用" }
   )
   let sectionTitleFrame = sectionTitle.convert(sectionTitle.bounds, to: controller.view)
-  let contentDocument = try #require(contentScroll.documentView)
   let contentDocumentType = String(describing: type(of: contentDocument))
   #expect(sidebarButtons.count == 9)
   #expect(sidebarButtons.allSatisfy { $0.frame.width >= 170 })
   #expect(contentScroll.documentView?.isFlipped == true)
   #expect(contentDocumentType.contains("FlippedDocumentView"))
-  #expect((cards.first?.frame.width ?? 0) >= 650)
-  #expect(sectionTitleFrame.maxY >= 690)
+  #expect((cards.first?.frame.width ?? 0) >= 430)
+  // 顶部锚定：分组标题需位于窗口顶部约 70pt 内（460 - 自动内容内边距 - 26pt 边距）。
+  #expect(sectionTitleFrame.maxY >= 390)
+  // 卡片内不再画 1pt hairline 分隔线：行间只靠留白（Otty 风格视觉决策的回归锁）。
+  let firstCard = try #require(cards.first as? NSStackView)
+  #expect(firstCard.arrangedSubviews.allSatisfy { $0.frame.height > 1 })
+}
+
+@Test("设置分类页由真实可交互控件构成而非只读文字")
+@MainActor
+func settingsSectionsExposeInteractiveControls() throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = SettingsViewController(preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 940, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  // 每个分类页的最少开关/下拉数量来自字段接线映射表，防止页面回退成 infoRow 文案。
+  let expectations: [(SettingsViewController.Section, Int, Int)] = [
+    (.general, 2, 5),
+    (.shell, 10, 0),
+    (.controls, 9, 0),
+    (.editor, 6, 0),
+    (.agents, 10, 0),
+    (.recipes, 0, 1),
+  ]
+  for (section, minSwitches, minPopups) in expectations {
+    controller.showSection(section)
+    let switches = controller.view.descendants.count(where: { $0 is NSSwitch })
+    let popups = controller.view.descendants.count(where: { $0 is NSPopUpButton })
+    #expect(switches >= minSwitches, "\(section) 页开关数不足：\(switches) < \(minSwitches)")
+    #expect(popups >= minPopups, "\(section) 页下拉数不足：\(popups) < \(minPopups)")
+  }
+}
+
+@Test("设置页新接线字段写入配置后可从 UserDefaults 恢复")
+@MainActor
+func settingsWiredFieldsPersistAcrossRelaunch() throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.general.closeTabConfirmation = .never
+  preferences.configuration.shell.terminalBell = false
+  preferences.configuration.controls.focusFollowsMouse = true
+  preferences.configuration.editor.tabSize = 6
+  preferences.configuration.agents.enabledAgents = ["claude"]
+  preferences.configuration.appearance.lineHeight = 1.5
+  preferences.configuration.recipeReplayMode = .skip
+
+  let reloaded = AppPreferences(defaults: defaults)
+  #expect(reloaded.configuration.general.closeTabConfirmation == .never)
+  #expect(reloaded.configuration.shell.terminalBell == false)
+  #expect(reloaded.configuration.controls.focusFollowsMouse == true)
+  #expect(reloaded.configuration.editor.tabSize == 6)
+  #expect(reloaded.configuration.agents.enabledAgents == ["claude"])
+  #expect(reloaded.configuration.appearance.lineHeight == 1.5)
+  #expect(reloaded.configuration.recipeReplayMode == .skip)
+
+  // 越界值在重新加载时经 normalized() 钳回合法范围。
+  preferences.configuration.editor.tabSize = 99
+  #expect(AppPreferences(defaults: defaults).configuration.editor.tabSize == 8)
 }
 
 @Test("主题容器把 Otty 材质映射为原生视觉效果")

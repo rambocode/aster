@@ -885,35 +885,56 @@ private final class TabRowButton: NSButton {
     heightAnchor.constraint(equalToConstant: style.height ?? (horizontal ? 31 : 47)).isActive = true
     if horizontal { widthAnchor.constraint(greaterThanOrEqualToConstant: 92).isActive = true }
     if !horizontal {
-      let path = tab.workingDirectory.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+      // 选中与未选中显示同一份 `tab.title`（目录稳定显示名），切换标签时行文案
+      // 不再在「完整路径 / 短名」之间跳变。
       let primary = makeLabel(
-        selected ? path : tab.title,
+        tab.title,
         size: selected ? 11.5 : 11,
         weight: selected ? .semibold : .regular,
         color: selected ? (style.activeForeground.map(NSColor.init) ?? AsterTheme.ink)
           : (style.foreground.map(NSColor.init) ?? AsterTheme.secondaryInk)
       )
-      let shell = makeLabel(
-        selected
-          ? URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh").lastPathComponent
-          : "",
-        size: 10,
-        color: AsterTheme.tertiaryInk,
-        monospaced: true
-      )
       addSubview(primary)
-      addSubview(shell)
       primary.translatesAutoresizingMaskIntoConstraints = false
-      shell.translatesAutoresizingMaskIntoConstraints = false
+
+      // 右侧 accessory：有前台命令在运行时显示 spinner（业务状态来源为
+      // TerminalSession 的前台进程组检测），否则选中行显示 shell 名。
+      let accessory: NSView
+      if tab.hasRunningCommand {
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isIndeterminate = true
+        spinner.isDisplayedWhenStopped = false
+        spinner.startAnimation(nil)
+        accessory = spinner
+      } else {
+        accessory = makeLabel(
+          selected
+            ? URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh").lastPathComponent
+            : "",
+          size: 10,
+          color: AsterTheme.tertiaryInk,
+          monospaced: true
+        )
+      }
+      addSubview(accessory)
+      accessory.translatesAutoresizingMaskIntoConstraints = false
       NSLayoutConstraint.activate([
         primary.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
         primary.centerYAnchor.constraint(equalTo: centerYAnchor),
-        primary.trailingAnchor.constraint(lessThanOrEqualTo: shell.leadingAnchor, constant: -8),
-        shell.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-        shell.centerYAnchor.constraint(equalTo: centerYAnchor),
+        primary.trailingAnchor.constraint(lessThanOrEqualTo: accessory.leadingAnchor, constant: -8),
+        accessory.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+        accessory.centerYAnchor.constraint(equalTo: centerYAnchor),
       ])
     }
     updateStyle()
+  }
+
+  /// 在 mouseDown 立即派发选择，不依赖 mouseUp 的 target/action：终端输出会触发
+  /// 侧栏整树重建，若等到 mouseUp，按钮可能已在按下与抬起之间被销毁，点击就会丢失。
+  override func mouseDown(with event: NSEvent) {
+    handler()
   }
 
   required init?(coder: NSCoder) { nil }

@@ -24,6 +24,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.mainMenu = makeMainMenu()
+    // Finder「服务 → 在 Aster 中打开」的接收端；服务菜单项由 Info.plist NSServices 声明。
+    NSApp.servicesProvider = self
     showMainWindow()
     preferences.objectWillChange
       .sink { [weak self] _ in
@@ -31,6 +33,19 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       }
       .store(in: &cancellables)
     NSApp.activate(ignoringOtherApps: true)
+  }
+
+  /// Finder 服务入口：把选中的目录/文件交给统一的 URL 打开逻辑（目录开新标签）。
+  @objc func openInAster(
+    _ pboard: NSPasteboard, userData: String,
+    error: AutoreleasingUnsafeMutablePointer<NSString>
+  ) {
+    let urls =
+      pboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+      as? [URL] ?? []
+    guard !urls.isEmpty else { return }
+    for url in urls { model.handleOpenURL(url) }
+    showMainWindow()
   }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -100,14 +115,19 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       return
     }
     let content = SettingsViewController(preferences: preferences)
+    // fullSizeContentView + 透明标题栏让侧栏延伸到窗口顶部（Otty 式全高侧栏），
+    // 红绿灯悬浮在侧栏上方，由侧栏顶部内边距让位。
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 940, height: 760),
-      styleMask: [.titled, .closable, .miniaturizable, .resizable],
+      contentRect: NSRect(x: 0, y: 0, width: 700, height: 460),
+      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
     )
     window.title = "Aster 设置"
-    window.minSize = NSSize(width: 820, height: 620)
+    window.titleVisibility = .hidden
+    window.titlebarAppearsTransparent = true
+    // 宽度下限保证外观页主题网格（3 列卡片）不被横向裁切；高度靠内容滚动。
+    window.minSize = NSSize(width: 700, height: 420)
     window.contentViewController = content
     window.isReleasedWhenClosed = false
     window.appearance = preferences.preferredAppearance

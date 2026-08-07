@@ -51,4 +51,23 @@
 - P2：详情分段控件原本仅为视觉控件；已接通信息、大纲和 Git 三个真实状态。
 - P3：Aster 保留独立品牌和九类设置侧栏，因此窗口整体不是 Otty 品牌复制；主题数据、缩略卡结构、选中状态和界面样式令牌按目标对齐。
 
+## 0.4.x 设置页 Otty 风格重构验收（2026-08）
+
+- 参考源：用户提供的 Otty 设置页截图（通用 / Shell / 编辑器 / 控制 四页）。
+- 结构：设置窗口启用 `fullSizeContentView` + 透明标题栏实现全高侧栏，默认尺寸对齐截图的 700×460（内容滚动，宽度下限 700 保证主题网格不裁切）；侧栏导航行整宽方角高亮贴到窗口边缘，图标/文字左侧留 22pt 间隙，搜索框独立留边；内容区改为「分组小标题（小号灰色加字距）+ 大圆角卡片」，卡片行间取消 hairline 分隔线，靠行内边距留白；主题网格按窄内容区改为 3 列 130pt 卡片；间距/字号/圆角集中到 `SettingsMetrics`。
+- 接线：通用、Shell、控制、编辑器、智能体、Recipes 页的开关与下拉接通 `AsterConfiguration` 既有字段（关闭确认、Shell/SSH 集成、会话恢复、通知、徽章、复制粘贴、编辑器选项、智能体启用、命令重放、行高、显示标签栏等）；枚举下拉由 `allCases` 单一来源生成，说明文案只描述配置意图。
+- 交互：全量重建 `refresh()` 增加按分类的滚动位置保存/恢复，控件改动不再跳回顶部。
+- 修复：内容区分组标题曾被内容栈按固有宽度靠右放置（跑到卡片右上角），压低水平 hugging 后恢复整行左对齐；`NSColor.controlAccentColor` 两处替换为 `AsterTheme.accent`，遵守主题色只经由 `ThemeRuntime` 的规则。
+- 测试：布局测试改在内容滚动区内定位分组标题（侧栏按钮内部文本会干扰），卡片圆角断言引用 `SettingsMetrics`；新增「分类页由真实控件构成」与「新接线字段持久化 + normalized 钳制」两个测试。`swift test --no-parallel` 60 项全部通过。
+
+## 0.4.x 侧栏标签运行态与系统集成（2026-08）
+
+- P0：有前台命令运行时点击侧栏标签无响应。根因 = OSC 0/2 标题高频重发（无去重）→ 工作区整树以近每帧频率重建，`TabRowButton` 在 mouseDown/mouseUp 之间被销毁、action 永不触发。修复：`TerminalSession` 对标题/目录发布去重 + 标签行改为 `mouseDown` 立即派发选择。
+- P1：运行中标签缺少状态指示。新增 `TerminalSession.hasRunningCommand`（每秒 `tcgetpgrp` 比较 PTY 前台进程组与 shell pgid，仅翻转时发布），侧栏行右侧显示小型 spinner；「无业务状态来源不放加载指示器」的原则保持成立。
+- P1（回归）：命令有输出时 spinner 闪烁——OSC 标题变化经全量 objectWillChange 转发触发整树重建，spinner 每次重建都重启动画。修复：Tab 只定向转发 UI 消费的会话字段（isRunning / hasRunningCommand / exitCode / startupError）。同时按用户预期把 spinner 语义收紧为「前台命令 + 近 5 秒有输出」；活跃度探针从光标/滚动位置改为可见屏幕内容哈希——Claude Code 思考时在原位重绘状态行（光标不动），位置探针会误判为无输出导致 spinner 时有时无，内容哈希能稳定捕捉原位动画，静止等待输入的界面则在窗口过后停转。
+- 安全：ssh:// 链接的 user/host 加保守字符集白名单（拒绝控制字符），防止 percent-encoded 换行把「预填不执行」变成注入自动执行。
+- P1：右侧内容区被套上 panel 色（April 主题下 #F4F6F4 灰绿），与白色终端画布割裂。根因 = 容器背景解析回退顺序 `container ?? panel ?? background` 错借 panel；改为 `container ?? background`（与终端画布连续、透明保持透明），与主题缩略卡的绘制规则及 Otty 参考截图一致。主题真值签名（fg/bg/ANSI）不受影响，测试全绿。
+- P1：切换标签时原标签名字变化（选中显示完整路径 / 未选中显示短名两个字段）。统一为始终显示 `tab.title`（目录稳定显示名，主目录 `~`），OSC 7 改名只在真正变化时写回。
+- 通用页新增「系统集成」组：设为 ssh:// 默认终端、安装 `aster` CLI、Finder「在 Aster 中打开」服务（Info.plist NSServices + servicesProvider）、完全磁盘访问设置入口；ssh 链接与 Finder/CLI 目录统一走 `handleOpenURL`，ssh 命令只预填不自动执行。「为常用应用设为默认终端」（改写第三方应用配置）未实现。
+
 final result: passed

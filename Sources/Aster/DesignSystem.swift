@@ -168,10 +168,17 @@ extension NSFont.Weight {
   }
 }
 
-/// `NSScrollView.documentView` 使用左下原点；翻转后的栈从可视区域顶部开始排列，
-/// 避免标签或设置内容在文档高度不足时沉到滚动区域底部。
-final class FlippedStackView: NSStackView {
-  override var isFlipped: Bool { true }
+/// 设置页共享的间距、字号与圆角常量。集中一处便于统一视觉节奏，也让布局测试
+/// 与实现引用同一真值，避免魔法数散落在各行构建函数里。
+enum SettingsMetrics {
+  static let cardCornerRadius: CGFloat = 12
+  static let rowVerticalInset: CGFloat = 17
+  static let rowHorizontalInset: CGFloat = 18
+  static let rowTitleSize: CGFloat = 13
+  static let rowDetailSize: CGFloat = 11
+  static let groupTitleSize: CGFloat = 11
+  // 全高侧栏窗口（fullSizeContentView）下为标题栏红绿灯让出的顶部空间。
+  static let sidebarTopInset: CGFloat = 44
 }
 
 /// 滚动文档使用左上原点，内部仍放置标准 `NSStackView`。不要直接翻转 StackView：

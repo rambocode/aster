@@ -395,7 +395,10 @@ enum OttyBuiltInThemes {
     let resolvedInterfaceWindow = color(interfaceWindow ?? panel ?? normalized(background))
     let resolvedInterfaceForeground = color(interfaceForeground ?? foreground)
     let resolvedSecondary = color(secondary ?? ansiColors[8].stringValue)
-    let resolvedContainer = color(container ?? panel ?? normalized(background))
+    // Otty 语义：容器默认与终端画布连续（继承终端背景），不借用 panel。
+    // 借用 panel 会让 April 等「panel 灰绿 + 终端纯白」的主题在右侧内容区套上
+    // 一层 panel 色，与白色终端画布割裂；透明背景（glass）仍保持透明。
+    let resolvedContainer = color(container ?? normalized(background))
     let resolvedStyle = style ?? TerminalThemeStyle(
       sidebarBackground: resolvedPanel,
       tab: TerminalTabStyle(
