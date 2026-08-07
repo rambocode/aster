@@ -210,6 +210,15 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let items = sectionViews()
     for item in items {
       content.addArrangedSubview(item)
+      // 标题与卡片必须满宽（扣除栈边距）。NSStackView 的 .width 对齐 + edgeInsets
+      // 对「固有宽度超过可用宽度」的 arranged subview 不可靠：系统集成卡片（长说明
+      // 文字单行固有宽度约 650pt）曾被布局引擎丢到 x=0、宽 474，丢失左侧 inset。
+      // 这里对满宽项加显式 required 边距约束，宽度不再依赖栈的内部分配算法；
+      // 超宽压力由行内文字列（压缩阻力已压低的 labels 栈）换行吸收。
+      if item.identifier == Self.groupTitleIdentifier || item.identifier == Self.cardIdentifier {
+        item.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: content.edgeInsets.left).isActive = true
+        item.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -content.edgeInsets.right).isActive = true
+      }
     }
     // 分组节奏：标题紧贴自己的卡片（8pt），上一块内容与下一个标题拉开（28pt），
     // 形成截图里「小标题 + 大卡片」的分组观感。
@@ -1016,13 +1025,21 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   // MARK: - Rows and cards
 
   /// 大圆角设置卡片；行间不画分隔线，靠每行自身的内边距形成留白节奏（Otty 风格）。
+  /// 分组卡片：surface 与窗口背景在多数主题下几乎相同，改用 `settingsCard`
+  /// （窗口底色向文字色轻混）让每组功能在白色画布上有可见的浅色底块。
   private func card(_ rows: [NSView]) -> NSView {
     let card = NSStackView()
     card.orientation = .vertical
     card.spacing = 0
     card.wantsLayer = true
-    card.layer?.backgroundColor = AsterTheme.panel.cgColor
+    card.layer?.backgroundColor = AsterTheme.settingsCard.cgColor
     card.layer?.cornerRadius = SettingsMetrics.cardCornerRadius
+    card.identifier = Self.cardIdentifier
+    // 显式压低卡片自身的水平压缩阻力。行内长说明文字的固有宽度（单行不换行）
+    // 可能超过内容栈可用宽度（系统集成卡片达 650pt），而栈的压缩阻力取子视图
+    // 最大值（750），外层内容栈的 .width 对齐压不动它，只能 break 左侧 inset
+    // 约束——卡片曾因此贴到内容区左边缘。压低后由行内文字列吸收压缩并换行。
+    card.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     for row in rows {
       card.addArrangedSubview(row)
     }
@@ -1046,6 +1063,15 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     labels.orientation = .vertical
     labels.alignment = .leading
     labels.spacing = 4
+    // 关键点：显式压低文字列整体（而非单个 label）的水平压缩阻力。NSStackView 的
+    // 压缩阻力取子视图最大值，只降详情 label 时标题的 750 会「代理」整列，而列宽
+    // 又由长说明文字的单行固有宽度决定（可达 650pt）——外层内容栈的 .width 对齐
+    // 约束压不动它，只能 break 边距约束，系统集成卡片曾因此丢失左侧 inset。
+    labels.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    // 文字列必须比弹簧视图更愿意拉伸（hugging 低于 spacer 的 250）：否则 labels
+    // 停在说明文字的单行固有宽度，行宽超出卡片可用宽度后整卡布局变成多解，
+    // 系统集成卡片曾因此丢失左侧 inset 或出现顶部幽灵空白。
+    labels.setContentHuggingPriority(.init(240), for: .horizontal)
     accessory.setContentHuggingPriority(.required, for: .horizontal)
     let row = NSStackView(views: [labels, NSView(), accessory])
     row.orientation = .horizontal
@@ -1144,6 +1170,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   /// 标记分组标题视图，`makeContentScroll` 据此调整标题前后的自定义间距。
   private static let groupTitleIdentifier = NSUserInterfaceItemIdentifier("settings.group-title")
+  /// 标记分组卡片视图，`makeContentScroll` 据此对卡片施加显式左右边距约束。
+  private static let cardIdentifier = NSUserInterfaceItemIdentifier("settings.card")
 
   private func executableExists(_ command: String) -> Bool {
     let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")

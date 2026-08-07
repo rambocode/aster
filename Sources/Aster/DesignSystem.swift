@@ -8,7 +8,7 @@ final class ThemeRuntime: @unchecked Sendable {
 
   enum Role {
     case window, container, panel, surface, foreground, secondary, tertiary, border, accent
-    case selection, warning
+    case selection, warning, settingsCard
   }
 
   private let lock = NSLock()
@@ -51,6 +51,13 @@ final class ThemeRuntime: @unchecked Sendable {
     case .accent: value = palette.accent
     case .selection: value = palette.selection
     case .warning: value = palette.ansiColors[1]
+    case .settingsCard:
+      // 设置页分组卡片底色：多数主题（如 Ayu）的 surface 与窗口背景几乎相同，卡片
+      // 直接叠在窗口色上会「看不见」。以窗口背景为底向界面主文字色轻混 4%，浅色
+      // 主题得到浅灰卡片、深色主题卡片略微提亮，任何主题下都与白色画布拉开对比。
+      let base = NSColor(palette.interfaceWindowBackground ?? palette.windowBackground)
+      let ink = NSColor(palette.interfaceForeground ?? palette.foreground)
+      return base.blended(withFraction: 0.04, of: ink) ?? base
     }
     return NSColor(value)
   }
@@ -61,6 +68,7 @@ enum AsterTheme {
   static let paper = dynamic(.window)
   static let sidebar = dynamic(.panel)
   static let panel = dynamic(.surface)
+  static let settingsCard = dynamic(.settingsCard)
   static let ink = dynamic(.foreground)
   static let secondaryInk = dynamic(.secondary)
   static let tertiaryInk = dynamic(.tertiary)
