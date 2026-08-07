@@ -12,6 +12,15 @@ final class WorkspaceViewController: NSViewController {
   private var tabSubscriptions: Set<AnyCancellable> = []
   private var retainedObjects: [AnyObject] = []
   private var refreshScheduled = false
+  /// 当前渲染出来的面板容器。焦点切换只更新这里的指示器与 first responder，
+  /// 不重建视图树。
+  private var paneHosts: [UUID: ActivePaneHostView] = [:]
+  // `nonisolated(unsafe)`：只在主线程读写，但 deinit 是 nonisolated，需要能取回它
+  // 来注销监视器，否则控制器释放后事件监视器仍然存活。
+  private nonisolated(unsafe) var paneClickMonitor: Any?
+  private var inactiveOverlay: InactiveWindowOverlayView?
+  /// 垂直侧栏顶部「+ 新建 / 折叠」悬停动作区；refresh 整树重建后重新赋值。
+  private weak var sidebarHoverActions: NSView?
 
   init(model: AppModel, preferences: AppPreferences) {
     self.model = model
@@ -34,7 +43,174 @@ final class WorkspaceViewController: NSViewController {
       .sink { [weak self] _ in self?.scheduleRefresh() }
       .store(in: &modelSubscriptions)
     model.ensureInitialTab()
+    installPaneClickMonitor()
+    observeWindowActivation()
     refresh()
+  }
+
+  /// 跟踪本窗口的键盘焦点状态。通知按窗口过滤，多窗口时互不影响。
+  private func observeWindowActivation() {
+    let center = NotificationCenter.default
+    for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+      center.publisher(for: name)
+        .sink { [weak self] notification in
+          guard let self, (notification.object as? NSWindow) === self.view.window else { return }
+          self.updateWindowActivationOverlay()
+        }
+        .store(in: &modelSubscriptions)
+    }
+  }
+
+  /// 当前是否叠着失焦遮罩（供测试断言）。
+  var isShowingInactiveOverlay: Bool { inactiveOverlay?.superview === view }
+
+  /// 失焦时叠加褪色遮罩，重新聚焦时移除。遮罩始终是最上层视图，
+  /// 因此工作区刷新（会清空并重建子视图）之后必须重新安放。
+  func updateWindowActivationOverlay() {
+    // 还没上屏的视图按「活动」处理，避免测试与首帧出现无谓的灰罩。
+    let isActive = view.window?.isKeyWindow ?? true
+    // 非活动窗口里的终端停止光标闪烁；后台标签的会话一并同步，切回来时状态已正确。
+    for tab in model.tabs {
+      for runtime in tab.runtimes.values {
+        runtime.terminalSession?.setWindowActive(isActive)
+      }
+    }
+    guard !isActive else {
+      inactiveOverlay?.removeFromSuperview()
+      inactiveOverlay = nil
+      return
+    }
+    if let inactiveOverlay, inactiveOverlay.superview === view {
+      view.addSubview(inactiveOverlay, positioned: .above, relativeTo: nil)
+      return
+    }
+    let overlay = InactiveWindowOverlayView(frame: view.bounds)
+    overlay.autoresizingMask = [.width, .height]
+    view.addSubview(overlay, positioned: .above, relativeTo: nil)
+    inactiveOverlay = overlay
+  }
+
+  deinit {
+    if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
+  }
+
+  /// 用窗口级事件监视器跟踪「点了哪个分屏」。终端和文本视图会自己消费 `mouseDown`
+  /// 并且不向 responder 链上抛，容器视图的 `mouseDown` 永远收不到点击——只靠容器
+  /// 事件会让 activePaneID 永远停在最后一次拆分出来的面板上，「关闭当前面板」也就
+  /// 总是关错对象。
+  private func installPaneClickMonitor() {
+    paneClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown])
+    { [weak self] event in
+      self?.activatePane(from: event)
+      return event
+    }
+  }
+
+  private func activatePane(from event: NSEvent) {
+    guard let window = view.window, event.window === window,
+      let tab = model.selectedTab, tab.layout.allPanes.count > 1,
+      let hit = window.contentView?.hitTest(event.locationInWindow)
+    else { return }
+    // 命中的是终端网格等叶子视图，沿 superview 链向上找到它所属的面板容器。
+    var candidate: NSView? = hit
+    while let current = candidate {
+      if let host = current as? ActivePaneHostView {
+        tab.setActivePane(host.paneID)
+        return
+      }
+      candidate = current.superview
+    }
+  }
+
+  // MARK: - 侧栏悬停动作区
+
+  /// 生成「+ 新建标签页」与「折叠/展开标签栏」按钮行，默认隐藏（悬停时由
+  /// `setSidebarHoverActionsVisible` 淡入）。侧栏展开与折叠两种布局共用。
+  private func makeHoverActionsRow(sidebarVisible: Bool) -> NSStackView {
+    let row = NSStackView()
+    row.orientation = .horizontal
+    row.spacing = 2
+    let addTabButton = ActionButton(symbol: "plus", bezelStyle: .inline) { [weak self] in
+      self?.model.newTab()
+    }
+    addTabButton.toolTip = "新建标签页"
+    let toggleButton = ActionButton(symbol: "sidebar.left", bezelStyle: .inline) { [weak self] in
+      self?.preferences.configuration.appearance.showTabBar.toggle()
+    }
+    toggleButton.toolTip = sidebarVisible
+      ? "折叠标签栏（悬停顶部或从「显示」菜单恢复）"
+      : "展开标签栏"
+    for button in [addTabButton, toggleButton] {
+      button.isBordered = false
+      button.contentTintColor = AsterTheme.secondaryInk
+      button.translatesAutoresizingMaskIntoConstraints = false
+      NSLayoutConstraint.activate([
+        button.widthAnchor.constraint(equalToConstant: 24),
+        button.heightAnchor.constraint(equalToConstant: 22),
+      ])
+      row.addArrangedSubview(button)
+    }
+    row.alphaValue = 0
+    row.isHidden = true
+    return row
+  }
+
+  /// 折叠态内容区：顶部叠加点击穿透的悬停带与「+ / 展开」按钮行。悬停带覆盖红绿灯
+  /// 及其右侧区域，鼠标一进入窗口顶部就淡入按钮；按钮行是兄弟视图（不在悬停带内），
+  /// 否则点击穿透会把按钮自己的点击也吞掉。
+  private func makeCollapsedContentArea() -> NSView {
+    let content = makeContentArea()
+    let strip = ClickThroughStripView()
+    strip.translatesAutoresizingMaskIntoConstraints = false
+    content.addSubview(strip)
+    NSLayoutConstraint.activate([
+      strip.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+      strip.topAnchor.constraint(equalTo: content.topAnchor),
+      strip.widthAnchor.constraint(equalToConstant: 340),
+      strip.heightAnchor.constraint(equalToConstant: 44),
+    ])
+    let actions = makeHoverActionsRow(sidebarVisible: false)
+    actions.translatesAutoresizingMaskIntoConstraints = false
+    content.addSubview(actions)
+    NSLayoutConstraint.activate([
+      // leading 必须让开红绿灯的命中/遮挡区（实测延伸到约 103pt，比视觉圆点更宽），
+      // 否则「+」按钮会被窗口标题栏区域整个盖住。
+      actions.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 108),
+      actions.topAnchor.constraint(equalTo: content.topAnchor, constant: 4),
+    ])
+    sidebarHoverActions = actions
+    let tracking = NSTrackingArea(
+      rect: .zero,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+      owner: self,
+      userInfo: nil
+    )
+    strip.addTrackingArea(tracking)
+    return content
+  }
+
+  /// 侧栏 tracking area 的 owner 是本控制器：进入时淡入「+ / 折叠」按钮，离开时淡出。
+  override func mouseEntered(with event: NSEvent) {
+    setSidebarHoverActionsVisible(true)
+  }
+
+  override func mouseExited(with event: NSEvent) {
+    setSidebarHoverActionsVisible(false)
+  }
+
+  /// 切换悬停动作区透明度；不可见时同时 isHidden，避免隐形按钮拦截该区域的窗口拖动。
+  private func setSidebarHoverActionsVisible(_ visible: Bool) {
+    guard let actions = sidebarHoverActions else { return }
+    if visible { actions.isHidden = false }
+    NSAnimationContext.runAnimationGroup({ context in
+      context.duration = 0.15
+      actions.animator().alphaValue = visible ? 1 : 0
+    }, completionHandler: {
+      // completionHandler 是 @Sendable 闭包，回主 actor 再改 isHidden。
+      Task { @MainActor in
+        actions.isHidden = !visible
+      }
+    })
   }
 
   private func scheduleRefresh() {
@@ -49,6 +225,7 @@ final class WorkspaceViewController: NSViewController {
   private func refresh() {
     observeTabs()
     retainedObjects.removeAll()
+    paneHosts.removeAll()
     children.forEach { $0.removeFromParent() }
     view.removeAllSubviews()
     view.appearance = preferences.preferredAppearance
@@ -91,6 +268,15 @@ final class WorkspaceViewController: NSViewController {
         if self?.model.notice == notice { self?.model.notice = nil }
       }
     }
+
+    // 视图树刚重建，first responder 还停在被移除的旧视图上；等本轮布局结束后把
+    // 键盘焦点交还给当前面板。只聚焦活动面板——过去对每个终端都调用 focus()，
+    // 最后渲染的那个会抢走输入焦点，用户看到的焦点框与真正接收按键的面板不一致。
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      if let tab = self.model.selectedTab { self.focusActivePane(in: tab) }
+      self.updateWindowActivationOverlay()
+    }
   }
 
   private func observeTabs() {
@@ -99,12 +285,97 @@ final class WorkspaceViewController: NSViewController {
       tab.objectWillChange
         .sink { [weak self] _ in self?.scheduleRefresh() }
         .store(in: &tabSubscriptions)
+      // 焦点切换走独立通道做局部更新：整树重建会打断终端拖选与 TUI 重绘。
+      tab.activePaneChanged
+        .sink { [weak self, weak tab] _ in
+          guard let self, let tab, tab.id == self.model.selectedTabID else { return }
+          self.updatePaneActivationOverlays(in: tab)
+          self.focusActivePane(in: tab)
+        }
+        .store(in: &tabSubscriptions)
     }
+  }
+
+  /// 一次 Pane 拖放的落点：`direction` 为 nil 表示落在面板中心（交换两个面板）。
+  private struct PaneDropTarget {
+    let paneID: UUID
+    let direction: SplitDirection?
+    let rect: NSRect
+    var isSwap: Bool { direction == nil }
+  }
+
+  /// 从把手按下开始接管事件循环，直到抬起。用 `trackEvents` 而不是 `NSDraggingSession`：
+  /// 落点全在自己窗口内，不需要跨应用拖放的粘贴板协议，事件循环也更好控制。
+  private func beginPaneDrag(paneID: UUID, event: NSEvent) {
+    guard let window = view.window, (model.selectedTab?.layout.allPanes.count ?? 0) > 1 else {
+      return
+    }
+    let overlay = PaneDropOverlayView(frame: view.bounds)
+    overlay.autoresizingMask = [.width, .height]
+    view.addSubview(overlay)
+    NSCursor.closedHand.push()
+
+    var target: PaneDropTarget?
+    window.trackEvents(
+      matching: [.leftMouseDragged, .leftMouseUp],
+      timeout: .greatestFiniteMagnitude,
+      mode: .eventTracking
+    ) { tracked, stop in
+      guard let tracked else {
+        stop.pointee = true
+        return
+      }
+      let point = self.view.convert(tracked.locationInWindow, from: nil)
+      target = self.paneDropTarget(at: point, source: paneID)
+      overlay.highlight = target.map { ($0.rect, $0.isSwap) }
+      if tracked.type == .leftMouseUp { stop.pointee = true }
+    }
+
+    overlay.removeFromSuperview()
+    NSCursor.pop()
+    guard let target else { return }
+    if let direction = target.direction {
+      model.movePane(paneID, nextTo: target.paneID, direction: direction)
+    } else {
+      model.swapPanes(paneID, target.paneID)
+    }
+  }
+
+  /// 命中落点：指针在目标面板四边 25% 以内时插到该侧，否则落在中心表示交换。
+  /// 拖回自己身上没有任何有效语义，直接不返回落点（覆盖层也就不会高亮）。
+  private func paneDropTarget(at point: NSPoint, source: UUID) -> PaneDropTarget? {
+    for (paneID, host) in paneHosts where paneID != source {
+      guard host.window != nil else { continue }
+      let frame = host.convert(host.bounds, to: view)
+      guard frame.contains(point) else { continue }
+      let zone = PaneDropGeometry.zone(in: frame, at: point)
+      return PaneDropTarget(paneID: paneID, direction: zone.direction, rect: zone.rect)
+    }
+    return nil
+  }
+
+  /// 切换聚焦面板时只翻转各 Pane 的褪色遮罩，不重建视图树。
+  private func updatePaneActivationOverlays(in tab: TerminalTabItem) {
+    for (paneID, host) in paneHosts {
+      host.isActivePane = paneID == tab.activePaneID
+    }
+  }
+
+  /// 把键盘焦点交给当前面板：终端面板交给 SwiftTerm 视图，其余面板交给容器本身。
+  private func focusActivePane(in tab: TerminalTabItem) {
+    if let session = tab.activeRuntime?.terminalSession {
+      session.focus()
+      return
+    }
+    guard let host = paneHosts[tab.activePaneID], let window = host.window else { return }
+    window.makeFirstResponder(host)
   }
 
   private func makeWorkspaceLayout() -> NSView {
     let showsTabs = preferences.configuration.appearance.showsTabBar(tabCount: model.tabs.count)
-    guard showsTabs else { return makeContentArea() }
+    // 折叠态：内容区左上角叠加悬停动作区（+ 新建 / 展开标签栏），鼠标进入顶部
+    // 悬停带时淡入，离开淡出——折叠后无需进设置页也能恢复侧栏。
+    guard showsTabs else { return makeCollapsedContentArea() }
 
     switch preferences.tabBarLayout {
     case .vertical:
@@ -112,6 +383,10 @@ final class WorkspaceViewController: NSViewController {
       stack.orientation = .horizontal
       stack.spacing = 0
       stack.distribution = .fill
+      // 侧栏、分隔线与内容区必须等高填满窗口。默认的 centerY 对齐会让内容区退回自身的
+      // 固有高度：上下分屏时 NSSplitView 给每个面板加了 `height == 0 @250` 约束，内容区
+      // 因此只剩「标题栏 + 分隔条 + 状态栏」的高度，两个终端都被压成 0。
+      stack.alignment = .height
       let sidebar = makeVerticalTabBar()
       sidebar.translatesAutoresizingMaskIntoConstraints = false
       sidebar.widthAnchor.constraint(equalToConstant: preferences.sidebarWidth).isActive = true
@@ -129,6 +404,8 @@ final class WorkspaceViewController: NSViewController {
       content.setContentHuggingPriority(.defaultLow, for: .horizontal)
       content.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
       stack.addArrangedSubview(content)
+      content.translatesAutoresizingMaskIntoConstraints = false
+      content.heightAnchor.constraint(equalTo: stack.heightAnchor).isActive = true
       return stack
 
     case .top, .bottom:
@@ -150,6 +427,10 @@ final class WorkspaceViewController: NSViewController {
         stack.addArrangedSubview(divider)
         stack.addArrangedSubview(bar)
       }
+      // 与竖直标签栏布局同理：内容区没有固有宽度，左右分屏会被 NSSplitView 的
+      // `width == 0 @250` 回退约束压到最窄。约束必须在入栈之后建立。
+      content.translatesAutoresizingMaskIntoConstraints = false
+      content.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
       return stack
     }
   }
@@ -226,6 +507,26 @@ final class WorkspaceViewController: NSViewController {
       menu.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -5),
     ])
     column.addArrangedSubview(header)
+
+    // 悬停动作区：「+ 新建标签」与「折叠标签栏」，默认隐藏，鼠标进入侧栏时淡入。
+    // 放在 header 顶部右侧，与红绿灯同一水平线。
+    let hoverActions = makeHoverActionsRow(sidebarVisible: true)
+    header.addSubview(hoverActions)
+    hoverActions.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      hoverActions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -6),
+      hoverActions.topAnchor.constraint(equalTo: header.topAnchor, constant: 4),
+    ])
+    sidebarHoverActions = hoverActions
+
+    // 鼠标进入侧栏任意位置都显示动作区；inVisibleRect 让跟踪区域跟随侧栏尺寸。
+    let tracking = NSTrackingArea(
+      rect: .zero,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+      owner: self,
+      userInfo: nil
+    )
+    background.addTrackingArea(tracking)
 
     let rows = NSStackView()
     rows.orientation = .vertical
@@ -518,20 +819,33 @@ final class WorkspaceViewController: NSViewController {
     inner.pinEdges(to: container)
 
     let paneHost = NSView()
-    let paneTree = makePaneTree(tab.layout, tab: tab, path: [])
+    let paneTree = makePaneContent(tab)
     paneHost.addSubview(paneTree)
     paneTree.pinEdges(to: paneHost, insets: NSEdgeInsets(style.padding))
     inner.addArrangedSubview(paneHost)
-    if preferences.showStatusBar { inner.addArrangedSubview(makeStatusBar(tab)) }
+    let statusBar = preferences.showStatusBar ? makeStatusBar(tab) : nil
+    if let statusBar { inner.addArrangedSubview(statusBar) }
     stack.addArrangedSubview(wrapper)
-    // 这些内容容器没有 intrinsicContentSize；显式绑定横向尺寸，保证 AppKit 的
-    // NSStackView 不会在主题边距存在时把 Pane 树压缩到最小宽度。
+    // 这些内容容器没有 intrinsicContentSize；两个方向都必须显式绑定，否则 NSStackView
+    // 会退回「固有尺寸」布局。上下分屏尤其致命：NSSplitView 给每个面板加了
+    // `height == 0 @250` 的回退约束，没有必需高度约束时整个内容区会塌成一条分隔条。
     wrapper.translatesAutoresizingMaskIntoConstraints = false
     paneHost.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
+    var constraints: [NSLayoutConstraint] = [
       wrapper.widthAnchor.constraint(equalTo: stack.widthAnchor),
+      wrapper.bottomAnchor.constraint(equalTo: stack.bottomAnchor),
       paneHost.widthAnchor.constraint(equalTo: inner.widthAnchor),
-    ])
+      paneHost.topAnchor.constraint(equalTo: inner.topAnchor),
+    ]
+    if let statusBar {
+      // 状态栏必须先钉在底边，Pane 区才有「剩余空间」可以填充；只写 paneHost 与状态栏
+      // 的相邻关系时两者会一起收缩到固有高度，把下方整块留白。
+      constraints.append(statusBar.bottomAnchor.constraint(equalTo: inner.bottomAnchor))
+      constraints.append(paneHost.bottomAnchor.constraint(equalTo: statusBar.topAnchor))
+    } else {
+      constraints.append(paneHost.bottomAnchor.constraint(equalTo: inner.bottomAnchor))
+    }
+    NSLayoutConstraint.activate(constraints)
     return stack
   }
 
@@ -600,6 +914,17 @@ final class WorkspaceViewController: NSViewController {
     return bar
   }
 
+  /// 工作区内容区：处于「缩放拆分」状态时只渲染被放大的那一个面板，其余面板保持
+  /// 运行（PTY 与滚动历史不受影响），退出放大后原样回到分屏树。
+  private func makePaneContent(_ tab: TerminalTabItem) -> NSView {
+    if let zoomed = tab.zoomedPaneID, tab.layout.allPanes.count > 1,
+      let descriptor = tab.layout.allPanes.first(where: { $0.id == zoomed })
+    {
+      return makePaneLeaf(descriptor, tab: tab)
+    }
+    return makePaneTree(tab.layout, tab: tab, path: [])
+  }
+
   private func makePaneTree(
     _ layout: PaneLayout,
     tab: TerminalTabItem,
@@ -626,9 +951,13 @@ final class WorkspaceViewController: NSViewController {
     guard let runtime = tab.runtime(for: descriptor.id) else {
       return makeCenteredMessage(title: "面板不可用", symbol: "exclamationmark.triangle")
     }
-    let host = ActivePaneHostView(isActive: tab.activePaneID == descriptor.id) {
-      tab.activePaneID = descriptor.id
+    let host = ActivePaneHostView(
+      paneID: descriptor.id,
+      isActive: tab.activePaneID == descriptor.id
+    ) { [weak tab] in
+      tab?.setActivePane(descriptor.id)
     }
+    paneHosts[descriptor.id] = host
     let content: NSView
     switch descriptor.kind {
     case .terminal: content = makeTerminalPane(runtime, tab: tab)
@@ -642,9 +971,14 @@ final class WorkspaceViewController: NSViewController {
     }
     host.addSubview(content)
     content.pinEdges(to: host)
-    // 单 Pane 无需额外蓝色顶边；只有分屏时才显示焦点边界，避免主界面比 Otty
-    // 多出一条高对比装饰线。
-    if tab.layout.allPanes.count > 1 { host.installIndicator() }
+    // 单 Pane 既无处可拖，也不需要区分聚焦状态；两种装饰都只在分屏时安装。
+    // 遮罩先于把手安装，把手才会浮在遮罩之上。
+    if tab.layout.allPanes.count > 1 {
+      host.installInactiveOverlay()
+      host.installDragHandle { [weak self] paneID, event in
+        self?.beginPaneDrag(paneID: paneID, event: event)
+      }
+    }
     return host
   }
 
@@ -666,7 +1000,6 @@ final class WorkspaceViewController: NSViewController {
         warning.topAnchor.constraint(equalTo: host.topAnchor, constant: 9),
       ])
     }
-    DispatchQueue.main.async { [weak session] in session?.focus() }
     return host
   }
 
@@ -750,7 +1083,10 @@ final class WorkspaceViewController: NSViewController {
     let state = tab.activeSession?.statusIsRunning == false ? "●  session ended" : "●  workspace"
     let path = tab.workingDirectory.replacingOccurrences(of: NSHomeDirectory(), with: "~")
     let label = makeLabel("\(state)  ·  \(path)", size: 9.5, weight: .medium, color: AsterTheme.tertiaryInk, monospaced: true)
-    let right = makeLabel("\(tab.layout.allPanes.count) PANE\(tab.layout.allPanes.count == 1 ? "" : "S")   UTF-8", size: 9.5, weight: .medium, color: AsterTheme.tertiaryInk, monospaced: true)
+    // 放大态下其它分屏不可见，状态栏必须给出提示，否则会被误读成分屏丢失。
+    let paneCount = tab.layout.allPanes.count
+    let zoomHint = tab.zoomedPaneID != nil && paneCount > 1 ? "ZOOMED   " : ""
+    let right = makeLabel("\(zoomHint)\(paneCount) PANE\(paneCount == 1 ? "" : "S")   UTF-8", size: 9.5, weight: .medium, color: AsterTheme.tertiaryInk, monospaced: true)
     let row = NSStackView(views: [label, NSView(), right])
     row.orientation = .horizontal
     row.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
@@ -979,12 +1315,20 @@ private final class TabRowButton: NSButton {
 }
 
 /// 递归分屏使用 `NSSplitView`，拖动结束后的比例写回领域模型以供会话恢复。
+///
+/// 分隔条默认是一条 1pt 灰线；指针进入命中区后加粗为主题强调色，双击恢复等分。
 @MainActor
 private final class PersistedSplitView: NSSplitView, NSSplitViewDelegate {
+  /// 命中区比可见线宽得多：1pt 的线几乎抓不住，Otty 同样用一条细线 + 宽感应带。
+  private static let hitThickness: CGFloat = 6
   private let ratio: Double
   private let onRatioChanged: (Double) -> Void
   private var positioned = false
   private var isUserResizing = false
+  private var isHoveringDivider = false {
+    didSet { if oldValue != isHoveringDivider { needsDisplay = true } }
+  }
+  private var dividerTrackingArea: NSTrackingArea?
 
   init(axis: SplitAxis, ratio: Double, onRatioChanged: @escaping (Double) -> Void) {
     self.ratio = ratio
@@ -997,35 +1341,306 @@ private final class PersistedSplitView: NSSplitView, NSSplitViewDelegate {
 
   required init?(coder: NSCoder) { nil }
 
+  override var dividerThickness: CGFloat { Self.hitThickness }
+
+  /// 只画中间 1pt（悬停时 2pt）的线，命中区其余部分留白透出容器底色，
+  /// 视觉上仍是 Otty 那条细分隔线。
+  override func drawDivider(in rect: NSRect) {
+    // 窗口不是键盘焦点窗口时一律画成灰线：非活动窗口不应该有强调色。
+    let isHoveringDivider = self.isHoveringDivider && (window?.isKeyWindow ?? false)
+    let thickness: CGFloat = isHoveringDivider ? 2 : 1
+    let line =
+      isVertical
+      ? NSRect(x: rect.midX - thickness / 2, y: rect.minY, width: thickness, height: rect.height)
+      : NSRect(x: rect.minX, y: rect.midY - thickness / 2, width: rect.width, height: thickness)
+    (isHoveringDivider ? AsterTheme.accent : AsterTheme.hairline).setFill()
+    line.fill()
+  }
+
+  /// 两个子视图之间的空隙就是分隔条命中区；不依赖 `NSSplitView` 的坐标翻转约定。
+  private var dividerHitRect: NSRect? {
+    guard arrangedSubviews.count == 2 else { return nil }
+    let first = arrangedSubviews[0].frame
+    let second = arrangedSubviews[1].frame
+    if isVertical {
+      return NSRect(
+        x: min(first.maxX, second.maxX), y: 0, width: dividerThickness, height: bounds.height)
+    }
+    return NSRect(
+      x: 0, y: min(first.maxY, second.maxY), width: bounds.width, height: dividerThickness)
+  }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let dividerTrackingArea { removeTrackingArea(dividerTrackingArea) }
+    guard let rect = dividerHitRect else {
+      isHoveringDivider = false
+      return
+    }
+    let area = NSTrackingArea(
+      rect: rect,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow],
+      owner: self
+    )
+    addTrackingArea(area)
+    dividerTrackingArea = area
+    // 移除感应区不会补发 mouseExited：指针正好停在旧感应区里时高亮会一直卡住。
+    // 每次重建后按指针的真实位置对齐一次状态。
+    syncHoverState()
+  }
+
+  /// 高亮只在「本窗口是键盘焦点窗口，且指针确实压在分隔条命中区上」时成立。
+  private func syncHoverState() {
+    guard let window, window.isKeyWindow, let rect = dividerHitRect else {
+      isHoveringDivider = false
+      return
+    }
+    let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+    isHoveringDivider = rect.contains(point)
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    syncHoverState()
+  }
+
+  override func mouseEntered(with event: NSEvent) { isHoveringDivider = true }
+  override func mouseExited(with event: NSEvent) { isHoveringDivider = false }
+
+  /// `NSSplitView` 把「分隔条厚度」当作与分隔方向垂直的固有尺寸（水平分隔时固有高度
+  /// 只有 1pt），因为它的子视图走 autoresizing、无法反推内容尺寸。放进 `NSStackView`
+  /// 后这个固有高度会把整个内容区压成一条线：上下分屏只剩分隔条，两个终端高度都是 0。
+  /// 分屏区域的尺寸完全由外层容器给定，这里直接取消固有尺寸。
+  override var intrinsicContentSize: NSSize {
+    NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+  }
+
+  /// 比例针对「扣掉分隔条之后的可用长度」，否则第一块会固定多出一个分隔条的厚度，
+  /// 等分看起来是歪的。
+  private var contentLength: CGFloat {
+    max(0, (isVertical ? bounds.width : bounds.height) - dividerThickness)
+  }
+
   override func layout() {
     super.layout()
     guard !positioned, arrangedSubviews.count == 2 else { return }
+    // 首轮布局可能在拿到真实尺寸前发生；此时定位分隔条会把比例锁在无效值上。
+    guard contentLength > 1 else { return }
     positioned = true
-    let length = isVertical ? bounds.width : bounds.height
-    setPosition(max(1, length * ratio), ofDividerAt: 0)
+    setPosition(max(1, contentLength * ratio), ofDividerAt: 0)
   }
 
   func splitViewDidResizeSubviews(_ notification: Notification) {
+    // 命中区是由两个子视图的间隙算出来的，自身 frame 不变时 AppKit 不会重建它，
+    // 拖完分隔条后感应区就会停在旧位置。
+    updateTrackingAreas()
     guard positioned, isUserResizing, arrangedSubviews.count == 2 else { return }
-    let total = isVertical ? bounds.width : bounds.height
     let first = isVertical ? arrangedSubviews[0].frame.width : arrangedSubviews[0].frame.height
-    guard total > 0 else { return }
-    onRatioChanged(min(max(first / total, 0.05), 0.95))
+    guard contentLength > 0 else { return }
+    onRatioChanged(min(max(first / contentLength, 0.05), 0.95))
   }
 
   override func mouseDown(with event: NSEvent) {
+    // 双击分隔条恢复等分，与参考应用一致；单击进入原生拖动，比例在拖动中写回。
+    if event.clickCount == 2, let rect = dividerHitRect,
+      rect.contains(convert(event.locationInWindow, from: nil))
+    {
+      guard contentLength > 1 else { return }
+      setPosition(contentLength * 0.5, ofDividerAt: 0)
+      onRatioChanged(0.5)
+      return
+    }
     isUserResizing = true
     super.mouseDown(with: event)
     isUserResizing = false
   }
 }
 
-@MainActor
-private final class ActivePaneHostView: NSView {
-  private let activation: () -> Void
-  private let isActivePane: Bool
+/// Pane 拖放的落点几何。与 AppKit 状态无关的纯函数：给定目标面板矩形和指针位置，
+/// 得出该落在哪一侧（或中心），以及要高亮的区域。
+enum PaneDropGeometry {
+  /// 四边各占 25%——比例太小会难以命中，太大则中心的「交换」区域几乎消失。
+  static let edgeFraction: CGFloat = 0.25
 
-  init(isActive: Bool, activation: @escaping () -> Void) {
+  /// - Returns: `direction` 为 nil 表示落在中心（交换语义），此时 `rect` 是整个面板。
+  static func zone(
+    in frame: NSRect,
+    at point: NSPoint,
+    edgeFraction: CGFloat = edgeFraction
+  ) -> (direction: SplitDirection?, rect: NSRect) {
+    let local = NSPoint(x: point.x - frame.minX, y: point.y - frame.minY)
+    let halfWidth = frame.width / 2
+    let halfHeight = frame.height / 2
+    let edgeX = frame.width * edgeFraction
+    let edgeY = frame.height * edgeFraction
+    // AppKit 非翻转坐标：y 越小越靠近底边，因此 `.down` 用 local.y、`.up` 用其补数。
+    let candidates: [(direction: SplitDirection, distance: CGFloat, limit: CGFloat, rect: NSRect)] = [
+      (.left, local.x, edgeX,
+       NSRect(x: frame.minX, y: frame.minY, width: halfWidth, height: frame.height)),
+      (.right, frame.width - local.x, edgeX,
+       NSRect(x: frame.midX, y: frame.minY, width: halfWidth, height: frame.height)),
+      (.down, local.y, edgeY,
+       NSRect(x: frame.minX, y: frame.minY, width: frame.width, height: halfHeight)),
+      (.up, frame.height - local.y, edgeY,
+       NSRect(x: frame.minX, y: frame.midY, width: frame.width, height: halfHeight)),
+    ]
+    guard let nearest = candidates.filter({ $0.distance <= $0.limit }).min(by: {
+      $0.distance < $1.distance
+    }) else {
+      return (nil, frame)
+    }
+    return (nearest.direction, nearest.rect)
+  }
+}
+
+/// 窗口失去键盘焦点时叠在工作区之上的褪色遮罩。
+///
+/// AppKit 只会自动灰化系统控件，终端网格、侧栏和自绘视图都不受影响，非活动窗口
+/// 看起来仍然「亮着」，多窗口下分不清哪个在接收输入。遮罩用主题窗口底色，
+/// 因此深浅主题都是朝各自背景褪色，而不是压一层固定的灰。
+@MainActor
+private final class InactiveWindowOverlayView: NSView {
+  /// 覆盖层不参与命中测试：失焦窗口的第一次点击仍应正常落到下面的终端上。
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+  override func draw(_ dirtyRect: NSRect) {
+    AsterTheme.paper.withAlphaComponent(0.45).setFill()
+    dirtyRect.fill()
+  }
+}
+
+/// 拖动 Pane 时覆盖在工作区之上的落点提示层。参考应用用两种颜色区分语义：
+/// 面板边缘（强调色）＝插到这一侧，面板中心（绿色）＝与该面板交换位置。
+@MainActor
+private final class PaneDropOverlayView: NSView {
+  var highlight: (rect: NSRect, isSwap: Bool)? {
+    didSet { needsDisplay = true }
+  }
+
+  /// 拖动全程由 `trackEvents` 驱动，覆盖层不参与命中测试。
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+  override func draw(_ dirtyRect: NSRect) {
+    guard let highlight else { return }
+    let color = highlight.isSwap ? NSColor.systemGreen : AsterTheme.accent
+    let path = NSBezierPath(roundedRect: highlight.rect.insetBy(dx: 2, dy: 2), xRadius: 6, yRadius: 6)
+    color.withAlphaComponent(0.20).setFill()
+    path.fill()
+    color.withAlphaComponent(0.85).setStroke()
+    path.lineWidth = 2
+    path.stroke()
+  }
+}
+
+/// Pane 顶边的胶囊拖动把手。参考应用的说法是「move the pointer near the top and a small
+/// capsule appears」：靠近顶边淡入短胶囊，指针压在胶囊上时变长并换成抓手光标，
+/// 按住即可把整个 Pane 拖到别处。
+@MainActor
+private final class PaneDragHandleView: NSView {
+  private static let collapsedWidth: CGFloat = 28
+  private static let expandedWidth: CGFloat = 56
+  private let capsule = NSView()
+  private var capsuleWidth: NSLayoutConstraint?
+  private var trackingArea: NSTrackingArea?
+  private let onDragStart: (NSEvent) -> Void
+  /// 指针是否靠近 Pane 顶边（由上层的点击穿透感应带驱动）。
+  var isRevealed = false {
+    didSet { if oldValue != isRevealed { updateAppearance() } }
+  }
+  private var isHovered = false {
+    didSet { if oldValue != isHovered { updateAppearance() } }
+  }
+
+  init(onDragStart: @escaping (NSEvent) -> Void) {
+    self.onDragStart = onDragStart
+    super.init(frame: .zero)
+    wantsLayer = true
+    capsule.wantsLayer = true
+    capsule.layer?.cornerRadius = 2
+    capsule.layer?.cornerCurve = .continuous
+    capsule.layer?.backgroundColor = AsterTheme.tertiaryInk.cgColor
+    capsule.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(capsule)
+    let width = capsule.widthAnchor.constraint(equalToConstant: Self.collapsedWidth)
+    capsuleWidth = width
+    NSLayoutConstraint.activate([
+      capsule.centerXAnchor.constraint(equalTo: centerXAnchor),
+      capsule.centerYAnchor.constraint(equalTo: centerYAnchor),
+      capsule.heightAnchor.constraint(equalToConstant: 4),
+      width,
+    ])
+    alphaValue = 0
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  /// 完全透明时不参与命中测试，否则 Pane 顶部中央会出现一块点不到终端的死区。
+  override func hitTest(_ point: NSPoint) -> NSView? {
+    alphaValue > 0.01 ? super.hitTest(point) : nil
+  }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let trackingArea { removeTrackingArea(trackingArea) }
+    let area = NSTrackingArea(
+      rect: bounds,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .cursorUpdate],
+      owner: self
+    )
+    addTrackingArea(area)
+    trackingArea = area
+  }
+
+  override func mouseEntered(with event: NSEvent) { isHovered = true }
+  override func mouseExited(with event: NSEvent) { isHovered = false }
+  override func cursorUpdate(with event: NSEvent) {
+    if isRevealed { NSCursor.openHand.set() } else { super.cursorUpdate(with: event) }
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    guard isRevealed else {
+      super.mouseDown(with: event)
+      return
+    }
+    onDragStart(event)
+  }
+
+  private func updateAppearance() {
+    let expanded = isRevealed && isHovered
+    capsule.layer?.backgroundColor =
+      (expanded ? AsterTheme.accent : AsterTheme.tertiaryInk).cgColor
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = 0.14
+      context.allowsImplicitAnimation = true
+      animator().alphaValue = isRevealed ? 1 : 0
+      capsuleWidth?.animator().constant = expanded ? Self.expandedWidth : Self.collapsedWidth
+      superview?.layoutSubtreeIfNeeded()
+    }
+  }
+}
+
+/// 全点击穿透的透明悬停带：只承载 tracking area 探测鼠标进入窗口顶部，
+/// 自身与子视图不参与命中测试，不会拦截下方终端的点击与拖选。
+private final class ClickThroughStripView: NSView {
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+@MainActor
+private final class ActivePaneHostView: NSView {  /// 所属面板的 ID：窗口级点击监视器沿 superview 链命中本视图后据此激活对应面板。
+  /// 顶边感应带与把手的高度：太矮抓不到，太高会让顶部一整条都在触发淡入。
+  private static let handleRevealHeight: CGFloat = 14
+  let paneID: UUID
+  private let activation: () -> Void
+  private var dragHandle: PaneDragHandleView?
+  private var handleTrackingArea: NSTrackingArea?
+  private var inactiveOverlay: NSView?
+  /// 焦点状态可原地切换：切换聚焦面板只改这层遮罩的可见性，不重建视图树。
+  var isActivePane: Bool {
+    didSet { inactiveOverlay?.isHidden = isActivePane }
+  }
+
+  init(paneID: UUID, isActive: Bool, activation: @escaping () -> Void) {
+    self.paneID = paneID
     self.activation = activation
     isActivePane = isActive
     super.init(frame: .zero)
@@ -1039,20 +1654,57 @@ private final class ActivePaneHostView: NSView {
     super.mouseDown(with: event)
   }
 
-  func installIndicator() {
-    guard isActivePane else { return }
-    let indicator = NSView()
-    indicator.wantsLayer = true
-    indicator.layer?.backgroundColor = AsterTheme.accent.cgColor
-    addSubview(indicator)
-    indicator.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      indicator.leadingAnchor.constraint(equalTo: leadingAnchor),
-      indicator.trailingAnchor.constraint(equalTo: trailingAnchor),
-      indicator.topAnchor.constraint(equalTo: topAnchor),
-      indicator.heightAnchor.constraint(equalToConstant: 2),
-    ])
+  /// 顶边感应带：指针靠近 Pane 顶部时淡入拖动把手。用 `NSTrackingArea` 而不是叠一层
+  /// 视图——终端要占满整个 Pane，任何实体覆盖层都会吃掉那一条上的点击与拖选。
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let handleTrackingArea { removeTrackingArea(handleTrackingArea) }
+    guard dragHandle != nil else { return }
+    let strip = NSRect(
+      x: 0, y: max(0, bounds.height - Self.handleRevealHeight),
+      width: bounds.width, height: min(bounds.height, Self.handleRevealHeight))
+    let area = NSTrackingArea(
+      rect: strip,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow],
+      owner: self
+    )
+    addTrackingArea(area)
+    handleTrackingArea = area
   }
+
+  override func mouseEntered(with event: NSEvent) { dragHandle?.isRevealed = true }
+  override func mouseExited(with event: NSEvent) { dragHandle?.isRevealed = false }
+
+  /// 给非聚焦的 Pane 铺一层褪色遮罩。取代过去那条强调色顶边——遮罩把「哪个 Pane
+  /// 在接收输入」表达为整块对比，而不是一条比终端内容还抢眼的装饰线。
+  /// 遮罩必须叠在内容之上、且点击穿透：点非活动 Pane 的第一下要能同时激活它并落到终端。
+  func installInactiveOverlay() {
+    guard inactiveOverlay == nil else { return }
+    let overlay = ClickThroughStripView()
+    overlay.wantsLayer = true
+    overlay.layer?.backgroundColor = AsterTheme.paper.withAlphaComponent(0.30).cgColor
+    overlay.isHidden = isActivePane
+    addSubview(overlay)
+    overlay.pinEdges(to: self)
+    inactiveOverlay = overlay
+  }
+
+  /// 安装顶边拖动把手；只有存在多个 Pane 时才有意义（单 Pane 无处可拖）。
+  func installDragHandle(onDragStart: @escaping (UUID, NSEvent) -> Void) {
+    guard dragHandle == nil else { return }
+    let paneID = paneID
+    let handle = PaneDragHandleView { event in onDragStart(paneID, event) }
+    handle.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(handle)
+    NSLayoutConstraint.activate([
+      handle.centerXAnchor.constraint(equalTo: centerXAnchor),
+      handle.topAnchor.constraint(equalTo: topAnchor),
+      handle.widthAnchor.constraint(equalToConstant: 96),
+      handle.heightAnchor.constraint(equalToConstant: Self.handleRevealHeight),
+    ])
+    dragHandle = handle
+  }
+
 }
 
 @MainActor

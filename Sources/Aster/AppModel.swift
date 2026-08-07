@@ -96,14 +96,14 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       onWorkspaceChanged?()
     }
   }
-  @Published var activePaneID: UUID {
-    didSet {
-      if oldValue != activePaneID {
-        markUpdated()
-        onWorkspaceChanged?()
-      }
-    }
-  }
+  /// 当前聚焦的面板。刻意不是 `@Published`：切换焦点只需要移动 first responder 和
+  /// 焦点指示器，若走 `objectWillChange` 会让整个工作区视图树重建，正在进行的终端
+  /// 拖选、TUI 重绘都会被打断。视图层订阅 `activePaneChanged` 做局部更新。
+  private(set) var activePaneID: UUID
+  let activePaneChanged = PassthroughSubject<UUID, Never>()
+  /// 被临时放大（缩放拆分）的面板。它是纯 UI 态，不进快照——恢复会话时应当回到
+  /// 完整分屏，而不是停在某次临时放大的状态。
+  @Published private(set) var zoomedPaneID: UUID?
   var onWorkspaceChanged: (() -> Void)?
   private(set) var runtimes: [UUID: WorkspacePaneRuntime] = [:]
   private var cancellables: Set<AnyCancellable> = []
@@ -188,6 +188,93 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     layout = updated
     addRuntime(for: descriptor)
     activePaneID = descriptor.id
+    // 新面板必须可见：在放大态下继续拆分，否则新建的 Shell 会藏在被折叠的分屏里。
+    zoomedPaneID = nil
+  }
+
+  /// 切换焦点面板。`paneID` 不存在或未变化时保持原状，避免无谓的 first responder 抖动。
+  func setActivePane(_ paneID: UUID) {
+    guard paneID != activePaneID, runtimes[paneID] != nil else { return }
+    activePaneID = paneID
+    markUpdated()
+    // 放大态下其它面板不可见，把焦点移出去会让 first responder 落在看不见的终端上。
+    if zoomedPaneID != nil, zoomedPaneID != paneID { zoomedPaneID = nil }
+    activePaneChanged.send(paneID)
+  }
+
+  /// 按方向聚焦相邻面板（对应「聚焦面板」子菜单）。返回是否真的移动了焦点。
+  @discardableResult
+  func focusPane(_ direction: SplitDirection) -> Bool {
+    guard let target = layout.adjacentPaneID(from: activePaneID, direction: direction) else {
+      return false
+    }
+    setActivePane(target)
+    return true
+  }
+
+  /// 在分屏树的中序遍历顺序上循环切换焦点（下一个/上一个面板）。
+  @discardableResult
+  func focusPane(forward: Bool) -> Bool {
+    let ids = layout.allPanes.map(\.id)
+    guard ids.count > 1, let index = ids.firstIndex(of: activePaneID) else { return false }
+    let offset = forward ? 1 : ids.count - 1
+    setActivePane(ids[(index + offset) % ids.count])
+    return true
+  }
+
+  /// 把当前面板临时放大到整个工作区，再次调用还原分屏（对应「缩放拆分」）。
+  func toggleZoom() {
+    guard layout.allPanes.count > 1 else {
+      zoomedPaneID = nil
+      return
+    }
+    zoomedPaneID = zoomedPaneID == nil ? activePaneID : nil
+  }
+
+  /// 沿指定方向移动当前面板所在的分隔条。方向语义与分隔条本身一致（右移即让
+  /// 左侧变宽），与聚焦面板处在哪一侧无关；没有该方向的分隔条时返回 false。
+  @discardableResult
+  func moveDivider(_ direction: SplitDirection, step: Double = 0.05) -> Bool {
+    let axis: SplitAxis = direction.isHorizontal ? .horizontal : .vertical
+    guard let path = layout.nearestSplitPath(fromPane: activePaneID, axis: axis),
+      let current = layout.splitRatio(at: path)
+    else { return false }
+    let delta = (direction == .right || direction == .down) ? step : -step
+    let updated = layout.updatingSplitRatio(at: path, ratio: current + delta)
+    guard updated != layout else { return false }
+    layout = updated
+    return true
+  }
+
+  /// 拖放到面板中心：交换两个面板的位置。面板 ID 不变，两端的 PTY 都不重启。
+  @discardableResult
+  func swapPanes(_ first: UUID, _ second: UUID) -> Bool {
+    let updated = layout.swappingPanes(first, second)
+    guard updated != layout else { return false }
+    layout = updated
+    zoomedPaneID = nil
+    return true
+  }
+
+  /// 拖放到面板边缘：把面板搬到目标面板的指定一侧，并让它继续保持聚焦。
+  @discardableResult
+  func movePane(_ paneID: UUID, nextTo targetID: UUID, direction: SplitDirection) -> Bool {
+    guard let updated = layout.movingPane(paneID, nextTo: targetID, direction: direction),
+      updated != layout
+    else { return false }
+    layout = updated
+    zoomedPaneID = nil
+    activePaneID = paneID
+    return true
+  }
+
+  /// 把所有层级的分屏恢复为等分（对应「等分拆分」）。
+  @discardableResult
+  func equalizeSplits() -> Bool {
+    let updated = layout.equalizingRatios()
+    guard updated != layout else { return false }
+    layout = updated
+    return true
   }
 
   func openFile(_ url: URL) {
@@ -210,14 +297,20 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     layout = updated
   }
 
-  func closeActivePane() {
-    guard runtimes[activePaneID]?.confirmCloseIfNeeded() != false else { return }
-    guard layout.allPanes.count > 1, let updated = layout.removing(paneID: activePaneID) else {
-      return
-    }
+  /// 关闭当前聚焦的面板。返回 false 表示没有可关闭的分屏（只剩最后一个面板），
+  /// 由调用方决定是否升级成关闭整个标签页；用户取消保存提示同样返回 false。
+  @discardableResult
+  func closeActivePane() -> Bool {
+    guard layout.allPanes.count > 1 else { return false }
+    guard runtimes[activePaneID]?.confirmCloseIfNeeded() != false else { return false }
+    guard let updated = layout.removing(paneID: activePaneID) else { return false }
+    // 焦点先于删除计算：删除后原 Pane 的兄弟关系已经消失，无法再定位相邻面板。
+    let successor = layout.neighborPaneID(ofPane: activePaneID) ?? updated.firstPaneID
     runtimes.removeValue(forKey: activePaneID)?.stop()
+    if zoomedPaneID == activePaneID { zoomedPaneID = nil }
     layout = updated
-    activePaneID = updated.firstPaneID ?? activePaneID
+    activePaneID = successor ?? activePaneID
+    return true
   }
 
   func stop(immediately: Bool = false) {
@@ -338,6 +431,17 @@ final class AppModel: ObservableObject {
     persistWorkspace()
   }
 
+  /// ⌘W 的上下文语义：标签内还有分屏时只关闭当前聚焦的面板，只剩最后一个面板时
+  /// 才关闭整个标签页。与 Otty/iTerm 一致——多分屏工作区里误关整个标签代价太大。
+  func closeSelectedPaneOrTab() {
+    guard let tab = selectedTab else { return }
+    if tab.closeActivePane() {
+      persistWorkspace()
+      return
+    }
+    closeSelectedTab()
+  }
+
   func closeSelectedTab() {
     guard let selectedTabID,
       let index = tabs.firstIndex(where: { $0.id == selectedTabID })
@@ -366,8 +470,50 @@ final class AppModel: ObservableObject {
   }
 
   func closeActivePane() {
-    selectedTab?.closeActivePane()
+    guard selectedTab?.closeActivePane() == true else { return }
     persistWorkspace()
+  }
+
+  /// 「聚焦面板」子菜单入口。焦点没有可去处时保持原状，不发出任何变更。
+  func focusPane(_ direction: SplitDirection) {
+    selectedTab?.focusPane(direction)
+  }
+
+  func focusPane(forward: Bool) {
+    selectedTab?.focusPane(forward: forward)
+  }
+
+  func toggleZoomActivePane() {
+    selectedTab?.toggleZoom()
+  }
+
+  /// 「调整拆分大小」子菜单入口；比例变化要落进快照，因此成功后立即持久化。
+  func moveDivider(_ direction: SplitDirection) {
+    guard selectedTab?.moveDivider(direction) == true else { return }
+    persistWorkspace()
+  }
+
+  func equalizeSplits() {
+    guard selectedTab?.equalizeSplits() == true else { return }
+    persistWorkspace()
+  }
+
+  /// 面板拖放的统一入口；布局变化要落进快照，因此成功后立即持久化。
+  func swapPanes(_ first: UUID, _ second: UUID) {
+    guard selectedTab?.swapPanes(first, second) == true else { return }
+    persistWorkspace()
+  }
+
+  func movePane(_ paneID: UUID, nextTo targetID: UUID, direction: SplitDirection) {
+    guard selectedTab?.movePane(paneID, nextTo: targetID, direction: direction) == true else {
+      return
+    }
+    persistWorkspace()
+  }
+
+  /// 当前标签是否处于可分屏操作的状态，供菜单项启用状态判断。
+  var selectedTabHasSplits: Bool {
+    (selectedTab?.layout.allPanes.count ?? 0) > 1
   }
 
   func togglePalette() { isPalettePresented.toggle() }
@@ -521,8 +667,13 @@ final class AppModel: ObservableObject {
       .init(id: "new-tab", title: "新建标签页", keywords: ["new", "tab"]),
       .init(id: "open-file", title: "打开文件", keywords: ["edit", "file"]),
       .init(id: "open-folder", title: "打开文件夹", keywords: ["browser", "folder"]),
-      .init(id: "split-right", title: "向右分屏", keywords: ["pane", "split"]),
-      .init(id: "split-down", title: "向下分屏", keywords: ["pane", "split"]),
+      .init(id: "split-right", title: "向右拆分", keywords: ["pane", "split"]),
+      .init(id: "split-left", title: "向左拆分", keywords: ["pane", "split"]),
+      .init(id: "split-down", title: "向下拆分", keywords: ["pane", "split"]),
+      .init(id: "split-up", title: "向上拆分", keywords: ["pane", "split"]),
+      .init(id: "zoom-pane", title: "缩放拆分", keywords: ["zoom", "pane", "maximize"]),
+      .init(id: "equalize-splits", title: "等分拆分", keywords: ["pane", "split", "equal"]),
+      .init(id: "focus-next-pane", title: "聚焦下一个面板", keywords: ["pane", "focus"]),
       .init(id: "files", title: "新建文件浏览器", keywords: ["tree", "files"]),
       .init(id: "inspector", title: "切换详情面板", keywords: ["git", "info", "outline"]),
       .init(id: "save-recipe", title: "保存为 Recipe", keywords: ["workspace"]),
@@ -538,7 +689,12 @@ final class AppModel: ObservableObject {
     case "open-file": openFile()
     case "open-folder": openFolder()
     case "split-right": splitSelectedTab(.right)
+    case "split-left": splitSelectedTab(.left)
     case "split-down": splitSelectedTab(.down)
+    case "split-up": splitSelectedTab(.up)
+    case "zoom-pane": toggleZoomActivePane()
+    case "equalize-splits": equalizeSplits()
+    case "focus-next-pane": focusPane(forward: true)
     case "files":
       selectedTab?.openFileBrowser()
       persistWorkspace()

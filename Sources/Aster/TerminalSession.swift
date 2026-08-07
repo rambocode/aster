@@ -55,6 +55,81 @@ private final class TerminalRetirementCoordinator {
   }
 }
 
+/// SwiftTerm 视图子类：把设置里的光标形状当作唯一真值，屏蔽程序端的 DECSCUSR 改写。
+///
+/// Claude Code、vim、fzf 等 TUI 会主动发送 `CSI Ps SP q` 把光标改成方块或下划线；
+/// SwiftTerm 默认接受该请求并覆盖 `terminal.options.cursorStyle`（Metal 渲染路径直接
+/// 读这个值），用户在设置里选的竖条因此一进这些程序就失效。这里拦截样式变更回调，
+/// 只放行与配置一致的样式。
+final class AsterTerminalView: LocalProcessTerminalView {
+  /// 用户配置的光标形状；nil 表示配置尚未下发，此时保持 SwiftTerm 默认行为。
+  var preferredCursorStyle: SwiftTerm.CursorStyle? {
+    didSet { applyEffectiveCursorStyle() }
+  }
+  /// 窗口是否持有键盘焦点。非活动窗口停止光标闪烁（形状不变），与系统终端一致：
+  /// 同屏多个窗口时只有正在输入的那个在闪。SwiftTerm 的 `caretView.focused` 只切换
+  /// 实心/空心，闪烁完全由 `CursorStyle` 的 blink 变体决定，所以必须换样式。
+  private var isWindowActive = true
+
+  /// 实际下发给 SwiftTerm 的样式：窗口失焦时取同形状的不闪烁变体。
+  private var effectiveCursorStyle: SwiftTerm.CursorStyle? {
+    guard let preferredCursorStyle else { return nil }
+    return isWindowActive ? preferredCursorStyle : preferredCursorStyle.nonBlinking
+  }
+
+  func setWindowActive(_ active: Bool) {
+    guard isWindowActive != active else { return }
+    isWindowActive = active
+    applyEffectiveCursorStyle()
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    setWindowActive(window?.isKeyWindow ?? true)
+  }
+
+  /// 隐藏 SwiftTerm 的 overlay 滚动条。
+  ///
+  /// 它是一条 5.5pt 的灰色 `NSScroller`，贴在终端右边缘、随滚动闪现又消失，看起来
+  /// 像界面里多出来一块灰斑，还会盖住右侧文字。SwiftTerm 在 scroller 隐藏时会把
+  /// `reservedScrollerWidth` 归零，终端网格自动收回这几个点的宽度，不会留下空隙。
+  override func didAddSubview(_ subview: NSView) {
+    super.didAddSubview(subview)
+    if let scroller = subview as? NSScroller { scroller.isHidden = true }
+  }
+
+  override func cursorStyleChanged(source: Terminal, newStyle: SwiftTerm.CursorStyle) {
+    guard let effective = effectiveCursorStyle, newStyle != effective else {
+      super.cursorStyleChanged(source: source, newStyle: newStyle)
+      return
+    }
+    // `Terminal.setCursorStyle` 是「先回调、后写 options」的顺序，在回调内改 options
+    // 会被紧随其后的赋值覆盖，因此纠正必须排到本次调用返回之后再执行。
+    Task { @MainActor [weak self] in
+      self?.applyEffectiveCursorStyle()
+    }
+  }
+
+  /// 把终端选项与 caret 视图对齐到当前应生效的样式（同时触发 Metal 路径重绘）。
+  private func applyEffectiveCursorStyle() {
+    guard let style = effectiveCursorStyle else { return }
+    let terminal = getTerminal()
+    terminal.options.cursorStyle = style
+    super.cursorStyleChanged(source: terminal, newStyle: style)
+  }
+}
+
+extension SwiftTerm.CursorStyle {
+  /// 同一形状的不闪烁变体。
+  var nonBlinking: SwiftTerm.CursorStyle {
+    switch self {
+    case .blinkBlock, .steadyBlock: .steadyBlock
+    case .blinkUnderline, .steadyUnderline: .steadyUnderline
+    case .blinkBar, .steadyBar: .steadyBar
+    }
+  }
+}
+
 /// 一个由 SwiftTerm 完整 VT/xterm 网格承载的本地登录 Shell。
 ///
 /// Session 强持有 `LocalProcessTerminalView`，因此在标签切换或 AppKit 重排视图时，
@@ -82,7 +157,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var lastScreenHash = 0
   private var lastActivityAt = Date.distantPast
 
-  private var terminalView: LocalProcessTerminalView?
+  private var terminalView: AsterTerminalView?
   /// SwiftTerm 视图一旦启动就保持在同一个 AppKit 容器中。工作区刷新只移动该容器，
   /// 不直接反复把 Metal-backed 终端视图从 superview 拆下，避免分屏后网格停止绘制。
   private var terminalHostView: NSView?
@@ -106,7 +181,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       return terminalView
     }
 
-    let view = LocalProcessTerminalView(frame: .zero)
+    let view = AsterTerminalView(frame: .zero)
     view.processDelegate = self
     view.autoresizingMask = [.width, .height]
     view.allowMouseReporting = preferences.allowMouseReporting
@@ -262,6 +337,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     return reportedValue.removingPercentEncoding ?? reportedValue
   }
 
+  /// 同步窗口活动状态：非活动窗口停止光标闪烁。
+  func setWindowActive(_ active: Bool) {
+    terminalView?.setWindowActive(active)
+  }
+
   /// 停止当前 Shell。关闭 Pane 时先给予 750ms 正常退出窗口；应用即将终止时必须
   /// 立即结束进程组，因为主事件循环不会继续存活到延迟升级任务执行。
   func stop(immediately: Bool = false) {
@@ -279,7 +359,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     TerminalRetirementCoordinator.shared.retire(view, immediately: immediately)
   }
 
-  private func apply(preferences: AppPreferences, to view: LocalProcessTerminalView) {
+  private func apply(preferences: AppPreferences, to view: AsterTerminalView) {
     view.font = preferences.terminalFont
     view.nativeForegroundColor = preferences.terminalForegroundColor
     view.nativeBackgroundColor = preferences.terminalBackgroundColor
@@ -297,13 +377,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
           blue: UInt16($0.blue) * 257
         )
       })
-    let terminal = view.getTerminal()
     let cursorStyle = swiftTermCursorStyle(
       preferences.configuration.appearance.cursorStyle.rawValue,
       blinks: preferences.configuration.appearance.cursorBlink
     )
-    terminal.options.cursorStyle = cursorStyle
-    view.cursorStyleChanged(source: terminal, newStyle: cursorStyle)
+    // 设置配置值即完成下发：`preferredCursorStyle` 的 didSet 会按窗口活动状态算出
+    // 实际样式（失焦时取不闪烁变体），再同步 terminal 选项与 caret 视图。
+    view.preferredCursorStyle = cursorStyle
     view.needsDisplay = true
   }
 

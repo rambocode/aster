@@ -41,7 +41,7 @@ open dist/Aster.app
 2. `TerminalSession` 强持有唯一 `LocalProcessTerminalView`；AppKit 布局重建/标签切换**不得重启 PTY**。Session 生命周期内有稳定的终端容器视图，刷新只重新安放外层容器。
 3. 递归 Pane 树用 `PersistedSplitView`（原生 `NSSplitView`）渲染，只在用户拖动分隔线时把 `0.05...0.95` 的比例写回快照。
 4. 主题色只能经由 `ThemeRuntime` 的动态 `NSColor` 和 `ThemeVisualEffectView` 进入视图，**不要在视图里散落固定色值**。
-5. Pane 容器需要显式尺寸约束；`NSStackView` 的固有宽度推断会把 SwiftTerm 网格压成 0 宽。设置页滚动文档用 `FlippedDocumentView`（左上原点）从 `NSClipView` 顶部锚定，内部放标准 `NSStackView`——不要直接翻转 StackView，AppKit 会同时反转 arrangedSubviews 的垂直排布。
+5. Pane 容器在**宽和高两个方向**都需要必需尺寸约束。`NSStackView` 的固有尺寸推断会把 SwiftTerm 网格压成 0：`NSSplitView` 给每个子面板加了 `PreferredSize/FallbackSize`（`== 0 @250`）回退约束，缺高度约束时上下分屏会把整个内容区塌成一条分隔条。约束链是「内容区绑定外层 stack 宽高 → wrapper 钉 stack 底边 → 状态栏钉 inner 底边 → Pane 区填充剩余」。设置页滚动文档用 `FlippedDocumentView`（左上原点）从 `NSClipView` 顶部锚定，内部放标准 `NSStackView`——不要直接翻转 StackView，AppKit 会同时反转 arrangedSubviews 的垂直排布。
 
 ### 进程关闭语义
 

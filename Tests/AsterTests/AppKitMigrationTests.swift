@@ -1,5 +1,6 @@
 import AppKit
 import AsterCore
+import SwiftTerm
 import Testing
 
 @testable import Aster
@@ -63,8 +64,44 @@ func verticalSidebarUsesFullWidthRows() throws {
   #expect((tabButtons.first?.frame.width ?? 0) >= 210)
   #expect(tabButtons.first?.enclosingScrollView == nil)
   #expect(controller.view.descendants.contains { $0 is NSProgressIndicator } == false)
-  #expect(controller.view.descendants.compactMap { ($0 as? NSButton)?.toolTip }.contains("新建标签页") == false)
+  // 悬停动作区：「+ 新建 / 折叠」按钮放在侧栏顶部右侧，默认隐藏，鼠标进入侧栏
+  // 才淡入（2026-08 设计变更，替代旧的「标签栏不含按钮」断言）。
+  let hoverButtons = controller.view.descendants.compactMap { $0 as? NSButton }.filter {
+    $0.toolTip == "新建标签页" || ($0.toolTip ?? "").hasPrefix("折叠标签栏")
+  }
+  #expect(hoverButtons.count == 2)
+  #expect(hoverButtons.allSatisfy { $0.superview?.isHidden == true && $0.superview?.alphaValue == 0 })
   #expect(controller.view.descendants.compactMap { ($0 as? NSTextField)?.stringValue }.contains { $0.contains("LOCAL") } == false)
+}
+
+@Test("折叠标签栏后顶部提供悬停恢复入口")
+@MainActor
+func collapsedTabBarOffersHoverRecovery() throws {
+  let defaults = isolatedDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  // 折叠标签栏：内容区顶部应叠加「+ 新建 / 展开」悬停动作区与点击穿透的悬停带。
+  preferences.configuration.appearance.showTabBar = false
+  model.ensureInitialTab()
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let buttons = controller.view.descendants.compactMap { $0 as? NSButton }
+  let addButton = try #require(buttons.first { $0.toolTip == "新建标签页" })
+  let expandButton = try #require(buttons.first { $0.toolTip == "展开标签栏" })
+  // 默认隐藏（悬停才淡入）；按钮行必须让开红绿灯遮挡区（实测约 103pt）。
+  let row = try #require(addButton.superview)
+  #expect(row.isHidden && row.alphaValue == 0)
+  #expect(row.superview === expandButton.superview?.superview)
+  #expect(row.frame.minX >= 104)
+  // 悬停带点击穿透：不拦截下方终端的点击与拖选。
+  let strip = controller.view.descendants.first {
+    String(describing: type(of: $0)).contains("ClickThroughStripView")
+  }
+  #expect(strip != nil)
+  #expect(strip?.hitTest(.zero) == nil)
 }
 
 @Test("工作区标题栏紧凑显示目录且不包含额外工具按钮")
@@ -83,14 +120,15 @@ func workspaceTitlebarMatchesOttyChrome() throws {
     $0.identifier?.rawValue == "workspace-titlebar"
   }
   let titlebarMaterial = titlebar as? NSVisualEffectView
-  let actionButtons = controller.view.descendants.filter {
+  // 标题区本身保持纯净（无按钮）；侧栏顶部的悬停动作按钮不属于标题区，不参与断言。
+  let titlebarButtons = (titlebar?.descendants ?? []).filter {
     String(describing: type(of: $0)).contains("ActionButton")
   }
   let labels = controller.view.descendants.compactMap { ($0 as? NSTextField)?.stringValue }
   #expect(titlebar != nil)
   #expect(abs((titlebar?.frame.height ?? 0) - 28) < 0.5)
   #expect(titlebarMaterial?.blendingMode == .withinWindow)
-  #expect(actionButtons.isEmpty)
+  #expect(titlebarButtons.isEmpty)
   #expect(labels.contains("~"))
 }
 
@@ -295,6 +333,35 @@ func settingsLayoutUsesTopAnchoredFullWidthRows() throws {
   #expect(firstCard.arrangedSubviews.allSatisfy { $0.frame.height > 1 })
 }
 
+@Test("设置页所有分类的卡片保持左右边距且占满内容宽度")
+@MainActor
+func settingsCardsKeepHorizontalInsetsAcrossSections() throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = SettingsViewController(preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 700, height: 460))
+
+  // 回归锁：长说明文字的单行固有宽度可能超过内容区可用宽度，NSStackView 的
+  // .width 对齐 + edgeInsets 会把这种卡片丢到 x=0、宽度异常（系统集成卡片曾
+  // 因此贴到内容区左边缘）。修复 = 对卡片施加显式 required 边距约束。
+  for section in SettingsViewController.Section.allCases {
+    controller.showSection(section)
+    window.contentView?.layoutSubtreeIfNeeded()
+    let scroll = try #require(controller.view.descendants.compactMap { $0 as? NSScrollView }.first)
+    let content = try #require(scroll.documentView?.subviews.first as? NSStackView)
+    let expectedWidth = content.frame.width - content.edgeInsets.left - content.edgeInsets.right
+    let cards = content.arrangedSubviews.filter {
+      $0 is NSStackView
+        && abs(($0.layer?.cornerRadius ?? 0) - SettingsMetrics.cardCornerRadius) < 0.1
+    }
+    #expect(!cards.isEmpty)
+    for card in cards {
+      #expect(abs(card.frame.minX - content.edgeInsets.left) < 0.5, "\(section.rawValue) 页卡片左边距异常：\(card.frame)")
+      #expect(abs(card.frame.width - expectedWidth) < 0.5, "\(section.rawValue) 页卡片宽度异常：\(card.frame)")
+    }
+  }
+}
+
 @Test("设置分类页由真实可交互控件构成而非只读文字")
 @MainActor
 func settingsSectionsExposeInteractiveControls() throws {
@@ -399,6 +466,27 @@ private func makeNonTerminalTestModel(
   let model = AppModel(defaults: defaults)
   model.ensureInitialTab()
   return model
+}
+
+/// 覆盖 Claude Code / vim 等 TUI 发送 `CSI Ps SP q` 的场景：用户配置过形状后，
+/// 程序端请求必须被丢弃；未配置时仍保持 SwiftTerm 的默认（跟随程序）行为。
+@Test("程序端 DECSCUSR 请求不会覆盖用户配置的光标形状")
+@MainActor
+func programmaticCursorStyleDoesNotOverrideConfiguration() async throws {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 240))
+  let terminal = view.getTerminal()
+
+  view.preferredCursorStyle = .steadyBar
+  terminal.options.cursorStyle = .steadyBar
+  terminal.setCursorStyle(.blinkBlock)
+  // 纠正被排到回调之后执行，断言前必须让主 actor 跑完那个任务。
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(terminal.options.cursorStyle == .steadyBar)
+
+  view.preferredCursorStyle = nil
+  terminal.setCursorStyle(.blinkUnderline)
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(terminal.options.cursorStyle == .blinkUnderline)
 }
 
 @MainActor

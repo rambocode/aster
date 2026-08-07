@@ -215,6 +215,169 @@ public indirect enum PaneLayout: Codable, Equatable, Sendable {
   }
 }
 
+/// 分屏树的导航与几何操作。这些方法是「聚焦面板」「移动分隔条」「等分拆分」
+/// 三组菜单命令的唯一真值来源：全部是纯函数，不依赖 AppKit 的实际帧尺寸，
+/// 因此可以在 `AsterCore` 直接测试。
+extension PaneLayout {
+  /// 定位叶节点在树中的子节点索引路径（`0` 进入第一个子节点，`1` 进入第二个）。
+  /// 返回空数组表示当前节点本身就是目标叶；找不到返回 nil。
+  public func path(toPane paneID: UUID) -> [Int]? {
+    switch self {
+    case .leaf(let pane):
+      return pane.id == paneID ? [] : nil
+    case .split(_, let first, let second, _):
+      if let sub = first.path(toPane: paneID) { return [0] + sub }
+      if let sub = second.path(toPane: paneID) { return [1] + sub }
+      return nil
+    }
+  }
+
+  /// 读取路径指向的子树；路径越界或走进叶节点内部时返回 nil。
+  public func node(at path: [Int]) -> PaneLayout? {
+    guard let next = path.first else { return self }
+    guard case .split(_, let first, let second, _) = self else { return nil }
+    let remaining = Array(path.dropFirst())
+    switch next {
+    case 0: return first.node(at: remaining)
+    case 1: return second.node(at: remaining)
+    default: return nil
+    }
+  }
+
+  /// 路径指向的分屏当前比例；路径不是分屏节点时返回 nil。
+  public func splitRatio(at path: [Int]) -> Double? {
+    guard let node = node(at: path), case .split(_, _, _, let ratio) = node else { return nil }
+    return ratio
+  }
+
+  /// 把整棵树的所有分屏比例恢复为等分，Pane 身份与树形结构保持不变。
+  public func equalizingRatios() -> PaneLayout {
+    switch self {
+    case .leaf:
+      return self
+    case .split(let axis, let first, let second, _):
+      return .split(
+        axis: axis,
+        first: first.equalizingRatios(),
+        second: second.equalizingRatios(),
+        ratio: 0.5
+      )
+    }
+  }
+
+  /// 按方向查找相邻面板，用于「聚焦上/下/左/右面板」。
+  ///
+  /// 采用树式导航而非屏幕坐标：从目标叶自底向上找第一个「轴向匹配、且目标叶位于
+  /// 移动方向来源侧」的祖先分屏，再进入对侧子树取靠近分隔条的那一片叶。屏幕坐标法
+  /// 需要真实帧尺寸，无法在领域层求值，也会在窗口尚未布局时给出错误结果。
+  public func adjacentPaneID(from paneID: UUID, direction: SplitDirection) -> UUID? {
+    guard var path = path(toPane: paneID) else { return nil }
+    let wantedAxis: SplitAxis = direction.isHorizontal ? .horizontal : .vertical
+    // 向右/向下是「从第一个子节点走向第二个」，向左/向上相反。
+    let forward = direction == .right || direction == .down
+
+    while let branch = path.last {
+      path.removeLast()
+      guard let parent = node(at: path),
+        case .split(let axis, let first, let second, _) = parent
+      else { return nil }
+      if axis == wantedAxis, branch == (forward ? 0 : 1) {
+        let target = forward ? second : first
+        return target.edgePaneID(alongAxis: wantedAxis, takeFirst: forward)
+      }
+    }
+    return nil
+  }
+
+  /// 距离目标叶最近、且轴向匹配的祖先分屏路径，用于移动分隔条。
+  /// 没有该方向的分隔条时返回 nil（例如只做过左右拆分却要求上移分隔条）。
+  public func nearestSplitPath(fromPane paneID: UUID, axis: SplitAxis) -> [Int]? {
+    guard var path = path(toPane: paneID) else { return nil }
+    while !path.isEmpty {
+      path.removeLast()
+      if let node = node(at: path), node.axis == axis { return path }
+    }
+    return nil
+  }
+
+  /// 关闭某个叶节点后应当接管焦点的面板：它的兄弟子树中最靠近它的一片叶。
+  /// 关闭后统一回到第一个 Pane 会让焦点在多层分屏里发生远距离跳跃。
+  public func neighborPaneID(ofPane paneID: UUID) -> UUID? {
+    guard var path = path(toPane: paneID), let branch = path.last else { return nil }
+    path.removeLast()
+    guard let parent = node(at: path),
+      case .split(let axis, let first, let second, _) = parent
+    else { return nil }
+    let sibling = branch == 0 ? second : first
+    // 被删叶在第一侧时，兄弟里最靠近的是它的「第一片」叶，反之取最后一片。
+    return sibling.edgePaneID(alongAxis: axis, takeFirst: branch == 0)
+  }
+
+  /// 读取指定叶的描述符；面板不存在时返回 nil。
+  public func descriptor(forPane paneID: UUID) -> PaneDescriptor? {
+    allPanes.first { $0.id == paneID }
+  }
+
+  /// 交换两个面板的位置，分屏结构与所有比例保持不变（拖放到面板中心的语义）。
+  /// 交换的是描述符而不是子树，因此两个面板的运行态（PTY、编辑缓冲）都不受影响。
+  public func swappingPanes(_ first: UUID, _ second: UUID) -> PaneLayout {
+    guard first != second,
+      let firstPane = descriptor(forPane: first),
+      let secondPane = descriptor(forPane: second)
+    else { return self }
+    return mappingLeaves { pane in
+      if pane.id == first { return secondPane }
+      if pane.id == second { return firstPane }
+      return pane
+    }
+  }
+
+  /// 把面板移动到目标面板的指定一侧（拖放到面板边缘的语义）。
+  ///
+  /// 先摘除再插入：摘除会自动提升被移动面板的兄弟节点，因此不会留下空容器，
+  /// 目标面板在摘除后仍存在才继续。面板 ID 全程不变，运行态跟着一起搬。
+  public func movingPane(
+    _ paneID: UUID,
+    nextTo targetID: UUID,
+    direction: SplitDirection
+  ) -> PaneLayout? {
+    guard paneID != targetID, let moved = descriptor(forPane: paneID) else { return nil }
+    guard let remaining = removing(paneID: paneID), remaining.path(toPane: targetID) != nil else {
+      return nil
+    }
+    return remaining.splitting(paneID: targetID, direction: direction, with: moved)
+  }
+
+  /// 对每个叶节点应用变换，保持树形结构与比例不变。
+  private func mappingLeaves(_ transform: (PaneDescriptor) -> PaneDescriptor) -> PaneLayout {
+    switch self {
+    case .leaf(let pane):
+      return .leaf(transform(pane))
+    case .split(let axis, let first, let second, let ratio):
+      return .split(
+        axis: axis,
+        first: first.mappingLeaves(transform),
+        second: second.mappingLeaves(transform),
+        ratio: ratio
+      )
+    }
+  }
+
+  /// 沿指定轴取子树边缘的叶：`takeFirst` 为真取靠前一侧，否则取靠后一侧。
+  /// 与导航轴垂直的分屏无法决定远近，统一取第一个子节点保持结果稳定。
+  private func edgePaneID(alongAxis axis: SplitAxis, takeFirst: Bool) -> UUID? {
+    switch self {
+    case .leaf(let pane):
+      return pane.id
+    case .split(let nodeAxis, let first, let second, _):
+      guard nodeAxis == axis else {
+        return first.edgePaneID(alongAxis: axis, takeFirst: takeFirst)
+      }
+      return (takeFirst ? first : second).edgePaneID(alongAxis: axis, takeFirst: takeFirst)
+    }
+  }
+}
+
 public enum RecipeReplayMode: String, CaseIterable, Codable, Equatable, Sendable {
   case automatic
   case confirmOnce

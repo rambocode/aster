@@ -59,6 +59,8 @@
 - 交互：全量重建 `refresh()` 增加按分类的滚动位置保存/恢复，控件改动不再跳回顶部。
 - 修复：内容区分组标题曾被内容栈按固有宽度靠右放置（跑到卡片右上角），压低水平 hugging 后恢复整行左对齐；`NSColor.controlAccentColor` 两处替换为 `AsterTheme.accent`，遵守主题色只经由 `ThemeRuntime` 的规则。
 - 测试：布局测试改在内容滚动区内定位分组标题（侧栏按钮内部文本会干扰），卡片圆角断言引用 `SettingsMetrics`；新增「分类页由真实控件构成」与「新接线字段持久化 + normalized 钳制」两个测试。`swift test --no-parallel` 60 项全部通过。
+- 追记（2026-08-07）：分组卡片底色从 `AsterTheme.panel`（surface）改为新增的 `settingsCard` 角色 —— Ayu 等多数主题的 surface 与窗口背景几乎相同（#FFFFFF / #FCFCFC），卡片「看不见」。`settingsCard` 以窗口背景为底向界面主文字色轻混 4%，浅色主题得到浅灰卡片、深色主题卡片略微提亮，内容画布保持窗口底色（用户确认目标效果是白底 + 灰卡片，初版灰画布 + 白卡片做反了已反转）。主题真值表未动，`swift test --no-parallel` 61 项全部通过，实机截图验收符合参考图。
+- 追记二（2026-08-07）：修复「通用」页系统集成卡片丢失左侧 inset、贴到内容区左边缘的问题。根因 = 行内长说明文字不换行时的单行固有宽度（约 650pt）超过内容区可用宽度（448pt），NSStackView 的 `.width` 对齐 + `edgeInsets` 对这类 arranged subview 的分配不可靠（实测被放到 x=0、宽 474；压缩阻力从 750 逐级降到 250 均无效）。修复：`card()` 打 `settings.card` 标记，`makeContentScroll` 对标题与卡片施加显式 required 的 leading/trailing 约束（= 栈边 ±26pt），行内 labels 栈显式压低水平压缩阻力让说明文字换行吸收超宽压力。同一机制还修复了「外观」页光标卡片窄缩（357.5pt）的隐性偏差。新增回归测试「设置页所有分类的卡片保持左右边距且占满内容宽度」逐页断言。
 
 ## 0.4.x 侧栏标签运行态与系统集成（2026-08）
 
@@ -69,5 +71,6 @@
 - P1：右侧内容区被套上 panel 色（April 主题下 #F4F6F4 灰绿），与白色终端画布割裂。根因 = 容器背景解析回退顺序 `container ?? panel ?? background` 错借 panel；改为 `container ?? background`（与终端画布连续、透明保持透明），与主题缩略卡的绘制规则及 Otty 参考截图一致。主题真值签名（fg/bg/ANSI）不受影响，测试全绿。
 - P1：切换标签时原标签名字变化（选中显示完整路径 / 未选中显示短名两个字段）。统一为始终显示 `tab.title`（目录稳定显示名，主目录 `~`），OSC 7 改名只在真正变化时写回。
 - 通用页新增「系统集成」组：设为 ssh:// 默认终端、安装 `aster` CLI、Finder「在 Aster 中打开」服务（Info.plist NSServices + servicesProvider）、完全磁盘访问设置入口；ssh 链接与 Finder/CLI 目录统一走 `handleOpenURL`，ssh 命令只预填不自动执行。「为常用应用设为默认终端」（改写第三方应用配置）未实现。
+- 追记（2026-08-07）：垂直侧栏新增悬停动作区 —— 鼠标进入侧栏时 header 顶部右侧（与红绿灯同一水平线）淡入「+ 新建标签页 / 折叠标签栏」无边框按钮，离开淡出；折叠写入既有 `appearance.showTabBar` 配置。折叠态在内容区顶部叠加点击穿透悬停带（`ClickThroughStripView.hitTest = nil`），鼠标进入窗口顶部淡入「+ / 展开标签栏」，按钮行是悬停带的兄弟视图（否则点击穿透吞掉按钮点击），leading 让开红绿灯遮挡区（实测约 103pt）。「显示」菜单新增「显示/隐藏标签栏」共用同一开关。旧的「垂直标签栏不含按钮」「标题区无 ActionButton」断言按新设计更新：标题区仍保持纯净，悬停按钮属侧栏/折叠态覆盖层。新增「折叠标签栏后顶部提供悬停恢复入口」回归测试。`swift test --no-parallel` 75 项全部通过；实机视觉验收（侧栏态 hover 截图与参考图一致）由用户完成。
 
 final result: passed
