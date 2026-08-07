@@ -9,6 +9,39 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 - **待审计**：尚未逐段提炼规则与失败语义。
 - **部分**：已存在一个或多个子能力，仍有明确缺口。
 - **完成**：逐项代码证据、功能测试和用户文档齐全。
+- **上游开发中**：Otty 页面只描述方向、没有稳定行为契约；记录现状但不臆造功能。
+
+## 需求基线
+
+以下条目来自 2026-08-08 对四个栏目 41 个页面的逐页读取，是后续实现与测试的验收边界。
+
+### User Interface
+
+- **Window / Tab / Split**：OSC 0/1/2 标题与覆盖、窗口尺寸模式/置顶/PiP、标签布局/分组/排序/分隔线/自动隐藏/徽标、新标签位置、分屏创建/移动/交换/等分/聚焦、关闭确认与最近关闭、Recipe 捕获。
+- **Details / Outline**：详情跟随聚焦 Pane；Info 显示目录、进程、监听端口和打开动作；Outline 索引命令/Agent Prompt/文件结构；Git 显示仓库与变更；Files 显示以 CWD 为根的树。
+- **Files / Links / Drag**：识别绝对、tilde、相对、行列路径、URL 与 OSC 8；安全打开、预览、复制、Finder、`cd`；支持文件/目录/URL/文本、标签和 Pane 的拖放落点语义。
+- **Find / Open Quickly / Command Palette**：Pane 内实时查找、大小写/正则/范围与全局结果；Open Quickly 的 All/Opened/Recent/Folders/SSH/Agents/Current/Recipes 过滤器；命令面板覆盖全部带 Pane/Window/App scope 的动作。
+- **Status Bar**：上游仅标记 Planned，不据此新增行为。
+
+### Workflows
+
+- **Recipes**：tab/window/commands scope，layout/commands/scrollback 内容级别，可移植路径，内部保存和 TOML 导入导出，来源区分、SHA-256 信任与命令 replay 策略。
+- **Recovery**：pane/tab/window 最近关闭 LIFO；正常退出、崩溃、更新三类启动恢复；可选 tmux/Agent/进程恢复与命令白名单。
+- **Frequent Folders / CLI**：目录自动学习、忽略、frecency 衰减和排名；`open/view/edit/watch/jump/learn/ignore`、Pane send/run/exec/capture、深链与 shell wrapper/alias。
+- **Data Sync / SSH Remote**：Data Sync 与深度 SSH 开发均标记 In Development；只验收页面明确声称已存在的配置目录备份建议和基础 SSH 会话，不实现未定义方向。
+
+### Terminal Features
+
+- **交互**：cursor shape/blink policy、鼠标捕获和 bypass；字符/行/矩形选择；首尾 overscroll 与 smooth scroll；原生编辑键、IME、Kitty/modifyOtherKeys、Secure Input；复制清理、paste protection、paste-as 与 OSC 52 权限。
+- **文本与媒体**：离线 autocomplete 与隐私过滤；完整 Unicode/emoji/样式、BiDi 逻辑顺序、box drawing；iTerm2/Kitty/Sixel 图片协议。
+- **状态与模式**：OSC 9;4 进度、badge/Dock；OSC 9/99/777 通知、BEL 与权限；Vi、Hint、Read-only 三种 Pane 模式及其交互边界。
+- **Shell / Identification**：zsh/bash/fish OSC 133/7 集成及安全安装卸载；`TERM`/`COLORTERM`/`TERM_PROGRAM`/`OTTY_PANE_ID`、DA1/DA2/XTVERSION/DSR 与 terminfo。
+
+### Working with Agents
+
+- **接入与状态**：以最小增量安装 Claude、Codex、OpenCode、Cursor、Kimi、Pi、omp hook/plugin；上报 processing/idle/awaiting，驱动 badge、通知、防睡与恢复。
+- **历史与分支**：识别各 Agent 的会话文件，渲染 transcript，搜索/resume；在 split/tab/window 中使用原生命令 fork/branch，保留 provider/model/system prompt。
+- **输入工作流**：Composer 多行编辑、草稿、富粘贴、pin/float；Prompt Queue 在空闲 Prompt 串行派发；Send to Chat 把终端/文件上下文送入现有或新 Agent 会话。
 
 ## 页面清单
 
