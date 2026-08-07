@@ -79,6 +79,8 @@ final class AsterTerminalView: LocalProcessTerminalView {
   var copyOnSelect = false
   var trimTrailingSpacesOnCopy = false
   var clearSelectionOnCopy = false
+  /// Otty 默认由 Shift+Arrow 驱动原生选区；关闭时菜单快捷键失效，事件回到 TUI。
+  var shiftArrowSelectionEnabled = true
   var pasteProtectionEnabled = true
   var pasteBracketedSafe = true
   /// Composer 在对应 Agent 批次接入；存在回调时“粘贴并在 Composer 中继续”可用。
@@ -88,6 +90,9 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// PTY termios 变化没有独立通知；输出到达和用户输入发送前都触发一次同步，既让
   /// 密码提示出现时立即保护，也保证首个按键写入 PTY 前已完成最终检查。
   var onTerminalIO: (() -> Void)?
+  /// 观察终端编码后即将写入 PTY 的输入；功能测试用它证明原生选择不会泄漏鼠标报告。
+  /// 回调只接收瞬时字节且不持久化，生产路径默认 nil。
+  var onEncodedInput: ((ArraySlice<UInt8>) -> Void)?
 
   /// 用户配置的光标形状；nil 表示配置尚未下发，此时保持 SwiftTerm 默认行为。
   var preferredCursorStyle: SwiftTerm.CursorStyle? {
@@ -121,7 +126,12 @@ final class AsterTerminalView: LocalProcessTerminalView {
     // 标题事件。重放排在 SwiftTerm 错误、缺失或提前入队的 macOS delegate 回调之后，
     // 因此工作区最终状态既符合协议语义，也保留恢复后紧随的新 OSC 更新。
     let safeBytes = oscStreamLimiter.consume(slice)
-    if !safeBytes.isEmpty { super.dataReceived(slice: safeBytes[...]) }
+    if !safeBytes.isEmpty {
+      super.dataReceived(slice: safeBytes[...])
+      // Otty 的滚动语义：任何新输出都回到底部；用户输入则由 SwiftTerm 的 send 路径
+      // 同步复位。alternate screen 没有 scrollback，此调用只清理可能残留的视觉偏移。
+      scrollToBottom()
+    }
     for update in titleStackObserver.consume(safeBytes) {
       onObservedTitleUpdate?(update.code, update.title)
     }
@@ -129,6 +139,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
 
   override func send(source: TerminalView, data: ArraySlice<UInt8>) {
     onTerminalIO?()
+    onEncodedInput?(data)
     super.send(source: source, data: data)
   }
 
@@ -237,6 +248,56 @@ final class AsterTerminalView: LocalProcessTerminalView {
 
   @objc func deletePromptWordRight(_ sender: Any?) {
     _ = sendNaturalEditing(.deleteWordRight)
+  }
+
+  @objc func extendSelectionLeft(_ sender: Any?) {
+    _ = extendSelection(.left)
+  }
+
+  @objc func extendSelectionRight(_ sender: Any?) {
+    _ = extendSelection(.right)
+  }
+
+  @objc func extendSelectionUp(_ sender: Any?) {
+    _ = extendSelection(.up)
+  }
+
+  @objc func extendSelectionDown(_ sender: Any?) {
+    _ = extendSelection(.down)
+  }
+
+  @objc func extendRectangularSelectionLeft(_ sender: Any?) {
+    _ = extendSelection(.left, rectangular: true)
+  }
+
+  @objc func extendRectangularSelectionRight(_ sender: Any?) {
+    _ = extendSelection(.right, rectangular: true)
+  }
+
+  @objc func extendRectangularSelectionUp(_ sender: Any?) {
+    _ = extendSelection(.up, rectangular: true)
+  }
+
+  @objc func extendRectangularSelectionDown(_ sender: Any?) {
+    _ = extendSelection(.down, rectangular: true)
+  }
+
+  /// Shift+Page Up/Down 与 Shift+Home/End 通过原生菜单进入这些 responder 动作。
+  /// 普通屏移动 scrollback；alternate screen 的分页仍由 SwiftTerm 发给前台 TUI。
+  @objc func scrollTerminalPageUp(_ sender: Any?) {
+    pageUp()
+  }
+
+  @objc func scrollTerminalPageDown(_ sender: Any?) {
+    pageDown()
+  }
+
+  @objc func scrollTerminalToTop(_ sender: Any?) {
+    scrollToTop()
+  }
+
+  @objc func scrollTerminalToBottom(_ sender: Any?) {
+    scrollToBottom()
   }
 
   /// 当前尚不能安全判断任意鼠标选区是否属于可编辑提示符；Cut 因而始终执行其无损
@@ -349,6 +410,15 @@ final class AsterTerminalView: LocalProcessTerminalView {
         isAlternateScreen: getTerminal().isCurrentBufferAlternate,
         hasEnhancedKeyboardProtocol: !getTerminal().keyboardEnhancementFlags.isEmpty
       )
+    case #selector(extendSelectionLeft(_:)), #selector(extendSelectionRight(_:)),
+      #selector(extendSelectionUp(_:)), #selector(extendSelectionDown(_:)),
+      #selector(extendRectangularSelectionLeft(_:)),
+      #selector(extendRectangularSelectionRight(_:)),
+      #selector(extendRectangularSelectionUp(_:)), #selector(extendRectangularSelectionDown(_:)):
+      return shiftArrowSelectionEnabled
+    case #selector(scrollTerminalPageUp(_:)), #selector(scrollTerminalPageDown(_:)),
+      #selector(scrollTerminalToTop(_:)), #selector(scrollTerminalToBottom(_:)):
+      return true
     case #selector(cut(_:)):
       return selectionActive
     case #selector(pasteSelection(_:)):
@@ -387,6 +457,25 @@ final class AsterTerminalView: LocalProcessTerminalView {
     let bytes = TerminalInputEncoder.encode(action)
     send(data: bytes[...])
     return true
+  }
+
+  /// 将领域层的可持久化枚举映射到 vendored SwiftTerm 的运行时滚动模式。
+  /// 映射集中在 AppKit 边界，AsterCore 不依赖终端渲染实现。
+  func applyScrollConfiguration(_ controls: ControlConfiguration) {
+    smoothScrollEnabled = controls.smoothScrolling
+    switch controls.resolvedScrollPastLastLine {
+    case .disabled: scrollPastLastLineMode = .disabled
+    case .lastLineWithContent: scrollPastLastLineMode = .lastLineWithContent
+    case .lastLineInMiddle: scrollPastLastLineMode = .lastLineInMiddle
+    case .cursorLine: scrollPastLastLineMode = .cursorLine
+    }
+    switch controls.resolvedScrollPastFirstLine {
+    case .disabled: scrollPastFirstLineMode = .disabled
+    case .sameAsLastLine: scrollPastFirstLineMode = .sameAsLastLine
+    case .firstLineWithContent: scrollPastFirstLineMode = .firstLineWithContent
+    case .firstLineInMiddle: scrollPastFirstLineMode = .firstLineInMiddle
+    }
+    reconcileScrollConfiguration()
   }
 
   private func copyCurrentSelection(clearAfterCopy: Bool) {
@@ -816,22 +905,24 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   /// 将命令直接写入活动 PTY，供 Recipe、命令面板和自动化入口使用。
   func send(_ command: String) {
-    guard let process = terminalView?.process, process.running else { return }
+    guard let terminalView, terminalView.process.running else { return }
     let bytes = Array((command + "\n").utf8)
-    process.send(data: bytes[...])
+    // Recipe 和命令面板也是用户输入入口；必须经过视图才能应用清选区、回到底部、
+    // 输入活跃度和安全键盘采样，不能直接绕过到 LocalProcess。
+    terminalView.send(data: bytes[...])
   }
 
   /// 把文本原样写入 PTY（不带回车）：用于把命令预填到提示符，执行与否由用户确认。
   func typeText(_ text: String) {
-    guard let process = terminalView?.process, process.running else { return }
+    guard let terminalView, terminalView.process.running else { return }
     let bytes = Array(text.utf8)
-    process.send(data: bytes[...])
+    terminalView.send(data: bytes[...])
   }
 
   func interrupt() {
-    guard let process = terminalView?.process, process.running else { return }
+    guard let terminalView, terminalView.process.running else { return }
     let controlC = [UInt8(3)]
-    process.send(data: controlC[...])
+    terminalView.send(data: controlC[...])
   }
 
   func focus() {
@@ -918,7 +1009,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.linkSchemePolicy = preferences.configuration.controls.resolvedLinkSchemePolicy
     view.copyOnSelect = preferences.configuration.controls.copyOnSelect
     view.trimTrailingSpacesOnCopy = preferences.configuration.controls.trimTrailingSpaces
+    view.shiftArrowSelectionEnabled =
+      preferences.configuration.controls.resolvedShiftArrowSelection
+    view.clearSelectionOnTyping =
+      preferences.configuration.controls.resolvedClearSelectionOnTyping
     view.clearSelectionOnCopy = preferences.configuration.controls.resolvedClearSelectionOnCopy
+    view.applyScrollConfiguration(preferences.configuration.controls)
     view.pasteProtectionEnabled = preferences.configuration.controls.pasteProtection
     view.pasteBracketedSafe = preferences.configuration.controls.resolvedPasteBracketedSafe
     automaticSecureInputEnabled = preferences.configuration.controls.secureInputAutomatically

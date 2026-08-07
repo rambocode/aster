@@ -299,19 +299,19 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(
       responderMenuItem(
         "移到行首", #selector(AsterTerminalView.movePromptToBeginningOfLine(_:)),
-        Self.arrowKey(NSLeftArrowFunctionKey), modifiers: [.command]))
+        Self.functionKey(NSLeftArrowFunctionKey), modifiers: [.command]))
     submenu.addItem(
       responderMenuItem(
         "移到行尾", #selector(AsterTerminalView.movePromptToEndOfLine(_:)),
-        Self.arrowKey(NSRightArrowFunctionKey), modifiers: [.command]))
+        Self.functionKey(NSRightArrowFunctionKey), modifiers: [.command]))
     submenu.addItem(
       responderMenuItem(
         "向左移动一个词", #selector(AsterTerminalView.movePromptWordLeft(_:)),
-        Self.arrowKey(NSLeftArrowFunctionKey), modifiers: [.option]))
+        Self.functionKey(NSLeftArrowFunctionKey), modifiers: [.option]))
     submenu.addItem(
       responderMenuItem(
         "向右移动一个词", #selector(AsterTerminalView.movePromptWordRight(_:)),
-        Self.arrowKey(NSRightArrowFunctionKey), modifiers: [.option]))
+        Self.functionKey(NSRightArrowFunctionKey), modifiers: [.option]))
     submenu.addItem(.separator())
     submenu.addItem(
       responderMenuItem(
@@ -320,7 +320,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(
       responderMenuItem(
         "删除到行尾", #selector(AsterTerminalView.deletePromptToEndOfLine(_:)),
-        Self.arrowKey(NSDeleteFunctionKey), modifiers: [.command]))
+        Self.functionKey(NSDeleteFunctionKey), modifiers: [.command]))
     submenu.addItem(
       responderMenuItem(
         "删除左侧词", #selector(AsterTerminalView.deletePromptWordLeft(_:)),
@@ -328,7 +328,36 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(
       responderMenuItem(
         "删除右侧词", #selector(AsterTerminalView.deletePromptWordRight(_:)),
-        Self.arrowKey(NSDeleteFunctionKey), modifiers: [.option]))
+        Self.functionKey(NSDeleteFunctionKey), modifiers: [.option]))
+    submenu.addItem(.separator())
+    submenu.addItem(selectionMenuItem())
+    item.submenu = submenu
+    return item
+  }
+
+  /// Shift+Arrow 默认进入原生终端选区；Option 版本保持矩形列。没有注册 Command
+  /// 组合，因此 Shift+Command+Arrow 会继续原样交给终端程序。
+  func selectionMenuItem() -> NSMenuItem {
+    let item = NSMenuItem(title: "扩展选区", action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: "扩展选区")
+    let directions: [(String, Selector, Selector, Int)] = [
+      ("向左扩展", #selector(AsterTerminalView.extendSelectionLeft(_:)),
+        #selector(AsterTerminalView.extendRectangularSelectionLeft(_:)), NSLeftArrowFunctionKey),
+      ("向右扩展", #selector(AsterTerminalView.extendSelectionRight(_:)),
+        #selector(AsterTerminalView.extendRectangularSelectionRight(_:)), NSRightArrowFunctionKey),
+      ("向上扩展", #selector(AsterTerminalView.extendSelectionUp(_:)),
+        #selector(AsterTerminalView.extendRectangularSelectionUp(_:)), NSUpArrowFunctionKey),
+      ("向下扩展", #selector(AsterTerminalView.extendSelectionDown(_:)),
+        #selector(AsterTerminalView.extendRectangularSelectionDown(_:)), NSDownArrowFunctionKey),
+    ]
+    for (title, linearAction, rectangularAction, key) in directions {
+      submenu.addItem(
+        responderMenuItem(title, linearAction, Self.functionKey(key), modifiers: [.shift]))
+      submenu.addItem(
+        responderMenuItem(
+          "\(title)（矩形）", rectangularAction, Self.functionKey(key),
+          modifiers: [.shift, .option]))
+    }
     item.submenu = submenu
     return item
   }
@@ -365,8 +394,36 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(menuItem("显示/隐藏详情面板", #selector(toggleInspector(_:)), "", modifiers: []))
     submenu.addItem(menuItem("显示/隐藏标签栏", #selector(toggleTabBarVisibility(_:)), "", modifiers: []))
     submenu.addItem(.separator())
+    submenu.addItem(terminalScrollMenuItem())
+    submenu.addItem(.separator())
     submenu.addItem(menuItem("打开 Recipe…", #selector(openRecipe(_:)), "", modifiers: []))
     submenu.addItem(menuItem("保存为 Recipe…", #selector(saveRecipe(_:)), "", modifiers: []))
+    item.submenu = submenu
+    return item
+  }
+
+  /// 滚动命令由 responder chain 定位到当前终端，避免应用层保存第二份“活动终端”状态。
+  /// Command+Page Up/Down 留给后续 Shell Integration 的上一/下一命令导航。
+  func terminalScrollMenuItem() -> NSMenuItem {
+    let item = NSMenuItem(title: "终端滚动", action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: "终端滚动")
+    submenu.addItem(
+      responderMenuItem(
+        "向上翻页", #selector(AsterTerminalView.scrollTerminalPageUp(_:)),
+        Self.functionKey(NSPageUpFunctionKey), modifiers: [.shift]))
+    submenu.addItem(
+      responderMenuItem(
+        "向下翻页", #selector(AsterTerminalView.scrollTerminalPageDown(_:)),
+        Self.functionKey(NSPageDownFunctionKey), modifiers: [.shift]))
+    submenu.addItem(.separator())
+    submenu.addItem(
+      responderMenuItem(
+        "滚动到顶部", #selector(AsterTerminalView.scrollTerminalToTop(_:)),
+        Self.functionKey(NSHomeFunctionKey), modifiers: [.shift]))
+    submenu.addItem(
+      responderMenuItem(
+        "滚动到底部", #selector(AsterTerminalView.scrollTerminalToBottom(_:)),
+        Self.functionKey(NSEndFunctionKey), modifiers: [.shift]))
     item.submenu = submenu
     return item
   }
@@ -379,16 +436,16 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(.separator())
     // 方向语义跟随分隔条本身：上移即让上方面板变小，与聚焦面板在哪一侧无关。
     submenu.addItem(
-      menuItem("上移分隔条", #selector(moveDividerUp(_:)), Self.arrowKey(NSUpArrowFunctionKey),
+      menuItem("上移分隔条", #selector(moveDividerUp(_:)), Self.functionKey(NSUpArrowFunctionKey),
         modifiers: [.command, .control]))
     submenu.addItem(
-      menuItem("下移分隔条", #selector(moveDividerDown(_:)), Self.arrowKey(NSDownArrowFunctionKey),
+      menuItem("下移分隔条", #selector(moveDividerDown(_:)), Self.functionKey(NSDownArrowFunctionKey),
         modifiers: [.command, .control]))
     submenu.addItem(
-      menuItem("左移分隔条", #selector(moveDividerLeft(_:)), Self.arrowKey(NSLeftArrowFunctionKey),
+      menuItem("左移分隔条", #selector(moveDividerLeft(_:)), Self.functionKey(NSLeftArrowFunctionKey),
         modifiers: [.command, .control]))
     submenu.addItem(
-      menuItem("右移分隔条", #selector(moveDividerRight(_:)), Self.arrowKey(NSRightArrowFunctionKey),
+      menuItem("右移分隔条", #selector(moveDividerRight(_:)), Self.functionKey(NSRightArrowFunctionKey),
         modifiers: [.command, .control]))
     item.submenu = submenu
     return item
@@ -398,16 +455,16 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     let item = NSMenuItem(title: "聚焦面板", action: nil, keyEquivalent: "")
     let submenu = NSMenu(title: "聚焦面板")
     submenu.addItem(
-      menuItem("聚焦上方面板", #selector(focusPaneUp(_:)), Self.arrowKey(NSUpArrowFunctionKey),
+      menuItem("聚焦上方面板", #selector(focusPaneUp(_:)), Self.functionKey(NSUpArrowFunctionKey),
         modifiers: [.command, .option]))
     submenu.addItem(
-      menuItem("聚焦下方面板", #selector(focusPaneDown(_:)), Self.arrowKey(NSDownArrowFunctionKey),
+      menuItem("聚焦下方面板", #selector(focusPaneDown(_:)), Self.functionKey(NSDownArrowFunctionKey),
         modifiers: [.command, .option]))
     submenu.addItem(
-      menuItem("聚焦左侧面板", #selector(focusPaneLeft(_:)), Self.arrowKey(NSLeftArrowFunctionKey),
+      menuItem("聚焦左侧面板", #selector(focusPaneLeft(_:)), Self.functionKey(NSLeftArrowFunctionKey),
         modifiers: [.command, .option]))
     submenu.addItem(
-      menuItem("聚焦右侧面板", #selector(focusPaneRight(_:)), Self.arrowKey(NSRightArrowFunctionKey),
+      menuItem("聚焦右侧面板", #selector(focusPaneRight(_:)), Self.functionKey(NSRightArrowFunctionKey),
         modifiers: [.command, .option]))
     submenu.addItem(.separator())
     submenu.addItem(menuItem("聚焦下一个面板", #selector(focusNextPane(_:)), "]"))
@@ -416,8 +473,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     return item
   }
 
-  /// AppKit 用私有区码位表示方向键，菜单快捷键必须写成对应的单字符字符串。
-  private static func arrowKey(_ functionKey: Int) -> String {
+  /// AppKit 用私有区码位表示方向、翻页和首尾等功能键，菜单快捷键必须写成单字符字符串。
+  private static func functionKey(_ functionKey: Int) -> String {
     guard let scalar = UnicodeScalar(UInt32(functionKey)) else { return "" }
     return String(Character(scalar))
   }

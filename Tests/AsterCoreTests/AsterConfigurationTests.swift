@@ -17,11 +17,15 @@ func defaultConfigurationMatchesReferenceWorkspace() {
   #expect(configuration.controls.allowMouseReporting)
   #expect(!configuration.controls.optionAsMeta)
   #expect(!configuration.controls.trimTrailingSpaces)
+  #expect(configuration.controls.resolvedShiftArrowSelection)
+  #expect(configuration.controls.resolvedClearSelectionOnTyping)
   #expect(!configuration.controls.resolvedClearSelectionOnCopy)
   #expect(configuration.controls.pasteProtection)
   #expect(configuration.controls.resolvedPasteBracketedSafe)
   #expect(configuration.controls.resolvedClipboardWriteAccess == .allow)
   #expect(configuration.controls.resolvedClipboardReadAccess == .ask)
+  #expect(configuration.controls.resolvedScrollPastLastLine == .disabled)
+  #expect(configuration.controls.resolvedScrollPastFirstLine == .disabled)
 }
 
 @Test("十六进制主题色支持 RGB 和 RGBA 并拒绝非法值")
@@ -38,12 +42,16 @@ func configurationRoundTripsThroughJSON() throws {
   configuration.appearance.fontFamily = "JetBrains Mono"
   configuration.appearance.newTabPosition = .afterCurrent
   configuration.editor.showLineNumbers = false
+  configuration.controls.scrollPastLastLine = .cursorLine
+  configuration.controls.scrollPastFirstLine = .sameAsLastLine
 
   let encoded = try JSONEncoder().encode(configuration)
   let decoded = try JSONDecoder().decode(AsterConfiguration.self, from: encoded)
 
   #expect(decoded == configuration)
   #expect(decoded.appearance.resolvedNewTabPosition == .afterCurrent)
+  #expect(decoded.controls.resolvedScrollPastLastLine == .cursorLine)
+  #expect(decoded.controls.resolvedScrollPastFirstLine == .sameAsLastLine)
 }
 
 @Test("旧配置缺少新标签位置时安全回退到自动策略")
@@ -92,6 +100,8 @@ func legacyControlConfigurationDefaultsClipboardSafety() throws {
   let data = try JSONEncoder().encode(ControlConfiguration())
   var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
   object.removeValue(forKey: "clearSelectionOnCopy")
+  object.removeValue(forKey: "shiftArrowSelection")
+  object.removeValue(forKey: "clearSelectionOnTyping")
   object.removeValue(forKey: "pasteBracketedSafe")
   object.removeValue(forKey: "clipboardWriteAccess")
   object.removeValue(forKey: "clipboardReadAccess")
@@ -100,9 +110,25 @@ func legacyControlConfigurationDefaultsClipboardSafety() throws {
   let decoded = try JSONDecoder().decode(ControlConfiguration.self, from: legacyData)
 
   #expect(!decoded.resolvedClearSelectionOnCopy)
+  #expect(decoded.resolvedShiftArrowSelection)
+  #expect(decoded.resolvedClearSelectionOnTyping)
   #expect(decoded.resolvedPasteBracketedSafe)
   #expect(decoded.resolvedClipboardWriteAccess == .allow)
   #expect(decoded.resolvedClipboardReadAccess == .ask)
+}
+
+@Test("旧控制配置缺少滚动边界字段时保持传统边界")
+func legacyControlConfigurationDefaultsScrollBoundaries() throws {
+  let data = try JSONEncoder().encode(ControlConfiguration())
+  var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+  object.removeValue(forKey: "scrollPastLastLine")
+  object.removeValue(forKey: "scrollPastFirstLine")
+  let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+  let decoded = try JSONDecoder().decode(ControlConfiguration.self, from: legacyData)
+
+  #expect(decoded.resolvedScrollPastLastLine == .disabled)
+  #expect(decoded.resolvedScrollPastFirstLine == .disabled)
 }
 
 @Test("导入配置会清理非法、重复和超限的链接安全例外")

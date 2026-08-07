@@ -36,12 +36,12 @@ cp "$PROJECT_DIR/THIRD-PARTY-NOTICES.md" "$RESOURCES_DIR/THIRD-PARTY-NOTICES.md"
 
 # SwiftPM 为 SwiftTerm 的 Metal shader 生成独立资源 Bundle。SwiftTerm 会从标准
 # `Contents/Resources` 位置探测该 Bundle；放在 .app 根目录会破坏 macOS 代码签名。
-SWIFTTERM_BUNDLE="$BUILD_DIR/release/SwiftTerm_SwiftTerm.bundle"
+SWIFTTERM_BUNDLE="$BUILD_DIR/release/AsterTerminal_SwiftTerm.bundle"
 if [[ ! -d "$SWIFTTERM_BUNDLE" ]]; then
   echo "Missing SwiftTerm resource bundle: $SWIFTTERM_BUNDLE" >&2
   exit 1
 fi
-cp -R "$SWIFTTERM_BUNDLE" "$RESOURCES_DIR/SwiftTerm_SwiftTerm.bundle"
+cp -R "$SWIFTTERM_BUNDLE" "$RESOURCES_DIR/AsterTerminal_SwiftTerm.bundle"
 
 # Quick Look 能稳定地把项目内的矢量源渲染成 1024px PNG；后续尺寸均由同一母版生成，
 # 避免图标在不同缩放档位出现构图漂移。

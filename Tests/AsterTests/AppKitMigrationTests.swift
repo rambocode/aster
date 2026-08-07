@@ -525,6 +525,10 @@ func settingsWiredFieldsPersistAcrossRelaunch() throws {
   preferences.configuration.controls.detectAllLinkSchemes = false
   preferences.configuration.controls.customLinkSchemes = ["codex"]
   preferences.configuration.controls.allowedNonStandardLinkSchemes = ["codex"]
+  preferences.configuration.controls.shiftArrowSelection = false
+  preferences.configuration.controls.clearSelectionOnTyping = false
+  preferences.configuration.controls.scrollPastLastLine = .lastLineInMiddle
+  preferences.configuration.controls.scrollPastFirstLine = .firstLineWithContent
   preferences.configuration.editor.tabSize = 6
   preferences.configuration.agents.enabledAgents = ["claude"]
   preferences.configuration.appearance.lineHeight = 1.5
@@ -536,6 +540,10 @@ func settingsWiredFieldsPersistAcrossRelaunch() throws {
   #expect(reloaded.configuration.controls.focusFollowsMouse == true)
   #expect(reloaded.configuration.controls.resolvedLinkSchemePolicy == .custom(["codex"]))
   #expect(reloaded.configuration.controls.resolvedAllowedNonStandardLinkSchemes == ["codex"])
+  #expect(!reloaded.configuration.controls.resolvedShiftArrowSelection)
+  #expect(!reloaded.configuration.controls.resolvedClearSelectionOnTyping)
+  #expect(reloaded.configuration.controls.resolvedScrollPastLastLine == .lastLineInMiddle)
+  #expect(reloaded.configuration.controls.resolvedScrollPastFirstLine == .firstLineWithContent)
   #expect(reloaded.configuration.editor.tabSize == 6)
   #expect(reloaded.configuration.agents.enabledAgents == ["claude"])
   #expect(reloaded.configuration.appearance.lineHeight == 1.5)

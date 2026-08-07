@@ -19,6 +19,8 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 - **PasteAnalysis**：一次粘贴的瞬时风险分类，只在内存中保存正文，不进入日志或持久化。
 - **OSC52ClipboardCoordinator**：终端程序通过 OSC 52 访问系统剪贴板的 AppKit 授权边界。
 - **SecureInputCoordinator**：合并多 Pane 自动请求与手动请求的进程级 Secure Event Input 所有者。
+- **TerminalSelection**：由光标或指针建立锚点和焦点，支持线性范围与按列输出的矩形范围。
+- **VirtualScrollPosition**：normal buffer 的整行 `yDisp` 与单行内像素偏移之和，可在配置边界内越过首尾内容。
 
 ## 核心规则
 
@@ -37,6 +39,8 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 13. OSC 必须在进入组件 parser 前流式限长；OSC 52 读取默认每次询问，拒绝时不得触碰系统剪贴板。
 14. 原生文本编辑只接管普通 Shell 屏幕；全屏 TUI 和增强键盘协议必须保留程序协商的按键编码。
 15. 自动安全输入只保护当前聚焦 Pane 中 `ECHO` 关闭且 `ICANON` 保持开启的密码式输入；raw-mode TUI 必须排除。多 Pane 共享引用计数，应用失活时暂停系统保护。
+16. 鼠标报告开启时，`Option` 必须强制进入原生选择，不向前台 TUI 泄漏部分鼠标序列；`Shift` 是否绕过报告遵循终端协商的捕获模式，`Option` 拖动产生矩形选区。
+17. 平滑滚动只改变 normal buffer 的视口；alternate screen 不允许首尾越界，手势结束必须回到完整字符行。
 
 ## 业务流程
 
@@ -124,6 +128,12 @@ Edit 菜单和终端右键菜单提供粘贴选区、普通文件 Base64、POSIX
 
 `TerminalSession` 在终端输出到达、用户输入写入 PTY 前、Pane 获焦和配置开启时立即对 PTY master 调用 `tcgetattr`，既有一秒轮询只作兜底。当自动保护开启、窗口与 Pane 聚焦、`ECHO` 关闭且 `ICANON` 仍开启时，向 `SecureInputCoordinator` 注册当前 Session；raw-mode TUI、失焦、恢复回显、进程结束、关闭 Pane 或关闭设置都会释放。协调器只在首个自动/手动请求时调用 `EnableSecureEventInput`，最后一个请求释放时调用 `DisableSecureEventInput`；启用或关闭失败都保留真实状态并允许后续同步重试。手动开关位于 Edit 菜单且不持久化为导入配置；应用失活时只暂停系统保护，重新激活后按用户开关恢复。
 
+### 原生选区与滚动视口
+
+SwiftTerm 1.15 的公开接口不能表达键盘扩展选区、矩形范围或行内像素位移。Aster 因而固定并 vendored 官方 revision；`SelectionService` 保存 keyboard anchor/focus，并让方向动作可以越过锚点收缩后反向扩展。普通拖动、双击单词和三击整行沿用上游语义；`Option` 拖动切换矩形模式，复制时在每个物理行截取相同列区间，短行的内部 NUL 空单元格转换为可见空格。鼠标手势在 mouseDown 时锁定由原生选择、链接还是终端报告拥有，修饰键中途变化不会产生孤立 press/release；Command-click 链接始终由本地完整处理。任何发送到 PTY 的输入都按配置清除选区，显式复制清理与选中即复制互不干扰。
+
+normal buffer 的虚拟滚动位置由整行 `Buffer.yDisp` 和 `viewportContentTranslationY` 组成。精确触控板手势直接累计像素，结束或取消时四舍五入到最近行；关闭平滑滚动时，残余像素累积到完整字符行才移动。滚过末尾可把最后内容行或光标行放到顶部，也可把最后内容行放到中部；滚过开头可独立把第一内容行放到底部/中部或跟随末尾策略。所有范围按实际内容、光标和视口行数计算，新输出及用户输入会复位到底部，alternate screen 会清除像素偏移并忽略越界设置。
+
 ### 进程关闭
 
 SwiftTerm 视图只在 `process.running` 为真时按当前 `shellPid` 终止进程组。进程级 `TerminalRetirementCoordinator` 会在 Pane 和 Session 释放后继续强持有 retiring View，直到 SwiftTerm 的进程 monitor 完成 `waitpid`；普通 Pane/标签关闭在 750ms 后仍未退出才升级为 `SIGKILL`。应用整体退出时事件循环不会继续等待，因此在保存快照和确认文档后立即结束进程组。自然结束的 Session 不再对保留的旧 PID 发送信号，避免 PID 复用后误杀无关进程。
@@ -141,10 +151,12 @@ SwiftTerm 视图只在 `process.running` 为真时按当前 `shellPid` 终止进
 - 粘贴保护取消：不写入任何 PTY 字节；剪贴板正文不记录日志。
 - OSC 52 畸形、超限或被拒绝：静默忽略且不读取/写入系统剪贴板。
 - Base64 文件不是普通文件、不可读或超过 8 MiB：显示错误并停止粘贴。
+- 终端切换 alternate screen：立即丢弃 normal buffer 的越界像素偏移，不把空白区域带入 TUI。
+- Cut 无法证明选区属于可编辑 Shell 提示符：只复制，不猜测发送 Backspace；待 Shell Integration 提供命令区间后再删除。
 
 ## 测试与发布
 
-测试覆盖纯 AppKit 迁移、配置编码、24 套主题真值、颜色解析、递归分屏、方向聚焦与分隔条调整、分屏面板在两个方向/两种标签栏布局下的真实 frame、⌘W 的面板优先语义、比例更新、移除节点、文档 dirty/原子保存、Recipe 往返、FIFO 和累计资源预算、恶意结构上限、会话快照、UTF-8 分块、ANSI 边界、粘贴风险、括号序列、OSC 52 权限/限长、Base64 文件边界和真实 PTY 生命周期。发布前必须运行：
+测试覆盖纯 AppKit 迁移、配置编码、24 套主题真值、颜色解析、递归分屏、方向聚焦与分隔条调整、分屏面板在两个方向/两种标签栏布局下的真实 frame、⌘W 的面板优先语义、比例更新、移除节点、文档 dirty/原子保存、Recipe 往返、FIFO 和累计资源预算、恶意结构上限、会话快照、UTF-8 分块、ANSI 边界、线性/矩形选区、鼠标报告绕过、像素滚动与首尾边界、粘贴风险、括号序列、OSC 52 权限/限长、Base64 文件边界和真实 PTY 生命周期。发布前必须运行：
 
 ```bash
 swift test

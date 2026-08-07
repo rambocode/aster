@@ -57,6 +57,22 @@ public enum CursorStyle: String, CaseIterable, Codable, Equatable, Sendable {
   case hollowBlock
 }
 
+/// 普通屏滚过最新内容后的停靠位置。枚举值保持稳定，供配置文件持久化和迁移使用。
+public enum TerminalScrollPastLastLine: String, CaseIterable, Codable, Equatable, Sendable {
+  case disabled
+  case lastLineWithContent
+  case lastLineInMiddle
+  case cursorLine
+}
+
+/// 普通屏滚过最早内容后的停靠位置；alternate screen 始终忽略该设置。
+public enum TerminalScrollPastFirstLine: String, CaseIterable, Codable, Equatable, Sendable {
+  case disabled
+  case sameAsLastLine
+  case firstLineWithContent
+  case firstLineInMiddle
+}
+
 public struct GeneralConfiguration: Codable, Equatable, Sendable {
   public var language = "system"
   public var quitAfterLastWindowClosed = false
@@ -93,9 +109,14 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
   public var trimTrailingSpaces = false
   public var pasteProtection = true
   public var smoothScrolling = true
+  /// 可选字段兼容旧配置；缺失时保持传统边界，不产生额外空白区域。
+  public var scrollPastLastLine: TerminalScrollPastLastLine? = .disabled
+  public var scrollPastFirstLine: TerminalScrollPastFirstLine? = .disabled
   public var showLinkPreviews = true
   public var secureInputAutomatically = true
-  /// 可选字段兼容 0.4.x 配置；缺失时采用 Otty 的复制与剪贴板安全默认值。
+  /// 可选字段兼容旧配置；缺失时采用 Otty 的选择、复制与剪贴板安全默认值。
+  public var shiftArrowSelection: Bool? = true
+  public var clearSelectionOnTyping: Bool? = true
   public var clearSelectionOnCopy: Bool? = false
   public var pasteBracketedSafe: Bool? = true
   public var clipboardWriteAccess: ClipboardAccess? = .allow
@@ -108,7 +129,19 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
 
   public var resolvedLinkDetectionEnabled: Bool { linkDetectionEnabled ?? true }
 
+  public var resolvedShiftArrowSelection: Bool { shiftArrowSelection ?? true }
+
+  public var resolvedClearSelectionOnTyping: Bool { clearSelectionOnTyping ?? true }
+
   public var resolvedClearSelectionOnCopy: Bool { clearSelectionOnCopy ?? false }
+
+  public var resolvedScrollPastLastLine: TerminalScrollPastLastLine {
+    scrollPastLastLine ?? .disabled
+  }
+
+  public var resolvedScrollPastFirstLine: TerminalScrollPastFirstLine {
+    scrollPastFirstLine ?? .disabled
+  }
 
   public var resolvedPasteBracketedSafe: Bool { pasteBracketedSafe ?? true }
 

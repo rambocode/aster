@@ -512,6 +512,27 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.controls.focusFollowsMouse = value
         },
       ]),
+      sectionTitle("选择"),
+      card([
+        toggleRow(
+          "Shift+方向键扩展选区", "关闭后把 Shift+方向键原样发送给终端程序",
+          value: preferences.configuration.controls.resolvedShiftArrowSelection
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.shiftArrowSelection = value
+        },
+        toggleRow(
+          "输入时清除选区", "向终端发送文字、导航键、Tab 或 IME 文本时取消选中",
+          value: preferences.configuration.controls.resolvedClearSelectionOnTyping
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.clearSelectionOnTyping = value
+        },
+        toggleRow(
+          "复制后清除选区", "显式复制后取消选中；选中即复制始终保留选区",
+          value: preferences.configuration.controls.resolvedClearSelectionOnCopy
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.clearSelectionOnCopy = value
+        },
+      ]),
       sectionTitle("复制与粘贴"),
       card([
         toggleRow(
@@ -525,12 +546,6 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           value: preferences.configuration.controls.trimTrailingSpaces
         ) { [weak self] value in
           self?.preferences.configuration.controls.trimTrailingSpaces = value
-        },
-        toggleRow(
-          "复制后清除选区", "复制完成后取消终端中的文本选中状态",
-          value: preferences.configuration.controls.resolvedClearSelectionOnCopy
-        ) { [weak self] value in
-          self?.preferences.configuration.controls.clearSelectionOnCopy = value
         },
         toggleRow(
           "粘贴保护", "粘贴多行或含控制字符的内容前先确认",
@@ -588,14 +603,29 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.controls.allowedNonStandardLinkSchemes = []
         },
       ]),
-      sectionTitle("显示"),
+      sectionTitle("滚动"),
       card([
         toggleRow(
-          "平滑滚动", "终端内容滚动时使用平滑动画",
+          "平滑滚动", "触控板按像素滚动，并在手势结束时对齐字符行",
           value: preferences.configuration.controls.smoothScrolling
         ) { [weak self] value in
           self?.preferences.configuration.controls.smoothScrolling = value
         },
+        enumPopupRow(
+          "滚过末尾", "选择最新内容或光标滚到视口中的停靠位置",
+          value: preferences.configuration.controls.resolvedScrollPastLastLine
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.scrollPastLastLine = value
+        },
+        enumPopupRow(
+          "滚过开头", "选择最早内容滚到视口中的停靠位置",
+          value: preferences.configuration.controls.resolvedScrollPastFirstLine
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.scrollPastFirstLine = value
+        },
+      ]),
+      sectionTitle("显示"),
+      card([
         toggleRow(
           "链接预览", "悬停链接时显示 URL 目标",
           value: preferences.configuration.controls.showLinkPreviews
@@ -1772,6 +1802,28 @@ extension ClipboardAccess: SettingsEnumOption {
     case .allow: "允许"
     case .ask: "每次询问"
     case .deny: "拒绝"
+    }
+  }
+}
+
+extension TerminalScrollPastLastLine: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .disabled: "关闭"
+    case .lastLineWithContent: "最后一行内容位于顶部"
+    case .lastLineInMiddle: "最后一行内容位于中部"
+    case .cursorLine: "光标行位于顶部"
+    }
+  }
+}
+
+extension TerminalScrollPastFirstLine: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .disabled: "关闭"
+    case .sameAsLastLine: "跟随末尾设置"
+    case .firstLineWithContent: "第一行内容位于底部"
+    case .firstLineInMiddle: "第一行内容位于中部"
     }
   }
 }

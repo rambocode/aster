@@ -24,7 +24,8 @@ swift test
 open dist/Aster.app
 ```
 
-需要 macOS 14 或更高版本及 Xcode Command Line Tools。SwiftPM 会获取 SwiftTerm 依赖。
+需要 macOS 14 或更高版本及 Xcode Command Line Tools。SwiftTerm 以固定上游 revision
+随仓库提供，构建不需要另行下载该依赖；来源与本地补丁见 `Vendor/SwiftTerm/UPSTREAM.md`。
 默认构建使用本机 ad-hoc 签名，适合本机安装；正式分发时通过
 `ASTER_SIGN_IDENTITY="Developer ID Application: ..."` 提供 Developer ID，并在产物外部完成
 notarization/stapling。
