@@ -73,3 +73,17 @@ func terminalExposesMonotonicBufferCoordinates() {
   )
   #expect(terminal.bufferRow(forAbsoluteRow: -1) == nil)
 }
+
+@Test("标题查询默认返回空值并仅在显式授权后报告清理后的标题")
+func terminalTitleReportRequiresPrivilege() {
+  let collector = TerminalResponseCollector()
+  let terminal = Terminal(delegate: collector)
+  terminal.feed(byteArray: Array("\u{1B}]0;secret-title\u{7}".utf8))
+
+  terminal.feed(byteArray: Array("\u{1B}[21t".utf8))
+  #expect(collector.consume() == "\u{1B}]l\u{1B}\\")
+
+  terminal.allowTitleReport = true
+  terminal.feed(byteArray: Array("\u{1B}[21t".utf8))
+  #expect(collector.consume() == "\u{1B}]lsecret-title\u{1B}\\")
+}

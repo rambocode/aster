@@ -318,6 +318,12 @@ open class Terminal {
     /// Identity of the embedding terminal application. This state is independent from
     /// `TerminalOptions` so view resizes cannot silently reset protocol responses.
     public var programIdentity: TerminalProgramIdentity?
+    /// Title queries are an explicit privilege because set-and-query can form a covert channel.
+    /// Embedders must opt in per terminal; the safe default continues to return blank titles.
+    public var allowTitleReport = false
+    /// Some hosts deliberately ignore OSC 9;4 state 4 instead of presenting SwiftTerm's pause state.
+    /// The default preserves upstream behavior; embedders opt in per terminal.
+    public var ignoresPausedProgressReports = false
 
     public enum ProgressReportState: Int {
         case remove = 0
@@ -1120,6 +1126,13 @@ open class Terminal {
     {
         parser.oscHandlers [code] = handler
     }
+
+    /// Adds a non-consuming OSC observer while preserving SwiftTerm's built-in processing and
+    /// any registered overriding handler. This is useful for host UI state such as tab badges.
+    public func registerOscObserver (code: Int, observer: @escaping (ArraySlice<UInt8>) -> ())
+    {
+        parser.oscObservers [code, default: []].append(observer)
+    }
     
     func cmdSet8BitControls ()
     {
@@ -1891,6 +1904,10 @@ open class Terminal {
     func oscProgressReport(_ data: ArraySlice<UInt8>) -> Bool {
         guard let report = parseProgressReport(data) else {
             return false
+        }
+
+        if ignoresPausedProgressReports, report.state == .pause {
+            return true
         }
 
         tdel?.progressReport(source: self, report: report)
@@ -3165,13 +3182,12 @@ open class Terminal {
                 sendResponse(cc.CSI, "9;\(rows);\(cols)t")
             }
         case [20]:
-            // Do not report the actual title back, as it can be exploited,
-            // https://marc.info/?l=bugtraq&m=104612710031920&w=2
-            sendResponse (cc.OSC, "L", cc.ST)
+            // Do not report the actual title unless the embedding app explicitly grants it.
+            let value = allowTitleReport ? safeTitleForReport(iconTitle) : ""
+            sendResponse (cc.OSC, "L\(value)", cc.ST)
         case [21]:
-            // Do not report the actual content of the title back, as it can be exploited,
-            // https://marc.info/?l=bugtraq&m=104612710031920&w=2
-            sendResponse (cc.OSC, "l", cc.ST)
+            let value = allowTitleReport ? safeTitleForReport(terminalTitle) : ""
+            sendResponse (cc.OSC, "l\(value)", cc.ST)
         case [22, 0], [22, 0, 0]:
             terminalTitleStack = terminalTitleStack + [terminalTitle]
             terminalIconStack = terminalIconStack + [iconTitle]
@@ -3203,6 +3219,14 @@ open class Terminal {
             log ("Unhandled Window command: \(pars)")
             break
         }
+    }
+
+    /// Never allow a title query response to inject another control sequence into the PTY.
+    private func safeTitleForReport(_ title: String) -> String {
+        String(title.unicodeScalars.filter { scalar in
+            scalar.value >= 0x20 && scalar.value != 0x7f
+                && !(0x80...0x9f).contains(scalar.value)
+        }.prefix(512))
     }
 
     func cmdSetMargins (_ pars: [Int], _ collect: cstring)

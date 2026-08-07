@@ -1,0 +1,109 @@
+import AppKit
+import AsterCore
+import Combine
+
+/// 把所有标签的任务状态投影到 Dock。聚合只读运行态，不进入工作区持久化；点击
+/// Dock 后会选择一个失败标签并确认当前错误，后续新错误仍会再次标红。
+@MainActor
+final class DockActivityCoordinator {
+  private let model: AppModel
+  private let preferences: AppPreferences
+  private var cancellables: Set<AnyCancellable> = []
+  private var acknowledgedErrorTabIDs: Set<UUID> = []
+  private var animationTimer: Timer?
+  private var animationPhase = 0
+  private let imageView = NSImageView()
+
+  init(model: AppModel, preferences: AppPreferences) {
+    self.model = model
+    self.preferences = preferences
+  }
+
+  func start() {
+    model.objectWillChange
+      .sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
+      .store(in: &cancellables)
+    preferences.objectWillChange
+      .sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
+      .store(in: &cancellables)
+    refresh()
+  }
+
+  @discardableResult
+  func acknowledgeAndSelectNextError() -> Bool {
+    let failing = model.tabs.filter { $0.activityBadge == .error }
+    guard let target = failing.first(where: { !acknowledgedErrorTabIDs.contains($0.id) })
+      ?? failing.first
+    else { return false }
+    model.select(target)
+    acknowledgedErrorTabIDs.formUnion(failing.map(\.id))
+    refresh()
+    return true
+  }
+
+  private func refresh() {
+    let failingIDs = Set(model.tabs.filter { $0.activityBadge == .error }.map(\.id))
+    acknowledgedErrorTabIDs.formIntersection(failingIDs)
+    let badges = model.tabs.map { tab -> TerminalBadgeState in
+      if tab.activityBadge == .error, acknowledgedErrorTabIDs.contains(tab.id) { return .none }
+      return tab.activityBadge
+    }
+    let appearance = preferences.configuration.appearance
+    apply(
+      DockActivityResolver.resolve(
+        badges: badges,
+        animateOnProgress: appearance.resolvedAnimateDockIconOnProgress,
+        redOnError: appearance.resolvedRedDockIconOnError
+      )
+    )
+  }
+
+  private func apply(_ state: DockActivityState) {
+    animationTimer?.invalidate()
+    animationTimer = nil
+    switch state {
+    case .idle:
+      NSApp.dockTile.contentView = nil
+      NSApp.dockTile.badgeLabel = nil
+      NSApp.dockTile.display()
+    case .error:
+      imageView.image = renderedIcon(angle: 0, errorTint: true)
+      NSApp.dockTile.contentView = imageView
+      NSApp.dockTile.badgeLabel = "!"
+      NSApp.dockTile.display()
+    case .working:
+      NSApp.dockTile.badgeLabel = nil
+      NSApp.dockTile.contentView = imageView
+      advanceAnimation()
+      animationTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: true) {
+        [weak self] _ in
+        Task { @MainActor [weak self] in self?.advanceAnimation() }
+      }
+    }
+  }
+
+  private func advanceAnimation() {
+    animationPhase = (animationPhase + 1) % 12
+    imageView.image = renderedIcon(angle: CGFloat(animationPhase) * 2.5, errorTint: false)
+    NSApp.dockTile.display()
+  }
+
+  private func renderedIcon(angle: CGFloat, errorTint: Bool) -> NSImage {
+    let source = NSApp.applicationIconImage ?? NSImage(size: NSSize(width: 128, height: 128))
+    let size = source.size.width > 0 ? source.size : NSSize(width: 128, height: 128)
+    let result = NSImage(size: size)
+    result.lockFocus()
+    let transform = NSAffineTransform()
+    transform.translateX(by: size.width / 2, yBy: size.height / 2)
+    transform.rotate(byDegrees: angle)
+    transform.translateX(by: -size.width / 2, yBy: -size.height / 2)
+    transform.concat()
+    source.draw(in: NSRect(origin: .zero, size: size))
+    if errorTint {
+      NSColor.systemRed.withAlphaComponent(0.48).setFill()
+      NSRect(origin: .zero, size: size).fill(using: .sourceAtop)
+    }
+    result.unlockFocus()
+    return result
+  }
+}

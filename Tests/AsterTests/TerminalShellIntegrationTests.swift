@@ -54,6 +54,80 @@ func terminalViewReceivesShellAliases() {
   #expect(reports == [["gco", "gs"]])
 }
 
+@Test("终端视图观察进度和三类通知且不覆盖 SwiftTerm 进度处理")
+@MainActor
+func terminalViewObservesProgressAndNotifications() {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  var progress: [TerminalProgressState] = []
+  var notifications: [TerminalNotification] = []
+  var responses: [String] = []
+  var badgeDirectives: [TerminalBadgeDirective] = []
+  var visibleCursorLines: [String] = []
+  view.onTerminalProgress = { progress.append($0) }
+  view.onTerminalNotification = { notifications.append($0) }
+  view.onTerminalProtocolResponse = { responses.append($0) }
+  view.onTerminalBadgeDirective = { badgeDirectives.append($0) }
+  view.onTerminalOutputActivity = { visibleCursorLines.append($0) }
+  view.installActivityHandlers()
+
+  let encodedBody = Data("Body".utf8).base64EncodedString()
+  let output =
+    "\u{1B}]9;4;1;35\u{7}"
+    + "\u{1B}]9;Build done\u{7}"
+    + "\u{1B}]777;notify;Deploy;Live\u{7}"
+    + "\u{1B}]99;i=k:p=body:e=1;\(encodedBody)\u{1B}\\"
+    + "\u{1B}]99;i=ping:p=?;\u{1B}\\"
+    + "Password:\u{1B}]6974;Badge=awaiting-input\u{7}"
+    + "\u{1B}]9;4;4;50\u{7}"
+    + "\u{1B}]9;4;5;0;watch\u{7}"
+  view.dataReceived(slice: Array(output.utf8)[...])
+
+  #expect(progress == [.determinate(percent: 35), .finished(exitCode: 0, watched: true)])
+  #expect(notifications.count == 3)
+  #expect(notifications[0].body == "Build done")
+  #expect(notifications[1].title == "Deploy")
+  #expect(notifications[2].body == "Body")
+  #expect(responses == ["\u{1B}]99;i=ping:p=?;ok\u{1B}\\"])
+  #expect(badgeDirectives == [.set(.awaitingInput)])
+  #expect(visibleCursorLines.last == "Password:")
+  #expect(view.getTerminal().ignoresPausedProgressReports)
+}
+
+@Test("终端铃声严格服从 Shell Controlled 开关")
+@MainActor
+func terminalViewBellHonorsConfiguration() {
+  let view = AsterTerminalView(frame: .zero)
+  var bells = 0
+  view.terminalBellHandler = { bells += 1 }
+
+  view.terminalBellEnabled = false
+  view.dataReceived(slice: [7][...])
+  #expect(bells == 0)
+
+  view.terminalBellEnabled = true
+  view.dataReceived(slice: [7][...])
+  #expect(bells == 1)
+}
+
+@Test("标题 Shell Controlled 关闭后丢弃 OSC 0/1/2 副作用")
+@MainActor
+func terminalViewTitleChangesRequirePrivilege() {
+  let view = AsterTerminalView(frame: .zero)
+  var updates: [(Int, String)] = []
+  view.onObservedTitleUpdate = { updates.append(($0, $1)) }
+  view.installTitleHandlers()
+
+  view.titleShellControlled = false
+  view.dataReceived(slice: Array("\u{1B}]2;blocked\u{7}".utf8)[...])
+  #expect(updates.isEmpty)
+
+  view.titleShellControlled = true
+  view.dataReceived(slice: Array("\u{1B}]2;allowed\u{7}".utf8)[...])
+  #expect(updates.count == 1)
+  #expect(updates[0].0 == 2)
+  #expect(updates[0].1 == "allowed")
+}
+
 @Test("命令导航按 OSC 133 提示符锚点向前和向后滚动")
 @MainActor
 func terminalViewNavigatesCommandMarks() {

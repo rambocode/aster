@@ -26,6 +26,46 @@ func defaultConfigurationMatchesReferenceWorkspace() {
   #expect(configuration.controls.resolvedClipboardReadAccess == .ask)
   #expect(configuration.controls.resolvedScrollPastLastLine == .disabled)
   #expect(configuration.controls.resolvedScrollPastFirstLine == .disabled)
+  #expect(configuration.shell.resolvedNotifyOnWatchFinish)
+  #expect(configuration.shell.resolvedNotificationShellControlled)
+  #expect(configuration.shell.resolvedNotifyWhileForeground == .off)
+  #expect(configuration.shell.resolvedBounceDockIcon)
+  #expect(!configuration.shell.resolvedSoundOnErrorExit)
+  #expect(configuration.shell.resolvedNotificationSoundCategories.isEmpty)
+  #expect(configuration.shell.resolvedBadgeCommandFinish)
+  #expect(configuration.shell.resolvedBadgeCommandFailure)
+  #expect(configuration.shell.resolvedTitleShellControlled)
+  #expect(!configuration.shell.resolvedTitleReport)
+  #expect(!configuration.appearance.resolvedAnimateDockIconOnProgress)
+  #expect(configuration.appearance.resolvedRedDockIconOnError)
+}
+
+@Test("旧 Shell 配置缺少通知和进度字段时采用 Otty 默认值")
+func legacyShellConfigurationDefaultsTerminalActivityOptions() throws {
+  let data = try JSONEncoder().encode(ShellConfiguration())
+  var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+  for key in [
+    "notifyOnWatchFinish", "notificationShellControlled", "notifyWhileForeground",
+    "bounceDockIcon", "soundOnErrorExit", "notificationSoundCategories",
+    "badgeCommandFinish", "badgeCommandFailure", "autoProgressCommands",
+    "titleShellControlled", "titleReport",
+  ] {
+    object.removeValue(forKey: key)
+  }
+  let decoded = try JSONDecoder().decode(
+    ShellConfiguration.self,
+    from: JSONSerialization.data(withJSONObject: object)
+  )
+
+  #expect(decoded.resolvedNotifyOnWatchFinish)
+  #expect(decoded.resolvedNotificationShellControlled)
+  #expect(decoded.resolvedNotifyWhileForeground == .off)
+  #expect(decoded.resolvedBounceDockIcon)
+  #expect(!decoded.resolvedSoundOnErrorExit)
+  #expect(decoded.resolvedNotificationSoundCategories.isEmpty)
+  #expect(decoded.resolvedAutoProgressCommands.contains("git push"))
+  #expect(decoded.resolvedTitleShellControlled)
+  #expect(!decoded.resolvedTitleReport)
 }
 
 @Test("十六进制主题色支持 RGB 和 RGBA 并拒绝非法值")

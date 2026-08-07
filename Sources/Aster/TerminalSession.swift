@@ -98,12 +98,27 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// Autocomplete 使用独立回调，避免覆盖测试或其它功能对原始输入的观察。
   var onAutocompleteInput: ((ArraySlice<UInt8>) -> Void)?
   var onAutocompleteOutput: ((ArraySlice<UInt8>) -> Void)?
+  /// SwiftTerm 解析完成后的光标行可见文本；等待输入检测不得读取原始 OSC/CSI 字节。
+  var onTerminalOutputActivity: ((String) -> Void)?
+  var onTerminalUserInput: (() -> Void)?
   var onShellIntegrationEvent: ((ShellIntegrationEvent) -> Void)?
   var onShellAliases: (([String]) -> Void)?
   var onAutocompleteKeyDown: ((NSEvent) -> Bool)?
+  /// 进度与通知观察器只镜像状态，不覆盖 SwiftTerm 自己的 OSC 9;4 顶部进度条。
+  var onTerminalProgress: ((TerminalProgressState) -> Void)?
+  var onTerminalNotification: ((TerminalNotification) -> Void)?
+  var onTerminalBadgeDirective: ((TerminalBadgeDirective) -> Void)?
+  /// Kitty capability query 必须直接回到 PTY，不能经过用户输入和补全跟踪器。
+  var onTerminalProtocolResponse: ((String) -> Void)?
+  var terminalBellEnabled = true
+  var titleShellControlled = true
+  var terminalBellHandler: () -> Void = { NSSound.beep() }
   private(set) var shellCommandTimeline = ShellCommandTimeline()
   private var shellNavigationAbsoluteRow: Int?
   private var shellIntegrationHandlerInstalled = false
+  private var activityHandlersInstalled = false
+  private var titleHandlersInstalled = false
+  private var kittyNotificationAssembler = KittyNotificationAssembler()
 
   /// 用户配置的光标形状；nil 表示配置尚未下发，此时保持 SwiftTerm 默认行为。
   var preferredCursorStyle: SwiftTerm.CursorStyle? {
@@ -152,9 +167,20 @@ final class AsterTerminalView: LocalProcessTerminalView {
       // Otty 的滚动语义：任何新输出都回到底部；用户输入则由 SwiftTerm 的 send 路径
       // 同步复位。alternate screen 没有 scrollback，此调用只清理可能残留的视觉偏移。
       scrollToBottom()
+      let terminal = getTerminal()
+      if let line = terminal.getLine(row: terminal.buffer.y) {
+        onTerminalOutputActivity?(
+          line.translateToString(trimRight: true, skipNullCellsFollowingWide: true)
+        )
+      }
     }
-    for update in titleStackObserver.consume(safeBytes) {
-      onObservedTitleUpdate?(update.code, update.title)
+    if titleShellControlled {
+      for update in titleStackObserver.consume(safeBytes) {
+        onObservedTitleUpdate?(update.code, update.title)
+      }
+    } else {
+      // 仍需消费字节以保持跨分片解析状态同步，只丢弃其业务副作用。
+      _ = titleStackObserver.consume(safeBytes)
     }
   }
 
@@ -163,7 +189,13 @@ final class AsterTerminalView: LocalProcessTerminalView {
     onTerminalIO?()
     onEncodedInput?(data)
     onAutocompleteInput?(data)
+    onTerminalUserInput?()
     super.send(source: source, data: data)
+  }
+
+  override func bell(source: Terminal) {
+    guard terminalBellEnabled else { return }
+    terminalBellHandler()
   }
 
   /// SwiftTerm 对 OSC 8 与隐式文字使用同一个回调且不暴露来源。原始 PTY 观察器维护
@@ -347,6 +379,80 @@ final class AsterTerminalView: LocalProcessTerminalView {
         let report = ShellAliasReport(payload: payload)
       else { return }
       self?.onShellAliases?(report.names)
+    }
+  }
+
+  /// 以非消费 observer 接收通知和进度 OSC，保留 SwiftTerm 已有的进度条渲染。
+  func installActivityHandlers() {
+    guard !activityHandlersInstalled else { return }
+    activityHandlersInstalled = true
+    let terminal = getTerminal()
+    // Otty 将 OSC 9;4 state 4 定义为无操作；让 SwiftTerm 消费但不显示暂停态，
+    // 避免它覆盖当前进度条。Aster 的 observer 同样不发布该状态。
+    terminal.ignoresPausedProgressReports = true
+    terminal.registerOscObserver(code: 9) { [weak self] bytes in
+      guard bytes.count <= TerminalNotificationParser.maximumChunkBytes,
+        let payload = String(bytes: bytes, encoding: .utf8), let self
+      else { return }
+      if payload == "4" || payload.hasPrefix("4;") {
+        if let progress = TerminalProgressParser.parseOSC9(payload) {
+          if case .finished = progress {
+            // state 5 是 Aster/Otty 完成扩展，不在 SwiftTerm 上游枚举中，需主动清除
+            // 已有的 state 1/2/3 进度条，不能等待 15 秒兜底计时器。
+            self.clearProgressReport()
+          }
+          self.onTerminalProgress?(progress)
+        }
+      } else if let notification = TerminalNotificationParser.parseOSC9(payload) {
+        self.onTerminalNotification?(notification)
+      }
+    }
+    terminal.registerOscObserver(code: 777) { [weak self] bytes in
+      guard bytes.count <= TerminalNotificationParser.maximumChunkBytes,
+        let payload = String(bytes: bytes, encoding: .utf8),
+        let notification = TerminalNotificationParser.parseOSC777(payload)
+      else { return }
+      self?.onTerminalNotification?(notification)
+    }
+    terminal.registerOscObserver(code: 99) { [weak self] bytes in
+      guard bytes.count <= TerminalNotificationParser.maximumChunkBytes,
+        let payload = String(bytes: bytes, encoding: .utf8), let self
+      else { return }
+      switch self.kittyNotificationAssembler.consume(payload) {
+      case .notification(let notification): self.onTerminalNotification?(notification)
+      case .response(let response): self.onTerminalProtocolResponse?(response)
+      case nil: break
+      }
+    }
+    terminal.registerOscHandler(code: 6_974) { [weak self] bytes in
+      guard let payload = String(bytes: bytes, encoding: .ascii),
+        let directive = TerminalBadgeDirective(payload: payload)
+      else { return }
+      self?.onTerminalBadgeDirective?(directive)
+    }
+  }
+
+  /// OSC 0/1/2 处理器在关闭权限时仍消费序列，但不修改 SwiftTerm 或 Aster 标题状态。
+  func installTitleHandlers() {
+    guard !titleHandlersInstalled else { return }
+    titleHandlersInstalled = true
+    let terminal = getTerminal()
+    for code in 0...2 {
+      terminal.registerOscHandler(code: code) { [weak terminal, weak self] bytes in
+        guard self?.titleShellControlled == true else { return }
+        let text = String(bytes: bytes, encoding: .utf8) ?? ""
+        switch code {
+        case 0:
+          terminal?.setIconTitle(text: text)
+          terminal?.setTitle(text: text)
+        case 1:
+          terminal?.setIconTitle(text: text)
+        case 2:
+          terminal?.setTitle(text: text)
+        default:
+          break
+        }
+      }
     }
   }
 
@@ -822,6 +928,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 由 PTY 前台进程组 + 终端缓冲活跃度轮询驱动，只在状态翻转时发布，
   /// 是侧栏运行中 spinner 的唯一业务状态源。
   @Published private(set) var hasRunningCommand = false
+  /// OSC 9;4 与 shell 自动进度的统一状态，供标签和 Dock 聚合，不持久化运行态。
+  @Published private(set) var progressState = TerminalProgressState.clear
+  /// 交互提示在输出尾部静默约 1.5 秒后置位；任意用户输入立即清除。
+  @Published private(set) var awaitingInput = false
+  /// 成功完成后短暂显示 checkmark，随后退化为未读完成圆点。
+  @Published private(set) var showsCompletedFlash = false
+  @Published private(set) var explicitBadge: TerminalBadgeState?
 
   private var foregroundPollTask: Task<Void, Never>?
   // 输出活跃度探针：可见屏幕内容哈希。Claude Code 等 TUI 思考时在原位重绘状态行
@@ -831,6 +944,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var lastActivityAt = Date.distantPast
   /// 设置关闭或 Pane 失焦时立即释放；PTY 模式由输出、输入前检查与低频兜底轮询采样。
   private var automaticSecureInputEnabled = true
+  private weak var preferences: AppPreferences?
+  private var submittedCommand: String?
+  private var activityOutputTail = ""
+  private var awaitingInputTask: Task<Void, Never>?
+  private var completedFlashTask: Task<Void, Never>?
+  private var progressExpiryTask: Task<Void, Never>?
 
   private var terminalView: AsterTerminalView?
   private var targetOpenCoordinator: TerminalTargetOpenCoordinator?
@@ -855,6 +974,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   /// 返回长期存活的终端视图；首次调用时才创建 PTY，确保 AppKit 窗口已完成初始化。
   func makeTerminalView(preferences: AppPreferences) -> LocalProcessTerminalView {
+    self.preferences = preferences
     if let terminalView {
       apply(preferences: preferences, to: terminalView)
       return terminalView
@@ -879,6 +999,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       }
     }
     view.onTerminalIO = { [weak self] in self?.refreshAutomaticSecureInput() }
+    view.onTerminalOutputActivity = { [weak self] line in self?.receiveActivityOutput(line) }
+    view.onTerminalUserInput = { [weak self] in self?.clearAwaitingInput() }
     view.onShellIntegrationStateChange = { [weak self] timeline in
       self?.handleShellIntegrationTimeline(timeline)
     }
@@ -895,12 +1017,20 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         }
       )
       autocomplete.attach(to: view)
+      autocomplete.onCommandSubmitted = { [weak self] command in self?.submittedCommand = command }
       view.onAutocompleteInput = { [weak autocomplete] in autocomplete?.receiveInput($0) }
       view.onAutocompleteOutput = { [weak autocomplete] in autocomplete?.receiveOutput($0) }
-      view.onShellIntegrationEvent = { [weak autocomplete] in autocomplete?.receive($0) }
+      view.onShellIntegrationEvent = { [weak self, weak autocomplete] event in
+        self?.handleShellIntegrationEvent(event)
+        autocomplete?.receive(event)
+      }
       view.onShellAliases = { [weak autocomplete] in autocomplete?.receiveAliases($0) }
       view.onAutocompleteKeyDown = { [weak autocomplete] in autocomplete?.handleKeyDown($0) ?? false }
       autocompleteController = autocomplete
+    } else {
+      view.onShellIntegrationEvent = { [weak self] event in
+        self?.handleShellIntegrationEvent(event)
+      }
     }
     view.autoresizingMask = [.width, .height]
     view.allowMouseReporting = preferences.allowMouseReporting
@@ -913,24 +1043,21 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // delegate 与自定义 handler 的调度先后打乱 XTWINOPS 恢复和后续 OSC。
     let terminal = view.getTerminal()
     view.installShellIntegrationHandler()
-    for code in 0...2 {
-      terminal.registerOscHandler(code: code) { [weak terminal] bytes in
-        let text = String(bytes: bytes, encoding: .utf8) ?? ""
-        switch code {
-        case 0:
-          terminal?.setIconTitle(text: text)
-          terminal?.setTitle(text: text)
-        case 1:
-          terminal?.setIconTitle(text: text)
-        case 2:
-          terminal?.setTitle(text: text)
-        default:
-          break
-        }
-        // 领域标题事件由 `AsterTerminalView.dataReceived` 的字节流观察器统一按原始顺序
-        // 上送。这里不单独通知，避免同一 PTY 分片内恢复与后续 OSC 的顺序被打乱。
+    view.installActivityHandlers()
+    view.onTerminalProgress = { [weak self] progress in self?.handleTerminalProgress(progress) }
+    view.onTerminalNotification = { [weak self] notification in
+      self?.post(notification, category: .application)
+    }
+    view.onTerminalBadgeDirective = { [weak self] directive in
+      switch directive {
+      case .set(let badge): self?.explicitBadge = badge
+      case .clear: self?.explicitBadge = nil
       }
     }
+    view.onTerminalProtocolResponse = { [weak view] response in
+      view?.process.send(data: Array(response.utf8)[...])
+    }
+    view.installTitleHandlers()
     let clipboardCoordinator = OSC52ClipboardCoordinator(
       access: { [weak preferences] operation in
         guard let controls = preferences?.configuration.controls else { return .deny }
@@ -1149,6 +1276,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     isRunning = false
     foregroundPollTask?.cancel()
     foregroundPollTask = nil
+    awaitingInputTask?.cancel()
+    completedFlashTask?.cancel()
+    progressExpiryTask?.cancel()
     SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
 
     // SwiftTerm 1.15 的 `terminate()` 会在发送信号后立即取消进程监视器，且自然退出
@@ -1158,6 +1288,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   private func apply(preferences: AppPreferences, to view: AsterTerminalView) {
+    self.preferences = preferences
     view.font = preferences.terminalFont
     view.nativeForegroundColor = preferences.terminalForegroundColor
     view.nativeBackgroundColor = preferences.terminalBackgroundColor
@@ -1181,6 +1312,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.applyScrollConfiguration(preferences.configuration.controls)
     view.pasteProtectionEnabled = preferences.configuration.controls.pasteProtection
     view.pasteBracketedSafe = preferences.configuration.controls.resolvedPasteBracketedSafe
+    view.terminalBellEnabled = preferences.configuration.shell.terminalBell
+    view.titleShellControlled = preferences.configuration.shell.resolvedTitleShellControlled
+    view.getTerminal().allowTitleReport = preferences.configuration.shell.resolvedTitleReport
     automaticSecureInputEnabled = preferences.configuration.controls.secureInputAutomatically
     if automaticSecureInputEnabled {
       refreshAutomaticSecureInput()
@@ -1260,6 +1394,133 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     }
   }
 
+  private func handleShellIntegrationEvent(_ event: ShellIntegrationEvent) {
+    switch event {
+    case .promptStart, .inputStart:
+      break
+    case .commandStart:
+      clearAwaitingInput()
+      completedFlashTask?.cancel()
+      showsCompletedFlash = false
+      activityOutputTail = ""
+      guard let command = submittedCommand,
+        let shell = preferences?.configuration.shell,
+        AutomaticProgressMatcher(prefixes: shell.resolvedAutoProgressCommands).matches(command)
+      else { return }
+      progressState = .indeterminate
+    case .commandFinished(let exitStatus):
+      clearAwaitingInput()
+      guard let status = exitStatus else {
+        progressState = .clear
+        submittedCommand = nil
+        return
+      }
+      // OSC 9;4;5 已携带完成语义时不重复通知；否则由 OSC 133 形成完成状态。
+      if case .finished = progressState {
+        submittedCommand = nil
+        return
+      }
+      progressState = .finished(exitCode: status, watched: false)
+      if status == 0 { showCompletedFlash() }
+      notifyForCompletion(exitCode: status, watched: false)
+      submittedCommand = nil
+    }
+  }
+
+  private func handleTerminalProgress(_ progress: TerminalProgressState) {
+    let previous = progressState
+    progressState = progress
+    clearAwaitingInput()
+    progressExpiryTask?.cancel()
+    if progress.isWorking {
+      progressExpiryTask = Task { @MainActor [weak self] in
+        try? await Task.sleep(for: .seconds(15))
+        guard !Task.isCancelled, let self, self.progressState == progress else { return }
+        self.progressState = .clear
+      }
+    }
+    guard previous != progress else { return }
+    switch progress {
+    case let .finished(exitCode, watched, notificationSuppressed):
+      if exitCode == 0 { showCompletedFlash() }
+      if !notificationSuppressed {
+        notifyForCompletion(exitCode: exitCode, watched: watched)
+      }
+    case .error:
+      notifyForCompletion(exitCode: 1, watched: false)
+    case .clear, .determinate, .indeterminate:
+      break
+    }
+  }
+
+  private func notifyForCompletion(exitCode: Int, watched: Bool) {
+    guard let shell = preferences?.configuration.shell else { return }
+    if exitCode != 0, shell.resolvedSoundOnErrorExit { NSSound.beep() }
+    let enabled = watched
+      ? shell.resolvedNotifyOnWatchFinish
+      : (exitCode == 0 ? shell.notifyOnFinish : shell.notifyOnError)
+    guard enabled else { return }
+    let title = exitCode == 0 ? "命令已完成" : "命令执行失败"
+    let command = submittedCommand ?? ""
+    let body = !command.isEmpty
+      ? command
+      : (exitCode == 0 ? "终端任务已结束。" : "退出状态：\(exitCode)")
+    post(
+      TerminalNotification(title: title, body: body, urgency: exitCode == 0 ? .normal : .critical),
+      category: exitCode == 0 ? .commandFinish : .errorExit
+    )
+  }
+
+  private func post(
+    _ notification: TerminalNotification,
+    category: TerminalNotificationCategory
+  ) {
+    guard let shell = preferences?.configuration.shell else { return }
+    let focused = terminalView?.window?.isKeyWindow == true
+      && terminalView?.window?.firstResponder === terminalView
+    let scopedNotification = TerminalNotification(
+      identifier: notification.identifier.map { "\(id.uuidString).\($0)" },
+      title: notification.title,
+      body: notification.body,
+      urgency: notification.urgency
+    )
+    TerminalNotificationService.shared.post(
+      scopedNotification,
+      category: category,
+      configuration: shell,
+      sourceTabIsFocused: focused
+    )
+  }
+
+  private func receiveActivityOutput(_ visibleCursorLine: String) {
+    activityOutputTail = String(visibleCursorLine.suffix(4_096))
+    awaitingInputTask?.cancel()
+    awaitingInputTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: .milliseconds(1_500))
+      guard !Task.isCancelled, let self,
+        self.hasRunningCommand || self.progressState.isWorking
+      else { return }
+      let detected = AwaitingInputPromptDetector.matches(self.activityOutputTail)
+      if self.awaitingInput != detected { self.awaitingInput = detected }
+    }
+  }
+
+  private func clearAwaitingInput() {
+    awaitingInputTask?.cancel()
+    awaitingInputTask = nil
+    if awaitingInput { awaitingInput = false }
+  }
+
+  private func showCompletedFlash() {
+    completedFlashTask?.cancel()
+    showsCompletedFlash = true
+    completedFlashTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: .seconds(1))
+      guard !Task.isCancelled else { return }
+      self?.showsCompletedFlash = false
+    }
+  }
+
   private func appendStartupWarning(_ warning: String) {
     guard !warning.isEmpty else { return }
     if let startupError, !startupError.isEmpty {
@@ -1291,6 +1552,7 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
 
   nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
     Task { @MainActor [weak self] in
+      guard (source as? AsterTerminalView)?.titleShellControlled == true else { return }
       // 去重：运行中的命令（尤其 TUI 与带 starship 的 shell）会高频重发相同标题，
       // 不去重会让整棵工作区视图树以接近每帧的频率重建，点击都无法完成。
       var state = TerminalTitleState(fallback: "Shell")

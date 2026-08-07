@@ -180,6 +180,10 @@ flowchart LR
 
 Shell Integration 通过私有 OSC 6973 仅上报符合 ASCII allowlist 的 alias 名称，不传输展开值。`aster learn` 使用 Application Support 中的 256-bit 随机 token 验证本机 URL，命令和目录采用有界 hex 编码；未通过鉴权的 URL 不会污染固定命令。
 
+### 任务状态、徽章与通知
+
+任务状态与通知的领域模型、协议流、权限边界和失败语义见 [terminal-activity-and-notifications.md](terminal-activity-and-notifications.md)。核心约束是：进度观察不得覆盖 SwiftTerm 内建渲染；通知在 parser 前后双重限长；Shell 应用通知、BEL、错误 beep、标题修改与标题报告分别授权；所有 Pane/Dock 状态均为可丢弃运行态。
+
 ### 进程关闭
 
 SwiftTerm 视图只在 `process.running` 为真时按当前 `shellPid` 终止进程组。进程级 `TerminalRetirementCoordinator` 会在 Pane 和 Session 释放后继续强持有 retiring View，直到 SwiftTerm 的进程 monitor 完成 `waitpid`；普通 Pane/标签关闭在 750ms 后仍未退出才升级为 `SIGKILL`。应用整体退出时事件循环不会继续等待，因此在保存快照和确认文档后立即结束进程组。自然结束的 Session 不再对保留的旧 PID 发送信号，避免 PID 复用后误杀无关进程。
@@ -201,10 +205,13 @@ SwiftTerm 视图只在 `process.running` 为真时按当前 `shellPid` 终止进
 - Cut 无法证明选区是当前提示符内同一行 ASCII 范围：只复制，不猜测发送 Backspace。
 - Shell 集成资源缺失、rc 是特殊文件、超过 1 MiB 或 marker 损坏：在任何写入前停止；磁盘写入中途失败则回滚已更新目标，回滚自身失败时明确要求检查对应路径。
 - 自定义 TERM 不合法或缺少 terminfo：记录单行启动告警并回退 `xterm-256color`，Shell 仍可启动。
+- 通知 OSC 畸形、超过 8 KiB、base64 非法或分片未结束：静默丢弃，不请求系统权限；OSC 99 查询只返回固定能力响应。
+- OSC 133 完成标记缺少退出码：停止进度但不猜测成功、不发完成通知。
+- SwiftPM 测试宿主没有应用 Bundle：通知中心保持不可用，设置页仍可构建；打包 app 才延迟解析系统通知中心。
 
 ## 测试与发布
 
-测试覆盖纯 AppKit 迁移、配置编码、24 套主题真值、颜色解析、递归分屏、方向聚焦与分隔条调整、分屏面板在两个方向/两种标签栏布局下的真实 frame、⌘W 的面板优先语义、比例更新、移除节点、文档 dirty/原子保存、Recipe 往返、FIFO 和累计资源预算、恶意结构上限、会话快照、UTF-8 分块、ANSI 边界、线性/矩形选区、鼠标报告绕过、像素滚动与首尾边界、粘贴风险、括号序列、OSC 52 权限/限长、Shell 受管文件、真实 zsh/Bash FTCS、命令时间线、提示符删除、TERM 回退、DA/XTVERSION/DSR、Base64 文件边界和真实 PTY 生命周期。发布前必须运行：
+测试覆盖纯 AppKit 迁移、配置编码、24 套主题真值、颜色解析、递归分屏、方向聚焦与分隔条调整、分屏面板在两个方向/两种标签栏布局下的真实 frame、⌘W 的面板优先语义、比例更新、移除节点、文档 dirty/原子保存、Recipe 往返、FIFO 和累计资源预算、恶意结构上限、会话快照、UTF-8 分块、ANSI 边界、线性/矩形选区、鼠标报告绕过、像素滚动与首尾边界、粘贴风险、括号序列、OSC 52 权限/限长、OSC 9;4/9/99/777、通知策略、标题权限、Shell 受管文件、真实 zsh/Bash FTCS、命令时间线、提示符删除、TERM 回退、DA/XTVERSION/DSR、Base64 文件边界和真实 PTY 生命周期。发布前必须运行：
 
 ```bash
 swift test

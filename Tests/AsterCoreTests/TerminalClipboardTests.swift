@@ -195,6 +195,19 @@ func oscStreamLimiterPreservesValidSequencesAndBoundsGenericOSC() {
   #expect(String(decoding: oversized, as: UTF8.self) == "\u{1B}]9;12345\u{18}tail")
 }
 
+@Test("通知 OSC 在进入 SwiftTerm 前使用独立 8 KiB 级上限")
+func oscStreamLimiterBoundsNotificationSequencesIndependently() {
+  var limiter = TerminalOSCStreamLimiter(
+    maximumSequenceBytes: 64,
+    maximumClipboardSequenceBytes: 60,
+    maximumNotificationSequenceBytes: 12
+  )
+
+  let oversized = limiter.consume(Array("\u{1B}]99;i=x;123456789\u{7}tail".utf8))
+
+  #expect(String(decoding: oversized, as: UTF8.self) == "\u{1B}]99;i=x;123\u{18}tail")
+}
+
 @Test("OSC 流限制器跨 ESC-ST 恢复并继续限制紧随其后的 OSC")
 func oscStreamLimiterTracksSequencesAfterEscapeTermination() {
   var limiter = TerminalOSCStreamLimiter(

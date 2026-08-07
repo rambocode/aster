@@ -55,6 +55,8 @@ final class TerminalAutocompleteController {
   private(set) var selectedIndex = 0
   private(set) var promptActive = false
   private(set) var lastSubmittedCommand: String?
+  /// 命令文本只在当前 Pane 内存中用于自动进度匹配，不进入工作区快照或日志。
+  var onCommandSubmitted: ((String) -> Void)?
 
   private var refreshTask: Task<Void, Never>?
   private var helpProbeTask: Task<Void, Never>?
@@ -126,6 +128,7 @@ final class TerminalAutocompleteController {
     let submitted = tracker.receive(Array(bytes))
     if let command = submitted.last {
       lastSubmittedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
+      if let lastSubmittedCommand { onCommandSubmitted?(lastSubmittedCommand) }
       promptActive = false
       dismiss()
       return

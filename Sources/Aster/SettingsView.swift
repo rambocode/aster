@@ -65,6 +65,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     preferences.objectWillChange
       .sink { [weak self] _ in self?.scheduleRefresh() }
       .store(in: &cancellables)
+    NotificationCenter.default.publisher(for: .terminalNotificationAuthorizationDidChange)
+      .sink { [weak self] _ in self?.scheduleRefresh() }
+      .store(in: &cancellables)
+    TerminalNotificationService.shared.refreshAuthorizationStatus()
     refresh()
   }
 
@@ -449,6 +453,13 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       ]),
       sectionTitle("通知"),
       card([
+        actionRow(
+          "系统权限",
+          "当前状态：\(TerminalNotificationService.shared.authorizationSummary)",
+          title: "打开系统设置"
+        ) {
+          TerminalNotificationService.shared.openSystemSettings()
+        },
         toggleRow(
           "命令完成时通知", "长时间命令结束后发送系统通知",
           value: preferences.configuration.shell.notifyOnFinish
@@ -462,18 +473,61 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.shell.notifyOnError = value
         },
         toggleRow(
-          "终端铃声", "响应终端 BEL 字符",
+          "Watch 完成时通知", "otty/aster watch 包装的命令结束后发送系统通知",
+          value: preferences.configuration.shell.resolvedNotifyOnWatchFinish
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.notifyOnWatchFinish = value
+        },
+        toggleRow(
+          "通知 — Shell Controlled", "允许终端程序通过 OSC 9、777 或 99 发送通知",
+          value: preferences.configuration.shell.resolvedNotificationShellControlled
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.notificationShellControlled = value
+        },
+        enumPopupRow(
+          "前台通知", "应用位于前台时是否仍显示横幅",
+          value: preferences.configuration.shell.resolvedNotifyWhileForeground
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.notifyWhileForeground = value
+        },
+        toggleRow(
+          "通知时弹跳 Dock 图标", "应用不活跃且收到通知时请求用户注意",
+          value: preferences.configuration.shell.resolvedBounceDockIcon
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.bounceDockIcon = value
+        },
+        toggleRow(
+          "错误退出时播放声音", "命令以非零状态退出时直接播放系统提示音",
+          value: preferences.configuration.shell.resolvedSoundOnErrorExit
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.soundOnErrorExit = value
+        },
+        toggleRow(
+          "声音 — Shell Controlled", "允许终端 BEL 字符播放系统提示音",
           value: preferences.configuration.shell.terminalBell
         ) { [weak self] value in
           self?.preferences.configuration.shell.terminalBell = value
         },
       ]),
+      sectionTitle("通知声音"),
+      card([
+        notificationSoundToggle("错误退出", category: .errorExit),
+        notificationSoundToggle("命令完成", category: .commandFinish),
+        notificationSoundToggle("应用通知", category: .application),
+      ]),
       sectionTitle("标签徽章"),
       card([
         toggleRow(
-          "退出状态徽章", "命令失败时在标签上显示标记",
-          value: preferences.configuration.shell.badgeExitStatus
+          "命令完成徽章", "成功退出后在标签上显示强调色圆点",
+          value: preferences.configuration.shell.resolvedBadgeCommandFinish
         ) { [weak self] value in
+          self?.preferences.configuration.shell.badgeCommandFinish = value
+        },
+        toggleRow(
+          "命令失败徽章", "非零退出或 OSC 进度错误时显示警告",
+          value: preferences.configuration.shell.resolvedBadgeCommandFailure
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.badgeCommandFailure = value
           self?.preferences.configuration.shell.badgeExitStatus = value
         },
         toggleRow(
@@ -484,6 +538,21 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         },
       ]),
     ]
+  }
+
+  private func notificationSoundToggle(
+    _ title: String,
+    category: TerminalNotificationCategory
+  ) -> NSView {
+    toggleRow(
+      title, "仅控制系统通知附带的声音，不影响通知是否显示",
+      value: preferences.configuration.shell.resolvedNotificationSoundCategories.contains(category)
+    ) { [weak self] enabled in
+      guard let self else { return }
+      var categories = preferences.configuration.shell.resolvedNotificationSoundCategories
+      if enabled { categories.insert(category) } else { categories.remove(category) }
+      preferences.configuration.shell.notificationSoundCategories = categories
+    }
   }
 
   /// Shell 集成开关同时维护 Bash/tmux 的受管启动文件。禁用前明确确认；文件编辑失败
@@ -927,6 +996,33 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         infoRow("会话恢复", "保存可重建的标签与分屏结构", "已启用"),
         infoRow("界面框架", "主窗口、设置和所有控件均为原生视图", "AppKit"),
       ]),
+      sectionTitle("终端任务"),
+      card([
+        textRow(
+          "自动进度命令", "用逗号分隔；每项按空白分词前缀匹配，留空即关闭",
+          value: preferences.configuration.shell.resolvedAutoProgressCommands.joined(separator: ", ")
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.autoProgressCommands = value
+            .split(separator: ",", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        },
+      ]),
+      sectionTitle("标题权限"),
+      card([
+        toggleRow(
+          "标题 — Shell Controlled", "允许终端程序通过 OSC 0、1、2 修改标签与窗口标题",
+          value: preferences.configuration.shell.resolvedTitleShellControlled
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.titleShellControlled = value
+        },
+        toggleRow(
+          "标题报告", "允许终端程序通过 XTWINOPS 读取当前标题；默认关闭以防数据外传",
+          value: preferences.configuration.shell.resolvedTitleReport
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.titleReport = value
+        },
+      ]),
       sectionTitle("配置"),
       card([
         actionRow("导出配置", "保存为可备份的 JSON 文件", title: "导出") { [weak self] in self?.exportConfiguration() },
@@ -987,6 +1083,22 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       },
       toggleRow("显示状态栏", "显示目录、编码和 Pane 数量", value: preferences.showStatusBar) { [weak self] value in
         self?.preferences.showStatusBar = value
+      },
+    ]))
+
+    views.append(sectionTitle("Dock"))
+    views.append(card([
+      toggleRow(
+        "任务运行时动画", "任一标签报告进度时让 Dock 图标显示活动状态",
+        value: preferences.configuration.appearance.resolvedAnimateDockIconOnProgress
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.animateDockIconOnProgress = value
+      },
+      toggleRow(
+        "任务出错时标红", "任一标签失败时将 Dock 图标标红；点击图标跳转到错误标签",
+        value: preferences.configuration.appearance.resolvedRedDockIconOnError
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.redDockIconOnError = value
       },
     ]))
 
@@ -1969,6 +2081,16 @@ extension AutocompleteDescriptionLanguage: SettingsEnumOption {
     case .system: "跟随系统"
     case .english: "English"
     case .chinese: "简体中文"
+    }
+  }
+}
+
+extension NotificationForegroundPolicy: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .off: "关闭"
+    case .always: "始终显示"
+    case .tabUnfocused: "仅来源标签未聚焦时"
     }
   }
 }

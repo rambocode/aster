@@ -129,6 +129,43 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     runtimes[activePaneID]?.terminalSession?.lastCommandExitStatus
   }
 
+  /// 多 Pane 标签按“当前错误 > 等待输入 > 正在运行 > 已完成”聚合；旧退出码不会
+  /// 覆盖已经开始的新任务，避免失败徽章在下一次构建期间仍误导用户。
+  var activityBadge: TerminalBadgeState {
+    let sessions = runtimes.values.compactMap(\.terminalSession)
+    let explicit = sessions.compactMap(\.explicitBadge)
+    if explicit.contains(.error) { return .error }
+    if explicit.contains(.awaitingInput) { return .awaitingInput }
+    if let running = explicit.first(where: {
+      if case .running = $0 { return true }
+      return false
+    }) { return running }
+    if explicit.contains(.completed) { return .completed }
+    if explicit.contains(.finished) { return .finished }
+    if sessions.contains(where: { $0.progressState.reportsError }) { return .error }
+    if sessions.contains(where: \.awaitingInput) { return .awaitingInput }
+    if let active = runtimes[activePaneID]?.terminalSession {
+      switch active.progressState {
+      case let .determinate(percent): return .running(percent: percent)
+      case .indeterminate: return .running(percent: nil)
+      case .clear, .error, .finished: break
+      }
+    }
+    if sessions.contains(where: { $0.progressState.isWorking || $0.hasRunningCommand }) {
+      return .running(percent: nil)
+    }
+    if sessions.contains(where: \.showsCompletedFlash) { return .completed }
+    if sessions.contains(where: {
+      if case .finished = $0.progressState { return true }
+      return $0.lastCommandExitStatus == 0
+    }) { return .finished }
+    if sessions.contains(where: {
+      if case .error = $0.progressState { return true }
+      return $0.lastCommandExitStatus.map { $0 != 0 } == true
+    }) { return .error }
+    return .none
+  }
+
   /// 目录的稳定显示名：主目录显示 `~`，其余取末级目录名。选中与未选中状态都用
   /// 它作为标签主文案，切换标签时名字不再变化。
   static func displayName(forDirectory path: String) -> String {
@@ -455,7 +492,11 @@ final class TerminalTabItem: ObservableObject, Identifiable {
         session.$hasRunningCommand.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$exitCode.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$startupError.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
-        session.$lastCommandExitStatus.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+        session.$lastCommandExitStatus.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        session.$progressState.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        session.$awaitingInput.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        session.$showsCompletedFlash.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        session.$explicitBadge.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
       )
       .sink { [weak self] _ in self?.objectWillChange.send() }
       .store(in: &cancellables)

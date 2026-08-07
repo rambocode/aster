@@ -124,10 +124,40 @@ public struct ShellConfiguration: Codable, Equatable, Sendable {
   public var terminalBell = true
   public var badgeExitStatus = true
   public var badgeAwaitingInput = true
+  /// 以下字段均保持可选以兼容 0.4.x 的单块 JSON 配置；resolved 属性提供 Otty 默认值。
+  public var notifyOnWatchFinish: Bool? = true
+  public var notificationShellControlled: Bool? = true
+  public var notifyWhileForeground: NotificationForegroundPolicy? = .off
+  public var bounceDockIcon: Bool? = true
+  public var soundOnErrorExit: Bool? = false
+  public var notificationSoundCategories: Set<TerminalNotificationCategory>? = []
+  public var badgeCommandFinish: Bool? = true
+  public var badgeCommandFailure: Bool? = true
+  public var autoProgressCommands: [String]? = AutomaticProgressMatcher.defaultPrefixes
+  public var titleShellControlled: Bool? = true
+  public var titleReport: Bool? = false
 
   public var resolvedFrecencyAutoRecord: Bool {
     frecencyAutoRecord ?? true
   }
+
+  public var resolvedNotifyOnWatchFinish: Bool { notifyOnWatchFinish ?? true }
+  public var resolvedNotificationShellControlled: Bool { notificationShellControlled ?? true }
+  public var resolvedNotifyWhileForeground: NotificationForegroundPolicy {
+    notifyWhileForeground ?? .off
+  }
+  public var resolvedBounceDockIcon: Bool { bounceDockIcon ?? true }
+  public var resolvedSoundOnErrorExit: Bool { soundOnErrorExit ?? false }
+  public var resolvedNotificationSoundCategories: Set<TerminalNotificationCategory> {
+    notificationSoundCategories ?? []
+  }
+  public var resolvedBadgeCommandFinish: Bool { badgeCommandFinish ?? true }
+  public var resolvedBadgeCommandFailure: Bool { badgeCommandFailure ?? badgeExitStatus }
+  public var resolvedAutoProgressCommands: [String] {
+    autoProgressCommands ?? AutomaticProgressMatcher.defaultPrefixes
+  }
+  public var resolvedTitleShellControlled: Bool { titleShellControlled ?? true }
+  public var resolvedTitleReport: Bool { titleReport ?? false }
 }
 
 public struct ControlConfiguration: Codable, Equatable, Sendable {
@@ -266,6 +296,9 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var showStatusBar = true
   public var windowWidth = 1180.0
   public var windowHeight = 760.0
+  /// Dock 聚合状态默认只标红错误；旋转动画需要用户主动开启。
+  public var animateDockIconOnProgress: Bool? = false
+  public var redDockIconOnError: Bool? = true
 
   public func showsTabBar(tabCount: Int) -> Bool {
     showTabBar && !(autoHideTabs && tabCount <= 1)
@@ -274,6 +307,9 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var resolvedNewTabPosition: NewTabPosition {
     newTabPosition ?? .automatic
   }
+
+  public var resolvedAnimateDockIconOnProgress: Bool { animateDockIconOnProgress ?? false }
+  public var resolvedRedDockIconOnError: Bool { redDockIconOnError ?? true }
 }
 
 public struct AgentConfiguration: Codable, Equatable, Sendable {
@@ -335,6 +371,12 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
             && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
         }
         .prefix(64)
+    )
+    result.shell.autoProgressCommands = Array(
+      result.shell.resolvedAutoProgressCommands.lazy
+        .map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        .filter { !$0.isEmpty && $0.utf8.count <= 128 }
+        .prefix(128)
     )
     return result
   }

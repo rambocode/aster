@@ -21,8 +21,12 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   private var mainWindowController: NSWindowController?
   private var settingsWindowController: NSWindowController?
   private var cancellables: Set<AnyCancellable> = []
+  private lazy var dockActivityCoordinator = DockActivityCoordinator(
+    model: model, preferences: preferences)
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    TerminalNotificationService.shared.refreshAuthorizationStatus()
+    dockActivityCoordinator.start()
     // 提前创建 0600 CLI token，使首次执行 `aster learn` 无需先打开设置页或等待 Pane。
     _ = AutocompleteService.shared
     // Bash 与 tmux 子 Shell 需要受管 rc 区块；每次启动都按当前签名 Bundle 路径幂等
@@ -56,6 +60,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
   func applicationDidBecomeActive(_ notification: Notification) {
     SecureInputCoordinator.shared.setApplicationActive(true)
+    TerminalNotificationService.shared.refreshAuthorizationStatus()
   }
 
   func applicationDidResignActive(_ notification: Notification) {
@@ -85,6 +90,15 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     preferences.configuration.general.quitAfterLastWindowClosed
+  }
+
+  func applicationShouldHandleReopen(
+    _ sender: NSApplication,
+    hasVisibleWindows flag: Bool
+  ) -> Bool {
+    _ = dockActivityCoordinator.acknowledgeAndSelectNextError()
+    showMainWindow()
+    return true
   }
 
   func application(_ application: NSApplication, open urls: [URL]) {

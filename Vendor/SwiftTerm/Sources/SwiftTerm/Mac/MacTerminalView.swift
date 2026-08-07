@@ -674,7 +674,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
-    private func clearProgressReport() {
+    /// Clears the host progress indicator immediately. Aster uses this for its OSC 9;4 state 5
+    /// completion extension, which SwiftTerm's upstream state enum does not model.
+    public func clearProgressReport() {
         progressReportTimer?.invalidate()
         progressReportTimer = nil
         lastProgressValue = nil

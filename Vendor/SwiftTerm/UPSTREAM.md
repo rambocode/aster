@@ -24,6 +24,11 @@ record the new version and revision here.
   with a zero translation.
 - `Terminal.swift` and `Buffer.swift` expose stable absolute buffer coordinates and an opt-in
   embedder identity used for conservative DA1/DA2 and XTVERSION replies.
+- `EscapeSequenceParser.swift` / `Terminal.swift` add non-consuming OSC observers so Aster can
+  mirror progress and notification state without replacing built-in handlers. `Terminal.swift`
+  also keeps title reports blank by default, exposes an explicit sanitized opt-in privilege, and
+  allows the host to consume OSC 9;4 pause reports without rendering them. The macOS view exposes
+  immediate progress clearing for Aster's state 5 completion extension.
 - `Apple/AppleTerminalView.swift` exposes a read-only selection range for prompt safety checks;
   `Mac/MacTerminalView.swift` makes `keyDown` open so Aster can consume Backspace only inside a
   verified OSC 133 prompt range.

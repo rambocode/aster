@@ -35,8 +35,20 @@
 - [ ] 关闭本机学习后不再出现历史/README/纠错，也不启动 help 探测；文件与内置命令仍可补全。
 - [ ] 设置页“立即更新”只在点击后联网；“清除”移除学习和固定命令但保留本地 help 规格。
 
+## Progress / Notifications 检查清单
+
+- [ ] OSC 9;4 百分比与不定进度同时更新终端顶部进度条和标签；成功先显示 checkmark，随后变为圆点。
+- [ ] password、`[y/n]` 与 Press Enter 提示静置约 1.5 秒后显示等待输入，输入后立即清除。
+- [ ] `aster watch`、`-q` 和 `aster tab badge` 的徽章、退出码与通知行为符合帮助文档。
+- [ ] OSC 9、777、99 在应用后台、前台未聚焦标签和前台聚焦标签下分别服从策略。
+- [ ] Shell Controlled、通知声音、BEL、错误 beep 和 Dock 弹跳互不串联。
+- [ ] Dock 运行动画默认关闭；错误标红默认开启，点击图标跳到失败标签并清除当前红色状态。
+- [ ] macOS 通知权限状态从系统设置返回后自动刷新。
+- [ ] 关闭标题 Shell Controlled 后程序不能改名；标题报告关闭时查询只能收到空值。
+
 ## 记录
 
 - 2026-08-08：新增 Selection / Scroll 验收项；尚未执行界面测试。
 - 2026-08-08：新增 Shell Integration / Identification 验收项；按用户要求仍未执行界面测试。
 - 2026-08-08：新增 Autocomplete / Inline Suggest 验收项；按用户要求仍未执行界面测试。
+- 2026-08-08：新增 Progress / Notifications 验收项；按用户要求仍未执行界面测试。

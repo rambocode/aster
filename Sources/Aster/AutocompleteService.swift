@@ -30,9 +30,52 @@ enum AutocompleteLearnURLResult: Equatable {
 /// 设置页安装的 POSIX sh 启动器。保持为单一常量，便于代码测试执行 `sh -n`；脚本
 /// 不解释命令内容，只将明确的 `learn` 参数和当前目录编码为十六进制 URL 字段。
 enum AsterCLIScript {
-  static let contents = """
+  static let contents = #"""
     #!/bin/sh
-    # Aster CLI 启动器：打开路径/Recipe，或把明确指定的命令固定到当前目录。
+    # Aster CLI 启动器：任务包装和标签徽章直接写当前 TTY，其余动作交给应用 URL。
+    if [ "${1-}" = "watch" ]; then
+      shift
+      quiet=0
+      if [ "${1-}" = "-q" ] || [ "${1-}" = "--quiet" ]; then
+        quiet=1
+        shift
+      fi
+      if [ "$#" -eq 0 ]; then
+        echo "usage: aster watch [-q|--quiet] <command> [args ...]" >&2
+        exit 64
+      fi
+      printf '\033]9;4;3\007'
+      "$@"
+      status=$?
+      if [ "$quiet" -eq 1 ]; then
+        printf '\033]9;4;5;%s;watch;quiet\007' "$status"
+      else
+        printf '\033]9;4;5;%s;watch\007' "$status"
+      fi
+      exit "$status"
+    fi
+    if [ "${1-}" = "tab" ] && [ "${2-}" = "badge" ]; then
+      shift 2
+      if [ "${1-}" = "--clear" ]; then
+        printf '\033]6974;Badge=clear\007'
+        exit 0
+      fi
+      if [ "${1-}" != "--kind" ] || [ "$#" -ne 2 ]; then
+        echo "usage: aster tab badge --kind running|completed|finished|unread|error|awaiting-input" >&2
+        echo "       aster tab badge --clear" >&2
+        exit 64
+      fi
+      case "$2" in
+        running|completed|finished|unread|error|awaiting-input)
+          printf '\033]6974;Badge=%s\007' "$2"
+          exit 0
+          ;;
+        *)
+          echo "aster: invalid badge kind: $2" >&2
+          exit 64
+          ;;
+      esac
+    fi
     if [ "${1-}" = "learn" ]; then
       shift
       if [ "$#" -eq 0 ]; then
@@ -59,7 +102,7 @@ enum AsterCLIScript {
     fi
     exec open -a "Aster" "$@"
 
-    """
+    """#
 }
 
 /// 未知本机命令的 help 探测器。只从 PATH 解析一个可执行文件，只尝试固定的 help

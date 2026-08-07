@@ -510,6 +510,11 @@ public class EscapeSequenceParser {
     }
 
     func dispatchOsc(code: Int, data: ArraySlice<UInt8>) {
+        // Observers are intentionally non-consuming: embedders can mirror protocol state
+        // without replacing SwiftTerm's built-in title, progress, image, or notification logic.
+        if let observers = oscObservers[code] {
+            for observer in observers { observer(data) }
+        }
         // Check user-registered handlers first (allows override)
         if let handler = oscHandlers[code] {
             handler(data)
@@ -586,6 +591,7 @@ public class EscapeSequenceParser {
     var oscHandlerFallback: OscHandlerFallback = { code, data -> () in
         
     }
+    var oscObservers: [Int: [OscHandler]] = [:]
     var apcHandlerFallback: ApcHandlerFallback = { code, data -> () in
         
     }

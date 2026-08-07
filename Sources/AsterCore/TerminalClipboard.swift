@@ -192,15 +192,23 @@ public struct TerminalOSCStreamLimiter: Sendable {
 
   public let maximumSequenceBytes: Int
   public let maximumClipboardSequenceBytes: Int
+  public let maximumNotificationSequenceBytes: Int
   private var state: State = .ground
 
   public init(
     maximumSequenceBytes: Int = 16 * 1_024 * 1_024,
-    maximumClipboardSequenceBytes: Int = 8 * 1_024 * 1_024
+    maximumClipboardSequenceBytes: Int = 8 * 1_024 * 1_024,
+    maximumNotificationSequenceBytes: Int = 8_224
   ) {
     self.maximumSequenceBytes = max(8, maximumSequenceBytes)
     self.maximumClipboardSequenceBytes = min(
       max(8, maximumClipboardSequenceBytes),
+      self.maximumSequenceBytes
+    )
+    // OSC 9/99/777 的协议 payload 上限为 8 KiB；额外 32 字节容纳 introducer、
+    // metadata 和终止符，但绝不允许它们继承通用 OSC 的 16 MiB 缓冲上限。
+    self.maximumNotificationSequenceBytes = min(
+      max(8, maximumNotificationSequenceBytes),
       self.maximumSequenceBytes
     )
   }
@@ -269,7 +277,14 @@ public struct TerminalOSCStreamLimiter: Sendable {
         output.append(byte)
         state = .forwardedEscape
       } else {
-        let limit = code == 52 ? maximumClipboardSequenceBytes : maximumSequenceBytes
+        let limit: Int
+        if code == 52 {
+          limit = maximumClipboardSequenceBytes
+        } else if code == 9 || code == 99 || code == 777 {
+          limit = maximumNotificationSequenceBytes
+        } else {
+          limit = maximumSequenceBytes
+        }
         if forwardedBytes >= limit {
           output.append(0x18)
           state = .dropping

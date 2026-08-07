@@ -78,8 +78,8 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 - 待审计：[BiDi / RTL Text](https://docs.otty.sh/terminal-features/bidi-rtl)
 - 部分：[Box Drawing](https://docs.otty.sh/terminal-features/box-drawing)
 - 待审计：[Images](https://docs.otty.sh/terminal-features/images)
-- 待审计：[Progress State](https://docs.otty.sh/terminal-features/progress-state)
-- 待审计：[Privilege and Notifications](https://docs.otty.sh/terminal-features/notifications)
+- 完成：[Progress State](https://docs.otty.sh/terminal-features/progress-state) — 完整解析 OSC 9;4（含 watch/quiet 完成扩展），保留 SwiftTerm 顶部进度条；支持可配置空白前缀自动进度、`aster watch`、CLI 直接徽章、完成闪现/未读/错误/等待输入标签状态，以及可选 Dock 动画、默认错误标红和点击跳转。等待输入要求提示停留 1.5 秒且输入立即清除。
+- 完成：[Privilege and Notifications](https://docs.otty.sh/terminal-features/notifications) — OSC 9/777/99 均映射系统通知；OSC 99 支持 urgency、base64、8 KiB 分片重组、替换 ID 和 capability query。成功/错误/watch、Shell Controlled、前台策略、Dock 弹跳、通知分类声音、BEL 与错误 beep 均独立可配；系统权限状态可刷新并直达设置。标题修改默认开、标题报告默认关，OSC 52 和 Secure Input 继续走各自安全边界。
 - 待审计：[Vi Mode](https://docs.otty.sh/terminal-features/vi-mode)
 - 待审计：[Hint Mode](https://docs.otty.sh/terminal-features/hint-mode)
 - 待审计：[Read-only Mode](https://docs.otty.sh/terminal-features/read-only-mode)
@@ -110,7 +110,7 @@ Autocomplete 由 `PromptInputTracker`、`AutocompleteEngine`、`AutocompleteLear
 
 文件和链接统一经过 `TargetResolver`、`TargetFileInspector` 与 `TargetSecurityPolicy`；点击单元格的 OSC 8 payload 是显式来源真值，`TerminalTargetOpenCoordinator` 取代组件默认直开路径。普通文字可选择检测全部 scheme 或标准 scheme 加自定义列表；OSC 8 始终识别，但所有非标准协议、可执行文件和 `.app` 仍需确认。可执行目标不保存路径授权，配置导入也会剥离本机 scheme 例外。
 
-复制粘贴由 `PasteRiskAnalyzer`、`PasteProtectionPolicy` 与 `PasteTransmissionEncoder` 组成纯领域链路，AppKit 只负责系统剪贴板、确认和 PTY 写入；bracketed 结束标记会被中和，控制字符不会因可信模式跳过。`TerminalOSCStreamLimiter` 在 SwiftTerm parser 前对普通 OSC/OSC 52 分别实施 16/8 MiB 跨分片硬上限，自定义 handler 再执行解码后限长和动态权限；配置导入会降级无提示读取授权，Ask 有重入保护与冷却。`TerminalFilePasteEncoder` 拒绝符号链接，并在打开前后复验文件身份和变更时间，避免特殊文件读取与路径替换竞态。
+复制粘贴由 `PasteRiskAnalyzer`、`PasteProtectionPolicy` 与 `PasteTransmissionEncoder` 组成纯领域链路，AppKit 只负责系统剪贴板、确认和 PTY 写入；bracketed 结束标记会被中和，控制字符不会因可信模式跳过。`TerminalOSCStreamLimiter` 在 SwiftTerm parser 前对普通 OSC、OSC 52、通知 OSC 分别实施 16 MiB、8 MiB、约 8 KiB 的跨分片硬上限，自定义 handler 再执行解码后限长和动态权限；配置导入会降级无提示读取授权，Ask 有重入保护与冷却。`TerminalFilePasteEncoder` 拒绝符号链接，并在打开前后复验文件身份和变更时间，避免特殊文件读取与路径替换竞态。
 
 ## 测试与验收
 

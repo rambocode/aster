@@ -242,7 +242,32 @@ func asterCLIScriptIsSyntacticallyValid() throws {
   #expect(process.terminationStatus == 0)
   #expect(AsterCLIScript.contents.contains("aster://learn?token="))
   #expect(AsterCLIScript.contents.contains("/usr/bin/xxd -p"))
+  #expect(AsterCLIScript.contents.contains("9;4;5;%s;watch"))
+  #expect(AsterCLIScript.contents.contains("6974;Badge=%s"))
   #expect(AutocompleteService.figTreeURL.absoluteString.contains("/trees/master?recursive=1"))
+}
+
+@Test("aster watch 保留命令退出码并发送开始与完成状态")
+@MainActor
+func asterCLIWatchReportsProgressAndExitStatus() throws {
+  let directory = try makeAutocompleteTemporaryDirectory()
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let script = directory.appendingPathComponent("aster")
+  try AsterCLIScript.contents.write(to: script, atomically: true, encoding: .utf8)
+  try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+  let pipe = Pipe()
+  let process = Process()
+  process.executableURL = script
+  process.arguments = ["watch", "/bin/sh", "-c", "exit 7"]
+  process.standardOutput = pipe
+  process.standardError = FileHandle.nullDevice
+  try process.run()
+  process.waitUntilExit()
+  let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+
+  #expect(process.terminationStatus == 7)
+  #expect(output.contains("\u{1B}]9;4;3\u{7}"))
+  #expect(output.contains("\u{1B}]9;4;5;7;watch\u{7}"))
 }
 
 private var repositoryAutocompleteSpecURL: URL {

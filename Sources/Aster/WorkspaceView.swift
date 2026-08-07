@@ -562,6 +562,9 @@ final class WorkspaceViewController: NSViewController {
           horizontal: false,
           theme: theme,
           showsExitStatus: preferences.configuration.shell.badgeExitStatus,
+          showsFinished: preferences.configuration.shell.resolvedBadgeCommandFinish,
+          showsFailure: preferences.configuration.shell.resolvedBadgeCommandFailure,
+          showsAwaitingInput: preferences.configuration.shell.badgeAwaitingInput,
           action: { [weak self, weak tab] in
             guard let tab else { return }
             self?.model.select(tab)
@@ -756,6 +759,9 @@ final class WorkspaceViewController: NSViewController {
         horizontal: true,
         theme: theme,
         showsExitStatus: preferences.configuration.shell.badgeExitStatus,
+        showsFinished: preferences.configuration.shell.resolvedBadgeCommandFinish,
+        showsFailure: preferences.configuration.shell.resolvedBadgeCommandFailure,
+        showsAwaitingInput: preferences.configuration.shell.badgeAwaitingInput,
         action: { [weak self, weak tab] in
           guard let tab else { return }
           self?.model.select(tab)
@@ -1244,6 +1250,9 @@ private final class TabRowButton: NSButton {
     horizontal: Bool,
     theme: TerminalTheme,
     showsExitStatus: Bool,
+    showsFinished: Bool,
+    showsFailure: Bool,
+    showsAwaitingInput: Bool,
     action: @escaping () -> Void
   ) {
     self.tab = tab
@@ -1262,6 +1271,23 @@ private final class TabRowButton: NSButton {
     translatesAutoresizingMaskIntoConstraints = false
     heightAnchor.constraint(equalToConstant: style.height ?? (horizontal ? 31 : 47)).isActive = true
     if horizontal { widthAnchor.constraint(greaterThanOrEqualToConstant: 92).isActive = true }
+    if horizontal {
+      switch tab.activityBadge {
+      case .running:
+        image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "正在运行")
+      case .awaitingInput where showsAwaitingInput:
+        image = NSImage(systemSymbolName: "hand.raised.fill", accessibilityDescription: "等待输入")
+      case .error where showsFailure && showsExitStatus:
+        image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "执行失败")
+      case .finished where showsFinished && showsExitStatus:
+        image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "已完成")
+      case .completed where showsFinished && showsExitStatus:
+        image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "刚刚完成")
+      default:
+        image = nil
+      }
+      imagePosition = .imageTrailing
+    }
     if !horizontal {
       // 选中与未选中显示同一份 `tab.title`（目录稳定显示名），切换标签时行文案
       // 不再在「完整路径 / 短名」之间跳变。
@@ -1278,7 +1304,8 @@ private final class TabRowButton: NSButton {
       // 右侧 accessory：有前台命令在运行时显示 spinner（业务状态来源为
       // TerminalSession 的前台进程组检测），否则选中行显示 shell 名。
       let accessory: NSView
-      if tab.hasRunningCommand {
+      switch tab.activityBadge {
+      case .running:
         let spinner = NSProgressIndicator()
         spinner.style = .spinning
         spinner.controlSize = .small
@@ -1286,15 +1313,23 @@ private final class TabRowButton: NSButton {
         spinner.isDisplayedWhenStopped = false
         spinner.startAnimation(nil)
         accessory = spinner
-      } else if showsExitStatus, let status = tab.lastCommandExitStatus {
+      case .awaitingInput where showsAwaitingInput:
         accessory = makeLabel(
-          status == 0 ? "✓" : "\(status)",
+          "✋", size: 11, weight: .semibold, color: AsterTheme.warning
+        )
+      case .error where showsFailure && showsExitStatus:
+        accessory = makeLabel(
+          tab.lastCommandExitStatus.map(String.init) ?? "!",
           size: 10,
           weight: .semibold,
-          color: status == 0 ? AsterTheme.accent : AsterTheme.warning,
+          color: AsterTheme.warning,
           monospaced: true
         )
-      } else {
+      case .finished where showsFinished && showsExitStatus:
+        accessory = makeLabel("●", size: 9, weight: .semibold, color: AsterTheme.accent)
+      case .completed where showsFinished && showsExitStatus:
+        accessory = makeLabel("✓", size: 11, weight: .semibold, color: AsterTheme.accent)
+      default:
         accessory = makeLabel(
           selected
             ? URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh").lastPathComponent
