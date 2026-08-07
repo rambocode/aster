@@ -198,6 +198,8 @@ func shellIntegrationResourcesAreReadableAndSyntacticallyValid() throws {
 func zshIntegrationEmitsCommandLifecycle() throws {
   let home = try temporaryDirectory(named: "aster-zsh-runtime")
   defer { try? FileManager.default.removeItem(at: home) }
+  try "alias aster_test_alias='echo safe'\n".write(
+    to: home.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
   let root = repositoryRoot.appendingPathComponent("Resources/shell-integration")
   let output = try runInteractiveShell(
     executable: "/bin/zsh",
@@ -223,6 +225,7 @@ func zshIntegrationEmitsCommandLifecycle() throws {
       "ASTER_ZSH_BODY", "\u{1B}]133;D;0\u{7}"]
   )
   #expect(output.contains("\u{1B}]7;file://"))
+  #expect(output.contains("\u{1B}]6973;Aliases=aster_test_alias"))
   #expect(!output.contains("%23/"))
 }
 

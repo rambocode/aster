@@ -23,6 +23,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   private var cancellables: Set<AnyCancellable> = []
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    // 提前创建 0600 CLI token，使首次执行 `aster learn` 无需先打开设置页或等待 Pane。
+    _ = AutocompleteService.shared
     // Bash 与 tmux 子 Shell 需要受管 rc 区块；每次启动都按当前签名 Bundle 路径幂等
     // 刷新，应用移动或升级后不会继续 source 旧位置。失败只禁用集成，不阻塞终端窗口。
     if let installer = AsterResourceLocations.shellIntegrationInstaller() {
@@ -86,7 +88,12 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   }
 
   func application(_ application: NSApplication, open urls: [URL]) {
-    for url in urls { model.handleOpenURL(url) }
+    for url in urls {
+      if let result = AutocompleteService.shared?.handleLearnURL(url), result != .notHandled {
+        continue
+      }
+      model.handleOpenURL(url)
+    }
     showMainWindow()
   }
 

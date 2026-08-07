@@ -1,0 +1,11892 @@
+{
+  "commands": [
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "-",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "act",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "adb",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "adr",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "afplay",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "aftman",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ag",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "agrippa",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "airflow",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "aliases",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "amplify",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ampx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ansible",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ansible-config",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ansible-doc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ansible-galaxy",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ansible-lint",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ansible-playbook",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ant",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "appwrite",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "apt",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "arch",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "arduino-cli",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "argo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "asar",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "asciinema",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "asdf",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "asr",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "assimp",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "astro",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "atlas",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "atuin",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "authchanger",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "autocannon",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "autojump",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "AWS 命令行界面",
+        "english": "AWS command-line interface"
+      },
+      "name": "aws",
+      "options": [
+        {
+          "description": "",
+          "name": "--help"
+        },
+        {
+          "description": "",
+          "name": "--profile"
+        },
+        {
+          "description": "",
+          "name": "--region"
+        },
+        {
+          "description": "",
+          "name": "--output"
+        }
+      ],
+      "subcommands": [
+        {
+          "description": "",
+          "name": "configure"
+        },
+        {
+          "description": "",
+          "name": "ec2"
+        },
+        {
+          "description": "",
+          "name": "ecr"
+        },
+        {
+          "description": "",
+          "name": "iam"
+        },
+        {
+          "description": "",
+          "name": "lambda"
+        },
+        {
+          "description": "",
+          "name": "s3"
+        },
+        {
+          "description": "",
+          "name": "s3api"
+        },
+        {
+          "description": "",
+          "name": "sts"
+        }
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "aws-vault",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "awsume",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "babel",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "banner",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "barnard59",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "base32",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "base64",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "basename",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "basenc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "bat",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "bazel",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "bc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "bcd",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "bit",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "black",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "blitz",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "bosh",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "br",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "Homebrew 包管理器",
+        "english": "Homebrew package manager"
+      },
+      "name": "brew",
+      "options": [
+        {
+          "description": "",
+          "name": "--help"
+        },
+        {
+          "description": "",
+          "name": "--version"
+        },
+        {
+          "description": "",
+          "name": "--formula"
+        },
+        {
+          "description": "",
+          "name": "--cask"
+        }
+      ],
+      "subcommands": [
+        {
+          "description": "",
+          "name": "cleanup"
+        },
+        {
+          "description": "",
+          "name": "doctor"
+        },
+        {
+          "description": "",
+          "name": "info"
+        },
+        {
+          "description": "",
+          "name": "install"
+        },
+        {
+          "description": "",
+          "name": "list"
+        },
+        {
+          "description": "",
+          "name": "outdated"
+        },
+        {
+          "description": "",
+          "name": "services"
+        },
+        {
+          "description": "",
+          "name": "uninstall"
+        },
+        {
+          "description": "",
+          "name": "update"
+        },
+        {
+          "description": "",
+          "name": "upgrade"
+        }
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "broot",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "browser-sync",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "btop",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "build-storybook",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "bun",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "bundle",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "bunx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "bw",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "bwdc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "bws",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "c++",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "caffeinate",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cal",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cap",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "capacitor",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "Rust 包管理器",
+        "english": "Rust package manager"
+      },
+      "name": "cargo",
+      "options": [
+        {
+          "description": "",
+          "name": "--help"
+        },
+        {
+          "description": "",
+          "name": "--version"
+        },
+        {
+          "description": "",
+          "name": "--release"
+        }
+      ],
+      "subcommands": [
+        {
+          "description": "",
+          "name": "add"
+        },
+        {
+          "description": "",
+          "name": "build"
+        },
+        {
+          "description": "",
+          "name": "check"
+        },
+        {
+          "description": "",
+          "name": "clippy"
+        },
+        {
+          "description": "",
+          "name": "install"
+        },
+        {
+          "description": "",
+          "name": "publish"
+        },
+        {
+          "description": "",
+          "name": "run"
+        },
+        {
+          "description": "",
+          "name": "test"
+        },
+        {
+          "description": "",
+          "name": "update"
+        }
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cat",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cci",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cd",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cdk",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cdk8s",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cf",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "charm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "checkov",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "chezmoi",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "chmod",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "chown",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "chsh",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cicada",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "circleci",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "clang",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "clang++",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "clear",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cliff-jumper",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "clilol",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "clion",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "clojure",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cloudflared",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cmake",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "coda",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "code",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "code-insiders",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "codesign",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "command",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "commercelayer",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "composer",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "conda",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "copilot",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "copyfile",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "copypath",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cordova",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cosign",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cot",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cp",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "create-completion-spec",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "create-next-app",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "create-nx-workspace",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "create-react-app",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "create-react-native-app",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "create-redwood-app",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "create-remix",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "create-t3-app",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "create-video",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "create-vite",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "create-web3-frontend",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "croc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "crontab",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "csdx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "curl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cut",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "cw",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dapr",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dart",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "date",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dateseq",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "datree",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dbt",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dcli",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dd",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ddev",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ddosify",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "defaultbrowser",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "defaults",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "degit",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "deno",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "deployctl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "deta",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "df",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "diff",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dig",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "direnv",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dirname",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ditto",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "django-admin",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "do",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "do-release-upgrade",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "构建和运行容器",
+        "english": "Build and run containers"
+      },
+      "name": "docker",
+      "options": [
+        {
+          "description": "",
+          "name": "--help"
+        },
+        {
+          "description": "",
+          "name": "--version"
+        },
+        {
+          "description": "",
+          "name": "--context"
+        }
+      ],
+      "subcommands": [
+        {
+          "description": "",
+          "name": "build"
+        },
+        {
+          "description": "",
+          "name": "compose"
+        },
+        {
+          "description": "",
+          "name": "exec"
+        },
+        {
+          "description": "",
+          "name": "images"
+        },
+        {
+          "description": "",
+          "name": "inspect"
+        },
+        {
+          "description": "",
+          "name": "logs"
+        },
+        {
+          "description": "",
+          "name": "ps"
+        },
+        {
+          "description": "",
+          "name": "pull"
+        },
+        {
+          "description": "",
+          "name": "push"
+        },
+        {
+          "description": "",
+          "name": "run"
+        },
+        {
+          "description": "",
+          "name": "stop"
+        }
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "docker-compose",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "doctl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dog",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "doggo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "doppler",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dos2unix",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dotenv",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dotenv-vault",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dotnet",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dotslash",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dpkg",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dprint",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "drush",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dscacheutil",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dscl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dtm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "du",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "dust",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "eas",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "eb",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "echo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "electron",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "eleventy",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "elif",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "elixir",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "elm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "elm-format",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "elm-json",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "elm-review",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "else",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "emacs",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "enapter",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "encore",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "env",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "envchain",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "esbuild",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "eslint",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "exa",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "exec",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "exercism",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "expo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "expo-cli",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "export",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "expressots",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "eza",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "fastlane",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "fastly",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "fd",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "fdisk",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ffmpeg",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "figterm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "file",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "fin",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "find",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "firebase",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "firefox",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "fisher",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "flutter",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "fly",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "flyctl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "fmt",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "fnm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "fold",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "for",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "forc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "forge",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "fvm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "fzf",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "fzf-tmux",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "g++",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ganache-cli",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "gatsby",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "gcc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "gcloud",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "gem",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "gh",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ghq",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "gibo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "分布式版本控制",
+        "english": "Distributed version control"
+      },
+      "name": "git",
+      "options": [
+        {
+          "description": "",
+          "name": "--help"
+        },
+        {
+          "description": "",
+          "name": "--version"
+        },
+        {
+          "description": "",
+          "name": "--no-pager"
+        }
+      ],
+      "subcommands": [
+        {
+          "description": "",
+          "name": "checkout"
+        },
+        {
+          "description": "",
+          "name": "cherry-pick"
+        },
+        {
+          "description": "",
+          "name": "clone"
+        },
+        {
+          "description": "",
+          "name": "commit"
+        },
+        {
+          "description": "",
+          "name": "diff"
+        },
+        {
+          "description": "",
+          "name": "fetch"
+        },
+        {
+          "description": "",
+          "name": "log"
+        },
+        {
+          "description": "",
+          "name": "merge"
+        },
+        {
+          "description": "",
+          "name": "pull"
+        },
+        {
+          "description": "",
+          "name": "push"
+        },
+        {
+          "description": "",
+          "name": "rebase"
+        },
+        {
+          "description": "",
+          "name": "restore"
+        },
+        {
+          "description": "",
+          "name": "status"
+        },
+        {
+          "description": "",
+          "name": "switch"
+        }
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "git-cliff",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "git-flow",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "git-profile",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "git-quick-stats",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "github",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "glow",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "gltfjsx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "go",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "goctl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "goland",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "googler",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "goreleaser",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "goto",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "gource",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "gpg",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "gradle",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "graphcdn",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "grep",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "grex",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "gron",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "gt",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "gum",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "hardhat",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "hasura",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "hb-service",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "head",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "helm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "helmfile",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "herd",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "hexo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "homey",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "hop",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "hostname",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "htop",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "http",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "https",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "httpy",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "hub",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "hugo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "hx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "hyper",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "hyperfine",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ibus",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "iconv",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "id",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "idea",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "iex",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "if",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ignite-cli",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "install",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ionic",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ipatool",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "j",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "java",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "jenv",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "jest",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "jmeter",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "join",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "jq",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "julia",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "jupyter",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "just",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "k3d",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "k6",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "k9s",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "kafkactl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "kamal",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "kdoctor",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "keytool",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "kill",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "killall",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "kind",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "kitty",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "klist",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "knex",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "kool",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "kotlinc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "kubecolor",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "Kubernetes 命令行工具",
+        "english": "Kubernetes command-line tool"
+      },
+      "name": "kubectl",
+      "options": [
+        {
+          "description": "",
+          "name": "--help"
+        },
+        {
+          "description": "",
+          "name": "--namespace"
+        },
+        {
+          "description": "",
+          "name": "--context"
+        },
+        {
+          "description": "",
+          "name": "--output"
+        }
+      ],
+      "subcommands": [
+        {
+          "description": "",
+          "name": "apply"
+        },
+        {
+          "description": "",
+          "name": "config"
+        },
+        {
+          "description": "",
+          "name": "delete"
+        },
+        {
+          "description": "",
+          "name": "describe"
+        },
+        {
+          "description": "",
+          "name": "exec"
+        },
+        {
+          "description": "",
+          "name": "get"
+        },
+        {
+          "description": "",
+          "name": "logs"
+        },
+        {
+          "description": "",
+          "name": "port-forward"
+        },
+        {
+          "description": "",
+          "name": "rollout"
+        }
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "kubectx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "kubens",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "laravel",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "launchctl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ldd",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "leaf",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "lerna",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "less",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "lima",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "limactl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ln",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "locust",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "login",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "lp",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "lpass",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ls",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "lsblk",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "lsd",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "lsof",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "luz",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "lvim",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "m",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mackup",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "magento",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "maigret",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mailsy",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "make",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mamba",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "man",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mas",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mask",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mdfind",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mdls",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "meroxa",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "meteor",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mgnl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "micro",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mikro-orm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "minectl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "minikube",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mix",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mkdir",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mkdocs",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mkfifo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mkinitcpio",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mknod",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mob",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "molecule",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mongocli",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mongoimport",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mongosh",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "more",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mosh",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mount",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "multipass",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mv",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mvn",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mypy",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "mysql",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "n",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nano",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nativescript",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ncal",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ncu",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "neofetch",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nest",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "netlify",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "networkQuality",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "networksetup",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "newman",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "next",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nextflow",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ng",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nginx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ngrok",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nhost",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ni",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nmap",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nocorrect",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "node",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "noglob",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "northflank",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "np",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "Node 包管理器",
+        "english": "Node package manager"
+      },
+      "name": "npm",
+      "options": [
+        {
+          "description": "",
+          "name": "--help"
+        },
+        {
+          "description": "",
+          "name": "--version"
+        },
+        {
+          "description": "",
+          "name": "--workspace"
+        },
+        {
+          "description": "",
+          "name": "--yes"
+        }
+      ],
+      "subcommands": [
+        {
+          "description": "",
+          "name": "ci"
+        },
+        {
+          "description": "",
+          "name": "exec"
+        },
+        {
+          "description": "",
+          "name": "install"
+        },
+        {
+          "description": "",
+          "name": "publish"
+        },
+        {
+          "description": "",
+          "name": "run"
+        },
+        {
+          "description": "",
+          "name": "test"
+        },
+        {
+          "description": "",
+          "name": "uninstall"
+        },
+        {
+          "description": "",
+          "name": "update"
+        }
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "npx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nr",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nrm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ns",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nu",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nuxi",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nuxt",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nvim",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nvm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "nylas",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "oci",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "od",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "oh-my-posh",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "okta",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "okteto",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ollama",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "omz",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "onboardbase",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "op",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "opa",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "open",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "osascript",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "osqueryi",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "oxlint",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pac",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pageres",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "palera1n",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pandoc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "paper",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pass",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "passwd",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "paste",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pathchk",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pdfunite",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pg_dump",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pgcli",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "php",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "phpstorm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "phpunit",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "phpunit-watcher",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pijul",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ping",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "Python 包安装工具",
+        "english": "Python package installer"
+      },
+      "name": "pip",
+      "options": [
+        {
+          "description": "",
+          "name": "--help"
+        },
+        {
+          "description": "",
+          "name": "--version"
+        },
+        {
+          "description": "",
+          "name": "--requirement"
+        }
+      ],
+      "subcommands": [
+        {
+          "description": "",
+          "name": "check"
+        },
+        {
+          "description": "",
+          "name": "download"
+        },
+        {
+          "description": "",
+          "name": "freeze"
+        },
+        {
+          "description": "",
+          "name": "install"
+        },
+        {
+          "description": "",
+          "name": "list"
+        },
+        {
+          "description": "",
+          "name": "show"
+        },
+        {
+          "description": "",
+          "name": "uninstall"
+        }
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pip3",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pipenv",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pipx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pkg-config",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pkgutil",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pkill",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "planter",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "playwright",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "plutil",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pm2",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pmset",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pnpm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pnpx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pocketbase",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pod",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "podman",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "poetry",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pre-commit",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "premake",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "preset",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "prettier",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "prisma",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pro",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "progressline",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "projj",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pry",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ps",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pscale",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "psql",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "publish",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pulumi",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pushd",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pwd",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pycharm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pyenv",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "pytest",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "python",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "python3",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "q",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "qodana",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "quasar",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "quickmail",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "r",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rails",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "railway",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rake",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rancher",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rbenv",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rclone",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "react-native",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "readlink",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "redwood",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "remix",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "remotion",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "repeat",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rg",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rich",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rmdir",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "robot",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rojo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rollup",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rome",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rscript",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rsync",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rubocop",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ruby",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rubymine",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ruff",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rugby",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rush",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rushx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rustc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rustrover",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "Rust 工具链管理器",
+        "english": "Rust toolchain installer"
+      },
+      "name": "rustup",
+      "options": [
+        {
+          "description": "",
+          "name": "--help"
+        },
+        {
+          "description": "",
+          "name": "--version"
+        }
+      ],
+      "subcommands": [
+        {
+          "description": "",
+          "name": "check"
+        },
+        {
+          "description": "",
+          "name": "component"
+        },
+        {
+          "description": "",
+          "name": "default"
+        },
+        {
+          "description": "",
+          "name": "doc"
+        },
+        {
+          "description": "",
+          "name": "override"
+        },
+        {
+          "description": "",
+          "name": "self"
+        },
+        {
+          "description": "",
+          "name": "show"
+        },
+        {
+          "description": "",
+          "name": "target"
+        },
+        {
+          "description": "",
+          "name": "toolchain"
+        },
+        {
+          "description": "",
+          "name": "update"
+        }
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "rvm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sake",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sam",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sanity",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sapphire",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "scarb",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "scc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "scp",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "screen",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sed",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "seq",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sequelize",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "serve",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "serverless",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sfdx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sftp",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sha1sum",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "shadcn-ui",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "shasum",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "shell-config",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "shelve",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "shortcuts",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "shred",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sidekiq",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "simctl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sips",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sls",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "snaplet",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "softwareupdate",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sort",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "source",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "space",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "speedtest",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "speedtest-cli",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "splash",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "split",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "spotify",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "spring",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sqlfluff",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sqlite3",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sqlmesh",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "src",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ssh",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ssh-keygen",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "st2",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sta",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "stack",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "starkli",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "start-storybook",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "stat",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "steadybit",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "stencil",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "stepzen",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "stow",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "streamlit",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "stripe",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "su",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "subl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sudo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "suitecloud",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "supabase",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "surreal",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "svn",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "svokit",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "svtplay-dl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sw_vers",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "swagger-typescript-api",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "swc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "swift",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "symfony",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "sysctl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "systemctl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tac",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tail",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tailcall",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tailscale",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tailwindcss",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tangram",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "taplo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tar",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "task",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tb",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tccutil",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tee",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "terraform",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "terragrunt",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tfenv",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tfsec",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "then",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "time",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tkn",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tldr",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tmutil",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tmux",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tmuxinator",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tns",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tokei",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "top",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "touch",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tr",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "traceroute",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "trap",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "trash",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tree",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "trex",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "trivy",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "truffle",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "truncate",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "trunk",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ts-node",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tsc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tsh",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tsuru",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tsx",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "tuist",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "turbo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "twiggy",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "twilio",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "typeorm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "typos",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "typst",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ua",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ubuntu-advantage",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "uname",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "uniq",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "unix2dos",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "unset",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "until",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "unzip",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "uv",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "v",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vale",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "valet",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vapor",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vault",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vela",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vercel",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vi",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vim",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vimr",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "visudo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vite",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "volta",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vr",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vsce",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vtex",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vue",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "vultr-cli",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "w",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "wasm-bindgen",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "wasm-pack",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "watchman",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "watson",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "wc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "wd",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "webpack",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "webstorm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "wezterm",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "wget",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "whence",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "where",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "whereis",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "which",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "while",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "who",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "whois",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "wifi-password",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "wing",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "wp",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "wrangler",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "wrk",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "wscat",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "xargs",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "xc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "xcode-select",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "xcodebuild",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "xcodeproj",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "xcodes",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "xcrun",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "xdg-mime",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "xdg-open",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "xed",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "xxd",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "yalc",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "yank",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "yarn",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "ykman",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "yo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "yomo",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "youtube-dl",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "z",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "zapier",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "zed",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "zellij",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "zig",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "zip",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "zipcloak",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    },
+    {
+      "arguments": [
+
+      ],
+      "description": {
+        "chinese": "",
+        "english": ""
+      },
+      "name": "zoxide",
+      "options": [
+
+      ],
+      "subcommands": [
+
+      ]
+    }
+  ],
+  "schemaVersion": 1,
+  "sourceRevision": "aef52acff84c45edde61ae610cc2c964802b9a38"
+}

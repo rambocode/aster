@@ -11,6 +11,7 @@ Aster 是一个完全使用 AppKit 构建的原生 macOS 终端工作区，采�
 - `.asterrecipe` 工作区导入/导出及启动会话恢复
 - OSC 1/2/0 独立标题、固定名称/动态前缀，以及 `⇧⌘T` 最近关闭标签恢复
 - zsh/Bash/fish Shell Integration、命令锚点导航、退出状态与安全提示符选区删除
+- 本机 Autocomplete / inline suggestion、715 命令清单、文件与别名候选、隐私学习和 `aster learn`
 - `TERM=auto`/terminfo 安全回退、Aster 环境标识及 DA1/DA2/XTVERSION/DSR 回包
 - 通用、Shell、控制、编辑器、智能体、外观、Recipes、快捷键和高级九类设置
 - 与 Otty 1.3.1 对齐的 24 个内置主题、实时终端预览、自定义复制/编辑及安全 `.astertheme` 导入

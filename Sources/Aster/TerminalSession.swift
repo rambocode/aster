@@ -95,6 +95,12 @@ final class AsterTerminalView: LocalProcessTerminalView {
   var onEncodedInput: ((ArraySlice<UInt8>) -> Void)?
   /// OSC 133 命令状态的领域快照。只发布位置与退出码，不包含用户命令文本。
   var onShellIntegrationStateChange: ((ShellCommandTimeline) -> Void)?
+  /// Autocomplete 使用独立回调，避免覆盖测试或其它功能对原始输入的观察。
+  var onAutocompleteInput: ((ArraySlice<UInt8>) -> Void)?
+  var onAutocompleteOutput: ((ArraySlice<UInt8>) -> Void)?
+  var onShellIntegrationEvent: ((ShellIntegrationEvent) -> Void)?
+  var onShellAliases: (([String]) -> Void)?
+  var onAutocompleteKeyDown: ((NSEvent) -> Bool)?
   private(set) var shellCommandTimeline = ShellCommandTimeline()
   private var shellNavigationAbsoluteRow: Int?
   private var shellIntegrationHandlerInstalled = false
@@ -126,6 +132,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
   }
 
   override func keyDown(with event: NSEvent) {
+    if onAutocompleteKeyDown?(event) == true { return }
     // macOS keyCode 51 is the backward Delete/Backspace key. Only consume it when OSC 133
     // proves the selection belongs to the current editable prompt; otherwise preserve TUI input.
     if event.keyCode == 51, deletePromptSelectionIfSafe() { return }
@@ -140,6 +147,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
     let safeBytes = oscStreamLimiter.consume(slice)
     if !safeBytes.isEmpty {
       shellNavigationAbsoluteRow = nil
+      onAutocompleteOutput?(safeBytes[...])
       super.dataReceived(slice: safeBytes[...])
       // Otty 的滚动语义：任何新输出都回到底部；用户输入则由 SwiftTerm 的 send 路径
       // 同步复位。alternate screen 没有 scrollback，此调用只清理可能残留的视觉偏移。
@@ -154,6 +162,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
     shellNavigationAbsoluteRow = nil
     onTerminalIO?()
     onEncodedInput?(data)
+    onAutocompleteInput?(data)
     super.send(source: source, data: data)
   }
 
@@ -329,7 +338,15 @@ final class AsterTerminalView: LocalProcessTerminalView {
         event,
         at: TerminalGridPoint(column: cursor.col, row: cursor.row)
       )
+      self.onShellIntegrationEvent?(event)
       self.onShellIntegrationStateChange?(self.shellCommandTimeline)
+    }
+    getTerminal().registerOscHandler(code: 6_973) { [weak self] bytes in
+      guard bytes.count <= 8_192,
+        let payload = String(bytes: bytes, encoding: .ascii),
+        let report = ShellAliasReport(payload: payload)
+      else { return }
+      self?.onShellAliases?(report.names)
     }
   }
 
@@ -817,6 +834,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   private var terminalView: AsterTerminalView?
   private var targetOpenCoordinator: TerminalTargetOpenCoordinator?
+  private var autocompleteController: TerminalAutocompleteController?
   /// OSC 0/1/2 的独立通道回调。Tab 领域状态负责固定名称、前缀与持久化。
   var onTitleUpdate: ((Int, String) -> Void)?
   /// SwiftTerm 视图一旦启动就保持在同一个 AppKit 容器中。工作区刷新只移动该容器，
@@ -863,6 +881,26 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.onTerminalIO = { [weak self] in self?.refreshAutomaticSecureInput() }
     view.onShellIntegrationStateChange = { [weak self] timeline in
       self?.handleShellIntegrationTimeline(timeline)
+    }
+    if let service = AutocompleteService.shared {
+      let autocomplete = TerminalAutocompleteController(
+        service: service,
+        sessionIdentifier: id.uuidString,
+        controls: { [weak preferences] in
+          preferences?.configuration.controls ?? ControlConfiguration()
+        },
+        currentDirectory: { [weak self] in
+          guard let self, self.currentWorkingDirectoryIsLocal else { return "" }
+          return self.currentWorkingDirectory
+        }
+      )
+      autocomplete.attach(to: view)
+      view.onAutocompleteInput = { [weak autocomplete] in autocomplete?.receiveInput($0) }
+      view.onAutocompleteOutput = { [weak autocomplete] in autocomplete?.receiveOutput($0) }
+      view.onShellIntegrationEvent = { [weak autocomplete] in autocomplete?.receive($0) }
+      view.onShellAliases = { [weak autocomplete] in autocomplete?.receiveAliases($0) }
+      view.onAutocompleteKeyDown = { [weak autocomplete] in autocomplete?.handleKeyDown($0) ?? false }
+      autocompleteController = autocomplete
     }
     view.autoresizingMask = [.width, .height]
     view.allowMouseReporting = preferences.allowMouseReporting
@@ -1107,6 +1145,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalView = nil
     terminalHostView = nil
     targetOpenCoordinator = nil
+    autocompleteController = nil
     isRunning = false
     foregroundPollTask?.cancel()
     foregroundPollTask = nil

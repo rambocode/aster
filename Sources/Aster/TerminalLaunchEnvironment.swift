@@ -92,13 +92,15 @@ enum AsterResourceLocations {
     fileManager: FileManager = .default
   ) -> URL? {
     if let bundled = bundle.resourceURL,
-      fileManager.fileExists(atPath: bundled.appendingPathComponent("shell-integration").path)
+      fileManager.fileExists(atPath: bundled.appendingPathComponent("shell-integration").path),
+      fileManager.fileExists(atPath: bundled.appendingPathComponent("autocomplete/fig-specs.json").path)
     {
       return bundled
     }
     let development = URL(fileURLWithPath: fileManager.currentDirectoryPath)
       .appendingPathComponent("Resources", isDirectory: true)
-    guard fileManager.fileExists(atPath: development.appendingPathComponent("shell-integration").path)
+    guard fileManager.fileExists(atPath: development.appendingPathComponent("shell-integration").path),
+      fileManager.fileExists(atPath: development.appendingPathComponent("autocomplete/fig-specs.json").path)
     else { return nil }
     return development
   }

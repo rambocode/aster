@@ -23,6 +23,27 @@ public enum ShellIntegrationEvent: Equatable, Sendable {
   }
 }
 
+/// Shell Integration 上报的当前别名名称。只接收名称，不接收 alias 展开内容，避免
+/// 凭据或复杂 Shell 语法进入应用；payload 上限与名称字符集也阻止控制序列注入。
+public struct ShellAliasReport: Equatable, Sendable {
+  public let names: [String]
+
+  public init?(payload: String) {
+    guard payload.hasPrefix("Aliases="), payload.utf8.count <= 8_192,
+      payload.unicodeScalars.allSatisfy({ scalar in
+        scalar.value >= 0x20 && scalar.value <= 0x7E
+      })
+    else { return nil }
+    let source = payload.dropFirst("Aliases=".count)
+    let values = source.split(separator: ",", omittingEmptySubsequences: true).map(String.init)
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._+-"))
+    guard values.count <= 500, values.allSatisfy({ value in
+      !value.isEmpty && value.utf8.count <= 128 && value.unicodeScalars.allSatisfy(allowed.contains)
+    }) else { return nil }
+    names = Array(Set(values)).sorted()
+  }
+}
+
 /// 不依赖渲染框架的终端网格位置。row 使用包含已裁剪 scrollback 的单调绝对行号，
 /// 因而缓冲区到达上限后继续输出也不会让历史命令锚点漂移。
 public struct TerminalGridPoint: Equatable, Sendable {

@@ -32,6 +32,18 @@ _aster_bash_osc7() {
   printf '\e]7;file://localhost%s\a' "$encoded_path"
 }
 
+_aster_bash_aliases() {
+  local name payload="" separator="" count=0
+  while IFS= read -r name; do
+    [[ -n "$name" && "$name" != *[^a-zA-Z0-9_.+-]* ]] || continue
+    payload="${payload}${separator}${name}"
+    separator=","
+    count=$((count + 1))
+    [[ $count -ge 500 || ${#payload} -ge 8000 ]] && break
+  done < <(compgen -A alias)
+  printf '\e]6973;Aliases=%s\a' "$payload"
+}
+
 _aster_bash_debug_trap() {
   local prior_status=$?
   if [[ "$BASH_COMMAND" == "_aster_bash_prompt_command"* ]]; then
@@ -52,6 +64,7 @@ _aster_bash_prompt_command() {
   fi
   printf '\e]133;A\a'
   _aster_bash_osc7
+  _aster_bash_aliases
   _ASTER_EXPECTING_COMMAND=1
   return "$command_status"
 }

@@ -368,14 +368,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   }
 
   /// 安装 `aster` 命令行启动器脚本：优先 /usr/local/bin，不可写时退回 ~/.local/bin。
-  /// 脚本只是 `open -a` 包装，不需要提权或后台守护进程。
+  /// `aster learn` 使用 0600 token 鉴权的本机 URL；其它参数继续交给 `open -a`。
   private func installCLI() {
-    let script = """
-      #!/bin/sh
-      # Aster CLI 启动器：把目录、文件或 .asterrecipe 交给 Aster.app 打开。
-      exec open -a "Aster" "$@"
-
-      """
     let fileManager = FileManager.default
     let localBin = "/usr/local/bin"
     let fallback = (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin")
@@ -383,7 +377,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let target = (targetDir as NSString).appendingPathComponent("aster")
     do {
       try fileManager.createDirectory(atPath: targetDir, withIntermediateDirectories: true)
-      try script.write(toFile: target, atomically: true, encoding: .utf8)
+      try AsterCLIScript.contents.write(toFile: target, atomically: true, encoding: .utf8)
       try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: target)
       let pathHint = targetDir == fallback ? "；如 PATH 未包含该目录请自行加入" : ""
       message = "已安装 aster 命令到 \(target)\(pathHint)"
@@ -531,6 +525,60 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.controls.optionAsMeta = value
         },
       ]),
+      sectionTitle("Autocomplete"),
+      card([
+        enumPopupRow(
+          "接受候选", "选择用于接受 inline suggestion 的快捷键",
+          value: preferences.configuration.controls.resolvedAutocompleteShortcut
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.autocompleteShortcut = value
+        },
+        enumPopupRow(
+          "候选面板", "自动显示或使用快捷键打开；面板最多显示 8 项",
+          value: preferences.configuration.controls.resolvedAutocompleteCandidatePanel
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.autocompleteCandidatePanel = value
+        },
+        toggleRow(
+          "Inline suggestion", "在终端光标后显示最高排名候选的灰色后缀",
+          value: preferences.configuration.controls.resolvedAutocompleteInlineSuggestion
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.autocompleteInlineSuggestion = value
+        },
+        toggleRow(
+          "本机学习", "在本机脱敏记录命令，并允许 README 与沙箱 help 规格学习",
+          value: preferences.configuration.controls.resolvedAutocompleteOnDeviceLearning
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.autocompleteOnDeviceLearning = value
+        },
+        textRow(
+          "历史忽略模式", "逗号分隔的 glob，例如 ssh *,mysql *；匹配命令不会保存",
+          value: preferences.configuration.controls.resolvedAutocompleteHistoryIgnore
+            .joined(separator: ",")
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.autocompleteHistoryIgnore = value
+            .split(separator: ",", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        },
+        enumPopupRow(
+          "描述语言", "候选面板中的命令说明语言",
+          value: preferences.configuration.controls.resolvedAutocompleteDescriptionLanguage
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.autocompleteDescriptionLanguage = value
+        },
+        infoRow(
+          "Fig 规格版本", "内置 715 个直接命令规格；只在手动操作时联网",
+          AutocompleteService.shared?.specDatabase.sourceRevision.prefix(12).description ?? "不可用"
+        ),
+        actionRow(
+          "更新命令规格", "从 Fig 官方 GitHub tree 手动刷新；不会覆盖本地 help 规格",
+          title: "立即更新"
+        ) { [weak self] in self?.updateAutocompleteSpecs() },
+        actionRow(
+          "本机学习数据", "清除历史、固定命令及 frecency；内置和本地规格保留",
+          title: "清除"
+        ) { [weak self] in self?.clearAutocompleteLearning() },
+      ]),
       sectionTitle("鼠标"),
       card([
         toggleRow("允许鼠标报告", "供 vim、tmux、htop 等 TUI 使用", value: preferences.configuration.controls.allowMouseReporting) { [weak self] value in
@@ -674,6 +722,40 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         },
       ]),
     ]
+  }
+
+  private func updateAutocompleteSpecs() {
+    guard let service = AutocompleteService.shared else {
+      message = "Autocomplete 规格服务不可用。"
+      refresh()
+      return
+    }
+    message = "正在手动更新 Fig 命令规格…"
+    refresh()
+    Task { @MainActor [weak self, service] in
+      do {
+        let revision = try await service.updateNow()
+        self?.message = "命令规格已更新到 \(revision.prefix(12))。"
+      } catch {
+        self?.message = "命令规格更新失败：\(error.localizedDescription)"
+      }
+      self?.refresh()
+    }
+  }
+
+  private func clearAutocompleteLearning() {
+    guard let service = AutocompleteService.shared else {
+      message = "Autocomplete 规格服务不可用。"
+      refresh()
+      return
+    }
+    do {
+      try service.clearLearning()
+      message = "已清除本机 Autocomplete 学习数据。"
+    } catch {
+      message = "清除失败：\(error.localizedDescription)"
+    }
+    refresh()
   }
 
   private func editorViews() -> [NSView] {
@@ -1855,6 +1937,38 @@ extension TerminalScrollPastFirstLine: SettingsEnumOption {
     case .sameAsLastLine: "跟随末尾设置"
     case .firstLineWithContent: "第一行内容位于底部"
     case .firstLineInMiddle: "第一行内容位于中部"
+    }
+  }
+}
+
+extension AutocompleteShortcut: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .tab: "Tab"
+    case .tabAndRightArrow: "Tab 或 →"
+    case .controlSpace: "Control-Space"
+    case .disabled: "关闭"
+    }
+  }
+}
+
+extension AutocompleteCandidatePanel: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .disabled: "关闭"
+    case .automatic: "自动（至少 2 项）"
+    case .escape: "Escape"
+    case .optionEscape: "Option-Escape / F5"
+    }
+  }
+}
+
+extension AutocompleteDescriptionLanguage: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .system: "跟随系统"
+    case .english: "English"
+    case .chinese: "简体中文"
     }
   }
 }

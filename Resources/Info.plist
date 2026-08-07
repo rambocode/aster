@@ -45,6 +45,16 @@
             <key>CFBundleTypeRole</key>
             <string>Viewer</string>
         </dict>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>CFBundleURLName</key>
+            <string>Aster Local CLI</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>aster</string>
+            </array>
+        </dict>
     </array>
     <key>NSServices</key>
     <array>

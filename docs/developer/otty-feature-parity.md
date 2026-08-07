@@ -73,7 +73,7 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 - 部分：[Scroll](https://docs.otty.sh/terminal-features/scroll) — 已实现 `Shift+Page Up/Down`、`Shift+Home/End`、新输出/输入回到底部、像素级平滑滚动与手势结束行吸附，并提供滚过首尾的全部停靠模式；alternate screen 禁用越界空白。OSC 133 命令锚点已接入，`Command+Page Up/Down` 可跳到上一/下一条未被 scrollback 裁剪的命令。
 - 部分：[Input](https://docs.otty.sh/terminal-features/input) — SwiftTerm 已承载 IME、Kitty Keyboard Protocol、modifyOtherKeys 与应用键盘模式；Aster 新增普通 Shell 下的原生 macOS 行/词移动、行/词删除与撤销 readline 映射，并在全屏 TUI 或增强键盘协议启用时保留组件原编码。Option as Meta 新安装默认关闭。自动安全输入在终端 I/O 前后读取 PTY ECHO/ICANON，手动开关位于“编辑 → 安全键盘输入”且应用失活时暂停。Shift+Arrow 选择和可配置选择清理已经接入；Redo、Composer 与 Prompt Queue 仍按各自批次推进。
 - 部分：[Copy and Paste](https://docs.otty.sh/terminal-features/copy-and-paste) — 已实现快捷键/菜单/右键复制粘贴、选中即复制、逐行去尾空白、复制后清选区、四类危险粘贴识别、备用屏与可信 bracketed 跳过、Paste As（选区/文件 Base64/Shell 转义/强制 bracketed）及 OSC 52 独立读写权限；“粘贴并在 Composer 中继续”已保留安全接缝，待 Composer 批次接通。
-- 待审计：[Autocomplete / Inline Suggest](https://docs.otty.sh/terminal-features/autocomplete)
+- 完成：[Autocomplete / Inline Suggest](https://docs.otty.sh/terminal-features/autocomplete) — 输入停顿触发、inline ghost、四种接受方案及 Escape/Option-Escape/F5/自动候选面板均已接入；面板支持上下选择、Return/Tab/点击接受和 8 行上限。候选覆盖命令、子命令、选项、参数、文件、目录、Shell alias、固定命令、历史、README 与纠错。Bundle 固定 Fig revision 的 715 个直接命令名称；没有内置结构的命令首次输入参数时，在禁网且禁止文件写入的沙箱中按 `--help`/`-h`/`help` 生成独立本地规格。学习按目录、会话、频率、时间与固定次数排序，过滤 secret、glob 忽略、127 和错误长选项；`aster learn` 使用 0600 随机 token 鉴权。关闭本机学习会同时停止历史、README、help 探测与纠错，内置规格和文件补全仍可用。Fig 更新只能由设置页手动触发，且不覆盖本地规格。
 - 部分：[Unicode and Text Styles](https://docs.otty.sh/terminal-features/unicode-and-text-styles)
 - 待审计：[BiDi / RTL Text](https://docs.otty.sh/terminal-features/bidi-rtl)
 - 部分：[Box Drawing](https://docs.otty.sh/terminal-features/box-drawing)
@@ -105,6 +105,8 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 Selection 与 Scroll 需要访问 SwiftTerm 1.15 未公开的选区锚点、矩形状态和像素滚动偏移。仓库将上游 revision `dd2fb8ac5b861e7bf617c872895e338f38165648` 固定到 `Vendor/SwiftTerm`，保留 MIT 许可证，并只在终端内核边界维护补丁；来源、核验与同步步骤见 `Vendor/SwiftTerm/UPSTREAM.md`。键盘选区跨锚点收缩或反向扩展，矩形复制按行输出；像素滚动以 `yDisp + viewportContentTranslationY` 表示，边界模式只在 normal buffer 生效。
 
 Shell Integration 由 `ShellIntegrationLaunchPlan`、`ShellIntegrationInstaller` 与 `ShellCommandTimeline` 分层：启动计划只生成环境，安装器只维护带品牌守卫的 rc 区块，时间线只接受最长 32 字节且严格匹配 FTCS 的 payload。命令文本不会通过 OSC 133 持久化；OSC 7 路径按 UTF-8 字节 URL 转义，BEL/ESC 目录名不能注入控制序列；位置采用 `totalLinesTrimmed + bufferRow` 的单调坐标，scrollback 到达容量后仍能判断锚点是否已经裁剪。终端身份由 `TerminalIdentityPolicy` 与 `TerminalLaunchEnvironmentBuilder` 解析，`infocmp` 只以固定可执行文件和参数数组调用，非法配置不会进入 Shell。
+
+Autocomplete 由 `PromptInputTracker`、`AutocompleteEngine`、`AutocompleteLearningDatabase`、`AutocompleteService` 与 `TerminalAutocompleteController` 分层。OSC 133 只确定 prompt/command 生命周期，命令正文只从用户输入字节重建；Up/Down 等无法重建的 Shell 历史操作会停用当前 prompt 候选。学习、Fig 更新、本地 help 规格使用独立有界文件，手动更新不会覆盖本地学习。Shell alias 通过 OSC 6973 只发送有界名称，不发送展开正文。
 
 文件和链接统一经过 `TargetResolver`、`TargetFileInspector` 与 `TargetSecurityPolicy`；点击单元格的 OSC 8 payload 是显式来源真值，`TerminalTargetOpenCoordinator` 取代组件默认直开路径。普通文字可选择检测全部 scheme 或标准 scheme 加自定义列表；OSC 8 始终识别，但所有非标准协议、可执行文件和 `.app` 仍需确认。可执行目标不保存路径授权，配置导入也会剥离本机 scheme 例外。
 

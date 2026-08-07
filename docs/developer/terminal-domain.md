@@ -23,6 +23,7 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 - **VirtualScrollPosition**：normal buffer 的整行 `yDisp` 与单行内像素偏移之和，可在配置边界内越过首尾内容。
 - **ShellCommandTimeline**：由 OSC 133 A/B/C/D 构成的有界命令位置与退出状态序列，不保存命令文本。
 - **TerminalIdentityResolution**：`auto`、自定义 terminfo 校验与安全回退后的实际 TERM。
+- **Autocomplete**：由当前 prompt、命令规格、目录级学习、README、文件和 alias 合成的本机候选，不拥有命令执行权。
 
 ## 核心规则
 
@@ -46,6 +47,8 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 18. Shell Integration 资源必须来自签名 Bundle；受管 rc 区块必须幂等、可卸载并保留区块外内容、权限与符号链接。所有目标先预检，后续写入失败时回滚已改目标。
 19. OSC 133 只接受 A/B/C/D 与非负退出码，不接收或持久化命令正文；命令位置使用包含已裁剪行数的绝对坐标。
 20. `TERM=auto` 解析为 `xterm-256color`；自定义名称只有真实 terminfo 存在时才能进入子进程，终端不得冒充其它产品。
+21. Autocomplete 只在 OSC 133 确认的可靠 prompt 中工作；接受候选只发送尚未输入的后缀，不自动发送回车。
+22. 命令学习必须先脱敏并遵守忽略模式；关闭本机学习时不得读取历史/README、运行 help 探测或生成纠错。
 
 ## 业务流程
 
@@ -158,6 +161,24 @@ flowchart LR
   H["TERM 配置"] --> I["语法与 infocmp 校验"]
   I --> J["Pane 环境与终端协议身份"]
 ```
+
+### Autocomplete 与 Inline Suggest
+
+`AutocompleteEngine` 是不依赖 AppKit 的候选合并与排序边界，输入为当前命令行、Fig/本地规格、目录级学习、固定命令、README 和 Shell alias，输出为候选、ghost 后缀及替换起点。`PromptInputTracker` 只重建能够由用户输入字节确定的编辑状态；遇到 Up/Down 等依赖 Shell 内部历史的操作即标记不可靠，直到下一次 OSC 133 A/B。`ShellCommandOutputCapture` 按 C/D 标记截取最多 128 KiB 的瞬时输出，只供失败纠错，不持久化。
+
+`AutocompleteService` 组合签名 Bundle 的 715 命令索引、用户手动 Fig tree 更新、本地 help 规格、README 普通文件读取、文件系统候选和脱敏学习库。状态文件先做 2 MiB 上限和结构校验，再以 0600 权限原子写入；符号链接和特殊文件不会被读取或覆盖。更新只从固定 GitHub API 端点发起，绝不后台联网。没有详细结构的命令只执行 PATH 中普通可执行文件的固定 `--help`、`-h` 或 `help` 参数，使用 `sandbox-exec` 拒绝网络与文件写入，并施加 2.5 秒超时、128 KiB 输出上限和最小环境 allowlist；远程会话完全跳过本机目录读取与 help 探测。
+
+```mermaid
+flowchart LR
+  A["OSC 133 A/B"] --> B["PromptInputTracker"]
+  B --> C["150 ms debounce"]
+  C --> D["AutocompleteService"]
+  D --> E["inline / candidate panel"]
+  F["OSC 133 C/D"] --> G["脱敏学习与纠错"]
+  G --> D
+```
+
+Shell Integration 通过私有 OSC 6973 仅上报符合 ASCII allowlist 的 alias 名称，不传输展开值。`aster learn` 使用 Application Support 中的 256-bit 随机 token 验证本机 URL，命令和目录采用有界 hex 编码；未通过鉴权的 URL 不会污染固定命令。
 
 ### 进程关闭
 

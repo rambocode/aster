@@ -31,6 +31,18 @@ _aster_zsh_osc7() {
   printf '\e]7;file://localhost%s\a' "$REPLY"
 }
 
+_aster_zsh_aliases() {
+  local name payload="" separator=""
+  local -i count=0
+  for name in ${(k)aliases}; do
+    [[ -n "$name" && "$name" != *[^a-zA-Z0-9_.+-]* ]] || continue
+    payload+="${separator}${name}"
+    separator=","
+    (( ++count >= 500 || ${#payload} >= 8000 )) && break
+  done
+  printf '\e]6973;Aliases=%s\a' "$payload"
+}
+
 _aster_zsh_precmd() {
   local command_status=$?
   if [[ "$_ASTER_COMMAND_ACTIVE" == "1" ]]; then
@@ -39,6 +51,7 @@ _aster_zsh_precmd() {
   fi
   printf '\e]133;A\a'
   _aster_zsh_osc7
+  _aster_zsh_aliases
   if [[ "$PS1" != *$'\e]133;B\a'* ]]; then
     PS1="${PS1}"$'%{\e]133;B\a%}'
   fi

@@ -40,6 +40,20 @@ func terminalViewRejectsMalformedShellMarkers() {
   #expect(view.shellCommandTimeline.marks.isEmpty)
 }
 
+@Test("终端视图接收有界 Alias 名称报告")
+@MainActor
+func terminalViewReceivesShellAliases() {
+  let view = AsterTerminalView(frame: .zero)
+  var reports: [[String]] = []
+  view.onShellAliases = { reports.append($0) }
+  view.installShellIntegrationHandler()
+
+  view.dataReceived(slice: Array("\u{1B}]6973;Aliases=gs,gco\u{7}".utf8)[...])
+  view.dataReceived(slice: Array("\u{1B}]6973;Aliases=bad name\u{7}".utf8)[...])
+
+  #expect(reports == [["gco", "gs"]])
+}
+
 @Test("命令导航按 OSC 133 提示符锚点向前和向后滚动")
 @MainActor
 func terminalViewNavigatesCommandMarks() {

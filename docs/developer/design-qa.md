@@ -25,7 +25,18 @@
 - [ ] 关闭 Shell Integration 会显示确认并移除受管区块；重新开启不会重复追加 marker。
 - [ ] `TERM=auto` 下 `echo "$TERM_PROGRAM $TERM"` 显示 `aster xterm-256color`；DA/XTVERSION 探测工具识别为 Aster。
 
+## Autocomplete / Inline Suggest 检查清单
+
+- [ ] zsh、Bash 和 fish 的提示符停顿后显示 ghost；Backspace 和 Escape 立即清除旧候选。
+- [ ] 默认第一次 Escape 关闭 ghost，第二次打开面板；上下键、Return、Tab 和点击均只接受候选、不自动执行命令。
+- [ ] 候选面板跟随光标并在上下空间不足时翻转，最多显示 8 项，长描述不撑破 Pane。
+- [ ] Tab、Tab 或 Right、Control-Space、关闭四种接受策略立即作用于已打开 Pane。
+- [ ] 文件、目录、alias、历史、README、纠错与 `aster learn` 候选分别显示正确类型。
+- [ ] 关闭本机学习后不再出现历史/README/纠错，也不启动 help 探测；文件与内置命令仍可补全。
+- [ ] 设置页“立即更新”只在点击后联网；“清除”移除学习和固定命令但保留本地 help 规格。
+
 ## 记录
 
 - 2026-08-08：新增 Selection / Scroll 验收项；尚未执行界面测试。
 - 2026-08-08：新增 Shell Integration / Identification 验收项；按用户要求仍未执行界面测试。
+- 2026-08-08：新增 Autocomplete / Inline Suggest 验收项；按用户要求仍未执行界面测试。

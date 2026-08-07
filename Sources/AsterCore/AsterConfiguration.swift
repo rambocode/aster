@@ -73,6 +73,35 @@ public enum TerminalScrollPastFirstLine: String, CaseIterable, Codable, Equatabl
   case firstLineInMiddle
 }
 
+/// 接受当前补全候选的键盘方案。Raw value 与配置文件中的稳定值保持一致。
+public enum AutocompleteShortcut: String, CaseIterable, Codable, Equatable, Sendable {
+  case tab
+  case tabAndRightArrow = "tab+right-arrow"
+  case controlSpace = "ctrl+space"
+  case disabled = "disable"
+}
+
+/// 候选面板的显示策略；inline suggestion 不受禁用面板影响。
+public enum AutocompleteCandidatePanel: String, CaseIterable, Codable, Equatable, Sendable {
+  case disabled = "disable"
+  case automatic = "auto"
+  case escape
+  case optionEscape = "option-escape"
+}
+
+/// 内置规格描述的首选语言。`system` 由 UI 层根据当前语言环境解析。
+public enum AutocompleteDescriptionLanguage: String, CaseIterable, Codable, Equatable, Sendable {
+  case system
+  case english
+  case chinese
+
+  public func resolved(preferredLanguageIdentifiers: [String]) -> AutocompleteDescriptionLanguage {
+    guard self == .system else { return self }
+    let primary = preferredLanguageIdentifiers.first?.lowercased() ?? "en"
+    return primary == "zh" || primary.hasPrefix("zh-") ? .chinese : .english
+  }
+}
+
 public struct GeneralConfiguration: Codable, Equatable, Sendable {
   public var language = "system"
   public var quitAfterLastWindowClosed = false
@@ -126,6 +155,15 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
   public var detectAllLinkSchemes: Bool? = true
   public var customLinkSchemes: Set<String>? = []
   public var allowedNonStandardLinkSchemes: Set<String>? = []
+  /// 可选字段兼容早期配置；缺失时采用 Otty 的补全默认行为。
+  public var autocompleteShortcut: AutocompleteShortcut? = .tab
+  public var autocompleteCandidatePanel: AutocompleteCandidatePanel? = .escape
+  public var autocompleteInlineSuggestion: Bool? = true
+  public var autocompleteOnDeviceLearning: Bool? = true
+  public var autocompleteHistoryIgnore: [String]? = []
+  public var autocompleteDescriptionLanguage: AutocompleteDescriptionLanguage? = .system
+
+  public init() {}
 
   public var resolvedLinkDetectionEnabled: Bool { linkDetectionEnabled ?? true }
 
@@ -159,6 +197,30 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
 
   public var resolvedAllowedNonStandardLinkSchemes: Set<String> {
     allowedNonStandardLinkSchemes ?? []
+  }
+
+  public var resolvedAutocompleteShortcut: AutocompleteShortcut {
+    autocompleteShortcut ?? .tab
+  }
+
+  public var resolvedAutocompleteCandidatePanel: AutocompleteCandidatePanel {
+    autocompleteCandidatePanel ?? .escape
+  }
+
+  public var resolvedAutocompleteInlineSuggestion: Bool {
+    autocompleteInlineSuggestion ?? true
+  }
+
+  public var resolvedAutocompleteOnDeviceLearning: Bool {
+    autocompleteOnDeviceLearning ?? true
+  }
+
+  public var resolvedAutocompleteHistoryIgnore: [String] {
+    autocompleteHistoryIgnore ?? []
+  }
+
+  public var resolvedAutocompleteDescriptionLanguage: AutocompleteDescriptionLanguage {
+    autocompleteDescriptionLanguage ?? .system
   }
 
   public var resolvedTargetSecurityPolicy: TargetSecurityPolicy {
@@ -265,6 +327,15 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
       result.controls.resolvedCustomLinkSchemes)
     result.controls.allowedNonStandardLinkSchemes = Self.normalizedSchemes(
       result.controls.resolvedAllowedNonStandardLinkSchemes)
+    result.controls.autocompleteHistoryIgnore = Array(
+      result.controls.resolvedAutocompleteHistoryIgnore.lazy
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter {
+          !$0.isEmpty && $0.utf8.count <= 256
+            && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        }
+        .prefix(64)
+    )
     return result
   }
 

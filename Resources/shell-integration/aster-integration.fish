@@ -12,9 +12,24 @@ function _aster_fish_osc7
   printf '\e]7;file://localhost%s\a' $encoded_path
 end
 
+function _aster_fish_aliases
+  set -l names
+  for definition in (alias)
+    set -l name (string replace -r '^alias ([A-Za-z0-9_.+\-]+) .*$' '$1' -- $definition)
+    if test "$name" != "$definition"
+      set -a names $name
+    end
+    test (count $names) -ge 500; and break
+  end
+  set -l payload (string join ',' -- $names)
+  set payload (string sub --length 8000 -- $payload)
+  printf '\e]6973;Aliases=%s\a' $payload
+end
+
 function _aster_fish_prompt
   printf '\e]133;A\a'
   _aster_fish_osc7
+  _aster_fish_aliases
   _aster_user_fish_prompt
   printf '\e]133;B\a'
 end

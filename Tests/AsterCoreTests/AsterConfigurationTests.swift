@@ -131,6 +131,42 @@ func legacyControlConfigurationDefaultsScrollBoundaries() throws {
   #expect(decoded.resolvedScrollPastFirstLine == .disabled)
 }
 
+@Test("旧控制配置缺少 Autocomplete 字段时使用隐私友好的兼容默认值")
+func legacyControlConfigurationDefaultsAutocomplete() throws {
+  let data = try JSONEncoder().encode(ControlConfiguration())
+  var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+  for key in [
+    "autocompleteShortcut", "autocompleteCandidatePanel", "autocompleteInlineSuggestion",
+    "autocompleteOnDeviceLearning", "autocompleteHistoryIgnore",
+    "autocompleteDescriptionLanguage",
+  ] {
+    object.removeValue(forKey: key)
+  }
+  let decoded = try JSONDecoder().decode(
+    ControlConfiguration.self,
+    from: JSONSerialization.data(withJSONObject: object)
+  )
+
+  #expect(decoded.resolvedAutocompleteShortcut == .tab)
+  #expect(decoded.resolvedAutocompleteCandidatePanel == .escape)
+  #expect(decoded.resolvedAutocompleteInlineSuggestion)
+  #expect(decoded.resolvedAutocompleteOnDeviceLearning)
+  #expect(decoded.resolvedAutocompleteHistoryIgnore.isEmpty)
+  #expect(decoded.resolvedAutocompleteDescriptionLanguage == .system)
+}
+
+@Test("配置规范化移除空白、控制字符和超限历史忽略模式")
+func configurationNormalizesAutocompleteIgnorePatterns() {
+  var configuration = AsterConfiguration.default
+  configuration.controls.autocompleteHistoryIgnore = [
+    "  ssh *  ", "", "bad\u{7}pattern", String(repeating: "x", count: 257),
+  ]
+
+  let normalized = configuration.normalized()
+
+  #expect(normalized.controls.resolvedAutocompleteHistoryIgnore == ["ssh *"])
+}
+
 @Test("导入配置会清理非法、重复和超限的链接安全例外")
 func configurationNormalizesLinkSafetyExceptions() {
   var configuration = AsterConfiguration.default
