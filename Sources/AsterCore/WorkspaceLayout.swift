@@ -18,6 +18,8 @@ public enum SidebarTabGrouping: String, CaseIterable, Codable, Equatable, Sendab
 public enum SidebarTabOrder: String, CaseIterable, Codable, Equatable, Sendable {
   case createdTime
   case updatedTime
+  /// 用户插入或拖动改变物理顺序后使用；菜单中的时间排序项均不勾选。
+  case manual
 }
 
 /// 面板内容类型。终端、编辑器和文件浏览器共享同一分屏树，因此可以任意组合。

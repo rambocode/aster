@@ -120,6 +120,8 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var terminalIdentity = "xterm-256color"
   public var showTabBar = true
   public var autoHideTabs = false
+  /// 可选字段用于兼容 0.4.x 配置；缺失时等价于 Otty 的 `auto`。
+  public var newTabPosition: NewTabPosition? = .automatic
   public var sidebarWidth = 220.0
   public var showStatusBar = true
   public var windowWidth = 1180.0
@@ -127,6 +129,10 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
 
   public func showsTabBar(tabCount: Int) -> Bool {
     showTabBar && !(autoHideTabs && tabCount <= 1)
+  }
+
+  public var resolvedNewTabPosition: NewTabPosition {
+    newTabPosition ?? .automatic
   }
 }
 

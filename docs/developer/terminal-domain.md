@@ -13,6 +13,8 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 - **Recipe**：`.asterrecipe` 格式的可移植工作区描述，可包含标签、分屏、目录、文件和可选命令。
 - **Snapshot**：只保存可重建状态的会话恢复记录，不保存 PID、描述符和临时焦点。
 - **Configuration**：通用、Shell、控制、编辑器、智能体、外观、Recipes、快捷键和高级九个设置域。
+- **TerminalTitleState**：分离 OSC 1 图标名与 OSC 2 窗口标题，OSC 0 同时更新两者；固定名称和动态前缀独立覆盖并进入快照。
+- **RecentlyClosedTabs**：只保存可重建标签快照的 LIFO 历史，供 `⇧⌘T` 跨重启恢复。
 
 ## 核心规则
 
@@ -72,6 +74,10 @@ flowchart LR
 ### 设置与状态恢复
 
 `AsterConfiguration` 按领域拆分，并在 `AppPreferences` 中原子持久化。`WorkspaceSnapshot` 在新建、关闭、分屏、打开文件或 Recipe 后更新；下次启动重建标签、Pane 和新登录 Shell，不尝试附着已经失效的进程。
+
+新标签插入由 `NewTabPosition` 统一计算：`auto` 把空标签放在当前手动分组末尾、把带内容标签放在当前标签后；`end` 始终追加；`after-current` 始终紧跟当前标签。分组边界以“位于标签之后”的 ID 保存，向分组末尾插入时边界会转移到新标签，避免标签落入下一组。
+
+程序标题属于不可信终端输入。`TerminalTitleState` 在持久化前移除控制字符并限制为 512 UTF-8 字节；固定名称忽略后续 OSC，前缀模式保留动态更新。每个 Pane 保留自己的程序标题，后台 Pane 的 OSC 不覆盖活动标题，焦点切换时再投影目标 Pane 的最新状态。OSC handler 在上报领域事件前调用 SwiftTerm 的 `setTitle` / `setIconTitle`，维持其内部标题栈；`TerminalTitleStackObserver` 另从真实 PTY 字节流镜像 OSC/CSI，在 SwiftTerm 的 macOS 图标标题回调缺失或 `23;1t` / `23;2t` 语义颠倒时补发正确恢复事件。最近关闭历史使用 `aster.workspace.recently-closed.v1`，不包含 PID、PTY 或文件描述符；解码时把容量限制到 `1...100`，并移除与当前活动标签重复的条目。
 
 `TerminalTabItem` 会把子 Session 的状态变化转发给标签视图，并把 OSC 7 当前目录写回分屏树。应用退出前再次持久化最终快照。
 

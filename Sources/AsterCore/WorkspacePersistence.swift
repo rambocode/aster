@@ -157,6 +157,8 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
   public let id: UUID
   public var title: String
   public var layout: PaneLayout
+  /// OSC 动态标题与用户固定名称/前缀。可选字段保证旧快照继续按 `title` 恢复。
+  public var titleState: TerminalTitleState?
   /// 可选时间戳兼容 0.4.1 之前的工作区快照；缺失时恢复层使用当前时间。
   public var createdAt: Date?
   public var updatedAt: Date?
@@ -165,12 +167,14 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
     id: UUID,
     title: String,
     layout: PaneLayout,
+    titleState: TerminalTitleState? = nil,
     createdAt: Date? = nil,
     updatedAt: Date? = nil
   ) {
     self.id = id
     self.title = title
     self.layout = layout
+    self.titleState = titleState
     self.createdAt = createdAt
     self.updatedAt = updatedAt
   }

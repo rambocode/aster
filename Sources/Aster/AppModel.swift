@@ -88,8 +88,13 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   let createdAt: Date
   private(set) var updatedAt: Date
   @Published var title: String {
-    didSet { markUpdated() }
+    didSet {
+      guard title != oldValue else { return }
+      markUpdated()
+      onWorkspaceChanged?()
+    }
   }
+  private var titleState: TerminalTitleState
   @Published var layout: PaneLayout {
     didSet {
       markUpdated()
@@ -101,11 +106,14 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// 拖选、TUI 重绘都会被打断。视图层订阅 `activePaneChanged` 做局部更新。
   private(set) var activePaneID: UUID
   let activePaneChanged = PassthroughSubject<UUID, Never>()
+  let windowTitleChanged = PassthroughSubject<String, Never>()
   /// 被临时放大（缩放拆分）的面板。它是纯 UI 态，不进快照——恢复会话时应当回到
   /// 完整分屏，而不是停在某次临时放大的状态。
   @Published private(set) var zoomedPaneID: UUID?
   var onWorkspaceChanged: (() -> Void)?
   private(set) var runtimes: [UUID: WorkspacePaneRuntime] = [:]
+  /// 每个 Pane 保留自己的程序标题；只有活动 Pane 的状态投影到标签和窗口。
+  private var paneTitleStates: [UUID: TerminalTitleState] = [:]
   private var cancellables: Set<AnyCancellable> = []
 
   /// 任一分屏的终端有前台命令在运行即视为「标签在运行任务」，驱动侧栏 spinner。
@@ -126,13 +134,16 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     title: String,
     workingDirectory: String,
     layout: PaneLayout? = nil,
+    titleState: TerminalTitleState? = nil,
     createdAt: Date = Date(),
     updatedAt: Date? = nil
   ) {
     self.id = id
     self.createdAt = createdAt
     self.updatedAt = updatedAt ?? createdAt
-    self.title = title
+    let initialTitleState = (titleState ?? TerminalTitleState(fallback: title)).normalized()
+    self.titleState = initialTitleState
+    self.title = initialTitleState.tabTitle
     let initial =
       layout
       ?? .leaf(
@@ -140,6 +151,7 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       )
     self.layout = initial
     activePaneID = initial.firstPaneID ?? UUID()
+    paneTitleStates[activePaneID] = initialTitleState
     rebuildRuntimes(for: initial)
   }
 
@@ -152,6 +164,7 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       title: snapshot.title,
       workingDirectory: directory,
       layout: snapshot.layout,
+      titleState: snapshot.titleState,
       createdAt: snapshot.createdAt ?? Date(),
       updatedAt: snapshot.updatedAt
     )
@@ -159,6 +172,8 @@ final class TerminalTabItem: ObservableObject, Identifiable {
 
   var activeRuntime: WorkspacePaneRuntime? { runtimes[activePaneID] }
   var activeSession: TerminalSession? { activeRuntime?.terminalSession }
+  var windowTitle: String { titleState.windowTitle }
+  var tabTitleOverride: TerminalTitleOverride { titleState.tabOverride }
   var workingDirectory: String {
     activeSession?.resolvedCurrentWorkingDirectory()
       ?? runtimes[activePaneID]?.descriptor.workingDirectory
@@ -166,6 +181,55 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   }
 
   func runtime(for paneID: UUID) -> WorkspacePaneRuntime? { runtimes[paneID] }
+
+  /// 接收终端解析后的 OSC 0/1/2 更新。固定名称保持不变；前缀模式继续跟随程序标题。
+  func applyProgramTitle(code: Int, text: String) {
+    applyProgramTitle(paneID: activePaneID, code: code, text: text)
+  }
+
+  func applyProgramTitle(paneID: UUID, code: Int, text: String) {
+    guard runtimes[paneID] != nil else { return }
+    var paneState = paneTitleStates[paneID] ?? TerminalTitleState(
+      tabOverride: titleState.tabOverride,
+      windowOverride: titleState.windowOverride,
+      fallback: fallbackTitle(for: paneID)
+    )
+    paneState.tabOverride = titleState.tabOverride
+    paneState.windowOverride = titleState.windowOverride
+    let previousState = paneState
+    paneState.applyOSC(code: code, text: text)
+    guard paneState != previousState else { return }
+    paneTitleStates[paneID] = paneState
+    guard paneID == activePaneID else { return }
+    applyActiveTitleState(paneState)
+  }
+
+  /// 固定名称、动态前缀和自动模式的统一入口；空固定名按领域规则回退为自动标题。
+  func setTabTitleOverride(_ override: TerminalTitleOverride) {
+    let normalized = override.normalized()
+    guard titleState.tabOverride != normalized else { return }
+    titleState.tabOverride = normalized
+    for paneID in paneTitleStates.keys {
+      paneTitleStates[paneID]?.tabOverride = normalized
+    }
+    applyActiveTitleState(titleState)
+  }
+
+  func updateTitleFallback(_ fallback: String) {
+    updateTitleFallback(fallback, paneID: activePaneID)
+  }
+
+  private func updateTitleFallback(_ fallback: String, paneID: UUID) {
+    var state = paneTitleStates[paneID] ?? TerminalTitleState(
+      tabOverride: titleState.tabOverride,
+      windowOverride: titleState.windowOverride,
+      fallback: fallback
+    )
+    state.updateFallback(fallback)
+    paneTitleStates[paneID] = state
+    guard paneID == activePaneID else { return }
+    applyActiveTitleState(state)
+  }
 
   func split(
     direction: SplitDirection,
@@ -188,6 +252,7 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     layout = updated
     addRuntime(for: descriptor)
     activePaneID = descriptor.id
+    if let state = paneTitleStates[descriptor.id] { applyActiveTitleState(state) }
     // 新面板必须可见：在放大态下继续拆分，否则新建的 Shell 会藏在被折叠的分屏里。
     zoomedPaneID = nil
   }
@@ -196,6 +261,15 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   func setActivePane(_ paneID: UUID) {
     guard paneID != activePaneID, runtimes[paneID] != nil else { return }
     activePaneID = paneID
+    var state = paneTitleStates[paneID] ?? TerminalTitleState(
+      tabOverride: titleState.tabOverride,
+      windowOverride: titleState.windowOverride,
+      fallback: fallbackTitle(for: paneID)
+    )
+    state.tabOverride = titleState.tabOverride
+    state.windowOverride = titleState.windowOverride
+    paneTitleStates[paneID] = state
+    applyActiveTitleState(state)
     markUpdated()
     // 放大态下其它面板不可见，把焦点移出去会让 first responder 落在看不见的终端上。
     if zoomedPaneID != nil, zoomedPaneID != paneID { zoomedPaneID = nil }
@@ -265,6 +339,7 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     layout = updated
     zoomedPaneID = nil
     activePaneID = paneID
+    if let state = paneTitleStates[paneID] { applyActiveTitleState(state) }
     return true
   }
 
@@ -306,10 +381,13 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     guard let updated = layout.removing(paneID: activePaneID) else { return false }
     // 焦点先于删除计算：删除后原 Pane 的兄弟关系已经消失，无法再定位相邻面板。
     let successor = layout.neighborPaneID(ofPane: activePaneID) ?? updated.firstPaneID
-    runtimes.removeValue(forKey: activePaneID)?.stop()
+    let removedPaneID = activePaneID
+    runtimes.removeValue(forKey: removedPaneID)?.stop()
+    paneTitleStates.removeValue(forKey: removedPaneID)
     if zoomedPaneID == activePaneID { zoomedPaneID = nil }
     layout = updated
     activePaneID = successor ?? activePaneID
+    if let state = paneTitleStates[activePaneID] { applyActiveTitleState(state) }
     return true
   }
 
@@ -331,6 +409,7 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       id: id,
       title: title,
       layout: layout,
+      titleState: titleState,
       createdAt: createdAt,
       updatedAt: updatedAt
     )
@@ -348,11 +427,21 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     guard runtimes[descriptor.id] == nil else { return }
     let runtime = WorkspacePaneRuntime(descriptor: descriptor)
     runtimes[descriptor.id] = runtime
+    if paneTitleStates[descriptor.id] == nil {
+      paneTitleStates[descriptor.id] = TerminalTitleState(
+        tabOverride: titleState.tabOverride,
+        windowOverride: titleState.windowOverride,
+        fallback: Self.displayName(forDirectory: descriptor.workingDirectory)
+      )
+    }
     // 侧栏和状态栏观察的是 Tab，而终端运行状态属于子 Session。只定向转发 UI 真正
     // 消费的字段（运行态、spinner、退出码、启动错误）；不要转发 objectWillChange
     // 全量事件——OSC 标题在命令运行期间高频变化，全量转发会让侧栏整树重建、
     // spinner 每帧重启（可见闪烁）。目录变化由下方专用 sink 经 layout/title 触发刷新。
     if let session = runtime.terminalSession {
+      session.onTitleUpdate = { [weak self] code, text in
+        self?.applyProgramTitle(paneID: descriptor.id, code: code, text: text)
+      }
       Publishers.MergeMany(
         session.$isRunning.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$hasRunningCommand.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
@@ -371,14 +460,32 @@ final class TerminalTabItem: ObservableObject, Identifiable {
           updated.workingDirectory = directory
           return updated
         }
-        if self.activePaneID == descriptor.id {
-          // 只在名字真正变化时写回：title 的 didSet 会 markUpdated 并触发持久化，
-          // 高频写同值会造成无意义的重建与快照写入。
-          let folder = Self.displayName(forDirectory: directory)
-          if self.title != folder { self.title = folder }
-        }
+        // 即使程序标题或固定名称当前遮住目录回退，也要同步每个 Pane 的 fallback；
+        // 用户稍后恢复自动模式或会话重启时才能显示最新目录，而不是旧快照值。
+        let folder = Self.displayName(forDirectory: directory)
+        self.updateTitleFallback(folder, paneID: descriptor.id)
       }
       .store(in: &cancellables)
+  }
+
+  private func fallbackTitle(for paneID: UUID) -> String {
+    guard let directory = runtimes[paneID]?.descriptor.workingDirectory else { return "Shell" }
+    return Self.displayName(forDirectory: directory)
+  }
+
+  private func applyActiveTitleState(_ state: TerminalTitleState) {
+    let previousWindowTitle = titleState.windowTitle
+    titleState = state
+    let resolved = state.tabTitle
+    if title != resolved {
+      title = resolved
+    } else {
+      markUpdated()
+      onWorkspaceChanged?()
+    }
+    if previousWindowTitle != state.windowTitle {
+      windowTitleChanged.send(state.windowTitle)
+    }
   }
 }
 
@@ -392,11 +499,22 @@ final class AppModel: ObservableObject {
   @Published var isFindPresented = false
   @Published var notice: String?
   @Published private(set) var dividerAfterTabIDs: Set<UUID> = []
+  var newTabPosition = NewTabPosition.automatic
+  var onTabOrderBecameManual: (() -> Void)?
   private let defaults: UserDefaults
   private let snapshotKey = "aster.workspace.snapshot.v1"
+  private let recentlyClosedKey = "aster.workspace.recently-closed.v1"
+  private var recentlyClosedTabs: RecentlyClosedTabs
 
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
+    if let data = defaults.data(forKey: recentlyClosedKey),
+      let decoded = try? JSONDecoder().decode(RecentlyClosedTabs.self, from: data)
+    {
+      recentlyClosedTabs = decoded
+    } else {
+      recentlyClosedTabs = RecentlyClosedTabs()
+    }
   }
 
   func ensureInitialTab() {
@@ -407,6 +525,9 @@ final class AppModel: ObservableObject {
     {
       tabs = snapshot.tabs.map(TerminalTabItem.init(snapshot:))
       dividerAfterTabIDs = Set(snapshot.dividerAfterTabIDs ?? [])
+      let previousHistory = recentlyClosedTabs
+      recentlyClosedTabs.removeEntries(withIDs: Set(tabs.map(\.id)))
+      if recentlyClosedTabs != previousHistory { persistRecentlyClosedTabs() }
       for tab in tabs { configurePersistence(for: tab) }
       selectedTabID =
         tabs.contains(where: { $0.id == snapshot.selectedTabID })
@@ -420,12 +541,46 @@ final class AppModel: ObservableObject {
     tabs.first(where: { $0.id == selectedTabID })
   }
 
-  func newTab(workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path) {
+  func newTab(
+    workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
+    position: NewTabPosition? = nil,
+    hasContent: Bool = false
+  ) {
     let tab = TerminalTabItem(
       title: TerminalTabItem.displayName(forDirectory: workingDirectory),
       workingDirectory: workingDirectory
     )
-    tabs.append(tab)
+    insertTab(tab, position: position, hasContent: hasContent)
+  }
+
+  private func insertTab(
+    _ tab: TerminalTabItem,
+    position: NewTabPosition? = nil,
+    hasContent: Bool
+  ) {
+    let selectedIndex = tabs.firstIndex { $0.id == selectedTabID }
+    let sectionEndIndex = selectedIndex.flatMap { currentIndex in
+      (currentIndex..<tabs.count).first { dividerAfterTabIDs.contains(tabs[$0].id) }.map { $0 + 1 }
+    }
+    let resolvedPosition = position ?? newTabPosition
+    let insertionIndex = resolvedPosition.insertionIndex(
+      selectedIndex: selectedIndex,
+      tabCount: tabs.count,
+      hasContent: hasContent,
+      sectionEndIndex: sectionEndIndex
+    )
+    // 分隔线存为「位于哪个标签之后」。在当前分组末尾插入时把边界转移到新标签，
+    // 这样新标签视觉上仍位于分隔线之前，而不是掉进下一个手动分组。
+    if resolvedPosition != .end, insertionIndex > 0, insertionIndex <= tabs.count {
+      let previousTabID = tabs[insertionIndex - 1].id
+      if dividerAfterTabIDs.remove(previousTabID) != nil {
+        dividerAfterTabIDs.insert(tab.id)
+      }
+    }
+    tabs.insert(tab, at: insertionIndex)
+    // 时间排序会覆盖 `new-tab-position` 的物理顺序（尤其 `.end` 会被最新时间推到
+    // 顶部）。任何按位置创建的标签都切换到手动顺序，用户之后仍可显式选回时间排序。
+    onTabOrderBecameManual?()
     configurePersistence(for: tab)
     selectedTabID = tab.id
     persistWorkspace()
@@ -447,6 +602,8 @@ final class AppModel: ObservableObject {
       let index = tabs.firstIndex(where: { $0.id == selectedTabID })
     else { return }
     guard tabs[index].confirmCloseDocuments() else { return }
+    recentlyClosedTabs.record(tabs[index].snapshot)
+    persistRecentlyClosedTabs()
     tabs[index].stop()
     dividerAfterTabIDs.remove(tabs[index].id)
     tabs.remove(at: index)
@@ -456,6 +613,20 @@ final class AppModel: ObservableObject {
       self.selectedTabID = tabs[min(index, tabs.count - 1)].id
       persistWorkspace()
     }
+  }
+
+  /// 恢复最近关闭的标签。历史只保存可重建快照，因此会创建新的运行态 Shell，
+  /// 不会尝试重新使用已终止的 PID 或 PTY 文件描述符。
+  @discardableResult
+  func reopenLastClosedTab() -> Bool {
+    guard let snapshot = recentlyClosedTabs.reopenLast() else { return false }
+    let tab = TerminalTabItem(snapshot: snapshot)
+    tabs.append(tab)
+    configurePersistence(for: tab)
+    selectedTabID = tab.id
+    persistRecentlyClosedTabs()
+    persistWorkspace()
+    return true
   }
 
   func select(_ tab: TerminalTabItem) {
@@ -519,6 +690,52 @@ final class AppModel: ObservableObject {
   func togglePalette() { isPalettePresented.toggle() }
   func toggleInspector() { isInspectorPresented.toggle() }
   func toggleFind() { isFindPresented.toggle() }
+
+  /// 原生重命名对话框同时支持固定名称与动态前缀。第三个按钮直接恢复程序标题，
+  /// 与留空固定名称的领域语义一致。
+  func promptRenameSelectedTab() {
+    guard let tab = selectedTab else { return }
+    let mode = NSPopUpButton()
+    mode.addItems(withTitles: ["固定名称", "动态前缀"])
+    let field = NSTextField()
+    field.placeholderString = "输入名称或前缀"
+    switch tab.tabTitleOverride {
+    case .automatic:
+      field.stringValue = ""
+    case .name(let value):
+      mode.selectItem(at: 0)
+      field.stringValue = value
+    case .prefix(let value):
+      mode.selectItem(at: 1)
+      field.stringValue = value
+    }
+    mode.translatesAutoresizingMaskIntoConstraints = false
+    field.translatesAutoresizingMaskIntoConstraints = false
+    let accessory = NSStackView(views: [mode, field])
+    accessory.orientation = .vertical
+    accessory.spacing = 8
+    accessory.translatesAutoresizingMaskIntoConstraints = false
+    accessory.widthAnchor.constraint(equalToConstant: 300).isActive = true
+
+    let alert = NSAlert()
+    alert.messageText = "重命名标签页"
+    alert.informativeText = "固定名称忽略程序标题更新；动态前缀会继续跟随 OSC 标题。"
+    alert.accessoryView = accessory
+    alert.addButton(withTitle: "保存")
+    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: "恢复自动标题")
+    switch alert.runModal() {
+    case .alertFirstButtonReturn:
+      let override: TerminalTitleOverride = mode.indexOfSelectedItem == 0
+        ? .name(field.stringValue) : .prefix(field.stringValue)
+      tab.setTabTitleOverride(override)
+    case .alertThirdButtonReturn:
+      tab.setTabTitleOverride(.automatic)
+    default:
+      return
+    }
+    persistWorkspace()
+  }
 
   /// 在当前标签之后插入一个视觉分隔线。重复调用保持幂等，避免菜单误操作堆叠线条。
   func insertDividerAfterSelectedTab() {
@@ -596,7 +813,8 @@ final class AppModel: ObservableObject {
     if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
       isDirectory.boolValue
     {
-      newTab(workingDirectory: url.path)
+      // `newTab` 的默认参数用于空标签；目录属于带内容入口，应紧跟当前标签。
+      newTab(workingDirectory: url.path, hasContent: true)
       return
     }
     guard url.pathExtension.lowercased() == "asterrecipe" else {
@@ -630,7 +848,7 @@ final class AppModel: ObservableObject {
       command += "\(user)@"
     }
     command += host
-    newTab()
+    newTab(hasContent: true)
     let tab = selectedTab
     // PTY 在标签视图挂载后才启动，延迟片刻再写入提示符。
     Task { @MainActor [weak tab] in
@@ -651,9 +869,7 @@ final class AppModel: ObservableObject {
           workingDirectory: directory,
           layout: recipeTab.layout
         )
-        tabs.append(tab)
-        configurePersistence(for: tab)
-        selectedTabID = tab.id
+        insertTab(tab, hasContent: true)
       }
       persistWorkspace()
       notice = "已打开 \(recipe.name)"
@@ -665,6 +881,8 @@ final class AppModel: ObservableObject {
   var paletteCommands: [PaletteCommand] {
     [
       .init(id: "new-tab", title: "新建标签页", keywords: ["new", "tab"]),
+      .init(id: "reopen-tab", title: "重新打开最近关闭的标签页", keywords: ["reopen", "closed", "tab"]),
+      .init(id: "rename-tab", title: "重命名标签页", keywords: ["rename", "prefix", "title"]),
       .init(id: "open-file", title: "打开文件", keywords: ["edit", "file"]),
       .init(id: "open-folder", title: "打开文件夹", keywords: ["browser", "folder"]),
       .init(id: "split-right", title: "向右拆分", keywords: ["pane", "split"]),
@@ -686,6 +904,8 @@ final class AppModel: ObservableObject {
   func performPaletteCommand(_ command: PaletteCommand) {
     switch command.id {
     case "new-tab": newTab()
+    case "reopen-tab": _ = reopenLastClosedTab()
+    case "rename-tab": promptRenameSelectedTab()
     case "open-file": openFile()
     case "open-folder": openFolder()
     case "split-right": splitSelectedTab(.right)
@@ -721,6 +941,11 @@ final class AppModel: ObservableObject {
 
   private func configurePersistence(for tab: TerminalTabItem) {
     tab.onWorkspaceChanged = { [weak self] in self?.persistWorkspace() }
+  }
+
+  private func persistRecentlyClosedTabs() {
+    guard let data = try? JSONEncoder().encode(recentlyClosedTabs) else { return }
+    defaults.set(data, forKey: recentlyClosedKey)
   }
 
   /// 应用退出前统一处理未保存文档并写入最后快照；取消任一提示会取消退出。

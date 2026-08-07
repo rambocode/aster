@@ -743,10 +743,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       ) { [weak self] value in
         self?.preferences.configuration.appearance.showTabBar = value
       },
-      popupRow(
-        "新标签页位置", "新标签自动追加到当前标签之后",
-        items: ["自动"], selected: 0
-      ) { _ in },
+      enumPopupRow(
+        "新标签页位置", "空标签进入当前分组末尾；带内容标签可紧跟当前标签",
+        value: preferences.configuration.appearance.resolvedNewTabPosition
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.newTabPosition = value
+      },
       popupRow(
         "自动隐藏标签面板", "控制侧边栏布局下，标签面板的显示方式",
         items: ["默认", "仅单标签时隐藏"],
@@ -1664,6 +1666,16 @@ extension LaunchBehavior: SettingsEnumOption {
     switch self {
     case .newWindow: "打开新窗口"
     case .restoreLastSession: "恢复上次会话"
+    }
+  }
+}
+
+extension NewTabPosition: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .automatic: "自动"
+    case .end: "始终位于末尾"
+    case .afterCurrent: "始终紧跟当前标签"
     }
   }
 }

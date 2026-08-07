@@ -21,6 +21,7 @@ final class WorkspaceViewController: NSViewController {
   private var inactiveOverlay: InactiveWindowOverlayView?
   /// 垂直侧栏顶部「+ 新建 / 折叠」悬停动作区；refresh 整树重建后重新赋值。
   private weak var sidebarHoverActions: NSView?
+  private weak var windowTitleLabel: NSTextField?
 
   init(model: AppModel, preferences: AppPreferences) {
     self.model = model
@@ -229,6 +230,7 @@ final class WorkspaceViewController: NSViewController {
     children.forEach { $0.removeFromParent() }
     view.removeAllSubviews()
     view.appearance = preferences.preferredAppearance
+    updateWindowTitle(model.selectedTab?.windowTitle ?? "Aster")
 
     let theme = preferences.activeTheme
     if let background = view as? ThemeVisualEffectView {
@@ -293,7 +295,20 @@ final class WorkspaceViewController: NSViewController {
           self.focusActivePane(in: tab)
         }
         .store(in: &tabSubscriptions)
+      tab.windowTitleChanged
+        .sink { [weak self, weak tab] title in
+          guard let self, let tab, tab.id == self.model.selectedTabID else { return }
+          self.updateWindowTitle(title)
+        }
+        .store(in: &tabSubscriptions)
     }
+  }
+
+  /// 同步系统窗口标题与自定义标题区。该更新不重建视图树，因此仅 OSC 2 变化或
+  /// 分屏焦点切换不会打断终端选择、滚动和 TUI 绘制。
+  private func updateWindowTitle(_ title: String) {
+    view.window?.title = title
+    windowTitleLabel?.stringValue = title
   }
 
   /// 一次 Pane 拖放的落点：`direction` 为 nil 表示落在面板中心（交换两个面板）。
@@ -580,11 +595,17 @@ final class WorkspaceViewController: NSViewController {
   /// 排序先于分组执行，使每个分组内部与未分组列表使用同一时间顺序；相同时间使用
   /// UUID 作为稳定兜底，避免 AppKit 刷新时标签随机跳动。
   private func sidebarTabSections() -> [(title: String?, tabs: [TerminalTabItem])] {
-    let sorted = model.tabs.sorted { lhs, rhs in
-      let lhsDate = preferences.sidebarTabOrder == .createdTime ? lhs.createdAt : lhs.updatedAt
-      let rhsDate = preferences.sidebarTabOrder == .createdTime ? rhs.createdAt : rhs.updatedAt
-      if lhsDate != rhsDate { return lhsDate > rhsDate }
-      return lhs.id.uuidString < rhs.id.uuidString
+    let sorted: [TerminalTabItem]
+    switch preferences.sidebarTabOrder {
+    case .manual:
+      sorted = model.tabs
+    case .createdTime, .updatedTime:
+      sorted = model.tabs.sorted { lhs, rhs in
+        let lhsDate = preferences.sidebarTabOrder == .createdTime ? lhs.createdAt : lhs.updatedAt
+        let rhsDate = preferences.sidebarTabOrder == .createdTime ? rhs.createdAt : rhs.updatedAt
+        if lhsDate != rhsDate { return lhsDate > rhsDate }
+        return lhs.id.uuidString < rhs.id.uuidString
+      }
     }
     guard preferences.sidebarTabGrouping != .none else {
       return [(nil, sorted)]
@@ -752,6 +773,17 @@ final class WorkspaceViewController: NSViewController {
 
   private func makeTabContextMenu(_ tab: TerminalTabItem) -> NSMenu {
     let menu = NSMenu()
+    menu.addItem(ActionMenuItem(title: "重命名标签页…") { [weak self, weak tab] in
+      guard let self, let tab else { return }
+      model.select(tab)
+      model.promptRenameSelectedTab()
+    })
+    menu.addItem(ActionMenuItem(title: "恢复自动标题") { [weak self, weak tab] in
+      guard let self, let tab else { return }
+      tab.setTabTitleOverride(.automatic)
+      model.persistWorkspace()
+    })
+    menu.addItem(.separator())
     menu.addItem(ActionMenuItem(title: "向右分屏") { [weak self, weak tab] in
       guard let self, let tab else { return }
       model.select(tab)
@@ -862,14 +894,15 @@ final class WorkspaceViewController: NSViewController {
     background.identifier = NSUserInterfaceItemIdentifier("workspace-titlebar")
     background.heightAnchor.constraint(equalToConstant: 28).isActive = true
 
-    // Otty 的右侧顶部只显示当前目录。文件、分屏和命令面板仍由菜单与快捷键提供，
-    // 不在标题栏重复堆放按钮，终端内容因此可以紧贴原生标题区开始。
-    let path = tab.workingDirectory.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+    // 标题区显示活动 Pane 的 OSC 2/0 窗口标题；OSC 1 的短名称只驱动标签文案。
+    // 文件、分屏和命令面板仍由菜单与快捷键提供，不在标题栏重复堆放按钮。
     let title = makeLabel(
-      path,
+      tab.windowTitle,
       size: 10.5,
       color: theme.style.titlebarForeground.map(NSColor.init) ?? AsterTheme.secondaryInk
     )
+    title.identifier = NSUserInterfaceItemIdentifier("workspace-window-title")
+    windowTitleLabel = title
     title.alignment = .center
     background.addSubview(title)
     title.translatesAutoresizingMaskIntoConstraints = false

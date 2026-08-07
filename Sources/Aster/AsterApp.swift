@@ -23,13 +23,20 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   private var cancellables: Set<AnyCancellable> = []
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    model.onTabOrderBecameManual = { [weak self] in
+      self?.preferences.sidebarTabOrder = .manual
+    }
+    synchronizeWorkspaceConfiguration()
     NSApp.mainMenu = makeMainMenu()
     // Finder「服务 → 在 Aster 中打开」的接收端；服务菜单项由 Info.plist NSServices 声明。
     NSApp.servicesProvider = self
     showMainWindow()
     preferences.objectWillChange
       .sink { [weak self] _ in
-        DispatchQueue.main.async { self?.applyAppearance() }
+        DispatchQueue.main.async {
+          self?.applyAppearance()
+          self?.synchronizeWorkspaceConfiguration()
+        }
       }
       .store(in: &cancellables)
     NSApp.activate(ignoringOtherApps: true)
@@ -142,9 +149,15 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     settingsWindowController?.window?.appearance = preferences.preferredAppearance
   }
 
+  private func synchronizeWorkspaceConfiguration() {
+    model.newTabPosition = preferences.configuration.appearance.resolvedNewTabPosition
+  }
+
   // MARK: - Native menu actions
 
   @objc private func newTab(_ sender: Any?) { model.newTab(); showMainWindow() }
+  @objc private func reopenLastClosedTab(_ sender: Any?) { _ = model.reopenLastClosedTab() }
+  @objc private func renameTab(_ sender: Any?) { model.promptRenameSelectedTab() }
   @objc private func openFile(_ sender: Any?) { model.openFile() }
   @objc private func openFolder(_ sender: Any?) { model.openFolder() }
   @objc private func closeTab(_ sender: Any?) { model.closeSelectedTab() }
@@ -207,10 +220,13 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     let item = NSMenuItem()
     let submenu = NSMenu(title: "文件")
     submenu.addItem(menuItem("新建标签页", #selector(newTab(_:)), "t"))
+    submenu.addItem(
+      menuItem("重新打开最近关闭的标签页", #selector(reopenLastClosedTab(_:)), "t", modifiers: [.command, .shift]))
     submenu.addItem(menuItem("打开文件…", #selector(openFile(_:)), "o"))
     submenu.addItem(menuItem("打开文件夹…", #selector(openFolder(_:)), "", modifiers: []))
     submenu.addItem(.separator())
     submenu.addItem(menuItem("保存", #selector(saveDocument(_:)), "s"))
+    submenu.addItem(menuItem("重命名标签页…", #selector(renameTab(_:)), "", modifiers: []))
     submenu.addItem(menuItem("关闭", #selector(closePaneOrTab(_:)), "w"))
     submenu.addItem(
       menuItem("关闭标签页", #selector(closeTab(_:)), "w", modifiers: [.command, .shift]))

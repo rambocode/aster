@@ -1,4 +1,5 @@
 import AppKit
+import AsterCore
 import Darwin
 import Foundation
 import SwiftTerm
@@ -62,6 +63,10 @@ private final class TerminalRetirementCoordinator {
 /// 读这个值），用户在设置里选的竖条因此一进这些程序就失效。这里拦截样式变更回调，
 /// 只放行与配置一致的样式。
 final class AsterTerminalView: LocalProcessTerminalView {
+  /// SwiftTerm 在 macOS 的标题回调存在缺失和顺序差异；此回调按 PTY 原始顺序校正。
+  var onObservedTitleUpdate: ((Int, String) -> Void)?
+  private var titleStackObserver = TerminalTitleStackObserver()
+
   /// 用户配置的光标形状；nil 表示配置尚未下发，此时保持 SwiftTerm 默认行为。
   var preferredCursorStyle: SwiftTerm.CursorStyle? {
     didSet { applyEffectiveCursorStyle() }
@@ -86,6 +91,16 @@ final class AsterTerminalView: LocalProcessTerminalView {
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     setWindowActive(window?.isKeyWindow ?? true)
+  }
+
+  override func dataReceived(slice: ArraySlice<UInt8>) {
+    // 先让 SwiftTerm 完成渲染和内部标题栈操作，再按 PTY 字节顺序重放本分片的全部
+    // 标题事件。重放排在 SwiftTerm 错误、缺失或提前入队的 macOS delegate 回调之后，
+    // 因此工作区最终状态既符合协议语义，也保留恢复后紧随的新 OSC 更新。
+    super.dataReceived(slice: slice)
+    for update in titleStackObserver.consume(slice) {
+      onObservedTitleUpdate?(update.code, update.title)
+    }
   }
 
   /// 隐藏 SwiftTerm 的 overlay 滚动条。
@@ -143,6 +158,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @Published private(set) var isRunning = false
   @Published private(set) var currentWorkingDirectory: String
   @Published private(set) var terminalTitle = "Shell"
+  @Published private(set) var terminalIconTitle = ""
   @Published private(set) var exitCode: Int32?
   @Published private(set) var startupError: String?
   /// 是否有前台命令正在运行且近期有输出（区别于 `isRunning` 的 shell 存活）。
@@ -158,6 +174,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var lastActivityAt = Date.distantPast
 
   private var terminalView: AsterTerminalView?
+  /// OSC 0/1/2 的独立通道回调。Tab 领域状态负责固定名称、前缀与持久化。
+  var onTitleUpdate: ((Int, String) -> Void)?
   /// SwiftTerm 视图一旦启动就保持在同一个 AppKit 容器中。工作区刷新只移动该容器，
   /// 不直接反复把 Metal-backed 终端视图从 superview 拆下，避免分屏后网格停止绘制。
   private var terminalHostView: NSView?
@@ -183,12 +201,38 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
     let view = AsterTerminalView(frame: .zero)
     view.processDelegate = self
+    view.onObservedTitleUpdate = { [weak self] code, title in
+      Task { @MainActor [weak self] in self?.handleTitleOSC(code: code, text: title) }
+    }
     view.autoresizingMask = [.width, .height]
     view.allowMouseReporting = preferences.allowMouseReporting
     view.optionAsMetaKey = preferences.optionAsMeta
     view.linkReporting = .implicit
     view.linkHighlightMode = .hoverWithModifier
     apply(preferences: preferences, to: view)
+    // SwiftTerm 默认只把 OSC 0/2 作为同一个窗口标题回调，且丢弃 macOS 上的 OSC 1。
+    // 注册专用处理器保留协议通道，才能让短标签名与窗口标题独立演进。处理器负责
+    // 回写 SwiftTerm 自身标题状态；工作区事件由原始字节观察器按顺序统一上送，避免
+    // delegate 与自定义 handler 的调度先后打乱 XTWINOPS 恢复和后续 OSC。
+    let terminal = view.getTerminal()
+    for code in 0...2 {
+      terminal.registerOscHandler(code: code) { [weak terminal] bytes in
+        let text = String(bytes: bytes, encoding: .utf8) ?? ""
+        switch code {
+        case 0:
+          terminal?.setIconTitle(text: text)
+          terminal?.setTitle(text: text)
+        case 1:
+          terminal?.setIconTitle(text: text)
+        case 2:
+          terminal?.setTitle(text: text)
+        default:
+          break
+        }
+        // 领域标题事件由 `AsterTerminalView.dataReceived` 的字节流观察器统一按原始顺序
+        // 上送。这里不单独通知，避免同一 PTY 分片内恢复与后续 OSC 的顺序被打乱。
+      }
+    }
 
     var environment = ProcessInfo.processInfo.environment
     environment["TERM"] = preferences.terminalIdentity
@@ -387,6 +431,18 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.needsDisplay = true
   }
 
+  private func handleTitleOSC(code: Int, text: String) {
+    var state = TerminalTitleState(
+      programWindowTitle: terminalTitle == "Shell" ? "" : terminalTitle,
+      programIconName: terminalIconTitle,
+      fallback: "Shell"
+    )
+    state.applyOSC(code: code, text: text)
+    terminalTitle = state.programWindowTitle.isEmpty ? "Shell" : state.programWindowTitle
+    terminalIconTitle = state.programIconName
+    onTitleUpdate?(code, text)
+  }
+
   private func swiftTermCursorStyle(_ style: String, blinks: Bool) -> SwiftTerm.CursorStyle {
     switch style {
     case "bar": blinks ? .blinkBar : .steadyBar
@@ -411,9 +467,13 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
     Task { @MainActor [weak self] in
       // 去重：运行中的命令（尤其 TUI 与带 starship 的 shell）会高频重发相同标题，
       // 不去重会让整棵工作区视图树以接近每帧的频率重建，点击都无法完成。
-      let next = title.isEmpty ? "Shell" : title
-      guard let self, self.terminalTitle != next else { return }
-      self.terminalTitle = next
+      var state = TerminalTitleState(fallback: "Shell")
+      state.applyOSC(code: 2, text: title)
+      let next = state.programWindowTitle.isEmpty ? "Shell" : state.programWindowTitle
+      guard let self else { return }
+      if self.terminalTitle != next { self.terminalTitle = next }
+      // 该路径也承接 XTWINOPS 标题栈恢复；必须上送给 Tab，不能只更新 Session。
+      self.onTitleUpdate?(2, title)
     }
   }
 
