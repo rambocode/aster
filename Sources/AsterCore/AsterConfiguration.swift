@@ -69,6 +69,8 @@ public struct GeneralConfiguration: Codable, Equatable, Sendable {
 public struct ShellConfiguration: Codable, Equatable, Sendable {
   public var shellIntegration = true
   public var sshIntegration = true
+  /// 可选字段兼容 0.4.x 配置；缺失时按 Otty 默认值开启自动记录。
+  public var frecencyAutoRecord: Bool? = true
   public var restoreMultiplexerSessions = true
   public var restoreAgentSessions = true
   public var restoreProcesses = false
@@ -77,6 +79,10 @@ public struct ShellConfiguration: Codable, Equatable, Sendable {
   public var terminalBell = true
   public var badgeExitStatus = true
   public var badgeAwaitingInput = true
+
+  public var resolvedFrecencyAutoRecord: Bool {
+    frecencyAutoRecord ?? true
+  }
 }
 
 public struct ControlConfiguration: Codable, Equatable, Sendable {

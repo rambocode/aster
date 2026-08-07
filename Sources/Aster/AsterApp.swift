@@ -151,6 +151,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
   private func synchronizeWorkspaceConfiguration() {
     model.newTabPosition = preferences.configuration.appearance.resolvedNewTabPosition
+    model.frecencyAutoRecord = preferences.configuration.shell.resolvedFrecencyAutoRecord
   }
 
   // MARK: - Native menu actions

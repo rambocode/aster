@@ -15,6 +15,7 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 - **Configuration**：通用、Shell、控制、编辑器、智能体、外观、Recipes、快捷键和高级九个设置域。
 - **TerminalTitleState**：分离 OSC 1 图标名与 OSC 2 窗口标题，OSC 0 同时更新两者；固定名称和动态前缀独立覆盖并进入快照。
 - **RecentlyClosedTabs**：只保存可重建标签快照的 LIFO 历史，供 `⇧⌘T` 跨重启恢复。
+- **FrequentFolders**：本机目录访问数据库，以名称匹配等级和时间衰减后的 frecency 排名；忽略列表具有粘性。
 
 ## 核心规则
 
@@ -81,6 +82,8 @@ flowchart LR
 
 `TerminalTabItem` 会把子 Session 的状态变化转发给标签视图，并把 OSC 7 当前目录写回分屏树。应用退出前再次持久化最终快照。
 
+OSC 7 目录变化还会在“自动记录访问目录”开启时写入 `aster.frequent-folders.v1`。每次访问把原始分数加 1，读取时按最近一小时 `×4`、一天内 `×2`、一周内 `×0.5`、更早 `×0.25` 衰减；查询优先级依次为目录名精确、前缀、包含、完整路径包含。数据库只保留最高分的 100 项，`ignore` 会同时删除记录并阻止后续自动学习，`unignore` 后才可重新进入。路径进入数据库前必须是 4096 字节以内、无控制字符的规范化绝对路径；OSC 7 自动入口还要求目录当前真实存在。
+
 ### 进程关闭
 
 SwiftTerm 视图只在 `process.running` 为真时按当前 `shellPid` 终止进程组。进程级 `TerminalRetirementCoordinator` 会在 Pane 和 Session 释放后继续强持有 retiring View，直到 SwiftTerm 的进程 monitor 完成 `waitpid`；普通 Pane/标签关闭在 750ms 后仍未退出才升级为 `SIGKILL`。应用整体退出时事件循环不会继续等待，因此在保存快照和确认文档后立即结束进程组。自然结束的 Session 不再对保留的旧 PID 发送信号，避免 PID 复用后误杀无关进程。
@@ -94,6 +97,7 @@ SwiftTerm 视图只在 `process.running` 为真时按当前 `shellPid` 终止进
 - 关闭 dirty 编辑器：保存失败或用户取消时中止关闭事务。
 - Shell 结束：终端保留滚动内容并显示结束状态；关闭 Pane/标签负责最终清理。
 - 配置导入失败：保留当前配置，不写入部分结果。
+- Frequent Folders 数据损坏：丢弃非法路径、非有限分数和重复项；单个 OSC 7 记录失败不影响工作区目录同步。
 
 ## 测试与发布
 

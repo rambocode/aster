@@ -107,6 +107,9 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   private(set) var activePaneID: UUID
   let activePaneChanged = PassthroughSubject<UUID, Never>()
   let windowTitleChanged = PassthroughSubject<String, Never>()
+  /// 目录变化由 Tab 专用回调上送给窗口级 frecency 数据库，不经 `objectWillChange`，
+  /// 避免单次 `cd` 同时触发无关界面刷新。
+  var onWorkingDirectoryChanged: ((String) -> Void)?
   /// 被临时放大（缩放拆分）的面板。它是纯 UI 态，不进快照——恢复会话时应当回到
   /// 完整分屏，而不是停在某次临时放大的状态。
   @Published private(set) var zoomedPaneID: UUID?
@@ -453,6 +456,9 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     }
     runtime.terminalSession?.$currentWorkingDirectory
       .removeDuplicates()
+      // `@Published` 订阅会立即发送 Session 构造时的初始目录；新建同目录分屏并不代表
+      // 用户访问了一次目录，必须跳过。后续真实 OSC 7 变化仍由 removeDuplicates 去重。
+      .dropFirst()
       .sink { [weak self] directory in
         guard let self else { return }
         self.layout = self.layout.updatingPane(paneID: descriptor.id) { pane in
@@ -464,6 +470,7 @@ final class TerminalTabItem: ObservableObject, Identifiable {
         // 用户稍后恢复自动模式或会话重启时才能显示最新目录，而不是旧快照值。
         let folder = Self.displayName(forDirectory: directory)
         self.updateTitleFallback(folder, paneID: descriptor.id)
+        self.onWorkingDirectoryChanged?(directory)
       }
       .store(in: &cancellables)
   }
@@ -500,11 +507,14 @@ final class AppModel: ObservableObject {
   @Published var notice: String?
   @Published private(set) var dividerAfterTabIDs: Set<UUID> = []
   var newTabPosition = NewTabPosition.automatic
+  var frecencyAutoRecord = true
   var onTabOrderBecameManual: (() -> Void)?
   private let defaults: UserDefaults
   private let snapshotKey = "aster.workspace.snapshot.v1"
   private let recentlyClosedKey = "aster.workspace.recently-closed.v1"
+  private let frequentFoldersKey = "aster.frequent-folders.v1"
   private var recentlyClosedTabs: RecentlyClosedTabs
+  private var frequentFolders: FrequentFolders
 
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
@@ -514,6 +524,13 @@ final class AppModel: ObservableObject {
       recentlyClosedTabs = decoded
     } else {
       recentlyClosedTabs = RecentlyClosedTabs()
+    }
+    if let data = defaults.data(forKey: frequentFoldersKey),
+      let decoded = try? FrequentFolderStore.decode(data)
+    {
+      frequentFolders = decoded
+    } else {
+      frequentFolders = FrequentFolders()
     }
   }
 
@@ -539,6 +556,35 @@ final class AppModel: ObservableObject {
 
   var selectedTab: TerminalTabItem? {
     tabs.first(where: { $0.id == selectedTabID })
+  }
+
+  /// 返回 Open Quickly / CLI 共用的 frecency 排名，不暴露可变数据库。
+  func frequentFolderMatches(
+    query: String = "", limit: Int? = nil, excluding excludedPath: String? = nil
+  ) -> [FrequentFolderMatch] {
+    frequentFolders.ranked(matching: query, limit: limit, excluding: excludedPath)
+  }
+
+  /// 显式学习目录。与自动 OSC 7 记录不同，该入口由调用者触发，忽略自动记录开关。
+  @discardableResult
+  func learnFolder(_ directory: String) -> Bool {
+    guard isExistingDirectory(directory), frequentFolders.record(directory) else { return false }
+    persistFrequentFolders()
+    return true
+  }
+
+  @discardableResult
+  func ignoreFolder(_ directory: String) -> Bool {
+    guard frequentFolders.ignore(directory) else { return false }
+    persistFrequentFolders()
+    return true
+  }
+
+  @discardableResult
+  func unignoreFolder(_ directory: String) -> Bool {
+    guard frequentFolders.unignore(directory) else { return false }
+    persistFrequentFolders()
+    return true
   }
 
   func newTab(
@@ -941,11 +987,31 @@ final class AppModel: ObservableObject {
 
   private func configurePersistence(for tab: TerminalTabItem) {
     tab.onWorkspaceChanged = { [weak self] in self?.persistWorkspace() }
+    tab.onWorkingDirectoryChanged = { [weak self] directory in
+      self?.recordVisitedFolderIfEnabled(directory)
+    }
   }
 
   private func persistRecentlyClosedTabs() {
     guard let data = try? JSONEncoder().encode(recentlyClosedTabs) else { return }
     defaults.set(data, forKey: recentlyClosedKey)
+  }
+
+  private func recordVisitedFolderIfEnabled(_ directory: String) {
+    guard frecencyAutoRecord, isExistingDirectory(directory), frequentFolders.record(directory)
+    else { return }
+    persistFrequentFolders()
+  }
+
+  private func isExistingDirectory(_ path: String) -> Bool {
+    var isDirectory: ObjCBool = false
+    return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+      && isDirectory.boolValue
+  }
+
+  private func persistFrequentFolders() {
+    guard let data = try? FrequentFolderStore.encode(frequentFolders) else { return }
+    defaults.set(data, forKey: frequentFoldersKey)
   }
 
   /// 应用退出前统一处理未保存文档并写入最后快照；取消任一提示会取消退出。

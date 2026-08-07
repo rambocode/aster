@@ -251,3 +251,72 @@ func terminalSessionPreservesTitleEventOrderWithinChunk() async throws {
   #expect(events.last?.0 == 0)
   #expect(events.last?.1 == "gamma")
 }
+
+@Test("OSC 7 目录变化按设置自动学习并跨 AppModel 恢复")
+@MainActor
+func appModelRecordsFrequentFoldersFromTerminalDirectoryChanges() async throws {
+  let defaults = behaviorTestDefaults()
+  let directory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("aster-frecency-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+
+  let model = AppModel(defaults: defaults)
+  model.frecencyAutoRecord = true
+  model.ensureInitialTab()
+  let session = try #require(model.selectedTab?.activeSession)
+  let preferences = AppPreferences(defaults: defaults)
+  let terminalView = session.makeTerminalView(preferences: preferences)
+  defer { session.stop(immediately: true) }
+
+  session.hostCurrentDirectoryUpdate(source: terminalView, directory: directory.path)
+  try await Task.sleep(for: .milliseconds(50))
+
+  #expect(model.frequentFolderMatches(query: directory.lastPathComponent).first?.path == directory.path)
+  let restored = AppModel(defaults: defaults)
+  #expect(restored.frequentFolderMatches(query: directory.lastPathComponent).first?.path == directory.path)
+}
+
+@Test("关闭自动记录时 OSC 7 不写入 Frequent Folders")
+@MainActor
+func appModelHonorsDisabledFrequentFolderAutoRecord() async throws {
+  let defaults = behaviorTestDefaults()
+  let directory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("aster-disabled-record-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let model = AppModel(defaults: defaults)
+  model.frecencyAutoRecord = false
+  model.ensureInitialTab()
+  let session = try #require(model.selectedTab?.activeSession)
+  let preferences = AppPreferences(defaults: defaults)
+  let terminalView = session.makeTerminalView(preferences: preferences)
+  defer { session.stop(immediately: true) }
+
+  session.hostCurrentDirectoryUpdate(source: terminalView, directory: directory.path)
+  try await Task.sleep(for: .milliseconds(50))
+
+  #expect(model.frequentFolderMatches(query: directory.lastPathComponent).isEmpty)
+}
+
+@Test("新建同目录分屏不会被误算为目录访问")
+@MainActor
+func appModelDoesNotRecordInitialDirectoryPublisherValue() throws {
+  let defaults = behaviorTestDefaults()
+  let directory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("aster-split-score-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+
+  let model = AppModel(defaults: defaults)
+  model.newTab(workingDirectory: directory.path)
+  #expect(model.learnFolder(directory.path))
+  let scoreBeforeSplit = try #require(
+    model.frequentFolderMatches(query: directory.lastPathComponent).first?.score)
+
+  model.splitSelectedTab(.right)
+
+  let scoreAfterSplit = try #require(
+    model.frequentFolderMatches(query: directory.lastPathComponent).first?.score)
+  #expect(scoreAfterSplit == scoreBeforeSplit)
+}

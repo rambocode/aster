@@ -52,6 +52,18 @@ func legacyAppearanceConfigurationDefaultsNewTabPosition() throws {
   #expect(decoded.resolvedNewTabPosition == .automatic)
 }
 
+@Test("旧 Shell 配置缺少自动记录字段时安全回退为开启")
+func legacyShellConfigurationDefaultsFrequentFolderRecording() throws {
+  let data = try JSONEncoder().encode(ShellConfiguration())
+  var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+  object.removeValue(forKey: "frecencyAutoRecord")
+  let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+  let decoded = try JSONDecoder().decode(ShellConfiguration.self, from: legacyData)
+
+  #expect(decoded.resolvedFrecencyAutoRecord)
+}
+
 @Test("标签栏自动隐藏只在单标签工作区生效")
 func appearanceConfigurationResolvesTabBarVisibility() {
   var appearance = AppearanceConfiguration()

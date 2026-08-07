@@ -61,10 +61,10 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 
 - 部分：[Recipes](https://docs.otty.sh/workflows/recipes)
 - 部分：[Session Recovery](https://docs.otty.sh/workflows/session-recovery)
-- 待审计：[Frequent Folders](https://docs.otty.sh/workflows/frequent-folders)
+- 部分：[Frequent Folders](https://docs.otty.sh/workflows/frequent-folders) — 已实现 OSC 7 自动学习、粘性忽略、精确/前缀/包含匹配、文档规定的时间衰减、100 项容量和本机持久化；管理 UI、Open Quickly Folders 与 CLI `jump/learn/ignore` 尚待接入。
 - 部分：[Using the CLI in your Shell](https://docs.otty.sh/workflows/cli-usage)
-- 待审计：[Data Sync](https://docs.otty.sh/workflows/data-sync)
-- 部分：[SSH / Remote Development](https://docs.otty.sh/workflows/ssh-remote)
+- 上游开发中：[Data Sync](https://docs.otty.sh/workflows/data-sync) — 页面只建议备份 `~/.config/otty`，没有稳定同步契约。
+- 部分 / 上游开发中：[SSH / Remote Development](https://docs.otty.sh/workflows/ssh-remote) — 基础 SSH 会话和 `ssh://` 安全预填已存在；页面声明更深远程开发仍在开发中。
 
 ### Terminal Features（17）
 

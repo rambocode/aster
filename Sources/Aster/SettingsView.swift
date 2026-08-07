@@ -423,6 +423,15 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.shell.sshIntegration = value
         },
       ]),
+      sectionTitle("常用目录"),
+      card([
+        toggleRow(
+          "自动记录访问目录", "根据 OSC 7 目录变化更新本机 frecency 排名；忽略列表中的目录不会重新出现",
+          value: preferences.configuration.shell.resolvedFrecencyAutoRecord
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.frecencyAutoRecord = value
+        },
+      ]),
       sectionTitle("会话恢复"),
       card([
         toggleRow(
