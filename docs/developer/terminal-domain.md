@@ -16,6 +16,8 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 - **TerminalTitleState**：分离 OSC 1 图标名与 OSC 2 窗口标题，OSC 0 同时更新两者；固定名称和动态前缀独立覆盖并进入快照。
 - **RecentlyClosedTabs**：只保存可重建标签快照的 LIFO 历史，供 `⇧⌘T` 跨重启恢复。
 - **FrequentFolders**：本机目录访问数据库，以名称匹配等级和时间衰减后的 frecency 排名；忽略列表具有粘性。
+- **PasteAnalysis**：一次粘贴的瞬时风险分类，只在内存中保存正文，不进入日志或持久化。
+- **OSC52ClipboardCoordinator**：终端程序通过 OSC 52 访问系统剪贴板的 AppKit 授权边界。
 
 ## 核心规则
 
@@ -30,6 +32,8 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 9. 关闭操作以「当前聚焦的 Pane」为对象：还有分屏时不得连带关闭整个标签页，焦点转移到被关 Pane 的相邻兄弟。
 10. 面板导航与拖放重排（方向聚焦、移动分隔条、等分、交换、搬移）是 `PaneLayout` 上的纯函数，不依赖 AppKit 帧尺寸。
 11. 拖放重排只改描述符位置，面板 ID 必须保持不变——ID 变了就等于重建运行态，PTY 会重启。
+12. 危险粘贴默认必须确认；备用屏 TUI，或已协商 bracketed paste 且用户允许信任时可跳过，但控制字符风险永不跳过。
+13. OSC 必须在进入组件 parser 前流式限长；OSC 52 读取默认每次询问，拒绝时不得触碰系统剪贴板。
 
 ## 业务流程
 
@@ -46,6 +50,25 @@ flowchart LR
   J --> B
   K[保存 Recipe/退出] --> L[WorkspaceSnapshot]
   L --> M[仅编码可重建状态]
+```
+
+### 剪贴板与粘贴保护流程
+
+```mermaid
+flowchart LR
+  A[复制 / 选中即复制] --> B[可选逐行去尾空白]
+  B --> C[写入 NSPasteboard]
+  D[普通或 Paste As 粘贴] --> E[PasteRiskAnalyzer]
+  E --> F{备用屏或可信 bracketed?}
+  F -->|是且无控制字符| H[编码 UTF-8 / bracketed 序列]
+  F -->|否且有风险| G{用户确认}
+  G -->|允许| H
+  G -->|取消| I[不写 PTY]
+  H --> J[写入当前 PTY]
+  K[OSC 52] --> L[限长解析]
+  L --> M{Allow / Ask / Deny}
+  M -->|允许| N[读写系统剪贴板]
+  M -->|拒绝| O[无副作用]
 ```
 
 ## 关键实现
@@ -84,6 +107,14 @@ flowchart LR
 
 OSC 7 目录变化还会在“自动记录访问目录”开启时写入 `aster.frequent-folders.v1`。每次访问把原始分数加 1，读取时按最近一小时 `×4`、一天内 `×2`、一周内 `×0.5`、更早 `×0.25` 衰减；查询优先级依次为目录名精确、前缀、包含、完整路径包含。数据库只保留最高分的 100 项，`ignore` 会同时删除记录并阻止后续自动学习，`unignore` 后才可重新进入。路径进入数据库前必须是 4096 字节以内、无控制字符的规范化绝对路径；OSC 7 自动入口还要求目录当前真实存在。
 
+### 复制、Paste As 与 OSC 52
+
+`AsterTerminalView` 覆盖 SwiftTerm 的复制和粘贴入口。复制可选逐物理行删除尾部水平空白，并可在显式复制成功后清除选区；“选中即复制”复用同一转换，但始终保留高亮供用户继续扩展选区。普通粘贴识别多行、末尾换行、`sudo`/`su` 命令词和 C0/C1 控制字符，确认框只展示经可视化和 2,000 字符上限处理的预览。正文按原始 UTF-8 写入 PTY；终端协商 bracketed paste 或用户显式选择“括号粘贴”时，使用 `CSI 200~` / `CSI 201~` 包裹。控制字符始终要求确认，正文内嵌的 `CSI 201~` 与 C1 等价结束标记会转为可见文本，不能提前逃逸括号模式。
+
+Edit 菜单和终端右键菜单提供粘贴选区、普通文件 Base64、POSIX Shell 单参数转义、强制括号粘贴，以及 Composer 交接入口。Base64 文件读取使用 `lstat` + `O_NOFOLLOW` + `fstat`，在打开前后比较设备号、inode、大小、mtime 与 ctime，限制为 8 MiB；目录、符号链接、FIFO、socket、设备和读取期间变化的文件都被拒绝。Composer 动作通过 `onPasteIntoComposer` 窄回调解耦；Composer 领域接入前右键项保持禁用。
+
+`TerminalOSCStreamLimiter` 在原始 PTY 字节进入 SwiftTerm 前跨分片跟踪 OSC：普通 OSC 上限 16 MiB，OSC 52 上限 8 MiB；超限时发送 CAN 取消组件内部缓存，并丢弃到真实终止符。自定义 OSC 52 handler 再执行第二层解析，Base64 解码后限制 6 MiB；读响应正文限制 1 MiB，并使用七位 OSC/ST。写权限默认 `Allow`，读权限默认 `Ask`；导入配置中的 `Allow Read` 会降级为 `Ask`，显式 `Deny` 保留。`Ask` 不持久化临时授权，提示期间拒绝重入，提示结束后 5 秒内静默拒绝后续请求，防止模态提示风暴。畸形、超限、拒绝和取消请求均无剪贴板副作用。
+
 ### 进程关闭
 
 SwiftTerm 视图只在 `process.running` 为真时按当前 `shellPid` 终止进程组。进程级 `TerminalRetirementCoordinator` 会在 Pane 和 Session 释放后继续强持有 retiring View，直到 SwiftTerm 的进程 monitor 完成 `waitpid`；普通 Pane/标签关闭在 750ms 后仍未退出才升级为 `SIGKILL`。应用整体退出时事件循环不会继续等待，因此在保存快照和确认文档后立即结束进程组。自然结束的 Session 不再对保留的旧 PID 发送信号，避免 PID 复用后误杀无关进程。
@@ -98,10 +129,13 @@ SwiftTerm 视图只在 `process.running` 为真时按当前 `shellPid` 终止进
 - Shell 结束：终端保留滚动内容并显示结束状态；关闭 Pane/标签负责最终清理。
 - 配置导入失败：保留当前配置，不写入部分结果。
 - Frequent Folders 数据损坏：丢弃非法路径、非有限分数和重复项；单个 OSC 7 记录失败不影响工作区目录同步。
+- 粘贴保护取消：不写入任何 PTY 字节；剪贴板正文不记录日志。
+- OSC 52 畸形、超限或被拒绝：静默忽略且不读取/写入系统剪贴板。
+- Base64 文件不是普通文件、不可读或超过 8 MiB：显示错误并停止粘贴。
 
 ## 测试与发布
 
-测试覆盖纯 AppKit 迁移、配置编码、24 套主题真值、颜色解析、递归分屏、方向聚焦与分隔条调整、分屏面板在两个方向/两种标签栏布局下的真实 frame、⌘W 的面板优先语义、比例更新、移除节点、文档 dirty/原子保存、Recipe 往返、FIFO 和累计资源预算、恶意结构上限、会话快照、UTF-8 分块、ANSI 边界和真实 PTY 生命周期。发布前必须运行：
+测试覆盖纯 AppKit 迁移、配置编码、24 套主题真值、颜色解析、递归分屏、方向聚焦与分隔条调整、分屏面板在两个方向/两种标签栏布局下的真实 frame、⌘W 的面板优先语义、比例更新、移除节点、文档 dirty/原子保存、Recipe 往返、FIFO 和累计资源预算、恶意结构上限、会话快照、UTF-8 分块、ANSI 边界、粘贴风险、括号序列、OSC 52 权限/限长、Base64 文件边界和真实 PTY 生命周期。发布前必须运行：
 
 ```bash
 swift test

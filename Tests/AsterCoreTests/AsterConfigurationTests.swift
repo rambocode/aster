@@ -16,6 +16,12 @@ func defaultConfigurationMatchesReferenceWorkspace() {
   #expect(configuration.appearance.terminalIdentity == "xterm-256color")
   #expect(configuration.controls.allowMouseReporting)
   #expect(configuration.controls.optionAsMeta)
+  #expect(!configuration.controls.trimTrailingSpaces)
+  #expect(!configuration.controls.resolvedClearSelectionOnCopy)
+  #expect(configuration.controls.pasteProtection)
+  #expect(configuration.controls.resolvedPasteBracketedSafe)
+  #expect(configuration.controls.resolvedClipboardWriteAccess == .allow)
+  #expect(configuration.controls.resolvedClipboardReadAccess == .ask)
 }
 
 @Test("十六进制主题色支持 RGB 和 RGBA 并拒绝非法值")
@@ -79,6 +85,24 @@ func legacyControlConfigurationDefaultsLinkSafety() throws {
   #expect(decoded.resolvedLinkDetectionEnabled)
   #expect(decoded.resolvedLinkSchemePolicy == .all)
   #expect(decoded.resolvedAllowedNonStandardLinkSchemes.isEmpty)
+}
+
+@Test("旧控制配置缺少剪贴板字段时使用安全且兼容的默认值")
+func legacyControlConfigurationDefaultsClipboardSafety() throws {
+  let data = try JSONEncoder().encode(ControlConfiguration())
+  var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+  object.removeValue(forKey: "clearSelectionOnCopy")
+  object.removeValue(forKey: "pasteBracketedSafe")
+  object.removeValue(forKey: "clipboardWriteAccess")
+  object.removeValue(forKey: "clipboardReadAccess")
+  let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+  let decoded = try JSONDecoder().decode(ControlConfiguration.self, from: legacyData)
+
+  #expect(!decoded.resolvedClearSelectionOnCopy)
+  #expect(decoded.resolvedPasteBracketedSafe)
+  #expect(decoded.resolvedClipboardWriteAccess == .allow)
+  #expect(decoded.resolvedClipboardReadAccess == .ask)
 }
 
 @Test("导入配置会清理非法、重复和超限的链接安全例外")

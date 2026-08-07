@@ -237,9 +237,12 @@ final class AppPreferences: ObservableObject {
 
   func importConfiguration(_ candidate: AsterConfiguration) {
     var imported = candidate.normalized()
-    // “始终允许”属于这台 Mac 上由用户亲自确认的安全状态，不能随 JSON 导入；否则
-    // 第三方配置文件可预置 scheme 授权并绕过首次警告。
+    // 本机安全授权不能随 JSON 导入；否则第三方配置可预置 scheme 例外，或把 OSC 52
+    // 读取改成无提示允许。显式 Deny 属于更严格策略，可以安全保留。
     imported.controls.allowedNonStandardLinkSchemes = []
+    if imported.controls.resolvedClipboardReadAccess == .allow {
+      imported.controls.clipboardReadAccess = .ask
+    }
     configuration = imported
   }
 

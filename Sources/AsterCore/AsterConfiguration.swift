@@ -90,11 +90,16 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
   public var allowMouseReporting = true
   public var focusFollowsMouse = false
   public var copyOnSelect = false
-  public var trimTrailingSpaces = true
+  public var trimTrailingSpaces = false
   public var pasteProtection = true
   public var smoothScrolling = true
   public var showLinkPreviews = true
   public var secureInputAutomatically = true
+  /// 可选字段兼容 0.4.x 配置；缺失时采用 Otty 的复制与剪贴板安全默认值。
+  public var clearSelectionOnCopy: Bool? = false
+  public var pasteBracketedSafe: Bool? = true
+  public var clipboardWriteAccess: ClipboardAccess? = .allow
+  public var clipboardReadAccess: ClipboardAccess? = .ask
   /// 可选字段保证 0.4.x 配置可继续解码。nil 均按 Otty 的安全默认值解释。
   public var linkDetectionEnabled: Bool? = true
   public var detectAllLinkSchemes: Bool? = true
@@ -102,6 +107,14 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
   public var allowedNonStandardLinkSchemes: Set<String>? = []
 
   public var resolvedLinkDetectionEnabled: Bool { linkDetectionEnabled ?? true }
+
+  public var resolvedClearSelectionOnCopy: Bool { clearSelectionOnCopy ?? false }
+
+  public var resolvedPasteBracketedSafe: Bool { pasteBracketedSafe ?? true }
+
+  public var resolvedClipboardWriteAccess: ClipboardAccess { clipboardWriteAccess ?? .allow }
+
+  public var resolvedClipboardReadAccess: ClipboardAccess { clipboardReadAccess ?? .ask }
 
   public var resolvedCustomLinkSchemes: Set<String> {
     customLinkSchemes ?? []

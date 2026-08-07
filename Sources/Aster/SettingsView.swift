@@ -527,10 +527,34 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.controls.trimTrailingSpaces = value
         },
         toggleRow(
+          "复制后清除选区", "复制完成后取消终端中的文本选中状态",
+          value: preferences.configuration.controls.resolvedClearSelectionOnCopy
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.clearSelectionOnCopy = value
+        },
+        toggleRow(
           "粘贴保护", "粘贴多行或含控制字符的内容前先确认",
           value: preferences.configuration.controls.pasteProtection
         ) { [weak self] value in
           self?.preferences.configuration.controls.pasteProtection = value
+        },
+        toggleRow(
+          "信任括号粘贴", "程序已协商 bracketed paste 时跳过危险内容确认",
+          value: preferences.configuration.controls.resolvedPasteBracketedSafe
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.pasteBracketedSafe = value
+        },
+        enumPopupRow(
+          "OSC 52 写入剪贴板", "终端程序请求替换系统剪贴板时的权限",
+          value: preferences.configuration.controls.resolvedClipboardWriteAccess
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.clipboardWriteAccess = value
+        },
+        enumPopupRow(
+          "OSC 52 读取剪贴板", "终端程序请求读取系统剪贴板时的权限",
+          value: preferences.configuration.controls.resolvedClipboardReadAccess
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.clipboardReadAccess = value
         },
       ]),
       sectionTitle("文件与链接"),
@@ -1738,6 +1762,16 @@ extension CursorStyle: SettingsEnumOption {
     case .bar: "竖线"
     case .underline: "下划线"
     case .hollowBlock: "空心方块"
+    }
+  }
+}
+
+extension ClipboardAccess: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .allow: "允许"
+    case .ask: "每次询问"
+    case .deny: "拒绝"
     }
   }
 }

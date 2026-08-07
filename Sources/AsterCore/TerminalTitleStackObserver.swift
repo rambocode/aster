@@ -99,6 +99,11 @@ public struct TerminalTitleStackObserver: Sendable {
       case 0x07:  // BEL
         handleOSC(code: code, payload: payload, updates: &updates)
         state = .ground
+      case 0x9C:  // 8-bit ST
+        handleOSC(code: code, payload: payload, updates: &updates)
+        state = .ground
+      case 0x18, 0x1A:  // CAN / SUB：取消序列，不应用截断标题。
+        state = .ground
       case 0x1B:
         state = .oscEscape(code: code, bytes: payload)
       default:

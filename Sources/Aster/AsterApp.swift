@@ -244,6 +244,26 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
     submenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
     submenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    let pasteAsItem = NSMenuItem(title: "粘贴为", action: nil, keyEquivalent: "")
+    let pasteAsMenu = NSMenu(title: "粘贴为")
+    pasteAsMenu.addItem(
+      withTitle: "粘贴选区", action: #selector(AsterTerminalView.pasteSelection(_:)),
+      keyEquivalent: "")
+    pasteAsMenu.addItem(
+      withTitle: "粘贴 Base64 编码文件…",
+      action: #selector(AsterTerminalView.pasteFileBase64Encoded(_:)),
+      keyEquivalent: "")
+    pasteAsMenu.addItem(
+      withTitle: "转义特殊字符后粘贴",
+      action: #selector(AsterTerminalView.pasteEscapingSpecialCharacters(_:)), keyEquivalent: "")
+    pasteAsMenu.addItem(
+      withTitle: "括号粘贴", action: #selector(AsterTerminalView.pasteBracketed(_:)),
+      keyEquivalent: "")
+    pasteAsMenu.addItem(
+      withTitle: "粘贴并在 Composer 中继续",
+      action: #selector(AsterTerminalView.pasteAndContinueInComposer(_:)), keyEquivalent: "")
+    pasteAsItem.submenu = pasteAsMenu
+    submenu.addItem(pasteAsItem)
     submenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     submenu.addItem(.separator())
     submenu.addItem(menuItem("查找", #selector(find(_:)), "f"))

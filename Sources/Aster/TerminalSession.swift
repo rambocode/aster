@@ -69,10 +69,22 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// `NSWorkspace.open` 路径绕过 scheme、可执行文件和特殊文件检查。
   var onRequestOpenTarget: ((String, DetectedTargetSource) -> Void)?
   private var titleStackObserver = TerminalTitleStackObserver()
+  /// 必须先于 SwiftTerm parser 处理原始 PTY 字节；handler 层限长时组件已经缓存完整 OSC。
+  private var oscStreamLimiter = TerminalOSCStreamLimiter()
   private var didForwardLinkInCurrentMouseUp = false
   private var currentLinkClickEvent: NSEvent?
   /// 普通文字链接的运行时检测策略；OSC 8 由 SwiftTerm 显式 payload 路径处理。
   var linkSchemePolicy: LinkSchemePolicy = .all
+  /// 复制与粘贴偏好在 `TerminalSession.apply` 中实时下发，已有 Pane 无需重启。
+  var copyOnSelect = false
+  var trimTrailingSpacesOnCopy = false
+  var clearSelectionOnCopy = false
+  var pasteProtectionEnabled = true
+  var pasteBracketedSafe = true
+  /// Composer 在对应 Agent 批次接入；存在回调时“粘贴并在 Composer 中继续”可用。
+  var onPasteIntoComposer: ((String) -> Void)?
+  var onConfirmPaste: @MainActor (PasteAnalysis) -> Bool =
+    AsterTerminalView.presentPasteConfirmation
 
   /// 用户配置的光标形状；nil 表示配置尚未下发，此时保持 SwiftTerm 默认行为。
   var preferredCursorStyle: SwiftTerm.CursorStyle? {
@@ -104,8 +116,9 @@ final class AsterTerminalView: LocalProcessTerminalView {
     // 先让 SwiftTerm 完成渲染和内部标题栈操作，再按 PTY 字节顺序重放本分片的全部
     // 标题事件。重放排在 SwiftTerm 错误、缺失或提前入队的 macOS delegate 回调之后，
     // 因此工作区最终状态既符合协议语义，也保留恢复后紧随的新 OSC 更新。
-    super.dataReceived(slice: slice)
-    for update in titleStackObserver.consume(slice) {
+    let safeBytes = oscStreamLimiter.consume(slice)
+    if !safeBytes.isEmpty { super.dataReceived(slice: safeBytes[...]) }
+    for update in titleStackObserver.consume(safeBytes) {
       onObservedTitleUpdate?(update.code, update.title)
     }
   }
@@ -158,6 +171,196 @@ final class AsterTerminalView: LocalProcessTerminalView {
     onRequestOpenTarget?(link, .plainText)
   }
 
+  /// 选择变化时同步“选中即复制”。SwiftTerm 会在拖选、单词选择和整行选择后调用该
+  /// 回调；空选区不会覆盖用户原剪贴板。
+  override func selectionChanged(source: Terminal) {
+    super.selectionChanged(source: source)
+    guard copyOnSelect else { return }
+    copyCurrentSelection(clearAfterCopy: false)
+  }
+
+  /// 所有复制入口共用同一转换，确保菜单、快捷键和右键行为一致。
+  override func copy(_ sender: Any) {
+    copyCurrentSelection(
+      clearAfterCopy: TerminalSelectionPolicy.clearsAfterExplicitCopy(
+        copyOnSelect: copyOnSelect,
+        clearSelectionOnCopy: clearSelectionOnCopy
+      ))
+  }
+
+  /// 普通粘贴读取剪贴板一次，先完成风险确认，再按终端协商状态决定是否使用括号模式。
+  override func paste(_ sender: Any) {
+    guard let text = NSPasteboard.general.string(forType: .string) else { return }
+    pasteText(text)
+  }
+
+  /// 供菜单变体复用的窄入口。返回 false 表示空内容、保护取消或没有可写入的数据。
+  @discardableResult
+  func pasteText(_ text: String, forceBracketed: Bool = false) -> Bool {
+    guard !text.isEmpty else { return false }
+    let terminal = getTerminal()
+    let analysis = PasteRiskAnalyzer.analyze(text)
+    if PasteProtectionPolicy.requiresConfirmation(
+      for: analysis,
+      protectionEnabled: pasteProtectionEnabled,
+      isAlternateScreen: terminal.isCurrentBufferAlternate,
+      isBracketedPasteMode: terminal.bracketedPasteMode,
+      treatsBracketedPasteAsSafe: pasteBracketedSafe
+    ), !onConfirmPaste(analysis) {
+      return false
+    }
+    let bytes = PasteTransmissionEncoder.encode(
+      text,
+      bracketed: forceBracketed || terminal.bracketedPasteMode
+    )
+    send(data: bytes[...])
+    return true
+  }
+
+  @objc func pasteSelection(_ sender: Any?) {
+    guard let selection = getSelection() else { return }
+    pasteText(selection)
+  }
+
+  @objc func pasteEscapingSpecialCharacters(_ sender: Any?) {
+    guard let text = NSPasteboard.general.string(forType: .string) else { return }
+    pasteText(ShellPasteEscaper.escape(text))
+  }
+
+  @objc func pasteBracketed(_ sender: Any?) {
+    guard let text = NSPasteboard.general.string(forType: .string) else { return }
+    pasteText(text, forceBracketed: true)
+  }
+
+  @objc func pasteFileBase64Encoded(_ sender: Any?) {
+    let panel = NSOpenPanel()
+    panel.title = "选择要以 Base64 粘贴的文件"
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    guard panel.runModal() == .OK, let path = panel.url?.path else { return }
+    do {
+      pasteText(try TerminalFilePasteEncoder.encodeBase64(path: path))
+    } catch {
+      Self.presentFilePasteError(error)
+    }
+  }
+
+  @objc func pasteAndContinueInComposer(_ sender: Any?) {
+    guard let text = NSPasteboard.general.string(forType: .string) else { return }
+    onPasteIntoComposer?(text)
+  }
+
+  /// 右键菜单补齐复制、粘贴与 Paste As。动作走 responder 自身，不依赖主菜单焦点。
+  override func menu(for event: NSEvent) -> NSMenu? {
+    let menu = NSMenu(title: "终端")
+    let copyItem = NSMenuItem(title: "复制", action: #selector(copy(_:)), keyEquivalent: "")
+    copyItem.target = self
+    copyItem.isEnabled = selectionActive
+    menu.addItem(copyItem)
+    let pasteItem = NSMenuItem(title: "粘贴", action: #selector(paste(_:)), keyEquivalent: "")
+    pasteItem.target = self
+    menu.addItem(pasteItem)
+
+    let pasteAsItem = NSMenuItem(title: "粘贴为", action: nil, keyEquivalent: "")
+    let pasteAsMenu = NSMenu(title: "粘贴为")
+    pasteAsMenu.addItem(
+      targetedMenuItem("粘贴选区", #selector(pasteSelection(_:)), enabled: selectionActive)
+    )
+    pasteAsMenu.addItem(
+      targetedMenuItem("粘贴 Base64 编码文件…", #selector(pasteFileBase64Encoded(_:)))
+    )
+    pasteAsMenu.addItem(
+      targetedMenuItem("转义特殊字符后粘贴", #selector(pasteEscapingSpecialCharacters(_:)))
+    )
+    pasteAsMenu.addItem(targetedMenuItem("括号粘贴", #selector(pasteBracketed(_:))))
+    pasteAsMenu.addItem(
+      targetedMenuItem(
+        "粘贴并在 Composer 中继续",
+        #selector(pasteAndContinueInComposer(_:)),
+        enabled: onPasteIntoComposer != nil
+      ))
+    pasteAsItem.submenu = pasteAsMenu
+    menu.addItem(pasteAsItem)
+    return menu
+  }
+
+  /// SwiftTerm 对未知 selector 默认返回 false；显式声明 Paste As 的可用条件，确保主菜单
+  /// 通过 responder chain 定位到终端后不会把已实现动作全部置灰。
+  override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+    switch item.action {
+    case #selector(pasteSelection(_:)):
+      return selectionActive
+    case #selector(pasteFileBase64Encoded(_:)):
+      return true
+    case #selector(pasteEscapingSpecialCharacters(_:)), #selector(pasteBracketed(_:)):
+      return NSPasteboard.general.string(forType: .string) != nil
+    case #selector(pasteAndContinueInComposer(_:)):
+      return onPasteIntoComposer != nil
+    default:
+      return super.validateUserInterfaceItem(item)
+    }
+  }
+
+  private func targetedMenuItem(
+    _ title: String,
+    _ action: Selector,
+    enabled: Bool = true
+  ) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+    item.target = self
+    item.isEnabled = enabled
+    return item
+  }
+
+  private func copyCurrentSelection(clearAfterCopy: Bool) {
+    guard var text = getSelection(), !text.isEmpty else { return }
+    if trimTrailingSpacesOnCopy {
+      text = TerminalClipboardText.trimmingTrailingWhitespace(in: text)
+    }
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(text, forType: .string)
+    if clearAfterCopy { selectNone() }
+  }
+
+  private static func presentPasteConfirmation(_ analysis: PasteAnalysis) -> Bool {
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = "粘贴的内容可能立即执行命令"
+    let reasons = analysis.risks
+      .map { risk -> String in
+        switch risk {
+        case .multipleLines: "包含多行"
+        case .trailingNewline: "末尾包含换行"
+        case .privilegeEscalation: "包含 sudo 或 su"
+        case .controlCharacters: "包含不可见控制字符"
+        }
+      }
+      .sorted()
+      .joined(separator: "、")
+    alert.informativeText = "检测到：\(reasons)\n\n\(analysis.preview())"
+    alert.addButton(withTitle: "仍然粘贴")
+    alert.addButton(withTitle: "取消")
+    return alert.runModal() == .alertFirstButtonReturn
+  }
+
+  private static func presentFilePasteError(_ error: Error) {
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = "无法粘贴该文件"
+    switch error {
+    case TerminalFilePasteError.fileTooLarge:
+      alert.informativeText = "文件超过 8 MiB 限制。"
+    case TerminalFilePasteError.unsupportedFile:
+      alert.informativeText = "只能读取普通文件，不能读取目录、管道、socket 或设备。"
+    default:
+      alert.informativeText = "文件不可读或在读取期间发生变化。"
+    }
+    alert.addButton(withTitle: "好")
+    alert.runModal()
+  }
+
   /// 通过公开的终端行和单元格尺寸把点击点映射为字符偏移。前缀转换跳过宽字符的
   /// 占位 cell，因此中文/emoji 出现在 URL 前面时仍能命中正确字符。
   private func customSchemeURL(at event: NSEvent) -> String? {
@@ -172,12 +375,13 @@ final class AsterTerminalView: LocalProcessTerminalView {
       skipNullCellsFollowingWide: true
     )
     guard !prefix.isEmpty else { return nil }
-    guard let link = InlineURLDetector.url(
-      inPhysicalLines: context.lines,
-      clickedLine: location.row - context.startRow,
-      atCharacterOffset: prefix.count - 1,
-      finalBoundaryMayContinue: context.finalBoundaryMayContinue
-    ),
+    guard
+      let link = InlineURLDetector.url(
+        inPhysicalLines: context.lines,
+        clickedLine: location.row - context.startRow,
+        atCharacterOffset: prefix.count - 1,
+        finalBoundaryMayContinue: context.finalBoundaryMayContinue
+      ),
       let separator = link.firstIndex(of: ":")
     else { return nil }
     let scheme = String(link[..<separator]).lowercased()
@@ -213,7 +417,8 @@ final class AsterTerminalView: LocalProcessTerminalView {
       lines.append(
         line.translateToString(trimRight: true, skipNullCellsFollowingWide: true))
     }
-    let finalBoundaryMayContinue = terminal.getLine(row: endRow)?
+    let finalBoundaryMayContinue =
+      terminal.getLine(row: endRow)?
       .hasContent(index: lastColumn) == true
     return (lines, startRow, finalBoundaryMayContinue)
   }
@@ -279,11 +484,11 @@ final class AsterTerminalView: LocalProcessTerminalView {
   }
 }
 
-private extension NSEvent {
+extension NSEvent {
   /// SwiftTerm 在 `linkReporting = .none` 时仍会用 Command 修饰符执行链接点击查询。
   /// 仅移除它用于链接激活的 Command 位；SwiftTerm 的终端鼠标协议只编码 Shift、
   /// Option 和 Control，因此 TUI 收到的按下/释放序列保持一致。
-  func removingCommandModifier() -> NSEvent? {
+  fileprivate func removingCommandModifier() -> NSEvent? {
     guard modifierFlags.contains(.command) else { return self }
     return NSEvent.mouseEvent(
       with: type,
@@ -412,6 +617,20 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         // 领域标题事件由 `AsterTerminalView.dataReceived` 的字节流观察器统一按原始顺序
         // 上送。这里不单独通知，避免同一 PTY 分片内恢复与后续 OSC 的顺序被打乱。
       }
+    }
+    let clipboardCoordinator = OSC52ClipboardCoordinator(
+      access: { [weak preferences] operation in
+        guard let controls = preferences?.configuration.controls else { return .deny }
+        switch operation {
+        case .read: return controls.resolvedClipboardReadAccess
+        case .write: return controls.resolvedClipboardWriteAccess
+        }
+      }
+    )
+    terminal.registerOscHandler(code: 52) { [weak view, clipboardCoordinator] bytes in
+      guard let response = clipboardCoordinator.handle(bytes) else { return }
+      // OSC 52 读取响应属于协议回包，不是用户输入；直接写 PTY，避免污染输入活跃度。
+      view?.process.send(data: response[...])
     }
 
     var environment = ProcessInfo.processInfo.environment
@@ -603,9 +822,15 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.selectedTextBackgroundColor = preferences.selectionColor
     view.optionAsMetaKey = preferences.optionAsMeta
     view.allowMouseReporting = preferences.allowMouseReporting
-    view.linkReporting = preferences.configuration.controls.resolvedLinkDetectionEnabled
+    view.linkReporting =
+      preferences.configuration.controls.resolvedLinkDetectionEnabled
       ? .implicit : .none
     view.linkSchemePolicy = preferences.configuration.controls.resolvedLinkSchemePolicy
+    view.copyOnSelect = preferences.configuration.controls.copyOnSelect
+    view.trimTrailingSpacesOnCopy = preferences.configuration.controls.trimTrailingSpaces
+    view.clearSelectionOnCopy = preferences.configuration.controls.resolvedClearSelectionOnCopy
+    view.pasteProtectionEnabled = preferences.configuration.controls.pasteProtection
+    view.pasteBracketedSafe = preferences.configuration.controls.resolvedPasteBracketedSafe
     view.installColors(
       preferences.ansiColors.map {
         SwiftTerm.Color(

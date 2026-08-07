@@ -117,11 +117,15 @@ func configurationImportStripsSecurityPermissions() {
   imported.controls.detectAllLinkSchemes = false
   imported.controls.customLinkSchemes = ["codex"]
   imported.controls.allowedNonStandardLinkSchemes = ["codex"]
+  imported.controls.clipboardReadAccess = .allow
+  imported.controls.clipboardWriteAccess = .deny
 
   preferences.importConfiguration(imported)
 
   #expect(preferences.configuration.controls.resolvedLinkSchemePolicy == .custom(["codex"]))
   #expect(preferences.configuration.controls.resolvedAllowedNonStandardLinkSchemes.isEmpty)
+  #expect(preferences.configuration.controls.resolvedClipboardReadAccess == .ask)
+  #expect(preferences.configuration.controls.resolvedClipboardWriteAccess == .deny)
 }
 
 @MainActor

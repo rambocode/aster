@@ -111,6 +111,14 @@ func terminalTitleStackObserverIgnoresUTF8ContinuationBytes() {
   #expect(observer.consume(output) == [.init(code: 1, title: "标题")])
 }
 
+@Test("标题栈观察器丢弃被 CAN 取消的超限 OSC 并继续解析后续标题")
+func terminalTitleStackObserverDiscardsCancelledOSC() {
+  var observer = TerminalTitleStackObserver()
+  let output = Array("\u{001B}]2;discarded\u{0018}\u{001B}]2;accepted\u{0007}".utf8)
+
+  #expect(observer.consume(output) == [.init(code: 2, title: "accepted")])
+}
+
 @Test("新标签位置策略区分空标签、内容标签和当前分组末尾")
 func newTabPositionResolvesInsertionIndex() {
   #expect(
