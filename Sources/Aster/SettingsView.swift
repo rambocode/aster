@@ -989,7 +989,27 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   }
 
   private func advancedViews() -> [NSView] {
-    [
+    let selectedAmbiguousBlocks =
+      preferences.configuration.appearance.resolvedWidenedEastAsianAmbiguousBlocks
+    let ambiguousBlockRows = EastAsianAmbiguousBlock.allCases.map { block in
+      toggleRow(
+        block.settingsLabel,
+        block.settingsDetail,
+        value: selectedAmbiguousBlocks.contains(block)
+      ) { [weak self] enabled in
+        guard let self else { return }
+        var blocks = self.preferences.configuration.appearance
+          .resolvedWidenedEastAsianAmbiguousBlocks
+        if enabled {
+          blocks.insert(block)
+        } else {
+          blocks.remove(block)
+        }
+        self.preferences.configuration.appearance.widenedEastAsianAmbiguousBlocks = blocks
+      }
+    }
+
+    return [
       sectionTitle("运行时"),
       card([
         infoRow("终端内核", "VT100 / xterm、真彩色、鼠标、超链接与本地 PTY", "SwiftTerm"),
@@ -1023,6 +1043,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.shell.titleReport = value
         },
       ]),
+      sectionTitle("East Asian Ambiguous 宽度"),
+      card(ambiguousBlockRows),
       sectionTitle("配置"),
       card([
         actionRow("导出配置", "保存为可备份的 JSON 文件", title: "导出") { [weak self] in self?.exportConfiguration() },
@@ -1143,7 +1165,36 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       textRow("字体", "终端的基础等宽字体", value: preferences.configuration.appearance.fontFamily) { [weak self] value in
         self?.preferences.configuration.appearance.fontFamily = value
       },
-      infoRow("粗体与斜体", "由基础字体自动匹配可用字重和斜体字形", "自动匹配"),
+      toggleRow(
+        "双向文本（BiDi）", "按 Unicode 双向算法显示 Hebrew、Arabic 与混排文本",
+        value: preferences.configuration.appearance.resolvedBidirectionalText
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.bidirectionalText = value
+      },
+      enumPopupRow(
+        "连字级别", "控制 OpenType 标准、上下文和 discretionary ligatures",
+        value: preferences.configuration.appearance.resolvedLigatureLevel
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.ligatureLevel = value
+      },
+      enumPopupRow(
+        "粗体渲染", "选择真实字形、主字体字形或 synthetic bold",
+        value: preferences.configuration.appearance.resolvedBoldRendering
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.boldRendering = value
+      },
+      enumPopupRow(
+        "斜体渲染", "选择真实字形、主字体字形或 synthetic italic",
+        value: preferences.configuration.appearance.resolvedItalicRendering
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.italicRendering = value
+      },
+      enumPopupRow(
+        "闪烁文本", "SGR 5/6 默认稳定显示；需要时才启用动画",
+        value: preferences.configuration.appearance.resolvedBlinkRenderingPolicy
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.blinkRenderingPolicy = value
+      },
       actionRow("字体管理", "使用系统字体面板或打开用户字体目录", title: "安装字体") {
         NSFontManager.shared.orderFrontFontPanel(nil)
       },
@@ -2081,6 +2132,66 @@ extension AutocompleteDescriptionLanguage: SettingsEnumOption {
     case .system: "跟随系统"
     case .english: "English"
     case .chinese: "简体中文"
+    }
+  }
+}
+
+extension TerminalLigatureLevel: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .none: "关闭"
+    case .standard: "标准与上下文"
+    case .discretionary: "Discretionary"
+    }
+  }
+}
+
+extension TerminalBlinkRenderingPolicy: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .steady: "稳定显示"
+    case .animated: "按 SGR 闪烁"
+    }
+  }
+}
+
+extension TerminalTextStyleRendering: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .automatic: "自动"
+    case .disabled: "忽略样式"
+    case .primaryFontOnly: "仅主字体"
+    case .synthetic: "Synthetic"
+    }
+  }
+}
+
+private extension EastAsianAmbiguousBlock {
+  var settingsLabel: String {
+    switch self {
+    case .enclosedAlphanumerics: "Enclosed Alphanumerics"
+    case .numberForms: "Number Forms"
+    case .mathematicalOperators: "Mathematical Operators"
+    case .miscellaneousTechnical: "Miscellaneous Technical"
+    case .miscellaneousSymbols: "Miscellaneous Symbols"
+    case .dingbats: "Dingbats"
+    case .arrows: "Arrows"
+    case .geometricShapes: "Geometric Shapes"
+    default: rawValue
+    }
+  }
+
+  var settingsDetail: String {
+    switch self {
+    case .enclosedAlphanumerics: "①、Ⓐ、ⓐ 等；默认按双宽显示"
+    case .numberForms: "分数与罗马数字等 Number Forms 字符"
+    case .mathematicalOperators: "数学运算符；仅在字体按双宽绘制时开启"
+    case .miscellaneousTechnical: "⌘、⌥ 等技术符号；仅在字体按双宽绘制时开启"
+    case .miscellaneousSymbols: "气象、星象等杂项符号"
+    case .dingbats: "装饰符号与标记字符"
+    case .arrows: "Unicode 箭头字符"
+    case .geometricShapes: "几何图形字符"
+    default: "未知 block 不会参与终端宽度计算"
     }
   }
 }

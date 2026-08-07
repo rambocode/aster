@@ -461,6 +461,10 @@ open class Terminal {
     var scrollInvariantRefreshEnd = -1
     var userScrolling = false
     var lineFeedMode = false
+
+    /// ECMA-48 Bidirectional Support Mode (BDSM, ANSI mode 8). Applications that perform
+    /// their own visual layout set this mode to suppress the view's implicit per-line UAX #9.
+    public private(set) var explicitBidirectionalMode = false
     
     // We do not implement smooth scrolling here, dubious value, but
     // makes a test bass
@@ -922,6 +926,7 @@ open class Terminal {
         if isReset {
             resetNormalBuffer()
             activateNormalBuffer(clearAlt: false)
+            explicitBidirectionalMode = false
         } else {
             normalBuffer.resize(newCols: cols, newRows: rows)
             altBuffer.resize(newCols: cols, newRows: rows)
@@ -1322,7 +1327,9 @@ open class Terminal {
                 }
                 
                 let rune = UnicodeScalar (code)
-                chWidth = UnicodeUtil.columnWidth(rune: rune)
+                chWidth = UnicodeUtil.columnWidth(
+                    rune: rune,
+                    widenedAmbiguousBlocks: options.widenedEastAsianAmbiguousBlocks)
 		if chWidth > 0 {
                 	let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
                 	buffer.insertCharacter(charData)
@@ -1342,7 +1349,9 @@ open class Terminal {
                 default:
                     // Invalid UTF-8 sequence, fall back to interpreting the first byte
                     let rune = UnicodeScalar(code)
-                    chWidth = UnicodeUtil.columnWidth(rune: rune)
+                    chWidth = UnicodeUtil.columnWidth(
+                        rune: rune,
+                        widenedAmbiguousBlocks: options.widenedEastAsianAmbiguousBlocks)
                     if chWidth > 0 {
                     	let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
                     	buffer.insertCharacter(charData)
@@ -1353,11 +1362,15 @@ open class Terminal {
                 // Now the challenge is that we have a character, not a rune, and we want to compute
                 // the width of it.
                 if ch.unicodeScalars.count == 1 {
-                    chWidth = UnicodeUtil.columnWidth(rune: ch.unicodeScalars.first!)
+                    chWidth = UnicodeUtil.columnWidth(
+                        rune: ch.unicodeScalars.first!,
+                        widenedAmbiguousBlocks: options.widenedEastAsianAmbiguousBlocks)
                 } else {
                     chWidth = 0
                     for scalar in ch.unicodeScalars {
-                        let width = UnicodeUtil.columnWidth(rune: scalar)
+                        let width = UnicodeUtil.columnWidth(
+                            rune: scalar,
+                            widenedAmbiguousBlocks: options.widenedEastAsianAmbiguousBlocks)
                         if width < 0 {
                             chWidth = -1
                             break
@@ -3489,6 +3502,8 @@ open class Terminal {
                 res = modeAlwaysReset
             case 7: // VEM vertical editing
                 res = modeAlwaysReset
+            case 8: // BDSM bidirectional support: set means application-owned explicit layout
+                res = explicitBidirectionalMode ? modeSet : modeReset
             case 10: // HEM horizontal editing
                 res = modeAlwaysReset
             case 11: // PUM positioning unit
@@ -3610,6 +3625,7 @@ open class Terminal {
         conformance = .vt500
         hyperLinkTracking = nil
         lineFeedMode = options.convertEol
+        explicitBidirectionalMode = false
         resetAllColors()
         tdel?.showCursor(source: self)
         // MIGUEL TODO:
@@ -4013,6 +4029,9 @@ open class Terminal {
             case 5:
                 // blink
                 style = [style, .blink]
+            case 6:
+                // ECMA-48 rapid blink shares the renderer's blink policy and SGR 25 reset.
+                style = [style, .blink]
             case 7:
                 // inverse and positive
                 // test with: echo -e '\e[31m\e[42mhello\e[7mworld\e[27mhi\e[m'
@@ -4213,6 +4232,10 @@ open class Terminal {
             case 4:
                 // IRM Insert/Replace Mode
                 setInsertMode(false)
+            case 8:
+                // BDSM reset returns to implicit terminal-side bidirectional reordering.
+                explicitBidirectionalMode = false
+                updateFullScreen()
             case 20:
                 // LNM—Line Feed/New Line Mode
                 lineFeedMode = false
@@ -4430,6 +4453,10 @@ open class Terminal {
                 // IRM Insert/Replace Mode
                 // https://vt100.net/docs/vt510-rm/IRM.html
                 setInsertMode(true)
+            case 8:
+                // BDSM set selects explicit application-owned bidirectional layout.
+                explicitBidirectionalMode = true
+                updateFullScreen()
 //            case 12:
 //                 SRM—Local Echo: Send/Receive Mode
 //                 When implemented, hook up cmdDecRqm

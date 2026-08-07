@@ -220,11 +220,43 @@ final class AsterTerminalView: LocalProcessTerminalView {
       super.keyDown(with: event)
       return
     }
+    if handleBidirectionalArrow(event) { return }
     if onAutocompleteKeyDown?(event) == true { return }
     // macOS keyCode 51 is the backward Delete/Backspace key. Only consume it when OSC 133
     // proves the selection belongs to the current editable prompt; otherwise preserve TUI input.
     if event.keyCode == 51, deletePromptSelectionIfSafe() { return }
     super.keyDown(with: event)
+  }
+
+  /// Shell 行编辑器只理解逻辑 Left/Right。隐式 BiDi 开启时，根据当前逻辑光标在
+  /// UAX #9 视觉映射中的邻居交换方向键，使单步移动与屏幕上的左右方向一致。
+  /// Alternate screen 和增强键盘协议交给应用自行布局，配合 BDSM mode 8 避免双重处理。
+  private func handleBidirectionalArrow(_ event: NSEvent) -> Bool {
+    guard bidirectionalTextEnabled,
+      event.keyCode == 123 || event.keyCode == 124,
+      event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
+    else { return false }
+    let terminal = getTerminal()
+    guard !terminal.explicitBidirectionalMode,
+      TerminalInputPolicy.usesNaturalTextEditing(
+        isAlternateScreen: terminal.isCurrentBufferAlternate,
+        hasEnhancedKeyboardProtocol: !terminal.keyboardEnhancementFlags.isEmpty
+      )
+    else { return false }
+
+    let cursor = terminal.activeBufferCursorPosition
+    let visualOffset = event.keyCode == 123 ? -1 : 1
+    let target = logicalColumn(
+      visuallyAdjacentToLogicalColumn: cursor.col,
+      offset: visualOffset,
+      bufferRow: cursor.row
+    )
+    let shouldSwap = (visualOffset < 0 && target > cursor.col)
+      || (visualOffset > 0 && target < cursor.col)
+    guard shouldSwap, let swapped = event.replacingArrowKeyCode(event.keyCode == 123 ? 124 : 123)
+    else { return false }
+    super.keyDown(with: swapped)
+    return true
   }
 
   override func dataReceived(slice: ArraySlice<UInt8>) {
@@ -703,8 +735,9 @@ final class AsterTerminalView: LocalProcessTerminalView {
     }
     let width = CGFloat(pixels.width) / scale
     let height = CGFloat(pixels.height) / scale
+    let visualColumn = visualColumn(forLogicalColumn: column, bufferRow: bufferRow)
     return NSRect(
-      x: bounds.minX + CGFloat(column) * width,
+      x: bounds.minX + CGFloat(visualColumn) * width,
       y: bounds.maxY - CGFloat(screenRow + 1) * height,
       width: width,
       height: height
@@ -1396,8 +1429,10 @@ final class AsterTerminalView: LocalProcessTerminalView {
     let scale = max(window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1, 1)
     let cellWidth = max(CGFloat(pixelSize.width) / scale, 1)
     let cellHeight = max(CGFloat(pixelSize.height) / scale, 1)
-    let column = min(max(Int(point.x / cellWidth), 0), terminal.cols - 1)
+    let visualColumn = min(max(Int(point.x / cellWidth), 0), terminal.cols - 1)
     let row = min(max(Int((bounds.height - point.y) / cellHeight), 0), terminal.rows - 1)
+    let bufferRow = row + terminal.buffer.yDisp
+    let column = logicalColumn(forVisualColumn: visualColumn, bufferRow: bufferRow)
     return (terminal, row, column)
   }
 
@@ -1461,6 +1496,25 @@ extension NSEvent {
       eventNumber: eventNumber,
       clickCount: clickCount,
       pressure: pressure
+    )
+  }
+
+  /// Rebuilds a keyboard event with the opposite arrow key while preserving timestamp and
+  /// modifier semantics. SwiftTerm reads the hardware keyCode to honor application-cursor mode.
+  fileprivate func replacingArrowKeyCode(_ keyCode: UInt16) -> NSEvent? {
+    let functionKey = keyCode == 123 ? NSLeftArrowFunctionKey : NSRightArrowFunctionKey
+    let arrowCharacters = String(Character(UnicodeScalar(UInt32(functionKey))!))
+    return NSEvent.keyEvent(
+      with: type,
+      location: locationInWindow,
+      modifierFlags: modifierFlags,
+      timestamp: timestamp,
+      windowNumber: windowNumber,
+      context: nil,
+      characters: arrowCharacters,
+      charactersIgnoringModifiers: arrowCharacters,
+      isARepeat: isARepeat,
+      keyCode: keyCode
     )
   }
 }
@@ -1945,6 +1999,21 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private func apply(preferences: AppPreferences, to view: AsterTerminalView) {
     self.preferences = preferences
     view.font = preferences.terminalFont
+    view.lineSpacing = CGFloat(preferences.configuration.appearance.lineHeight)
+    view.bidirectionalTextEnabled = preferences.configuration.appearance.resolvedBidirectionalText
+    view.ligatureMode = switch preferences.configuration.appearance.resolvedLigatureLevel {
+    case .none: .none
+    case .standard: .standard
+    case .discretionary: .discretionary
+    }
+    view.boldStyleMode = swiftTermFontStyleMode(
+      preferences.configuration.appearance.resolvedBoldRendering)
+    view.italicStyleMode = swiftTermFontStyleMode(
+      preferences.configuration.appearance.resolvedItalicRendering)
+    view.animatedTextBlinkEnabled =
+      preferences.configuration.appearance.resolvedBlinkRenderingPolicy == .animated
+    view.getTerminal().options.widenedEastAsianAmbiguousBlocks = swiftTermAmbiguousWidthBlocks(
+      preferences.configuration.appearance.resolvedWidenedEastAsianAmbiguousBlocks)
     view.nativeForegroundColor = preferences.terminalForegroundColor
     view.nativeBackgroundColor = preferences.terminalBackgroundColor
     view.caretColor = preferences.cursorColor
@@ -2191,6 +2260,39 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     case "underline": blinks ? .blinkUnderline : .steadyUnderline
     default: blinks ? .blinkBlock : .steadyBlock
     }
+  }
+
+  private func swiftTermFontStyleMode(
+    _ mode: AsterCore.TerminalTextStyleRendering
+  ) -> SwiftTerm.TerminalFontStyleMode {
+    switch mode {
+    case .automatic: .automatic
+    case .disabled: .disabled
+    case .primaryFontOnly: .primaryFontOnly
+    case .synthetic: .synthetic
+    }
+  }
+
+  /// AsterCore 持久化稳定字符串，SwiftTerm 只接收紧凑 OptionSet；转换集中在交付边界，
+  /// 避免终端引擎反向依赖应用配置领域。
+  private func swiftTermAmbiguousWidthBlocks(
+    _ blocks: Set<AsterCore.EastAsianAmbiguousBlock>
+  ) -> SwiftTerm.EastAsianAmbiguousWidthBlocks {
+    var result: SwiftTerm.EastAsianAmbiguousWidthBlocks = []
+    for block in blocks {
+      switch block {
+      case .enclosedAlphanumerics: result.insert(.enclosedAlphanumerics)
+      case .numberForms: result.insert(.numberForms)
+      case .arrows: result.insert(.arrows)
+      case .mathematicalOperators: result.insert(.mathematicalOperators)
+      case .miscellaneousTechnical: result.insert(.miscellaneousTechnical)
+      case .geometricShapes: result.insert(.geometricShapes)
+      case .miscellaneousSymbols: result.insert(.miscellaneousSymbols)
+      case .dingbats: result.insert(.dingbats)
+      default: break
+      }
+    }
+    return result
   }
 
   private static func launchArguments(forShell shell: String) -> [String] {

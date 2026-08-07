@@ -128,6 +128,25 @@ struct KittyGraphicsImage {
 struct KittyGraphicsPending {
     let control: KittyGraphicsControl
     var base64Payload: [UInt8]
+    var chunkCount: Int
+
+    /// Appends one protocol chunk without allowing either integer overflow or unbounded growth.
+    /// On failure the caller must discard the whole transfer; partial base64 is never decoded.
+    mutating func append(
+        _ payload: ArraySlice<UInt8>,
+        maximumBytes: Int,
+        maximumChunks: Int
+    ) -> Bool {
+        guard chunkCount < maximumChunks,
+              base64Payload.count <= maximumBytes,
+              payload.count <= maximumBytes - base64Payload.count else {
+            base64Payload.removeAll(keepingCapacity: false)
+            return false
+        }
+        base64Payload.append(contentsOf: payload)
+        chunkCount += 1
+        return true
+    }
 }
 
 final class KittyGraphicsState {
@@ -142,36 +161,93 @@ final class KittyGraphicsState {
 }
 
 extension Terminal {
-    private static let kittyMaxImageBytes = 400 * 1024 * 1024
+    // Direct APC payloads are intentionally much smaller than the decoded image ceiling. Kitty
+    // senders already split large transfers into protocol chunks, so this prevents one escape
+    // sequence from retaining an arbitrary amount of parser memory without reducing capability.
+    static let kittyMaxApcBytes = 1024 * 1024
+    private static let kittyMaxControlBytes = 4 * 1024
+    private static let kittyMaxPendingBase64Bytes = 96 * 1024 * 1024
+    private static let kittyMaxPendingChunks = 65_536
+    private static let kittyMaxImageBytes = 64 * 1024 * 1024
     private static let kittyMaxImageDimension = 10000
-    private static let kittyMaxImageCacheBytes = 4 * 1024 * 1024 * 1024
+    private static let kittyMaxImageCacheBytes = 512 * 1024 * 1024
 
     func handleKittyGraphics(_ data: ArraySlice<UInt8>) {
+        guard data.count <= Terminal.kittyMaxApcBytes else {
+            cancelKittyGraphicsTransfer()
+            return
+        }
         guard let (control, payload) = parseKittyGraphicsControl(data) else {
+            cancelKittyGraphicsTransfer()
             return
         }
 
         if control.action == "d" || control.action == "D" {
-            kittyGraphicsState.pending = nil
+            cancelKittyGraphicsTransfer()
         }
 
         if control.more == 1 {
-            if kittyGraphicsState.pending == nil {
-                kittyGraphicsState.pending = KittyGraphicsPending(control: control, base64Payload: Array(payload))
+            guard control.action == "t" || control.action == "T" || control.action == "q" else {
+                cancelKittyGraphicsTransfer()
+                sendKittyError(control: control, message: "EINVAL: action cannot be chunked")
+                return
+            }
+            if var pending = kittyGraphicsState.pending {
+                guard pending.append(
+                    payload,
+                    maximumBytes: Terminal.kittyMaxPendingBase64Bytes,
+                    maximumChunks: Terminal.kittyMaxPendingChunks
+                ) else {
+                    kittyGraphicsState.pending = nil
+                    sendKittyError(control: pending.control, message: "E2BIG: chunked payload too large")
+                    return
+                }
+                kittyGraphicsState.pending = pending
             } else {
-                kittyGraphicsState.pending?.base64Payload.append(contentsOf: payload)
+                var pending = KittyGraphicsPending(
+                    control: control,
+                    base64Payload: [],
+                    chunkCount: 0
+                )
+                guard pending.append(
+                    payload,
+                    maximumBytes: Terminal.kittyMaxPendingBase64Bytes,
+                    maximumChunks: Terminal.kittyMaxPendingChunks
+                ) else {
+                    sendKittyError(control: control, message: "E2BIG: chunked payload too large")
+                    return
+                }
+                kittyGraphicsState.pending = pending
             }
             return
         }
 
         if var pending = kittyGraphicsState.pending {
-            pending.base64Payload.append(contentsOf: payload)
             kittyGraphicsState.pending = nil
+            guard control.action == "t" || control.action == "T" || control.action == "q" else {
+                sendKittyError(control: pending.control, message: "EINVAL: invalid continuation")
+                return
+            }
+            guard pending.append(
+                payload,
+                maximumBytes: Terminal.kittyMaxPendingBase64Bytes,
+                maximumChunks: Terminal.kittyMaxPendingChunks
+            ) else {
+                sendKittyError(control: pending.control, message: "E2BIG: chunked payload too large")
+                return
+            }
             processKittyGraphics(control: pending.control, base64Payload: pending.base64Payload)
             return
         }
 
         processKittyGraphics(control: control, base64Payload: Array(payload))
+    }
+
+    /// Cancels a partially received direct transfer. The escape parser calls this for CAN/SUB,
+    /// malformed APC input, and APC size overflow so a later transfer cannot inherit stale bytes.
+    func cancelKittyGraphicsTransfer() {
+        kittyGraphicsState.pending?.base64Payload.removeAll(keepingCapacity: false)
+        kittyGraphicsState.pending = nil
     }
 
     private func parseKittyGraphicsControl(_ data: ArraySlice<UInt8>) -> (KittyGraphicsControl, ArraySlice<UInt8>)? {
@@ -186,31 +262,50 @@ extension Terminal {
             payload = data[data.endIndex..<data.endIndex]
         }
 
+        guard controlBytes.count <= Terminal.kittyMaxControlBytes else {
+            return nil
+        }
+
         var values: [String: String] = [:]
         var start = controlBytes.startIndex
         while start < controlBytes.endIndex {
             let end = controlBytes[start..<controlBytes.endIndex].firstIndex(of: UInt8(ascii: ",")) ?? controlBytes.endIndex
             let chunk = controlBytes[start..<end]
-            if let eq = chunk.firstIndex(of: UInt8(ascii: "=")) {
-                let keyBytes = chunk[chunk.startIndex..<eq]
-                let valueBytes = chunk[(eq+1)..<chunk.endIndex]
-                if let key = String(bytes: keyBytes, encoding: .ascii),
-                   let value = String(bytes: valueBytes, encoding: .ascii) {
-                    values[key] = value
-                }
+            guard let eq = chunk.firstIndex(of: UInt8(ascii: "=")) else {
+                return nil
             }
+            let keyBytes = chunk[chunk.startIndex..<eq]
+            let valueBytes = chunk[(eq+1)..<chunk.endIndex]
+            guard keyBytes.count == 1,
+                  !valueBytes.isEmpty,
+                  valueBytes.count <= 32,
+                  let key = String(bytes: keyBytes, encoding: .ascii),
+                  let value = String(bytes: valueBytes, encoding: .ascii),
+                  values[key] == nil else {
+                return nil
+            }
+            values[key] = value
             start = end == controlBytes.endIndex ? end : end + 1
         }
 
+        var malformedInteger = false
         func intValue(_ key: String, default value: Int = 0) -> Int {
-            guard let raw = values[key], let val = Int(raw) else {
+            guard let raw = values[key] else {
+                return value
+            }
+            guard let val = Int(raw), val >= Int(Int32.min), val <= Int(Int32.max) else {
+                malformedInteger = true
                 return value
             }
             return val
         }
 
         func uintValue(_ key: String) -> UInt32? {
-            guard let raw = values[key], let val = UInt32(raw), val > 0 else {
+            guard let raw = values[key] else {
+                return nil
+            }
+            guard let val = UInt32(raw), val > 0 else {
+                malformedInteger = true
                 return nil
             }
             return val
@@ -252,6 +347,17 @@ extension Terminal {
         let deleteMode = values["d"]?.first
         let dataSize = intValue("S", default: 0)
         let dataOffset = intValue("O", default: 0)
+
+        guard !malformedInteger,
+              values["a"].map({ $0.count == 1 }) ?? true,
+              values["t"].map({ $0.count == 1 }) ?? true,
+              values["o"].map({ $0.count == 1 }) ?? true,
+              values["d"].map({ $0.count == 1 }) ?? true,
+              more == 0 || more == 1,
+              dataSize >= 0, dataSize <= Terminal.kittyMaxImageBytes,
+              dataOffset >= 0, dataOffset <= Terminal.kittyMaxImageBytes else {
+            return nil
+        }
 
         if transmission != "d" {
             more = 0
@@ -501,7 +607,7 @@ extension Terminal {
         }
         let width = image.width
         let height = image.height
-        guard validateKittyDimensions(width: width, height: height) else {
+        guard validateKittyRawDimensions(width: width, height: height, bytesPerPixel: 4) else {
             return nil
         }
         let bytesPerPixel = 4
@@ -689,7 +795,9 @@ extension Terminal {
     }
 
     private func decodeKittyBase64Payload(_ payload: [UInt8]) -> Data? {
-        Data(base64Encoded: Data(payload), options: .ignoreUnknownCharacters)
+        // Kitty payloads are ASCII base64. Ignoring unknown bytes can turn a corrupted or
+        // attacker-spliced transfer into different valid data, so decoding is intentionally strict.
+        Data(base64Encoded: Data(payload))
     }
 
     private func decompressKittyData(_ data: Data, compression: Character?) -> Data? {
@@ -729,7 +837,9 @@ extension Terminal {
               let height = props[kCGImagePropertyPixelHeight] as? Int else {
             return false
         }
-        return validateKittyDimensions(width: width, height: height)
+        // PNG compression can be tiny while its decoded bitmap is enormous. Apply the allocation
+        // ceiling to decoded RGBA size before ImageIO or a delegate creates pixel storage.
+        return validateKittyRawDimensions(width: width, height: height, bytesPerPixel: 4)
         #else
         return true
         #endif
@@ -1916,6 +2026,11 @@ extension Terminal {
                 }
                 let produced = dstSize - stream.dst_size
                 if produced > 0 {
+                    guard produced <= Terminal.kittyMaxImageBytes - output.count else {
+                        // Stop at the allocation boundary while inflating instead of checking only
+                        // after a zip bomb has already consumed unbounded memory.
+                        return nil
+                    }
                     output.append(dstBuffer, count: produced)
                 }
 
@@ -1923,6 +2038,11 @@ extension Terminal {
                 case COMPRESSION_STATUS_END:
                     return output
                 case COMPRESSION_STATUS_OK:
+                    guard produced > 0 || stream.src_size > 0 else {
+                        // A malformed stream that consumes no input and produces no output would
+                        // otherwise keep the decoder in an infinite loop.
+                        return nil
+                    }
                     continue
                 default:
                     return nil

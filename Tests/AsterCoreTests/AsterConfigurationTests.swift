@@ -81,6 +81,14 @@ func configurationRoundTripsThroughJSON() throws {
   configuration.tabBarLayout = .bottom
   configuration.appearance.fontFamily = "JetBrains Mono"
   configuration.appearance.newTabPosition = .afterCurrent
+  configuration.appearance.bidirectionalText = false
+  configuration.appearance.ligatureLevel = .discretionary
+  configuration.appearance.widenedEastAsianAmbiguousBlocks = [
+    .arrows, .geometricShapes, .numberForms,
+  ]
+  configuration.appearance.blinkRenderingPolicy = .animated
+  configuration.appearance.boldRendering = .synthetic
+  configuration.appearance.italicRendering = .synthetic
   configuration.editor.showLineNumbers = false
   configuration.controls.scrollPastLastLine = .cursorLine
   configuration.controls.scrollPastFirstLine = .sameAsLastLine
@@ -90,8 +98,69 @@ func configurationRoundTripsThroughJSON() throws {
 
   #expect(decoded == configuration)
   #expect(decoded.appearance.resolvedNewTabPosition == .afterCurrent)
+  #expect(!decoded.appearance.resolvedBidirectionalText)
+  #expect(decoded.appearance.resolvedLigatureLevel == .discretionary)
+  #expect(decoded.appearance.resolvedWidenedEastAsianAmbiguousBlocks == [
+    .arrows, .geometricShapes, .numberForms,
+  ])
+  #expect(decoded.appearance.resolvedBlinkRenderingPolicy == .animated)
+  #expect(decoded.appearance.resolvedBoldRendering == .synthetic)
+  #expect(decoded.appearance.resolvedItalicRendering == .synthetic)
   #expect(decoded.controls.resolvedScrollPastLastLine == .cursorLine)
   #expect(decoded.controls.resolvedScrollPastFirstLine == .sameAsLastLine)
+}
+
+@Test("Unicode 与文本样式配置采用可访问且兼容的默认值")
+func unicodeTextConfigurationUsesAccessibleDefaults() {
+  let appearance = AppearanceConfiguration()
+
+  #expect(appearance.resolvedBidirectionalText)
+  #expect(appearance.resolvedLigatureLevel == .standard)
+  #expect(appearance.resolvedWidenedEastAsianAmbiguousBlocks == [.enclosedAlphanumerics])
+  #expect(appearance.resolvedBlinkRenderingPolicy == .steady)
+  #expect(appearance.resolvedBoldRendering == .automatic)
+  #expect(appearance.resolvedItalicRendering == .automatic)
+}
+
+@Test("旧外观配置缺少 Unicode 与文本样式字段时采用新默认值")
+func legacyAppearanceConfigurationDefaultsUnicodeTextRendering() throws {
+  let data = try JSONEncoder().encode(AppearanceConfiguration())
+  var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+  for key in [
+    "bidirectionalText", "ligatureLevel", "widenedEastAsianAmbiguousBlocks",
+    "blinkRenderingPolicy", "boldRendering", "italicRendering",
+  ] {
+    object.removeValue(forKey: key)
+  }
+
+  let decoded = try JSONDecoder().decode(
+    AppearanceConfiguration.self,
+    from: JSONSerialization.data(withJSONObject: object)
+  )
+
+  #expect(decoded.resolvedBidirectionalText)
+  #expect(decoded.resolvedLigatureLevel == .standard)
+  #expect(decoded.resolvedWidenedEastAsianAmbiguousBlocks == [.enclosedAlphanumerics])
+  #expect(decoded.resolvedBlinkRenderingPolicy == .steady)
+  #expect(decoded.resolvedBoldRendering == .automatic)
+  #expect(decoded.resolvedItalicRendering == .automatic)
+}
+
+@Test("导入配置会规范化 Ambiguous block 标识并丢弃未知值")
+func configurationNormalizesEastAsianAmbiguousBlocks() {
+  var configuration = AsterConfiguration.default
+  configuration.appearance.widenedEastAsianAmbiguousBlocks = [
+    EastAsianAmbiguousBlock(rawValue: " ENCLOSED_ALPHANUMERICS "),
+    EastAsianAmbiguousBlock(rawValue: "mathematical operators"),
+    EastAsianAmbiguousBlock(rawValue: "miscellaneous-technical"),
+    EastAsianAmbiguousBlock(rawValue: "not-a-unicode-block"),
+  ]
+
+  let normalized = configuration.normalized()
+
+  #expect(normalized.appearance.resolvedWidenedEastAsianAmbiguousBlocks == [
+    .enclosedAlphanumerics, .mathematicalOperators, .miscellaneousTechnical,
+  ])
 }
 
 @Test("旧配置缺少新标签位置时安全回退到自动策略")

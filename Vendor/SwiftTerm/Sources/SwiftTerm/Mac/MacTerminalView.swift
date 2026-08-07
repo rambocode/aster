@@ -62,6 +62,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Subclasses can reject user-originated input while keeping terminal protocol replies intact.
     open func shouldSendUserData(_ data: ArraySlice<UInt8>) -> Bool { true }
 
+    /// Applies Unicode BiDi reordering only while the application remains in implicit mode.
+    /// Logical terminal storage is never changed.
+    public var bidirectionalTextEnabled = true {
+        didSet {
+            guard oldValue != bidirectionalTextEnabled else { return }
+            terminal?.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
 #if canImport(MetalKit)
     // Default to throttling Metal redraws during live-resize; set SWIFTTERM_METAL_LIVE_RESIZE_THROTTLE=0 to disable.
     private static let metalLiveResizeThrottleEnabled: Bool = {
@@ -352,6 +362,26 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var disableFullRedrawOnAnyChanges = false
     var fontSet: FontSet
 
+    /// Runtime shaping and style policies. Setters invalidate attribute caches so existing
+    /// on-screen cells are redrawn without mutating the logical terminal buffer.
+    public var ligatureMode: TerminalLigatureMode = .standard {
+        didSet { resetCaches(); terminal?.updateFullScreen(); needsDisplay = true }
+    }
+    public var boldStyleMode: TerminalFontStyleMode = .automatic {
+        didSet { resetCaches(); terminal?.updateFullScreen(); needsDisplay = true }
+    }
+    public var italicStyleMode: TerminalFontStyleMode = .automatic {
+        didSet { resetCaches(); terminal?.updateFullScreen(); needsDisplay = true }
+    }
+    public var animatedTextBlinkEnabled = false {
+        didSet {
+            guard oldValue != animatedTextBlinkEnabled else { return }
+            updateAnimatedTextBlinkTimer()
+        }
+    }
+    var textBlinkPhaseVisible = true
+    var textBlinkTimer: Timer?
+
     /// The font to use to render the terminal
     public var font: NSFont {
         get {
@@ -626,6 +656,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             NotificationCenter.default.removeObserver (resignMainObserver)
         }
         progressReportTimer?.invalidate()
+        textBlinkTimer?.invalidate()
     }
     
     func setupFocusNotification() {
@@ -2442,10 +2473,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // undo that translation before mapping the pointer back to a terminal cell.
         let translatedY = point.y - viewportContentTranslationY
         let row = Int ((frame.height-translatedY) / cellDimension.height)
-        let colValue = min (max (0, col), terminal.cols-1)
+        let visualCol = min (max (0, col), terminal.cols-1)
         let bufferRow = row + displayBuffer.yDisp
         let maxRow = max (0, displayBuffer.lines.count - 1)
         let rowValue = min (max (0, bufferRow), maxRow)
+        let colValue = logicalColumn(forVisualColumn: visualCol, bufferRow: rowValue)
         return (Position(col: colValue, row: rowValue), toInt (point))
     }
     

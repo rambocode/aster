@@ -354,7 +354,10 @@ struct UnicodeUtil {
      *   -1 if the value is not printable, otherwise the number of columsn that the rune occupies.
      * - Parameter rune: a UnicodeScalar
      */
-    static func columnWidth (rune: UnicodeScalar) -> Int
+    static func columnWidth (
+        rune: UnicodeScalar,
+        widenedAmbiguousBlocks: EastAsianAmbiguousWidthBlocks = []
+    ) -> Int
     {
         let irune = rune.value
 
@@ -409,6 +412,30 @@ struct UnicodeUtil {
             return 2
         }
 
+        let ambiguousBlock = blockContainingAmbiguousScalar(irune)
+        if !ambiguousBlock.isEmpty, widenedAmbiguousBlocks.contains(ambiguousBlock) {
+            return 2
+        }
+
         return 1
+    }
+
+    /// Returns the configurable block containing `value`, or an empty option for scalars
+    /// outside the supported East-Asian-Ambiguous ranges. Existing wide characters are
+    /// handled before this lookup and remain wide regardless of the selected block policy.
+    private static func blockContainingAmbiguousScalar(
+        _ value: UInt32
+    ) -> EastAsianAmbiguousWidthBlocks {
+        switch value {
+        case 0x2150...0x218F: return .numberForms
+        case 0x2190...0x21FF: return .arrows
+        case 0x2200...0x22FF: return .mathematicalOperators
+        case 0x2300...0x23FF: return .miscellaneousTechnical
+        case 0x2460...0x24FF: return .enclosedAlphanumerics
+        case 0x25A0...0x25FF: return .geometricShapes
+        case 0x2600...0x26FF: return .miscellaneousSymbols
+        case 0x2700...0x27BF: return .dingbats
+        default: return []
+        }
     }
 }

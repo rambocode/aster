@@ -56,6 +56,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Subclasses can reject user-originated input while keeping terminal protocol replies intact.
     open func shouldSendUserData(_ data: ArraySlice<UInt8>) -> Bool { true }
 
+    /// Applies Unicode BiDi reordering only while the application remains in implicit mode.
+    /// Logical terminal storage is never changed.
+    public var bidirectionalTextEnabled = true {
+        didSet {
+            guard oldValue != bidirectionalTextEnabled else { return }
+            terminal?.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
     private enum PendingKoreanResyllabificationResult {
         case none
         case prefixReinserted
@@ -290,6 +300,25 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var lastFloatingCursorLocation: CGPoint?
     
     var fontSet: FontSet
+
+    /// Runtime shaping and style policies shared with the macOS renderer.
+    public var ligatureMode: TerminalLigatureMode = .standard {
+        didSet { resetCaches(); terminal?.updateFullScreen(); setNeedsDisplay(bounds) }
+    }
+    public var boldStyleMode: TerminalFontStyleMode = .automatic {
+        didSet { resetCaches(); terminal?.updateFullScreen(); setNeedsDisplay(bounds) }
+    }
+    public var italicStyleMode: TerminalFontStyleMode = .automatic {
+        didSet { resetCaches(); terminal?.updateFullScreen(); setNeedsDisplay(bounds) }
+    }
+    public var animatedTextBlinkEnabled = false {
+        didSet {
+            guard oldValue != animatedTextBlinkEnabled else { return }
+            updateAnimatedTextBlinkTimer()
+        }
+    }
+    var textBlinkPhaseVisible = true
+    var textBlinkTimer: Timer?
     
     /// The font to use to render the terminal, this attempts to derive the bold, italic and italic/bold variants from
     /// the original font, using the iOS UIFontDescriptor APIs.   For full control use the `setFonts(normal:bold:italic:boldItalic)`

@@ -57,6 +57,92 @@ public enum CursorStyle: String, CaseIterable, Codable, Equatable, Sendable {
   case hollowBlock
 }
 
+/// OpenType 连字级别。Raw value 是 Aster JSON 配置的稳定持久化契约，渲染层可将
+/// `standard` 映射到标准连字和 contextual alternates，将 `discretionary` 再扩展到 dlig。
+public enum TerminalLigatureLevel: String, CaseIterable, Codable, Equatable, Sendable {
+  case none
+  case standard
+  case discretionary
+}
+
+/// SGR 5/6 文本的渲染策略。默认把 blink 文本稳定显示，避免无意闪烁造成可访问性问题。
+public enum TerminalBlinkRenderingPolicy: String, CaseIterable, Codable, Equatable, Sendable {
+  case steady
+  case animated
+}
+
+/// 粗体与斜体请求的字形选择策略。`synthetic` 仅在真实字形不可用时由渲染层合成，
+/// `primaryFontOnly` 则禁止从 fallback 字体借用对应样式。
+public enum TerminalTextStyleRendering: String, CaseIterable, Codable, Equatable, Sendable {
+  case automatic
+  case disabled
+  case primaryFontOnly = "primary-font-only"
+  case synthetic
+}
+
+/// 可选择加宽的 East-Asian-Ambiguous Unicode block。
+///
+/// 这里使用可保留原始字符串的值类型，而不是封闭枚举：配置导入阶段可以先成功解码
+/// 新版本或手写的 block 标识，再由 `AsterConfiguration.normalized()` 统一规范化、过滤。
+/// 这样既不会让一个未知值导致整份配置无法读取，也不会把未知 block 传给渲染层。
+public struct EastAsianAmbiguousBlock: RawRepresentable, CaseIterable, Codable, Hashable, Sendable {
+  public let rawValue: String
+
+  public init(rawValue: String) {
+    self.rawValue = rawValue
+  }
+
+  public static let enclosedAlphanumerics = Self(rawValue: "enclosed-alphanumerics")
+  public static let numberForms = Self(rawValue: "number-forms")
+  public static let mathematicalOperators = Self(rawValue: "math-operators")
+  public static let miscellaneousTechnical = Self(rawValue: "misc-technical")
+  public static let miscellaneousSymbols = Self(rawValue: "misc-symbols")
+  public static let dingbats = Self(rawValue: "dingbats")
+  public static let arrows = Self(rawValue: "arrows")
+  public static let geometricShapes = Self(rawValue: "geometric-shapes")
+
+  public static let allCases: [Self] = [
+    .enclosedAlphanumerics,
+    .numberForms,
+    .mathematicalOperators,
+    .miscellaneousTechnical,
+    .miscellaneousSymbols,
+    .dingbats,
+    .arrows,
+    .geometricShapes,
+  ]
+
+  /// 把大小写、空白、下划线和常见 Unicode block 全名统一成 Aster 的稳定标识；
+  /// 返回 nil 表示该输入不是当前版本支持的可加宽 block。
+  public var normalizedKnownValue: Self? {
+    let identifier = rawValue
+      .lowercased()
+      .split(whereSeparator: { $0.isWhitespace || $0 == "_" || $0 == "-" })
+      .joined(separator: "-")
+    return switch identifier {
+    case "enclosed-alphanumerics": .enclosedAlphanumerics
+    case "number-forms": .numberForms
+    case "math-operators", "mathematical-operators": .mathematicalOperators
+    case "misc-technical", "miscellaneous-technical": .miscellaneousTechnical
+    case "misc-symbols", "miscellaneous-symbols": .miscellaneousSymbols
+    case "dingbats": .dingbats
+    case "arrows": .arrows
+    case "geometric-shapes": .geometricShapes
+    default: nil
+    }
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    self.init(rawValue: try container.decode(String.self))
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.singleValueContainer()
+    try container.encode(rawValue)
+  }
+}
+
 /// 普通屏滚过最新内容后的停靠位置。枚举值保持稳定，供配置文件持久化和迁移使用。
 public enum TerminalScrollPastLastLine: String, CaseIterable, Codable, Equatable, Sendable {
   case disabled
@@ -286,6 +372,15 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var selection = HexColor("#B8CEF099")!
   public var cursorStyle = CursorStyle.block
   public var cursorBlink = true
+  /// 新字段保持可选以兼容 0.4.x JSON；所有消费者应使用下方 resolved 属性。
+  public var bidirectionalText: Bool? = true
+  public var ligatureLevel: TerminalLigatureLevel? = .standard
+  public var widenedEastAsianAmbiguousBlocks: Set<EastAsianAmbiguousBlock>? = [
+    .enclosedAlphanumerics
+  ]
+  public var blinkRenderingPolicy: TerminalBlinkRenderingPolicy? = .steady
+  public var boldRendering: TerminalTextStyleRendering? = .automatic
+  public var italicRendering: TerminalTextStyleRendering? = .automatic
   /// `auto` 在 Pane 启动时解析为保守的 xterm-256color；自定义值必须存在 terminfo。
   public var terminalIdentity = "auto"
   public var showTabBar = true
@@ -307,6 +402,17 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var resolvedNewTabPosition: NewTabPosition {
     newTabPosition ?? .automatic
   }
+
+  public var resolvedBidirectionalText: Bool { bidirectionalText ?? true }
+  public var resolvedLigatureLevel: TerminalLigatureLevel { ligatureLevel ?? .standard }
+  public var resolvedWidenedEastAsianAmbiguousBlocks: Set<EastAsianAmbiguousBlock> {
+    widenedEastAsianAmbiguousBlocks ?? [.enclosedAlphanumerics]
+  }
+  public var resolvedBlinkRenderingPolicy: TerminalBlinkRenderingPolicy {
+    blinkRenderingPolicy ?? .steady
+  }
+  public var resolvedBoldRendering: TerminalTextStyleRendering { boldRendering ?? .automatic }
+  public var resolvedItalicRendering: TerminalTextStyleRendering { italicRendering ?? .automatic }
 
   public var resolvedAnimateDockIconOnProgress: Bool { animateDockIconOnProgress ?? false }
   public var resolvedRedDockIconOnError: Bool { redDockIconOnError ?? true }
@@ -348,6 +454,17 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
     result.appearance.lineHeight = min(max(result.appearance.lineHeight, 0.8), 2)
     result.appearance.windowWidth = min(max(result.appearance.windowWidth, 820), 3_840)
     result.appearance.windowHeight = min(max(result.appearance.windowHeight, 520), 2_160)
+    // 旧配置的 nil 在导入边界固化为当前默认值；Ambiguous block 同时接受常见外部
+    // 拼写，但只保留当前渲染层能识别的稳定标识。空集合是用户主动关闭全部加宽，
+    // 因此必须原样保留，不能回填 enclosed alphanumerics。
+    result.appearance.bidirectionalText = result.appearance.resolvedBidirectionalText
+    result.appearance.ligatureLevel = result.appearance.resolvedLigatureLevel
+    result.appearance.blinkRenderingPolicy = result.appearance.resolvedBlinkRenderingPolicy
+    result.appearance.boldRendering = result.appearance.resolvedBoldRendering
+    result.appearance.italicRendering = result.appearance.resolvedItalicRendering
+    result.appearance.widenedEastAsianAmbiguousBlocks = Set(
+      result.appearance.resolvedWidenedEastAsianAmbiguousBlocks.compactMap(\.normalizedKnownValue)
+    )
     result.editor.tabSize = min(max(result.editor.tabSize, 2), 8)
     if result.appearance.fontFamily.utf8.count > 128 {
       result.appearance.fontFamily = AppearanceConfiguration().fontFamily

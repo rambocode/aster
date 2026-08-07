@@ -1047,15 +1047,16 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 
         for shaped in shapedSegments {
-            var processedGlyphs = 0
+            var processedCells = 0
             for run in shaped.runs {
                 let runGlyphsCount = run.shaperRun.glyphCount
                 if runGlyphsCount == 0 {
                     continue
                 }
                 let runAttributes = run.attributes
-                let startColumn = shaped.segment.column + (processedGlyphs * shaped.segment.columnWidth)
-                let endColumn = startColumn + (runGlyphsCount * shaped.segment.columnWidth)
+                let runCellCount = run.shaperRun.cellCount
+                let startColumn = shaped.segment.column + (processedCells * shaped.segment.columnWidth)
+                let endColumn = startColumn + (runCellCount * shaped.segment.columnWidth)
                 var backgroundColor: TTColor?
                 if runAttributes.keys.contains(.selectionBackgroundColor) {
                     backgroundColor = runAttributes[.selectionBackgroundColor] as? TTColor
@@ -1095,7 +1096,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                         }
                     }
                 }
-                processedGlyphs += runGlyphsCount
+                processedCells += runCellCount
             }
         }
 
@@ -1192,7 +1193,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 
         for shaped in shapedSegments {
-            var processedGlyphs = 0
+            var processedCells = 0
             for run in shaped.runs {
                 let runGlyphsCount = run.shaperRun.glyphCount
                 if runGlyphsCount == 0 {
@@ -1201,12 +1202,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 let runAttributes = run.attributes
                 let runFont = runAttributes[.font] as? TTFont ?? terminalView.fontSet.normal
                 let ctFont = runFont as CTFont
-                let startColumn = shaped.segment.column + (processedGlyphs * shaped.segment.columnWidth)
+                let runCellCount = run.shaperRun.cellCount
+                let startColumn = shaped.segment.column + (processedCells * shaped.segment.columnWidth)
 
                 let textColor = runAttributes[.foregroundColor] as? TTColor ?? terminalView.nativeForegroundColor
                 let textColorSIMD = colorToSIMD(textColor)
 
-                var drawnGlyphsInRun = 0
                 for glyphRun in run.shaperRun.glyphRuns {
                     let scaledFont = scaledFontFor(font: glyphRun.font, scale: scale)
                     for i in 0..<glyphRun.glyphs.count {
@@ -1218,7 +1219,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                             continue
                         }
                         let ctPos = glyphRun.positions[i]
-                        let glyphColumn = startColumn + ((drawnGlyphsInRun + i) * shaped.segment.columnWidth)
+                        let glyphColumn = startColumn
+                            + (glyphRun.cellOffsets[i] * shaped.segment.columnWidth)
                         // Center full-width (CJK) and substituted glyphs within
                         // their multi-cell slot instead of pinning them to the
                         // cell's left edge, mirroring the CoreGraphics path. The
@@ -1265,7 +1267,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                             }
                         }
                     }
-                    drawnGlyphsInRun += glyphRun.glyphs.count
                 }
 
                 if let rawStyle = runAttributes[.underlineStyle] as? Int,
@@ -1276,10 +1277,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     let thickness = underlineThickness * scale
                     let segmentStyle: UnderlineStyle = underlineStyle == .double ? .single : underlineStyle
 
-                    for (glyphIndex, ctPos) in run.shaperRun.positions.enumerated() {
-                        let glyphColumn = startColumn + (glyphIndex * shaped.segment.columnWidth)
+                    for cellOffset in 0..<(runCellCount * shaped.segment.columnWidth) {
+                        let glyphColumn = startColumn + cellOffset
                         let basePos = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(glyphColumn)),
-                                              y: lineOrigin.y + yOffset + ctPos.y)
+                                              y: lineOrigin.y + yOffset)
                         let x0 = basePos.x * scale
                         let x1 = (basePos.x + decorationCellWidth) * scale
                         let yCenter = (basePos.y + underlinePosition) * scale
@@ -1328,10 +1329,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     let strikeThickness = max(round(scale * CTFontGetUnderlineThickness(ctFont)) / scale, 0.5)
                     let strikePosition = (CTFontGetXHeight(ctFont) + strikeThickness) * 0.5
 
-                    for (glyphIndex, ctPos) in run.shaperRun.positions.enumerated() {
-                        let glyphColumn = startColumn + (glyphIndex * shaped.segment.columnWidth)
+                    for cellOffset in 0..<(runCellCount * shaped.segment.columnWidth) {
+                        let glyphColumn = startColumn + cellOffset
                         let basePos = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(glyphColumn)),
-                                              y: lineOrigin.y + yOffset + ctPos.y)
+                                              y: lineOrigin.y + yOffset)
                         let x0 = basePos.x * scale
                         let x1 = (basePos.x + decorationCellWidth) * scale
                         let yCenter = (basePos.y + strikePosition) * scale
@@ -1364,7 +1365,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     }
                 }
 
-                processedGlyphs += runGlyphsCount
+                processedCells += runCellCount
             }
         }
 
@@ -1453,7 +1454,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     return
                 }
                 let runFont = attributes[.font] as? TTFont ?? terminalView.fontSet.normal
-                guard let shaped = shaperCache.shape(text: text, font: runFont as CTFont) else {
+                let ligatureLevel = attributes[.ligature] as? Int ?? 0
+                guard let shaped = shaperCache.shape(
+                    text: text,
+                    font: runFont as CTFont,
+                    ligatureLevel: ligatureLevel) else {
                     return
                 }
                 shapedRuns.append(ShapedRun(attributes: attributes, shaperRun: shaped))
@@ -1816,18 +1821,22 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let fontName: String
         let fontSize: CGFloat
         let text: String
+        let ligatureLevel: Int
     }
 
     private struct ShaperGlyphRun {
         let font: CTFont
         let glyphs: [CGGlyph]
         let positions: [CGPoint]
+        /// Visual-order offsets measured in terminal characters, not glyph count.
+        let cellOffsets: [Int]
     }
 
     private struct ShaperRun {
         let glyphRuns: [ShaperGlyphRun]
         let positions: [CGPoint]
         let glyphCount: Int
+        let cellCount: Int
     }
 
     private struct ShapedRun {
@@ -1849,18 +1858,21 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             self.maxEntries = maxEntries
         }
 
-        func shape(text: String, font: CTFont) -> ShaperRun? {
+        func shape(text: String, font: CTFont, ligatureLevel: Int) -> ShaperRun? {
             guard !text.isEmpty else {
                 return nil
             }
             let key = ShaperKey(fontName: CTFontCopyPostScriptName(font) as String,
                                 fontSize: CTFontGetSize(font),
-                                text: text)
+                                text: text,
+                                ligatureLevel: ligatureLevel)
             if let cached = cache[key] {
                 return cached
             }
 
-            let attributedString = NSAttributedString(string: text, attributes: [.font: font])
+            let attributedString = NSAttributedString(
+                string: text,
+                attributes: [.font: font, .ligature: ligatureLevel])
             let line = CTLineCreateWithAttributedString(attributedString)
             guard let runs = CTLineGetGlyphRuns(line) as? [CTRun], !runs.isEmpty else {
                 return nil
@@ -1868,6 +1880,14 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
             var glyphRuns: [ShaperGlyphRun] = []
             var positions: [CGPoint] = []
+            var utf16CellOffsets: [Int] = []
+            var cellCount = 0
+            for character in text {
+                utf16CellOffsets.append(
+                    contentsOf: repeatElement(cellCount, count: String(character).utf16.count))
+                cellCount += 1
+            }
+            var processedCells = 0
             for run in runs {
                 let count = CTRunGetGlyphCount(run)
                 if count == 0 {
@@ -1886,13 +1906,38 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 }
                 var runPositions = [CGPoint](repeating: .zero, count: count)
                 CTRunGetPositions(run, CFRange(), &runPositions)
-                glyphRuns.append(ShaperGlyphRun(font: runFont, glyphs: glyphs, positions: runPositions))
+                var stringIndices = [CFIndex](repeating: 0, count: count)
+                CTRunGetStringIndices(run, CFRange(), &stringIndices)
+                var cellOffsets: [Int] = []
+                var previousCell: Int?
+                var visualOffset = processedCells
+                for (fallback, index) in stringIndices.enumerated() {
+                    let safeIndex = index == kCFNotFound ? fallback : index
+                    let cell = utf16CellOffsets.indices.contains(safeIndex)
+                        ? utf16CellOffsets[safeIndex]
+                        : fallback
+                    if let previousCell, cell != previousCell {
+                        visualOffset += abs(cell - previousCell)
+                    }
+                    cellOffsets.append(visualOffset)
+                    previousCell = cell
+                }
+                let range = CTRunGetStringRange(run)
+                let lower = max(0, min(utf16CellOffsets.count, range.location))
+                let upper = max(lower, min(utf16CellOffsets.count, range.location + range.length))
+                processedCells += Set(utf16CellOffsets[lower..<upper]).count
+                glyphRuns.append(ShaperGlyphRun(
+                    font: runFont,
+                    glyphs: glyphs,
+                    positions: runPositions,
+                    cellOffsets: cellOffsets))
                 positions.append(contentsOf: runPositions)
             }
 
             let result = ShaperRun(glyphRuns: glyphRuns,
                                    positions: positions,
-                                   glyphCount: positions.count)
+                                   glyphCount: positions.count,
+                                   cellCount: cellCount)
             insert(key: key, run: result)
             return result
         }

@@ -25,6 +25,21 @@ public enum TerminalSelectionDirection: Sendable {
     case down
 }
 
+/// OpenType ligature features requested for terminal glyph shaping.
+public enum TerminalLigatureMode: Int, Sendable {
+    case none = 0
+    case standard = 1
+    case discretionary = 2
+}
+
+/// Controls whether SGR bold/italic selects a styled font variant.
+public enum TerminalFontStyleMode: Sendable {
+    case automatic
+    case disabled
+    case primaryFontOnly
+    case synthetic
+}
+
 let SwiftTermUnderlineStyleKey = NSAttributedString.Key("SwiftTermUnderlineStyle")
 
 #if os(iOS) || os(visionOS)
@@ -74,9 +89,45 @@ struct ViewLineSegment {
     let columnWidth: Int
     let characterCount: Int
     let attributedString: NSAttributedString
+    /// Maps each UTF-16 code unit in `attributedString` to its logical terminal-cell offset.
+    /// CoreText reports run/glyph ranges in UTF-16 indices, while terminal layout is cell based.
+    let utf16CellOffsets: [Int]
     
     var columnSpan: Int {
         return max(0, characterCount * columnWidth)
+    }
+
+    func cellCount(inUTF16Range range: CFRange) -> Int {
+        guard range.location != kCFNotFound, range.length > 0 else { return 0 }
+        let lower = max(0, min(utf16CellOffsets.count, range.location))
+        let upper = max(lower, min(utf16CellOffsets.count, range.location + range.length))
+        return Set(utf16CellOffsets[lower..<upper]).count
+    }
+
+    /// Converts CoreText's visual-order glyph string indices into offsets measured in terminal
+    /// cells. A ligature may consume several cells but emit one glyph; RTL runs may descend.
+    func visualCellOffsets(for run: CTRun) -> [Int] {
+        let glyphCount = CTRunGetGlyphCount(run)
+        guard glyphCount > 0 else { return [] }
+        var indices = [CFIndex](repeating: 0, count: glyphCount)
+        CTRunGetStringIndices(run, CFRange(), &indices)
+
+        var result: [Int] = []
+        result.reserveCapacity(glyphCount)
+        var previousCell: Int?
+        var visualOffset = 0
+        for (fallback, index) in indices.enumerated() {
+            let safeIndex = index == kCFNotFound ? fallback : index
+            let cell = utf16CellOffsets.indices.contains(safeIndex)
+                ? utf16CellOffsets[safeIndex]
+                : fallback
+            if let previousCell, cell != previousCell {
+                visualOffset += abs(cell - previousCell)
+            }
+            result.append(visualOffset)
+            previousCell = cell
+        }
+        return result
     }
 }
 
@@ -119,6 +170,49 @@ struct GlyphSlotFit {
 extension TerminalView {
     typealias CellDimension = CGSize
 
+    /// Returns the visual grid column used to draw a logical buffer column.
+    public func visualColumn(forLogicalColumn column: Int, bufferRow: Int) -> Int {
+        bidirectionalMap(bufferRow: bufferRow).visualColumn(forLogicalColumn: column)
+    }
+
+    /// Returns the logical buffer column under a visual grid column.
+    public func logicalColumn(forVisualColumn column: Int, bufferRow: Int) -> Int {
+        bidirectionalMap(bufferRow: bufferRow).logicalColumn(forVisualColumn: column)
+    }
+
+    /// Returns the next logical grapheme column when moving one cell in visual order.
+    public func logicalColumn(
+        visuallyAdjacentToLogicalColumn column: Int,
+        offset: Int,
+        bufferRow: Int
+    ) -> Int {
+        bidirectionalMap(bufferRow: bufferRow).logicalColumn(
+            visuallyAdjacentToLogicalColumn: column,
+            offset: offset
+        )
+    }
+
+    private func bidirectionalMap(bufferRow: Int) -> TerminalBidirectionalMap {
+        let buffer = terminal.displayBuffer
+        guard bufferRow >= 0, bufferRow < buffer.lines.count else {
+            return .identity(cells: [], columnCount: max(0, terminal.cols))
+        }
+        let line = buffer.lines[bufferRow]
+        var cells: [TerminalBidirectionalCell] = []
+        var column = 0
+        while column < terminal.cols, column < line.count {
+            let cell = line[column]
+            let width = max(1, Int(cell.width))
+            let text = cell.code == 0 ? " " : String(terminal.getCharacter(for: cell))
+            cells.append(.init(text: text, logicalColumn: column, width: width))
+            column += width
+        }
+        guard bidirectionalTextEnabled, !terminal.explicitBidirectionalMode else {
+            return .identity(cells: cells, columnCount: terminal.cols)
+        }
+        return .make(cells: cells, columnCount: terminal.cols)
+    }
+
 #if os(macOS)
     /// Controls whether font smoothing (sub-pixel rendering) is enabled during glyph drawing.
     /// Set to `false` to get thinner strokes on Retina displays, matching iTerm2's "Thin strokes" setting.
@@ -146,6 +240,57 @@ extension TerminalView {
         self.urlAttributes = [:]
         self.colors = Array(repeating: nil, count: 256)
         self.trueColors = [:]
+    }
+
+    /// Starts one view-level blink clock for all SGR 5/6 cells. The safe default leaves these
+    /// cells steadily visible; enabling animation alternates only their foreground/decorations
+    /// and never mutates the terminal buffer or selection text.
+    func updateAnimatedTextBlinkTimer() {
+        textBlinkTimer?.invalidate()
+        textBlinkTimer = nil
+        textBlinkPhaseVisible = true
+        resetCaches()
+        terminal?.updateFullScreen()
+        queuePendingDisplay()
+        guard animatedTextBlinkEnabled else { return }
+
+        textBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) {
+            [weak self] timer in
+            guard let self else {
+                timer.invalidate()
+                return
+            }
+            self.textBlinkPhaseVisible.toggle()
+            self.resetCaches()
+            self.terminal?.updateFullScreen()
+            self.queuePendingDisplay()
+        }
+    }
+
+    /// Resolves SGR bold/italic against the configured rendering policy without changing the
+    /// cell's logical attributes. `primaryFontOnly` refuses a variant from another family;
+    /// `synthetic` uses the platform-derived variants in `FontSet` when no real face exists.
+    private func configuredFont(
+        flags: CharacterStyle,
+        useBoldForBrightColor: Bool = false
+    ) -> TTFont {
+        let wantsBold = (flags.contains(.bold) && boldStyleMode != .disabled) || useBoldForBrightColor
+        let wantsItalic = flags.contains(.italic) && italicStyleMode != .disabled
+        let candidate: TTFont
+        switch (wantsBold, wantsItalic) {
+        case (true, true): candidate = fontSet.boldItalic
+        case (true, false): candidate = fontSet.bold
+        case (false, true): candidate = fontSet.italic
+        case (false, false): candidate = fontSet.normal
+        }
+
+        let requiresPrimaryBold = wantsBold && boldStyleMode == .primaryFontOnly
+        let requiresPrimaryItalic = wantsItalic && italicStyleMode == .primaryFontOnly
+        if (requiresPrimaryBold || requiresPrimaryItalic),
+           candidate.familyName != fontSet.normal.familyName {
+            return fontSet.normal
+        }
+        return candidate
     }
     
     // This is invoked when the font changes to recompute state
@@ -187,10 +332,13 @@ extension TerminalView {
         self.cellDimension = computeFontDimensions ()
 
         let zeroSizedView = width == 0 && height == 0
-        let terminalOptions = zeroSizedView
-            ? (terminal?.options ?? .default)
-            : TerminalOptions(cols: Int(width / cellDimension.width),
-                              rows: Int(height / cellDimension.height))
+        // Preserve protocol, Unicode-width and cache options across view resizes. Rebuilding
+        // `TerminalOptions` from defaults here silently discarded host configuration.
+        var terminalOptions = terminal?.options ?? .default
+        if !zeroSizedView {
+            terminalOptions.cols = Int(width / cellDimension.width)
+            terminalOptions.rows = Int(height / cellDimension.height)
+        }
 
         if terminal == nil {
             terminal = Terminal(delegate: self, options: terminalOptions)
@@ -484,26 +632,20 @@ extension TerminalView {
             swap (&bg, &fg)
         }
         
-        var tf: TTFont
-        let isBold = flags.contains(.bold)
-        if isBold {
-            if flags.contains (.italic) {
-                tf = fontSet.boldItalic
-            } else {
-                tf = fontSet.bold
-            }
-        } else if flags.contains (.italic) {
-            tf = fontSet.italic
-        } else {
-            tf = fontSet.normal
+        let tf = configuredFont(flags: flags)
+        let hidden = flags.contains(.invisible)
+            || (flags.contains(.blink) && animatedTextBlinkEnabled && !textBlinkPhaseVisible)
+        if hidden {
+            fg = bg
         }
         
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,
             .foregroundColor: fg,
-            .backgroundColor: bg
+            .backgroundColor: bg,
+            .ligature: ligatureMode.rawValue
         ]
-        if flags.contains (.underline) {
+        if flags.contains (.underline), !hidden {
             let underlineColor = attribute.underlineColor.map {
                 mapColor(color: $0, isFg: true, isBold: flags.contains(.bold), useBrightColors: useBrightColors)
             } ?? fg
@@ -512,7 +654,7 @@ extension TerminalView {
             nsattr [.underlineStyle] = nsUnderlineStyle(underlineVariant).rawValue
             nsattr [SwiftTermUnderlineStyleKey] = Int(underlineVariant.rawValue)
         }
-        if flags.contains (.crossedOut) {
+        if flags.contains (.crossedOut), !hidden {
             nsattr [.strikethroughColor] = fg
             nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
@@ -548,20 +690,8 @@ extension TerminalView {
         if case .ansi256(let code) = fg, code > 7, !useBrightColors {
             useBoldForBrightColor = true
         }
-        var tf: TTFont
         let isBold = flags.contains(.bold)
-        
-        if isBold || useBoldForBrightColor {
-            if flags.contains (.italic) {
-                tf = fontSet.boldItalic
-            } else {
-                tf = fontSet.bold
-            }
-        } else if flags.contains (.italic) {
-            tf = fontSet.italic
-        } else {
-            tf = fontSet.normal
-        }
+        let tf = configuredFont(flags: flags, useBoldForBrightColor: useBoldForBrightColor)
         
         var fgColor = mapColor (color: fg, isFg: true, isBold: isBold, useBrightColors: useBrightColors)
         let bgColor = mapColor (color: bg, isFg: false, isBold: false)
@@ -569,12 +699,18 @@ extension TerminalView {
         if flags.contains (.dim) {
             fgColor = fgColor.dimmedColor (towards: bgColor)
         }
+        let hidden = flags.contains(.invisible)
+            || (flags.contains(.blink) && animatedTextBlinkEnabled && !textBlinkPhaseVisible)
+        if hidden {
+            fgColor = bgColor
+        }
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,
             .foregroundColor: fgColor,
-            .backgroundColor: bgColor
+            .backgroundColor: bgColor,
+            .ligature: ligatureMode.rawValue
         ]
-        if flags.contains (.underline) {
+        if flags.contains (.underline), !hidden {
             let underlineColor = attribute.underlineColor.map {
                 mapColor(color: $0, isFg: true, isBold: isBold, useBrightColors: useBrightColors)
             } ?? fgColor
@@ -583,12 +719,12 @@ extension TerminalView {
             nsattr [.underlineStyle] = nsUnderlineStyle(underlineVariant).rawValue
             nsattr [SwiftTermUnderlineStyleKey] = Int(underlineVariant.rawValue)
         }
-        if flags.contains (.crossedOut) {
+        if flags.contains (.crossedOut), !hidden {
             nsattr [.strikethroughColor] = fgColor
             nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
 
-        if withUrl {
+        if withUrl, !hidden {
             nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
             nsattr [.underlineColor] = fgColor
             nsattr [SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
@@ -666,6 +802,7 @@ extension TerminalView {
         let columnWidth: Int
         private var attributedString = NSMutableAttributedString()
         private var characterCount: Int = 0
+        private var utf16CellOffsets: [Int] = []
         
         init(column: Int, columnWidth: Int) {
             self.column = column
@@ -678,14 +815,24 @@ extension TerminalView {
         
         mutating func append(text: String, attributes: [NSAttributedString.Key: Any]) {
             attributedString.append(NSAttributedString(string: text, attributes: attributes))
-            characterCount += 1
+            for character in text {
+                let utf16Length = String(character).utf16.count
+                utf16CellOffsets.append(
+                    contentsOf: repeatElement(characterCount, count: utf16Length))
+                characterCount += 1
+            }
         }
         
         func buildIfNeeded() -> ViewLineSegment? {
             guard !isEmpty else {
                 return nil
             }
-            return ViewLineSegment(column: column, columnWidth: columnWidth, characterCount: characterCount, attributedString: attributedString)
+            return ViewLineSegment(
+                column: column,
+                columnWidth: columnWidth,
+                characterCount: characterCount,
+                attributedString: attributedString,
+                utf16CellOffsets: utf16CellOffsets)
         }
     }
     
@@ -1429,15 +1576,17 @@ extension TerminalView {
             context.setLineWidth(0)
 
             for prepared in preparedSegments {
-                var processedGlyphs = 0
+                var processedCells = 0
                 for run in prepared.runs {
                     let runGlyphsCount = CTRunGetGlyphCount(run)
                     if runGlyphsCount == 0 {
                         continue
                     }
                     let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-                    let startColumn = prepared.segment.column + (processedGlyphs * prepared.segment.columnWidth)
-                    let endColumn = startColumn + (runGlyphsCount * prepared.segment.columnWidth)
+                    let runCellCount = prepared.segment.cellCount(
+                        inUTF16Range: CTRunGetStringRange(run))
+                    let startColumn = prepared.segment.column + (processedCells * prepared.segment.columnWidth)
+                    let endColumn = startColumn + (runCellCount * prepared.segment.columnWidth)
                     var backgroundColor: TTColor?
                     if runAttributes.keys.contains(.selectionBackgroundColor) {
                         backgroundColor = runAttributes[.selectionBackgroundColor] as? TTColor
@@ -1491,7 +1640,7 @@ extension TerminalView {
                             #endif
                         }
                     }
-                    processedGlyphs += runGlyphsCount
+                    processedCells += runCellCount
                 }
             }
 
@@ -1528,7 +1677,7 @@ extension TerminalView {
 
             // Glyph drawing loop — reuses cached CTLines
             for prepared in preparedSegments {
-                var processedGlyphs = 0
+                var processedCells = 0
                 for run in prepared.runs {
                     let runGlyphsCount = CTRunGetGlyphCount(run)
                     if runGlyphsCount == 0 {
@@ -1536,7 +1685,9 @@ extension TerminalView {
                     }
                     let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
                     let runFont = runAttributes[.font] as! TTFont
-                    let startColumn = prepared.segment.column + (processedGlyphs * prepared.segment.columnWidth)
+                    let runCellCount = prepared.segment.cellCount(
+                        inUTF16Range: CTRunGetStringRange(run))
+                    let startColumn = prepared.segment.column + (processedCells * prepared.segment.columnWidth)
 
                     let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
                         CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
@@ -1547,9 +1698,11 @@ extension TerminalView {
                     CTRunGetPositions(run, CFRange(), &coreTextPositions)
 
                     var positions = [CGPoint](repeating: .zero, count: runGlyphsCount)
+                    let visualCellOffsets = prepared.segment.visualCellOffsets(for: run)
                     for i in 0..<runGlyphsCount {
                         let ctPosition = coreTextPositions[i]
-                        let glyphColumn = startColumn + (i * prepared.segment.columnWidth)
+                        let glyphColumn = startColumn
+                            + (visualCellOffsets[i] * prepared.segment.columnWidth)
                         positions[i] = CGPoint(
                             x: lineOrigin.x + CGFloat(glyphColumn) * cellDimension.width,
                             y: lineOrigin.y + yOffset + ctPosition.y)
@@ -1599,9 +1752,14 @@ extension TerminalView {
                     }
 
                     // Draw other attributes (decorations stay grid-aligned)
-                    drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
+                    let decorationPositions = (0..<(runCellCount * prepared.segment.columnWidth)).map {
+                        CGPoint(
+                            x: lineOrigin.x + CGFloat(startColumn + $0) * cellDimension.width,
+                            y: lineOrigin.y + yOffset)
+                    }
+                    drawRunAttributes(runAttributes, glyphPositions: decorationPositions, in: context)
 
-                    processedGlyphs += runGlyphsCount
+                    processedCells += runCellCount
                 }
             }
 
@@ -1912,7 +2070,8 @@ extension TerminalView {
         // Span the caret across the full character so a block cursor covers a
         // full-width (CJK) glyph instead of only its left half.
         let cursorColumnWidth = max(1, Int(charUnderCursor.width))
-        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(buffer.x)), y: lineOrigin.y)
+        let visualCursorColumn = visualColumn(forLogicalColumn: buffer.x, bufferRow: vy)
+        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(visualCursorColumn)), y: lineOrigin.y)
         caretView.frame.size.width = cellDimension.width * doublePosition * CGFloat(cursorColumnWidth)
         caretView.setText (ch: charUnderCursor)
     }

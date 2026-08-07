@@ -22,6 +22,9 @@
 - [ ] `Command+Page Up / Page Down` 连续跳过多条命令，首尾没有反向跳动。
 - [ ] 命令运行时标签显示 spinner；结束后按设置显示 `✓` 或非零退出码。
 - [ ] 提示符内选择 ASCII 文本后按 Backspace 或 Cut，只删除选区；跨行或 Unicode 选区保持无损降级。
+- [ ] 混合英文、希伯来文/阿拉伯文、数字和路径按阅读顺序显示；鼠标、caret 与左右键对齐，复制结果仍为逻辑顺序。
+- [ ] 标准与 discretionary 连字不会挤压后续网格列；宽字符、下划线、背景和选择区域仍按单元对齐。
+- [ ] iTerm2、Kitty 与 Sixel 示例图片尺寸正确；损坏或超限输入不残留旧图，也不阻塞后续文字。
 - [ ] 关闭 Shell Integration 会显示确认并移除受管区块；重新开启不会重复追加 marker。
 - [ ] `TERM=auto` 下 `echo "$TERM_PROGRAM $TERM"` 显示 `aster xterm-256color`；DA/XTVERSION 探测工具识别为 Aster。
 

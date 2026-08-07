@@ -335,6 +335,9 @@ public class EscapeSequenceParser {
     // buffers over several calls
     var _osc: cstring
     var _apc: cstring
+    /// True after the current APC exceeds its byte budget. Bytes are then ignored until the
+    /// terminator, and fragmented Kitty state is canceled instead of dispatching truncated data.
+    var _apcOverflowed: Bool
     var _pars: [Int]
     var _parsTxt: [UInt8]
     var _collect: cstring
@@ -349,6 +352,7 @@ public class EscapeSequenceParser {
         table = EscapeSequenceParser.buildVt500TransitionTable()
         _osc = []
         _apc = []
+        _apcOverflowed = false
         _pars = [0]
         _parsTxt = []
         _collect = []
@@ -601,6 +605,7 @@ public class EscapeSequenceParser {
         currentState = initialState
         _osc = []
         _apc = []
+        _apcOverflowed = false
         _pars = [0]
         _collect = []
         activeDcsHandler = nil
@@ -643,6 +648,7 @@ public class EscapeSequenceParser {
         var dcs = -1
         var osc = self._osc
         var apc = self._apc
+        var apcOverflowed = self._apcOverflowed
         var collect = self._collect
         var pars = self._pars
         var parsTxt = self._parsTxt
@@ -768,6 +774,7 @@ public class EscapeSequenceParser {
                 }
                 osc = []
                 apc = []
+                apcOverflowed = false
                 pars = [0]
                 parsTxt = []
                 collect = []
@@ -806,6 +813,7 @@ public class EscapeSequenceParser {
                 let nextState = ParserState (rawValue: transition & 15)!
                 if nextState == .apcString {
                     apc = []
+                    apcOverflowed = false
                 } else {
                     osc = []
                 }
@@ -813,11 +821,21 @@ public class EscapeSequenceParser {
                 var j = i
                 while j < end {
                     let c = data [j]
-                    if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
+                    if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.SUB ||
+                        c == ControlCodes.ESC || c == 0x9c {
                         break
                     } else if c >= 0x20 {
                         if currentState == .apcString {
-                            apc.append (c)
+                            if !apcOverflowed {
+                                if apc.count < Terminal.kittyMaxApcBytes {
+                                    apc.append(c)
+                                } else {
+                                    // Release the prefix immediately; retaining a maximum-sized
+                                    // attacker buffer until ST would defeat the hard memory bound.
+                                    apc.removeAll(keepingCapacity: false)
+                                    apcOverflowed = true
+                                }
+                            }
                         } else {
                             osc.append (c)
                         }
@@ -827,7 +845,9 @@ public class EscapeSequenceParser {
                 i = j - 1
             case .oscEnd:
                 if currentState == .apcString {
-                    if apc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
+                    if apcOverflowed || code == ControlCodes.CAN || code == ControlCodes.SUB {
+                        terminal?.cancelKittyGraphicsTransfer()
+                    } else if apc.count != 0 {
                         let command = apc[apc.startIndex]
                         let content = apc.count > 1 ? apc[(apc.startIndex+1)...] : ArraySlice<UInt8>()
                         dispatchApc(command: command, content: content)
@@ -853,6 +873,7 @@ public class EscapeSequenceParser {
                 }
                 osc = []
                 apc = []
+                apcOverflowed = false
                 pars = [0]
                 parsTxt = []
                 collect = []
@@ -871,6 +892,7 @@ public class EscapeSequenceParser {
         // save non pushable buffers
         _osc = osc
         _apc = apc
+        _apcOverflowed = apcOverflowed
         _collect = collect
         _pars = pars
         _parsTxt = parsTxt

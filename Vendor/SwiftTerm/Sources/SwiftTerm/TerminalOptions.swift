@@ -50,6 +50,31 @@ public enum RegionalIndicatorWidth: Sendable {
     case narrow
 }
 
+/// Unicode blocks whose East-Asian-Ambiguous characters should occupy two terminal cells.
+///
+/// A block policy is deliberately used instead of a global "ambiguous is wide" switch: it
+/// matches terminal configuration UIs while limiting cursor-width divergence with remote hosts.
+public struct EastAsianAmbiguousWidthBlocks: OptionSet, Sendable {
+    public let rawValue: UInt16
+
+    public init(rawValue: UInt16) {
+        self.rawValue = rawValue
+    }
+
+    public static let enclosedAlphanumerics = Self(rawValue: 1 << 0)
+    public static let numberForms = Self(rawValue: 1 << 1)
+    public static let arrows = Self(rawValue: 1 << 2)
+    public static let mathematicalOperators = Self(rawValue: 1 << 3)
+    public static let miscellaneousTechnical = Self(rawValue: 1 << 4)
+    public static let geometricShapes = Self(rawValue: 1 << 5)
+    public static let miscellaneousSymbols = Self(rawValue: 1 << 6)
+    public static let dingbats = Self(rawValue: 1 << 7)
+    public static let all: Self = [
+        .enclosedAlphanumerics, .numberForms, .arrows, .mathematicalOperators,
+        .miscellaneousTechnical, .geometricShapes, .miscellaneousSymbols, .dingbats,
+    ]
+}
+
 /// Configuration options for the terminal at startup, these values are only read at startup
 public struct TerminalOptions {
     /// Desired number of columns at startup (default 80)
@@ -77,6 +102,9 @@ public struct TerminalOptions {
     /// Width for individual Regional Indicator symbols. `.wide` (default) preserves existing
     /// behavior. `.narrow` matches system wcwidth() and avoids cursor divergence with tmux.
     public var regionalIndicatorWidth: RegionalIndicatorWidth
+    /// Ambiguous-width blocks rendered as two cells. Otty-compatible defaults widen only
+    /// enclosed alphanumerics; callers may opt into the remaining blocks independently.
+    public var widenedEastAsianAmbiguousBlocks: EastAsianAmbiguousWidthBlocks
 
     /// Default options
     public static let `default` = TerminalOptions.init(cols: 80,
@@ -90,11 +118,13 @@ public struct TerminalOptions {
                                                        enableSixelReported: true,
                                                        kittyImageCacheLimitBytes: 320 * 1024 * 1024,
                                                        ansi256PaletteStrategy: .base16Lab,
-                                                       regionalIndicatorWidth: .wide)
+                                                       regionalIndicatorWidth: .wide,
+                                                       widenedEastAsianAmbiguousBlocks: [.enclosedAlphanumerics])
 
   public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
               enableSixelReported: Bool = Self.default.enableSixelReported, kittyImageCacheLimitBytes: Int = Self.default.kittyImageCacheLimitBytes, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy,
-              regionalIndicatorWidth: RegionalIndicatorWidth = Self.default.regionalIndicatorWidth) {
+              regionalIndicatorWidth: RegionalIndicatorWidth = Self.default.regionalIndicatorWidth,
+              widenedEastAsianAmbiguousBlocks: EastAsianAmbiguousWidthBlocks = Self.default.widenedEastAsianAmbiguousBlocks) {
         self.cols = cols
         self.rows = rows
         self.convertEol = convertEol
@@ -107,5 +137,6 @@ public struct TerminalOptions {
         self.kittyImageCacheLimitBytes = kittyImageCacheLimitBytes
         self.ansi256PaletteStrategy = ansi256PaletteStrategy
         self.regionalIndicatorWidth = regionalIndicatorWidth
+        self.widenedEastAsianAmbiguousBlocks = widenedEastAsianAmbiguousBlocks
     }
 }

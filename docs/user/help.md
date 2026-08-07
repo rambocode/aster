@@ -129,6 +129,13 @@ aster learn 'npm run deploy'
 
 Fig 命令清单不会后台更新。需要刷新时，在同一设置区域点击“立即更新”；本地 help 规格不会被覆盖。“清除”只删除学习与固定命令，不删除内置或 help 规格。
 
+### Unicode、双向文本与终端图片
+
+- Aster 支持组合字符、CJK 双宽字符、emoji ZWJ/肤色/旗帜序列、text/emoji variation selector，以及 24-bit truecolor、256 色和完整 SGR 样式。圈字母数字默认按两列显示；可在“设置 → 高级 → 加宽 East-Asian-Ambiguous Block”选择其它 block。该宽度策略只影响新建标签和之后写入的字符。
+- “设置 → 外观 → 文本”可选择关闭、标准或 discretionary 连字，并设置粗体、斜体与 blink 的渲染策略。blink 默认稳定显示；选择动画后才会闪烁。
+- 双向文本默认开启。希伯来文、阿拉伯文和混合方向行按阅读顺序显示，但复制、查找和粘贴仍使用程序写入的逻辑顺序；左右键与鼠标命中跟随视觉位置。遇到自行排版 RTL 的全屏 TUI，可在设置中关闭。程序进入 ECMA-48 mode 8 时 Aster 会自动暂停隐式重排。
+- 终端程序可以显示 iTerm2、Kitty 和 Sixel 图片。Aster 会限制输入、分片、解压、像素尺寸与缓存；损坏、取消或超限图片会被丢弃，不影响之后的正常终端输出。
+
 ### 任务进度、徽章与通知
 
 终端程序可通过 `OSC 9;4` 报告百分比、不定进度、错误和完成状态；支持 Shell Integration 时，Aster 也会为“设置 → 高级 → 自动进度命令”列表中的常见慢命令自动显示运行状态。列表按空白分词前缀匹配，例如 `git push` 会匹配 `git push origin main`，但不会匹配 `git pushd`；清空列表即可关闭自动匹配。

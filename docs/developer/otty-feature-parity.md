@@ -74,10 +74,10 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 - 部分：[Input](https://docs.otty.sh/terminal-features/input) — SwiftTerm 已承载 IME、Kitty Keyboard Protocol、modifyOtherKeys 与应用键盘模式；Aster 新增普通 Shell 下的原生 macOS 行/词移动、行/词删除与撤销 readline 映射，并在全屏 TUI 或增强键盘协议启用时保留组件原编码。Option as Meta 新安装默认关闭。自动安全输入在终端 I/O 前后读取 PTY ECHO/ICANON，手动开关位于“编辑 → 安全键盘输入”且应用失活时暂停。Shift+Arrow 选择和可配置选择清理已经接入；Redo、Composer 与 Prompt Queue 仍按各自批次推进。
 - 部分：[Copy and Paste](https://docs.otty.sh/terminal-features/copy-and-paste) — 已实现快捷键/菜单/右键复制粘贴、选中即复制、逐行去尾空白、复制后清选区、四类危险粘贴识别、备用屏与可信 bracketed 跳过、Paste As（选区/文件 Base64/Shell 转义/强制 bracketed）及 OSC 52 独立读写权限；“粘贴并在 Composer 中继续”已保留安全接缝，待 Composer 批次接通。
 - 完成：[Autocomplete / Inline Suggest](https://docs.otty.sh/terminal-features/autocomplete) — 输入停顿触发、inline ghost、四种接受方案及 Escape/Option-Escape/F5/自动候选面板均已接入；面板支持上下选择、Return/Tab/点击接受和 8 行上限。候选覆盖命令、子命令、选项、参数、文件、目录、Shell alias、固定命令、历史、README 与纠错。Bundle 固定 Fig revision 的 715 个直接命令名称；没有内置结构的命令首次输入参数时，在禁网且禁止文件写入的沙箱中按 `--help`/`-h`/`help` 生成独立本地规格。学习按目录、会话、频率、时间与固定次数排序，过滤 secret、glob 忽略、127 和错误长选项；`aster learn` 使用 0600 随机 token 鉴权。关闭本机学习会同时停止历史、README、help 探测与纠错，内置规格和文件补全仍可用。Fig 更新只能由设置页手动触发，且不覆盖本地规格。
-- 部分：[Unicode and Text Styles](https://docs.otty.sh/terminal-features/unicode-and-text-styles)
-- 待审计：[BiDi / RTL Text](https://docs.otty.sh/terminal-features/bidi-rtl)
+- 部分：[Unicode and Text Styles](https://docs.otty.sh/terminal-features/unicode-and-text-styles) — 完整 Unicode、emoji/variation selector、宽字符、24-bit/256 色及五类下划线沿用 SwiftTerm；本轮增加可配置 Ambiguous block、三档连字、粗斜体策略、稳定/动画 blink、SGR 6、Invisible，并修正连字与 UTF-16/网格映射。内置 Nerd Font fallback 尚未随包交付，因此本页仍为部分。
+- 完成：[BiDi / RTL Text](https://docs.otty.sh/terminal-features/bidi-rtl) — 逻辑缓冲不变，逐显示行使用 Unicode BiDi run 排列；纯 LTR 保持原位，caret、鼠标命中和普通左右键跟随视觉顺序，复制/搜索保留逻辑顺序。设置默认开启，ECMA-48 mode 8、关闭设置与 reset 均有测试。
 - 部分：[Box Drawing](https://docs.otty.sh/terminal-features/box-drawing)
-- 待审计：[Images](https://docs.otty.sh/terminal-features/images)
+- 完成：[Images](https://docs.otty.sh/terminal-features/images) — iTerm2 OSC 1337 支持 PNG/JPEG/GIF；Kitty 支持 direct/file/temp、分片、zlib、RGB/RGBA/PNG、placement/query/delete/placeholder；Sixel 支持 raster、RGB/HLS、RLE、透明背景与 VT340 palette。APC、分片、解压、尺寸、repeat、缓存和 RGBA 分配均有硬上限与失败清理。
 - 完成：[Progress State](https://docs.otty.sh/terminal-features/progress-state) — 完整解析 OSC 9;4（含 watch/quiet 完成扩展），保留 SwiftTerm 顶部进度条；支持可配置空白前缀自动进度、`aster watch`、CLI 直接徽章、完成闪现/未读/错误/等待输入标签状态，以及可选 Dock 动画、默认错误标红和点击跳转。等待输入要求提示停留 1.5 秒且输入立即清除。
 - 完成：[Privilege and Notifications](https://docs.otty.sh/terminal-features/notifications) — OSC 9/777/99 均映射系统通知；OSC 99 支持 urgency、base64、8 KiB 分片重组、替换 ID 和 capability query。成功/错误/watch、Shell Controlled、前台策略、Dock 弹跳、通知分类声音、BEL 与错误 beep 均独立可配；系统权限状态可刷新并直达设置。标题修改默认开、标题报告默认关，OSC 52 和 Secure Input 继续走各自安全边界。
 - 完成：[Vi Mode](https://docs.otty.sh/terminal-features/vi-mode) — `Control+Shift+Space` 进入，支持计数、字符/词/行/屏幕/缓冲区/半页与整页移动，字符/整行/矩形选择、锚点交换、复制退出、`/ ? n N` 查找和 `f` 进入 Hint；`Escape`/`q` 退出，`Command+/` 切换按键提示。模式只修改本地 Buffer 选区和视口，不向 PTY 写入按键。
@@ -106,6 +106,8 @@ Selection 与 Scroll 需要访问 SwiftTerm 1.15 未公开的选区锚点、矩�
 
 Shell Integration 由 `ShellIntegrationLaunchPlan`、`ShellIntegrationInstaller` 与 `ShellCommandTimeline` 分层：启动计划只生成环境，安装器只维护带品牌守卫的 rc 区块，时间线只接受最长 32 字节且严格匹配 FTCS 的 payload。命令文本不会通过 OSC 133 持久化；OSC 7 路径按 UTF-8 字节 URL 转义，BEL/ESC 目录名不能注入控制序列；位置采用 `totalLinesTrimmed + bufferRow` 的单调坐标，scrollback 到达容量后仍能判断锚点是否已经裁剪。终端身份由 `TerminalIdentityPolicy` 与 `TerminalLaunchEnvironmentBuilder` 解析，`infocmp` 只以固定可执行文件和参数数组调用，非法配置不会进入 Shell。
 
+Unicode、BiDi 与图像渲染的领域边界见 `terminal-text-and-images.md`。核心规则是逻辑文本与视觉布局分离：可配置宽度只影响新写入字符；UTF-16 shaping range 经 cell offset 映射回固定网格；BiDi 只生成视觉列映射；图片协议在位图分配和解压前完成所有上限检查。
+
 Autocomplete 由 `PromptInputTracker`、`AutocompleteEngine`、`AutocompleteLearningDatabase`、`AutocompleteService` 与 `TerminalAutocompleteController` 分层。OSC 133 只确定 prompt/command 生命周期，命令正文只从用户输入字节重建；Up/Down 等无法重建的 Shell 历史操作会停用当前 prompt 候选。学习、Fig 更新、本地 help 规格使用独立有界文件，手动更新不会覆盖本地学习。Shell alias 通过 OSC 6973 只发送有界名称，不发送展开正文。
 
 文件和链接统一经过 `TargetResolver`、`TargetFileInspector` 与 `TargetSecurityPolicy`；点击单元格的 OSC 8 payload 是显式来源真值，`TerminalTargetOpenCoordinator` 取代组件默认直开路径。普通文字可选择检测全部 scheme 或标准 scheme 加自定义列表；OSC 8 始终识别，但所有非标准协议、可执行文件和 `.app` 仍需确认。可执行目标不保存路径授权，配置导入也会剥离本机 scheme 例外。
@@ -114,4 +116,4 @@ Autocomplete 由 `PromptInputTracker`、`AutocompleteEngine`、`AutocompleteLear
 
 ## 测试与验收
 
-新增测试位于 `WorkspaceNavigationPolicyTests.swift`、`WorkspaceBehaviorTests.swift`、`DetectedTargetTests.swift`、`TerminalClipboardTests.swift`、`TerminalClipboardCoordinatorTests.swift`、`TerminalSelectionTests.swift`、`TerminalScrollTests.swift`、`ShellIntegrationTests.swift`、`ShellIntegrationInstallerTests.swift`、`TerminalIdentificationTests.swift`、`TerminalLaunchEnvironmentTests.swift`、`TerminalShellIntegrationTests.swift`、`AsterConfigurationTests.swift` 与 `AppKitMigrationTests.swift`。Shell 资源会启动真实 zsh 与 macOS Bash 3.2 验证 A/B/C/D、用户 `ZDOTDIR`、rc 回滚和控制字节路径；当前机器未安装 fish，因此 fish 只做静态资源检查，安装 fish 的环境会额外执行语法检查。每完成一页，必须在本矩阵记录代码入口、失败路径和测试名称；界面视觉验收由用户执行。
+新增测试位于 `WorkspaceNavigationPolicyTests.swift`、`WorkspaceBehaviorTests.swift`、`DetectedTargetTests.swift`、`TerminalClipboardTests.swift`、`TerminalClipboardCoordinatorTests.swift`、`TerminalSelectionTests.swift`、`TerminalScrollTests.swift`、`TerminalUnicodeRenderingTests.swift`、`TerminalBidirectionalTests.swift`、`TerminalGraphicsTests.swift`、`ShellIntegrationTests.swift`、`ShellIntegrationInstallerTests.swift`、`TerminalIdentificationTests.swift`、`TerminalLaunchEnvironmentTests.swift`、`TerminalShellIntegrationTests.swift`、`AsterConfigurationTests.swift` 与 `AppKitMigrationTests.swift`。Shell 资源会启动真实 zsh 与 macOS Bash 3.2 验证 A/B/C/D、用户 `ZDOTDIR`、rc 回滚和控制字节路径；当前机器未安装 fish，因此 fish 只做静态资源检查，安装 fish 的环境会额外执行语法检查。每完成一页，必须在本矩阵记录代码入口、失败路径和测试名称；界面视觉验收由用户执行。
