@@ -585,6 +585,38 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     split(direction: .right, kind: .preview, resourcePath: url.path)
   }
 
+  /// 在指定方向拆出编辑器 Pane；Files「在 Aster 中打开」四向分屏入口。
+  func openFile(_ url: URL, splitDirection: SplitDirection) {
+    split(direction: splitDirection, kind: .editor, resourcePath: url.path)
+  }
+
+  /// 用编辑器替换当前聚焦 Pane（保留 Pane UUID 与树位置）。脏编辑器先走关闭确认。
+  @discardableResult
+  func openFileReplacingActivePane(_ url: URL) -> Bool {
+    guard runtimes[activePaneID]?.confirmCloseIfNeeded() != false else { return false }
+    let directory = url.deletingLastPathComponent().path
+    let replacement = PaneDescriptor(
+      id: activePaneID,
+      kind: .editor,
+      workingDirectory: directory,
+      resourcePath: url.path
+    )
+    runtimes.removeValue(forKey: activePaneID)?.stop()
+    layout = layout.updatingPane(paneID: activePaneID) { _ in replacement }
+    addRuntime(for: replacement)
+    var state = paneTitleStates[activePaneID] ?? TerminalTitleState(
+      tabOverride: titleState.tabOverride,
+      windowOverride: titleState.windowOverride,
+      fallback: url.lastPathComponent
+    )
+    state.updateFallback(url.lastPathComponent)
+    paneTitleStates[activePaneID] = state
+    applyActiveTitleState(state)
+    zoomedPaneID = nil
+    markUpdated()
+    return true
+  }
+
   func openFileBrowser() {
     split(direction: .left, kind: .fileBrowser)
   }

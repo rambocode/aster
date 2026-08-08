@@ -8,7 +8,7 @@ final class ThemeRuntime: @unchecked Sendable {
 
   enum Role {
     case window, container, panel, surface, foreground, secondary, tertiary, border, accent
-    case selection, warning, settingsCard
+    case selection, warning
   }
 
   private let lock = NSLock()
@@ -51,15 +51,67 @@ final class ThemeRuntime: @unchecked Sendable {
     case .accent: value = palette.accent
     case .selection: value = palette.selection
     case .warning: value = palette.ansiColors[1]
-    case .settingsCard:
-      // 设置页分组卡片底色：多数主题（如 Ayu）的 surface 与窗口背景几乎相同，卡片
-      // 直接叠在窗口色上会「看不见」。以窗口背景为底向界面主文字色轻混 4%，浅色
-      // 主题得到浅灰卡片、深色主题卡片略微提亮，任何主题下都与白色画布拉开对比。
-      let base = NSColor(palette.interfaceWindowBackground ?? palette.windowBackground)
-      let ink = NSColor(palette.interfaceForeground ?? palette.foreground)
-      return base.blended(withFraction: 0.04, of: ink) ?? base
     }
     return NSColor(value)
+  }
+}
+
+/// 设置窗口的固定色板。
+///
+/// 这是 CLAUDE.md「主题色只经由 ThemeRuntime 进入视图」规则的一处明确例外：设置页
+/// **不跟随终端主题**。主题描述的是终端与工作区的样子，把它铺到设置窗口会让调色本身
+/// 变得不可用——把 window 改成红色，整个设置窗口连同正在编辑的色板都会变红，用户
+/// 无法判断某个颜色是主题效果还是设置页自己的底色。这里的颜色只随系统明暗外观变化。
+enum SettingsTheme {
+  /// 内容画布。卡片要压在它上面，因此它比卡片更亮（深色模式下更暗）。
+  static let canvas = dynamic(light: 0xFFFFFF, dark: 0x1C1C1E)
+  /// 分组卡片 / 主题网格 / 主题详情的整块底色。
+  static let card = dynamic(light: 0xFAFAFA, dark: 0x262628)
+  static let sidebar = dynamic(light: 0xF5F5F7, dark: 0x202022)
+  static let ink = dynamic(light: 0x1D1D1F, dark: 0xF2F2F7)
+  static let secondaryInk = dynamic(light: 0x6E6E73, dark: 0xA1A1A6)
+  static let tertiaryInk = dynamic(light: 0x8E8E93, dark: 0x8A8A8F)
+  static let hairline = dynamic(light: 0xD8D8DC, dark: 0x3A3A3C)
+  /// 选中态跟随系统强调色：设置页属于系统外观的一部分，不该用终端主题的 accent。
+  static var accent: NSColor { .controlAccentColor }
+
+  private static func dynamic(light: UInt32, dark: UInt32) -> NSColor {
+    NSColor(name: nil) { appearance in
+      appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        ? NSColor(rgb: dark) : NSColor(rgb: light)
+    }
+  }
+}
+
+extension HexColor {
+  /// `NSColor` → 领域层色值。取色器与设置页共用同一套转换，避免两处各自取整后漂移。
+  ///
+  /// 必须四舍五入而不是截断：颜色在 hex → NSColor → HSB → NSColor → hex 的往返里会
+  /// 落下浮点误差，`UInt8(0.23137 * 255)` 截断后是 58 而不是 59，用户输入的
+  /// `#3b82f6` 会被存成 `#3a82f6`——每往返一次就再暗一档。
+  init(nsColor: NSColor) {
+    let value = nsColor.usingColorSpace(.sRGB) ?? nsColor
+    func channel(_ raw: CGFloat) -> UInt8 {
+      UInt8((min(max(raw, 0), 1) * 255).rounded())
+    }
+    self.init(
+      red: channel(value.redComponent),
+      green: channel(value.greenComponent),
+      blue: channel(value.blueComponent),
+      alpha: channel(value.alphaComponent)
+    )
+  }
+}
+
+extension NSColor {
+  /// 从 0xRRGGBB 构造不透明色，供固定色板使用。
+  fileprivate convenience init(rgb: UInt32) {
+    self.init(
+      srgbRed: CGFloat((rgb >> 16) & 0xFF) / 255,
+      green: CGFloat((rgb >> 8) & 0xFF) / 255,
+      blue: CGFloat(rgb & 0xFF) / 255,
+      alpha: 1
+    )
   }
 }
 
@@ -84,11 +136,19 @@ enum AsterTheme {
   static let paper = dynamic(.window)
   static let sidebar = dynamic(.panel)
   static let panel = dynamic(.surface)
-  static let settingsCard = dynamic(.settingsCard)
   static let ink = dynamic(.foreground)
   static let secondaryInk = dynamic(.secondary)
   static let tertiaryInk = dynamic(.tertiary)
   static let hairline = dynamic(.border)
+  /// 结构分隔线（Pane 之间、工作区与详情面板之间、侧栏边界）专用的更淡描边。
+  ///
+  /// 与 `hairline` 分开：`hairline` 还要给卡片、输入框、色块描边用，那些地方需要
+  /// 看得清的边界；而贯穿整个窗口高度的分隔线用同样的深度会喧宾夺主，视觉上把
+  /// 窗口切成几块硬边。这里在主题 border 色基础上再降到 40% 不透明度。
+  static let divider = NSColor(name: nil) { appearance in
+    ThemeRuntime.shared.color(for: .border, appearance: appearance)
+      .withAlphaComponent(0.4)
+  }
   static let accent = dynamic(.accent)
   static let selection = dynamic(.selection)
   static let warning = dynamic(.warning)
@@ -257,6 +317,18 @@ final class ActionButton: NSButton {
   required init?(coder: NSCoder) { nil }
 
   @objc private func invoke() { handler() }
+}
+
+/// 详情面板切换图标在「标题栏（面板收起）」与「面板 header（面板展开）」两处的统一
+/// 几何。两处必须在窗口坐标中完全重合，点击展开/收起时图标才不会跳位——因此尺寸、
+/// 右边距和距顶中心线都从这里取值，不允许任一侧各写各的常量。
+enum InspectorToggleMetrics {
+  static let buttonSize: CGFloat = 24
+  static let trailingInset: CGFloat = 8
+  /// 距各自容器顶边的中心线。工作区标题栏高 28pt，因此是 14pt；详情面板 header
+  /// 用 `top = 1` 的内边距让 26pt 的 chip 与它落在同一条中心线上。
+  static let centerYFromTop: CGFloat = 14
+  static let symbol = "sidebar.right"
 }
 
 /// 无边框图标按钮 + 悬停底色。`isBordered = false` 的图标默认没有任何指针反馈，看上去

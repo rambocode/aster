@@ -17,9 +17,12 @@ extension CaretView {
             return
         }
         context.saveGState()
+        defer { context.restoreGState() }
         context.clip(to: [bounds])
-        context.setFillColor(TTColor.clear.cgColor)
-        context.fill ([bounds])
+        // `CGContext.fill` 使用 source-over；填透明色不会擦掉 CALayer backing store
+        // 里上一帧的像素。光标样式或行高变化后若不先真正 clear，旧的整格竖线会和
+        // 新光标叠在一起，看起来像光标仍然顶到上一行，输入时也会出现残影重叠。
+        context.clear(bounds)
         
         if !hasFocus {
             context.setStrokeColor(bgColor)
@@ -31,9 +34,23 @@ extension CaretView {
         let region: CGRect
         switch style {
         case .blinkBar, .steadyBar:
-            region = CGRect (x: 0, y: 0, width: 2, height: bounds.height)
+            // 行距只扩大终端网格，不应把竖线光标拉伸到相邻行。CTFont 的
+            // ascent + descent + leading 常常显著大于 point size（Menlo 13pt 约为
+            // 15pt），用整套 metrics 仍会让竖线几乎铺满 cell。竖线按用户设置的字号
+            // 绘制并贴齐 cell 底部，额外 line-height 留白只出现在文字上方。
+            let font = terminal.fontSet.normal
+            region = CGRect(
+                x: 0,
+                y: 0,
+                width: 2,
+                height: min(bounds.height, max(1, ceil(CTFontGetSize(font)))))
         case .blinkBlock, .steadyBlock:
             region = bounds
+        case .blinkHollowBlock, .steadyHollowBlock:
+            context.setStrokeColor(bgColor)
+            context.setLineWidth(2)
+            context.stroke(bounds.insetBy(dx: 1, dy: 1))
+            return
         case .blinkUnderline, .steadyUnderline:
             region = CGRect (x: 0, y: 0, width: bounds.width, height: 2)
         }
@@ -80,6 +97,5 @@ extension CaretView {
                 CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
             }
         }
-        context.restoreGState()
     }
 }

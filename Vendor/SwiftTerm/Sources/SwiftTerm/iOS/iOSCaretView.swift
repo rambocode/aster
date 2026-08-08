@@ -92,9 +92,9 @@ class CaretView: UIView {
     
     func updateCursorStyle () {
         switch style {
-        case .blinkUnderline, .blinkBlock, .blinkBar:
+        case .blinkUnderline, .blinkBlock, .blinkHollowBlock, .blinkBar:
             updateAnimation(to: true)
-        case .steadyBar, .steadyBlock, .steadyUnderline:
+        case .steadyBar, .steadyBlock, .steadyHollowBlock, .steadyUnderline:
             updateAnimation(to: false)
         }
         updateView()

@@ -140,6 +140,54 @@ func unicodeTextConfigurationUsesAccessibleDefaults() {
   #expect(appearance.resolvedItalicRendering == .automatic)
 }
 
+@Test("外观配置保留 Otty 字体、文本与光标设置并钳制不透明度")
+func appearanceConfigurationPreservesOttyAppearanceControls() throws {
+  var object = try #require(
+    JSONSerialization.jsonObject(with: JSONEncoder().encode(AppearanceConfiguration()))
+      as? [String: Any]
+  )
+  object["fontFamilyBold"] = "JetBrains Mono Bold"
+  object["fontFamilyItalic"] = "JetBrains Mono Italic"
+  object["fontFamilyBoldItalic"] = "JetBrains Mono Bold Italic"
+  object["fontFamilyFallback"] = ["SF Mono", "Menlo"]
+  object["underlineRendering"] = true
+  object["fontSmoothing"] = false
+  object["cursorColorOverride"] = ["red": 16, "green": 32, "blue": 48, "alpha": 255]
+  object["cursorTextColorOverride"] = ["red": 240, "green": 224, "blue": 208, "alpha": 255]
+  object["cursorOpacity"] = 2.5
+  object["cursorBlinkMode"] = "always-off"
+  object["cursorAnimation"] = "smooth"
+
+  var configuration = AsterConfiguration.default
+  configuration.appearance = try JSONDecoder().decode(
+    AppearanceConfiguration.self,
+    from: JSONSerialization.data(withJSONObject: object)
+  )
+  #expect(configuration.appearance.resolvedFontFamilyFallback == ["SF Mono", "Menlo"])
+  let normalized = configuration.normalized()
+  #expect(normalized.appearance.resolvedFontFamilyFallback == ["SF Mono", "Menlo"])
+  let encoded = try #require(
+    JSONSerialization.jsonObject(with: JSONEncoder().encode(normalized.appearance))
+      as? [String: Any]
+  )
+
+  #expect(encoded["fontFamilyBold"] as? String == "JetBrains Mono Bold")
+  #expect(encoded["fontFamilyItalic"] as? String == "JetBrains Mono Italic")
+  #expect(encoded["fontFamilyBoldItalic"] as? String == "JetBrains Mono Bold Italic")
+  #expect((encoded["fontFamilyFallback"] as? [Any])?.compactMap { $0 as? String } == ["SF Mono", "Menlo"])
+  #expect(encoded["underlineRendering"] as? Bool == true)
+  #expect(encoded["fontSmoothing"] as? Bool == false)
+  let cursor = encoded["cursorColorOverride"] as? [String: Int]
+  let cursorText = encoded["cursorTextColorOverride"] as? [String: Int]
+  #expect(cursor?["red"] == 16)
+  #expect(cursor?["green"] == 32)
+  #expect(cursorText?["red"] == 240)
+  #expect(cursorText?["blue"] == 208)
+  #expect(encoded["cursorOpacity"] as? Double == 1)
+  #expect(encoded["cursorBlinkMode"] as? String == "always-off")
+  #expect(encoded["cursorAnimation"] as? String == "smooth")
+}
+
 @Test("旧外观配置缺少 Unicode 与文本样式字段时采用新默认值")
 func legacyAppearanceConfigurationDefaultsUnicodeTextRendering() throws {
   let data = try JSONEncoder().encode(AppearanceConfiguration())

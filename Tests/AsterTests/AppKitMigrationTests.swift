@@ -167,6 +167,18 @@ func settingsUsesOnlyNativeAppKitControls() throws {
   #expect(controller.view.descendants.contains { $0 is NSScrollView } == true)
 }
 
+@Test("设置页保持原始 700×460pt 默认尺寸")
+@MainActor
+func settingsKeepsOriginalDefaultSize() {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = SettingsViewController(preferences: preferences)
+
+  controller.loadViewIfNeeded()
+
+  #expect(controller.view.frame.size == NSSize(width: 700, height: 460))
+}
+
 @Test("垂直标签栏使用 Otty 的整行选中结构")
 @MainActor
 func verticalSidebarUsesFullWidthRows() throws {
@@ -187,14 +199,44 @@ func verticalSidebarUsesFullWidthRows() throws {
   #expect((tabButtons.first?.frame.width ?? 0) >= 210)
   #expect(tabButtons.first?.enclosingScrollView == nil)
   #expect(controller.view.descendants.contains { $0 is NSProgressIndicator } == false)
-  // 悬停动作区：「+ 新建 / 折叠」按钮放在侧栏顶部右侧，默认隐藏，鼠标进入侧栏
-  // 才淡入（2026-08 设计变更，替代旧的「标签栏不含按钮」断言）。
+  // 悬停动作区：「+ 新建 / 折叠」按钮放在侧栏顶部右侧，默认隐藏，指针进入对应
+  // 感应区才淡入（2026-08 设计变更，替代旧的「标签栏不含按钮」断言）。两个按钮
+  // 各自显隐，因此隐藏状态记在按钮自己身上，而不是共享的容器上。
   let hoverButtons = controller.view.descendants.compactMap { $0 as? NSButton }.filter {
     $0.toolTip == "新建标签页" || ($0.toolTip ?? "").hasPrefix("折叠标签栏")
   }
   #expect(hoverButtons.count == 2)
-  #expect(hoverButtons.allSatisfy { $0.superview?.isHidden == true && $0.superview?.alphaValue == 0 })
+  #expect(hoverButtons.allSatisfy { $0.isHidden && $0.alphaValue == 0 })
+  // 容器保持可见但不参与命中测试，隐藏按钮的位置仍然可以拖动窗口。
+  let hoverContainer = try #require(hoverButtons.first?.superview)
+  #expect(hoverContainer.isHidden == false)
+  let hoverProbe = NSPoint(x: hoverContainer.frame.midX, y: hoverContainer.frame.midY)
+  #expect(hoverContainer.hitTest(hoverProbe) == nil)
   #expect(controller.view.descendants.compactMap { ($0 as? NSTextField)?.stringValue }.contains { $0.contains("LOCAL") } == false)
+}
+
+@Test("侧栏标签行使用两侧留边的圆角底卡")
+@MainActor
+func verticalSidebarRowsUseInsetRoundedCard() throws {
+  let defaults = isolatedDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  model.ensureInitialTab()
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let row = try #require(
+    controller.view.descendants.first {
+      String(describing: type(of: $0)).contains("TabRowButton")
+    })
+  // 底卡是行内唯一带圆角 layer 的子视图；行本体保持透明并维持整行命中宽度。
+  let card = try #require(row.subviews.first { ($0.layer?.cornerRadius ?? 0) > 0 })
+  #expect(card.frame.minX == 6)
+  #expect(card.frame.maxX == row.bounds.width - 6)
+  #expect(card.frame.height < row.bounds.height)
+  #expect((card.layer?.cornerRadius ?? 0) >= 8)
+  #expect(row.layer?.backgroundColor?.alpha == 0)
 }
 
 @Test("左侧标签悬停显示关闭按钮且可直接关闭后台标签")
@@ -278,10 +320,12 @@ func collapsedTabBarOffersHoverRecovery() throws {
   let buttons = controller.view.descendants.compactMap { $0 as? NSButton }
   let addButton = try #require(buttons.first { $0.toolTip == "新建标签页" })
   let expandButton = try #require(buttons.first { $0.toolTip == "展开标签栏" })
-  // 默认隐藏（悬停才淡入）；按钮行必须让开红绿灯遮挡区（实测约 103pt）。
+  // 默认隐藏（悬停才淡入）；折叠态两个按钮共用同一条顶部悬停带，同时显隐。
+  #expect(addButton.isHidden && addButton.alphaValue == 0)
+  #expect(expandButton.isHidden && expandButton.alphaValue == 0)
+  // 按钮行必须让开红绿灯遮挡区（实测约 103pt）。
   let row = try #require(addButton.superview)
-  #expect(row.isHidden && row.alphaValue == 0)
-  #expect(row.superview === expandButton.superview?.superview)
+  #expect(row === expandButton.superview)
   #expect(row.frame.minX >= 104)
   // 悬停带点击穿透：不拦截下方终端的点击与拖选。
   let strip = controller.view.descendants.first {
@@ -291,13 +335,15 @@ func collapsedTabBarOffersHoverRecovery() throws {
   #expect(strip?.hitTest(.zero) == nil)
 }
 
-@Test("工作区标题栏紧凑显示目录且不包含额外工具按钮")
+@Test("工作区标题栏与终端同色并在悬停时显示路径胶囊")
 @MainActor
 func workspaceTitlebarMatchesOttyChrome() throws {
   let defaults = isolatedDefaults()
-  let model = AppModel(defaults: defaults)
+  let model = try makeNonTerminalTestModel(
+    defaults: defaults,
+    directories: ["/Users/mike/source/project/AsterTerminal"]
+  )
   let preferences = AppPreferences(defaults: defaults)
-  model.ensureInitialTab()
   let controller = WorkspaceViewController(model: model, preferences: preferences)
   let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
 
@@ -306,20 +352,121 @@ func workspaceTitlebarMatchesOttyChrome() throws {
   let titlebar = controller.view.descendants.first {
     $0.identifier?.rawValue == "workspace-titlebar"
   }
-  let titlebarMaterial = titlebar as? NSVisualEffectView
-  // 标题区只有详情面板的悬停切换按钮（2026-08 设计变更）：默认完全透明且不参与
-  // 视觉布局，指针进入右端感应区才淡入；侧栏顶部的悬停动作按钮不属于标题区。
-  let titlebarButtons = (titlebar?.descendants ?? []).filter {
-    String(describing: type(of: $0)).contains("ActionButton")
-  }
-  let labels = controller.view.descendants.compactMap { ($0 as? NSTextField)?.stringValue }
+  let titleButton = try #require(
+    titlebar?.descendants.compactMap { $0 as? NSButton }.first {
+      $0.identifier?.rawValue == "workspace-title-button"
+    }
+  )
   #expect(titlebar != nil)
   #expect(abs((titlebar?.frame.height ?? 0) - 28) < 0.5)
-  #expect(titlebarMaterial?.blendingMode == .withinWindow)
-  #expect(titlebarButtons.count == 1)
-  #expect(titlebarButtons.first?.identifier?.rawValue == "workspace-inspector-toggle")
-  #expect(titlebarButtons.first?.superview?.alphaValue == 0)
-  #expect(labels.contains("~"))
+  #expect(titlebar is NSVisualEffectView == false)
+  #expect(
+    titlebar?.layer?.backgroundColor
+      == NSColor(preferences.activeTheme.palette.renderedTerminalBackground).cgColor
+  )
+  #expect(titleButton.layer?.backgroundColor == NSColor.clear.cgColor)
+
+  let hover = try #require(
+    NSEvent.mouseEvent(
+      // `NSEvent.mouseEvent` 只能构造鼠标按钮/移动事件；直接调用 mouseEntered 时使用
+      // 同坐标的 mouseMoved 即可，避免 AppKit 因伪造 tracking 事件抛异常。
+      with: .mouseMoved,
+      location: titleButton.convert(
+        NSPoint(x: titleButton.bounds.midX, y: titleButton.bounds.midY), to: nil),
+      modifierFlags: [],
+      timestamp: 0,
+      windowNumber: window.windowNumber,
+      context: nil,
+      eventNumber: 0,
+      clickCount: 0,
+      pressure: 0
+    )
+  )
+  titleButton.mouseEntered(with: hover)
+  #expect(titleButton.title.contains("AsterTerminal"))
+  #expect(titleButton.title.hasSuffix("⋯"))
+  #expect(titleButton.layer?.backgroundColor != NSColor.clear.cgColor)
+}
+
+@Test("点击标题路径胶囊弹出可操作的工作区菜单")
+@MainActor
+func workspaceTitlePopoverExposesWorkingActions() throws {
+  let defaults = isolatedDefaults()
+  let directory = "/Users/mike/source/project/AsterTerminal"
+  let model = try makeNonTerminalTestModel(defaults: defaults, directories: [directory])
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  defer { window.orderOut(nil) }
+  window.makeKeyAndOrderFront(nil)
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let titleButton = try #require(
+    controller.view.descendants.compactMap { $0 as? NSButton }.first {
+      $0.identifier?.rawValue == "workspace-title-button"
+    }
+  )
+  titleButton.performClick(nil)
+  RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+  let popover = try #require(
+    NSApp.windows.compactMap(\.contentView).first {
+      $0.identifier?.rawValue == "workspace-title-popover"
+        || $0.descendants.contains {
+          $0.identifier?.rawValue == "workspace-title-popover"
+        }
+    }
+  )
+  let root = popover.identifier?.rawValue == "workspace-title-popover"
+    ? popover
+    : try #require(popover.descendants.first {
+      $0.identifier?.rawValue == "workspace-title-popover"
+    })
+  let labels = root.descendants.compactMap { ($0 as? NSTextField)?.stringValue }
+  let buttons = root.descendants.compactMap { $0 as? NSButton }
+  #expect(labels.contains("WORKING DIRECTORY"))
+  #expect(labels.contains((directory as NSString).abbreviatingWithTildeInPath + "/"))
+  for identifier in [
+    "workspace-title-copy-path", "workspace-title-reveal-finder", "workspace-title-open-in",
+    "workspace-title-git", "workspace-title-notifications", "workspace-title-split",
+    "workspace-title-find", "workspace-title-global-find", "workspace-title-jump",
+    "workspace-title-palette",
+  ] {
+    #expect(buttons.contains { $0.identifier?.rawValue == identifier }, "缺少动作：\(identifier)")
+  }
+
+  let mode = try #require(root.descendants.compactMap { $0 as? NSSegmentedControl }.first)
+  let field = try #require(root.descendants.compactMap { $0 as? NSTextField }.first {
+    $0.identifier?.rawValue == "workspace-title-name-field"
+  })
+  mode.selectedSegment = 1
+  _ = NSApp.sendAction(try #require(mode.action), to: mode.target, from: mode)
+  field.stringValue = "dev: "
+  _ = NSApp.sendAction(try #require(field.action), to: field.target, from: field)
+  #expect(model.selectedTab?.tabTitleOverride == .prefix("dev: "))
+
+  let reset = try #require(buttons.first {
+    $0.identifier?.rawValue == "workspace-title-reset-name"
+  })
+  reset.performClick(nil)
+  #expect(model.selectedTab?.tabTitleOverride == .automatic)
+
+  let find = try #require(buttons.first { $0.identifier?.rawValue == "workspace-title-find" })
+  find.performClick(nil)
+  #expect(model.isFindPresented)
+  let global = try #require(buttons.first {
+    $0.identifier?.rawValue == "workspace-title-global-find"
+  })
+  global.performClick(nil)
+  #expect(model.isGlobalFindPresented)
+  let jump = try #require(buttons.first { $0.identifier?.rawValue == "workspace-title-jump" })
+  jump.performClick(nil)
+  #expect(model.isOpenQuicklyPresented)
+  let palette = try #require(buttons.first {
+    $0.identifier?.rawValue == "workspace-title-palette"
+  })
+  palette.performClick(nil)
+  #expect(model.isPalettePresented)
 }
 
 @Test("TABS 标题使用截图一致的原生标签整理菜单按钮")
@@ -525,6 +672,190 @@ func settingsLayoutUsesTopAnchoredFullWidthRows() throws {
   #expect(firstCard.arrangedSubviews.allSatisfy { $0.frame.height > 1 })
 }
 
+@Test("外观设置的主题网格每行放四张等宽卡片")
+@MainActor
+func appearanceThemeGridUsesFourEqualColumns() throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = SettingsViewController(preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 700, height: 460))
+  controller.showSection(.appearance)
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let cards = controller.view.descendants.filter {
+    String(describing: type(of: $0)).contains("ThemeCardButton")
+  }
+  #expect(cards.count >= 8)
+  // 同一行的卡片共用一个父视图（等分行栈）；行内张数与宽度都要一致。
+  let rows = Dictionary(grouping: cards) { ObjectIdentifier($0.superview ?? $0) }
+  let fullRows = rows.values.filter { $0.count == 4 }
+  #expect(fullRows.count >= 2)
+  #expect(rows.values.allSatisfy { $0.count <= 4 })
+  for row in fullRows {
+    let widths = row.map(\.frame.width)
+    // fillEqually 在宽度不能整除时会把余数分给个别列，允许 1pt 的取整差。
+    #expect((widths.max() ?? 0) - (widths.min() ?? 0) <= 1.0)
+    // 700pt 窗口下内容区约 448pt，四等分后单卡仍需保持可读宽度。
+    #expect((widths.first ?? 0) >= 84)
+  }
+}
+
+@Test("设置页配色不跟随终端主题，卡片使用固定灰底")
+@MainActor
+func settingsChromeIgnoresTerminalTheme() throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = SettingsViewController(preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 700, height: 460))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  func cardColors() -> [NSColor] {
+    controller.view.descendants
+      .filter { abs(($0.layer?.cornerRadius ?? 0) - SettingsMetrics.cardCornerRadius) < 0.1 }
+      .compactMap { $0.layer?.backgroundColor }
+      .map { NSColor(cgColor: $0) ?? .clear }
+  }
+  let before = cardColors()
+  #expect(!before.isEmpty)
+
+  // 浅色外观下卡片就是 #FAFAFA。
+  let expected = SettingsTheme.card.usingColorSpace(.sRGB)
+  controller.view.appearance = NSAppearance(named: .aqua)
+  let sample = try #require(cardColors().first?.usingColorSpace(.sRGB))
+  #expect(abs(sample.redComponent - (expected?.redComponent ?? 0)) < 0.01)
+
+  // 把当前主题换成一套完全不同的配色，设置页的卡片底色不得跟着变。
+  preferences.selectTheme(
+    TerminalThemeCatalog.resolve(named: "Catppuccin Mocha", customThemes: [], mode: .dark))
+  window.contentView?.layoutSubtreeIfNeeded()
+  #expect(cardColors() == before)
+}
+
+@Test("色板改色写成覆盖层，内置主题不被复制成副本")
+@MainActor
+func themeSwatchColorPickWritesOverrideWithoutDuplicating() throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  // `activeTheme` 在 appearance == .system 时会读 `NSApp.effectiveAppearance`，
+  // 测试进程里必须先把 NSApplication 实例化，否则隐式解包直接崩。
+  _ = NSApplication.shared
+  let builtIn = preferences.activeTheme
+  #expect(builtIn.isBuiltIn)
+  let controller = SettingsViewController(preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 700, height: 460))
+  controller.showSection(.appearance)
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let swatch = try #require(
+    controller.view.descendants.first {
+      $0.identifier?.rawValue == "theme-slot-interface.window"
+    } as? NSControl)
+  swatch.mouseDown(with: makeClickEvent(in: window))
+
+  let picker = try #require(
+    controller.presentedViewControllers?.compactMap { $0 as? InlineColorPickerViewController }
+      .first)
+  let hexField = try #require(
+    picker.view.descendants.compactMap { $0 as? NSTextField }.first {
+      $0.identifier?.rawValue == "inline-color-picker-hex"
+    })
+  // 真实输入会先触发 textDidChange；取色器据此区分「用户敲的」与「程序回写的」。
+  hexField.stringValue = "#123456"
+  NotificationCenter.default.post(name: NSControl.textDidChangeNotification, object: hexField)
+  NotificationCenter.default.post(name: NSControl.textDidEndEditingNotification, object: hexField)
+
+  // 改色只写覆盖表：主题库里不该多出「副本」，内置主题也仍然是内置的。
+  #expect(preferences.themeLibrary.customThemes.isEmpty)
+  #expect(preferences.themeOverrides(for: builtIn.id)["interface.window"]?.displayString == "#123456")
+  #expect(preferences.activeTheme.palette.interfaceWindowBackground?.displayString == "#123456")
+  #expect(preferences.activeTheme.id == builtIn.id)
+  // 回归锁：`updateTheme` 广播会触发整页重建，销毁 popover 锚点后取色目标被清空、
+  // 后续改色全部丢失——表现就是「调完颜色关掉，值没设置上」。色板视图实例不变即
+  // 说明取色期间没有重建。
+  let swatchAfterPick = controller.view.descendants.first {
+    $0.identifier?.rawValue == "theme-slot-interface.window"
+  }
+  #expect(swatchAfterPick === swatch)
+
+  // 撤销覆盖后完整回到内置主题的原始配色。
+  preferences.clearThemeOverrides(themeID: builtIn.id)
+  #expect(
+    preferences.activeTheme.palette.interfaceWindowBackground
+      == builtIn.palette.interfaceWindowBackground)
+}
+
+@Test("主题详情渲染出可点可悬停的完整 token 色板")
+@MainActor
+func appearanceThemeDetailRendersFullColorSlotBoard() throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = SettingsViewController(preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 700, height: 460))
+  controller.showSection(.appearance)
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let expected = preferences.activeTheme.colorSlots
+  let swatches = controller.view.descendants.filter {
+    $0.identifier?.rawValue.hasPrefix("theme-slot-") == true
+  }
+  // 色板逐个渲染领域层给出的 token，不在界面里另立一套清单。
+  #expect(swatches.count == expected.count)
+  for slot in expected {
+    let swatch = try #require(
+      swatches.first { $0.identifier?.rawValue == "theme-slot-\(slot.id)" })
+    // hover 提示带 token 名与色值，用户能照着改 .ottytheme 文件。
+    #expect(swatch.toolTip == slot.tooltip)
+    #expect(swatch.toolTip?.contains(slot.id) == true)
+  }
+  // 分组名比普通行文案小两号，色块才是这块的主角。只在胶囊内部找，避免匹配到
+  // 「光标」「选区」这类同名的分组小标题。
+  let capsules = controller.view.descendants.filter {
+    String(describing: type(of: $0)).contains("ThemeColorGroupCapsule")
+  }
+  #expect(capsules.count == ThemeColorGroup.allCases.count - 1)  // terminal 组画在顶部，不出胶囊
+  let groupLabels = capsules.flatMap { $0.descendants.compactMap { $0 as? NSTextField } }
+  #expect(groupLabels.count == capsules.count)
+  #expect(groupLabels.allSatisfy { ($0.font?.pointSize ?? 0) == 10 })
+  // 派生态必须能从 tooltip 区分出来，否则看不出「改 window 会不会连带变」。
+  #expect(expected.contains { $0.isDerived })
+  #expect(
+    swatches.contains { $0.toolTip?.contains("跟随 Window 派生") == true })
+}
+
+@Test("设置页每个顶层区块在窄窗口与宽窗口下都保持左右边距")
+@MainActor
+func settingsTopLevelBlocksKeepInsetsAtEverySize() throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = SettingsViewController(preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 700, height: 460))
+
+  // 回归锁：以前只有 card / 分组标题有显式边距约束，其余顶层项（主题网格、主题详情、
+  // 字体块、布局选择行）靠 NSStackView 的 .width 对齐。窗口放大后它们会缩成固有宽度
+  // 并靠右，窄窗口下又会丢掉左边距——两种尺寸都要锁。
+  for width in [700.0, 1_400.0] as [CGFloat] {
+    window.setContentSize(NSSize(width: width, height: 900))
+    for section in SettingsViewController.Section.allCases {
+      controller.showSection(section)
+      window.contentView?.layoutSubtreeIfNeeded()
+      let scroll = try #require(controller.view.descendants.compactMap { $0 as? NSScrollView }.first)
+      let content = try #require(scroll.documentView?.subviews.first as? NSStackView)
+      let expectedWidth = content.frame.width - content.edgeInsets.left - content.edgeInsets.right
+      for item in content.arrangedSubviews {
+        // 约束作用在 alignment rect 上：NSTextField 的 frame 比它每边宽 2pt，
+        // 直接比 frame 会把正常的标题误判成越界。
+        let box = item.alignmentRect(forFrame: item.frame)
+        #expect(
+          abs(box.minX - content.edgeInsets.left) < 0.5,
+          "\(section.rawValue) @\(Int(width)) 顶层项左边距异常：\(box)")
+        #expect(
+          abs(box.width - expectedWidth) < 0.5,
+          "\(section.rawValue) @\(Int(width)) 顶层项宽度异常：\(box)")
+      }
+    }
+  }
+}
+
 @Test("设置页所有分类的卡片保持左右边距且占满内容宽度")
 @MainActor
 func settingsCardsKeepHorizontalInsetsAcrossSections() throws {
@@ -570,6 +901,7 @@ func settingsSectionsExposeInteractiveControls() throws {
     (.controls, 9, 0),
     (.editor, 6, 0),
     (.agents, 10, 0),
+    (.appearance, 6, 10),
     (.recipes, 0, 1),
   ]
   for (section, minSwitches, minPopups) in expectations {
@@ -619,6 +951,26 @@ func settingsWiredFieldsPersistAcrossRelaunch() throws {
   // 越界值在重新加载时经 normalized() 钳回合法范围。
   preferences.configuration.editor.tabSize = 99
   #expect(AppPreferences(defaults: defaults).configuration.editor.tabSize == 8)
+}
+
+@Test("外观设置覆盖主题光标颜色并应用不透明度")
+@MainActor
+func appearanceCursorOverridesThemeAndAppliesOpacity() throws {
+  _ = NSApplication.shared
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.appearance = .light
+  preferences.configuration.appearance.cursorColorOverride = HexColor("#102030")!
+  preferences.configuration.appearance.cursorTextColorOverride = HexColor("#F0E0D0")!
+  preferences.configuration.appearance.cursorOpacity = 0.5
+
+  let cursor = try #require(preferences.cursorColor.usingColorSpace(.sRGB))
+  let cursorText = try #require(preferences.cursorTextColor.usingColorSpace(.sRGB))
+
+  #expect(abs(cursor.redComponent - (16.0 / 255.0)) < 0.001)
+  #expect(abs(cursor.alphaComponent - 0.5) < 0.001)
+  #expect(abs(cursorText.redComponent - (240.0 / 255.0)) < 0.001)
+  #expect(abs(cursorText.alphaComponent - 1) < 0.001)
 }
 
 @Test("主题容器把 Otty 材质映射为原生视觉效果")
@@ -694,7 +1046,38 @@ func programmaticCursorStyleDoesNotOverrideConfiguration() async throws {
   #expect(terminal.options.cursorStyle == .blinkUnderline)
 }
 
+@Test("光标默认模式接受程序控制而始终模式固定用户形状")
 @MainActor
+func cursorBlinkPriorityMatchesOttyDefaultAndAlwaysModes() async throws {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 240))
+  let terminal = view.getTerminal()
+
+  view.configureCursor(initialStyle: .blinkBar, pinsProgramControl: false)
+  terminal.setCursorStyle(.steadyUnderline)
+  #expect(terminal.options.cursorStyle == .steadyUnderline)
+
+  view.configureCursor(initialStyle: .steadyHollowBlock, pinsProgramControl: true)
+  terminal.setCursorStyle(.blinkBlock)
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(terminal.options.cursorStyle == .steadyHollowBlock)
+}
+
+/// 合成一次落在窗口中心的左键按下，用于驱动自绘控件的 `mouseDown`。
+@MainActor
+private func makeClickEvent(in window: NSWindow) -> NSEvent {
+  NSEvent.mouseEvent(
+    with: .leftMouseDown,
+    location: NSPoint(x: window.frame.midX, y: window.frame.midY),
+    modifierFlags: [],
+    timestamp: 0,
+    windowNumber: window.windowNumber,
+    context: nil,
+    eventNumber: 0,
+    clickCount: 1,
+    pressure: 1
+  )!
+}
+
 private func makeTestWindow(content: NSViewController, size: NSSize) -> NSWindow {
   let window = NSWindow(
     contentRect: NSRect(origin: .zero, size: size),

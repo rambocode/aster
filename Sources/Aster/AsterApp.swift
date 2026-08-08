@@ -324,7 +324,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     window.title = "Aster 设置"
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
-    // 宽度下限保证外观页主题网格（3 列卡片）不被横向裁切；高度靠内容滚动。
+    // 保持原始窗口宽高；外观页主题网格使用三列，较长内容由纵向滚动承载。
     window.minSize = NSSize(width: 700, height: 420)
     window.contentViewController = content
     window.isReleasedWhenClosed = false
@@ -333,6 +333,14 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     let controller = NSWindowController(window: window)
     settingsWindowController = controller
     controller.showWindow(sender)
+  }
+
+  /// 标题工作区弹层等深链入口先复用唯一设置窗口，再切到目标分类；不会改变设置页
+  /// 原有的 700×460pt 默认尺寸，也不会为单一入口创建第二个设置窗口。
+  func showSettings(section: SettingsViewController.Section) {
+    showSettings(nil)
+    (settingsWindowController?.contentViewController as? SettingsViewController)?
+      .showSection(section)
   }
 
   private func applyAppearance() {

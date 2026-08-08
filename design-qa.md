@@ -74,7 +74,6 @@
 - 追记（2026-08-07）：垂直侧栏新增悬停动作区 —— 鼠标进入侧栏时 header 顶部右侧（与红绿灯同一水平线）淡入「+ 新建标签页 / 折叠标签栏」无边框按钮，离开淡出；折叠写入既有 `appearance.showTabBar` 配置。折叠态在内容区顶部叠加点击穿透悬停带（`ClickThroughStripView.hitTest = nil`），鼠标进入窗口顶部淡入「+ / 展开标签栏」，按钮行是悬停带的兄弟视图（否则点击穿透吞掉按钮点击），leading 让开红绿灯遮挡区（实测约 103pt）。「显示」菜单新增「显示/隐藏标签栏」共用同一开关。旧的「垂直标签栏不含按钮」「标题区无 ActionButton」断言按新设计更新：标题区仍保持纯净，悬停按钮属侧栏/折叠态覆盖层。新增「折叠标签栏后顶部提供悬停恢复入口」回归测试。`swift test --no-parallel` 75 项全部通过；实机视觉验收（侧栏态 hover 截图与参考图一致）由用户完成。
 
 final result: passed
-
 ## 终端进度、徽章与通知验收（2026-08-08）
 
 - 本批次按用户要求不执行界面测试、通知横幅实机触发或 Dock 动画截图；视觉与系统权限手感由用户检查。
@@ -91,3 +90,50 @@ final result: passed
 
 - 本批次继续不执行界面测试；用户可检查“编辑 → 文本编辑 / 安全键盘输入”的菜单层级与快捷键显示。
 - 代码测试覆盖 9 种可移植 readline 精确字节、普通屏/alternate screen 接管边界、输入/输出即时安全采样、canonical 隐藏输入策略，以及多 Pane、手动请求、应用失活和系统调用失败的保护状态机。
+
+---
+
+# Workspace Title Popover Design QA
+
+- source visual truth: `/var/folders/7x/yt4bl33s2yq8vgt2cswylzwr0000gn/T/codex-clipboard-8415b98c-0031-4144-9834-9134a36495f6.png`
+- implementation screenshot: `/Users/mike/source/project/AsterTerminal/.build/design-qa/workspace-title-popover-final.png`
+- combined comparison: `/Users/mike/source/project/AsterTerminal/.build/design-qa/workspace-title-popover-comparison-final.png`
+- viewport: 280 × 462 pt popover content, light appearance, Name segment selected
+- density normalization: source popover region cropped to 560 × 924 px at approximately 2×; implementation captured at 560 × 950 px at 2×, including 13 pt of native popover chrome above and below the 462 pt content region
+- state: hover title path entry clicked; workspace action popover open; no text field focus
+
+## Full-view comparison evidence
+
+The final combined image places the source on the left and the rendered AppKit implementation on the right. Both use the same information order, 280 pt width, compact vertical rhythm, segmented Name/Prefix header, filled name field, uppercase working-directory heading, folder/path row, action dividers, trailing notification icons, submenu chevrons, and keyboard shortcuts. The implementation uses native AppKit text rasterization and SF Symbols; the source uses the same macOS visual language. No actionable P0/P1/P2 differences remain.
+
+## Focused region comparison evidence
+
+The full comparison already renders the controls at 2× and keeps all labels and icons readable, so a second crop was unnecessary. The most fidelity-sensitive header region was checked at original pixels: the selected Name segment is a white capsule with a subtle shadow on a neutral track, and the text field uses a borderless gray fill matching the source. The working-directory and action regions preserve the source alignment and separator rhythm.
+
+## Required fidelity surfaces
+
+- Fonts and typography: native system font, matching regular/semibold hierarchy, uppercase directory heading, single-line truncation, and shortcut weights are consistent with the source.
+- Spacing and layout rhythm: width, grouping, row order, dividers, corner radii, and compact action spacing match; the 26 px height difference is native popover chrome rather than content drift.
+- Colors and visual tokens: neutral AppKit/Aster theme tokens reproduce the light surface, gray field, secondary labels, dividers, and hover affordance without adding a title-specific background color.
+- Image quality and asset fidelity: the source contains no raster product imagery. Visible icons use native SF Symbols at backing scale; no placeholder, emoji, custom SVG, or bitmap substitute is present.
+- Copy and content: labels, working-directory formatting, submenu affordances, and keyboard shortcuts match the requested reference. The path is dynamic and therefore uses the test workspace value.
+- Interaction and accessibility: Name/Prefix, reset, copy path, Finder, editor menu, Git menu, notification settings, split menu, find, global find, Jump to, and Command Palette are native controls with target/action behavior and accessibility descriptions for icon-only controls.
+
+## Comparison history
+
+1. Initial capture: `.build/design-qa/workspace-title-popover-comparison.png`.
+   - P2: popover was 300 pt wide and vertically too loose.
+   - P2: Copy/Reveal used leading icons absent from the source; Notifications used one leading icon instead of two trailing status icons.
+   - P2: name field used a white bordered bezel instead of a filled gray field.
+   - Fixes: reduced the popover to 280 × 462 pt, tightened stack spacing, removed the extra action icons, added trailing SF Symbols for notification/sound, and changed the field to a borderless neutral fill.
+2. Second capture: `.build/design-qa/workspace-title-popover-comparison-v2.png`.
+   - P2: the system capsule drew the selected Name segment gray instead of white.
+   - Fix: retained `NSSegmentedControl` semantics while rendering the reference white selected capsule, neutral track, native typography, and subtle shadow.
+3. Post-fix capture: `.build/design-qa/workspace-title-popover-comparison-final.png`.
+   - Result: earlier P2 findings are resolved; no actionable P0/P1/P2 difference remains.
+
+## Residual P3 polish
+
+- Native font rasterization and the system popover material may vary slightly by macOS appearance and display scale; this is expected platform behavior and does not change hierarchy or operation.
+
+final result: passed

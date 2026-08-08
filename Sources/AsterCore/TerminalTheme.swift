@@ -123,6 +123,8 @@ public struct TerminalContainerStyle: Codable, Equatable, Sendable {
 /// Otty 主题中颜色之外的界面真值。旧版 `.astertheme` 未保存这些字段时使用稳定默认值。
 public struct TerminalThemeStyle: Codable, Equatable, Sendable {
   public var radius: Double
+  /// Otty `[token].font-mono` 的候选顺序；空值表示使用全局或应用 fallback。
+  public var fontFamilies: [String]?
   public var sidebarBackground: HexColor?
   public var sidebarBorderColor: HexColor?
   public var sidebarBorderWidth: Double
@@ -140,6 +142,7 @@ public struct TerminalThemeStyle: Codable, Equatable, Sendable {
 
   public init(
     radius: Double = 8,
+    fontFamilies: [String]? = nil,
     sidebarBackground: HexColor? = nil,
     sidebarBorderColor: HexColor? = nil,
     sidebarBorderWidth: Double = 0,
@@ -156,6 +159,7 @@ public struct TerminalThemeStyle: Codable, Equatable, Sendable {
     container: TerminalContainerStyle = TerminalContainerStyle()
   ) {
     self.radius = radius
+    self.fontFamilies = fontFamilies
     self.sidebarBackground = sidebarBackground
     self.sidebarBorderColor = sidebarBorderColor
     self.sidebarBorderWidth = sidebarBorderWidth
@@ -373,6 +377,7 @@ public enum TerminalThemeStoreError: Error, Equatable {
   case invalidFileExtension
   case notRegularFile
   case fileTooLarge
+  case invalidFormat(String)
   case invalidName
   case invalidIdentifier
   case invalidPalette
@@ -381,9 +386,10 @@ public enum TerminalThemeStoreError: Error, Equatable {
 extension TerminalThemeStoreError: LocalizedError {
   public var errorDescription: String? {
     switch self {
-    case .invalidFileExtension: "主题文件必须使用 .astertheme 后缀。"
+    case .invalidFileExtension: "主题文件必须使用 .astertheme 或 .ottytheme 后缀。"
     case .notRegularFile: "主题必须是普通文件。"
     case .fileTooLarge: "主题文件超过 256 KiB。"
+    case .invalidFormat(let message): message
     case .invalidName: "主题名称不能为空且不能超过 128 字节。"
     case .invalidIdentifier: "主题标识无效。"
     case .invalidPalette: "主题必须包含完整的 16 色 ANSI 调色板。"
@@ -405,17 +411,30 @@ public enum TerminalThemeStore {
   }
 
   public static func load(from fileURL: URL) throws -> TerminalTheme {
-    guard fileURL.pathExtension.lowercased() == "astertheme" else {
+    let fileExtension = fileURL.pathExtension.lowercased()
+    guard fileExtension == "astertheme" || fileExtension == "ottytheme" else {
       throw TerminalThemeStoreError.invalidFileExtension
     }
-    let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-    guard values.isRegularFile == true else { throw TerminalThemeStoreError.notRegularFile }
+    let values = try fileURL.resourceValues(forKeys: [
+      .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
+    ])
+    guard values.isRegularFile == true, values.isSymbolicLink != true else {
+      throw TerminalThemeStoreError.notRegularFile
+    }
     guard (values.fileSize ?? 0) <= maximumFileSize else {
       throw TerminalThemeStoreError.fileTooLarge
     }
     let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
     guard data.count <= maximumFileSize else { throw TerminalThemeStoreError.fileTooLarge }
-    var theme = try JSONDecoder().decode(TerminalTheme.self, from: data)
+    var theme: TerminalTheme
+    if fileExtension == "ottytheme" {
+      theme = try OttyThemeParser.parse(
+        data: data,
+        sourceName: fileURL.deletingPathExtension().lastPathComponent
+      )
+    } else {
+      theme = try JSONDecoder().decode(TerminalTheme.self, from: data)
+    }
     theme.isBuiltIn = false
     try validate(theme)
     return theme

@@ -6,7 +6,9 @@ import Combine
 /// 数据全部来自 `WorkspaceInspectionService` 的只读快照；Commit、stage 等写操作不后台
 /// 执行 git，而是把命令注入当前终端输入行，由用户审阅后自行回车（不触发隐藏 hook）。
 @MainActor
-final class DetailsPanelViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+final class DetailsPanelViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate,
+  NSMenuDelegate
+{
   private enum Section: Int, CaseIterable {
     case info, outline, git, files
 
@@ -85,11 +87,14 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   private var expandedPaths: Set<String> = []
   private var filesQuery = ""
   private var filesDirectoriesFirst = true
+  /// 默认不包含隐藏项；开启后重新枚举并**一并列出**隐藏文件（不是只显示隐藏项）。
+  private var filesShowHidden = false
   private var fileNodes: [WorkspaceFileNode]?
   private var filesDirectory: String?
   private var requestedFilesDirectory: String?
   private weak var filesSearchField: NSSearchField?
   private weak var filesSortButton: NSButton?
+  private weak var filesShowHiddenButton: NSButton?
   private weak var filesEmptyLabel: NSTextField?
   private let filesTable = NSTableView()
   private var fileTree: [FileTreeItem] = []
@@ -138,8 +143,12 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     let column = NSStackView()
     column.orientation = .vertical
     column.spacing = 0
-    column.addArrangedSubview(makeHeader())
-    column.addArrangedSubview(makeSeparator())
+    let header = makeHeader()
+    column.addArrangedSubview(header)
+    // header 自身只占 28pt（为了让图标压在标题栏中心线上），其后的留白改到这里补。
+    // 这里刻意不画分隔线：面板左缘已经有一条竖线把它与工作区分开，再加一条横线会
+    // 让面板顶部出现一个多余的「口」字框。
+    column.setCustomSpacing(10, after: header)
     column.addArrangedSubview(contentHost)
     background.addSubview(column)
     column.pinEdges(to: background)
@@ -190,7 +199,14 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     let row = NSStackView()
     row.orientation = .horizontal
     row.spacing = 6
-    row.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
+    row.edgeInsets = NSEdgeInsets(
+      top: 0, left: 10, bottom: 0, right: InspectorToggleMetrics.trailingInset)
+    // 行高固定成「中心线 × 2」，chip 与收起按钮就都落在距面板顶边 14pt 的中心线上，
+    // 正好是工作区标题栏（高 28pt）里那颗切换按钮的中心线，两处图标完全重合。
+    // 用行高而不是内边距来定位，chip 或按钮改尺寸时对齐关系不会失效。
+    row.translatesAutoresizingMaskIntoConstraints = false
+    row.heightAnchor.constraint(
+      equalToConstant: InspectorToggleMetrics.centerYFromTop * 2).isActive = true
     for section in Section.allCases {
       let chip = PanelTabChip(title: section.title, symbol: section.symbol) { [weak self] in
         self?.selectSection(section)
@@ -203,23 +219,21 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     let spacer = NSView()
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
     row.addArrangedSubview(spacer)
-    let close = ActionButton(symbol: "sidebar.right", bezelStyle: .accessoryBarAction) {
-      [weak self] in self?.model.toggleInspector()
+    let close = IconHoverButton(
+      symbol: InspectorToggleMetrics.symbol,
+      accessibilityDescription: "收起详情面板"
+    ) { [weak self] in
+      self?.model.toggleInspector()
     }
-    close.isBordered = false
     close.toolTip = "收起详情面板"
     close.identifier = NSUserInterfaceItemIdentifier("details-panel-close")
+    close.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      close.widthAnchor.constraint(equalToConstant: InspectorToggleMetrics.buttonSize),
+      close.heightAnchor.constraint(equalToConstant: InspectorToggleMetrics.buttonSize),
+    ])
     row.addArrangedSubview(close)
     return row
-  }
-
-  private func makeSeparator() -> NSView {
-    let line = NSView()
-    line.wantsLayer = true
-    line.layer?.backgroundColor = AsterTheme.hairline.cgColor
-    line.translatesAutoresizingMaskIntoConstraints = false
-    line.heightAnchor.constraint(equalToConstant: 1).isActive = true
-    return line
   }
 
   /// chip 切换只更新面板本地内容并持久化选中页；不经过 preferences 广播，避免
@@ -398,13 +412,15 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     let tabID = tab.id
     let paneID = tab.activePaneID
     let directory = requestedDirectory ?? tab.workingDirectory
+    let includeHidden = filesShowHidden
     requestedFilesDirectory = directory
     filesTask = Task { @MainActor [weak self] in
       guard let self else { return }
-      let value = await self.inspectionClient.files(directory)
+      let value = await self.inspectionClient.files(directory, includeHidden)
       guard !Task.isCancelled, self.model.selectedTab?.id == tabID,
         self.model.selectedTab?.activePaneID == paneID,
-        self.requestedFilesDirectory == directory
+        self.requestedFilesDirectory == directory,
+        self.filesShowHidden == includeHidden
       else { return }
       self.fileNodes = value
       self.filesDirectory = directory
@@ -1097,6 +1113,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
 
   // MARK: - Files
 
+  private enum FilesLayout {
+    /// 与 Find 搜索框左右留白一致，文件树箭头列对齐搜索框左缘。
+    static let horizontalInset: CGFloat = 8
+  }
+
   private func makeFilesContent() -> NSView {
     let root = NSView()
     let search = NSSearchField()
@@ -1113,9 +1134,22 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     sort.isBordered = false
     sort.toolTip = filesDirectoriesFirst ? "目录优先（点击切换为按名称）" : "按名称（点击切换为目录优先）"
     filesSortButton = sort
+    let showHidden = ActionButton(
+      symbol: filesShowHidden ? "eye" : "eye.slash",
+      bezelStyle: .accessoryBarAction
+    ) { [weak self] in
+      guard let self else { return }
+      self.filesShowHidden.toggle()
+      self.updateFilesShowHiddenButton()
+      self.refreshFiles(directory: self.filesDirectory ?? self.requestedFilesDirectory)
+    }
+    showHidden.isBordered = false
+    showHidden.identifier = NSUserInterfaceItemIdentifier("details-files-show-hidden")
+    filesShowHiddenButton = showHidden
+    updateFilesShowHiddenButton()
     let spacer = NSView()
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    let header = NSStackView(views: [search, spacer, sort])
+    let header = NSStackView(views: [search, spacer, sort, showHidden])
     header.orientation = .horizontal
     header.alignment = .centerY
     header.spacing = 6
@@ -1127,11 +1161,16 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     filesTable.identifier = NSUserInterfaceItemIdentifier("details-files-table")
     filesTable.headerView = nil
     filesTable.backgroundColor = .clear
+    // 默认 inset 样式会给每行额外左右留白，箭头无法贴齐 Find 左缘。
+    filesTable.style = .plain
     filesTable.rowHeight = 24
     filesTable.intercellSpacing = .zero
     filesTable.selectionHighlightStyle = .none
     filesTable.dataSource = self
     filesTable.delegate = self
+    let filesMenu = NSMenu()
+    filesMenu.delegate = self
+    filesTable.menu = filesMenu
     if filesTable.tableColumns.isEmpty {
       let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("details-files-name"))
       column.resizingMask = .autoresizingMask
@@ -1151,15 +1190,17 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     empty.translatesAutoresizingMaskIntoConstraints = false
     filesEmptyLabel = empty
     NSLayoutConstraint.activate([
-      header.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
-      header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
-      header.topAnchor.constraint(equalTo: root.topAnchor, constant: 14),
-      scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-      scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-      scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
+      header.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: FilesLayout.horizontalInset),
+      header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -FilesLayout.horizontalInset),
+      header.topAnchor.constraint(equalTo: root.topAnchor, constant: 10),
+      scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: FilesLayout.horizontalInset),
+      scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -FilesLayout.horizontalInset),
+      scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
       scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-      empty.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: 14),
-      empty.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -14),
+      empty.leadingAnchor.constraint(
+        greaterThanOrEqualTo: root.leadingAnchor, constant: FilesLayout.horizontalInset),
+      empty.trailingAnchor.constraint(
+        lessThanOrEqualTo: root.trailingAnchor, constant: -FilesLayout.horizontalInset),
       empty.centerXAnchor.constraint(equalTo: root.centerXAnchor),
       empty.topAnchor.constraint(equalTo: scroll.topAnchor, constant: 16),
     ])
@@ -1236,6 +1277,15 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     rebuildVisibleFileRows()
   }
 
+  private func updateFilesShowHiddenButton() {
+    guard let button = filesShowHiddenButton else { return }
+    let symbol = filesShowHidden ? "eye" : "eye.slash"
+    let label = filesShowHidden ? "不包含隐藏文件" : "包含隐藏文件"
+    button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+    button.toolTip = label
+    button.setAccessibilityLabel(label)
+  }
+
   private func rebuildVisibleFileRows() {
     var filtered = fileTree
     if !filesQuery.isEmpty { filtered = filterFileTree(filtered, query: filesQuery) }
@@ -1243,6 +1293,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     filesTable.reloadData()
     filesSortButton?.toolTip = filesDirectoriesFirst
       ? "目录优先（点击切换为按名称）" : "按名称（点击切换为目录优先）"
+    updateFilesShowHiddenButton()
     guard let empty = filesEmptyLabel else { return }
     if fileNodes == nil {
       empty.stringValue = "正在读取目录…"
@@ -1302,30 +1353,93 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       node: node,
       depth: fileRow.depth,
       expanded: expandedPaths.contains(node.path),
-      onToggle: { [weak self] in
-        guard let self else { return }
-        if self.expandedPaths.contains(node.path) {
-          self.expandedPaths.remove(node.path)
-        } else {
-          self.expandedPaths.insert(node.path)
-        }
-        self.rebuildVisibleFileRows()
-      },
+      onToggle: { [weak self] in self?.toggleDirectoryExpansion(node.path) },
       onOpen: { [weak self] in self?.openFileNode(node) }
     )
     return cell
   }
 
+  /// 目录只在 Files 树内展开/折叠；chevron、双击与右键共用，不打开遗留 fileBrowser Pane。
+  private func toggleDirectoryExpansion(_ path: String) {
+    if expandedPaths.contains(path) {
+      expandedPaths.remove(path)
+    } else {
+      expandedPaths.insert(path)
+    }
+    rebuildVisibleFileRows()
+  }
+
   private func openFileNode(_ node: WorkspaceFileNode) {
     let url = URL(fileURLWithPath: node.path)
     if node.isDirectory, !node.isSymbolicLink {
-      model.selectedTab?.split(direction: .left, kind: .fileBrowser, resourcePath: node.path)
-    } else if node.isSymbolicLink {
-      NSWorkspace.shared.activateFileViewerSelecting([url])
-    } else {
-      model.selectedTab?.openFile(url)
+      toggleDirectoryExpansion(node.path)
+      return
     }
+    if node.isSymbolicLink {
+      NSWorkspace.shared.activateFileViewerSelecting([url])
+      return
+    }
+    model.selectedTab?.openFile(url)
     model.persistWorkspace()
+  }
+
+  /// 根据右键命中行即时生成菜单，避免树刷新后仍引用失效节点。
+  func menuWillOpen(_ menu: NSMenu) {
+    guard menu === filesTable.menu else { return }
+    menu.removeAllItems()
+    let row = filesTable.clickedRow >= 0 ? filesTable.clickedRow : filesTable.selectedRow
+    guard visibleFileRows.indices.contains(row) else { return }
+    filesTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    populateFilesContextMenu(menu, node: visibleFileRows[row].item.node)
+  }
+
+  private func populateFilesContextMenu(_ menu: NSMenu, node: WorkspaceFileNode) {
+    let url = URL(fileURLWithPath: node.path)
+    let directoryURL = node.isDirectory ? url : url.deletingLastPathComponent()
+
+    if node.isSymbolicLink {
+      menu.addItem(ActionMenuItem(title: "在 Finder 中显示") {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+      })
+    } else if node.isDirectory {
+      let expanded = expandedPaths.contains(node.path)
+      menu.addItem(ActionMenuItem(title: expanded ? "折叠" : "展开") { [weak self] in
+        self?.toggleDirectoryExpansion(node.path)
+      })
+    } else {
+      menu.addItem(ActionMenuItem(title: "打开") { [weak self] in
+        self?.openFileNode(node)
+      })
+      menu.addItem(ActionMenuItem(title: "在预览中打开") { [weak self] in
+        self?.model.selectedTab?.openPreview(url)
+        self?.model.persistWorkspace()
+      })
+      menu.addItem(ActionMenuItem(title: "发送到 Chat") { [weak self] in
+        self?.model.sendFileToChat(url)
+      })
+    }
+
+    menu.addItem(.separator())
+    menu.addItem(ActionMenuItem(title: "复制绝对路径") {
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(url.path, forType: .string)
+    })
+    menu.addItem(ActionMenuItem(title: "在新终端中打开所在目录") { [weak self] in
+      self?.model.selectedTab?.split(direction: .right, workingDirectory: directoryURL.path)
+      self?.model.persistWorkspace()
+    })
+    menu.addItem(ActionMenuItem(title: "在当前终端中 cd 到所在目录") { [weak self] in
+      _ = self?.model.selectedTab?.openDirectoryInTerminal(directoryURL.path)
+    })
+    menu.addItem(.separator())
+    if !node.isSymbolicLink {
+      menu.addItem(ActionMenuItem(title: "在 Finder 中显示") {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+      })
+    }
+    menu.addItem(ActionMenuItem(title: "使用默认应用打开") {
+      NSWorkspace.shared.open(url)
+    })
   }
 
   // MARK: - 共享构建辅助
@@ -1876,13 +1990,27 @@ class HoverHighlightRowView: NSTableCellView {
     hoverBackground.isHidden = true
     hoverBackground.translatesAutoresizingMaskIntoConstraints = false
     addSubview(hoverBackground)
+    hoverLeading = hoverBackground.leadingAnchor.constraint(
+      equalTo: leadingAnchor, constant: hoverHorizontalInset)
+    hoverTrailing = hoverBackground.trailingAnchor.constraint(
+      equalTo: trailingAnchor, constant: -hoverHorizontalInset)
     NSLayoutConstraint.activate([
-      hoverBackground.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-      hoverBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+      hoverLeading,
+      hoverTrailing,
       hoverBackground.topAnchor.constraint(equalTo: topAnchor, constant: 1),
       hoverBackground.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
     ])
   }
+
+  /// 行悬停底相对左右边的内缩。Files 树用更紧的值，避免窄面板里两侧空一截。
+  var hoverHorizontalInset: CGFloat = 8 {
+    didSet {
+      hoverLeading?.constant = hoverHorizontalInset
+      hoverTrailing?.constant = -hoverHorizontalInset
+    }
+  }
+  private var hoverLeading: NSLayoutConstraint!
+  private var hoverTrailing: NSLayoutConstraint!
 
   required init?(coder: NSCoder) { nil }
 
@@ -2167,21 +2295,38 @@ private final class DetailsFileRowView: HoverHighlightRowView {
   private lazy var disclosure = IconHoverButton(symbol: "chevron.right") { [weak self] in
     self?.onToggle?()
   }
+  private let iconView = NSImageView()
   private let fileButton = PointingHandButton()
   private var indentationConstraint: NSLayoutConstraint!
+  private var disclosureWidthConstraint: NSLayoutConstraint!
+  private var iconLeadingConstraint: NSLayoutConstraint!
   private var onToggle: (() -> Void)?
   private var onOpen: (() -> Void)?
+
+  /// 每级缩进 = chevron 列宽；箭头贴该行左缘，图标在箭头右侧留出固定间距。
+  private static let rowLeading: CGFloat = 0
+  private static let indentStep: CGFloat = 14
+  private static let chevronWidth: CGFloat = 14
+  private static let iconGap: CGFloat = 6
 
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
     self.identifier = identifier
+    hoverHorizontalInset = 0
 
     disclosure.translatesAutoresizingMaskIntoConstraints = false
+    disclosure.setContentHuggingPriority(.required, for: .horizontal)
+    disclosure.setContentCompressionResistancePriority(.required, for: .horizontal)
     addSubview(disclosure)
+
+    iconView.imageScaling = .scaleProportionallyDown
+    iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+    iconView.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(iconView)
 
     fileButton.isBordered = false
     fileButton.alignment = .left
-    fileButton.imagePosition = .imageLeading
+    fileButton.imagePosition = .noImage
     fileButton.lineBreakMode = .byTruncatingTail
     fileButton.activatesOnDoubleClickOnly = true
     fileButton.target = self
@@ -2189,14 +2334,24 @@ private final class DetailsFileRowView: HoverHighlightRowView {
     fileButton.translatesAutoresizingMaskIntoConstraints = false
     addSubview(fileButton)
 
-    indentationConstraint = disclosure.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8)
+    indentationConstraint = disclosure.leadingAnchor.constraint(
+      equalTo: leadingAnchor, constant: Self.rowLeading)
+    disclosureWidthConstraint = disclosure.widthAnchor.constraint(
+      equalToConstant: Self.chevronWidth)
+    iconLeadingConstraint = iconView.leadingAnchor.constraint(
+      equalTo: disclosure.trailingAnchor, constant: Self.iconGap)
+    disclosure.restingTint = AsterTheme.tertiaryInk
     NSLayoutConstraint.activate([
       indentationConstraint,
       disclosure.centerYAnchor.constraint(equalTo: centerYAnchor),
-      disclosure.widthAnchor.constraint(equalToConstant: 18),
-      disclosure.heightAnchor.constraint(equalToConstant: 18),
-      fileButton.leadingAnchor.constraint(equalTo: disclosure.trailingAnchor, constant: 2),
-      fileButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+      disclosureWidthConstraint,
+      disclosure.heightAnchor.constraint(equalToConstant: Self.chevronWidth),
+      iconLeadingConstraint,
+      iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+      iconView.widthAnchor.constraint(equalToConstant: 13),
+      iconView.heightAnchor.constraint(equalToConstant: 13),
+      fileButton.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 3),
+      fileButton.trailingAnchor.constraint(equalTo: trailingAnchor),
       fileButton.topAnchor.constraint(equalTo: topAnchor),
       fileButton.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
@@ -2211,23 +2366,38 @@ private final class DetailsFileRowView: HoverHighlightRowView {
     onToggle: @escaping () -> Void,
     onOpen: @escaping () -> Void
   ) {
-    indentationConstraint.constant = 8 + CGFloat(max(0, depth)) * 14
+    indentationConstraint.constant = Self.rowLeading + CGFloat(max(0, depth)) * Self.indentStep
     let expandable = node.isDirectory && !node.isSymbolicLink
     disclosure.isHidden = !expandable
+    // 始终保留 chevron 列宽，文件图标与文件夹图标左缘对齐。
+    disclosureWidthConstraint.constant = Self.chevronWidth
+    iconLeadingConstraint.constant = Self.iconGap
+    disclosure.restingTint = AsterTheme.tertiaryInk
     if expandable {
       disclosure.setSymbol(
         expanded ? "chevron.down" : "chevron.right",
         accessibilityDescription: expanded ? "折叠目录" : "展开目录")
     }
-    fileButton.title = node.name
-    fileButton.image = NSImage(
-      systemSymbolName: node.isSymbolicLink
-        ? "arrow.up.forward.square" : (node.isDirectory ? "folder" : "doc"),
-      accessibilityDescription: nil)
+    let symbolName = node.isSymbolicLink
+      ? "arrow.up.forward.square" : (node.isDirectory ? "folder" : "doc")
+    iconView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+    iconView.contentTintColor = Self.filesIconTint
+    fileButton.image = nil
+    fileButton.contentTintColor = nil
+    fileButton.attributedTitle = NSAttributedString(
+      string: node.name,
+      attributes: [
+        .foregroundColor: AsterTheme.ink,
+        .font: NSFont.systemFont(ofSize: 12),
+      ])
     fileButton.toolTip = node.path
     self.onToggle = onToggle
     self.onOpen = onOpen
   }
+
+  /// 文件夹与文件图标统一 `#5FABF3`；文件名保持默认前景。
+  private static let filesIconTint = NSColor(
+    srgbRed: 0x5F / 255, green: 0xAB / 255, blue: 0xF3 / 255, alpha: 1)
 
   @objc private func openItem() { onOpen?() }
 }

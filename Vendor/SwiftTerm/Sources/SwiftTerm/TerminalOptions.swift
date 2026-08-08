@@ -13,6 +13,8 @@ import Foundation
 public enum CursorStyle {
     case blinkBlock
     case steadyBlock
+    case blinkHollowBlock
+    case steadyHollowBlock
     case blinkUnderline
     case steadyUnderline
     case blinkBar
@@ -24,6 +26,10 @@ public enum CursorStyle {
             return .blinkBlock
         case "steadyBlock":
             return .steadyBlock
+        case "blinkHollowBlock":
+            return .blinkHollowBlock
+        case "steadyHollowBlock":
+            return .steadyHollowBlock
         case "blinkUnderline":
             return .blinkUnderline
         case "steadyUnderline":

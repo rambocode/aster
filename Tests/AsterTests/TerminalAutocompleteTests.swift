@@ -34,6 +34,44 @@ func terminalAutocompleteAcceptsOnlyCandidateSuffix() throws {
   #expect(controller.lastSubmittedCommand == nil)
 }
 
+@Test("Shell 尚未回显本次输入时不显示 inline suggestion")
+@MainActor
+func terminalAutocompleteWaitsForEchoBeforeShowingInlineSuggestion() async throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let controller = TerminalAutocompleteController(
+    service: fixture.service,
+    sessionIdentifier: "session",
+    controls: { fixture.controls.value },
+    currentDirectory: { "/project" }
+  )
+  controller.attach(to: view)
+  view.onAutocompleteOutput = { controller.receiveOutput($0) }
+
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.refreshNow()
+
+  let overlay = try #require(
+    view.subviews.first {
+      String(describing: type(of: $0)).contains("TerminalAutocompleteOverlayView")
+    }
+  )
+  let ghost = try #require(overlay.subviews.compactMap { $0 as? NSTextField }.first)
+  // 本地 tracker 比 PTY 回显更早拿到输入。此窗口期若显示 ghost，它会锚定在旧光标上，
+  // 与 Shell 随后绘制的 `git ch` 发生重叠。
+  #expect(ghost.isHidden)
+
+  view.dataReceived(slice: Array("git ch".utf8)[...])
+  await Task.yield()
+
+  #expect(ghost.stringValue == "eckout")
+  #expect(!ghost.isHidden)
+  #expect(ghost.frame.minX >= view.caretFrame.maxX - 0.5)
+}
+
 @Test("Escape 先关闭 inline suggestion，再按一次打开候选面板")
 @MainActor
 func terminalAutocompleteEscapeSeparatesInlineAndPanelActions() throws {

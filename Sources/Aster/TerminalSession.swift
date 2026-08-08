@@ -73,12 +73,9 @@ struct TerminalTextSnapshot: Equatable {
   let lines: [String]
 }
 
-/// SwiftTerm 视图子类：把设置里的光标形状当作唯一真值，屏蔽程序端的 DECSCUSR 改写。
-///
-/// Claude Code、vim、fzf 等 TUI 会主动发送 `CSI Ps SP q` 把光标改成方块或下划线；
-/// SwiftTerm 默认接受该请求并覆盖 `terminal.options.cursorStyle`（Metal 渲染路径直接
-/// 读这个值），用户在设置里选的竖条因此一进这些程序就失效。这里拦截样式变更回调，
-/// 只放行与配置一致的样式。
+/// SwiftTerm 视图子类：实现 Otty 的 `Default` / `Always` 光标优先级。
+/// `Default` 只给出初始状态，之后接受 DECSCUSR / DEC mode 12；`Always` 把用户设置
+/// 作为最终真值，并在 SwiftTerm 回调返回后纠正程序端写入。
 final class AsterTerminalView: LocalProcessTerminalView {
   /// SwiftTerm 在 macOS 的标题回调存在缺失和顺序差异；此回调按 PTY 原始顺序校正。
   var onObservedTitleUpdate: ((Int, String) -> Void)?
@@ -179,6 +176,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
   var preferredCursorStyle: SwiftTerm.CursorStyle? {
     didSet { applyEffectiveCursorStyle() }
   }
+  private var programCursorStyle: SwiftTerm.CursorStyle?
   /// 窗口是否持有键盘焦点。非活动窗口停止光标闪烁（形状不变），与系统终端一致：
   /// 同屏多个窗口时只有正在输入的那个在闪。SwiftTerm 的 `caretView.focused` 只切换
   /// 实心/空心，闪烁完全由 `CursorStyle` 的 blink 变体决定，所以必须换样式。
@@ -186,8 +184,14 @@ final class AsterTerminalView: LocalProcessTerminalView {
 
   /// 实际下发给 SwiftTerm 的样式：窗口失焦时取同形状的不闪烁变体。
   private var effectiveCursorStyle: SwiftTerm.CursorStyle? {
-    guard let preferredCursorStyle else { return nil }
-    return isWindowActive ? preferredCursorStyle : preferredCursorStyle.nonBlinking
+    guard let style = preferredCursorStyle ?? programCursorStyle else { return nil }
+    return isWindowActive ? style : style.nonBlinking
+  }
+
+  func configureCursor(initialStyle: SwiftTerm.CursorStyle, pinsProgramControl: Bool) {
+    programCursorStyle = initialStyle
+    preferredCursorStyle = pinsProgramControl ? initialStyle : nil
+    applyEffectiveCursorStyle()
   }
 
   func setWindowActive(_ active: Bool) {
@@ -287,6 +291,8 @@ final class AsterTerminalView: LocalProcessTerminalView {
     let safeBytes = oscStreamLimiter.consume(slice)
     if !safeBytes.isEmpty {
       shellNavigationAbsoluteRow = nil
+      // 输出捕获必须先于 SwiftTerm 解析 OSC 133 D，确保命令完成事件能读到同一分片；
+      // overlay 自己延后一轮主线程布局，等下方 SwiftTerm 更新 caretFrame 后再显示。
       onAutocompleteOutput?(safeBytes[...])
       let previousMouseReporting = allowMouseReporting
       if paneModeState.inputDecision != .forwardToProcess {
@@ -1566,6 +1572,14 @@ final class AsterTerminalView: LocalProcessTerminalView {
   }
 
   override func cursorStyleChanged(source: Terminal, newStyle: SwiftTerm.CursorStyle) {
+    if preferredCursorStyle == nil {
+      programCursorStyle = newStyle
+      super.cursorStyleChanged(source: source, newStyle: newStyle)
+      if !isWindowActive {
+        Task { @MainActor [weak self] in self?.applyEffectiveCursorStyle() }
+      }
+      return
+    }
     guard let effective = effectiveCursorStyle, newStyle != effective else {
       super.cursorStyleChanged(source: source, newStyle: newStyle)
       return
@@ -1630,6 +1644,7 @@ extension SwiftTerm.CursorStyle {
   var nonBlinking: SwiftTerm.CursorStyle {
     switch self {
     case .blinkBlock, .steadyBlock: .steadyBlock
+    case .blinkHollowBlock, .steadyHollowBlock: .steadyHollowBlock
     case .blinkUnderline, .steadyUnderline: .steadyUnderline
     case .blinkBar, .steadyBar: .steadyBar
     }
@@ -2268,8 +2283,15 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   private func apply(preferences: AppPreferences, to view: AsterTerminalView) {
     self.preferences = preferences
-    view.font = preferences.terminalFont
+    let fonts = preferences.terminalFontVariants
+    view.setFonts(
+      normal: fonts.normal,
+      bold: fonts.bold,
+      italic: fonts.italic,
+      boldItalic: fonts.boldItalic
+    )
     view.lineSpacing = CGFloat(preferences.configuration.appearance.lineHeight)
+    view.fontSmoothing = preferences.configuration.appearance.resolvedFontSmoothing
     view.bidirectionalTextEnabled = preferences.configuration.appearance.resolvedBidirectionalText
     view.ligatureMode = switch preferences.configuration.appearance.resolvedLigatureLevel {
     case .none: .none
@@ -2280,6 +2302,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       preferences.configuration.appearance.resolvedBoldRendering)
     view.italicStyleMode = swiftTermFontStyleMode(
       preferences.configuration.appearance.resolvedItalicRendering)
+    view.underlineStyleEnabled = preferences.configuration.appearance.resolvedUnderlineRendering
+    view.smoothCursorMovementEnabled =
+      preferences.configuration.appearance.resolvedCursorAnimation == .smooth
     view.animatedTextBlinkEnabled =
       preferences.configuration.appearance.resolvedBlinkRenderingPolicy == .animated
     view.getTerminal().options.widenedEastAsianAmbiguousBlocks = swiftTermAmbiguousWidthBlocks(
@@ -2323,13 +2348,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
           blue: UInt16($0.blue) * 257
         )
       })
+    let blinkMode = preferences.configuration.appearance.resolvedCursorBlinkMode
     let cursorStyle = swiftTermCursorStyle(
       preferences.configuration.appearance.cursorStyle.rawValue,
-      blinks: preferences.configuration.appearance.cursorBlink
+      blinks: blinkMode.initiallyBlinks
     )
-    // 设置配置值即完成下发：`preferredCursorStyle` 的 didSet 会按窗口活动状态算出
-    // 实际样式（失焦时取不闪烁变体），再同步 terminal 选项与 caret 视图。
-    view.preferredCursorStyle = cursorStyle
+    view.configureCursor(initialStyle: cursorStyle, pinsProgramControl: blinkMode.pinsProgramControl)
     view.needsDisplay = true
   }
 
@@ -2645,6 +2669,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     switch style {
     case "bar": blinks ? .blinkBar : .steadyBar
     case "underline": blinks ? .blinkUnderline : .steadyUnderline
+    case "hollowBlock": blinks ? .blinkHollowBlock : .steadyHollowBlock
     default: blinks ? .blinkBlock : .steadyBlock
     }
   }

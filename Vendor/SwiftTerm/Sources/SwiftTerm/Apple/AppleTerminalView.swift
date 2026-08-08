@@ -645,7 +645,7 @@ extension TerminalView {
             .backgroundColor: bg,
             .ligature: ligatureMode.rawValue
         ]
-        if flags.contains (.underline), !hidden {
+        if flags.contains (.underline), underlineStyleEnabled, !hidden {
             let underlineColor = attribute.underlineColor.map {
                 mapColor(color: $0, isFg: true, isBold: flags.contains(.bold), useBrightColors: useBrightColors)
             } ?? fg
@@ -710,7 +710,7 @@ extension TerminalView {
             .backgroundColor: bgColor,
             .ligature: ligatureMode.rawValue
         ]
-        if flags.contains (.underline), !hidden {
+        if flags.contains (.underline), underlineStyleEnabled, !hidden {
             let underlineColor = attribute.underlineColor.map {
                 mapColor(color: $0, isFg: true, isBold: isBold, useBrightColors: useBrightColors)
             } ?? fgColor
@@ -2071,8 +2071,14 @@ extension TerminalView {
         // full-width (CJK) glyph instead of only its left half.
         let cursorColumnWidth = max(1, Int(charUnderCursor.width))
         let visualCursorColumn = visualColumn(forLogicalColumn: buffer.x, bufferRow: vy)
-        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(visualCursorColumn)), y: lineOrigin.y)
-        caretView.frame.size.width = cellDimension.width * doublePosition * CGFloat(cursorColumnWidth)
+        let nextOrigin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(visualCursorColumn)), y: lineOrigin.y)
+        let nextSize = CGSize(width: cellDimension.width * doublePosition * CGFloat(cursorColumnWidth), height: caretView.frame.height)
+        #if os(macOS)
+        caretView.move(to: nextOrigin, size: nextSize, smoothly: smoothCursorMovementEnabled)
+        #else
+        caretView.frame.origin = nextOrigin
+        caretView.frame.size = nextSize
+        #endif
         caretView.setText (ch: charUnderCursor)
     }
     

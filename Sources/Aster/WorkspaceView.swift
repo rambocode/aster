@@ -22,7 +22,21 @@ final class WorkspaceViewController: NSViewController {
   private var inactiveOverlay: InactiveWindowOverlayView?
   /// 垂直侧栏顶部「+ 新建 / 折叠」悬停动作区；refresh 整树重建后重新赋值。
   private weak var sidebarHoverActions: NSView?
-  private weak var windowTitleLabel: NSTextField?
+  /// 两个动作按钮各自跟随不同的感应区：「+」跟随左栏，「折叠」跟随红绿灯行。
+  private weak var sidebarAddTabButton: NSButton?
+  private weak var sidebarToggleButton: NSButton?
+  /// 「左栏」感应区（展开态是侧栏本体，折叠态是顶部悬停带）。
+  private weak var sidebarHoverRegion: NSView?
+  /// 「红绿灯行」感应区（展开态是侧栏顶部那一行，折叠态同为顶部悬停带）。
+  private weak var titleBarHoverRegion: NSView?
+  /// 顶部标题按钮只在悬停/弹层打开时切换成路径胶囊；普通状态继续显示活动程序标题。
+  private weak var workspaceTitleButton: WorkspaceTitleButton?
+  /// 标题栏右端的详情面板入口。面板展开/收起是局部操作（不重建标题栏），因此显隐
+  /// 必须在这里同步，否则展开后标题栏与面板上会同时出现两个折叠图标。
+  private weak var inspectorToggleButton: NSButton?
+  /// `NSPopover` 不会被视图层级强持有。控制器持有到关闭回调，避免点击标题后弹层
+  /// 在下一轮 run loop 立刻释放。
+  private var workspaceTitlePopover: NSPopover?
   /// 详情面板在同一标签的常规状态刷新与收起/重开之间保持实例稳定，避免 Files 树和
   /// 搜索框先被销毁再创建。切换标签后按新 Tab ID 替换，防止订阅继续指向旧标签。
   private var detailsPanelController: DetailsPanelViewController?
@@ -34,10 +48,13 @@ final class WorkspaceViewController: NSViewController {
   private weak var detailsPanelDivider: NSView?
   private var workspaceFullWidthConstraint: NSLayoutConstraint?
   private var detailsPanelLayoutConstraints: [NSLayoutConstraint] = []
-  /// 标题栏展开入口始终创建，面板显隐时原地切换可见性和标题尾部约束。
-  private weak var inspectorHoverReveal: NSView?
-  private var titleTrailingWithInspectorToggle: NSLayoutConstraint?
-  private var titleTrailingWithoutInspectorToggle: NSLayoutConstraint?
+  /// 详情面板宽度。滑动动画的位移量也取这个值。
+  private static let detailsPanelWidth: CGFloat = 278
+  /// 收起动画进行中。此时约束仍然有效，中途再次展开只需反向播放，不必重建面板。
+  private var detailsPanelIsDetaching = false
+  /// 每次展开/收起/整树重建都自增。收起动画的收尾闭包凭它判断自己是否已经过期，
+  /// 避免把动画期间新挂上去的面板误删。
+  private var detailsPanelTransitionToken = 0
   /// Open Quickly 通过独立 presentation 事件局部挂载；控制器跨关闭保留，以复用搜索框、
   /// 结果行与约束，普通开关不再重建侧栏、终端和详情面板。
   private var openQuicklyController: OpenQuicklyOverlayViewController?
@@ -88,6 +105,13 @@ final class WorkspaceViewController: NSViewController {
     refresh()
   }
 
+  /// 布局落定后按指针实际位置对齐一次悬停按钮。`refresh()` 重建侧栏时不会补发
+  /// 鼠标事件，只有在这里同步，点击标签页后指针仍停在侧栏上的「+」才不会消失。
+  override func viewDidLayout() {
+    super.viewDidLayout()
+    updateSidebarHoverVisibility(animated: false)
+  }
+
   /// 局部显示或移除 Open Quickly。关闭后终端焦点同步恢复，避免等待下一轮 run loop
   /// 时用户输入的第一个字符丢失。
   private func setOpenQuicklyPresented(_ presented: Bool) {
@@ -107,9 +131,10 @@ final class WorkspaceViewController: NSViewController {
   /// 视图不离开层级，因此 first responder、拖选和高频 TUI 绘制都不会被打断。
   private func setInspectorPresented(_ presented: Bool) {
     guard isViewLoaded else { return }
-    updateInspectorHeaderPresentation(presented)
+    // 标题栏与面板 header 上的图标位置重合，只能有一个可见，否则展开瞬间会重影。
+    inspectorToggleButton?.isHidden = presented
     if presented {
-      attachDetailsPanelIfNeeded()
+      attachDetailsPanelIfNeeded(animated: true)
     } else {
       detachDetailsPanelIfNeeded()
     }
@@ -128,7 +153,20 @@ final class WorkspaceViewController: NSViewController {
 
   /// 把详情面板接到当前内容区右侧。先停用全宽约束，再建立 workspace-divider-panel
   /// 链，避免 Auto Layout 在同一轮同时要求工作区占满并给面板保留 278pt。
-  private func attachDetailsPanelIfNeeded() {
+  ///
+  /// `animated` 只在用户主动切换时为真。`refresh()` 走的整树重建也会经过这里，那种
+  /// 场景下面板本来就该在原位，再播一次滑入会让每次刷新都抖一下。
+  private func attachDetailsPanelIfNeeded(animated: Bool = false) {
+    // 收起动画中途又被展开：约束都还在，直接从当前位置反向播回去即可。
+    if detailsPanelIsDetaching, let divider = detailsPanelDivider,
+      let panel = detailsPanelController?.view
+    {
+      detailsPanelIsDetaching = false
+      detailsPanelTransitionToken &+= 1
+      detailsPanelController?.setPresentationActive(true)
+      slideDetailsPanel(panel, divider: divider, presenting: true, startsFromCurrent: true)
+      return
+    }
     guard let host = contentAreaHost, let workspace = contentAreaWorkspace,
       detailsPanelDivider == nil
     else { return }
@@ -136,7 +174,7 @@ final class WorkspaceViewController: NSViewController {
     let resumesCachedController = details.isViewLoaded
     if details.parent !== self { addChild(details) }
     details.synchronizeAppearanceIfNeeded()
-    let divider = makeDivider(color: AsterTheme.hairline, vertical: true)
+    let divider = makeDivider(color: AsterTheme.divider, vertical: true)
     host.addSubview(divider)
     host.addSubview(details.view)
     divider.translatesAutoresizingMaskIntoConstraints = false
@@ -150,31 +188,92 @@ final class WorkspaceViewController: NSViewController {
       details.view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
       details.view.topAnchor.constraint(equalTo: host.topAnchor),
       details.view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-      details.view.widthAnchor.constraint(equalToConstant: 278),
+      details.view.widthAnchor.constraint(equalToConstant: Self.detailsPanelWidth),
     ]
     NSLayoutConstraint.activate(constraints)
     detailsPanelDivider = divider
     detailsPanelLayoutConstraints = constraints
+    detailsPanelTransitionToken &+= 1
     if resumesCachedController { details.setPresentationActive(true) }
+    if animated { slideDetailsPanel(details.view, divider: divider, presenting: true) }
   }
 
   /// 收起只移除详情面板自身及分隔线，随后让既有 workspace 重新占满内容区。控制器
   /// 仍由窗口持有，稍后重开时可复用查询、折叠状态和已经完成的检查结果。
   private func detachDetailsPanelIfNeeded() {
-    guard detailsPanelDivider != nil else { return }
-    NSLayoutConstraint.deactivate(detailsPanelLayoutConstraints)
-    detailsPanelLayoutConstraints.removeAll()
-    detailsPanelDivider?.removeFromSuperview()
-    detailsPanelDivider = nil
+    guard let divider = detailsPanelDivider, let panel = detailsPanelController?.view,
+      !detailsPanelIsDetaching
+    else { return }
+    detailsPanelIsDetaching = true
+    detailsPanelTransitionToken &+= 1
+    let token = detailsPanelTransitionToken
     detailsPanelController?.setPresentationActive(false)
-    detailsPanelController?.view.removeFromSuperview()
-    workspaceFullWidthConstraint?.isActive = true
+    // 先播收起动画，动画结束再拆约束并移除视图——否则面板会瞬间消失，看不到过渡。
+    slideDetailsPanel(panel, divider: divider, presenting: false) { [weak self] in
+      guard let self, token == detailsPanelTransitionToken else { return }
+      detailsPanelIsDetaching = false
+      detailsPanelDivider = nil
+      NSLayoutConstraint.deactivate(detailsPanelLayoutConstraints)
+      detailsPanelLayoutConstraints.removeAll()
+      divider.removeFromSuperview()
+      panel.removeFromSuperview()
+      // 面板视图会被下次展开复用，位移与透明度必须复位。
+      panel.layer?.transform = CATransform3DIdentity
+      panel.alphaValue = 1
+      workspaceFullWidthConstraint?.isActive = true
+    }
   }
 
-  private func updateInspectorHeaderPresentation(_ presented: Bool) {
-    inspectorHoverReveal?.isHidden = presented
-    titleTrailingWithInspectorToggle?.isActive = !presented
-    titleTrailingWithoutInspectorToggle?.isActive = presented
+  /// 面板从右侧滑入 / 滑出。
+  ///
+  /// 动画只作用在 layer 的 transform 上，**不动约束**：布局在动画开始前就一次到位，
+  /// 终端因此只收到一次 resize。若改用宽度约束逐帧动画，每一帧都会给 PTY 发一次
+  /// TIOCSWINSZ，vim / Claude Code 这类 TUI 会在 0.2 秒里被迫重绘十几次。
+  /// 系统开启「减弱动态效果」时直接落到终态。
+  private func slideDetailsPanel(
+    _ panel: NSView,
+    divider: NSView,
+    presenting: Bool,
+    startsFromCurrent: Bool = false,
+    completion: (@MainActor @Sendable () -> Void)? = nil
+  ) {
+    // +1 让分隔线也完全退到窗口外，收起时右边缘不留一条残线。
+    let offset = Self.detailsPanelWidth + 1
+    for view in [panel, divider] { view.wantsLayer = true }
+    guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+      panel.alphaValue = 1
+      completion?()
+      return
+    }
+    let to = presenting ? 0 : offset
+    // 反向播放时以当前位置为起点，否则会先跳回完全隐藏再滑入。
+    if !startsFromCurrent {
+      // 起始态必须在同一轮 run loop 里写完，动画才有可插值的起点。
+      let from = presenting ? offset : 0
+      for view in [panel, divider] {
+        view.layer?.transform = CATransform3DMakeTranslation(from, 0, 0)
+      }
+      panel.alphaValue = presenting ? 0 : 1
+    }
+    panel.layoutSubtreeIfNeeded()
+    NSAnimationContext.runAnimationGroup({ context in
+      context.duration = 0.18
+      context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+      context.allowsImplicitAnimation = true
+      for view in [panel, divider] {
+        view.layer?.transform = CATransform3DMakeTranslation(to, 0, 0)
+      }
+      panel.animator().alphaValue = presenting ? 1 : 0
+    }, completionHandler: {
+      Task { @MainActor in
+        // 只有滑入结束才把 transform 归位。滑出如果也归位，恰好会在这一帧把面板
+        // 弹回可见位置；它的收尾由调用方在移除视图时一并处理。
+        if presenting {
+          for view in [panel, divider] { view.layer?.transform = CATransform3DIdentity }
+        }
+        completion?()
+      }
+    })
   }
 
   /// 把缓存浮层约束到工作区顶层。使用相对两侧的上限约束，在窄窗口中仍保留边距；
@@ -256,6 +355,8 @@ final class WorkspaceViewController: NSViewController {
   func updateWindowActivationOverlay() {
     // 还没上屏的视图按「活动」处理，避免测试与首帧出现无谓的灰罩。
     let isActive = view.window?.isKeyWindow ?? true
+    // 悬停按钮只在键盘焦点窗口露出，窗口失焦/回焦都要按当前指针位置重算一次。
+    updateSidebarHoverVisibility(animated: false)
     // 非活动窗口里的终端停止光标闪烁；后台标签的会话一并同步，切回来时状态已正确。
     for tab in model.tabs {
       for runtime in tab.runtimes.values {
@@ -311,12 +412,13 @@ final class WorkspaceViewController: NSViewController {
 
   // MARK: - 侧栏悬停动作区
 
-  /// 生成「+ 新建标签页」与「折叠/展开标签栏」按钮行，默认隐藏（悬停时由
-  /// `setSidebarHoverActionsVisible` 淡入）。侧栏展开与折叠两种布局共用。
-  private func makeHoverActionsRow(sidebarVisible: Bool) -> NSStackView {
-    let row = NSStackView()
-    row.orientation = .horizontal
-    row.spacing = 2
+  /// 生成「+ 新建标签页」与「折叠/展开标签栏」按钮行，两个按钮默认隐藏，各自跟随
+  /// 不同的感应区淡入（见 `updateSidebarHoverVisibility`）。侧栏展开与折叠共用。
+  ///
+  /// 这里刻意不用 `NSStackView`：两个按钮显隐时机不同，栈会在隐藏时抽走槽位，让
+  /// 「+」在折叠按钮出现前后左右横跳。改用固定约束后，任一按钮单独显示都不移位。
+  private func makeHoverActionsRow(sidebarVisible: Bool) -> NSView {
+    let row = HoverActionsContainerView()
     let addTabButton = ActionButton(symbol: "plus", bezelStyle: .inline) { [weak self] in
       self?.model.newTab()
     }
@@ -331,14 +433,23 @@ final class WorkspaceViewController: NSViewController {
       button.isBordered = false
       button.contentTintColor = AsterTheme.secondaryInk
       button.translatesAutoresizingMaskIntoConstraints = false
+      button.alphaValue = 0
+      button.isHidden = true
+      row.addSubview(button)
       NSLayoutConstraint.activate([
         button.widthAnchor.constraint(equalToConstant: 24),
         button.heightAnchor.constraint(equalToConstant: 22),
+        button.topAnchor.constraint(equalTo: row.topAnchor),
+        button.bottomAnchor.constraint(equalTo: row.bottomAnchor),
       ])
-      row.addArrangedSubview(button)
     }
-    row.alphaValue = 0
-    row.isHidden = true
+    NSLayoutConstraint.activate([
+      addTabButton.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+      toggleButton.leadingAnchor.constraint(equalTo: addTabButton.trailingAnchor, constant: 2),
+      toggleButton.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+    ])
+    sidebarAddTabButton = addTabButton
+    sidebarToggleButton = toggleButton
     return row
   }
 
@@ -366,36 +477,87 @@ final class WorkspaceViewController: NSViewController {
       actions.topAnchor.constraint(equalTo: content.topAnchor, constant: 4),
     ])
     sidebarHoverActions = actions
-    let tracking = NSTrackingArea(
-      rect: .zero,
-      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-      owner: self,
-      userInfo: nil
-    )
-    strip.addTrackingArea(tracking)
+    // 折叠态没有左栏，悬停带同时充当「左栏」与「红绿灯行」感应区：进入顶部即两个
+    // 按钮一起淡入，否则用户无处触发「+」。
+    sidebarHoverRegion = strip
+    titleBarHoverRegion = strip
+    strip.addTrackingArea(makeHoverTrackingArea())
     return content
   }
 
-  /// 侧栏 tracking area 的 owner 是本控制器：进入时淡入「+ / 折叠」按钮，离开时淡出。
+  /// 悬停感应区统一用「进入/移动/离开」三类事件驱动：只有 enter/exit 时，指针在
+  /// 侧栏内部跨越红绿灯行边界不会有任何事件，折叠按钮就永远不会按行切换。
+  private func makeHoverTrackingArea() -> NSTrackingArea {
+    NSTrackingArea(
+      rect: .zero,
+      options: [
+        .mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect,
+      ],
+      owner: self,
+      userInfo: nil
+    )
+  }
+
+  /// 三个入口都只做一件事：按指针的真实位置重算两个按钮各自的可见性。
   override func mouseEntered(with event: NSEvent) {
-    setSidebarHoverActionsVisible(true)
+    updateSidebarHoverVisibility(animated: true)
   }
 
   override func mouseExited(with event: NSEvent) {
-    setSidebarHoverActionsVisible(false)
+    updateSidebarHoverVisibility(animated: true)
   }
 
-  /// 切换悬停动作区透明度；不可见时同时 isHidden，避免隐形按钮拦截该区域的窗口拖动。
-  private func setSidebarHoverActionsVisible(_ visible: Bool) {
-    guard let actions = sidebarHoverActions else { return }
-    if visible { actions.isHidden = false }
+  override func mouseMoved(with event: NSEvent) {
+    updateSidebarHoverVisibility(animated: true)
+  }
+
+  /// 「+」跟随左栏、「折叠」跟随红绿灯行，各自独立淡入淡出。
+  ///
+  /// 状态一律由指针当前位置推导，而不是记在事件回调里：`refresh()` 会整树重建侧栏，
+  /// 新建的 tracking area 在指针不动时不会补发 `mouseEntered`。点一下标签页触发重建
+  /// 后，若沿用事件态，「+」就会凭空消失，直到用户重新划出再划入侧栏。
+  func updateSidebarHoverVisibility(animated: Bool) {
+    let visibility = resolveSidebarHoverVisibility()
+    setHoverButtonVisible(sidebarAddTabButton, visibility.showsNewTab, animated: animated)
+    setHoverButtonVisible(sidebarToggleButton, visibility.showsCollapseToggle, animated: animated)
+  }
+
+  /// 把两块感应区与指针换算到同一套窗口坐标，再交给 `AsterCore` 的规则判定。
+  /// 窗口不是键盘焦点窗口时不传指针，与 tracking area 的 `.activeInKeyWindow` 一致。
+  private func resolveSidebarHoverVisibility() -> SidebarHoverActionVisibility {
+    guard let window = view.window, window.isKeyWindow else { return .hidden }
+    return SidebarHoverActionVisibility.resolve(
+      pointer: window.mouseLocationOutsideOfEventStream,
+      sidebar: hoverRegionRectInWindow(sidebarHoverRegion),
+      titleBarRow: hoverRegionRectInWindow(titleBarHoverRegion)
+    )
+  }
+
+  private func hoverRegionRectInWindow(_ region: NSView?) -> CGRect? {
+    guard let region, region.window === view.window else { return nil }
+    return region.convert(region.bounds, to: nil)
+  }
+
+  /// 切换单个动作按钮的透明度；不可见时同时 `isHidden`，避免隐形按钮拦截该区域的
+  /// 窗口拖动。值没变时直接返回——本方法会在 `viewDidLayout` 里被调用，重复写
+  /// `isHidden` 会再触发一轮布局。
+  private func setHoverButtonVisible(_ button: NSView?, _ visible: Bool, animated: Bool) {
+    guard let button else { return }
+    let targetAlpha: CGFloat = visible ? 1 : 0
+    guard button.isHidden != !visible || button.alphaValue != targetAlpha else { return }
+    if visible { button.isHidden = false }
+    guard animated else {
+      button.alphaValue = targetAlpha
+      button.isHidden = !visible
+      return
+    }
     NSAnimationContext.runAnimationGroup({ context in
       context.duration = 0.15
-      actions.animator().alphaValue = visible ? 1 : 0
+      button.animator().alphaValue = targetAlpha
     }, completionHandler: {
       // completionHandler 是 @Sendable 闭包，回主 actor 再改 isHidden。
       Task { @MainActor in
-        actions.isHidden = !visible
+        button.isHidden = !visible
       }
     })
   }
@@ -419,8 +581,8 @@ final class WorkspaceViewController: NSViewController {
     // 当前 Tab 缓存，重建后的内容区会按展示状态重新接入它。
     detailsPanelLayoutConstraints.removeAll()
     workspaceFullWidthConstraint = nil
-    titleTrailingWithInspectorToggle = nil
-    titleTrailingWithoutInspectorToggle = nil
+    workspaceTitlePopover?.close()
+    workspaceTitlePopover = nil
     retainedObjects.removeAll()
     paneHosts.removeAll()
     editorTextViews.removeAll()
@@ -564,6 +726,14 @@ final class WorkspaceViewController: NSViewController {
           self.updateWindowTitle(title)
         }
         .store(in: &tabSubscriptions)
+      tab.workingDirectoryChanged
+        .sink { [weak self, weak tab] change in
+          guard let self, let tab, tab.id == self.model.selectedTabID,
+            change.paneID == tab.activePaneID
+          else { return }
+          self.workspaceTitleButton?.workingDirectory = change.directory
+        }
+        .store(in: &tabSubscriptions)
       tab.documentLineRevealRequested
         .sink { [weak self] request in
           self?.revealEditorLine(request.line, paneID: request.paneID)
@@ -576,7 +746,7 @@ final class WorkspaceViewController: NSViewController {
   /// 分屏焦点切换不会打断终端选择、滚动和 TUI 绘制。
   private func updateWindowTitle(_ title: String) {
     view.window?.title = title
-    windowTitleLabel?.stringValue = title
+    workspaceTitleButton?.programTitle = title
   }
 
   /// 一次 Pane 拖放的落点：`direction` 为 nil 表示落在面板中心（交换两个面板）。
@@ -696,7 +866,7 @@ final class WorkspaceViewController: NSViewController {
         stack.addArrangedSubview(
           makeDivider(
             color: preferences.activeTheme.style.sidebarBorderColor.map(NSColor.init)
-              ?? AsterTheme.hairline,
+              ?? AsterTheme.divider,
             vertical: true,
             thickness: preferences.activeTheme.style.sidebarBorderWidth
           ))
@@ -715,7 +885,7 @@ final class WorkspaceViewController: NSViewController {
       stack.spacing = 0
       stack.distribution = .fill
       let bar = makeHorizontalTabBar(isBottom: preferences.tabBarLayout == .bottom)
-      let divider = makeDivider(color: AsterTheme.hairline, vertical: false)
+      let divider = makeDivider(color: AsterTheme.divider, vertical: false)
       let content = makeContentArea()
       content.setContentHuggingPriority(.defaultLow, for: .vertical)
       content.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
@@ -756,7 +926,11 @@ final class WorkspaceViewController: NSViewController {
     contentAreaHost = host
     contentAreaWorkspace = workspace
     workspaceFullWidthConstraint = fullWidth
+    // 整树重建：旧面板的视图与约束已经随内容区一起作废，正在播放的收起动画也就
+    // 失效了，先让它的收尾闭包过期，避免它去动新挂上来的面板。
     detailsPanelDivider = nil
+    detailsPanelIsDetaching = false
+    detailsPanelTransitionToken &+= 1
     if model.isInspectorPresented { attachDetailsPanelIfNeeded() }
     return host
   }
@@ -790,15 +964,30 @@ final class WorkspaceViewController: NSViewController {
     header.addSubview(title)
     header.addSubview(menu)
     NSLayoutConstraint.activate([
-      title.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 12),
+      // 与标签行文案左对齐（行底卡内缩 6 + 卡内边距 10）。
+      title.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 16),
       title.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -12),
       menu.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -6),
       menu.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -5),
     ])
     column.addArrangedSubview(header)
 
-    // 悬停动作区：「+ 新建标签」与「折叠标签栏」，默认隐藏，鼠标进入侧栏时淡入。
-    // 放在 header 顶部右侧，与红绿灯同一水平线。
+    // 红绿灯行感应区：header 顶部与交通灯同高的一条带子，只用来界定「折叠」按钮的
+    // 显示范围。它不自带 tracking area，也不参与命中测试（否则会吃掉窗口拖动），
+    // 指针位置由侧栏那一个 tracking area 统一推导。
+    let titleBarRow = ClickThroughStripView()
+    titleBarRow.translatesAutoresizingMaskIntoConstraints = false
+    header.addSubview(titleBarRow)
+    NSLayoutConstraint.activate([
+      titleBarRow.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+      titleBarRow.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+      titleBarRow.topAnchor.constraint(equalTo: header.topAnchor),
+      titleBarRow.heightAnchor.constraint(equalToConstant: 30),
+    ])
+    titleBarHoverRegion = titleBarRow
+
+    // 悬停动作区：「+ 新建标签」跟随整个侧栏，「折叠标签栏」跟随上面那条红绿灯行。
+    // 两个按钮都放在 header 顶部右侧，与红绿灯同一水平线。
     let hoverActions = makeHoverActionsRow(sidebarVisible: true)
     header.addSubview(hoverActions)
     hoverActions.translatesAutoresizingMaskIntoConstraints = false
@@ -808,14 +997,9 @@ final class WorkspaceViewController: NSViewController {
     ])
     sidebarHoverActions = hoverActions
 
-    // 鼠标进入侧栏任意位置都显示动作区；inVisibleRect 让跟踪区域跟随侧栏尺寸。
-    let tracking = NSTrackingArea(
-      rect: .zero,
-      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-      owner: self,
-      userInfo: nil
-    )
-    background.addTrackingArea(tracking)
+    // 鼠标进入侧栏任意位置就显示「+」；inVisibleRect 让跟踪区域跟随侧栏尺寸。
+    sidebarHoverRegion = background
+    background.addTrackingArea(makeHoverTrackingArea())
 
     let rows = NSStackView()
     rows.orientation = .vertical
@@ -857,7 +1041,7 @@ final class WorkspaceViewController: NSViewController {
         rows.addArrangedSubview(button)
         button.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
         if model.dividerAfterTabIDs.contains(tab.id) {
-          let divider = makeDivider(color: AsterTheme.hairline, vertical: false)
+          let divider = makeDivider(color: AsterTheme.divider, vertical: false)
           divider.identifier = NSUserInterfaceItemIdentifier("sidebar-manual-divider")
           rows.addArrangedSubview(divider)
           divider.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
@@ -937,7 +1121,8 @@ final class WorkspaceViewController: NSViewController {
     host.addSubview(label)
     label.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      label.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 12),
+      // 分组标题同样对齐标签行文案的左缘。
+      label.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 16),
       label.trailingAnchor.constraint(lessThanOrEqualTo: host.trailingAnchor, constant: -12),
       label.centerYAnchor.constraint(equalTo: host.centerYAnchor),
     ])
@@ -1180,62 +1365,88 @@ final class WorkspaceViewController: NSViewController {
 
   private func makeWorkspaceHeader(_ tab: TerminalTabItem) -> NSView {
     let theme = preferences.activeTheme
-    let background = ThemeVisualEffectView()
-    // Otty 的右侧标题区与终端画布连续，主题声明的 titlebar material 只用于
-    // 独立系统标题栏。这里使用终端最终背景色，避免 vibrancy 把右侧顶部压成灰条。
-    background.apply(
-      material: TerminalThemeMaterial.none,
-      tint: theme.palette.renderedTerminalBackground
-    )
+    let background = NSView()
+    background.wantsLayer = true
+    // 标题区与终端画布是同一块视觉平面。不能使用 NSVisualEffectView：即使额外覆盖
+    // 同一个 tint，vibrancy/material 仍会根据窗口内容产生可见色差。
+    background.layer?.backgroundColor = NSColor(theme.palette.renderedTerminalBackground).cgColor
     background.translatesAutoresizingMaskIntoConstraints = false
     background.identifier = NSUserInterfaceItemIdentifier("workspace-titlebar")
     background.heightAnchor.constraint(equalToConstant: 28).isActive = true
 
-    // 标题区显示活动 Pane 的 OSC 2/0 窗口标题；OSC 1 的短名称只驱动标签文案。
-    // 文件、分屏和命令面板仍由菜单与快捷键提供，不在标题栏重复堆放按钮。
-    let title = makeLabel(
-      tab.windowTitle,
-      size: 10.5,
-      color: theme.style.titlebarForeground.map(NSColor.init) ?? AsterTheme.secondaryInk
-    )
-    title.identifier = NSUserInterfaceItemIdentifier("workspace-window-title")
-    windowTitleLabel = title
-    title.alignment = .center
+    // 普通状态显示 OSC 2/0 程序标题；悬停切成缩写后的工作目录胶囊。点击入口承载
+    // 命名、目录、Git、分屏与查找等动作，不再给标题栏增加独立颜色或常驻图标。
+    let title = WorkspaceTitleButton(
+      programTitle: tab.windowTitle,
+      workingDirectory: tab.workingDirectory,
+      foregroundColor: theme.style.titlebarForeground.map(NSColor.init)
+        ?? AsterTheme.secondaryInk
+    ) { [weak self, weak tab] button in
+      guard let self, let tab else { return }
+      self.showWorkspaceTitlePopover(anchor: button, tab: tab)
+    }
+    title.identifier = NSUserInterfaceItemIdentifier("workspace-title-button")
+    workspaceTitleButton = title
     background.addSubview(title)
     title.translatesAutoresizingMaskIntoConstraints = false
 
-    // 展开入口始终留在稳定标题栏内；显隐时只切换它和两条互斥约束，避免为了一个
-    // 右侧按钮重建整个 workspace header。
-    let inspectorToggle = ActionButton(symbol: "sidebar.right", bezelStyle: .accessoryBarAction) {
-      [weak self] in self?.model.toggleInspector()
+    // 标题栏右端的详情面板入口。面板展开后这颗按钮隐藏，收起入口移到面板 header
+    // 右侧——两处共用 `InspectorToggleMetrics`，在窗口坐标里完全重合，切换时图标
+    // 停在原地而不是左右横跳。
+    let inspectorToggle = IconHoverButton(
+      symbol: InspectorToggleMetrics.symbol,
+      accessibilityDescription: "详情面板"
+    ) { [weak self] in
+      self?.model.toggleInspector()
     }
-    inspectorToggle.isBordered = false
-    inspectorToggle.toolTip = "展开详情面板"
     inspectorToggle.identifier = NSUserInterfaceItemIdentifier("workspace-inspector-toggle")
-    inspectorToggle.contentTintColor = AsterTheme.secondaryInk
-    let hoverReveal = TitlebarHoverRevealView(content: inspectorToggle)
-    background.addSubview(hoverReveal)
-    hoverReveal.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      hoverReveal.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -2),
-      hoverReveal.topAnchor.constraint(equalTo: background.topAnchor),
-      hoverReveal.bottomAnchor.constraint(equalTo: background.bottomAnchor),
-    ])
-    let withToggle = title.trailingAnchor.constraint(
-      lessThanOrEqualTo: hoverReveal.leadingAnchor, constant: -8)
-    let withoutToggle = title.trailingAnchor.constraint(
-      lessThanOrEqualTo: background.trailingAnchor, constant: -12)
-    inspectorHoverReveal = hoverReveal
-    titleTrailingWithInspectorToggle = withToggle
-    titleTrailingWithoutInspectorToggle = withoutToggle
-    hoverReveal.isHidden = model.isInspectorPresented
-    (model.isInspectorPresented ? withoutToggle : withToggle).isActive = true
+    inspectorToggle.toolTip = "展开详情面板"
+    inspectorToggle.restingTint = theme.style.titlebarForeground.map(NSColor.init)
+      ?? AsterTheme.secondaryInk
+    inspectorToggle.isHidden = model.isInspectorPresented
+    inspectorToggleButton = inspectorToggle
+    background.addSubview(inspectorToggle)
+    inspectorToggle.translatesAutoresizingMaskIntoConstraints = false
+
     NSLayoutConstraint.activate([
       title.centerXAnchor.constraint(equalTo: background.centerXAnchor),
       title.centerYAnchor.constraint(equalTo: background.centerYAnchor),
       title.leadingAnchor.constraint(greaterThanOrEqualTo: background.leadingAnchor, constant: 12),
+      title.trailingAnchor.constraint(
+        lessThanOrEqualTo: inspectorToggle.leadingAnchor, constant: -8),
+      title.heightAnchor.constraint(equalToConstant: 24),
+      inspectorToggle.trailingAnchor.constraint(
+        equalTo: background.trailingAnchor, constant: -InspectorToggleMetrics.trailingInset),
+      inspectorToggle.centerYAnchor.constraint(
+        equalTo: background.topAnchor, constant: InspectorToggleMetrics.centerYFromTop),
+      inspectorToggle.widthAnchor.constraint(
+        equalToConstant: InspectorToggleMetrics.buttonSize),
+      inspectorToggle.heightAnchor.constraint(
+        equalToConstant: InspectorToggleMetrics.buttonSize),
     ])
     return background
+  }
+
+  /// 点击路径胶囊显示工作区动作。再次点击同一入口会关闭；弹层关闭后恢复普通程序标题。
+  private func showWorkspaceTitlePopover(anchor: WorkspaceTitleButton, tab: TerminalTabItem) {
+    if workspaceTitlePopover?.isShown == true {
+      workspaceTitlePopover?.close()
+      return
+    }
+    let content = WorkspaceTitlePopoverViewController(
+      model: model,
+      preferences: preferences,
+      tab: tab
+    )
+    let popover = NSPopover()
+    popover.behavior = .transient
+    popover.animates = true
+    popover.delegate = self
+    popover.contentViewController = content
+    popover.contentSize = NSSize(width: 280, height: 462)
+    workspaceTitlePopover = popover
+    anchor.setPopoverPresented(true)
+    popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
   }
 
   private func makeFindBar(_ tab: TerminalTabItem) -> NSView {
@@ -1710,6 +1921,13 @@ final class WorkspaceViewController: NSViewController {
   @objc private func showSettings() { (NSApp.delegate as? AsterAppDelegate)?.showSettings(nil) }
 }
 
+extension WorkspaceViewController: NSPopoverDelegate {
+  func popoverDidClose(_ notification: Notification) {
+    workspaceTitleButton?.setPopoverPresented(false)
+    workspaceTitlePopover = nil
+  }
+}
+
 // MARK: - AppKit components
 
 @MainActor
@@ -1828,6 +2046,10 @@ private final class SidebarOptionsButton: NSButton {
 /// 都不经过跨框架的 Material/Shape 二次混色。
 @MainActor
 private final class TabRowButton: NSButton {
+  /// 视觉底卡两侧留白；按钮本身仍保持整行命中宽度。
+  private static let sidebarRowInset: CGFloat = 6
+  /// 底卡圆角下限。多数 Otty 主题按「整行铺满」给的是 0，内缩之后必须圆角化。
+  private static let sidebarRowRadius: CGFloat = 8
   private let tab: TerminalTabItem
   private let selected: Bool
   private let style: TerminalTabStyle
@@ -1836,6 +2058,9 @@ private final class TabRowButton: NSButton {
   private var tracking: NSTrackingArea?
   private weak var verticalAccessory: NSView?
   private weak var closeButton: NSButton?
+  /// 侧栏行的内缩圆角底。整行仍然是全宽命中区，只有这层底色两侧留边并带圆角，
+  /// 因此指针落在行的任何位置都能点中，视觉上却是一枚独立的圆角卡片。
+  private weak var rowBackground: NSView?
   private var hovered = false {
     didSet {
       guard hovered != oldValue else { return }
@@ -1892,6 +2117,22 @@ private final class TabRowButton: NSButton {
       imagePosition = .imageTrailing
     }
     if !horizontal {
+      // 内缩圆角底必须先入栈，才能垫在标题与右侧附件下面。
+      let rowBackground = NSView()
+      rowBackground.wantsLayer = true
+      rowBackground.layer?.cornerCurve = .continuous
+      rowBackground.translatesAutoresizingMaskIntoConstraints = false
+      addSubview(rowBackground)
+      NSLayoutConstraint.activate([
+        rowBackground.leadingAnchor.constraint(
+          equalTo: leadingAnchor, constant: Self.sidebarRowInset),
+        rowBackground.trailingAnchor.constraint(
+          equalTo: trailingAnchor, constant: -Self.sidebarRowInset),
+        rowBackground.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+        rowBackground.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+      ])
+      self.rowBackground = rowBackground
+
       // 选中与未选中显示同一份 `tab.title`（目录稳定显示名），切换标签时行文案
       // 不再在「完整路径 / 短名」之间跳变。
       let primary = makeLabel(
@@ -1962,11 +2203,13 @@ private final class TabRowButton: NSButton {
       verticalAccessory = accessory
       closeButton = close
       NSLayoutConstraint.activate([
-        primary.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+        // 文案与右侧槽位都按圆角底的内缘对齐，卡片左右各留出 10pt 内边距。
+        primary.leadingAnchor.constraint(equalTo: rowBackground.leadingAnchor, constant: 10),
         primary.centerYAnchor.constraint(equalTo: centerYAnchor),
         primary.trailingAnchor.constraint(
           lessThanOrEqualTo: accessorySlot.leadingAnchor, constant: -8),
-        accessorySlot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+        accessorySlot.trailingAnchor.constraint(
+          equalTo: rowBackground.trailingAnchor, constant: -4),
         accessorySlot.centerYAnchor.constraint(equalTo: centerYAnchor),
         accessorySlot.widthAnchor.constraint(equalToConstant: 28),
         accessorySlot.heightAnchor.constraint(equalToConstant: 28),
@@ -2039,21 +2282,35 @@ private final class TabRowButton: NSButton {
       ofSize: selected ? 12.5 : 12,
       weight: selected ? NSFont.Weight(cssWeight: style.activeFontWeight) : .regular
     )
-    layer?.cornerRadius = style.radius
+    // 侧栏行的装饰画在内缩底层上；横向标签栏仍然直接用按钮自身的 layer。
+    let decoration = rowBackground?.layer ?? layer
+    if rowBackground != nil {
+      // 行本体保持透明，否则内缩底外面会再糊一层直角色块。
+      layer?.backgroundColor = NSColor.clear.cgColor
+      layer?.borderWidth = 0
+      layer?.shadowOpacity = 0
+      // 主题给的是「整行铺满」语义下的圆角（多数为 0）。内缩成卡片后必须有可见
+      // 圆角，取一个下限；主题本来就更圆时沿用主题值。
+      decoration?.cornerRadius = max(style.radius, Self.sidebarRowRadius)
+    } else {
+      decoration?.cornerRadius = style.radius
+    }
     let background: NSColor
     if selected { background = style.activeBackground.map(NSColor.init) ?? AsterTheme.ink.withAlphaComponent(0.075) }
-    else if hovered { background = style.hoverBackground.map(NSColor.init) ?? .clear }
-    else { background = .clear }
-    layer?.backgroundColor = background.cgColor
-    layer?.borderWidth = selected ? style.activeBorderWidth : 0
-    layer?.borderColor = style.activeBorderColor.map(NSColor.init)?.cgColor
+    else if hovered {
+      // 主题没给悬停色时也必须有反馈，否则鼠标扫过侧栏毫无变化。
+      background = style.hoverBackground.map(NSColor.init) ?? AsterTheme.ink.withAlphaComponent(0.05)
+    } else { background = .clear }
+    decoration?.backgroundColor = background.cgColor
+    decoration?.borderWidth = selected ? style.activeBorderWidth : 0
+    decoration?.borderColor = style.activeBorderColor.map(NSColor.init)?.cgColor
     if selected, let shadow = style.activeShadow {
-      layer?.shadowColor = NSColor(shadow.color).cgColor
-      layer?.shadowOpacity = 1
-      layer?.shadowRadius = shadow.blur
-      layer?.shadowOffset = NSSize(width: shadow.x, height: -shadow.y)
+      decoration?.shadowColor = NSColor(shadow.color).cgColor
+      decoration?.shadowOpacity = 1
+      decoration?.shadowRadius = shadow.blur
+      decoration?.shadowOffset = NSSize(width: shadow.x, height: -shadow.y)
     } else {
-      layer?.shadowOpacity = 0
+      decoration?.shadowOpacity = 0
     }
   }
 
@@ -2099,7 +2356,7 @@ private final class PersistedSplitView: NSSplitView, NSSplitViewDelegate {
       isVertical
       ? NSRect(x: rect.midX - thickness / 2, y: rect.minY, width: thickness, height: rect.height)
       : NSRect(x: rect.minX, y: rect.midY - thickness / 2, width: rect.width, height: thickness)
-    (isHoveringDivider ? AsterTheme.accent : AsterTheme.hairline).setFill()
+    (isHoveringDivider ? AsterTheme.accent : AsterTheme.divider).setFill()
     line.fill()
   }
 
@@ -2371,44 +2628,12 @@ private final class ClickThroughStripView: NSView {
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-/// 标题栏右端的悬停揭示容器：内含详情面板切换按钮与一小段感应边距，自持
-/// tracking area（owner 是自身，不与控制器的侧栏悬停处理串扰）。只在面板收起
-/// 时挂载——面板展开后标题栏不再渲染它，收起入口在面板 header 右侧。
-private final class TitlebarHoverRevealView: NSView {
-  init(content: NSView) {
-    super.init(frame: .zero)
-    alphaValue = 0
-    addSubview(content)
-    content.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      content.centerYAnchor.constraint(equalTo: centerYAnchor),
-      content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-      // 感应区向左多延伸 18pt，按钮不必精确命中也能触发揭示。
-      content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
-      topAnchor.constraint(equalTo: content.topAnchor),
-      bottomAnchor.constraint(equalTo: content.bottomAnchor),
-    ])
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  override func updateTrackingAreas() {
-    super.updateTrackingAreas()
-    trackingAreas.forEach { removeTrackingArea($0) }
-    addTrackingArea(
-      NSTrackingArea(
-        rect: bounds, options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
-        owner: self, userInfo: nil))
-  }
-
-  override func mouseEntered(with event: NSEvent) { setRevealed(true) }
-  override func mouseExited(with event: NSEvent) { setRevealed(false) }
-
-  private func setRevealed(_ revealed: Bool) {
-    NSAnimationContext.runAnimationGroup { context in
-      context.duration = 0.15
-      animator().alphaValue = revealed ? 1 : 0
-    }
+/// 侧栏悬停动作按钮的容器：自身不参与命中测试，只把点击交给真正可见的按钮子视图。
+/// 两个按钮都隐藏时，这块区域仍然属于标题栏，用户可以在上面拖动窗口。
+private final class HoverActionsContainerView: NSView {
+  override func hitTest(_ point: NSPoint) -> NSView? {
+    let hit = super.hitTest(point)
+    return hit === self ? nil : hit
   }
 }
 

@@ -67,6 +67,9 @@ final class TerminalAutocompleteController {
   private var pendingCorrection: String?
   private var aliases: [String] = []
   private var inlineDismissed = false
+  /// 本地输入会先于 PTY 回显到达。等待回显期间保留候选数据但隐藏 ghost，避免它
+  /// 锚定在旧 caretFrame 上并与 Shell 随后绘制的输入文字重叠。
+  private var awaitingInputEcho = false
 
   init(
     service: AutocompleteService,
@@ -104,12 +107,14 @@ final class TerminalAutocompleteController {
       promptActive = false
       tracker.beginPrompt()
       inlineDismissed = false
+      awaitingInputEcho = false
     case .inputStart:
       // B 明确表示光标已进入可编辑区。A 缺失时仍可从此处开始安全跟踪。
       if !promptActive {
         promptActive = true
         tracker.beginPrompt()
       }
+      awaitingInputEcho = false
       scheduleRefresh()
     case .commandStart:
       promptActive = false
@@ -139,12 +144,21 @@ final class TerminalAutocompleteController {
     }
     inlineDismissed = false
     panelVisible = false
+    awaitingInputEcho = true
     scheduleRefresh()
   }
 
   func receiveOutput(_ bytes: ArraySlice<UInt8>) {
     if let completed = outputCapture.consume(bytes).last {
       completedCommandOutput = completed
+    }
+    guard promptActive, awaitingInputEcho else { return }
+    awaitingInputEcho = false
+    // 输出捕获需先于同分片内的 OSC 命令完成事件，但 ghost 布局必须等 SwiftTerm
+    // 消费完回显并更新 caretFrame。延后一轮 MainActor 同时满足这两个时序约束。
+    Task { @MainActor [weak self] in
+      guard let self, self.promptActive, !self.awaitingInputEcho else { return }
+      self.render()
     }
   }
 
@@ -360,7 +374,9 @@ final class TerminalAutocompleteController {
     guard let terminalView else { return }
     overlay.render(
       result: currentResult,
-      showInline: controls().resolvedAutocompleteInlineSuggestion && !inlineDismissed,
+      showInline: controls().resolvedAutocompleteInlineSuggestion
+        && !inlineDismissed
+        && !awaitingInputEcho,
       showPanel: panelVisible,
       selectedIndex: selectedIndex,
       caretFrame: terminalView.caretFrame,

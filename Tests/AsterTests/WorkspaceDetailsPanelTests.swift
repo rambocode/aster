@@ -59,7 +59,98 @@ func inspectorPreferencesRoundTripThroughDefaults() {
   #expect(reloaded.inspectorSection == 3)
 }
 
-@Test("面板收起时标题栏含悬停切换按钮，展开后隐藏并呈现四个页签 chip")
+@Test("详情面板展开前后的折叠图标在窗口里完全重合")
+@MainActor
+func inspectorToggleKeepsIdenticalPositionAcrossPresentation() throws {
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorPresented = false
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+    styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let toggle = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSButton }
+      .first { $0.identifier?.rawValue == "workspace-inspector-toggle" })
+  let collapsedFrame = toggle.convert(toggle.bounds, to: nil)
+
+  model.toggleInspector()
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let close = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSButton }
+      .first { $0.identifier?.rawValue == "details-panel-close" })
+  let expandedFrame = close.convert(close.bounds, to: nil)
+  // 展开动画只改 layer transform，不影响 frame，因此这里比的就是最终位置。
+  #expect(abs(collapsedFrame.midX - expandedFrame.midX) < 0.5)
+  #expect(abs(collapsedFrame.midY - expandedFrame.midY) < 0.5)
+  #expect(collapsedFrame.size == expandedFrame.size)
+  // 展开后标题栏那颗必须让位，否则同一位置会有两个图标。
+  #expect(toggle.isHidden)
+}
+
+@Test("展开详情面板走 layer 位移动画，布局与终端宽度一次到位")
+@MainActor
+func inspectorPresentationAnimatesWithoutRelayoutingTerminalEachFrame() throws {
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorPresented = false
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+    styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  model.toggleInspector()
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let panel = try #require(
+    controller.view.allDescendants.first {
+      $0.identifier?.rawValue == "details-panel-close"
+    }?.enclosingPanelRoot)
+  // 约束在动画开始前就已经生效：面板宽度是最终值，终端因此只收到一次 resize。
+  // 过渡画在 layer transform 上，不逐帧改宽度约束——否则每一帧都会给 PTY 发一次
+  // TIOCSWINSZ，TUI 会在 0.2 秒里被迫重绘十几次。
+  #expect(abs(panel.frame.width - 278) < 0.5)
+  let workspace = try #require(
+    controller.view.allDescendants.first { $0.identifier?.rawValue == "workspace-titlebar" }?
+      .superview)
+  // 终端一侧同样一次让位：标题栏（与终端同宽）已经缩到扣掉面板与分隔线后的宽度。
+  #expect(abs(workspace.frame.width - (panel.superview!.frame.width - 278 - 1)) < 1)
+  #expect(panel.wantsLayer)
+}
+
+extension NSView {
+  /// 从面板 header 的按钮回溯到详情面板根视图（宽度受 278pt 约束的那一层）。
+  fileprivate var enclosingPanelRoot: NSView? {
+    var candidate: NSView? = self
+    while let current = candidate {
+      if current.constraints.contains(where: {
+        $0.firstAttribute == .width && abs($0.constant - 278) < 0.5
+      }) {
+        return current
+      }
+      candidate = current.superview
+    }
+    return nil
+  }
+}
+
+@Test("面板收起时标题栏含切换按钮，展开后隐藏并呈现四个页签 chip")
 @MainActor
 func workspaceHeaderRevealsInspectorToggleAndPanelChips() {
   let collapsedDefaults = panelTestDefaults()
@@ -75,8 +166,9 @@ func workspaceHeaderRevealsInspectorToggleAndPanelChips() {
   #expect(collapsedIdentifiers.contains("workspace-inspector-toggle"))
   let toggle = collapsedController.view.allDescendants.compactMap { $0 as? NSButton }
     .first { $0.identifier?.rawValue == "workspace-inspector-toggle" }
-  // 默认完全透明，悬停才淡入。
-  #expect(toggle?.superview?.alphaValue == 0)
+  // 2026-08 设计变更：改为常驻可见（`IconHoverButton` 自带悬停底色反馈），
+  // 不再是悬停才淡入的揭示容器——它要和面板展开后的收起图标位置对照。
+  #expect(toggle?.isHidden == false)
 
   let defaults = panelTestDefaults()
   let preferences = AppPreferences(defaults: defaults)
@@ -91,7 +183,7 @@ func workspaceHeaderRevealsInspectorToggleAndPanelChips() {
   // 面板展开后标题栏切换入口保留同一实例但隐藏，收起入口在面板 header 右侧。
   let expandedToggle = controller.view.allDescendants.compactMap { $0 as? NSButton }
     .first { $0.identifier?.rawValue == "workspace-inspector-toggle" }
-  #expect(expandedToggle?.superview?.isHidden == true)
+  #expect(expandedToggle?.isHidden == true)
   #expect(identifiers.contains("details-panel-close"))
   for chip in ["details-chip-info", "details-chip-outline", "details-chip-git", "details-chip-files"] {
     #expect(identifiers.contains(chip))
@@ -196,6 +288,58 @@ func filesSearchKeepsInputViewAndUsesVirtualizedRows() throws {
   #expect(filesTable != nil)
 }
 
+@Test("Files 显示隐藏文件开关会带着 includeHidden 重新枚举")
+@MainActor
+func filesShowHiddenToggleReenumeratesWithFlag() async throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 3
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.stop(immediately: true) }
+  var includeHiddenFlags: [Bool] = []
+  let client = WorkspaceInspectionClient(
+    information: { _ in WorkspaceInformationSnapshot(processes: [], listeningPorts: []) },
+    git: { _ in GitStatusSummary() },
+    files: { _, includeHidden in
+      includeHiddenFlags.append(includeHidden)
+      if includeHidden {
+        return [
+          WorkspaceFileNode(path: "/tmp/.gitignore", name: ".gitignore", depth: 0, isDirectory: false),
+          WorkspaceFileNode(path: "/tmp/README.md", name: "README.md", depth: 0, isDirectory: false),
+        ]
+      }
+      return [
+        WorkspaceFileNode(path: "/tmp/README.md", name: "README.md", depth: 0, isDirectory: false)
+      ]
+    }
+  )
+  let controller = DetailsPanelViewController(
+    model: model, preferences: preferences, inspectionClient: client)
+  controller.loadViewIfNeeded()
+  await Task.yield()
+  await Task.yield()
+
+  let table = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-files-table" })
+  #expect(table.numberOfRows == 1)
+  #expect(includeHiddenFlags == [false])
+
+  let toggle = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSButton }
+      .first { $0.identifier?.rawValue == "details-files-show-hidden" })
+  #expect(toggle.toolTip == "包含隐藏文件")
+  toggle.performClick(nil)
+  await Task.yield()
+  await Task.yield()
+
+  #expect(includeHiddenFlags == [false, true])
+  #expect(table.numberOfRows == 2)
+  #expect(toggle.toolTip == "不包含隐藏文件")
+}
+
 @Test("Files 首次加载默认收起目录并只投影顶层行")
 @MainActor
 func filesInitiallyCollapsesDirectories() async throws {
@@ -214,7 +358,7 @@ func filesInitiallyCollapsesDirectories() async throws {
   let client = WorkspaceInspectionClient(
     information: { _ in WorkspaceInformationSnapshot(processes: [], listeningPorts: []) },
     git: { _ in GitStatusSummary() },
-    files: { _ in nodes }
+    files: { _, _ in nodes }
   )
   let controller = DetailsPanelViewController(
     model: model, preferences: preferences, inspectionClient: client)
@@ -232,6 +376,72 @@ func filesInitiallyCollapsesDirectories() async throws {
     directoryCell.allDescendants.compactMap { $0 as? NSButton }.first)
   disclosure.performClick(nil)
   #expect(table.numberOfRows == 3)
+}
+
+@Test("Files 右键菜单区分文件与目录，展开目录不创建 fileBrowser Pane")
+@MainActor
+func filesContextMenuItemsAndDirectoryExpandStayInTree() async throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 3
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.stop(immediately: true) }
+  let nodes = [
+    WorkspaceFileNode(path: "/tmp/Sources", name: "Sources", depth: 0, isDirectory: true),
+    WorkspaceFileNode(path: "/tmp/Sources/main.swift", name: "main.swift", depth: 1, isDirectory: false),
+    WorkspaceFileNode(path: "/tmp/README.md", name: "README.md", depth: 0, isDirectory: false),
+  ]
+  let client = WorkspaceInspectionClient(
+    information: { _ in WorkspaceInformationSnapshot(processes: [], listeningPorts: []) },
+    git: { _ in GitStatusSummary() },
+    files: { _, _ in nodes }
+  )
+  let controller = DetailsPanelViewController(
+    model: model, preferences: preferences, inspectionClient: client)
+  controller.loadViewIfNeeded()
+  await Task.yield()
+  await Task.yield()
+
+  let table = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-files-table" })
+  let menu = try #require(table.menu)
+  #expect(table.numberOfRows == 2)
+
+  // 顶层排序：目录优先 → Sources (0), README.md (1)
+  table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+  controller.menuWillOpen(menu)
+  let fileTitles = menu.items.map(\.title)
+  #expect(fileTitles.contains("打开"))
+  #expect(fileTitles.contains("在预览中打开"))
+  #expect(fileTitles.contains("发送到 Chat"))
+  #expect(fileTitles.contains("复制绝对路径"))
+  #expect(fileTitles.contains("在 Finder 中显示"))
+  #expect(!fileTitles.contains("展开"))
+  #expect(!fileTitles.contains("折叠"))
+
+  table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+  controller.menuWillOpen(menu)
+  let directoryTitles = menu.items.map(\.title)
+  #expect(directoryTitles.contains("展开"))
+  #expect(!directoryTitles.contains("在预览中打开"))
+  #expect(!directoryTitles.contains("发送到 Chat"))
+  #expect(!directoryTitles.contains("打开"))
+
+  let expand = try #require(menu.items.first { $0.title == "展开" })
+  #expect(NSApp.sendAction(expand.action!, to: expand.target, from: expand))
+  #expect(table.numberOfRows == 3)
+  let kinds = model.selectedTab?.runtimes.values.map(\.descriptor.kind) ?? []
+  #expect(!kinds.contains(.fileBrowser))
+
+  // 再点 chevron 应折叠回顶层；证明右键展开走的是同一套树内状态。
+  let directoryCell = try #require(table.view(atColumn: 0, row: 0, makeIfNecessary: true))
+  let disclosure = try #require(
+    directoryCell.allDescendants.compactMap { $0 as? NSButton }.first)
+  disclosure.performClick(nil)
+  #expect(table.numberOfRows == 2)
 }
 
 @Test("Git 变更使用虚拟化表格")
@@ -273,7 +483,7 @@ private func makeGitPanelFixture(
   let client = WorkspaceInspectionClient(
     information: { _ in WorkspaceInformationSnapshot(processes: [], listeningPorts: []) },
     git: { _ in status },
-    files: { _ in [] },
+    files: { _, _ in [] },
     diff: { _, _, _ in diff }
   )
   let controller = DetailsPanelViewController(
@@ -595,7 +805,7 @@ func detailsPanelStartsOnlySelectedInspection() async {
       gitCalls += 1
       return GitStatusSummary()
     },
-    files: { _ in
+    files: { _, _ in
       filesCalls += 1
       return []
     }
@@ -632,7 +842,7 @@ func reopeningGitAfterCacheExpiryRefreshesStatus() async {
       gitCalls += 1
       return GitStatusSummary()
     },
-    files: { _ in [] }
+    files: { _, _ in [] }
   )
   let controller = DetailsPanelViewController(
     model: model,
@@ -676,7 +886,7 @@ func switchingDetailsSectionCancelsPreviousInspection() async throws {
       gitCalls += 1
       return GitStatusSummary()
     },
-    files: { _ in [] }
+    files: { _, _ in [] }
   )
   let controller = DetailsPanelViewController(
     model: model,
@@ -997,7 +1207,7 @@ func activePaneSwitchKeepsLoadedDetailsPageRoots() async throws {
   let client = WorkspaceInspectionClient(
     information: { _ in WorkspaceInformationSnapshot(processes: [], listeningPorts: []) },
     git: { _ in GitStatusSummary() },
-    files: { _ in
+    files: { _, _ in
       filesCalls += 1
       return []
     }

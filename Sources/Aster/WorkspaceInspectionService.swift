@@ -12,7 +12,7 @@ struct WorkspaceInformationSnapshot: Sendable {
 struct WorkspaceInspectionClient {
   let information: @MainActor (_ shellProcessIdentifier: Int32?) async -> WorkspaceInformationSnapshot
   let git: @MainActor (_ directory: String) async -> GitStatusSummary
-  let files: @MainActor (_ directory: String) async -> [WorkspaceFileNode]
+  let files: @MainActor (_ directory: String, _ includeHidden: Bool) async -> [WorkspaceFileNode]
   /// 只有用户点开 diff 预览时才会用到，因此给出「无差异」默认实现：只验证 Info/Git/Files
   /// 加载顺序的测试不必逐个声明它。
   var diff: @MainActor (_ directory: String, _ path: String, _ staged: Bool) async -> String = {
@@ -27,8 +27,9 @@ struct WorkspaceInspectionClient {
     git: { directory in
       await WorkspaceInspectionService.inspectGit(directory: directory)
     },
-    files: { directory in
-      await WorkspaceInspectionService.inspectFiles(directory: directory)
+    files: { directory, includeHidden in
+      await WorkspaceInspectionService.inspectFiles(
+        directory: directory, includeHidden: includeHidden)
     },
     diff: { directory, path, staged in
       await WorkspaceInspectionService.inspectDiff(
@@ -154,9 +155,10 @@ enum WorkspaceInspectionService {
   /// Files 页只依赖目录枚举，不应排在可能触发秒级超时的 ps/lsof/Git 检查之后。
   /// 独立 user-initiated 任务让面板先得到有界文件树，顶部页签切换也不会阻塞主线程；外层
   /// 刷新取消时必须同步取消扫描，否则快速 cd 或关闭面板会积累已经无用的目录遍历。
-  static func inspectFiles(directory: String) async -> [WorkspaceFileNode] {
+  static func inspectFiles(directory: String, includeHidden: Bool = false) async -> [WorkspaceFileNode] {
     let scan = Task.detached(priority: .userInitiated) {
-      WorkspaceFileTree.enumerate(root: URL(fileURLWithPath: directory))
+      WorkspaceFileTree.enumerate(
+        root: URL(fileURLWithPath: directory), includeHidden: includeHidden)
     }
     return await withTaskCancellationHandler {
       await scan.value

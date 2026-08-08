@@ -1,15 +1,46 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <defs>
-    <linearGradient id="surface" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#30322f"/>
-      <stop offset="1" stop-color="#171817"/>
-    </linearGradient>
-    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="26" stdDeviation="28" flood-color="#000" flood-opacity=".28"/>
-    </filter>
-  </defs>
-  <rect x="92" y="92" width="840" height="840" rx="204" fill="url(#surface)" filter="url(#shadow)"/>
-  <path d="M512 232 563 418 732 322 606 462 792 512 606 562 732 702 563 606 512 792 461 606 292 702 418 562 232 512 418 462 292 322 461 418Z" fill="#8fac69"/>
-  <circle cx="512" cy="512" r="94" fill="#f3f1eb"/>
-  <circle cx="512" cy="512" r="36" fill="#242623"/>
+  <!--
+    Aster 的品牌底色使用统一珊瑚色。完整画布作为图标底面，避免各尺寸导出时
+    因透明边缘采样产生暗边；前景仅使用白色，保证 Dock 小尺寸下仍有足够对比度。
+  -->
+  <rect width="1024" height="1024" fill="#EA6D49"/>
+
+  <!-- 独立提示符表示终端入口；圆角端点与主轨道保持相同视觉语言。 -->
+  <path
+    d="M156 260 278 356 156 452"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="52"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!--
+    连续轨道表示 Prompt、工具调用和结果回流。右下收束成回转箭头，同时保留
+    足够大的内部留白，避免缩小后与中央星芒粘连。
+  -->
+  <path
+    d="M684 676
+       C754 586 794 488 768 398
+       C731 272 597 231 474 286
+       C349 342 284 466 307 592
+       C331 724 445 797 572 800
+       C670 802 756 779 860 748
+       L860 610"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="52"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- 四向星芒是 Aster 与 AI 辅助能力的共同识别核心。 -->
+  <path
+    d="M548 405
+       C558 480 599 520 674 530
+       C599 540 558 580 548 655
+       C538 580 497 540 422 530
+       C497 520 538 480 548 405Z"
+    fill="#FFFFFF"
+  />
 </svg>

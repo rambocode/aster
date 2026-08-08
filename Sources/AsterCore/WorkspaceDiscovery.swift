@@ -654,6 +654,7 @@ public enum WorkspaceFileTree {
     root: URL,
     maximumDepth: Int = 3,
     maximumItems: Int = 500,
+    includeHidden: Bool = false,
     fileManager: FileManager = .default
   ) -> [WorkspaceFileNode] {
     let depthLimit = max(0, min(maximumDepth, 16))
@@ -678,20 +679,23 @@ public enum WorkspaceFileTree {
       let sorted = entries.sorted {
         $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
       }
+      // 保持深度优先：子节点紧跟父节点，供详情 Files 的 buildFileTree 归并。
+      // 隐藏目录只入列、不递归，避免 .build/.git 占满 maximumItems。
       for entry in sorted where result.count < itemLimit {
         guard !isCancelled() else { return }
-        guard let values = try? entry.resourceValues(forKeys: keys), values.isHidden != true else {
-          continue
-        }
-        let directory = values.isDirectory == true
+        guard let values = try? entry.resourceValues(forKeys: keys) else { continue }
+        if !includeHidden, values.isHidden == true { continue }
+        let isDirectory = values.isDirectory == true
+        let isLink = values.isSymbolicLink == true
+        let isHidden = values.isHidden == true
         result.append(.init(
           path: entry.path,
           name: entry.lastPathComponent,
           depth: depth,
-          isDirectory: directory,
-          isSymbolicLink: values.isSymbolicLink == true
+          isDirectory: isDirectory,
+          isSymbolicLink: isLink
         ))
-        if directory, values.isSymbolicLink != true, depth < depthLimit {
+        if isDirectory, !isLink, !isHidden, depth < depthLimit {
           visit(entry, depth: depth + 1)
         }
       }

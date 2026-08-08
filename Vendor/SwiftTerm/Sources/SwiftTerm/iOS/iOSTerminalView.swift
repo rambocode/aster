@@ -311,6 +311,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var italicStyleMode: TerminalFontStyleMode = .automatic {
         didSet { resetCaches(); terminal?.updateFullScreen(); setNeedsDisplay(bounds) }
     }
+    public var underlineStyleEnabled = true {
+        didSet { resetCaches(); terminal?.updateFullScreen(); setNeedsDisplay(bounds) }
+    }
+    public var smoothCursorMovementEnabled = false
     public var animatedTextBlinkEnabled = false {
         didSet {
             guard oldValue != animatedTextBlinkEnabled else { return }

@@ -57,6 +57,29 @@ public enum CursorStyle: String, CaseIterable, Codable, Equatable, Sendable {
   case hollowBlock
 }
 
+/// 光标闪烁与终端程序控制之间的优先级。`default*` 只设置初始状态，之后接受
+/// DECSCUSR / DEC mode 12；`always*` 则把用户设置作为最终真值。
+public enum TerminalCursorBlinkMode: String, CaseIterable, Codable, Equatable, Sendable {
+  case defaultOff = "default-off"
+  case defaultOn = "default-on"
+  case alwaysOff = "always-off"
+  case alwaysOn = "always-on"
+
+  public var initiallyBlinks: Bool {
+    self == .defaultOn || self == .alwaysOn
+  }
+
+  public var pinsProgramControl: Bool {
+    self == .alwaysOff || self == .alwaysOn
+  }
+}
+
+/// 光标移动反馈。当前只有关闭与同一行平滑移动两种稳定语义。
+public enum TerminalCursorAnimation: String, CaseIterable, Codable, Equatable, Sendable {
+  case off
+  case smooth
+}
+
 /// OpenType 连字级别。Raw value 是 Aster JSON 配置的稳定持久化契约，渲染层可将
 /// `standard` 映射到标准连字和 contextual alternates，将 `discretionary` 再扩展到 dlig。
 public enum TerminalLigatureLevel: String, CaseIterable, Codable, Equatable, Sendable {
@@ -368,6 +391,12 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var darkThemeName = "Ayu Dark"
   public var useSeparateDarkTheme = true
   public var fontFamily = "JetBrains Mono"
+  /// 空值表示让 AppKit 从普通字体自动匹配对应字重/字形；显式值覆盖自动匹配。
+  public var fontFamilyBold: String?
+  public var fontFamilyItalic: String?
+  public var fontFamilyBoldItalic: String?
+  /// 用户 fallback 位于内置 Nerd Symbols 之后、系统级级联之前。
+  public var fontFamilyFallback: [String]?
   public var fontSize = 13.0
   public var lineHeight = 1.08
   public var foreground = HexColor("#202124")!
@@ -378,6 +407,7 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var cursor = HexColor("#5B73FF")!
   public var selection = HexColor("#B8CEF099")!
   public var cursorStyle = CursorStyle.block
+  /// 旧版布尔字段保留用于解码迁移；新代码统一读取 `resolvedCursorBlinkMode`。
   public var cursorBlink = true
   /// 新字段保持可选以兼容 0.4.x JSON；所有消费者应使用下方 resolved 属性。
   public var bidirectionalText: Bool? = true
@@ -388,6 +418,13 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var blinkRenderingPolicy: TerminalBlinkRenderingPolicy? = .steady
   public var boldRendering: TerminalTextStyleRendering? = .automatic
   public var italicRendering: TerminalTextStyleRendering? = .automatic
+  public var underlineRendering: Bool? = true
+  public var fontSmoothing: Bool? = true
+  public var cursorColorOverride: HexColor?
+  public var cursorTextColorOverride: HexColor?
+  public var cursorOpacity: Double? = 1
+  public var cursorBlinkMode: TerminalCursorBlinkMode? = .defaultOn
+  public var cursorAnimation: TerminalCursorAnimation? = .off
   /// `auto` 在 Pane 启动时解析为保守的 xterm-256color；自定义值必须存在 terminfo。
   public var terminalIdentity = "auto"
   public var showTabBar = true
@@ -420,6 +457,14 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   }
   public var resolvedBoldRendering: TerminalTextStyleRendering { boldRendering ?? .automatic }
   public var resolvedItalicRendering: TerminalTextStyleRendering { italicRendering ?? .automatic }
+  public var resolvedUnderlineRendering: Bool { underlineRendering ?? true }
+  public var resolvedFontSmoothing: Bool { fontSmoothing ?? true }
+  public var resolvedFontFamilyFallback: [String] { fontFamilyFallback ?? [] }
+  public var resolvedCursorOpacity: Double { min(max(cursorOpacity ?? 1, 0.1), 1) }
+  public var resolvedCursorBlinkMode: TerminalCursorBlinkMode {
+    cursorBlinkMode ?? (cursorBlink ? .defaultOn : .defaultOff)
+  }
+  public var resolvedCursorAnimation: TerminalCursorAnimation { cursorAnimation ?? .off }
 
   public var resolvedAnimateDockIconOnProgress: Bool { animateDockIconOnProgress ?? false }
   public var resolvedRedDockIconOnError: Bool { redDockIconOnError ?? true }
@@ -480,6 +525,13 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
     result.appearance.blinkRenderingPolicy = result.appearance.resolvedBlinkRenderingPolicy
     result.appearance.boldRendering = result.appearance.resolvedBoldRendering
     result.appearance.italicRendering = result.appearance.resolvedItalicRendering
+    result.appearance.underlineRendering = result.appearance.resolvedUnderlineRendering
+    result.appearance.fontSmoothing = result.appearance.resolvedFontSmoothing
+    result.appearance.cursorOpacity = result.appearance.resolvedCursorOpacity
+    result.appearance.cursorBlinkMode = result.appearance.resolvedCursorBlinkMode
+    result.appearance.cursorAnimation = result.appearance.resolvedCursorAnimation
+    result.appearance.fontFamilyFallback = Self.normalizedFontFamilies(
+      result.appearance.resolvedFontFamilyFallback)
     result.appearance.widenedEastAsianAmbiguousBlocks = Set(
       result.appearance.resolvedWidenedEastAsianAmbiguousBlocks.compactMap(\.normalizedKnownValue)
     )
@@ -487,6 +539,12 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
     if result.appearance.fontFamily.utf8.count > 128 {
       result.appearance.fontFamily = AppearanceConfiguration().fontFamily
     }
+    result.appearance.fontFamilyBold = Self.normalizedOptionalFontFamily(
+      result.appearance.fontFamilyBold)
+    result.appearance.fontFamilyItalic = Self.normalizedOptionalFontFamily(
+      result.appearance.fontFamilyItalic)
+    result.appearance.fontFamilyBoldItalic = Self.normalizedOptionalFontFamily(
+      result.appearance.fontFamilyBoldItalic)
     let term = result.appearance.terminalIdentity
     if term.isEmpty || term.utf8.count > 64
       || term.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) })
@@ -529,6 +587,30 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
         else { return }
         normalized[provider.rawValue] = entry.value
       }
+    }
+    return result
+  }
+
+  /// 字体名称来自配置文件和文本框。拒绝控制字符、限制长度并去重，避免把异常名称
+  /// 传入 CoreText 或让 fallback 级联无限增长。
+  private static func normalizedOptionalFontFamily(_ value: String?) -> String? {
+    guard let value else { return nil }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, trimmed.utf8.count <= 128,
+      !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+    else { return nil }
+    return trimmed
+  }
+
+  private static func normalizedFontFamilies(_ values: [String]) -> [String] {
+    var seen: Set<String> = []
+    var result: [String] = []
+    for value in values {
+      guard let normalized = normalizedOptionalFontFamily(value),
+        seen.insert(normalized).inserted
+      else { continue }
+      result.append(normalized)
+      if result.count == 16 { break }
     }
     return result
   }

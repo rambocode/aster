@@ -198,6 +198,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             self.boldItalic = NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask, .boldFontMask])
         }
 
+        public init(normal: NSFont, bold: NSFont, italic: NSFont, boldItalic: NSFont) {
+            self.normal = normal
+            self.bold = bold
+            self.italic = italic
+            self.boldItalic = boldItalic
+        }
+
         // Expected by the shared rendering code
         func underlinePosition () -> CGFloat
         {
@@ -373,6 +380,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var italicStyleMode: TerminalFontStyleMode = .automatic {
         didSet { resetCaches(); terminal?.updateFullScreen(); needsDisplay = true }
     }
+    public var underlineStyleEnabled = true {
+        didSet { resetCaches(); terminal?.updateFullScreen(); needsDisplay = true }
+    }
+    public var smoothCursorMovementEnabled = false
     public var animatedTextBlinkEnabled = false {
         didSet {
             guard oldValue != animatedTextBlinkEnabled else { return }
@@ -392,6 +403,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             resetFont()
             selectNone()
         }
+    }
+
+    /// Sets explicit fonts for all SGR style combinations. The normal face remains the sole
+    /// source of grid metrics so changing a bold or italic family cannot resize the terminal.
+    public func setFonts(normal: NSFont, bold: NSFont, italic: NSFont, boldItalic: NSFont) {
+        fontSet = FontSet(normal: normal, bold: bold, italic: italic, boldItalic: boldItalic)
+        resetFont()
+        selectNone()
     }
     
     public init(frame: CGRect, font: NSFont?) {

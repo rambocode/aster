@@ -154,6 +154,210 @@ func terminalThemeStoreRoundTripsAndRejectsNamedPipe() throws {
   }
 }
 
+@Test("Otty TOML 主题导入保留终端色表与界面样式")
+func terminalThemeStoreImportsOttyThemeFiles() throws {
+  let directory = FileManager.default.temporaryDirectory
+    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+
+  let file = directory.appendingPathComponent("studio-glass.ottytheme")
+  try """
+    [meta]
+    name = "Studio Glass"
+    mode = "dark"
+
+    [terminal]
+    foreground = "#F7F8FF"
+    background = "none"
+    palette = [
+      "#252A35", "#FF8A8A", "#A8D46F", "#E8C778",
+      "#8DB7FF", "#D1A3FF", "#7FD6C2", "#E3E6F0",
+      "#747B8E", "#FFB0A8", "#C8EA90", "#F2DA9A",
+      "#B2CCFF", "#E0C2FF", "#A3E6D8", "#FFFFFF",
+    ]
+    cursor = "#F7F8FF"
+    cursor-text = "#252A35"
+    selection-foreground = "#252A35"
+    selection-background = "rgba(187, 201, 237, 0.75)"
+
+    [token]
+    foreground = "#F7F8FF"
+    secondary = "#C9CEDB"
+    tertiary = "#8E95A8"
+    accent = "#B4D979"
+    radius = 12
+    font-mono = ["JetBrains Mono", "Menlo", "monospace"]
+
+    [panel]
+    background = "#444445"
+    surface = "#40434B"
+    border = "#6B7286"
+
+    [window]
+    material = "vibrancy-regular"
+
+    [sidebar]
+    background = "rgba(37, 40, 50, 0.36)"
+    border-right = "1px solid rgba(255, 255, 255, 0.18)"
+
+    [tab]
+    radius = 8
+    foreground = "#C9CEDB"
+    font-weight = 400
+
+    [tab.active]
+    background = "rgba(255,255,255,0.16)"
+    foreground = "#FFFFFF"
+    border = "1px solid rgba(255,255,255,0.18)"
+    shadow = "0 1px 2px rgba(0,0,0,0.30)"
+    font-weight = 500
+
+    [tab-bar]
+    height = 44
+
+    [tab-bar.tab]
+    radius = 14
+    height = 32
+
+    [tab-bar.tab.active]
+    background = "#303846"
+    border = "none"
+    shadow = "none"
+
+    [tab-bar.tab.hover]
+    background = "#202834"
+
+    [container]
+    radius = 0
+    margin = [4, 8, 12, 16]
+    padding = 8
+    shadow = "0 2px 8px rgba(0,0,0,0.34)"
+    """.write(to: file, atomically: true, encoding: .utf8)
+
+  let theme = try TerminalThemeStore.load(from: file)
+
+  #expect(theme.name == "Studio Glass")
+  #expect(theme.mode == .dark)
+  #expect(!theme.isBuiltIn)
+  #expect(theme.palette.windowBackground == HexColor("#00000000"))
+  #expect(theme.palette.ansiColors.count == 16)
+  #expect(theme.palette.cursorText == HexColor("#252A35"))
+  #expect(theme.palette.selectionForeground == HexColor("#252A35"))
+  #expect(theme.palette.selection == HexColor("#BBC9EDBF"))
+  #expect(theme.palette.material == .vibrancyRegular)
+  #expect(theme.style.radius == 12)
+  #expect(theme.style.sidebarBackground == HexColor("#2528325C"))
+  #expect(theme.style.sidebarBorderWidth == 1)
+  #expect(theme.style.tab.activeBackground == HexColor("#FFFFFF29"))
+  #expect(theme.style.tab.activeBorderWidth == 1)
+  #expect(theme.style.tab.activeFontWeight == 500)
+  #expect(theme.style.horizontalTabBarHeight == 44)
+  #expect(theme.style.horizontalTab?.radius == 14)
+  #expect(theme.style.horizontalTab?.height == 32)
+  #expect(theme.style.horizontalTab?.foreground == HexColor("#C9CEDB"))
+  #expect(theme.style.horizontalTab?.activeBackground == HexColor("#303846"))
+  #expect(theme.style.horizontalTab?.hoverBackground == HexColor("#202834"))
+  #expect(theme.style.tab.activeBorderColor != nil)
+  #expect(theme.style.tab.activeShadow != nil)
+  #expect(theme.style.horizontalTab?.activeBorderColor == nil)
+  #expect(theme.style.horizontalTab?.activeBorderWidth == 0)
+  #expect(theme.style.horizontalTab?.activeShadow == nil)
+  #expect(theme.style.container.margin == ThemeInsets(top: 4, leading: 8, bottom: 12, trailing: 16))
+  #expect(theme.style.container.padding == ThemeInsets(all: 8))
+  #expect(theme.style.container.shadow?.blur == 8)
+  let encoded = try #require(
+    JSONSerialization.jsonObject(with: JSONEncoder().encode(theme)) as? [String: Any]
+  )
+  let style = try #require(encoded["style"] as? [String: Any])
+  #expect((style["fontFamilies"] as? [Any])?.compactMap { $0 as? String }
+    == ["JetBrains Mono", "Menlo", "monospace"])
+}
+
+@Test("Otty 主题缺少模式时按背景推断并安全处理非有限布局数值")
+func terminalThemeStoreInfersModeAndNormalizesUnsafeNumbers() throws {
+  let directory = FileManager.default.temporaryDirectory
+    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+
+  let file = directory.appendingPathComponent("inferred-dark.ottytheme")
+  try """
+    [meta]
+    name = "Inferred Dark"
+    [terminal]
+    foreground = "#FFFFFF"
+    background = "#101820"
+    palette = ["#000000", "#111111", "#222222", "#333333", "#444444", "#555555", "#666666", "#777777", "#888888", "#999999", "#AAAAAA", "#BBBBBB", "#CCCCCC", "#DDDDDD", "#EEEEEE", "#FFFFFF"]
+    [token]
+    radius = nan
+    [tab.active]
+    font-weight = nan
+    """.write(to: file, atomically: true, encoding: .utf8)
+
+  let theme = try TerminalThemeStore.load(from: file)
+  #expect(theme.mode == .dark)
+  #expect(theme.style.radius.isFinite)
+  #expect((0...128).contains(theme.style.radius))
+  #expect(theme.style.tab.activeFontWeight == 600)
+}
+
+@Test("Otty 主题导入拒绝不完整色表与符号链接")
+func terminalThemeStoreRejectsUnsafeOttyThemes() throws {
+  let directory = FileManager.default.temporaryDirectory
+    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+
+  let invalid = directory.appendingPathComponent("invalid.ottytheme")
+  try """
+    [meta]
+    name = "Invalid"
+    mode = "light"
+    [terminal]
+    foreground = "#111111"
+    background = "#FFFFFF"
+    palette = ["#000000"]
+    """.write(to: invalid, atomically: true, encoding: .utf8)
+  #expect(throws: TerminalThemeStoreError.invalidPalette) {
+    try TerminalThemeStore.load(from: invalid)
+  }
+
+  let unbalanced = directory.appendingPathComponent("unbalanced.ottytheme")
+  try """
+    [meta]
+    name = "Unbalanced"
+    mode = "dark"
+    [terminal]
+    foreground = "#FFFFFF"
+    background = "#000000"
+    palette = ["#000000", "#111111", "#222222", "#333333", "#444444", "#555555", "#666666", "#777777", "#888888", "#999999", "#AAAAAA", "#BBBBBB", "#CCCCCC", "#DDDDDD", "#EEEEEE", "#FFFFFF"]]
+    """.write(to: unbalanced, atomically: true, encoding: .utf8)
+  #expect(throws: TerminalThemeStoreError.invalidFormat("主题包含未配对的数组闭括号。")) {
+    try TerminalThemeStore.load(from: unbalanced)
+  }
+
+  let invalidMode = directory.appendingPathComponent("invalid-mode.ottytheme")
+  try """
+    [meta]
+    name = "Invalid Mode"
+    mode = "sepia"
+    [terminal]
+    foreground = "#FFFFFF"
+    background = "#000000"
+    palette = ["#000000", "#111111", "#222222", "#333333", "#444444", "#555555", "#666666", "#777777", "#888888", "#999999", "#AAAAAA", "#BBBBBB", "#CCCCCC", "#DDDDDD", "#EEEEEE", "#FFFFFF"]
+    """.write(to: invalidMode, atomically: true, encoding: .utf8)
+  #expect(throws: TerminalThemeStoreError.invalidFormat("主题 meta.mode 必须是 light 或 dark。")) {
+    try TerminalThemeStore.load(from: invalidMode)
+  }
+
+  let symlink = directory.appendingPathComponent("linked.ottytheme")
+  try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: invalid)
+  #expect(throws: TerminalThemeStoreError.notRegularFile) {
+    try TerminalThemeStore.load(from: symlink)
+  }
+}
+
 @Test("主题校验拒绝不完整调色板和超长名称")
 func terminalThemeValidationRejectsInvalidValues() throws {
   var theme = try #require(TerminalThemeCatalog.theme(named: "Ayu Light"))

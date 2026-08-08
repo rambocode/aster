@@ -213,6 +213,15 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private let frameSemaphore = DispatchSemaphore(value: 1)
     private var pendingRedraw = false
     private let redrawLock = NSLock()
+#if os(macOS)
+    private var rasterizedFontSmoothing: Bool?
+    private struct CursorMovementAnimation {
+        var from: CGPoint
+        var target: CGPoint
+        var startedAt: CFTimeInterval
+    }
+    private var cursorMovementAnimation: CursorMovementAnimation?
+#endif
 #if DEBUG
     private var debugFrameCount = 0
     private var debugLastLogTime = CFAbsoluteTimeGetCurrent()
@@ -328,7 +337,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             return
         }
 #if os(macOS)
-        rasterizer.fontSmoothing = terminalView.fontSmoothing
+        applyFontSmoothingIfNeeded(terminalView.fontSmoothing)
         let scale = terminalView.metalRenderingScaleFactor()
         if let layer = view.layer, layer.contentsScale != scale {
             layer.contentsScale = scale
@@ -556,6 +565,23 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         redrawLock.unlock()
         return needsRedraw
     }
+
+#if os(macOS)
+    /// Glyph cache keys intentionally describe the font and glyph only. Font smoothing changes
+    /// the pixels rather than the font identity, so the atlas and every UV-bearing row cache must
+    /// be invalidated as one transaction before the next frame is built.
+    private func applyFontSmoothingIfNeeded(_ enabled: Bool) {
+        guard rasterizedFontSmoothing != enabled else { return }
+        rasterizedFontSmoothing = enabled
+        rasterizer.fontSmoothing = enabled
+        grayscaleAtlas.removeAll()
+        colorAtlas.removeAll()
+        glyphCache.removeAll()
+        customGlyphCache.removeAll()
+        rowCache.removeAll()
+        cacheSignature = nil
+    }
+#endif
 
     /// Worst case before the working set is stable: a few grows
     /// (1024 -> ... -> maxSize) can invalidate passes, then one reset, and
@@ -2219,8 +2245,19 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         // the CoreGraphics caret.
         let cursorColumnWidth = CGFloat(max(1, Int(buffer.lines[cursorRow][buffer.x].width)))
 
-        let x0 = lineOriginPx.x + CGFloat(buffer.x) * cellWidthPx * doublePosition
-        let y0 = lineOriginPx.y
+        var cursorOrigin = CGPoint(
+            x: lineOriginPx.x + CGFloat(buffer.x) * cellWidthPx * doublePosition,
+            y: lineOriginPx.y
+        )
+#if os(macOS)
+        cursorOrigin = animatedCursorOrigin(
+            target: cursorOrigin,
+            maximumDistance: cellWidthPx * doublePosition * 8,
+            enabled: terminalView.smoothCursorMovementEnabled
+        )
+#endif
+        let x0 = cursorOrigin.x
+        let y0 = cursorOrigin.y
         let x1 = x0 + cellWidthPx * doublePosition * cursorColumnWidth
         let y1 = y0 + cellHeightPx
 
@@ -2277,6 +2314,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                           y1: CGFloat(y0 + underlineHeight),
                                                           color: cursorColor))
             return (colorVertices, [], [])
+        case .blinkHollowBlock, .steadyHollowBlock:
+            let stroke = max(1, 2 * scale)
+            colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0), y0: CGFloat(y0), x1: CGFloat(x1), y1: CGFloat(y0 + stroke), color: cursorColor))
+            colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0), y0: CGFloat(y1 - stroke), x1: CGFloat(x1), y1: CGFloat(y1), color: cursorColor))
+            colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0), y0: CGFloat(y0 + stroke), x1: CGFloat(x0 + stroke), y1: CGFloat(y1 - stroke), color: cursorColor))
+            colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x1 - stroke), y0: CGFloat(y0 + stroke), x1: CGFloat(x1), y1: CGFloat(y1 - stroke), color: cursorColor))
+            return (colorVertices, [], [])
         case .blinkBlock, .steadyBlock:
             colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
                                                           y0: CGFloat(y0),
@@ -2327,8 +2371,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 // Center the glyph under the cursor the same way as normal text so
                 // a full-width (CJK) character doesn't shift when the caret lands on it.
                 let fit = terminalView.glyphSlotFit(font: ctFont, glyph: glyph, columnWidth: max(1, Int(charData.width)))
-                let basePos = CGPoint(x: lineOrigin.x + cellWidth * doublePosition * CGFloat(buffer.x) + fit.dx * doublePosition,
-                                      y: lineOrigin.y + yOffset + ctPos.y + fit.dy)
+                // The cursor glyph must share the interpolated origin used by its background
+                // and clip. Anchoring it to the final buffer column makes the character vanish
+                // outside the moving clip until the animation reaches its target.
+                let basePos = CGPoint(
+                    x: cursorOrigin.x / scale + fit.dx * doublePosition,
+                    y: cursorOrigin.y / scale + yOffset + ctPos.y + fit.dy
+                )
                 let pxX = basePos.x * scale + entry.bearing.x * fit.scale
                 let pxY = basePos.y * scale + entry.bearing.y * fit.scale
                 let x0 = Float(pxX)
@@ -2361,6 +2410,57 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
         return (colorVertices, glyphVerticesGray, glyphVerticesColor)
     }
+
+#if os(macOS)
+    /// Interpolates only short movements on one terminal row, matching the AppKit caret path.
+    /// Each in-flight frame requests another draw through `pendingRedraw`; Reduce Motion and the
+    /// disabled setting both snap immediately and clear stale animation state.
+    private func animatedCursorOrigin(
+        target: CGPoint,
+        maximumDistance: CGFloat,
+        enabled: Bool
+    ) -> CGPoint {
+        guard enabled, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            cursorMovementAnimation = CursorMovementAnimation(
+                from: target, target: target, startedAt: CFAbsoluteTimeGetCurrent())
+            return target
+        }
+
+        let now = CFAbsoluteTimeGetCurrent()
+        guard var animation = cursorMovementAnimation else {
+            cursorMovementAnimation = CursorMovementAnimation(from: target, target: target, startedAt: now)
+            return target
+        }
+
+        let duration: CFTimeInterval = 0.1
+        func position(of value: CursorMovementAnimation) -> CGPoint {
+            let rawProgress = min(max((now - value.startedAt) / duration, 0), 1)
+            let progress = CGFloat(rawProgress * rawProgress * (3 - 2 * rawProgress))
+            return CGPoint(
+                x: value.from.x + (value.target.x - value.from.x) * progress,
+                y: value.from.y + (value.target.y - value.from.y) * progress
+            )
+        }
+
+        if animation.target != target {
+            let current = position(of: animation)
+            let isSameRow = abs(animation.target.y - target.y) < 0.5
+            let isShortMove = abs(animation.target.x - target.x) <= maximumDistance
+            animation = isSameRow && isShortMove
+                ? CursorMovementAnimation(from: current, target: target, startedAt: now)
+                : CursorMovementAnimation(from: target, target: target, startedAt: now)
+            cursorMovementAnimation = animation
+        }
+
+        let elapsed = now - animation.startedAt
+        guard elapsed < duration, animation.from != animation.target else {
+            cursorMovementAnimation = CursorMovementAnimation(from: target, target: target, startedAt: now)
+            return target
+        }
+        markPendingRedraw()
+        return position(of: animation)
+    }
+#endif
 
     private func texture(for image: TerminalView.AppleImage) -> MTLTexture? {
         if let cached = imageTextureCache.object(forKey: image) {
@@ -2752,9 +2852,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
     private func isBlinkStyle(_ style: CursorStyle) -> Bool {
         switch style {
-        case .blinkBlock, .blinkUnderline, .blinkBar:
+        case .blinkBlock, .blinkHollowBlock, .blinkUnderline, .blinkBar:
             return true
-        case .steadyBlock, .steadyUnderline, .steadyBar:
+        case .steadyBlock, .steadyHollowBlock, .steadyUnderline, .steadyBar:
             return false
         }
     }

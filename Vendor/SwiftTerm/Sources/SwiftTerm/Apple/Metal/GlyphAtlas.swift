@@ -244,6 +244,16 @@ final class GlyphAtlas {
         }
     }
 
+    /// Discards every allocated glyph region while keeping the current texture size.
+    /// Rasterization policy changes (for example font smoothing) must call this together
+    /// with clearing renderer glyph caches, otherwise cached UVs keep referencing pixels
+    /// produced with the previous policy.
+    func removeAll() {
+        frozen = false
+        didReset = false
+        reset()
+    }
+
     private func contentRegion(in paddedRegion: AtlasRegion, width: Int, height: Int) -> AtlasRegion {
         AtlasRegion(
             x: paddedRegion.x + Self.glyphPadding,

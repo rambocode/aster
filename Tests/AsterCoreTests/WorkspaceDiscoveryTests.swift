@@ -192,6 +192,59 @@ func workspaceFileTreeDoesNotEscapeThroughSymbolicLinks() throws {
   #expect(nodes.filter { $0.path.contains("outside/") }.isEmpty)
 }
 
+@Test("文件树默认跳过隐藏项，开启后包含")
+func workspaceFileTreeIncludeHiddenToggle() throws {
+  let manager = FileManager.default
+  let root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+  try manager.createDirectory(at: root, withIntermediateDirectories: true)
+  try Data().write(to: root.appendingPathComponent("README.md"))
+  try Data().write(to: root.appendingPathComponent(".gitignore"))
+  defer { try? manager.removeItem(at: root) }
+
+  let visible = WorkspaceFileTree.enumerate(root: root, includeHidden: false)
+  #expect(visible.map(\.name) == ["README.md"])
+
+  let all = WorkspaceFileTree.enumerate(root: root, includeHidden: true)
+  #expect(all.map(\.name) == [".gitignore", "README.md"])
+}
+
+@Test("包含隐藏文件时大隐藏目录不会挤掉顶层普通项")
+func workspaceFileTreeIncludeHiddenKeepsVisibleSiblings() throws {
+  let manager = FileManager.default
+  let root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+  let build = root.appendingPathComponent(".build", isDirectory: true)
+  try manager.createDirectory(at: build, withIntermediateDirectories: true)
+  try manager.createDirectory(at: root.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+  try Data().write(to: root.appendingPathComponent("README.md"))
+  for index in 0..<600 {
+    try Data().write(to: build.appendingPathComponent("artifact-\(index).o"))
+  }
+  defer { try? manager.removeItem(at: root) }
+
+  let nodes = WorkspaceFileTree.enumerate(root: root, maximumDepth: 3, maximumItems: 500, includeHidden: true)
+  let names = Set(nodes.map(\.name))
+  #expect(names.contains(".build"))
+  #expect(names.contains("Sources"))
+  #expect(names.contains("README.md"))
+  // 隐藏目录只露自身，不把数百个产物扫进有界列表。
+  #expect(!names.contains("artifact-0.o"))
+  #expect(nodes.count < 20)
+}
+
+@Test("文件树深度优先输出，子节点紧跟父目录")
+func workspaceFileTreeEmitsChildrenImmediatelyAfterParent() throws {
+  let manager = FileManager.default
+  let root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+  try manager.createDirectory(at: root.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+  try manager.createDirectory(at: root.appendingPathComponent("Tests"), withIntermediateDirectories: true)
+  try Data().write(to: root.appendingPathComponent("Sources/main.swift"))
+  try Data().write(to: root.appendingPathComponent("README.md"))
+  defer { try? manager.removeItem(at: root) }
+
+  let names = WorkspaceFileTree.enumerate(root: root, maximumDepth: 3).map(\.name)
+  #expect(names == ["README.md", "Sources", "main.swift", "Tests"])
+}
+
 @Test("Git shortstat 解析汇总行并区分干净仓库与采集失败")
 func gitShortStatParserParsesSummaryLine() {
   #expect(

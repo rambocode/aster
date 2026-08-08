@@ -66,9 +66,9 @@ class CaretView: NSView, CALayerDelegate {
     
     func updateCursorStyle () {
         switch style {
-        case .blinkUnderline, .blinkBlock, .blinkBar:
+        case .blinkUnderline, .blinkBlock, .blinkHollowBlock, .blinkBar:
             updateAnimation(to: true)
-        case .steadyBar, .steadyBlock, .steadyUnderline:
+        case .steadyBar, .steadyBlock, .steadyHollowBlock, .steadyUnderline:
             updateAnimation(to: false)
         }
         updateView ()
@@ -118,6 +118,25 @@ class CaretView: NSView, CALayerDelegate {
 
     func updateView() {
         setNeedsDisplay(bounds)
+    }
+
+    /// Model geometry changes immediately so IME placement never lags. The presentation layer
+    /// interpolates only short same-row moves; line changes, resize and Reduce Motion stay locked
+    /// to the terminal grid.
+    func move(to origin: CGPoint, size: CGSize, smoothly: Bool) {
+        let oldFrame = frame
+        let oldPosition = layer?.presentation()?.position ?? layer?.position
+        frame = CGRect(origin: origin, size: size)
+        guard smoothly, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            abs(oldFrame.minY - origin.y) < 0.5,
+            abs(oldFrame.minX - origin.x) <= max(oldFrame.width, size.width) * 8,
+            let layer, let oldPosition else { return }
+        let animation = CABasicAnimation(keyPath: "position")
+        animation.fromValue = oldPosition
+        animation.toValue = layer.position
+        animation.duration = 0.1
+        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(animation, forKey: "aster.cursor.position")
     }
     
     func draw(_ layer: CALayer, in context: CGContext) {

@@ -68,12 +68,12 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 
 ### Terminal Features（17）
 
-- 完成：[Cursor and Mouse](https://docs.otty.sh/terminal-features/cursor-and-mouse) — 用户光标形状/闪烁是最终真值；TUI 鼠标、Option bypass、焦点与安全输入边界均已实现。
+- 完成：[Cursor and Mouse](https://docs.otty.sh/terminal-features/cursor-and-mouse) — 支持颜色、文字色、不透明度、方块/空心方块/竖线/下划线、Default/Always 闪烁优先级和平滑移动；Default 接受 DECSCUSR，Always 固定用户选择。TUI 鼠标、Option bypass、焦点与安全输入边界均已实现。
 - 完成：[Selection](https://docs.otty.sh/terminal-features/selection) — 字符/词/行/矩形、Shift 扩展、键盘扩展、复制清理和提示符内安全删除均已实现；歧义范围按文档安全降级为只复制。
 - 完成：[Scroll](https://docs.otty.sh/terminal-features/scroll) — 像素平滑、手势吸附、键盘翻页、首尾停靠、alternate screen 约束与命令锚点导航均已实现。
 - 完成：[Input](https://docs.otty.sh/terminal-features/input) — IME、Kitty/modifyOtherKeys、原生行词编辑、Option/Meta 与自动/手动 Secure Input 已接入；不支持的跨 Shell Redo 不发送猜测序列。
 - 完成：[Copy and Paste](https://docs.otty.sh/terminal-features/copy-and-paste) — 复制清理、paste protection、全部 Paste As、OSC 52 权限及 Composer 交接均已实现。
-- 完成：[Autocomplete / Inline Suggest](https://docs.otty.sh/terminal-features/autocomplete) — 输入停顿触发、inline ghost、四种接受方案及 Escape/Option-Escape/F5/自动候选面板均已接入；面板支持上下选择、Return/Tab/点击接受和 8 行上限。候选覆盖命令、子命令、选项、参数、文件、目录、Shell alias、固定命令、历史、README 与纠错。Bundle 固定 Fig revision 的 715 个直接命令名称；没有内置结构的命令首次输入参数时，在禁网且禁止文件写入的沙箱中按 `--help`/`-h`/`help` 生成独立本地规格。学习按目录、会话、频率、时间与固定次数排序，过滤 secret、glob 忽略、127 和错误长选项；`aster learn` 使用 0600 随机 token 鉴权。关闭本机学习会同时停止历史、README、help 探测与纠错，内置规格和文件补全仍可用。Fig 更新只能由设置页手动触发，且不覆盖本地规格。
+- 完成：[Autocomplete / Inline Suggest](https://docs.otty.sh/terminal-features/autocomplete) — 输入停顿触发、inline ghost、四种接受方案及 Escape/Option-Escape/F5/自动候选面板均已接入；面板支持上下选择、Return/Tab/点击接受和 8 行上限。候选覆盖命令、子命令、选项、参数、文件、目录、Shell alias、固定命令、历史、README 与纠错。Inline ghost 会等 PTY 回显完成并更新光标位置后才显示，避免本地输入 tracker 领先 Shell 时与命令文字重叠。Bundle 固定 Fig revision 的 715 个直接命令名称；没有内置结构的命令首次输入参数时，在禁网且禁止文件写入的沙箱中按 `--help`/`-h`/`help` 生成独立本地规格。学习按目录、会话、频率、时间与固定次数排序，过滤 secret、glob 忽略、127 和错误长选项；`aster learn` 使用 0600 随机 token 鉴权。关闭本机学习会同时停止历史、README、help 探测与纠错，内置规格和文件补全仍可用。Fig 更新只能由设置页手动触发，且不覆盖本地规格。
 - 完成：[Unicode and Text Styles](https://docs.otty.sh/terminal-features/unicode-and-text-styles) — Unicode/emoji/宽度/样式、Ambiguous block、连字、粗斜体/blink 策略及内置 Aster Nerd Symbols cascade fallback 均已交付。
 - 完成：[BiDi / RTL Text](https://docs.otty.sh/terminal-features/bidi-rtl) — 逻辑缓冲不变，逐显示行使用 Unicode BiDi run 排列；纯 LTR 保持原位，caret、鼠标命中和普通左右键跟随视觉顺序，复制/搜索保留逻辑顺序。设置默认开启，ECMA-48 mode 8、关闭设置与 reset 均有测试。
 - 完成：[Box Drawing](https://docs.otty.sh/terminal-features/box-drawing) — box/block 元素由网格几何渲染器绘制，不依赖字体 glyph 的 baseline 与 hinting。

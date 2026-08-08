@@ -40,6 +40,16 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private var searchText = ""
   private var focusedThemeID: String?
   private var themeDraft: TerminalTheme?
+  /// 详情色板取色器的当前目标：这次在改哪套主题的哪个 token。
+  private var themeColorPickTarget: (themeID: String, slotID: String, createdCopy: Bool)?
+  /// 被点开的那个色块，改色时就地预览，不必重建整页。
+  private weak var themeColorPickAnchor: ThemeColorSwatch?
+  /// 取色期间挂起整页重建。`updateTheme` 会广播 preferences 变化，重建会销毁 popover
+  /// 的锚点视图，取色器在用户拖到一半时就被关掉，之后每一次改色都会因为目标已清空而
+  /// 被丢弃——表现就是「调完颜色关掉，值没设置上」。
+  private var isPickingThemeColor = false
+  private var needsRefreshAfterColorPick = false
+  private var fontScope: FontScope = .computed
   private var message: String?
   private var cancellables: Set<AnyCancellable> = []
   private var refreshScheduled = false
@@ -49,6 +59,22 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private weak var contentScrollView: NSScrollView?
   private var scrollOffsets: [Section: CGPoint] = [:]
   private var renderedSection: Section?
+
+  private enum FontScope: Int, CaseIterable {
+    case computed
+    case global
+    case theme
+    case fallback
+
+    var label: String {
+      switch self {
+      case .computed: "计算值"
+      case .global: "全局"
+      case .theme: "主题"
+      case .fallback: "回退"
+      }
+    }
+  }
 
   init(
     preferences: AppPreferences,
@@ -62,6 +88,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   required init?(coder: NSCoder) { nil }
 
   override func loadView() {
+    // 设置页保持既有 700×460pt 窗口尺寸；内容超出高度时由各分类的滚动视图承载。
     view = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 460))
   }
 
@@ -84,6 +111,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   }
 
   private func scheduleRefresh() {
+    guard !isPickingThemeColor else {
+      needsRefreshAfterColorPick = true
+      return
+    }
     guard !refreshScheduled else { return }
     refreshScheduled = true
     DispatchQueue.main.async { [weak self] in
@@ -103,7 +134,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     view.removeAllSubviews()
     view.appearance = preferences.preferredAppearance
     view.wantsLayer = true
-    view.layer?.backgroundColor = AsterTheme.paper.cgColor
+    view.layer?.backgroundColor = SettingsTheme.canvas.cgColor
 
     let root = NSStackView()
     root.orientation = .horizontal
@@ -133,7 +164,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private func makeSidebar() -> NSView {
     let host = NSView()
     host.wantsLayer = true
-    host.layer?.backgroundColor = AsterTheme.sidebar.cgColor
+    host.layer?.backgroundColor = SettingsTheme.sidebar.cgColor
     let column = NSStackView()
     column.orientation = .vertical
     // 默认 alignment 会按按钮固有宽度居中；侧栏导航必须整行拉伸，才能维持
@@ -170,7 +201,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     }
     let spacer = NSView()
     column.addArrangedSubview(spacer)
-    let version = makeLabel("Aster 0.4.1", size: 9, color: AsterTheme.tertiaryInk, monospaced: true)
+    let version = makeLabel("Aster 0.4.1", size: 9, color: SettingsTheme.tertiaryInk, monospaced: true)
     version.alignment = .center
     column.addArrangedSubview(version)
 
@@ -200,7 +231,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private func makeContentScroll() -> NSView {
     let scroll = NSScrollView()
     scroll.drawsBackground = true
-    scroll.backgroundColor = AsterTheme.paper
+    scroll.backgroundColor = SettingsTheme.canvas
     scroll.hasVerticalScroller = true
     scroll.autohidesScrollers = true
     // 右侧滚动区承担窗口横向伸缩；降低固有宽度优先级，避免根 Stack 仅按
@@ -219,15 +250,17 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let items = sectionViews()
     for item in items {
       content.addArrangedSubview(item)
-      // 标题与卡片必须满宽（扣除栈边距）。NSStackView 的 .width 对齐 + edgeInsets
-      // 对「固有宽度超过可用宽度」的 arranged subview 不可靠：系统集成卡片（长说明
-      // 文字单行固有宽度约 650pt）曾被布局引擎丢到 x=0、宽 474，丢失左侧 inset。
-      // 这里对满宽项加显式 required 边距约束，宽度不再依赖栈的内部分配算法；
-      // 超宽压力由行内文字列（压缩阻力已压低的 labels 栈）换行吸收。
-      if item.identifier == Self.groupTitleIdentifier || item.identifier == Self.cardIdentifier {
-        item.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: content.edgeInsets.left).isActive = true
-        item.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -content.edgeInsets.right).isActive = true
-      }
+      // 每一个顶层项都要显式钉住左右边距，一个都不能漏。`NSStackView` 的 `.width`
+      // 对齐 + `edgeInsets` 在两个方向上都不可靠：固有宽度超过可用宽度时，卡片会被
+      // 丢到 x=0（系统集成卡片曾因此贴左边缘）；固有宽度小于可用宽度时，视图又会
+      // 缩成固有宽度并靠右（放大窗口后主题网格、字体卡整块飘到右侧，左边留大片空白）。
+      // 只对部分项加约束就会出现这种「一半满宽、一半靠右」的错位。
+      item.leadingAnchor.constraint(
+        equalTo: content.leadingAnchor, constant: content.edgeInsets.left
+      ).isActive = true
+      item.trailingAnchor.constraint(
+        equalTo: content.trailingAnchor, constant: -content.edgeInsets.right
+      ).isActive = true
     }
     // 分组节奏：标题紧贴自己的卡片（8pt），上一块内容与下一个标题拉开（28pt），
     // 形成截图里「小标题 + 大卡片」的分组观感。
@@ -240,7 +273,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       }
     }
     if let message {
-      content.addArrangedSubview(makeLabel("✓  \(message)", size: 10.5, color: AsterTheme.accent))
+      content.addArrangedSubview(makeLabel("✓  \(message)", size: 10.5, color: SettingsTheme.accent))
     }
     document.addSubview(content)
     scroll.documentView = document
@@ -1260,6 +1293,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       ) { [weak self] value in
         self?.preferences.configuration.appearance.redDockIconOnError = value
       },
+      toggleRow(
+        "收到通知时跳动", "Aster 不在前台且收到终端通知时请求 Dock 提醒",
+        value: preferences.configuration.shell.resolvedBounceDockIcon
+      ) { [weak self] value in
+        self?.preferences.configuration.shell.bounceDockIcon = value
+      },
     ]))
 
     views.append(sectionTitle("主题"))
@@ -1276,13 +1315,24 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     }
 
     views.append(sectionTitle("详情"))
-    views.append(ThemeDetailView(theme: focusedTheme))
+    views.append(
+      ThemeDetailView(theme: focusedTheme) { [weak self] slot, anchor in
+        self?.pickColor(for: slot, anchor: anchor)
+      })
     let actions = NSStackView(views: [
       ActionButton(title: "复制") { [weak self] in self?.duplicateTheme() },
       ActionButton(title: "编辑当前主题") { [weak self] in self?.beginEditingTheme() },
       ActionButton(title: "打开主题文件夹") { [weak self] in self?.openThemesFolder() },
       ActionButton(title: "导入主题…") { [weak self] in self?.importTheme() },
+      NSView(),
     ])
+    // 覆盖是可撤销的：有覆盖时才给出入口，没改过就不要多一个永远点不动的按钮。
+    if !preferences.themeOverrides(for: focusedTheme.id).isEmpty {
+      actions.insertArrangedSubview(
+        ActionButton(title: "恢复主题原色") { [weak self] in self?.resetThemeOverrides() },
+        at: actions.arrangedSubviews.count - 1
+      )
+    }
     actions.orientation = .horizontal
     actions.spacing = 10
     views.append(actions)
@@ -1293,65 +1343,254 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       stepperRow("字号", "终端字号", value: preferences.fontSize, range: 9...32) { [weak self] value in
         self?.preferences.fontSize = value
       },
-      sliderRow(
-        "行高", "行间距倍数",
-        value: preferences.configuration.appearance.lineHeight,
-        range: 0.8...2, suffix: "×", fractionDigits: 2
-      ) { [weak self] value in
-        self?.preferences.configuration.appearance.lineHeight = value
-      },
-      textRow("字体", "终端的基础等宽字体", value: preferences.configuration.appearance.fontFamily) { [weak self] value in
-        self?.preferences.configuration.appearance.fontFamily = value
-      },
-      toggleRow(
-        "双向文本（BiDi）", "按 Unicode 双向算法显示 Hebrew、Arabic 与混排文本",
-        value: preferences.configuration.appearance.resolvedBidirectionalText
-      ) { [weak self] value in
-        self?.preferences.configuration.appearance.bidirectionalText = value
-      },
       enumPopupRow(
-        "连字级别", "控制 OpenType 标准、上下文和 discretionary ligatures",
-        value: preferences.configuration.appearance.resolvedLigatureLevel
-      ) { [weak self] value in
-        self?.preferences.configuration.appearance.ligatureLevel = value
-      },
-      enumPopupRow(
-        "粗体渲染", "选择真实字形、主字体字形或 synthetic bold",
+        "加粗", "选择真实字形、主字体字形或 synthetic bold",
         value: preferences.configuration.appearance.resolvedBoldRendering
       ) { [weak self] value in
         self?.preferences.configuration.appearance.boldRendering = value
       },
       enumPopupRow(
-        "斜体渲染", "选择真实字形、主字体字形或 synthetic italic",
+        "斜体", "选择真实字形、主字体字形或 synthetic italic",
         value: preferences.configuration.appearance.resolvedItalicRendering
       ) { [weak self] value in
         self?.preferences.configuration.appearance.italicRendering = value
       },
-      enumPopupRow(
-        "闪烁文本", "SGR 5/6 默认稳定显示；需要时才启用动画",
-        value: preferences.configuration.appearance.resolvedBlinkRenderingPolicy
+      toggleRow(
+        "下划线", "允许终端程序通过 SGR 显示下划线样式",
+        value: preferences.configuration.appearance.resolvedUnderlineRendering
       ) { [weak self] value in
-        self?.preferences.configuration.appearance.blinkRenderingPolicy = value
+        self?.preferences.configuration.appearance.underlineRendering = value
       },
-      actionRow("字体管理", "使用系统字体面板或打开用户字体目录", title: "安装字体") {
-        NSFontManager.shared.orderFrontFontPanel(nil)
+      toggleRow(
+        "闪烁", "允许 SGR 5/6 文本按节奏闪烁；关闭时文本保持可见",
+        value: preferences.configuration.appearance.resolvedBlinkRenderingPolicy == .animated
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.blinkRenderingPolicy = value ? .animated : .steady
+      },
+      enumPopupRow(
+        "连字", "控制 OpenType 标准、上下文和 discretionary ligatures",
+        value: preferences.configuration.appearance.resolvedLigatureLevel
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.ligatureLevel = value
+      },
+      popupRow(
+        "字体混合", "控制 macOS 字形平滑；默认使用系统抗锯齿",
+        items: ["默认", "关闭"],
+        selected: preferences.configuration.appearance.resolvedFontSmoothing ? 0 : 1
+      ) { [weak self] index in
+        self?.preferences.configuration.appearance.fontSmoothing = index == 0
+      },
+      popupRow(
+        "行高", "终端网格的垂直间距",
+        items: ["紧凑 (1.0)", "默认 (1.08)", "宽松 (1.2)"],
+        selected: lineHeightSelection(preferences.configuration.appearance.lineHeight)
+      ) { [weak self] index in
+        self?.preferences.configuration.appearance.lineHeight = [1.0, 1.08, 1.2][index]
       },
     ]))
 
+    views.append(sectionTitle("字体"))
+    views.append(makeFontSettings())
+
     views.append(sectionTitle("光标"))
     views.append(card([
-      ThemeCursorPreviewView(theme: focusedTheme),
+      ThemeCursorPreviewView(
+        theme: focusedTheme,
+        appearance: preferences.configuration.appearance
+      ),
+      rowShell(
+        "光标颜色", "覆盖主题光标颜色",
+        accessory: ClosureColorWell(color: preferences.cursorColor.withAlphaComponent(1)) {
+          [weak self] color in
+          self?.preferences.configuration.appearance.cursorColorOverride = HexColor(nsColor: color)
+        }
+      ),
+      rowShell(
+        "光标下方文字颜色", "仅方块光标覆盖字符时使用",
+        accessory: ClosureColorWell(color: preferences.cursorTextColor) { [weak self] color in
+          self?.preferences.configuration.appearance.cursorTextColorOverride = HexColor(nsColor: color)
+        }
+      ),
+      sliderRow(
+        "光标不透明度", "颜色透明度实时同步到现有终端",
+        value: preferences.configuration.appearance.resolvedCursorOpacity,
+        range: 0.1...1, suffix: "", fractionDigits: 2
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.cursorOpacity = value
+      },
       enumPopupRow(
-        "光标样式", "终端程序仍可通过 DECSCUSR 临时覆盖",
+        "光标样式", "方块、竖线、下划线或空心方块",
         value: preferences.configuration.appearance.cursorStyle
       ) { [weak self] value in
         self?.preferences.configuration.appearance.cursorStyle = value
       },
-      toggleRow("光标闪烁", "实时同步到已打开的终端", value: preferences.configuration.appearance.cursorBlink) { [weak self] value in
-        self?.preferences.configuration.appearance.cursorBlink = value
+      enumPopupRow(
+        "光标闪烁方式",
+        "默认模式允许程序覆盖；始终模式忽略 DECSCUSR 与 DEC mode 12",
+        value: preferences.configuration.appearance.resolvedCursorBlinkMode
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.cursorBlinkMode = value
+      },
+      enumPopupRow(
+        "光标动画", "平滑模式只插值同一行内的短距离移动，并尊重减弱动态效果",
+        value: preferences.configuration.appearance.resolvedCursorAnimation
+      ) { [weak self] value in
+        self?.preferences.configuration.appearance.cursorAnimation = value
+      },
+      actionRow("主题颜色", "清除覆盖并重新使用当前主题的光标与文字颜色", title: "跟随主题") {
+        [weak self] in
+        self?.preferences.configuration.appearance.cursorColorOverride = nil
+        self?.preferences.configuration.appearance.cursorTextColorOverride = nil
       },
     ]))
     return views
+  }
+
+  private func lineHeightSelection(_ value: Double) -> Int {
+    let choices = [1.0, 1.08, 1.2]
+    return choices.enumerated().min(by: {
+      abs($0.element - value) < abs($1.element - value)
+    })?.offset ?? 1
+  }
+
+  /// 字体页按 Otty 的“计算值 / 全局 / 主题 / 回退”四个来源展示。计算值只读；其它
+  /// scope 修改后都进入正式配置或自定义主题，不把临时文本框状态误当成渲染真值。
+  private func makeFontSettings() -> NSView {
+    let scope = ClosureSegmentedControl(
+      labels: FontScope.allCases.map(\.label),
+      selected: fontScope.rawValue
+    ) { [weak self] index in
+      guard let self, let next = FontScope(rawValue: index) else { return }
+      self.fontScope = next
+      self.refresh()
+    }
+    let scopeRow = NSStackView(views: [
+      makeLabel("设置范围", size: 12, color: SettingsTheme.secondaryInk),
+      scope,
+      NSView(),
+    ])
+    scopeRow.orientation = .horizontal
+    scopeRow.spacing = 10
+
+    let rows: [NSView]
+    switch fontScope {
+    case .computed:
+      let fonts = preferences.terminalFontVariants
+      let automatic = preferences.configuration.appearance.fontFamilyBold == nil
+        && preferences.configuration.appearance.fontFamilyItalic == nil
+        && preferences.configuration.appearance.fontFamilyBoldItalic == nil
+      rows = [
+        infoRow("字体", "由全局 → 主题 → 回退解析得到", fonts.normal.fontName),
+        infoRow("字体（粗体）", "当前实际字形", fonts.bold.fontName),
+        infoRow("字体（斜体）", "当前实际字形", fonts.italic.fontName),
+        infoRow("字体（粗斜体）", "当前实际字形", fonts.boldItalic.fontName),
+        toggleRow("自动匹配粗细与样式", "关闭后把当前匹配结果固定到全局设置", value: automatic) {
+          [weak self] enabled in
+          guard let self else { return }
+          if enabled {
+            self.preferences.configuration.appearance.fontFamilyBold = nil
+            self.preferences.configuration.appearance.fontFamilyItalic = nil
+            self.preferences.configuration.appearance.fontFamilyBoldItalic = nil
+          } else {
+            let resolved = self.preferences.terminalFontVariants
+            self.preferences.configuration.appearance.fontFamilyBold = resolved.bold.fontName
+            self.preferences.configuration.appearance.fontFamilyItalic = resolved.italic.fontName
+            self.preferences.configuration.appearance.fontFamilyBoldItalic = resolved.boldItalic.fontName
+          }
+        },
+      ]
+    case .global:
+      let appearance = preferences.configuration.appearance
+      rows = [
+        textRow("字体", "留空则读取当前主题", value: appearance.fontFamily) { [weak self] value in
+          self?.preferences.configuration.appearance.fontFamily = value
+        },
+        textRow("字体（粗体）", "留空自动匹配", value: appearance.fontFamilyBold ?? "") { [weak self] value in
+          self?.preferences.configuration.appearance.fontFamilyBold = value.nilIfBlank
+        },
+        textRow("字体（斜体）", "留空自动匹配", value: appearance.fontFamilyItalic ?? "") { [weak self] value in
+          self?.preferences.configuration.appearance.fontFamilyItalic = value.nilIfBlank
+        },
+        textRow("字体（粗斜体）", "留空自动匹配", value: appearance.fontFamilyBoldItalic ?? "") { [weak self] value in
+          self?.preferences.configuration.appearance.fontFamilyBoldItalic = value.nilIfBlank
+        },
+      ]
+    case .theme:
+      rows = [
+        textRow(
+          "主题字体",
+          "逗号分隔候选；修改内置主题时会自动创建可编辑副本",
+          value: focusedTheme.style.fontFamilies?.joined(separator: ", ") ?? ""
+        ) { [weak self] value in
+          self?.updateFocusedThemeFontFamilies(value)
+        },
+        infoRow("当前主题", "字体设置保存到该主题", focusedTheme.name),
+      ]
+    case .fallback:
+      rows = [
+        textRow(
+          "字体回退",
+          "逗号分隔；内置 Nerd Symbols 始终位于首位",
+          value: preferences.configuration.appearance.resolvedFontFamilyFallback
+            .joined(separator: ", ")
+        ) { [weak self] value in
+          self?.preferences.configuration.appearance.fontFamilyFallback = value
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        },
+      ]
+    }
+
+    let actions = NSStackView(views: [
+      NSView(),
+      ActionButton(title: "安装字体") { NSFontManager.shared.orderFrontFontPanel(nil) },
+      ActionButton(title: "打开字体文件夹") { [weak self] in self?.openFontsFolder() },
+    ])
+    actions.orientation = .horizontal
+    actions.spacing = 10
+    let column = NSStackView(views: [scopeRow, card(rows), actions])
+    column.orientation = .vertical
+    column.alignment = .width
+    column.spacing = 12
+    column.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    return column
+  }
+
+  private func updateFocusedThemeFontFamilies(_ value: String) {
+    let families = value.split(separator: ",").map {
+      $0.trimmingCharacters(in: .whitespacesAndNewlines)
+    }.filter { !$0.isEmpty }
+    var editable = focusedTheme
+    if editable.isBuiltIn {
+      editable = preferences.duplicateTheme(editable)
+      focusedThemeID = editable.id
+    }
+    editable.style.fontFamilies = families.isEmpty ? nil : families
+    guard preferences.updateTheme(editable) else {
+      message = "主题字体保存失败，请确认主题名称未冲突"
+      refresh()
+      return
+    }
+    do {
+      _ = try preferences.saveThemeToLibraryFolder(editable)
+      message = "已更新主题“\(editable.name)”的字体"
+    } catch {
+      message = "主题字体已应用，但文件保存失败：\(error.localizedDescription)"
+    }
+    refresh()
+  }
+
+  private func openFontsFolder() {
+    let directory = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Fonts", isDirectory: true)
+    do {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      NSWorkspace.shared.open(directory)
+    } catch {
+      message = "无法打开字体文件夹：\(error.localizedDescription)"
+      refresh()
+    }
   }
 
   private func makeLayoutChoices() -> NSView {
@@ -1364,6 +1603,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       }
       row.addArrangedSubview(card)
     }
+    // 顶层项现在一律满宽，横向行必须自带尾部 spacer，否则卡片会被等分拉伸。
+    row.addArrangedSubview(NSView())
     return row
   }
 
@@ -1372,24 +1613,33 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let selectedName = mode == .light
       ? preferences.configuration.appearance.themeName
       : preferences.configuration.appearance.darkThemeName
-    // 700pt 窗口下内容区约 448pt 宽：3 列 130pt 卡片刚好放下，4 列会横向裁切。
-    let rows = stride(from: 0, to: themes.count, by: 3).map { start -> [NSView] in
-      var cells: [NSView] = themes[start..<min(start + 3, themes.count)].map { theme in
-        ThemeCardButton(theme: theme, selected: theme.name == selectedName) { [weak self] in
-          self?.focusedThemeID = theme.id
-          self?.preferences.selectTheme(theme)
-        }
+    // 一行四张卡。原始 700pt 窗口的内容区放不下四个固定 130pt 卡片，因此卡片改为
+    // 按列等分宽度（`fillEqually`），窗口拉宽时同步变大，不再写死单卡宽度。
+    let columns = 4
+    let grid = NSStackView()
+    grid.orientation = .vertical
+    grid.alignment = .width
+    grid.spacing = 14
+    for start in stride(from: 0, to: themes.count, by: columns) {
+      let row = NSStackView()
+      row.orientation = .horizontal
+      row.distribution = .fillEqually
+      row.spacing = 12
+      for theme in themes[start..<min(start + columns, themes.count)] {
+        row.addArrangedSubview(
+          ThemeCardButton(theme: theme, selected: theme.name == selectedName) { [weak self] in
+            self?.focusedThemeID = theme.id
+            self?.preferences.selectTheme(theme)
+          })
       }
-      while cells.count < 3 { cells.append(NSView()) }
-      return cells
+      // 末行不足四个时补占位视图，剩余卡片才不会被等分算法拉宽成异形。
+      while row.arrangedSubviews.count < columns { row.addArrangedSubview(NSView()) }
+      grid.addArrangedSubview(row)
+      row.widthAnchor.constraint(equalTo: grid.widthAnchor).isActive = true
     }
-    let grid = NSGridView(views: rows)
-    grid.columnSpacing = 12
-    grid.rowSpacing = 14
-    grid.xPlacement = .fill
     let host = NSView()
     host.wantsLayer = true
-    host.layer?.backgroundColor = AsterTheme.sidebar.withAlphaComponent(0.52).cgColor
+    host.layer?.backgroundColor = SettingsTheme.card.cgColor
     host.layer?.cornerRadius = 12
     host.addSubview(grid)
     grid.pinEdges(to: host, insets: NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16))
@@ -1400,8 +1650,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     TerminalThemeCatalog.builtIns + preferences.themeLibrary.customThemes
   }
 
+  /// 详情区展示的主题：必须带上用户覆盖，色板显示的才是真正生效的颜色。
   private var focusedTheme: TerminalTheme {
-    allThemes.first(where: { $0.id == focusedThemeID }) ?? preferences.activeTheme
+    guard let base = allThemes.first(where: { $0.id == focusedThemeID }) else {
+      return preferences.activeTheme
+    }
+    return preferences.resolved(base)
   }
 
   private func duplicateTheme() {
@@ -1411,6 +1665,83 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       _ = try preferences.saveThemeToLibraryFolder(copy)
       message = "已复制并保存主题“\(copy.name)”"
     } catch { message = "主题已复制，但文件保存失败：\(error.localizedDescription)" }
+    refresh()
+  }
+
+  /// 点击详情色板里的色块：弹出取色器，选色后就地写回该 token 并保存。
+  ///
+  /// 内置主题不可原位修改，先自动复制一份再改——否则点一下就会破坏内置真值表。
+  /// 复制发生在取色**之前**，取色器里的实时预览因此落在副本上。
+  private func pickColor(for slot: ThemeColorSlot, anchor: NSView) {
+    // 改色写进覆盖表，不再复制整套主题：内置的 24 套是 Otty 只读真值表，复制会让
+    // 主题列表被「副本」堆满，而且副本与上游脱钩。覆盖只记用户显式改过的 token。
+    let themeID = focusedTheme.id
+    themeColorPickTarget = (themeID: themeID, slotID: slot.id, createdCopy: false)
+    let picker = InlineColorPickerViewController(
+      title: slot.title,
+      color: NSColor(slot.resolved)
+    ) { [weak self] color in
+      self?.writeThemeColor(color)
+    }
+    picker.onClose = { [weak self] in self?.finishColorPick() }
+    isPickingThemeColor = true
+    needsRefreshAfterColorPick = false
+    themeColorPickAnchor = anchor as? ThemeColorSwatch
+    // 贴着被点的色块弹出：用户改的是哪一格必须一眼可见。`.semitransient` 让面板在
+    // 拖动色域时不会因为点到别处就消失，点击色板之外才关闭。
+    present(
+      picker,
+      asPopoverRelativeTo: anchor.bounds,
+      of: anchor,
+      preferredEdge: .maxY,
+      behavior: .semitransient
+    )
+  }
+
+  /// 取色器每次拖动都会回调；写进覆盖表并落盘，用户看到的是实时生效。
+  ///
+  /// 这里**不能** `refresh()`：整棵设置页会被重建，popover 的锚点视图随之销毁，
+  /// 取色器会在用户拖动色域的过程中被关掉。
+  private func writeThemeColor(_ color: NSColor) {
+    guard let target = themeColorPickTarget else { return }
+    let picked = color.usingColorSpace(.sRGB) ?? color
+    preferences.setThemeColor(
+      HexColor(nsColor: picked), slotID: target.slotID, themeID: target.themeID)
+    themeColorPickAnchor?.showPickedColor(picked)
+    needsRefreshAfterColorPick = true
+  }
+
+  /// 取色器关闭后再把色板重建一次，让斜线底（派生态）与 tooltip 跟上新值，
+  /// 同时把覆盖写进主题文件夹里的 `.ottytheme` 追加段。
+  private func finishColorPick() {
+    guard isPickingThemeColor else { return }
+    isPickingThemeColor = false
+    let target = themeColorPickTarget
+    themeColorPickTarget = nil
+    themeColorPickAnchor = nil
+    guard needsRefreshAfterColorPick else { return }
+    needsRefreshAfterColorPick = false
+    if let target {
+      do {
+        _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: target.themeID)
+        message = "已更新主题“\(focusedTheme.name)”的颜色"
+      } catch {
+        message = "颜色已生效，但主题文件写入失败：\(error.localizedDescription)"
+      }
+    }
+    refresh()
+  }
+
+  /// 撤销当前主题的全部颜色覆盖，回到主题自身（含内置真值表）的原始配色。
+  private func resetThemeOverrides() {
+    let themeID = focusedTheme.id
+    preferences.clearThemeOverrides(themeID: themeID)
+    do {
+      _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
+      message = "已恢复主题“\(focusedTheme.name)”的原始配色"
+    } catch {
+      message = "已恢复原始配色，但主题文件写入失败：\(error.localizedDescription)"
+    }
     refresh()
   }
 
@@ -1516,7 +1847,9 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let panel = NSOpenPanel()
     panel.canChooseDirectories = false
     panel.canChooseFiles = true
-    if let type = UTType(filenameExtension: "astertheme") { panel.allowedContentTypes = [type] }
+    panel.allowedContentTypes = ["astertheme", "ottytheme"].compactMap {
+      UTType(filenameExtension: $0)
+    }
     guard panel.runModal() == .OK, let url = panel.url else { return }
     do {
       let theme = try preferences.importTheme(from: url)
@@ -1535,14 +1868,14 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   // MARK: - Rows and cards
 
   /// 大圆角设置卡片；行间不画分隔线，靠每行自身的内边距形成留白节奏（Otty 风格）。
-  /// 分组卡片：surface 与窗口背景在多数主题下几乎相同，改用 `settingsCard`
-  /// （窗口底色向文字色轻混）让每组功能在白色画布上有可见的浅色底块。
+  /// 底色取 `SettingsTheme.card`（浅色固定 #FAFAFA），压在白色画布上形成可见的浅灰
+  /// 底块；该色**不跟随终端主题**，改主题不会把设置页染色。
   private func card(_ rows: [NSView]) -> NSView {
     let card = NSStackView()
     card.orientation = .vertical
     card.spacing = 0
     card.wantsLayer = true
-    card.layer?.backgroundColor = AsterTheme.settingsCard.cgColor
+    card.layer?.backgroundColor = SettingsTheme.card.cgColor
     card.layer?.cornerRadius = SettingsMetrics.cardCornerRadius
     card.identifier = Self.cardIdentifier
     // 显式压低卡片自身的水平压缩阻力。行内长说明文字的固有宽度（单行不换行）
@@ -1560,14 +1893,14 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private func rowShell(_ title: String, _ detail: String, accessory: NSView) -> NSView {
     let host = NSView()
     host.translatesAutoresizingMaskIntoConstraints = false
-    let detailLabel = makeLabel(detail, size: SettingsMetrics.rowDetailSize, color: AsterTheme.secondaryInk)
+    let detailLabel = makeLabel(detail, size: SettingsMetrics.rowDetailSize, color: SettingsTheme.secondaryInk)
     // 说明文字允许折行撑高整行；水平抗压缩降为最低，长说明被压缩换行而不是
     // 把右侧 accessory（已 required hugging）挤出卡片。
     detailLabel.lineBreakMode = .byWordWrapping
     detailLabel.maximumNumberOfLines = 0
     detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     let labels = NSStackView(views: [
-      makeLabel(title, size: SettingsMetrics.rowTitleSize, weight: .medium),
+      makeLabel(title, size: SettingsMetrics.rowTitleSize, weight: .medium, color: SettingsTheme.ink),
       detailLabel,
     ])
     labels.orientation = .vertical
@@ -1599,7 +1932,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   }
 
   private func infoRow(_ title: String, _ detail: String, _ value: String) -> NSView {
-    rowShell(title, detail, accessory: makeLabel(value, size: 11, color: AsterTheme.secondaryInk))
+    rowShell(title, detail, accessory: makeLabel(value, size: 11, color: SettingsTheme.secondaryInk))
   }
 
   private func toggleRow(_ title: String, _ detail: String, value: Bool, action: @escaping (Bool) -> Void) -> NSView {
@@ -1645,7 +1978,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let text = fractionDigits == 0
       ? "\(Int(value)) \(suffix)"
       : String(format: "%.\(fractionDigits)f \(suffix)", value)
-    let valueLabel = makeLabel(text, size: 10.5, color: AsterTheme.secondaryInk)
+    let valueLabel = makeLabel(text, size: 10.5, color: SettingsTheme.secondaryInk)
     let stack = NSStackView(views: [slider, valueLabel])
     stack.orientation = .horizontal
     stack.spacing = 8
@@ -1662,12 +1995,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   /// 分组小标题：灰色小号加字距，identifier 供内容栈识别并收紧「标题 → 卡片」间距。
   private func sectionTitle(_ title: String) -> NSView {
-    let label = makeLabel(title, size: SettingsMetrics.groupTitleSize, weight: .medium, color: AsterTheme.tertiaryInk)
+    let label = makeLabel(title, size: SettingsMetrics.groupTitleSize, weight: .medium, color: SettingsTheme.tertiaryInk)
     label.attributedStringValue = NSAttributedString(
       string: title,
       attributes: [
         .font: NSFont.systemFont(ofSize: SettingsMetrics.groupTitleSize, weight: .medium),
-        .foregroundColor: AsterTheme.tertiaryInk,
+        .foregroundColor: SettingsTheme.tertiaryInk,
         .kern: 0.8,
       ]
     )
@@ -1725,9 +2058,9 @@ private final class SettingsSidebarButton: NSButton {
     setAccessibilityLabel(section.rawValue)
     isBordered = false
     wantsLayer = true
-    layer?.backgroundColor = selected ? AsterTheme.ink.withAlphaComponent(0.07).cgColor : NSColor.clear.cgColor
+    layer?.backgroundColor = selected ? SettingsTheme.ink.withAlphaComponent(0.07).cgColor : NSColor.clear.cgColor
 
-    let tint = selected ? AsterTheme.ink : AsterTheme.secondaryInk
+    let tint = selected ? SettingsTheme.ink : SettingsTheme.secondaryInk
     let icon = NSImageView(
       image: NSImage(systemSymbolName: section.symbol, accessibilityDescription: section.rawValue) ?? NSImage()
     )
@@ -1780,6 +2113,33 @@ private final class ClosurePopUpButton: NSPopUpButton {
   }
   required init?(coder: NSCoder) { nil }
   @objc private func changed() { handler(indexOfSelectedItem) }
+}
+
+@MainActor
+private final class ClosureSegmentedControl: NSSegmentedControl {
+  private let handler: (Int) -> Void
+
+  init(labels: [String], selected: Int, action: @escaping (Int) -> Void) {
+    handler = action
+    // `init(labels:trackingMode:target:action:)` 由 AppKit 以 Objective-C 工厂方法实现；
+    // 从 Swift 子类调用时会把工厂 selector 错发给已经分配的子类实例并在运行时崩溃。
+    // 使用指定初始化器逐项配置，既保留相同行为，也保证子类初始化路径有效。
+    super.init(frame: .zero)
+    segmentCount = labels.count
+    trackingMode = .selectOne
+    for (index, label) in labels.enumerated() {
+      setLabel(label, forSegment: index)
+    }
+    selectedSegment = min(max(selected, 0), max(labels.count - 1, 0))
+    target = self
+    self.action = #selector(changed)
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  @objc private func changed() {
+    handler(selectedSegment)
+  }
 }
 
 @MainActor
@@ -1880,17 +2240,17 @@ private final class LayoutChoiceButton: NSButton {
     title = ""
     isBordered = false
     wantsLayer = true
-    layer?.backgroundColor = AsterTheme.panel.cgColor
+    layer?.backgroundColor = SettingsTheme.card.cgColor
     layer?.cornerRadius = 12
     layer?.borderWidth = selected ? 2 : 1
     // 选中框走主题强调色而不是系统 accent，遵守「主题色只经由 ThemeRuntime」规则。
-    layer?.borderColor = (selected ? AsterTheme.accent : AsterTheme.hairline).cgColor
+    layer?.borderColor = (selected ? SettingsTheme.accent : SettingsTheme.hairline).cgColor
     let image = NSImageView(
       image: NSImage(systemSymbolName: data.0, accessibilityDescription: data.1) ?? NSImage()
     )
     image.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 25, weight: .regular)
-    image.contentTintColor = AsterTheme.secondaryInk
-    let label = makeLabel(data.1, size: 12, color: AsterTheme.secondaryInk)
+    image.contentTintColor = SettingsTheme.secondaryInk
+    let label = makeLabel(data.1, size: 12, color: SettingsTheme.secondaryInk)
     label.alignment = .center
     let stack = NSStackView(views: [image, label])
     stack.orientation = .vertical
@@ -1917,20 +2277,31 @@ private final class LayoutChoiceButton: NSButton {
 @MainActor
 private final class ThemeCardButton: NSButton {
   private let handler: () -> Void
+  private let selected: Bool
+  private var hoverTrackingArea: NSTrackingArea?
+  private var isHovering = false { didSet { applyBackground() } }
+
   init(theme: TerminalTheme, selected: Bool, action: @escaping () -> Void) {
     handler = action
+    self.selected = selected
     super.init(frame: .zero)
     title = ""
     setAccessibilityLabel(theme.name)
     isBordered = false
     wantsLayer = true
     layer?.cornerRadius = 12
+    layer?.cornerCurve = .continuous
     layer?.borderWidth = selected ? 2 : 0
     // 同上：主题卡选中描边使用主题强调色。
-    layer?.borderColor = AsterTheme.accent.cgColor
+    layer?.borderColor = SettingsTheme.accent.cgColor
     let preview = ThemeMiniPreviewView(theme: theme)
-    let label = makeLabel(theme.name, size: 11.5, color: AsterTheme.secondaryInk)
+    let label = makeLabel(theme.name, size: 11.5, color: SettingsTheme.secondaryInk)
     label.alignment = .center
+    // 一行四列后单卡只有 95pt 左右，「Solarized Light」这类长名必须换行显示；
+    // 同时压低横向抗压优先级，名称不会反过来把等分的列撑宽。
+    label.lineBreakMode = .byWordWrapping
+    label.maximumNumberOfLines = 2
+    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     let stack = NSStackView(views: [preview, label])
     stack.orientation = .vertical
     stack.spacing = 8
@@ -1938,16 +2309,45 @@ private final class ThemeCardButton: NSButton {
     addSubview(stack)
     stack.pinEdges(to: self)
     preview.translatesAutoresizingMaskIntoConstraints = false
-    preview.heightAnchor.constraint(equalToConstant: 68).isActive = true
+    preview.heightAnchor.constraint(equalToConstant: 62).isActive = true
     target = self
     self.action = #selector(invoke)
     translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      widthAnchor.constraint(equalToConstant: 130),
-      heightAnchor.constraint(equalToConstant: 110),
+      // 卡宽由所在列等分决定，这里只兜住极窄窗口下的最小可读宽度。
+      widthAnchor.constraint(greaterThanOrEqualToConstant: 84),
+      heightAnchor.constraint(equalToConstant: 118),
     ])
+    applyBackground()
   }
   required init?(coder: NSCoder) { nil }
+
+  /// 卡片自身的灰底：预览缩略图多为浅色，没有底色时卡片与网格容器糊成一片，
+  /// 看不出「一张张卡」的边界。悬停时加深一档，给出可点反馈。
+  private func applyBackground() {
+    let alpha: CGFloat = selected ? 0.09 : (isHovering ? 0.08 : 0.05)
+    layer?.backgroundColor = SettingsTheme.ink.withAlphaComponent(alpha).cgColor
+  }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+    let area = NSTrackingArea(
+      rect: .zero,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+      owner: self
+    )
+    addTrackingArea(area)
+    hoverTrackingArea = area
+  }
+
+  override func mouseEntered(with event: NSEvent) { isHovering = true }
+  override func mouseExited(with event: NSEvent) { isHovering = false }
+
+  override func resetCursorRects() {
+    addCursorRect(bounds, cursor: .pointingHand)
+  }
+
   @objc private func invoke() { handler() }
 }
 
@@ -2009,32 +2409,75 @@ private final class ThemeMiniPreviewView: NSView {
   }
 }
 
+/// 主题详情色板。
+///
+/// 顶部是「终端前景 / 背景两个大块 + ANSI 上下两排圆点」，下面按 `ThemeColorGroup`
+/// 排成一行行胶囊，每个胶囊是「组名 + 该组的 token 色块」。色块 hover 显示
+/// `前景色 · terminal.foreground = "#2a2b33"`，点击直接改色。
+///
+/// 未显式声明的 token（`slot.isDerived`）画成斜线底：它此刻的颜色是从 window 派生
+/// 出来的，改 window 会连带变；用户必须能一眼看出哪些格子属于这种情况。
 @MainActor
 private final class ThemeDetailView: NSView {
-  init(theme: TerminalTheme) {
+  init(theme: TerminalTheme, onPick: @escaping (ThemeColorSlot, NSView) -> Void) {
     super.init(frame: .zero)
     wantsLayer = true
-    layer?.backgroundColor = AsterTheme.panel.cgColor
+    layer?.backgroundColor = SettingsTheme.card.cgColor
     layer?.cornerRadius = 12
-    let title = makeLabel(theme.name, size: 14, weight: .semibold)
-    let sample = TerminalSampleView(theme: theme)
-    sample.translatesAutoresizingMaskIntoConstraints = false
-    sample.heightAnchor.constraint(equalToConstant: 164).isActive = true
-    let mode = makeLabel(theme.mode == .dark ? "深色" : "浅色", size: 10, color: AsterTheme.secondaryInk)
+
+    let slots = theme.colorSlots
+    let grouped = Dictionary(grouping: slots, by: \.group)
+
+    let title = makeLabel(theme.name, size: 14, weight: .semibold, color: SettingsTheme.ink)
+    let mode = makeLabel(
+      theme.mode == .dark ? "深色" : "浅色", size: 10, color: SettingsTheme.secondaryInk)
     let header = NSStackView(views: [title, NSView(), mode])
     header.orientation = .horizontal
-    let roleSwatches = NSStackView(views: [
-      ThemeRoleSwatch(title: "Window", color: theme.palette.interfaceWindowBackground ?? theme.palette.panelBackground),
-      ThemeRoleSwatch(title: "Container", color: theme.palette.containerBackground),
-      ThemeRoleSwatch(title: "Panel", color: theme.palette.panelBackground),
-    ])
-    roleSwatches.orientation = .horizontal
-    roleSwatches.spacing = 12
-    roleSwatches.distribution = .fillEqually
+    let sample = TerminalSampleView(theme: theme)
+    sample.translatesAutoresizingMaskIntoConstraints = false
+    sample.heightAnchor.constraint(equalToConstant: 132).isActive = true
+
+    // 顶部：终端前景/背景两个大块（左）+ ANSI 两排（右）。
+    let terminalColumn = NSStackView(
+      views: (grouped[.terminal] ?? []).map { slot in
+        ThemeColorSwatch(slot: slot, size: NSSize(width: 78, height: 44), onPick: onPick)
+      })
+    terminalColumn.orientation = .vertical
+    terminalColumn.alignment = .leading
+    terminalColumn.spacing = 8
     let ansi = ANSIColorStrip(colors: theme.palette.ansiColors)
-    let stack = NSStackView(views: [header, sample, roleSwatches, ansi])
+    let top = NSStackView(views: [terminalColumn, NSView(), ansi])
+    top.orientation = .horizontal
+    top.alignment = .top
+    top.spacing = 16
+
+    var rows: [NSView] = [header, sample, top]
+    // 组胶囊按固定顺序两三个一行地流式排布，与 Otty 的详情面板节奏一致。
+    let groupOrder: [[ThemeColorGroup]] = [
+      [.window, .container, .panel],
+      [.sidebar, .titlebar, .tabbar],
+      [.tab],
+      [.accents, .cursor, .selection],
+    ]
+    for line in groupOrder {
+      let capsules = line.compactMap { group -> NSView? in
+        guard let groupSlots = grouped[group], !groupSlots.isEmpty else { return nil }
+        return ThemeColorGroupCapsule(group: group, slots: groupSlots, onPick: onPick)
+      }
+      guard !capsules.isEmpty else { continue }
+      let row = NSStackView(views: capsules + [NSView()])
+      row.orientation = .horizontal
+      row.alignment = .centerY
+      row.spacing = 10
+      rows.append(row)
+    }
+
+    let stack = NSStackView(views: rows)
     stack.orientation = .vertical
-    stack.spacing = 12
+    // 每一行内部都自带尾部 spacer，因此这里用满宽对齐；改成 .leading 会让 header
+    // 与终端样例缩成固有宽度。
+    stack.alignment = .width
+    stack.spacing = 10
     stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
     addSubview(stack)
     stack.pinEdges(to: self)
@@ -2042,54 +2485,176 @@ private final class ThemeDetailView: NSView {
   required init?(coder: NSCoder) { nil }
 }
 
+/// 一组 token 的胶囊：左侧是组名，右侧顺序排开该组的色块。
 @MainActor
-private final class ThemeRoleSwatch: NSView {
-  init(title: String, color: HexColor) {
+private final class ThemeColorGroupCapsule: NSView {
+  init(group: ThemeColorGroup, slots: [ThemeColorSlot], onPick: @escaping (ThemeColorSlot, NSView) -> Void) {
     super.init(frame: .zero)
-    let swatch = NSView()
-    swatch.wantsLayer = true
-    swatch.layer?.backgroundColor = NSColor(color).cgColor
-    swatch.layer?.cornerRadius = 5
-    swatch.layer?.borderWidth = 1
-    swatch.layer?.borderColor = AsterTheme.hairline.cgColor
-    swatch.translatesAutoresizingMaskIntoConstraints = false
-    swatch.heightAnchor.constraint(equalToConstant: 28).isActive = true
-    let label = makeLabel(title, size: 9.5, color: AsterTheme.secondaryInk)
-    let stack = NSStackView(views: [swatch, label])
-    stack.orientation = .vertical
-    stack.spacing = 5
-    addSubview(stack)
-    stack.pinEdges(to: self)
+    wantsLayer = true
+    layer?.cornerRadius = 15
+    layer?.cornerCurve = .continuous
+    layer?.borderWidth = 1
+    layer?.borderColor = SettingsTheme.hairline.cgColor
+    let title = makeLabel(group.title, size: 10, weight: .medium, color: SettingsTheme.ink)
+    let swatches = slots.map { ThemeColorSwatch(slot: $0, onPick: onPick) }
+    let row = NSStackView(views: [title] + swatches)
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = 8
+    row.edgeInsets = NSEdgeInsets(top: 6, left: 14, bottom: 6, right: 12)
+    addSubview(row)
+    row.pinEdges(to: self)
   }
 
   required init?(coder: NSCoder) { nil }
 }
 
-/// 详情区只读展示完整 ANSI 色表，便于与 Otty 主题文件逐色核对。
+/// 单个 token 色块。可点（打开取色器）、可悬停（显示 token 与色值）。
+@MainActor
+private final class ThemeColorSwatch: NSControl {
+  private let slot: ThemeColorSlot
+  private let onPick: (ThemeColorSlot, NSView) -> Void
+  private var hoverTrackingArea: NSTrackingArea?
+  private var isHovering = false { didSet { needsDisplay = true } }
+  /// 取色器正在改的颜色。非空时覆盖 slot 自带的值与派生态。
+  private var pickedColor: NSColor?
+
+  init(
+    slot: ThemeColorSlot,
+    size: NSSize = NSSize(width: 20, height: 20),
+    onPick: @escaping (ThemeColorSlot, NSView) -> Void
+  ) {
+    self.slot = slot
+    self.onPick = onPick
+    super.init(frame: .zero)
+    wantsLayer = true
+    toolTip = slot.tooltip
+    identifier = NSUserInterfaceItemIdentifier("theme-slot-\(slot.id)")
+    setAccessibilityLabel(slot.tooltip)
+    translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      widthAnchor.constraint(equalToConstant: size.width),
+      heightAnchor.constraint(equalToConstant: size.height),
+    ])
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
+    let path = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
+    let resolved = pickedColor ?? NSColor(slot.resolved)
+    // 取色器写过之后这个 token 就是显式值了，不该再画成派生态的斜线底。
+    let isDerived = pickedColor == nil && slot.isDerived
+    switch slot.kind {
+    case .fill:
+      if isDerived {
+        // 派生值：先铺一层淡底再画斜线，和显式实心块区分开。
+        path.addClip()
+        resolved.withAlphaComponent(0.35).setFill()
+        rect.fill()
+        drawDiagonalHatch(in: rect)
+      } else {
+        resolved.setFill()
+        path.fill()
+      }
+    case .border:
+      // border token 画成空心：它本来就只描一圈边，实心块会误导。
+      resolved.setStroke()
+      path.lineWidth = isDerived ? 1 : 2
+      if isDerived {
+        path.setLineDash([2.5, 2.5], count: 2, phase: 0)
+      }
+      path.stroke()
+    }
+    // 悬停描边：无论哪种画法都要有可点反馈。
+    if isHovering {
+      let ring = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
+      SettingsTheme.accent.setStroke()
+      ring.lineWidth = 2
+      ring.stroke()
+    } else if slot.kind == .fill, !isDerived {
+      let hairline = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
+      SettingsTheme.hairline.setStroke()
+      hairline.lineWidth = 1
+      hairline.stroke()
+    }
+  }
+
+  /// 45° 斜线底纹，表示「主题没写这个 token」。
+  private func drawDiagonalHatch(in rect: NSRect) {
+    let hatch = NSBezierPath()
+    hatch.lineWidth = 1
+    var x = rect.minX - rect.height
+    while x < rect.maxX {
+      hatch.move(to: NSPoint(x: x, y: rect.minY))
+      hatch.line(to: NSPoint(x: x + rect.height, y: rect.maxY))
+      x += 4
+    }
+    SettingsTheme.tertiaryInk.withAlphaComponent(0.55).setStroke()
+    hatch.stroke()
+  }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+    let area = NSTrackingArea(
+      rect: .zero,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+      owner: self
+    )
+    addTrackingArea(area)
+    hoverTrackingArea = area
+  }
+
+  /// 取色器改色时就地更新这一格。整页重建在取色期间被挂起，没有这个方法色板会
+  /// 一直停在旧色，用户以为「没设置上」。赋值后按显式值画（不再是斜线底），因为
+  /// 这个 token 已经被显式写入主题了。
+  func showPickedColor(_ color: NSColor) {
+    pickedColor = color
+    needsDisplay = true
+  }
+
+  override func mouseEntered(with event: NSEvent) { isHovering = true }
+  override func mouseExited(with event: NSEvent) { isHovering = false }
+  override func mouseDown(with event: NSEvent) { onPick(slot, self) }
+  override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+}
+
+/// 详情区展示完整 ANSI 色表，便于与 Otty 主题文件逐色核对；上排标准色、下排高亮色。
 @MainActor
 private final class ANSIColorStrip: NSView {
   init(colors: [HexColor]) {
     super.init(frame: .zero)
-    let cells = colors.prefix(16).map { color -> NSView in
+    let cells = colors.prefix(16).enumerated().map { index, color -> NSView in
       let cell = NSView()
       cell.wantsLayer = true
       cell.layer?.backgroundColor = NSColor(color).cgColor
-      cell.layer?.cornerRadius = 9
+      cell.layer?.cornerRadius = 13
       cell.layer?.borderWidth = 0.5
-      cell.layer?.borderColor = AsterTheme.hairline.cgColor
+      cell.layer?.borderColor = SettingsTheme.hairline.cgColor
+      cell.toolTip = "ANSI \(index) = \"\(color.displayString)\""
       cell.translatesAutoresizingMaskIntoConstraints = false
       NSLayoutConstraint.activate([
-        cell.widthAnchor.constraint(equalToConstant: 18),
-        cell.heightAnchor.constraint(equalToConstant: 18),
+        cell.widthAnchor.constraint(equalToConstant: 26),
+        cell.heightAnchor.constraint(equalToConstant: 26),
       ])
       return cell
     }
-    let row = NSStackView(views: cells)
-    row.orientation = .horizontal
-    row.spacing = 7
-    row.alignment = .centerY
-    addSubview(row)
-    row.pinEdges(to: self)
+    let rows = stride(from: 0, to: cells.count, by: 8).map { start -> NSView in
+      let row = NSStackView(views: Array(cells[start..<min(start + 8, cells.count)]))
+      row.orientation = .horizontal
+      row.spacing = 8
+      row.alignment = .centerY
+      return row
+    }
+    let column = NSStackView(views: rows)
+    column.orientation = .vertical
+    column.spacing = 8
+    column.alignment = .trailing
+    addSubview(column)
+    column.pinEdges(to: self)
   }
 
   required init?(coder: NSCoder) { nil }
@@ -2122,29 +2687,67 @@ private final class TerminalSampleView: NSView {
 
 @MainActor
 private final class ThemeCursorPreviewView: NSView {
-  init(theme: TerminalTheme) {
+  private let theme: TerminalTheme
+  private let appearanceConfiguration: AppearanceConfiguration
+
+  init(theme: TerminalTheme, appearance: AppearanceConfiguration) {
+    self.theme = theme
+    appearanceConfiguration = appearance
     super.init(frame: .zero)
     wantsLayer = true
-    layer?.backgroundColor = NSColor(theme.palette.renderedTerminalBackground).cgColor
-    layer?.cornerRadius = 8
-    let text = makeLabel("abner@makbook$ git commit -am \"▮", size: 12.5, color: NSColor(theme.palette.foreground), monospaced: true)
-    addSubview(text)
-    text.pinEdges(to: self, insets: NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14))
     translatesAutoresizingMaskIntoConstraints = false
-    heightAnchor.constraint(equalToConstant: 58).isActive = true
+    heightAnchor.constraint(equalToConstant: 82).isActive = true
   }
+
   required init?(coder: NSCoder) { nil }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    NSColor(theme.palette.renderedTerminalBackground).setFill()
+    NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
+
+    let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    let segments: [(String, NSColor)] = [
+      ("abner", NSColor(theme.palette.ansiColors[2])),
+      ("@", NSColor(theme.palette.foreground)),
+      ("macbook", NSColor(theme.palette.ansiColors[4])),
+      ("$ ", NSColor(theme.palette.ansiColors[5])),
+      ("git commit -am ", NSColor(theme.palette.ansiColors[2])),
+      ("\"", NSColor(theme.palette.ansiColors[3])),
+    ]
+    let origin = NSPoint(x: 18, y: bounds.midY - 8)
+    var x = origin.x
+    for (text, color) in segments {
+      let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+      text.draw(at: NSPoint(x: x, y: origin.y), withAttributes: attributes)
+      x += text.size(withAttributes: attributes).width
+    }
+
+    let source = appearanceConfiguration.cursorColorOverride ?? theme.palette.cursor
+    let cursor = NSColor(source).withAlphaComponent(
+      CGFloat(appearanceConfiguration.resolvedCursorOpacity)
+    )
+    let rect = NSRect(x: x + 1, y: origin.y - 1, width: 8, height: 18)
+    cursor.set()
+    switch appearanceConfiguration.cursorStyle {
+    case .block:
+      rect.fill()
+    case .hollowBlock:
+      let path = NSBezierPath(rect: rect.insetBy(dx: 0.75, dy: 0.75))
+      path.lineWidth = 1.5
+      path.stroke()
+    case .bar:
+      NSRect(x: rect.minX, y: rect.minY, width: 2, height: rect.height).fill()
+    case .underline:
+      NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: 2).fill()
+    }
+  }
 }
 
-private extension HexColor {
-  init(nsColor: NSColor) {
-    let value = nsColor.usingColorSpace(.sRGB) ?? nsColor
-    self.init(
-      red: UInt8(min(max(value.redComponent, 0), 1) * 255),
-      green: UInt8(min(max(value.greenComponent, 0), 1) * 255),
-      blue: UInt8(min(max(value.blueComponent, 0), 1) * 255),
-      alpha: UInt8(min(max(value.alphaComponent, 0), 1) * 255)
-    )
+private extension String {
+  var nilIfBlank: String? {
+    let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
   }
 }
 
@@ -2201,6 +2804,26 @@ extension CursorStyle: SettingsEnumOption {
     case .bar: "竖线"
     case .underline: "下划线"
     case .hollowBlock: "空心方块"
+    }
+  }
+}
+
+extension TerminalCursorBlinkMode: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .defaultOff: "默认关闭"
+    case .defaultOn: "默认开启"
+    case .alwaysOff: "始终关闭"
+    case .alwaysOn: "始终开启"
+    }
+  }
+}
+
+extension TerminalCursorAnimation: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .off: "关闭"
+    case .smooth: "平滑"
     }
   }
 }
