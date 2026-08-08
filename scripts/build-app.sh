@@ -55,6 +55,16 @@ if [[ ! -d "$SWIFTTERM_BUNDLE" ]]; then
 fi
 cp -R "$SWIFTTERM_BUNDLE" "$RESOURCES_DIR/AsterTerminal_SwiftTerm.bundle"
 
+# HighlighterSwift 把 highlight.js 和主题表放在独立 SwiftPM resource bundle 中。
+# 缺失时 `Highlighter()` 会返回 nil，源码预览虽能退化为纯文本，但发布包不应静默
+# 丢失已承诺的语法高亮，因此和 SwiftTerm bundle 一样执行强校验。
+HIGHLIGHTER_BUNDLE="$BUILD_DIR/release/Highlighter_Highlighter.bundle"
+if [[ ! -d "$HIGHLIGHTER_BUNDLE" ]]; then
+  echo "Missing Highlighter resource bundle: $HIGHLIGHTER_BUNDLE" >&2
+  exit 1
+fi
+cp -R "$HIGHLIGHTER_BUNDLE" "$RESOURCES_DIR/Highlighter_Highlighter.bundle"
+
 # Quick Look 能稳定地把项目内的矢量源渲染成 1024px PNG；后续尺寸均由同一母版生成，
 # 避免图标在不同缩放档位出现构图漂移。
 qlmanage -t -s 1024 -o "$ICON_PREVIEW_DIR" "$PROJECT_DIR/Resources/AsterIcon.svg" >/dev/null 2>&1

@@ -23,13 +23,17 @@ public enum AgentTaskStateSignal: Equatable, Sendable {
 /// 任意终端文本当成生命周期事件；Pane 归属由控制终端天然确定，不依赖 PID 猜测。
 public struct AgentTerminalDirective: Equatable, Sendable {
   public static let maximumPayloadBytes = 256
+  public static let maximumSessionIDBytes = 128
 
   public let provider: AgentProvider
   public let signal: AgentTaskStateSignal
+  /// 只有 provider 明确提供稳定会话身份时才存在；不接受 prompt、tool 参数或输出。
+  public let sessionID: String?
 
-  public init(provider: AgentProvider, signal: AgentTaskStateSignal) {
+  public init(provider: AgentProvider, signal: AgentTaskStateSignal, sessionID: String? = nil) {
     self.provider = provider
     self.signal = signal
+    self.sessionID = sessionID
   }
 
   public init?(payload: String) {
@@ -43,11 +47,24 @@ public struct AgentTerminalDirective: Equatable, Sendable {
         return nil
       }
     }
-    guard values.count == 2,
+    guard (2...3).contains(values.count),
       let providerValue = values["Provider"],
       let provider = AgentProvider(rawValue: providerValue),
-      let state = values["AgentState"]
+      let state = values["AgentState"],
+      Set(values.keys).isSubset(of: ["AgentState", "Provider", "SessionID"])
     else { return nil }
+    let sessionID: String?
+    if let value = values["SessionID"] {
+      guard value.utf8.count <= Self.maximumSessionIDBytes,
+        value.utf8.allSatisfy({ byte in
+          (0x30...0x39).contains(byte) || (0x41...0x5A).contains(byte)
+            || (0x61...0x7A).contains(byte) || [0x2D, 0x2E, 0x3A, 0x5F].contains(byte)
+        })
+      else { return nil }
+      sessionID = value
+    } else {
+      sessionID = nil
+    }
     let signal: AgentTaskStateSignal
     switch state {
     case "processing": signal = .processing
@@ -55,7 +72,7 @@ public struct AgentTerminalDirective: Equatable, Sendable {
     case "awaiting-input": signal = .awaitingInput
     default: return nil
     }
-    self.init(provider: provider, signal: signal)
+    self.init(provider: provider, signal: signal, sessionID: sessionID)
   }
 }
 

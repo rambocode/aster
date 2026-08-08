@@ -34,6 +34,15 @@ struct AgentChatPresentation: Equatable {
   let transcriptHasError: Bool
 }
 
+/// 文件和目录从 Files、CLI、拖放等入口进入工作区时共用的落点语义。
+/// `currentPane` 不写入持久化模型；真正落盘的仍是既有 Pane 树。
+enum WorkspaceResourcePlacement: Equatable {
+  case currentPane
+  case newTab
+  case newWindow
+  case split(SplitDirection)
+}
+
 /// 在 Recipe 边界递归转换 Pane 描述中的目录和资源路径，保持 UUID、嵌套方向与比例。
 /// 领域模型只处理模板语法，不触碰文件系统，也不把运行态对象写入 Recipe。
 enum WorkflowRecipeWorkspaceMapper {
@@ -119,12 +128,13 @@ enum WorkflowRecipeWorkspaceMapper {
 @MainActor
 final class WorkspacePaneRuntime: ObservableObject, Identifiable {
   let id: UUID
-  let descriptor: PaneDescriptor
+  private(set) var descriptor: PaneDescriptor
   let terminalSession: TerminalSession?
   @Published var documentText = ""
   @Published private(set) var documentError: String?
   @Published private(set) var isDirty = false
-  /// Read-only 是 Pane 运行态，不写入会话快照；恢复后默认重新允许输入，避免持久锁定。
+  /// Read-only 是 Pane 运行态，不写入会话快照。Preview Pane 恢复后仍默认只读；
+  /// Editor Pane 恢复后默认可编辑，保持既有快照兼容性。
   @Published private(set) var isReadOnly = false
   private var documentBuffer: DocumentBuffer?
 
@@ -137,9 +147,19 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
       terminalSession = nil
     }
 
-    if descriptor.kind == .editor, let path = descriptor.resourcePath {
+    isReadOnly = descriptor.kind == .preview
+    if [.editor, .preview].contains(descriptor.kind), let path = descriptor.resourcePath {
+      let url = URL(fileURLWithPath: path)
+      let handle = try? FileHandle(forReadingFrom: url)
+      let prefix = handle?.readData(ofLength: 64 * 1_024) ?? Data()
+      if let handle { try? handle.close() }
+      let presentation = FileDocumentClassifier.classify(
+        fileName: url.lastPathComponent,
+        prefix: prefix
+      )
+      guard presentation.usesTextContent else { return }
       do {
-        let buffer = try DocumentBuffer.load(from: URL(fileURLWithPath: path))
+        let buffer = try DocumentBuffer.load(from: url)
         documentBuffer = buffer
         documentText = buffer.text
       } catch {
@@ -156,6 +176,7 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
   }
 
   func saveDocument() {
+    guard !isReadOnly else { return }
     guard var buffer = documentBuffer else { return }
     buffer.updateText(documentText)
     do {
@@ -171,6 +192,43 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
   func toggleReadOnly() {
     isReadOnly.toggle()
     terminalSession?.setReadOnly(isReadOnly)
+  }
+
+  func setReadOnly(_ value: Bool) {
+    guard isReadOnly != value else { return }
+    isReadOnly = value
+    terminalSession?.setReadOnly(value)
+  }
+
+  /// 丢弃内存中的未保存内容并从磁盘重载。调用方负责在脏状态下先向用户确认，
+  /// 该方法只执行可预测的文件事务并把错误暴露给 Pane。
+  func reloadDocument() {
+    guard let path = descriptor.resourcePath else { return }
+    do {
+      let buffer = try DocumentBuffer.load(from: URL(fileURLWithPath: path))
+      documentBuffer = buffer
+      documentText = buffer.text
+      isDirty = false
+      documentError = nil
+    } catch {
+      documentError = error.localizedDescription
+    }
+  }
+
+  /// 重命名后让已打开 Pane 继续跟踪同一资源。仅更新路径并重新加载，不改变 Pane ID，
+  /// 因而不会破坏布局、焦点或工作区恢复引用。
+  func relocateDocument(to url: URL) {
+    descriptor.resourcePath = url.path
+    descriptor.workingDirectory = descriptor.kind == .fileBrowser
+      ? url.path : url.deletingLastPathComponent().path
+    if let buffer = documentBuffer {
+      documentBuffer = buffer.relocated(to: url)
+      // 文本与 dirty 状态保持不变；只有保存目标随文件系统重命名移动。
+      isDirty = documentBuffer?.isDirty ?? isDirty
+    } else if [.editor, .preview].contains(descriptor.kind) {
+      // 二进制或超大预览没有 DocumentBuffer，由 renderer 直接按新路径读取。
+      documentError = nil
+    }
   }
 
   /// 在丢弃编辑器运行态前完成可取消的保存事务。
@@ -600,6 +658,36 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     split(direction: .right, kind: .editor, resourcePath: url.path)
   }
 
+  /// 以指定模式替换当前 Pane，保留叶节点 UUID 与树位置。正在运行命令的终端必须
+  /// 显式确认；脏文档继续使用统一的保存确认，避免 Files 菜单绕过关闭保护。
+  @discardableResult
+  func replaceActivePane(with descriptorKind: PaneKind, resourceURL: URL) -> Bool {
+    if let session = runtimes[activePaneID]?.terminalSession, session.hasRunningCommand {
+      let alert = NSAlert()
+      alert.messageText = "Replace the active terminal?"
+      alert.informativeText = "A command is still running. Replacing this Pane will stop it."
+      alert.alertStyle = .warning
+      alert.addButton(withTitle: "Replace")
+      alert.addButton(withTitle: "Cancel")
+      guard alert.runModal() == .alertFirstButtonReturn else { return false }
+    }
+    guard runtimes[activePaneID]?.confirmCloseIfNeeded() != false else { return false }
+    let replacement = PaneDescriptor(
+      id: activePaneID,
+      kind: descriptorKind,
+      workingDirectory: descriptorKind == .fileBrowser
+        ? resourceURL.path : resourceURL.deletingLastPathComponent().path,
+      resourcePath: resourceURL.path
+    )
+    runtimes.removeValue(forKey: activePaneID)?.stop()
+    layout = layout.updatingPane(paneID: activePaneID) { _ in replacement }
+    addRuntime(for: replacement)
+    updateTitleFallback(resourceURL.lastPathComponent, paneID: activePaneID)
+    zoomedPaneID = nil
+    markUpdated()
+    return true
+  }
+
   func openPreview(_ url: URL) {
     split(direction: .right, kind: .preview, resourcePath: url.path)
   }
@@ -612,28 +700,27 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// 用编辑器替换当前聚焦 Pane（保留 Pane UUID 与树位置）。脏编辑器先走关闭确认。
   @discardableResult
   func openFileReplacingActivePane(_ url: URL) -> Bool {
-    guard runtimes[activePaneID]?.confirmCloseIfNeeded() != false else { return false }
-    let directory = url.deletingLastPathComponent().path
-    let replacement = PaneDescriptor(
-      id: activePaneID,
-      kind: .editor,
-      workingDirectory: directory,
-      resourcePath: url.path
-    )
-    runtimes.removeValue(forKey: activePaneID)?.stop()
-    layout = layout.updatingPane(paneID: activePaneID) { _ in replacement }
-    addRuntime(for: replacement)
-    var state = paneTitleStates[activePaneID] ?? TerminalTitleState(
-      tabOverride: titleState.tabOverride,
-      windowOverride: titleState.windowOverride,
-      fallback: url.lastPathComponent
-    )
-    state.updateFallback(url.lastPathComponent)
-    paneTitleStates[activePaneID] = state
-    applyActiveTitleState(state)
-    zoomedPaneID = nil
+    replaceActivePane(with: .editor, resourceURL: url)
+  }
+
+  /// 文件重命名后同步所有打开该路径的 Pane。目录重命名会同步其后代资源，路径比较
+  /// 按标准化 pathComponents 完成，避免 `/a/b` 错误匹配 `/a/b2`。
+  func relocateOpenResources(from oldURL: URL, to newURL: URL) {
+    let oldComponents = oldURL.standardizedFileURL.pathComponents
+    for pane in layout.allPanes {
+      guard let path = pane.resourcePath else { continue }
+      let current = URL(fileURLWithPath: path).standardizedFileURL
+      let components = current.pathComponents
+      guard components.count >= oldComponents.count,
+        components.prefix(oldComponents.count).elementsEqual(oldComponents)
+      else { continue }
+      let suffix = components.dropFirst(oldComponents.count)
+      let relocated = suffix.reduce(newURL) { $0.appendingPathComponent($1) }
+      guard let runtime = runtimes[pane.id] else { continue }
+      runtime.relocateDocument(to: relocated)
+      layout = layout.updatingPane(paneID: pane.id) { _ in runtime.descriptor }
+    }
     markUpdated()
-    return true
   }
 
   func openFileBrowser() {
@@ -989,6 +1076,67 @@ final class AppModel: ObservableObject {
       layout: .leaf(descriptor)
     )
     insertTab(tab, hasContent: true)
+  }
+
+  /// Files、Open 面板与 CLI 共用的资源路由。普通文件默认由调用方选择 view/edit；
+  /// 目录固定进入 File Browser。这里重新检查类型与符号链接，防止菜单展示后目标被
+  /// 替换成特殊文件或跳出原来的安全边界。
+  @discardableResult
+  func openResource(
+    _ url: URL,
+    mode: WorkflowCLIFileMode = .view,
+    placement: WorkspaceResourcePlacement = .split(.right)
+  ) -> Bool {
+    guard url.isFileURL,
+      let values = try? url.resourceValues(forKeys: [
+        .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
+      ]), values.isSymbolicLink != true,
+      values.isDirectory == true || values.isRegularFile == true
+    else {
+      notice = "The selected item is not a safe local file or folder."
+      return false
+    }
+    let kind: PaneKind = values.isDirectory == true
+      ? .fileBrowser : (mode == .edit ? .editor : .preview)
+    let workingDirectory = values.isDirectory == true
+      ? url.path : url.deletingLastPathComponent().path
+    let descriptor = PaneDescriptor(
+      kind: kind,
+      workingDirectory: workingDirectory,
+      resourcePath: url.path
+    )
+    switch placement {
+    case .currentPane:
+      guard selectedTab?.replaceActivePane(with: kind, resourceURL: url) == true else {
+        return false
+      }
+    case .newTab:
+      openResourceInNewTab(descriptor)
+    case .newWindow:
+      guard onRequestNewWindow?(descriptor) == true else {
+        notice = "Unable to create a new window."
+        return false
+      }
+    case .split(let direction):
+      guard let tab = selectedTab else {
+        notice = "There is no active workspace."
+        return false
+      }
+      tab.split(
+        direction: direction,
+        kind: kind,
+        resourcePath: url.path,
+        workingDirectory: workingDirectory
+      )
+    }
+    persistWorkspace()
+    return true
+  }
+
+  /// 文件系统重命名完成后更新窗口内所有引用旧路径的 Pane，再一次性持久化布局。
+  func relocateOpenResources(from oldURL: URL, to newURL: URL) {
+    for tab in tabs { tab.relocateOpenResources(from: oldURL, to: newURL) }
+    persistWorkspace()
   }
 
   var selectedTab: TerminalTabItem? {
@@ -1884,8 +2032,7 @@ final class AppModel: ObservableObject {
     panel.canChooseDirectories = false
     panel.canChooseFiles = true
     guard panel.runModal() == .OK, let url = panel.url else { return }
-    selectedTab?.openFile(url)
-    persistWorkspace()
+    _ = openResource(url, mode: .view, placement: .split(.right))
   }
 
   func openFolder() {
@@ -2513,29 +2660,13 @@ final class AppModel: ObservableObject {
       return .failure("远程文件 Pane 仍属于上游开发中能力。\n", exitCode: 69)
     case .localPath(let path):
       let url = URL(fileURLWithPath: path)
-      guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
-        values.isRegularFile == true, values.isSymbolicLink != true
-      else { return .failure("目标不是可打开的普通文件。\n", exitCode: 66) }
-      let kind: PaneKind = request.mode == .view ? .preview : .editor
-      switch request.placement {
-      case .split(let direction):
-        guard let tab = selectedTab else { return .failure("当前没有活动窗口。\n", exitCode: 69) }
-        tab.split(direction: direction, kind: kind, resourcePath: path)
-        persistWorkspace()
-      case .newTab:
-        let directory = url.deletingLastPathComponent().path
-        let descriptor = PaneDescriptor(
-          kind: kind, workingDirectory: directory, resourcePath: path)
-        openResourceInNewTab(descriptor)
-      case .newWindow:
-        let descriptor = PaneDescriptor(
-          kind: kind,
-          workingDirectory: url.deletingLastPathComponent().path,
-          resourcePath: path
-        )
-        guard onRequestNewWindow?(descriptor) == true else {
-          return .failure("无法创建目标窗口。\n", exitCode: 69)
-        }
+      let placement: WorkspaceResourcePlacement = switch request.placement {
+      case .split(let direction): .split(direction)
+      case .newTab: .newTab
+      case .newWindow: .newWindow
+      }
+      guard openResource(url, mode: request.mode, placement: placement) else {
+        return .failure("目标不是可安全打开的本地文件或目录。\n", exitCode: 66)
       }
       return .success()
     }

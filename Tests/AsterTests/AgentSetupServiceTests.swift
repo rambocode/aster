@@ -373,6 +373,7 @@ func agentSetupArtifactsEmitTerminalLifecycleSignals() throws {
     #expect(artifact.contains("/dev/tty"))
     #expect(artifact.contains("AgentState="))
     #expect(artifact.contains("Provider="))
+    #expect(artifact.contains("SessionID="))
   }
 }
 

@@ -23,6 +23,12 @@ public struct DocumentBuffer: Equatable, Sendable {
     text = newValue
   }
 
+  /// 文件系统已完成同卷重命名后，只替换后续保存目标；当前文本与最后持久化文本必须
+  /// 原样保留，否则重命名一个 dirty 编辑器会静默丢失尚未保存的内容。
+  public func relocated(to fileURL: URL) -> DocumentBuffer {
+    DocumentBuffer(fileURL: fileURL, text: text, persistedText: persistedText)
+  }
+
   /// 使用 Foundation 的原子替换写入，避免进程中断留下半个文件。
   public mutating func save() throws {
     try text.write(to: fileURL, atomically: true, encoding: .utf8)

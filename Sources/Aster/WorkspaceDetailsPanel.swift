@@ -43,6 +43,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   private let model: AppModel
   private let preferences: AppPreferences
   private let inspectionClient: WorkspaceInspectionClient
+  private let fileActionService: WorkspaceFileActionService
   private let now: @MainActor () -> Date
   private let contentHost = NSView()
   private var chips: [Section: PanelTabChip] = [:]
@@ -99,6 +100,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   private let filesTable = NSTableView()
   private var fileTree: [FileTreeItem] = []
   private var visibleFileRows: [FileRow] = []
+  private var pendingFileSelectionPath: String?
   private var didRequestAgentHistory = false
   private var renderedTheme: TerminalTheme?
   /// 控制器在面板收起后继续缓存，但隐藏期间不得因 CWD、Pane 或文档事件重新启动工作。
@@ -109,6 +111,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     model: AppModel,
     preferences: AppPreferences,
     inspectionClient: WorkspaceInspectionClient = .live,
+    fileActionService: WorkspaceFileActionService = WorkspaceFileActionService(),
     now: @escaping @MainActor () -> Date = Date.init,
     // 编辑器探测走 NSWorkspace，结果取决于本机安装了什么；注入后测试才能稳定断言
     // 「在编辑器中打开」入口的存在与标题。
@@ -117,6 +120,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     self.model = model
     self.preferences = preferences
     self.inspectionClient = inspectionClient
+    self.fileActionService = fileActionService
     self.now = now
     self.editorLocator = editorLocator
     self.selection = Section(rawValue: preferences.inspectorSection) ?? .info
@@ -1281,6 +1285,13 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     if !filesQuery.isEmpty { filtered = filterFileTree(filtered, query: filesQuery) }
     visibleFileRows = flattenFileTree(filtered, honoringCollapse: filesQuery.isEmpty)
     filesTable.reloadData()
+    if let pendingFileSelectionPath,
+      let row = visibleFileRows.firstIndex(where: { $0.item.node.path == pendingFileSelectionPath })
+    {
+      filesTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+      filesTable.scrollRowToVisible(row)
+      self.pendingFileSelectionPath = nil
+    }
     filesSortButton?.toolTip = filesDirectoriesFirst
       ? "目录优先（点击切换为按名称）" : "按名称（点击切换为目录优先）"
     updateFilesShowHiddenButton()
@@ -1369,8 +1380,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       NSWorkspace.shared.activateFileViewerSelecting([url])
       return
     }
-    model.selectedTab?.openFile(url)
-    model.persistWorkspace()
+    _ = model.openResource(url, mode: .view, placement: .split(.right))
   }
 
   /// 根据右键命中行即时生成菜单，避免树刷新后仍引用失效节点。
@@ -1385,51 +1395,207 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
 
   private func populateFilesContextMenu(_ menu: NSMenu, node: WorkspaceFileNode) {
     let url = URL(fileURLWithPath: node.path)
-    let directoryURL = node.isDirectory ? url : url.deletingLastPathComponent()
+    let parent = node.isDirectory ? url : url.deletingLastPathComponent()
+    let isSafeInternalTarget = !node.isSymbolicLink
 
-    if node.isSymbolicLink {
-      menu.addItem(ActionMenuItem(title: "在 Finder 中显示") {
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-      })
-    } else if node.isDirectory {
-      let expanded = expandedPaths.contains(node.path)
-      menu.addItem(ActionMenuItem(title: expanded ? "折叠" : "展开") { [weak self] in
-        self?.toggleDirectoryExpansion(node.path)
-      })
-    } else {
-      menu.addItem(ActionMenuItem(title: "打开") { [weak self] in
-        self?.openFileNode(node)
-      })
-      menu.addItem(ActionMenuItem(title: "在预览中打开") { [weak self] in
-        self?.model.selectedTab?.openPreview(url)
-        self?.model.persistWorkspace()
-      })
-      menu.addItem(ActionMenuItem(title: "发送到 Chat") { [weak self] in
-        self?.model.sendFileToChat(url)
+    let open = ActionMenuItem(title: "Open") { [weak self] in
+      self?.openWithDefaultApplication(url)
+    }
+    open.isEnabled = isSafeInternalTarget
+    menu.addItem(open)
+
+    let openInAster = NSMenuItem(title: "Open in Aster", action: nil, keyEquivalent: "")
+    let asterMenu = NSMenu(title: "Open in Aster")
+    asterMenu.addItem(ActionMenuItem(title: "Current Pane") { [weak self] in
+      _ = self?.model.openResource(url, mode: .view, placement: .currentPane)
+    })
+    asterMenu.addItem(.separator())
+    asterMenu.addItem(ActionMenuItem(title: "New Tab") { [weak self] in
+      _ = self?.model.openResource(url, mode: .view, placement: .newTab)
+    })
+    asterMenu.addItem(.separator())
+    asterMenu.addItem(ActionMenuItem(title: "New Window") { [weak self] in
+      _ = self?.model.openResource(url, mode: .view, placement: .newWindow)
+    })
+    asterMenu.addItem(.separator())
+    for (title, direction) in [
+      ("Split Right", SplitDirection.right),
+      ("Split Left", .left),
+      ("Split Top", .up),
+      ("Split Bottom", .down),
+    ] {
+      asterMenu.addItem(ActionMenuItem(title: title) { [weak self] in
+        _ = self?.model.openResource(url, mode: .view, placement: .split(direction))
       })
     }
+    openInAster.submenu = asterMenu
+    openInAster.isEnabled = isSafeInternalTarget
+    menu.addItem(openInAster)
 
     menu.addItem(.separator())
-    menu.addItem(ActionMenuItem(title: "复制绝对路径") {
-      NSPasteboard.general.clearContents()
-      NSPasteboard.general.setString(url.path, forType: .string)
+    menu.addItem(ActionMenuItem(title: "New File…") { [weak self] in
+      self?.createFile(in: parent)
     })
-    menu.addItem(ActionMenuItem(title: "在新终端中打开所在目录") { [weak self] in
-      self?.model.selectedTab?.split(direction: .right, workingDirectory: directoryURL.path)
-      self?.model.persistWorkspace()
+    menu.addItem(ActionMenuItem(title: "New Folder…") { [weak self] in
+      self?.createFolder(in: parent)
     })
-    menu.addItem(ActionMenuItem(title: "在当前终端中 cd 到所在目录") { [weak self] in
-      _ = self?.model.selectedTab?.openDirectoryInTerminal(directoryURL.path)
-    })
-    menu.addItem(.separator())
-    if !node.isSymbolicLink {
-      menu.addItem(ActionMenuItem(title: "在 Finder 中显示") {
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-      })
+    let rename = ActionMenuItem(title: "Rename…") { [weak self] in
+      self?.renameItem(at: url)
     }
-    menu.addItem(ActionMenuItem(title: "使用默认应用打开") {
-      NSWorkspace.shared.open(url)
+    rename.isEnabled = isSafeInternalTarget
+    menu.addItem(rename)
+    let trash = ActionMenuItem(title: "Move to Trash") { [weak self] in
+      self?.trashItem(at: url)
+    }
+    trash.isEnabled = isSafeInternalTarget
+    trash.attributedTitle = NSAttributedString(
+      string: trash.title,
+      attributes: [.foregroundColor: NSColor.systemRed]
+    )
+    menu.addItem(trash)
+
+    menu.addItem(.separator())
+    menu.addItem(ActionMenuItem(title: "Copy Path") {
+      Self.copyToPasteboard(url.path)
     })
+    let relative = ActionMenuItem(title: "Copy Relative Path") { [weak self] in
+      guard let rootPath = self?.filesDirectory,
+        let value = WorkspaceRelativePath.make(
+          target: url,
+          relativeTo: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+      else { return }
+      Self.copyToPasteboard(value)
+    }
+    relative.isEnabled = filesDirectory != nil
+    menu.addItem(relative)
+    menu.addItem(ActionMenuItem(title: "Reveal in Finder") {
+      NSWorkspace.shared.activateFileViewerSelecting([url])
+    })
+  }
+
+  private static func copyToPasteboard(_ value: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(value, forType: .string)
+  }
+
+  /// 顶层 Open 始终交给 Launch Services，但特殊文件、符号链接和可执行目标不会被
+  /// 静默启动。用户确认只覆盖本次打开，不会降低后续内部打开的安全检查。
+  private func openWithDefaultApplication(_ url: URL) {
+    guard let values = try? url.resourceValues(forKeys: [
+      .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
+    ]), values.isSymbolicLink != true,
+      values.isDirectory == true || values.isRegularFile == true
+    else {
+      model.notice = "The selected item is not safe to open."
+      return
+    }
+    let isExecutable = FileManager.default.isExecutableFile(atPath: url.path)
+      || url.pathExtension.lowercased() == "app"
+    if isExecutable {
+      let alert = NSAlert()
+      alert.messageText = "Open executable item?"
+      alert.informativeText = "Opening “\(url.lastPathComponent)” may run code on this Mac."
+      alert.alertStyle = .warning
+      alert.addButton(withTitle: "Open")
+      alert.addButton(withTitle: "Cancel")
+      guard alert.runModal() == .alertFirstButtonReturn else { return }
+    }
+    guard NSWorkspace.shared.open(url) else {
+      model.notice = "Unable to open the selected item."
+      return
+    }
+  }
+
+  private func createFile(in parent: URL) {
+    guard let name = promptForItemName(
+      title: "New File",
+      initialValue: "untitled.txt"
+    ) else { return }
+    do {
+      let mutation = try fileActionService.createFile(named: name, in: parent)
+      guard let url = mutation.newURL else { return }
+      refreshFilesAfterMutation(expanding: parent, selecting: url)
+      _ = model.openResource(url, mode: .edit, placement: .split(.right))
+    } catch {
+      model.notice = "Unable to create file: \(error.localizedDescription)"
+    }
+  }
+
+  private func createFolder(in parent: URL) {
+    guard let name = promptForItemName(
+      title: "New Folder",
+      initialValue: "untitled folder"
+    ) else { return }
+    do {
+      let mutation = try fileActionService.createDirectory(named: name, in: parent)
+      guard let destination = mutation.newURL else { return }
+      expandedPaths.insert(destination.standardizedFileURL.path)
+      refreshFilesAfterMutation(expanding: parent, selecting: destination)
+    } catch {
+      model.notice = "Unable to create folder: \(error.localizedDescription)"
+    }
+  }
+
+  private func renameItem(at source: URL) {
+    guard let name = promptForItemName(title: "Rename", initialValue: source.lastPathComponent)
+    else { return }
+    do {
+      let mutation = try fileActionService.rename(source, to: name)
+      guard let destination = mutation.newURL else { return }
+      expandedPaths = Set(expandedPaths.map { path in
+        let candidate = URL(fileURLWithPath: path)
+        return WorkspaceRelativePath.make(target: candidate, relativeTo: source).map {
+          $0 == "." ? destination.path : destination.appendingPathComponent($0).path
+        } ?? path
+      })
+      model.relocateOpenResources(from: source, to: destination)
+      refreshFilesAfterMutation(
+        expanding: destination.deletingLastPathComponent(),
+        selecting: destination
+      )
+    } catch {
+      model.notice = "Unable to rename item: \(error.localizedDescription)"
+    }
+  }
+
+  private func trashItem(at source: URL) {
+    let alert = NSAlert()
+    alert.messageText = "Move “\(source.lastPathComponent)” to the Trash?"
+    alert.informativeText = "The item can be recovered from the Trash."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Move to Trash")
+    alert.addButton(withTitle: "Cancel")
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+    do {
+      _ = try fileActionService.moveToTrash(source)
+      expandedPaths = expandedPaths.filter {
+        WorkspaceRelativePath.make(target: URL(fileURLWithPath: $0), relativeTo: source) == nil
+      }
+      refreshFilesAfterMutation(expanding: source.deletingLastPathComponent())
+    } catch {
+      model.notice = "Unable to move item to the Trash: \(error.localizedDescription)"
+    }
+  }
+
+  private func promptForItemName(title: String, initialValue: String) -> String? {
+    let field = NSTextField(string: initialValue)
+    field.selectText(nil)
+    field.translatesAutoresizingMaskIntoConstraints = false
+    field.widthAnchor.constraint(equalToConstant: 300).isActive = true
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.accessoryView = field
+    alert.addButton(withTitle: title)
+    alert.addButton(withTitle: "Cancel")
+    guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+    return field.stringValue
+  }
+
+  private func refreshFilesAfterMutation(expanding url: URL, selecting selection: URL? = nil) {
+    expandedPaths.insert(url.standardizedFileURL.path)
+    pendingFileSelectionPath = selection?.standardizedFileURL.path
+    refreshFiles(directory: filesDirectory ?? requestedFilesDirectory)
   }
 
   // MARK: - 共享构建辅助

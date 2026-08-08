@@ -664,7 +664,7 @@ func filesInitiallyCollapsesDirectories() async throws {
   #expect(table.numberOfRows == 3)
 }
 
-@Test("Files 右键菜单区分文件与目录，展开目录不创建 fileBrowser Pane")
+@Test("Files 右键菜单严格匹配资源动作且目录展开只由树内入口负责")
 @MainActor
 func filesContextMenuItemsAndDirectoryExpandStayInTree() async throws {
   _ = NSApplication.shared
@@ -700,34 +700,32 @@ func filesContextMenuItemsAndDirectoryExpandStayInTree() async throws {
   table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
   controller.menuWillOpen(menu)
   let fileTitles = menu.items.map(\.title)
-  #expect(fileTitles.contains("打开"))
-  #expect(fileTitles.contains("在预览中打开"))
-  #expect(fileTitles.contains("发送到 Chat"))
-  #expect(fileTitles.contains("复制绝对路径"))
-  #expect(fileTitles.contains("在 Finder 中显示"))
-  #expect(!fileTitles.contains("展开"))
-  #expect(!fileTitles.contains("折叠"))
+  #expect(fileTitles == [
+    "Open", "Open in Aster", "", "New File…", "New Folder…", "Rename…",
+    "Move to Trash", "", "Copy Path", "Copy Relative Path", "Reveal in Finder",
+  ])
+  let openInAsterItem = try #require(menu.items.first { $0.title == "Open in Aster" })
+  let openInAster = try #require(openInAsterItem.submenu)
+  let asterTitles = openInAster.items.map { $0.title }
+  #expect(asterTitles == [
+    "Current Pane", "", "New Tab", "", "New Window", "", "Split Right",
+    "Split Left", "Split Top", "Split Bottom",
+  ])
 
   table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
   controller.menuWillOpen(menu)
   let directoryTitles = menu.items.map(\.title)
-  #expect(directoryTitles.contains("展开"))
-  #expect(!directoryTitles.contains("在预览中打开"))
-  #expect(!directoryTitles.contains("发送到 Chat"))
-  #expect(!directoryTitles.contains("打开"))
-
-  let expand = try #require(menu.items.first { $0.title == "展开" })
-  #expect(NSApp.sendAction(expand.action!, to: expand.target, from: expand))
-  #expect(table.numberOfRows == 3)
+  #expect(directoryTitles == fileTitles)
+  #expect(table.numberOfRows == 2)
   let kinds = model.selectedTab?.runtimes.values.map(\.descriptor.kind) ?? []
   #expect(!kinds.contains(.fileBrowser))
 
-  // 再点 chevron 应折叠回顶层；证明右键展开走的是同一套树内状态。
+  // 目录展开仍通过 chevron 完成，右键菜单不再混入树结构动作。
   let directoryCell = try #require(table.view(atColumn: 0, row: 0, makeIfNecessary: true))
   let disclosure = try #require(
     directoryCell.allDescendants.compactMap { $0 as? NSButton }.first)
   disclosure.performClick(nil)
-  #expect(table.numberOfRows == 2)
+  #expect(table.numberOfRows == 3)
 }
 
 @Test("Git 变更使用虚拟化表格")

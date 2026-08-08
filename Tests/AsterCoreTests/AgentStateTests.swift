@@ -12,6 +12,17 @@ func agentTerminalDirectiveParsesBoundedLifecycleSignal() {
     AgentTerminalDirective(payload: "AgentState=awaiting-input;Provider=claudeCode")
       == .init(provider: .claudeCode, signal: .awaitingInput)
   )
+  #expect(
+    AgentTerminalDirective(payload: "AgentState=idle;Provider=codex;SessionID=abc-123")
+      == .init(provider: .codex, signal: .idle, sessionID: "abc-123")
+  )
+  #expect(
+    AgentTerminalDirective(payload: "AgentState=idle;Provider=codex;SessionID=bad/value")
+      == nil
+  )
+  #expect(
+    AgentTerminalDirective(payload: "AgentState=idle;Provider=codex;Prompt=secret") == nil
+  )
   #expect(AgentTerminalDirective(payload: "AgentState=idle;Provider=unknown") == nil)
   #expect(AgentTerminalDirective(payload: "AgentState=idle") == nil)
 }
