@@ -126,7 +126,7 @@ Aster 会在本机记录你通过终端访问的目录，并按“使用频率 +
 
 ### Autocomplete 与 Inline Suggestion
 
-在支持 Shell Integration 的 zsh、Bash 或 fish 提示符中停顿片刻，Aster 会在 Shell 完成本次输入回显后，于最新光标位置显示灰色候选，因此候选不会覆盖正在输入的命令。默认按 `Tab` 接受；可在“设置 → 控制 → Autocomplete”改为 `Tab 或 →`、`Control-Space` 或关闭。候选面板默认用 `Escape` 打开：若 inline suggestion 正在显示，第一次 `Escape` 先关闭它，再按一次打开面板。用上下方向键选择，`Return` 或 `Tab` 接受，也可直接点击；面板最多同时显示 8 项。接受候选只补上剩余文字，不会替你按回车执行。
+在支持 Shell Integration 的 zsh、Bash 或 fish 提示符中停顿片刻，Aster 会在 Shell 完成本次输入回显后，于最新光标位置显示灰色候选。继续输入时，上一轮候选会立刻隐藏，等新候选准备好再显示，因此不会覆盖正在输入的命令。默认按 `Tab` 接受；可在“设置 → 控制 → Autocomplete”改为 `Tab 或 →`、`Control-Space` 或关闭。候选面板默认用 `Escape` 打开：若 inline suggestion 正在显示，第一次 `Escape` 先关闭它，再按一次打开面板。用上下方向键选择，`Return` 或 `Tab` 接受，也可直接点击；面板最多同时显示 8 项。接受候选只补上剩余文字，不会替你按回车执行。
 
 候选来自内置命令/子命令/选项、当前目录文件和文件夹、Shell alias、本机历史、固定命令、README shell code block 和失败纠错。文件名会自动按 Shell 规则转义。Aster 不会自动扫描 `package.json`、Makefile 或 justfile；需要固定项目命令时，先在“设置 → 通用”安装 CLI，然后在目标目录运行：
 

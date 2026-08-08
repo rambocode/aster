@@ -64,12 +64,56 @@ func terminalAutocompleteWaitsForEchoBeforeShowingInlineSuggestion() async throw
   // 与 Shell 随后绘制的 `git ch` 发生重叠。
   #expect(ghost.isHidden)
 
+  // 终端可能在输入回显之前送达状态控制序列或其他输出；这不能被误判成当前输入
+  // 已经出现在网格中，否则 ghost 会锚定旧光标并覆盖随后回显的字符。
+  view.dataReceived(slice: Array("\u{1B}[?25l".utf8)[...])
+  await Task.yield()
+
+  #expect(ghost.isHidden)
+
   view.dataReceived(slice: Array("git ch".utf8)[...])
   await Task.yield()
 
   #expect(ghost.stringValue == "eckout")
   #expect(!ghost.isHidden)
   #expect(ghost.frame.minX >= view.caretFrame.maxX - 0.5)
+}
+
+@Test("后续输入会立即隐藏上一轮 inline suggestion")
+@MainActor
+func terminalAutocompleteHidesStaleGhostBeforeDebouncedRefresh() async throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let controller = TerminalAutocompleteController(
+    service: fixture.service,
+    sessionIdentifier: "session",
+    controls: { fixture.controls.value },
+    currentDirectory: { "/project" }
+  )
+  controller.attach(to: view)
+  view.onAutocompleteOutput = { controller.receiveOutput($0) }
+
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.refreshNow()
+  view.dataReceived(slice: Array("git ch".utf8)[...])
+  await Task.yield()
+
+  let overlay = try #require(
+    view.subviews.first {
+      String(describing: type(of: $0)).contains("TerminalAutocompleteOverlayView")
+    }
+  )
+  let ghost = try #require(overlay.subviews.compactMap { $0 as? NSTextField }.first)
+  #expect(!ghost.isHidden)
+
+  // 输入 tracker 会立刻收到下一个字符，而候选重算有 150ms debounce；旧后缀若继续
+  // 留在屏幕上，就会与 Shell 随后的新回显重叠。
+  controller.receiveInput(Array("e".utf8)[...])
+
+  #expect(ghost.isHidden)
 }
 
 @Test("Escape 先关闭 inline suggestion，再按一次打开候选面板")

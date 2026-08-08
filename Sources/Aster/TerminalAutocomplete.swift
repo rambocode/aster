@@ -145,6 +145,11 @@ final class TerminalAutocompleteController {
     inlineDismissed = false
     panelVisible = false
     awaitingInputEcho = true
+    // 候选重算有 debounce，而 PTY 回显会在这段窗口内继续推进终端网格。若保留上一轮
+    // ghost，旧后缀会短暂覆盖新输入；先清空可见候选，待新输入回显并重算后再显示。
+    currentResult = AutocompleteResult(candidates: [], ghostText: nil, replacementStart: 0)
+    selectedIndex = 0
+    render()
     scheduleRefresh()
   }
 
@@ -153,11 +158,14 @@ final class TerminalAutocompleteController {
       completedCommandOutput = completed
     }
     guard promptActive, awaitingInputEcho else { return }
-    awaitingInputEcho = false
     // 输出捕获需先于同分片内的 OSC 命令完成事件，但 ghost 布局必须等 SwiftTerm
-    // 消费完回显并更新 caretFrame。延后一轮 MainActor 同时满足这两个时序约束。
+    // 消费完回显并更新 caretFrame。终端的状态报告、光标控制等同样会走 PTY 输出，
+    // 因此不能把“收到任意输出”当成回显完成，否则 ghost 会锚定旧光标并覆盖输入。
     Task { @MainActor [weak self] in
-      guard let self, self.promptActive, !self.awaitingInputEcho else { return }
+      guard let self, self.promptActive, self.awaitingInputEcho,
+        self.currentPromptIsEchoed()
+      else { return }
+      self.awaitingInputEcho = false
       self.render()
     }
   }
@@ -368,6 +376,17 @@ final class TerminalAutocompleteController {
   /// 模式后的下一次正常输入仍可从可靠状态继续刷新。
   func dismissForPaneMode() {
     dismiss()
+  }
+
+  /// 仅当 SwiftTerm 的当前可见输入行已包含本地跟踪的完整命令时，才允许显示 ghost。
+  /// PTY 会混入 OSC、CSI 等非回显字节；它们可能在用户输入与真实回显之间到达，不能
+  /// 以它们为依据提前读取旧 `caretFrame`。
+  private func currentPromptIsEchoed() -> Bool {
+    guard !tracker.line.isEmpty, tracker.isCursorAtEnd, let terminalView else { return false }
+    let terminal = terminalView.getTerminal()
+    guard let line = terminal.getLine(row: terminal.buffer.y) else { return false }
+    let visibleLine = line.translateToString(trimRight: true, skipNullCellsFollowingWide: true)
+    return visibleLine.hasSuffix(tracker.line)
   }
 
   private func render() {

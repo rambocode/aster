@@ -172,7 +172,7 @@ flowchart LR
 
 ### Autocomplete 与 Inline Suggest
 
-`AutocompleteEngine` 是不依赖 AppKit 的候选合并与排序边界，输入为当前命令行、Fig/本地规格、目录级学习、固定命令、README 和 Shell alias，输出为候选、ghost 后缀及替换起点。`PromptInputTracker` 只重建能够由用户输入字节确定的编辑状态；遇到 Up/Down 等依赖 Shell 内部历史的操作即标记不可靠，直到下一次 OSC 133 A/B。`ShellCommandOutputCapture` 按 C/D 标记截取最多 128 KiB 的瞬时输出，只供失败纠错，不持久化。
+`AutocompleteEngine` 是不依赖 AppKit 的候选合并与排序边界，输入为当前命令行、Fig/本地规格、目录级学习、固定命令、README 和 Shell alias，输出为候选、ghost 后缀及替换起点。`PromptInputTracker` 只重建能够由用户输入字节确定的编辑状态；遇到 Up/Down 等依赖 Shell 内部历史的操作即标记不可靠，直到下一次 OSC 133 A/B。`TerminalAutocompleteController` 每次新输入会立即清除上一轮 ghost，只在 SwiftTerm 当前可见行已包含完整 tracker 输入且新候选完成重算后显示；PTY 的 OSC、CSI 等非回显输出不能提前解锁，避免候选锚定旧光标或覆盖随后回显。`ShellCommandOutputCapture` 按 C/D 标记截取最多 128 KiB 的瞬时输出，只供失败纠错，不持久化。
 
 `AutocompleteService` 组合签名 Bundle 的 715 命令索引、用户手动 Fig tree 更新、本地 help 规格、README 普通文件读取、文件系统候选和脱敏学习库。状态文件先做 2 MiB 上限和结构校验，再以 0600 权限原子写入；符号链接和特殊文件不会被读取或覆盖。更新只从固定 GitHub API 端点发起，绝不后台联网。没有详细结构的命令只执行 PATH 中普通可执行文件的固定 `--help`、`-h` 或 `help` 参数，使用 `sandbox-exec` 拒绝网络与文件写入，并施加 2.5 秒超时、128 KiB 输出上限和最小环境 allowlist；远程会话完全跳过本机目录读取与 help 探测。
 
