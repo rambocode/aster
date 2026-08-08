@@ -30,8 +30,22 @@ enum WorkspaceEditorLocator {
 
   /// 在指定编辑器中打开目录；失败静默（面板动作不提供错误通道，用户可从 Finder 重试）。
   static func open(directory: URL, in editor: DetectedEditor) {
+    open([directory], in: editor)
+  }
+
+  /// 打开任意目标（目录或单个文件）。始终显式指定应用，不经过 scheme 猜测或 shell 命令。
+  static func open(_ urls: [URL], in editor: DetectedEditor) {
+    guard !urls.isEmpty else { return }
     let configuration = NSWorkspace.OpenConfiguration()
-    NSWorkspace.shared.open(
-      [directory], withApplicationAt: editor.appURL, configuration: configuration)
+    NSWorkspace.shared.open(urls, withApplicationAt: editor.appURL, configuration: configuration)
+  }
+
+  /// 按持久化的偏好选择目标编辑器；偏好为空或对应应用已卸载时回落到探测顺序的第一项。
+  static func preferred(from editors: [DetectedEditor], bundleIdentifier: String?) -> DetectedEditor? {
+    if let bundleIdentifier,
+      let match = editors.first(where: { $0.bundleIdentifier == bundleIdentifier }) {
+      return match
+    }
+    return editors.first
   }
 }

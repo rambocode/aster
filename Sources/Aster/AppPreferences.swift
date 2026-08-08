@@ -52,9 +52,9 @@ final class AppPreferences: ObservableObject {
   }
 
   /// 右侧详情面板的显隐与选中页属于轻量 UI 状态，随 UserDefaults 持久化但不进入
-  /// 配置 JSON（与侧栏分组/排序同级）。刻意不用 @Published：显隐变化已由
-  /// `AppModel.isInspectorPresented` 驱动刷新，选中页由面板本地即时生效，再广播
-  /// 一次只会引发整树重建与检查数据重取的闪烁。
+  /// 配置 JSON（与侧栏分组/排序同级）。刻意不用 @Published：显隐由
+  /// `AppModel.inspectorPresentationChanged` 驱动内容区局部约束切换，选中页由面板
+  /// 本地即时生效；这里仅落盘，不能触发工作区重建。
   var inspectorPresented: Bool {
     get { defaults.bool(forKey: Keys.inspectorPresented) }
     set { defaults.set(newValue, forKey: Keys.inspectorPresented) }
@@ -63,6 +63,13 @@ final class AppPreferences: ObservableObject {
   var inspectorSection: Int {
     get { min(max(defaults.integer(forKey: Keys.inspectorSection), 0), 3) }
     set { defaults.set(min(max(newValue, 0), 3), forKey: Keys.inspectorSection) }
+  }
+
+  /// Git 页「在编辑器中打开」记住的目标 bundle ID。只是一个偏好指针：真正可用的编辑器
+  /// 每次由 `WorkspaceEditorLocator` 重新探测，卸载后会自动回落到第一个已安装项。
+  var inspectorGitEditorBundleIdentifier: String? {
+    get { defaults.string(forKey: Keys.inspectorGitEditor) }
+    set { defaults.set(newValue, forKey: Keys.inspectorGitEditor) }
   }
 
   private let defaults: UserDefaults
@@ -314,5 +321,6 @@ final class AppPreferences: ObservableObject {
     static let sidebarTabOrder = "aster.sidebar.tab-order.v1"
     static let inspectorPresented = "aster.inspector.presented.v1"
     static let inspectorSection = "aster.inspector.section.v1"
+    static let inspectorGitEditor = "aster.inspector.git-editor.v1"
   }
 }

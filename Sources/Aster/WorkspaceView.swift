@@ -27,6 +27,17 @@ final class WorkspaceViewController: NSViewController {
   /// 搜索框先被销毁再创建。切换标签后按新 Tab ID 替换，防止订阅继续指向旧标签。
   private var detailsPanelController: DetailsPanelViewController?
   private var detailsPanelTabID: UUID?
+  /// 当前内容区的稳定布局引用。详情面板显隐只切换这组约束和局部子视图，不能调用
+  /// `refresh()`，否则侧栏、Pane 树和终端视图都会被无意义地重建。
+  private weak var contentAreaHost: NSView?
+  private weak var contentAreaWorkspace: NSView?
+  private weak var detailsPanelDivider: NSView?
+  private var workspaceFullWidthConstraint: NSLayoutConstraint?
+  private var detailsPanelLayoutConstraints: [NSLayoutConstraint] = []
+  /// 标题栏展开入口始终创建，面板显隐时原地切换可见性和标题尾部约束。
+  private weak var inspectorHoverReveal: NSView?
+  private var titleTrailingWithInspectorToggle: NSLayoutConstraint?
+  private var titleTrailingWithoutInspectorToggle: NSLayoutConstraint?
   /// Open Quickly 通过独立 presentation 事件局部挂载；控制器跨关闭保留，以复用搜索框、
   /// 结果行与约束，普通开关不再重建侧栏、终端和详情面板。
   private var openQuicklyController: OpenQuicklyOverlayViewController?
@@ -54,6 +65,12 @@ final class WorkspaceViewController: NSViewController {
     model.openQuicklyPresentationChanged
       .sink { [weak self] presented in self?.setOpenQuicklyPresented(presented) }
       .store(in: &modelSubscriptions)
+    model.inspectorPresentationChanged
+      .sink { [weak self, weak preferences] presented in
+        preferences?.inspectorPresented = presented
+        self?.setInspectorPresented(presented)
+      }
+      .store(in: &modelSubscriptions)
     preferences.objectWillChange
       .sink { [weak self] _ in self?.scheduleRefresh() }
       .store(in: &modelSubscriptions)
@@ -65,11 +82,6 @@ final class WorkspaceViewController: NSViewController {
     .store(in: &modelSubscriptions)
     // 详情面板显隐跟随持久化的偏好值；之后用户的每次切换再写回，重启窗口即恢复。
     model.isInspectorPresented = preferences.inspectorPresented
-    model.$isInspectorPresented
-      .removeDuplicates()
-      .dropFirst()
-      .sink { [weak preferences] presented in preferences?.inspectorPresented = presented }
-      .store(in: &modelSubscriptions)
     model.ensureInitialTab()
     installPaneClickMonitor()
     observeWindowActivation()
@@ -89,6 +101,80 @@ final class WorkspaceViewController: NSViewController {
       openQuicklyBackdrop?.removeFromSuperview()
       if let tab = model.selectedTab { focusActivePane(in: tab) }
     }
+  }
+
+  /// 展开或收起详情面板时只更新当前内容区。控制器和已经加载的页面继续保留，终端
+  /// 视图不离开层级，因此 first responder、拖选和高频 TUI 绘制都不会被打断。
+  private func setInspectorPresented(_ presented: Bool) {
+    guard isViewLoaded else { return }
+    updateInspectorHeaderPresentation(presented)
+    if presented {
+      attachDetailsPanelIfNeeded()
+    } else {
+      detachDetailsPanelIfNeeded()
+    }
+  }
+
+  private func detailsControllerForSelectedTab() -> DetailsPanelViewController {
+    let selectedTabID = model.selectedTabID
+    if let cached = detailsPanelController, detailsPanelTabID == selectedTabID {
+      return cached
+    }
+    let details = DetailsPanelViewController(model: model, preferences: preferences)
+    detailsPanelController = details
+    detailsPanelTabID = selectedTabID
+    return details
+  }
+
+  /// 把详情面板接到当前内容区右侧。先停用全宽约束，再建立 workspace-divider-panel
+  /// 链，避免 Auto Layout 在同一轮同时要求工作区占满并给面板保留 278pt。
+  private func attachDetailsPanelIfNeeded() {
+    guard let host = contentAreaHost, let workspace = contentAreaWorkspace,
+      detailsPanelDivider == nil
+    else { return }
+    let details = detailsControllerForSelectedTab()
+    let resumesCachedController = details.isViewLoaded
+    if details.parent !== self { addChild(details) }
+    details.synchronizeAppearanceIfNeeded()
+    let divider = makeDivider(color: AsterTheme.hairline, vertical: true)
+    host.addSubview(divider)
+    host.addSubview(details.view)
+    divider.translatesAutoresizingMaskIntoConstraints = false
+    details.view.translatesAutoresizingMaskIntoConstraints = false
+    workspaceFullWidthConstraint?.isActive = false
+    let constraints = [
+      divider.leadingAnchor.constraint(equalTo: workspace.trailingAnchor),
+      divider.topAnchor.constraint(equalTo: host.topAnchor),
+      divider.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+      details.view.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
+      details.view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+      details.view.topAnchor.constraint(equalTo: host.topAnchor),
+      details.view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+      details.view.widthAnchor.constraint(equalToConstant: 278),
+    ]
+    NSLayoutConstraint.activate(constraints)
+    detailsPanelDivider = divider
+    detailsPanelLayoutConstraints = constraints
+    if resumesCachedController { details.setPresentationActive(true) }
+  }
+
+  /// 收起只移除详情面板自身及分隔线，随后让既有 workspace 重新占满内容区。控制器
+  /// 仍由窗口持有，稍后重开时可复用查询、折叠状态和已经完成的检查结果。
+  private func detachDetailsPanelIfNeeded() {
+    guard detailsPanelDivider != nil else { return }
+    NSLayoutConstraint.deactivate(detailsPanelLayoutConstraints)
+    detailsPanelLayoutConstraints.removeAll()
+    detailsPanelDivider?.removeFromSuperview()
+    detailsPanelDivider = nil
+    detailsPanelController?.setPresentationActive(false)
+    detailsPanelController?.view.removeFromSuperview()
+    workspaceFullWidthConstraint?.isActive = true
+  }
+
+  private func updateInspectorHeaderPresentation(_ presented: Bool) {
+    inspectorHoverReveal?.isHidden = presented
+    titleTrailingWithInspectorToggle?.isActive = !presented
+    titleTrailingWithoutInspectorToggle?.isActive = presented
   }
 
   /// 把缓存浮层约束到工作区顶层。使用相对两侧的上限约束，在窄窗口中仍保留边距；
@@ -329,6 +415,12 @@ final class WorkspaceViewController: NSViewController {
     let previouslyFocusedTerminal = view.window?.firstResponder as? AsterTerminalView
     if !model.isOpenQuicklyPresented { openQuicklyController?.invalidateTargets() }
     observeTabs()
+    // `refresh()` 会替换整个布局，先释放指向旧内容区的强约束；详情控制器本身仍按
+    // 当前 Tab 缓存，重建后的内容区会按展示状态重新接入它。
+    detailsPanelLayoutConstraints.removeAll()
+    workspaceFullWidthConstraint = nil
+    titleTrailingWithInspectorToggle = nil
+    titleTrailingWithoutInspectorToggle = nil
     retainedObjects.removeAll()
     paneHosts.removeAll()
     editorTextViews.removeAll()
@@ -654,42 +746,18 @@ final class WorkspaceViewController: NSViewController {
     }
     host.addSubview(workspace)
     workspace.translatesAutoresizingMaskIntoConstraints = false
-    if model.isInspectorPresented {
-      let divider = makeDivider(color: AsterTheme.hairline, vertical: true)
-      let selectedTabID = model.selectedTabID
-      let details: DetailsPanelViewController
-      if let cached = detailsPanelController, detailsPanelTabID == selectedTabID {
-        details = cached
-      } else {
-        detailsPanelController = nil
-        detailsPanelTabID = nil
-        details = DetailsPanelViewController(model: model, preferences: preferences)
-        detailsPanelController = details
-        detailsPanelTabID = selectedTabID
-      }
-      if details.parent !== self { addChild(details) }
-      details.synchronizeAppearanceIfNeeded()
-      host.addSubview(divider)
-      host.addSubview(details.view)
-      details.view.translatesAutoresizingMaskIntoConstraints = false
-      NSLayoutConstraint.activate([
-        workspace.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-        workspace.topAnchor.constraint(equalTo: host.topAnchor),
-        workspace.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-        divider.leadingAnchor.constraint(equalTo: workspace.trailingAnchor),
-        divider.topAnchor.constraint(equalTo: host.topAnchor),
-        divider.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-        details.view.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
-        details.view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-        details.view.topAnchor.constraint(equalTo: host.topAnchor),
-        details.view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-        details.view.widthAnchor.constraint(equalToConstant: 278),
-      ])
-    } else {
-      // 收起时仅从布局移除，保留已完成布局的四页与检查结果；同一标签再次展开可
-      // 直接复用。若期间切换标签，展开分支会按 Tab ID 创建新控制器。
-      workspace.pinEdges(to: host)
-    }
+    let fullWidth = workspace.trailingAnchor.constraint(equalTo: host.trailingAnchor)
+    NSLayoutConstraint.activate([
+      workspace.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+      workspace.topAnchor.constraint(equalTo: host.topAnchor),
+      workspace.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+      fullWidth,
+    ])
+    contentAreaHost = host
+    contentAreaWorkspace = workspace
+    workspaceFullWidthConstraint = fullWidth
+    detailsPanelDivider = nil
+    if model.isInspectorPresented { attachDetailsPanelIfNeeded() }
     return host
   }
 
@@ -1136,36 +1204,36 @@ final class WorkspaceViewController: NSViewController {
     background.addSubview(title)
     title.translatesAutoresizingMaskIntoConstraints = false
 
-    // 右侧详情面板的悬停切换按钮：指针进入标题栏右端感应区时淡入。面板展开后不
-    // 渲染该按钮（收起入口在面板 header 右侧），标题重新获得完整可用宽度。
-    var titleTrailing: NSLayoutConstraint
-    if model.isInspectorPresented {
-      titleTrailing = title.trailingAnchor.constraint(
-        lessThanOrEqualTo: background.trailingAnchor, constant: -12)
-    } else {
-      let inspectorToggle = ActionButton(symbol: "sidebar.right", bezelStyle: .accessoryBarAction) {
-        [weak self] in self?.model.toggleInspector()
-      }
-      inspectorToggle.isBordered = false
-      inspectorToggle.toolTip = "展开详情面板"
-      inspectorToggle.identifier = NSUserInterfaceItemIdentifier("workspace-inspector-toggle")
-      inspectorToggle.contentTintColor = AsterTheme.secondaryInk
-      let hoverReveal = TitlebarHoverRevealView(content: inspectorToggle)
-      background.addSubview(hoverReveal)
-      hoverReveal.translatesAutoresizingMaskIntoConstraints = false
-      NSLayoutConstraint.activate([
-        hoverReveal.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -2),
-        hoverReveal.topAnchor.constraint(equalTo: background.topAnchor),
-        hoverReveal.bottomAnchor.constraint(equalTo: background.bottomAnchor),
-      ])
-      titleTrailing = title.trailingAnchor.constraint(
-        lessThanOrEqualTo: hoverReveal.leadingAnchor, constant: -8)
+    // 展开入口始终留在稳定标题栏内；显隐时只切换它和两条互斥约束，避免为了一个
+    // 右侧按钮重建整个 workspace header。
+    let inspectorToggle = ActionButton(symbol: "sidebar.right", bezelStyle: .accessoryBarAction) {
+      [weak self] in self?.model.toggleInspector()
     }
+    inspectorToggle.isBordered = false
+    inspectorToggle.toolTip = "展开详情面板"
+    inspectorToggle.identifier = NSUserInterfaceItemIdentifier("workspace-inspector-toggle")
+    inspectorToggle.contentTintColor = AsterTheme.secondaryInk
+    let hoverReveal = TitlebarHoverRevealView(content: inspectorToggle)
+    background.addSubview(hoverReveal)
+    hoverReveal.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      hoverReveal.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -2),
+      hoverReveal.topAnchor.constraint(equalTo: background.topAnchor),
+      hoverReveal.bottomAnchor.constraint(equalTo: background.bottomAnchor),
+    ])
+    let withToggle = title.trailingAnchor.constraint(
+      lessThanOrEqualTo: hoverReveal.leadingAnchor, constant: -8)
+    let withoutToggle = title.trailingAnchor.constraint(
+      lessThanOrEqualTo: background.trailingAnchor, constant: -12)
+    inspectorHoverReveal = hoverReveal
+    titleTrailingWithInspectorToggle = withToggle
+    titleTrailingWithoutInspectorToggle = withoutToggle
+    hoverReveal.isHidden = model.isInspectorPresented
+    (model.isInspectorPresented ? withoutToggle : withToggle).isActive = true
     NSLayoutConstraint.activate([
       title.centerXAnchor.constraint(equalTo: background.centerXAnchor),
       title.centerYAnchor.constraint(equalTo: background.centerYAnchor),
       title.leadingAnchor.constraint(greaterThanOrEqualTo: background.leadingAnchor, constant: 12),
-      titleTrailing,
     ])
     return background
   }

@@ -203,7 +203,14 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// 当前聚焦的面板。刻意不是 `@Published`：切换焦点只需要移动 first responder 和
   /// 焦点指示器，若走 `objectWillChange` 会让整个工作区视图树重建，正在进行的终端
   /// 拖选、TUI 重绘都会被打断。视图层订阅 `activePaneChanged` 做局部更新。
-  private(set) var activePaneID: UUID
+  /// 所有 Pane 焦点转换都经此属性发布局部事件，覆盖拆分、恢复、拖移、关闭与显式
+  /// 聚焦。详情面板据此统一取消旧检查并切换订阅，避免某条状态转换遗漏刷新。
+  private(set) var activePaneID: UUID {
+    didSet {
+      guard activePaneID != oldValue else { return }
+      activePaneChanged.send(activePaneID)
+    }
+  }
   let activePaneChanged = PassthroughSubject<UUID, Never>()
   /// Shell 报告的新目录只要求刷新依赖 CWD 的局部内容。视图层订阅该事件更新详情面板，
   /// 不必等待或推断通用 `objectWillChange`，也不会在新快照返回前清空旧文件树。
@@ -475,7 +482,6 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     markUpdated()
     // 放大态下其它面板不可见，把焦点移出去会让 first responder 落在看不见的终端上。
     if zoomedPaneID != nil, zoomedPaneID != paneID { zoomedPaneID = nil }
-    activePaneChanged.send(paneID)
   }
 
   /// 文件面板的“在当前终端中 cd”如果存在同标签终端就复用并聚焦；若标签只有文件
@@ -777,7 +783,15 @@ final class AppModel: ObservableObject {
   private(set) var agentHistories: [AgentSessionHistory] = [] {
     didSet { agentHistoriesChanged.send(agentHistories) }
   }
-  @Published var isInspectorPresented = false
+  /// 详情面板与 Open Quickly 一样属于局部展示状态。显隐只改变内容区约束，不得通过
+  /// `objectWillChange` 触发整个工作区重建，否则终端、侧栏和 Pane 树都会被拆下再挂回。
+  let inspectorPresentationChanged = PassthroughSubject<Bool, Never>()
+  var isInspectorPresented = false {
+    didSet {
+      guard isInspectorPresented != oldValue else { return }
+      inspectorPresentationChanged.send(isInspectorPresented)
+    }
+  }
   @Published var isFindPresented = false
   @Published var notice: String?
   @Published private(set) var dividerAfterTabIDs: Set<UUID> = []

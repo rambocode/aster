@@ -169,12 +169,17 @@ public enum WorkspaceOutlineParser {
   private static let maximumItems = 1_000
 
   public static func parse(_ text: String, kind: WorkspaceOutlineKind) -> [WorkspaceOutlineItem] {
-    guard text.utf8.count <= maximumBytes else { return [] }
+    guard !currentTaskIsCancelled(), text.utf8.count <= maximumBytes else { return [] }
     let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    // 大文档解析运行在 detached task；每 64 行检查一次取消，避免面板收起或连续输入
+    // 后旧版本仍把整份文本解析完。prefix 在第一次取消命中时停止消费后续行。
+    let indexedLines = lines.enumerated().lazy.prefix { index, _ in
+      !index.isMultiple(of: 64) || !currentTaskIsCancelled()
+    }
     let items: [WorkspaceOutlineItem]
     switch kind {
     case .markdown:
-      items = lines.enumerated().compactMap { index, line in
+      items = indexedLines.compactMap { index, line in
         let marker = line.prefix(while: { $0 == "#" })
         guard !marker.isEmpty, marker.count <= 6,
           line.dropFirst(marker.count).first?.isWhitespace == true
@@ -183,7 +188,7 @@ public enum WorkspaceOutlineParser {
         return title.isEmpty ? nil : .init(title: title, line: index + 1, level: marker.count)
       }
     case .html:
-      items = lines.enumerated().compactMap { index, line in
+      items = indexedLines.compactMap { index, line in
         guard let match = line.range(
           of: #"<h([1-6])(?:\s[^>]*)?>(.*?)</h\1>"#,
           options: [.regularExpression, .caseInsensitive])
@@ -199,7 +204,7 @@ public enum WorkspaceOutlineParser {
         .init(title: $0.element, line: $0.offset + 1)
       }
     case .yaml, .toml:
-      items = lines.enumerated().compactMap { index, line in
+      items = indexedLines.compactMap { index, line in
         guard !line.isEmpty, line.first?.isWhitespace != true, !line.hasPrefix("#") else { return nil }
         let separator: Character = kind == .yaml ? ":" : "="
         guard let offset = line.firstIndex(of: separator) else { return nil }
@@ -208,7 +213,7 @@ public enum WorkspaceOutlineParser {
         return title.isEmpty ? nil : .init(title: title, line: index + 1)
       }
     case .diff:
-      items = lines.enumerated().compactMap { index, line in
+      items = indexedLines.compactMap { index, line in
         guard line.hasPrefix("diff --git ") else { return nil }
         let fields = line.split(separator: " ")
         guard fields.count >= 4 else { return nil }
@@ -216,7 +221,7 @@ public enum WorkspaceOutlineParser {
         return .init(title: String(path), line: index + 1)
       }
     case .jsonLinesTranscript:
-      items = lines.enumerated().compactMap { index, line in
+      items = indexedLines.compactMap { index, line in
         guard let data = line.data(using: .utf8),
           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
@@ -227,7 +232,12 @@ public enum WorkspaceOutlineParser {
         return bounded.isEmpty ? nil : .init(title: String(bounded), line: index + 1)
       }
     }
+    guard !currentTaskIsCancelled() else { return [] }
     return Array(items.prefix(maximumItems))
+  }
+
+  private static func currentTaskIsCancelled() -> Bool {
+    withUnsafeCurrentTask { $0?.isCancelled == true }
   }
 
   private static func topLevelJSONKeys(_ text: String) -> [String] {
@@ -294,6 +304,12 @@ public struct GitChange: Equatable, Sendable {
   public let path: String
   public let originalPath: String?
   public let status: String
+
+  public init(path: String, originalPath: String? = nil, status: String) {
+    self.path = path
+    self.originalPath = originalPath
+    self.status = status
+  }
 }
 
 /// `git diff --shortstat` 的汇总行解析结果,驱动详情面板 Git 页的 +/− 统计。

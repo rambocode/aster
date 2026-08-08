@@ -14,6 +14,19 @@ private func panelTestDefaults() -> UserDefaults {
   return defaults
 }
 
+private final class DetailsCancellationProbe: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value = false
+
+  var isCancelled: Bool {
+    lock.withLock { value }
+  }
+
+  func markCancelled() {
+    lock.withLock { value = true }
+  }
+}
+
 @Test("编辑器探测只返回已安装的应用并保持固定顺序")
 @MainActor
 func editorLocatorReturnsOnlyInstalledEditorsInFixedOrder() {
@@ -75,8 +88,10 @@ func workspaceHeaderRevealsInspectorToggleAndPanelChips() {
   controller.loadViewIfNeeded()
 
   let identifiers = controller.view.allDescendants.compactMap { $0.identifier?.rawValue }
-  // 面板展开后标题栏不再渲染切换按钮，收起入口在面板 header 右侧。
-  #expect(!identifiers.contains("workspace-inspector-toggle"))
+  // 面板展开后标题栏切换入口保留同一实例但隐藏，收起入口在面板 header 右侧。
+  let expandedToggle = controller.view.allDescendants.compactMap { $0 as? NSButton }
+    .first { $0.identifier?.rawValue == "workspace-inspector-toggle" }
+  #expect(expandedToggle?.superview?.isHidden == true)
   #expect(identifiers.contains("details-panel-close"))
   for chip in ["details-chip-info", "details-chip-outline", "details-chip-git", "details-chip-files"] {
     #expect(identifiers.contains(chip))
@@ -85,9 +100,11 @@ func workspaceHeaderRevealsInspectorToggleAndPanelChips() {
   let outlineChip = controller.view.allDescendants.compactMap { $0 as? NSButton }
     .first { $0.identifier?.rawValue == "details-chip-outline" }
   #expect(outlineChip?.title.contains("Outline") == true)
-  // 面板滚动文档必须左上原点翻转，否则内容短于视口时会沉到底部。
+  // 大列表页改用原生虚拟化表格；普通 stack 页仍使用左上原点翻转文档。
   let panelScrolls = controller.view.allDescendants.compactMap { $0 as? NSScrollView }
-  #expect(panelScrolls.contains { $0.documentView is FlippedDocumentView })
+  #expect(panelScrolls.contains {
+    $0.documentView is FlippedDocumentView || $0.documentView is NSTableView
+  })
 }
 
 @Test("切换详情面板显隐会写回偏好，下次启动恢复")
@@ -104,6 +121,579 @@ func togglingInspectorPersistsPresentationState() {
   #expect(preferences.inspectorPresented == true)
   model.toggleInspector()
   #expect(preferences.inspectorPresented == false)
+}
+
+@Test("详情面板显隐只更新内容区且保留终端与侧栏视图")
+@MainActor
+func togglingInspectorDoesNotRebuildWorkspaceViews() throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+    styleMask: [.titled, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let terminal = try #require(
+    controller.view.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
+  let tabsLabel = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTextField }
+      .first { $0.stringValue == "TABS" })
+  #expect(window.makeFirstResponder(terminal))
+
+  model.toggleInspector()
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  #expect(controller.view.allDescendants.contains { $0 === terminal })
+  #expect(controller.view.allDescendants.contains { $0 === tabsLabel })
+  #expect(window.firstResponder === terminal)
+  let details = try #require(
+    controller.children.compactMap { $0 as? DetailsPanelViewController }.first)
+
+  model.toggleInspector()
+  model.toggleInspector()
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  #expect(controller.view.allDescendants.contains { $0 === terminal })
+  #expect(controller.view.allDescendants.contains { $0 === tabsLabel })
+  #expect(controller.children.contains { $0 === details })
+  #expect(window.firstResponder === terminal)
+}
+
+@Test("Files 搜索使用稳定搜索框与虚拟化表格")
+@MainActor
+func filesSearchKeepsInputViewAndUsesVirtualizedRows() throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 3
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  let controller = DetailsPanelViewController(model: model, preferences: preferences)
+  controller.loadViewIfNeeded()
+
+  let search = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSSearchField }.first)
+  search.stringValue = "Sources"
+  controller.controlTextDidChange(
+    Notification(name: NSControl.textDidChangeNotification, object: search))
+
+  let currentSearch = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSSearchField }.first)
+  let filesTable = controller.view.allDescendants.compactMap { $0 as? NSTableView }
+    .first { $0.identifier?.rawValue == "details-files-table" }
+  #expect(currentSearch === search)
+  #expect(filesTable != nil)
+}
+
+@Test("Files 首次加载默认收起目录并只投影顶层行")
+@MainActor
+func filesInitiallyCollapsesDirectories() async throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 3
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.stop(immediately: true) }
+  let nodes = [
+    WorkspaceFileNode(path: "/tmp/Sources", name: "Sources", depth: 0, isDirectory: true),
+    WorkspaceFileNode(path: "/tmp/Sources/main.swift", name: "main.swift", depth: 1, isDirectory: false),
+    WorkspaceFileNode(path: "/tmp/README.md", name: "README.md", depth: 0, isDirectory: false),
+  ]
+  let client = WorkspaceInspectionClient(
+    information: { _ in WorkspaceInformationSnapshot(processes: [], listeningPorts: []) },
+    git: { _ in GitStatusSummary() },
+    files: { _ in nodes }
+  )
+  let controller = DetailsPanelViewController(
+    model: model, preferences: preferences, inspectionClient: client)
+  controller.loadViewIfNeeded()
+  await Task.yield()
+  await Task.yield()
+
+  let table = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-files-table" })
+  #expect(table.numberOfRows == 2)
+
+  let directoryCell = try #require(table.view(atColumn: 0, row: 0, makeIfNecessary: true))
+  let disclosure = try #require(
+    directoryCell.allDescendants.compactMap { $0 as? NSButton }.first)
+  disclosure.performClick(nil)
+  #expect(table.numberOfRows == 3)
+}
+
+@Test("Git 变更使用虚拟化表格")
+@MainActor
+func gitChangesUseVirtualizedRows() throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 2
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  let controller = DetailsPanelViewController(model: model, preferences: preferences)
+  controller.loadViewIfNeeded()
+
+  let gitTable = controller.view.allDescendants.compactMap { $0 as? NSTableView }
+    .first { $0.identifier?.rawValue == "details-git-table" }
+  #expect(gitTable != nil)
+}
+
+/// Git 页交互测试共享的夹具：固定一条未暂存变更、可注入的编辑器列表与 diff 文本，
+/// 面板挂在真实窗口里，行内动作与 diff 浮层才有 `view.window` 可用。
+@MainActor
+private func makeGitPanelFixture(
+  editors: [DetectedEditor] = [],
+  diff: String = ""
+) -> (controller: DetailsPanelViewController, model: AppModel, window: NSWindow) {
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 2
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let status = GitStatusSummary(
+    branch: "master",
+    objectID: "abc1234",
+    changes: [GitChange(path: "Sources/Aster/AppModel.swift", status: ".M")],
+    diffStat: GitDiffStat(filesChanged: 1, insertions: 925, deletions: 237)
+  )
+  let client = WorkspaceInspectionClient(
+    information: { _ in WorkspaceInformationSnapshot(processes: [], listeningPorts: []) },
+    git: { _ in status },
+    files: { _ in [] },
+    diff: { _, _, _ in diff }
+  )
+  let controller = DetailsPanelViewController(
+    model: model,
+    preferences: preferences,
+    inspectionClient: client,
+    editorLocator: { editors }
+  )
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+    styleMask: [.titled, .resizable],
+    backing: .buffered,
+    defer: false
+  )
+  // 详情面板在真实窗口里只占右侧 278pt；diff 气泡要贴着它的左缘展开，因此夹具必须
+  // 保留左侧空间，不能把面板当成整个 contentView。
+  let host = NSView()
+  window.contentView = host
+  controller.loadViewIfNeeded()
+  host.addSubview(controller.view)
+  controller.view.translatesAutoresizingMaskIntoConstraints = false
+  NSLayoutConstraint.activate([
+    controller.view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+    controller.view.topAnchor.constraint(equalTo: host.topAnchor),
+    controller.view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+    controller.view.widthAnchor.constraint(equalToConstant: 278),
+  ])
+  host.layoutSubtreeIfNeeded()
+  return (controller, model, window)
+}
+
+@MainActor
+private func gitRowCell(in controller: DetailsPanelViewController, row: Int) throws -> NSView {
+  let table = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-git-table" })
+  return try #require(table.view(atColumn: 0, row: row, makeIfNecessary: true))
+}
+
+@MainActor
+private func button(_ identifier: String, in view: NSView) throws -> NSButton {
+  try #require(
+    view.allDescendants.compactMap { $0 as? NSButton }
+      .first { $0.identifier?.rawValue == identifier })
+}
+
+@Test("Commit 下拉提供 Push/Pull/Fetch 与需要分支名的 Merge/Rebase")
+@MainActor
+func gitCommitMenuOffersRemoteAndBranchOperations() async throws {
+  _ = NSApplication.shared
+  let fixture = makeGitPanelFixture()
+  defer { fixture.model.selectedTab?.stop(immediately: true) }
+  await Task.yield()
+  await Task.yield()
+
+  let menu = fixture.controller.makeGitOperationsMenu()
+  #expect(menu.items.map(\.title) == ["Push", "Pull", "Fetch", "", "Merge…", "Rebase…"])
+  #expect(menu.items[3].isSeparatorItem)
+  // Commit 主按钮与下拉箭头是同一个分离式控件的两部分。
+  let commit = try #require(
+    fixture.controller.view.allDescendants.compactMap { $0 as? SplitActionButton }
+      .first { $0.identifier?.rawValue == "details-git-commit" })
+  #expect(commit.primaryButton.title == "Commit")
+  #expect(commit.isHidden == false)
+}
+
+@Test("Git 页编辑器入口使用偏好的已安装编辑器并可切换")
+@MainActor
+func gitEditorButtonUsesPreferredInstalledEditor() async throws {
+  _ = NSApplication.shared
+  let editors = [
+    DetectedEditor(
+      name: "VS Code", bundleIdentifier: "com.microsoft.VSCode",
+      appURL: URL(fileURLWithPath: "/Applications/VSCode.app")),
+    DetectedEditor(
+      name: "Cursor", bundleIdentifier: "com.todesktop.230313mzl4w4u92",
+      appURL: URL(fileURLWithPath: "/Applications/Cursor.app")),
+  ]
+  let fixture = makeGitPanelFixture(editors: editors)
+  defer { fixture.model.selectedTab?.stop(immediately: true) }
+  await Task.yield()
+  await Task.yield()
+
+  let editorButton = try #require(
+    fixture.controller.view.allDescendants.compactMap { $0 as? SplitActionButton }
+      .first { $0.identifier?.rawValue == "details-git-editor" })
+  // 没有保存过偏好时回落到探测顺序的第一项。
+  #expect(editorButton.primaryButton.title == "VS Code")
+  #expect(editorButton.isHidden == false)
+
+  let menu = fixture.controller.makeEditorMenu()
+  #expect(menu.items.map(\.title) == ["VS Code", "Cursor"])
+  #expect(menu.items[0].state == .on)
+  let cursor = menu.items[1]
+  _ = cursor.target?.perform(cursor.action, with: cursor)
+
+  #expect(editorButton.primaryButton.title == "Cursor")
+  #expect(fixture.controller.makeEditorMenu().items[1].state == .on)
+}
+
+@Test("Git 变更行悬停才显示暂存、编辑器与预览三个动作")
+@MainActor
+func gitChangeRowRevealsActionsOnHover() async throws {
+  _ = NSApplication.shared
+  let editors = [
+    DetectedEditor(
+      name: "Cursor", bundleIdentifier: "com.todesktop.230313mzl4w4u92",
+      appURL: URL(fileURLWithPath: "/Applications/Cursor.app"))
+  ]
+  let fixture = makeGitPanelFixture(editors: editors)
+  defer { fixture.model.selectedTab?.stop(immediately: true) }
+  await Task.yield()
+  await Task.yield()
+
+  // row 0 是 Unstaged 分组标题，row 1 才是变更行。
+  let cell = try gitRowCell(in: fixture.controller, row: 1)
+  let stage = try button("details-git-row-stage", in: cell)
+  let editor = try button("details-git-row-editor", in: cell)
+  let preview = try button("details-git-row-preview", in: cell)
+  #expect(stage.isHidden)
+  #expect(editor.isHidden)
+  #expect(preview.isHidden)
+
+  let entered = try #require(
+    NSEvent.enterExitEvent(
+      with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0,
+      windowNumber: fixture.window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0,
+      userData: nil))
+  cell.mouseEntered(with: entered)
+
+  #expect(!stage.isHidden)
+  #expect(!editor.isHidden)
+  #expect(!preview.isHidden)
+  #expect(stage.toolTip?.contains("git add") == true)
+  #expect(editor.toolTip == "在 Cursor 中打开")
+
+  // 悬停整行会加底色：无边框图标本身没有指针反馈，行必须自己给出「这里可以点」的提示。
+  let rowBackground = try #require(
+    cell.subviews.first { $0.layer?.cornerRadius == 5 && !($0 is NSButton) })
+  #expect(!rowBackground.isHidden)
+  #expect((rowBackground.layer?.backgroundColor?.alpha ?? 0) > 0)
+  // 行内图标各自也有悬停底色，静息态保持透明。
+  #expect((stage.layer?.backgroundColor?.alpha ?? 0) == 0)
+  let insideStage = NSPoint(x: stage.bounds.midX, y: stage.bounds.midY)
+  stage.mouseEntered(
+    with: try #require(
+      NSEvent.enterExitEvent(
+        with: .mouseEntered, location: stage.convert(insideStage, to: nil), modifierFlags: [],
+        timestamp: 0, windowNumber: fixture.window.windowNumber, context: nil, eventNumber: 0,
+        trackingNumber: 0, userData: nil)))
+  #expect((stage.layer?.backgroundColor?.alpha ?? 0) > 0)
+
+  let exited = try #require(
+    NSEvent.enterExitEvent(
+      with: .mouseExited, location: .zero, modifierFlags: [], timestamp: 0,
+      windowNumber: fixture.window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0,
+      userData: nil))
+  cell.mouseExited(with: exited)
+  #expect(stage.isHidden)
+  #expect(rowBackground.isHidden)
+  // 图标隐藏时收不到 mouseExited，重新显示不能残留上一次的悬停底色。
+  #expect((stage.layer?.backgroundColor?.alpha ?? 0) == 0)
+}
+
+@Test("未探测到编辑器时变更行不显示编辑器入口")
+@MainActor
+func gitChangeRowHidesEditorActionWithoutInstalledEditor() async throws {
+  _ = NSApplication.shared
+  let fixture = makeGitPanelFixture()
+  defer { fixture.model.selectedTab?.stop(immediately: true) }
+  await Task.yield()
+  await Task.yield()
+
+  let cell = try gitRowCell(in: fixture.controller, row: 1)
+  let entered = try #require(
+    NSEvent.enterExitEvent(
+      with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0,
+      windowNumber: fixture.window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0,
+      userData: nil))
+  cell.mouseEntered(with: entered)
+
+  #expect(try button("details-git-row-editor", in: cell).isHidden)
+  #expect(try !button("details-git-row-preview", in: cell).isHidden)
+  let editorButton = fixture.controller.view.allDescendants.compactMap { $0 as? SplitActionButton }
+    .first { $0.identifier?.rawValue == "details-git-editor" }
+  #expect(editorButton?.isHidden == true)
+}
+
+@Test("详情面板的文件项单击不打开，双击才在工作区打开")
+@MainActor
+func detailsFileItemsRequireDoubleClickToOpen() async throws {
+  _ = NSApplication.shared
+  let fixture = makeGitPanelFixture()
+  let tab = try #require(fixture.model.selectedTab)
+  defer { tab.stop(immediately: true) }
+  await Task.yield()
+  await Task.yield()
+
+  let cell = try gitRowCell(in: fixture.controller, row: 1)
+  let fileButton = try #require(
+    cell.subviews.compactMap { $0 as? PointingHandButton }.first)
+  #expect(fileButton.activatesOnDoubleClickOnly)
+
+  // performClick 没有关联事件，clickCount 视为 1，等价于单击：工作区布局不能变化。
+  let layoutBeforeClick = tab.layout
+  fileButton.performClick(nil)
+  #expect(tab.layout == layoutBeforeClick)
+  // 单击被拦在 sendAction 之前，动作本身没有被派发。
+  #expect(fileButton.sendAction(fileButton.action, to: fileButton.target) == false)
+}
+
+@Test("预览按钮打开内置 diff 浮层并渲染只读 diff 文本")
+@MainActor
+func gitPreviewPresentsInlineDiffOverlay() async throws {
+  _ = NSApplication.shared
+  let diff = """
+    diff --git a/App.swift b/App.swift
+    @@ -1,2 +1,2 @@
+    -let value = 1
+    +let value = 2
+    """
+  let fixture = makeGitPanelFixture(diff: diff)
+  defer { fixture.model.selectedTab?.stop(immediately: true) }
+  await Task.yield()
+  await Task.yield()
+
+  let cell = try gitRowCell(in: fixture.controller, row: 1)
+  // 行视图是刚按需创建的，先跑一轮布局让它拿到最终 frame——否则点击时记录的锚点是
+  // 布局前的旧位置，断言会和布局后的行位置对不上。
+  fixture.window.contentView?.layoutSubtreeIfNeeded()
+  try button("details-git-row-preview", in: cell).performClick(nil)
+  await Task.yield()
+  await Task.yield()
+  fixture.window.contentView?.layoutSubtreeIfNeeded()
+
+  let contentView = try #require(fixture.window.contentView)
+  let overlay = try #require(
+    contentView.allDescendants
+      .first { $0.identifier?.rawValue == "details-git-diff-preview" } as? GitDiffPreviewOverlay)
+  let text = try #require(overlay.allDescendants.compactMap { $0 as? NSTextView }.first)
+  #expect(text.string.contains("+let value = 2"))
+  #expect(text.string.contains("-let value = 1"))
+  #expect(text.isEditable == false)
+
+  // 气泡右缘贴着详情面板左缘；本体可能因为贴近窗口边缘被夹回来，但箭头仍对准触发行。
+  let panel = try #require(
+    overlay.allDescendants
+      .first { $0.identifier?.rawValue == "details-git-diff-panel" } as? CalloutPanelView)
+  let panelEdgeX = fixture.controller.view.convert(fixture.controller.view.bounds, to: overlay).minX
+  let rowCenterY = cell.convert(cell.bounds, to: overlay).midY
+  #expect(abs(panel.frame.maxX - panelEdgeX) < 1)
+  #expect(panel.frame.minX > 0)
+  #expect(panel.frame.minY >= 0)
+  #expect(panel.frame.maxY <= overlay.bounds.height)
+  #expect(abs(panel.frame.minY + panel.arrowCenterY - rowCenterY) < 1)
+
+  // 文件名压在浅色标题条上，标题条贴气泡顶边并让开右侧箭头宽度。
+  let header = try #require(
+    overlay.allDescendants.first { $0.identifier?.rawValue == "details-git-diff-header" })
+  let headerInPanel = header.convert(header.bounds, to: panel)
+  // 标题条底色由设计稿固定为 #EFF4FF，不随明暗外观变化。
+  let headerColor = try #require(header.layer?.backgroundColor)
+  let srgb = try #require(NSColor(cgColor: headerColor)?.usingColorSpace(.sRGB))
+  #expect(abs(srgb.redComponent - 0xEF / 255) < 0.01)
+  #expect(abs(srgb.greenComponent - 0xF4 / 255) < 0.01)
+  #expect(abs(srgb.blueComponent - 0xFF / 255) < 0.01)
+  #expect(abs(headerInPanel.maxY - panel.bounds.height) < 1)
+  #expect(headerInPanel.minX == 0)
+  #expect(abs(headerInPanel.maxX - (panel.bounds.width - 9)) < 1)
+
+  // 关闭按钮必须留在标题条内且不压到箭头根部。
+  let close = try button("details-git-diff-close", in: overlay)
+  let closeInPanel = close.convert(close.bounds, to: panel)
+  #expect(closeInPanel.maxX <= panel.bounds.width - 9)
+  #expect(closeInPanel.minY >= headerInPanel.minY)
+  #expect(closeInPanel.maxY <= headerInPanel.maxY)
+
+  overlay.dismiss()
+  #expect(!contentView.allDescendants.contains { $0 === overlay })
+}
+
+@Test("详情检查取消会及时终止正在运行的外部命令")
+func workspaceInspectionCancellationStopsCommandPromptly() async {
+  let task = Task.detached {
+    WorkspaceInspectionService.runForTesting(
+      executable: "/bin/sleep",
+      arguments: ["5"],
+      timeout: 5
+    )
+  }
+  try? await Task.sleep(for: .milliseconds(50))
+  let clock = ContinuousClock()
+  let cancelledAt = clock.now
+  task.cancel()
+  _ = await task.value
+
+  #expect(cancelledAt.duration(to: clock.now) < .seconds(1))
+}
+
+@Test("详情面板只启动当前 Git 页需要的检查")
+@MainActor
+func detailsPanelStartsOnlySelectedInspection() async {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 2
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  var informationCalls = 0
+  var gitCalls = 0
+  var filesCalls = 0
+  let client = WorkspaceInspectionClient(
+    information: { _ in
+      informationCalls += 1
+      return WorkspaceInformationSnapshot(processes: [], listeningPorts: [])
+    },
+    git: { _ in
+      gitCalls += 1
+      return GitStatusSummary()
+    },
+    files: { _ in
+      filesCalls += 1
+      return []
+    }
+  )
+  let controller = DetailsPanelViewController(
+    model: model,
+    preferences: preferences,
+    inspectionClient: client
+  )
+  controller.loadViewIfNeeded()
+  await Task.yield()
+  await Task.yield()
+
+  #expect(informationCalls == 0)
+  #expect(gitCalls == 1)
+  #expect(filesCalls == 0)
+}
+
+@Test("Git 页收起超过缓存期限后重开会重新检查")
+@MainActor
+func reopeningGitAfterCacheExpiryRefreshesStatus() async {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 2
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.stop(immediately: true) }
+  var gitCalls = 0
+  var currentTime = Date(timeIntervalSince1970: 1_000)
+  let client = WorkspaceInspectionClient(
+    information: { _ in WorkspaceInformationSnapshot(processes: [], listeningPorts: []) },
+    git: { _ in
+      gitCalls += 1
+      return GitStatusSummary()
+    },
+    files: { _ in [] }
+  )
+  let controller = DetailsPanelViewController(
+    model: model,
+    preferences: preferences,
+    inspectionClient: client,
+    now: { currentTime }
+  )
+  controller.loadViewIfNeeded()
+  await Task.yield()
+  await Task.yield()
+  #expect(gitCalls == 1)
+
+  controller.setPresentationActive(false)
+  currentTime = currentTime.addingTimeInterval(31)
+  controller.setPresentationActive(true)
+  await Task.yield()
+  await Task.yield()
+
+  #expect(gitCalls == 2)
+}
+
+@Test("切换详情页会取消上一页未完成的检查")
+@MainActor
+func switchingDetailsSectionCancelsPreviousInspection() async throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 0
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  let probe = DetailsCancellationProbe()
+  var gitCalls = 0
+  let client = WorkspaceInspectionClient(
+    information: { _ in
+      do { try await Task.sleep(for: .seconds(5)) }
+      catch { probe.markCancelled() }
+      return WorkspaceInformationSnapshot(processes: [], listeningPorts: [])
+    },
+    git: { _ in
+      gitCalls += 1
+      return GitStatusSummary()
+    },
+    files: { _ in [] }
+  )
+  let controller = DetailsPanelViewController(
+    model: model,
+    preferences: preferences,
+    inspectionClient: client
+  )
+  controller.loadViewIfNeeded()
+  await Task.yield()
+  let gitChip = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSButton }
+      .first { $0.identifier?.rawValue == "details-chip-git" })
+  gitChip.performClick(nil)
+  await Task.yield()
+  await Task.yield()
+
+  #expect(probe.isCancelled)
+  #expect(gitCalls == 1)
 }
 
 @Test("Open Quickly 局部挂载浮层且不会重建工作区")
@@ -350,6 +940,93 @@ func detailsPanelTabSwitchReusesCachedSectionViews() throws {
   #expect(restoredFilesSearch === originalFilesSearch)
 }
 
+@Test("详情面板页签默认等宽收起，选中项扩展宽度且切换后归位")
+@MainActor
+func detailsPanelChipsKeepUniformCollapsedWidthAndExpandSelection() throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 0
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  defer { tab.stop(immediately: true) }
+  let controller = DetailsPanelViewController(model: model, preferences: preferences)
+  controller.loadViewIfNeeded()
+
+  func chipWidth(_ identifier: String) throws -> CGFloat {
+    let chip = try #require(
+      controller.view.allDescendants.compactMap { $0 as? NSButton }
+        .first { $0.identifier?.rawValue == identifier })
+    return try #require(chip.constraints.first { $0.firstAttribute == .width }).constant
+  }
+
+  // 未选中页签保持同一收起宽度：默认状态下四个 chip 的间距不随各自标题长度变化。
+  let collapsed = try chipWidth("details-chip-outline")
+  let gitCollapsed = try chipWidth("details-chip-git")
+  let filesCollapsed = try chipWidth("details-chip-files")
+  #expect(gitCollapsed == collapsed)
+  #expect(filesCollapsed == collapsed)
+  // 选中项在收起宽度基础上扩展出标题文字。
+  let selected = try chipWidth("details-chip-info")
+  #expect(selected > collapsed)
+
+  let git = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSButton }
+      .first { $0.identifier?.rawValue == "details-chip-git" })
+  git.performClick(nil)
+
+  // 切换后宽度互换：新选中项展开，旧选中项立即回到统一收起宽度，不残留扩展位。
+  #expect(try chipWidth("details-chip-git") > collapsed)
+  #expect(try chipWidth("details-chip-info") == collapsed)
+}
+
+@Test("活动 Pane 切换仍复用详情页根视图与表格行池")
+@MainActor
+func activePaneSwitchKeepsLoadedDetailsPageRoots() async throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 3
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  let firstPaneID = tab.activePaneID
+  defer { tab.stop(immediately: true) }
+  var filesCalls = 0
+  let client = WorkspaceInspectionClient(
+    information: { _ in WorkspaceInformationSnapshot(processes: [], listeningPorts: []) },
+    git: { _ in GitStatusSummary() },
+    files: { _ in
+      filesCalls += 1
+      return []
+    }
+  )
+  let controller = DetailsPanelViewController(
+    model: model, preferences: preferences, inspectionClient: client)
+  controller.loadViewIfNeeded()
+  await Task.yield()
+
+  let originalSearch = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSSearchField }.first)
+  let originalTable = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-files-table" })
+
+  tab.split(direction: .right)
+  await Task.yield()
+  #expect(filesCalls == 2)
+  tab.setActivePane(firstPaneID)
+
+  let currentSearch = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSSearchField }.first)
+  let currentTable = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-files-table" })
+  #expect(currentSearch === originalSearch)
+  #expect(currentTable === originalTable)
+}
+
 @Test("Outline 实时跟随编辑内容并把条目点击路由到对应行")
 @MainActor
 func outlineTracksDocumentEditsAndRevealsSelectedLine() async throws {
@@ -378,13 +1055,24 @@ func outlineTracksDocumentEditsAndRevealsSelectedLine() async throws {
   let controller = DetailsPanelViewController(model: model, preferences: preferences)
   controller.loadViewIfNeeded()
 
-  runtime.updateDocument("# Updated\n\n## Child\n")
-  await Task.yield()
+  let outlineTable = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-outline-table" })
 
-  let buttons = controller.view.allDescendants.compactMap { $0 as? NSButton }
-  let buttonTitles = buttons.map { $0.title.trimmingCharacters(in: .whitespaces) }
-  #expect(buttonTitles.contains("Child"))
-  let child = try #require(buttons.first { $0.title.trimmingCharacters(in: .whitespaces) == "Child" })
+  runtime.updateDocument("# Updated\n\n## Child\n")
+  var childButton: NSButton?
+  for _ in 0..<20 {
+    await Task.yield()
+    try await Task.sleep(for: .milliseconds(20))
+    for row in 0..<outlineTable.numberOfRows {
+      let cell = outlineTable.view(atColumn: 0, row: row, makeIfNecessary: true)
+      childButton = cell?.allDescendants.compactMap { $0 as? NSButton }
+        .first { $0.title.trimmingCharacters(in: .whitespaces) == "Child" }
+      if childButton != nil { break }
+    }
+    if childButton != nil { break }
+  }
+  let child = try #require(childButton)
   var revealedLine: Int?
   let subscription = tab.documentLineRevealRequested.sink { revealedLine = $0.line }
   child.performClick(nil)
@@ -415,7 +1103,13 @@ func outlineTracksCompletedTerminalCommands() async throws {
   terminalView.dataReceived(slice: Array(output.utf8)[...])
   await Task.yield()
 
-  let titles = controller.view.allDescendants.compactMap { ($0 as? NSButton)?.title }
+  let outlineTable = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-outline-table" })
+  let titles = (0..<outlineTable.numberOfRows).flatMap { row in
+    outlineTable.view(atColumn: 0, row: row, makeIfNecessary: true)?
+      .allDescendants.compactMap { ($0 as? NSButton)?.title } ?? []
+  }
   #expect(titles.contains { $0.contains("echo outline") })
 }
 

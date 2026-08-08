@@ -259,6 +259,89 @@ final class ActionButton: NSButton {
   @objc private func invoke() { handler() }
 }
 
+/// 无边框图标按钮 + 悬停底色。`isBordered = false` 的图标默认没有任何指针反馈，看上去
+/// 与静态图标无异；凡是可点的图标都应使用该按钮，让用户能判断哪里可以点。
+@MainActor
+final class IconHoverButton: NSButton {
+  private let handler: () -> Void
+  private var hoverTrackingArea: NSTrackingArea?
+  private var isHovering = false
+  /// 非悬停时的图标色。悬停会同时加深图标，只靠底色在浅色主题下不够明显。
+  var restingTint: NSColor = AsterTheme.secondaryInk {
+    didSet { applyAppearance() }
+  }
+
+  init(symbol: String, accessibilityDescription: String? = nil, handler: @escaping () -> Void) {
+    self.handler = handler
+    super.init(frame: .zero)
+    image = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibilityDescription)
+    imagePosition = .imageOnly
+    bezelStyle = .accessoryBarAction
+    isBordered = false
+    wantsLayer = true
+    layer?.cornerRadius = 5
+    target = self
+    action = #selector(invoke)
+    applyAppearance()
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  /// 换图标（例如暂存 ↔ 取消暂存）后仍要保持当前的悬停配色。
+  func setSymbol(_ symbol: String, accessibilityDescription: String? = nil) {
+    image = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibilityDescription)
+    applyAppearance()
+  }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+    let area = NSTrackingArea(
+      rect: .zero,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+      owner: self
+    )
+    addTrackingArea(area)
+    hoverTrackingArea = area
+  }
+
+  override func mouseEntered(with event: NSEvent) {
+    super.mouseEntered(with: event)
+    guard !isHovering else { return }
+    isHovering = true
+    applyAppearance()
+  }
+
+  override func mouseExited(with event: NSEvent) {
+    super.mouseExited(with: event)
+    guard isHovering else { return }
+    isHovering = false
+    applyAppearance()
+  }
+
+  /// 隐藏时收不到 `mouseExited`，重新显示会残留上一次的悬停态。
+  override var isHidden: Bool {
+    didSet {
+      guard isHidden, isHovering else { return }
+      isHovering = false
+      applyAppearance()
+    }
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    applyAppearance()
+  }
+
+  private func applyAppearance() {
+    contentTintColor = isHovering ? AsterTheme.ink : restingTint
+    layer?.backgroundColor = isHovering
+      ? AsterTheme.ink.withAlphaComponent(0.10).cgColor : NSColor.clear.cgColor
+  }
+
+  @objc private func invoke() { handler() }
+}
+
 /// 右键菜单项的闭包桥接，避免菜单动作依赖全局单例或脆弱的 responder chain。
 final class ActionMenuItem: NSMenuItem {
   private var handler: (() -> Void)?
