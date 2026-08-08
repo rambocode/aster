@@ -167,6 +167,43 @@ func settingsUsesOnlyNativeAppKitControls() throws {
   #expect(controller.view.descendants.contains { $0 is NSScrollView } == true)
 }
 
+@Test("设置使用固定独立窗口且不改动主工作区")
+@MainActor
+func settingsUsesFixedIndependentWindow() throws {
+  let defaults = isolatedDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  let workspace = WorkspaceViewController(model: model, preferences: preferences)
+  let workspaceWindow = makeTestWindow(
+    content: workspace,
+    size: NSSize(width: 1_180, height: 760)
+  )
+  let workspaceFrame = workspaceWindow.frame
+  let workspaceRoot = try #require(workspace.view.subviews.first)
+  let settings = SettingsViewController(preferences: preferences)
+  let settingsWindowController = AsterSettingsWindowController(
+    content: settings,
+    appearance: preferences.preferredAppearance
+  )
+  let settingsWindow = try #require(settingsWindowController.window)
+
+  #expect(settingsWindow !== workspaceWindow)
+  #expect(settingsWindow.contentViewController === settings)
+  #expect(settingsWindow.contentView?.frame.size == SettingsViewController.defaultContentSize)
+  #expect(settingsWindow.minSize == settingsWindow.frame.size)
+  #expect(settingsWindow.maxSize == settingsWindow.frame.size)
+  #expect(settingsWindow.standardWindowButton(.miniaturizeButton)?.isEnabled == false)
+  #expect(settingsWindow.standardWindowButton(.zoomButton)?.isEnabled == false)
+  #expect(workspaceWindow.frame == workspaceFrame)
+  #expect(workspace.view.subviews.contains { $0 === workspaceRoot })
+  #expect(!workspaceRoot.isHidden)
+  #expect(!workspace.children.contains { $0 is SettingsViewController })
+  let visibleLabels = settings.view.descendants.compactMap {
+    ($0 as? NSTextField)?.stringValue
+  }
+  #expect(!visibleLabels.contains("返回工作区"))
+}
+
 @Test("设置页保持原始 700×460pt 默认尺寸")
 @MainActor
 func settingsKeepsOriginalDefaultSize() {
@@ -911,6 +948,47 @@ func settingsSectionsExposeInteractiveControls() throws {
     #expect(switches >= minSwitches, "\(section) 页开关数不足：\(switches) < \(minSwitches)")
     #expect(popups >= minPopups, "\(section) 页下拉数不足：\(popups) < \(minPopups)")
   }
+}
+
+@Test("设置开关点击后就地更新且不重建当前页面")
+@MainActor
+func settingsSwitchUpdatesInPlaceWithoutRebuildingPage() async throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = SettingsViewController(preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 700, height: 460))
+  window.contentView?.layoutSubtreeIfNeeded()
+  let originalSwitch = try #require(
+    controller.view.descendants.compactMap { $0 as? NSSwitch }.first)
+
+  originalSwitch.performClick(nil)
+  // 设置页的配置订阅通过主队列合并刷新。等待队列排空后再检查控件身份，才能捕获
+  // “点击后整页重建并销毁正在播放切换动画的 NSSwitch”这一真实卡顿路径。
+  await withCheckedContinuation { continuation in
+    DispatchQueue.main.async { continuation.resume() }
+  }
+
+  #expect(preferences.configuration.general.quitAfterLastWindowClosed)
+  #expect(controller.view.descendants.contains { $0 === originalSwitch })
+}
+
+@Test("设置内容区字号小于左侧导航字号")
+@MainActor
+func settingsContentTypographyIsSmallerThanSidebarNavigation() throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = SettingsViewController(preferences: preferences)
+  controller.loadViewIfNeeded()
+
+  let labels = controller.view.descendants.compactMap { $0 as? NSTextField }
+  let sidebarLabel = try #require(labels.first { $0.stringValue == "智能体" })
+  let rowTitle = try #require(labels.first { $0.stringValue == "语言" })
+  let rowDetail = try #require(labels.first { $0.stringValue == "界面显示语言" })
+
+  #expect(rowTitle.font?.pointSize == SettingsMetrics.rowTitleSize)
+  #expect(rowDetail.font?.pointSize == SettingsMetrics.rowDetailSize)
+  #expect((rowTitle.font?.pointSize ?? .greatestFiniteMagnitude) < (sidebarLabel.font?.pointSize ?? 0))
+  #expect((rowDetail.font?.pointSize ?? .greatestFiniteMagnitude) < (rowTitle.font?.pointSize ?? 0))
 }
 
 @Test("设置页新接线字段写入配置后可从 UserDefaults 恢复")

@@ -136,6 +136,8 @@ final class AppPreferences: ObservableObject {
     set { configuration.appearance.fontSize = min(max(newValue, 9), 32) }
   }
 
+  /// 0.4.x 全局侧栏宽度兼容字段。新窗口只在尚无 Panel 布局状态时读取它作为迁移
+  /// 种子；运行期间的左右 Panel 宽度由窗口级 `WorkspacePanelLayoutStore` 管理。
   var sidebarWidth: Double {
     get { configuration.appearance.sidebarWidth }
     set { configuration.appearance.sidebarWidth = min(max(newValue, 180), 360) }

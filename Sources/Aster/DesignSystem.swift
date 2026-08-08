@@ -56,11 +56,11 @@ final class ThemeRuntime: @unchecked Sendable {
   }
 }
 
-/// 设置窗口的固定色板。
+/// 独立设置窗口的固定色板。
 ///
 /// 这是 CLAUDE.md「主题色只经由 ThemeRuntime 进入视图」规则的一处明确例外：设置页
-/// **不跟随终端主题**。主题描述的是终端与工作区的样子，把它铺到设置窗口会让调色本身
-/// 变得不可用——把 window 改成红色，整个设置窗口连同正在编辑的色板都会变红，用户
+/// **不跟随终端主题**。主题描述的是终端与工作区的样子，把它铺到设置页会让调色本身
+/// 变得不可用——把 window 改成红色，整个设置页连同正在编辑的色板都会变红，用户
 /// 无法判断某个颜色是主题效果还是设置页自己的底色。这里的颜色只随系统明暗外观变化。
 enum SettingsTheme {
   /// 内容画布。卡片要压在它上面，因此它比卡片更亮（深色模式下更暗）。
@@ -258,9 +258,11 @@ enum SettingsMetrics {
   static let cardCornerRadius: CGFloat = 12
   static let rowVerticalInset: CGFloat = 17
   static let rowHorizontalInset: CGFloat = 18
-  static let rowTitleSize: CGFloat = 13
-  static let rowDetailSize: CGFloat = 11
-  static let groupTitleSize: CGFloat = 11
+  /// 右侧内容字号统一低于 13pt 侧栏导航，避免卡片文字反客为主。
+  static let rowTitleSize: CGFloat = 12
+  static let rowDetailSize: CGFloat = 10
+  static let groupTitleSize: CGFloat = 10
+  static let controlTextSize: CGFloat = 11
   // 全高侧栏窗口（fullSizeContentView）下为标题栏红绿灯让出的顶部空间。
   static let sidebarTopInset: CGFloat = 44
 }
@@ -319,16 +321,18 @@ final class ActionButton: NSButton {
   @objc private func invoke() { handler() }
 }
 
-/// 详情面板切换图标在「标题栏（面板收起）」与「面板 header（面板展开）」两处的统一
-/// 几何。两处必须在窗口坐标中完全重合，点击展开/收起时图标才不会跳位——因此尺寸、
-/// 右边距和距顶中心线都从这里取值，不允许任一侧各写各的常量。
+/// 工作区右上角唯一 Inspector 切换按钮的几何与显隐参数。按钮直接覆盖在根视图上，
+/// 不参与 Content / Inspector 宽度求解，所以面板显隐时实例和坐标都不变。
 enum InspectorToggleMetrics {
   static let buttonSize: CGFloat = 24
   static let trailingInset: CGFloat = 8
-  /// 距各自容器顶边的中心线。工作区标题栏高 28pt，因此是 14pt；详情面板 header
-  /// 用 `top = 1` 的内边距让 26pt 的 chip 与它落在同一条中心线上。
+  /// Inspector header 为覆盖按钮留出的宽度：按钮尺寸、窗口右边距和 6pt 安全间隔。
+  static let trailingReservedWidth = buttonSize + trailingInset + 6
+  /// 距工作区顶边的中心线，与 28pt 标题栏垂直居中。
   static let centerYFromTop: CGFloat = 14
   static let symbol = "sidebar.right"
+  /// 收拢完成后同一颗按钮继续短暂停留，再按标题栏悬停状态淡出。
+  static let postCollapseHideDelay: Duration = .milliseconds(650)
 }
 
 /// 无边框图标按钮 + 悬停底色。`isBordered = false` 的图标默认没有任何指针反馈，看上去

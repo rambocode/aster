@@ -59,7 +59,7 @@ func inspectorPreferencesRoundTripThroughDefaults() {
   #expect(reloaded.inspectorSection == 3)
 }
 
-@Test("详情面板展开前后的折叠图标在窗口里完全重合")
+@Test("详情面板显隐复用同一颗固定位置图标")
 @MainActor
 func inspectorToggleKeepsIdenticalPositionAcrossPresentation() throws {
   let defaults = panelTestDefaults()
@@ -85,19 +85,23 @@ func inspectorToggleKeepsIdenticalPositionAcrossPresentation() throws {
   model.toggleInspector()
   window.contentView?.layoutSubtreeIfNeeded()
 
-  let close = try #require(
+  let expandedToggle = try #require(
     controller.view.allDescendants.compactMap { $0 as? NSButton }
-      .first { $0.identifier?.rawValue == "details-panel-close" })
-  let expandedFrame = close.convert(close.bounds, to: nil)
-  // 展开动画只改 layer transform，不影响 frame，因此这里比的就是最终位置。
+      .first { $0.identifier?.rawValue == "workspace-inspector-toggle" })
+  let expandedFrame = expandedToggle.convert(expandedToggle.bounds, to: nil)
+  // 同一个根视图覆盖按钮不参与 Panel 宽度求解，展开前后的实例和窗口坐标都不变。
+  #expect(expandedToggle === toggle)
   #expect(abs(collapsedFrame.midX - expandedFrame.midX) < 0.5)
   #expect(abs(collapsedFrame.midY - expandedFrame.midY) < 0.5)
   #expect(collapsedFrame.size == expandedFrame.size)
-  // 展开后标题栏那颗必须让位，否则同一位置会有两个图标。
-  #expect(toggle.isHidden)
+  #expect(expandedToggle.isHidden == false)
+  #expect(
+    controller.view.allDescendants.contains {
+      $0.identifier?.rawValue == "details-panel-close"
+    } == false)
 }
 
-@Test("展开详情面板走 layer 位移动画，布局与终端宽度一次到位")
+@Test("展开详情面板走 Panel 裁剪动画，布局与终端宽度一次到位")
 @MainActor
 func inspectorPresentationAnimatesWithoutRelayoutingTerminalEachFrame() throws {
   let defaults = panelTestDefaults()
@@ -118,39 +122,74 @@ func inspectorPresentationAnimatesWithoutRelayoutingTerminalEachFrame() throws {
   model.toggleInspector()
   window.contentView?.layoutSubtreeIfNeeded()
 
-  let panel = try #require(
-    controller.view.allDescendants.first {
-      $0.identifier?.rawValue == "details-panel-close"
-    }?.enclosingPanelRoot)
-  // 约束在动画开始前就已经生效：面板宽度是最终值，终端因此只收到一次 resize。
-  // 过渡画在 layer transform 上，不逐帧改宽度约束——否则每一帧都会给 PTY 发一次
-  // TIOCSWINSZ，TUI 会在 0.2 秒里被迫重绘十几次。
-  #expect(abs(panel.frame.width - 278) < 0.5)
-  let workspace = try #require(
-    controller.view.allDescendants.first { $0.identifier?.rawValue == "workspace-titlebar" }?
-      .superview)
+  let split = try #require(
+    controller.view.allDescendants.compactMap { $0 as? WorkspacePanelSplitView }.first)
+  let panel = try #require(split.panelView(for: .inspector))
+  let expectedWidth = controller.panelLayoutStore.state.inspectorWidth
+  // 模型 frame 在动画开始时就进入终态，Core Animation 只插值 Panel Host 的显示层；
+  // 终端因此只收到一次 resize，不会在 0.18 秒里反复发送 TIOCSWINSZ。
+  #expect(abs(panel.frame.width - expectedWidth) < 0.5)
+  let workspace = try #require(split.panelView(for: .content))
+  let sidebarWidth = split.panelView(for: .sidebar)?.frame.width ?? 0
+  let dividerCount = CGFloat(split.panelRoles.count - 1)
   // 终端一侧同样一次让位：标题栏（与终端同宽）已经缩到扣掉面板与分隔线后的宽度。
-  #expect(abs(workspace.frame.width - (panel.superview!.frame.width - 278 - 1)) < 1)
+  #expect(
+    abs(
+      workspace.frame.width
+        - (split.frame.width - sidebarWidth - expectedWidth - dividerCount)
+    ) < 1
+  )
   #expect(panel.wantsLayer)
 }
 
-extension NSView {
-  /// 从面板 header 的按钮回溯到详情面板根视图（宽度受 278pt 约束的那一层）。
-  fileprivate var enclosingPanelRoot: NSView? {
-    var candidate: NSView? = self
-    while let current = candidate {
-      if current.constraints.contains(where: {
-        $0.firstAttribute == .width && abs($0.constant - 278) < 0.5
-      }) {
-        return current
-      }
-      candidate = current.superview
-    }
-    return nil
+@Test("关闭详情面板不对终端子树做 frame 动画")
+@MainActor
+func inspectorRemovalDoesNotAnimateTerminalViewTree() throws {
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorPresented = true
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+    styleMask: [.titled, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let split = try #require(
+    controller.view.allDescendants.compactMap { $0 as? WorkspacePanelSplitView }.first)
+  let content = try #require(split.panelView(for: .content))
+  let terminal = try #require(
+    content.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
+  var gridSizes: [(columns: Int, rows: Int)] = []
+  terminal.onGridSizeChange = { columns, rows in
+    gridSizes.append((columns, rows))
   }
+
+  model.toggleInspector()
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let frameAnimationKeys: Set<String> = ["bounds", "position"]
+  let animatedViews = ([content] + content.allDescendants).filter { view in
+    guard view === terminal || view.isDescendant(of: terminal) || terminal.isDescendant(of: view)
+    else { return false }
+    return !(Set(view.layer?.animationKeys() ?? []).isDisjoint(with: frameAnimationKeys))
+  }
+  // 根 Content 没有动画仍不够：如果 Auto Layout 在外层 NSAnimationContext
+  // 内延迟刷新终端子树，容器或终端 layer 仍会被二次拉伸。
+  #expect(animatedViews.isEmpty)
+  // 一次显隐只能把终端网格直接切到最终列数。重复通知意味着 NSSplitView 的中间
+  // frame 泄漏进 SwiftTerm，会让 TUI 连续清屏、reflow，用户看到的就是抖动闪烁。
+  #expect(gridSizes.count <= 1)
 }
 
-@Test("面板收起时标题栏含切换按钮，展开后隐藏并呈现四个页签 chip")
+@Test("面板显隐始终保留唯一切换入口并呈现四个页签 chip")
 @MainActor
 func workspaceHeaderRevealsInspectorToggleAndPanelChips() {
   let collapsedDefaults = panelTestDefaults()
@@ -166,9 +205,8 @@ func workspaceHeaderRevealsInspectorToggleAndPanelChips() {
   #expect(collapsedIdentifiers.contains("workspace-inspector-toggle"))
   let toggle = collapsedController.view.allDescendants.compactMap { $0 as? NSButton }
     .first { $0.identifier?.rawValue == "workspace-inspector-toggle" }
-  // 2026-08 设计变更：改为常驻可见（`IconHoverButton` 自带悬停底色反馈），
-  // 不再是悬停才淡入的揭示容器——它要和面板展开后的收起图标位置对照。
-  #expect(toggle?.isHidden == false)
+  // 收起态保留同一入口和固定布局槽位，但没有标题栏悬停时不显示。
+  #expect(toggle?.isHidden == true)
 
   let defaults = panelTestDefaults()
   let preferences = AppPreferences(defaults: defaults)
@@ -180,12 +218,17 @@ func workspaceHeaderRevealsInspectorToggleAndPanelChips() {
   controller.loadViewIfNeeded()
 
   let identifiers = controller.view.allDescendants.compactMap { $0.identifier?.rawValue }
-  // 面板展开后标题栏切换入口保留同一实例但隐藏，收起入口在面板 header 右侧。
+  // 面板展开后仍由根视图上的唯一入口负责关闭，Panel header 不再创建第二颗按钮。
   let expandedToggle = controller.view.allDescendants.compactMap { $0 as? NSButton }
     .first { $0.identifier?.rawValue == "workspace-inspector-toggle" }
-  #expect(expandedToggle?.isHidden == true)
-  #expect(identifiers.contains("details-panel-close"))
-  for chip in ["details-chip-info", "details-chip-outline", "details-chip-git", "details-chip-files"] {
+  #expect(expandedToggle?.isHidden == false)
+  #expect(identifiers.contains("details-panel-close") == false)
+  for chip in [
+    "details-chip-info",
+    "details-chip-outline",
+    "details-chip-git",
+    "details-chip-files",
+  ] {
     #expect(identifiers.contains(chip))
   }
   // 持久化的选中页应反映为对应 chip 的选中态标题。
@@ -194,9 +237,121 @@ func workspaceHeaderRevealsInspectorToggleAndPanelChips() {
   #expect(outlineChip?.title.contains("Outline") == true)
   // 大列表页改用原生虚拟化表格；普通 stack 页仍使用左上原点翻转文档。
   let panelScrolls = controller.view.allDescendants.compactMap { $0 as? NSScrollView }
-  #expect(panelScrolls.contains {
-    $0.documentView is FlippedDocumentView || $0.documentView is NSTableView
-  })
+  #expect(
+    panelScrolls.contains {
+      $0.documentView is FlippedDocumentView || $0.documentView is NSTableView
+    })
+}
+
+@Test("Inspector 单一按钮关闭后延迟隐藏并跟随标题栏悬停")
+@MainActor
+func inspectorToggleDoesNotFlashDuringPanelCollapse() async throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorPresented = true
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+    styleMask: [.titled, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  window.makeKeyAndOrderFront(nil)
+  defer { window.orderOut(nil) }
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let toggle = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSButton }
+      .first { $0.identifier?.rawValue == "workspace-inspector-toggle" })
+  let currentSplit = try #require(
+    controller.view.allDescendants.compactMap { $0 as? WorkspacePanelSplitView }.first)
+  #expect(toggle.isHidden == false)
+  let frameBeforeCollapse = toggle.convert(toggle.bounds, to: nil)
+
+  model.toggleInspector()
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  // 点击关闭只改变同一实例的显示策略；它不离开根视图，也不改变坐标。
+  #expect(toggle.isHidden == false)
+  let frameDuringCollapse = toggle.convert(toggle.bounds, to: nil)
+  #expect(abs(frameBeforeCollapse.midX - frameDuringCollapse.midX) < 0.5)
+  #expect(abs(frameBeforeCollapse.midY - frameDuringCollapse.midY) < 0.5)
+  #expect(frameBeforeCollapse.size == frameDuringCollapse.size)
+  #expect(toggle.window === window)
+  let content = try #require(currentSplit.panelView(for: .content))
+  let inspector = try #require(currentSplit.panelView(for: .inspector))
+  #expect(inspector.frame.width == 0)
+  #expect(content.frame.maxX <= inspector.frame.minX)
+  try await Task.sleep(for: .milliseconds(300))
+  let collapsedToggle = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSButton }
+      .first { $0.identifier?.rawValue == "workspace-inspector-toggle" })
+  let collapsedTitlebar = try #require(
+    controller.view.allDescendants.first {
+      $0.identifier?.rawValue == "workspace-titlebar"
+    })
+  // Panel 解除挂载后仍是同一实例；即使鼠标已经离开，也要短暂停留再淡出。
+  #expect(collapsedToggle === toggle)
+  #expect(collapsedToggle.isHidden == false)
+  #expect(currentSplit.panelView(for: .inspector) == nil)
+
+  let exit = try #require(
+    NSEvent.mouseEvent(
+      with: .mouseMoved,
+      location: NSPoint(x: -20, y: -20),
+      modifierFlags: [],
+      timestamp: 0,
+      windowNumber: window.windowNumber,
+      context: nil,
+      eventNumber: 0,
+      clickCount: 0,
+      pressure: 0
+    ))
+  controller.mouseMoved(with: exit)
+  #expect(collapsedToggle.isHidden == false)
+  try await Task.sleep(for: .milliseconds(800))
+  #expect(collapsedToggle.isHidden)
+
+  let hoverLocation = collapsedTitlebar.convert(
+    NSPoint(x: collapsedTitlebar.bounds.midX, y: collapsedTitlebar.bounds.midY),
+    to: nil
+  )
+  let hover = try #require(
+    NSEvent.mouseEvent(
+      with: .mouseMoved,
+      location: hoverLocation,
+      modifierFlags: [],
+      timestamp: 0,
+      windowNumber: window.windowNumber,
+      context: nil,
+      eventNumber: 0,
+      clickCount: 0,
+      pressure: 0
+    ))
+  controller.mouseMoved(with: hover)
+  #expect(collapsedToggle.isHidden == false)
+
+  let secondExit = try #require(
+    NSEvent.mouseEvent(
+      with: .mouseMoved,
+      location: NSPoint(x: -20, y: -20),
+      modifierFlags: [],
+      timestamp: 0,
+      windowNumber: window.windowNumber,
+      context: nil,
+      eventNumber: 0,
+      clickCount: 0,
+      pressure: 0
+    ))
+  controller.mouseMoved(with: secondExit)
+  try await Task.sleep(for: .milliseconds(200))
+  #expect(collapsedToggle.isHidden)
 }
 
 @Test("切换详情面板显隐会写回偏好，下次启动恢复")
@@ -217,7 +372,7 @@ func togglingInspectorPersistsPresentationState() {
 
 @Test("详情面板显隐只更新内容区且保留终端与侧栏视图")
 @MainActor
-func togglingInspectorDoesNotRebuildWorkspaceViews() throws {
+func togglingInspectorDoesNotRebuildWorkspaceViews() async throws {
   _ = NSApplication.shared
   let defaults = panelTestDefaults()
   let preferences = AppPreferences(defaults: defaults)
@@ -254,10 +409,61 @@ func togglingInspectorDoesNotRebuildWorkspaceViews() throws {
   model.toggleInspector()
   model.toggleInspector()
   window.contentView?.layoutSubtreeIfNeeded()
+  let split = try #require(
+    controller.view.allDescendants.compactMap { $0 as? WorkspacePanelSplitView }.first)
+  let inspector = try #require(split.panelContentView(for: .inspector))
 
   #expect(controller.view.allDescendants.contains { $0 === terminal })
   #expect(controller.view.allDescendants.contains { $0 === tabsLabel })
   #expect(controller.children.contains { $0 === details })
+  #expect(window.firstResponder === terminal)
+
+  // 等待超过显隐动画时长，再确认被 transition token 判定为过期的收起 completion
+  // 没有延迟移除刚重新展开的同一视图。终端启动事件可能在等待期间触发一次正常
+  // 工作区刷新，因此以当前 split 验证所有权，同时要求 Inspector 内容身份保持不变。
+  try await Task.sleep(for: .milliseconds(300))
+  let currentSplit = try #require(
+    controller.view.allDescendants.compactMap { $0 as? WorkspacePanelSplitView }.first)
+  #expect(currentSplit.panelContentView(for: .inspector) === inspector)
+  #expect(inspector.superview === currentSplit.panelView(for: .inspector))
+  #expect(inspector.alphaValue == 1)
+  #expect(CATransform3DIsIdentity(inspector.layer?.transform ?? CATransform3DIdentity))
+}
+
+@Test("从 Inspector 搜索框收起详情后把输入焦点交还活动 Pane")
+@MainActor
+func collapsingInspectorRestoresFocusFromItsSearchField() async throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorPresented = true
+  preferences.inspectorSection = 3
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+    styleMask: [.titled, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let terminal = try #require(
+    controller.view.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
+  let search = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSSearchField }.first)
+  #expect(window.makeFirstResponder(search))
+  search.selectText(nil)
+  let fieldEditor = try #require(window.fieldEditor(false, for: search))
+  #expect(window.firstResponder === fieldEditor)
+
+  model.toggleInspector()
+  try await Task.sleep(for: .milliseconds(300))
+
   #expect(window.firstResponder === terminal)
 }
 

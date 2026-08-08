@@ -431,6 +431,7 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var autoHideTabs = false
   /// 可选字段用于兼容 0.4.x 配置；缺失时等价于 Otty 的 `auto`。
   public var newTabPosition: NewTabPosition? = .automatic
+  /// 旧配置兼容字段。AppKit 层仅用它初始化尚无窗口级 Panel 状态的工作区。
   public var sidebarWidth = 220.0
   public var showStatusBar = true
   public var windowWidth = 1180.0

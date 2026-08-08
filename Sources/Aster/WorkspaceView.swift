@@ -8,10 +8,18 @@ import Combine
 final class WorkspaceViewController: NSViewController {
   let model: AppModel
   private let preferences: AppPreferences
+  /// 与当前窗口 UserDefaults suite 一一对应的 Panel 布局状态。左右栏拖动只写这里，
+  /// 不再通过全局 `AppPreferences` 把所有窗口强制同步成同一宽度。
+  let panelLayoutStore: WorkspacePanelLayoutStore
   private var modelSubscriptions: Set<AnyCancellable> = []
   private var tabSubscriptions: Set<AnyCancellable> = []
   private var retainedObjects: [AnyObject] = []
   private var refreshScheduled = false
+  /// 设置窗口独立于工作区，但配置仍是全局的。展示期间延后结构刷新，避免设置窗口的
+  /// NSSwitch 动画与多个工作区整树重建争抢主线程；现存终端偏好仍会立即就地应用。
+  private var settingsPresentationActive = false
+  private var needsRefreshAfterSettingsDismiss = false
+  private var terminalPreferenceApplyScheduled = false
   /// 当前渲染出来的面板容器。焦点切换只更新这里的指示器与 first responder，
   /// 不重建视图树。
   private var paneHosts: [UUID: ActivePaneHostView] = [:]
@@ -31,9 +39,18 @@ final class WorkspaceViewController: NSViewController {
   private weak var titleBarHoverRegion: NSView?
   /// 顶部标题按钮只在悬停/弹层打开时切换成路径胶囊；普通状态继续显示活动程序标题。
   private weak var workspaceTitleButton: WorkspaceTitleButton?
-  /// 标题栏右端的详情面板入口。面板展开/收起是局部操作（不重建标题栏），因此显隐
-  /// 必须在这里同步，否则展开后标题栏与面板上会同时出现两个折叠图标。
-  private weak var inspectorToggleButton: NSButton?
+  /// 根视图右上角唯一的详情面板入口。面板显隐只更新这一实例的显示策略，不在
+  /// Content 与 Inspector header 之间创建、移动或交换按钮。
+  /// 强持有以跨 `refresh()` 复用同一实例；按钮回调弱捕获控制器，不形成引用环。
+  private var inspectorToggleButton: IconHoverButton?
+  /// 详情面板收起后的展开入口只响应工作区标题栏悬停。单独记录这块区域，避免复用
+  /// 左栏红绿灯行的窄感应区，导致右端按钮只有移到窗口左上角才会出现。
+  private weak var inspectorTitleBarHoverRegion: NSView?
+  /// 收拢结束后的延迟隐藏截止时间；deadline 跨 `refresh()` 保留，即使其间因其它
+  /// 模型事件重建工作区，新根视图上的按钮也会延续同一显示策略。
+  private var inspectorToggleRevealDeadline: ContinuousClock.Instant?
+  private var inspectorToggleHideTask: Task<Void, Never>?
+  private var inspectorTitleBarIsHovered = false
   /// `NSPopover` 不会被视图层级强持有。控制器持有到关闭回调，避免点击标题后弹层
   /// 在下一轮 run loop 立刻释放。
   private var workspaceTitlePopover: NSPopover?
@@ -41,20 +58,9 @@ final class WorkspaceViewController: NSViewController {
   /// 搜索框先被销毁再创建。切换标签后按新 Tab ID 替换，防止订阅继续指向旧标签。
   private var detailsPanelController: DetailsPanelViewController?
   private var detailsPanelTabID: UUID?
-  /// 当前内容区的稳定布局引用。详情面板显隐只切换这组约束和局部子视图，不能调用
-  /// `refresh()`，否则侧栏、Pane 树和终端视图都会被无意义地重建。
-  private weak var contentAreaHost: NSView?
-  private weak var contentAreaWorkspace: NSView?
-  private weak var detailsPanelDivider: NSView?
-  private var workspaceFullWidthConstraint: NSLayoutConstraint?
-  private var detailsPanelLayoutConstraints: [NSLayoutConstraint] = []
-  /// 详情面板宽度。滑动动画的位移量也取这个值。
-  private static let detailsPanelWidth: CGFloat = 278
-  /// 收起动画进行中。此时约束仍然有效，中途再次展开只需反向播放，不必重建面板。
-  private var detailsPanelIsDetaching = false
-  /// 每次展开/收起/整树重建都自增。收起动画的收尾闭包凭它判断自己是否已经过期，
-  /// 避免把动画期间新挂上去的面板误删。
-  private var detailsPanelTransitionToken = 0
+  /// 主窗口左、中、右三个语义区域的统一布局边界。详情显隐和宽度更新都只作用在
+  /// 这里，不重建中栏里的终端视图或递归 Pane 树。
+  private weak var workspacePanelSplitView: WorkspacePanelSplitView?
   /// Open Quickly 通过独立 presentation 事件局部挂载；控制器跨关闭保留，以复用搜索框、
   /// 结果行与约束，普通开关不再重建侧栏、终端和详情面板。
   private var openQuicklyController: OpenQuicklyOverlayViewController?
@@ -62,10 +68,31 @@ final class WorkspaceViewController: NSViewController {
   /// 不参与搜索或结果布局，避免深色阴影影响内容对齐。
   private var openQuicklyBackdrop: OpenQuicklyBackdropView?
 
-  init(model: AppModel, preferences: AppPreferences) {
+  init(
+    model: AppModel,
+    preferences: AppPreferences,
+    panelLayoutStore: WorkspacePanelLayoutStore
+  ) {
     self.model = model
     self.preferences = preferences
+    self.panelLayoutStore = panelLayoutStore
     super.init(nibName: nil, bundle: nil)
+  }
+
+  /// 兼容单元测试和独立预览的临时入口。生产窗口必须显式注入与 `AppModel` 相同的
+  /// defaults suite；临时入口使用唯一 suite，避免测试污染标准偏好域。
+  convenience init(model: AppModel, preferences: AppPreferences) {
+    let suite = "Aster.WorkspacePanelPreview.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defaults.removePersistentDomain(forName: suite)
+    self.init(
+      model: model,
+      preferences: preferences,
+      panelLayoutStore: WorkspacePanelLayoutStore(
+        defaults: defaults,
+        legacySidebarWidth: preferences.sidebarWidth
+      )
+    )
   }
 
   required init?(coder: NSCoder) { nil }
@@ -89,7 +116,7 @@ final class WorkspaceViewController: NSViewController {
       }
       .store(in: &modelSubscriptions)
     preferences.objectWillChange
-      .sink { [weak self] _ in self?.scheduleRefresh() }
+      .sink { [weak self] _ in self?.schedulePreferenceRefresh() }
       .store(in: &modelSubscriptions)
     NotificationCenter.default.publisher(
       for: .panePictureInPictureOwnershipDidChange,
@@ -110,6 +137,7 @@ final class WorkspaceViewController: NSViewController {
   override func viewDidLayout() {
     super.viewDidLayout()
     updateSidebarHoverVisibility(animated: false)
+    updateInspectorToggleVisibility(animated: false)
   }
 
   /// 局部显示或移除 Open Quickly。关闭后终端焦点同步恢复，避免等待下一轮 run loop
@@ -131,9 +159,9 @@ final class WorkspaceViewController: NSViewController {
   /// 视图不离开层级，因此 first responder、拖选和高频 TUI 绘制都不会被打断。
   private func setInspectorPresented(_ presented: Bool) {
     guard isViewLoaded else { return }
-    // 标题栏与面板 header 上的图标位置重合，只能有一个可见，否则展开瞬间会重影。
-    inspectorToggleButton?.isHidden = presented
     if presented {
+      cancelInspectorToggleDelayedHide()
+      setHoverButtonVisible(inspectorToggleButton, true, animated: false)
       attachDetailsPanelIfNeeded(animated: true)
     } else {
       detachDetailsPanelIfNeeded()
@@ -151,129 +179,37 @@ final class WorkspaceViewController: NSViewController {
     return details
   }
 
-  /// 把详情面板接到当前内容区右侧。先停用全宽约束，再建立 workspace-divider-panel
-  /// 链，避免 Auto Layout 在同一轮同时要求工作区占满并给面板保留 278pt。
-  ///
-  /// `animated` 只在用户主动切换时为真。`refresh()` 走的整树重建也会经过这里，那种
-  /// 场景下面板本来就该在原位，再播一次滑入会让每次刷新都抖一下。
+  /// 把详情面板作为 trailing Panel 接入统一 split。`refresh()` 初次构建直接传入三栏，
+  /// 只有用户主动开关时才从这里做局部插入动画。
   private func attachDetailsPanelIfNeeded(animated: Bool = false) {
-    // 收起动画中途又被展开：约束都还在，直接从当前位置反向播回去即可。
-    if detailsPanelIsDetaching, let divider = detailsPanelDivider,
-      let panel = detailsPanelController?.view
-    {
-      detailsPanelIsDetaching = false
-      detailsPanelTransitionToken &+= 1
-      detailsPanelController?.setPresentationActive(true)
-      slideDetailsPanel(panel, divider: divider, presenting: true, startsFromCurrent: true)
-      return
-    }
-    guard let host = contentAreaHost, let workspace = contentAreaWorkspace,
-      detailsPanelDivider == nil
-    else { return }
+    guard let split = workspacePanelSplitView else { return }
     let details = detailsControllerForSelectedTab()
     let resumesCachedController = details.isViewLoaded
     if details.parent !== self { addChild(details) }
     details.synchronizeAppearanceIfNeeded()
-    let divider = makeDivider(color: AsterTheme.divider, vertical: true)
-    host.addSubview(divider)
-    host.addSubview(details.view)
-    divider.translatesAutoresizingMaskIntoConstraints = false
-    details.view.translatesAutoresizingMaskIntoConstraints = false
-    workspaceFullWidthConstraint?.isActive = false
-    let constraints = [
-      divider.leadingAnchor.constraint(equalTo: workspace.trailingAnchor),
-      divider.topAnchor.constraint(equalTo: host.topAnchor),
-      divider.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-      details.view.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
-      details.view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-      details.view.topAnchor.constraint(equalTo: host.topAnchor),
-      details.view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-      details.view.widthAnchor.constraint(equalToConstant: Self.detailsPanelWidth),
-    ]
-    NSLayoutConstraint.activate(constraints)
-    detailsPanelDivider = divider
-    detailsPanelLayoutConstraints = constraints
-    detailsPanelTransitionToken &+= 1
     if resumesCachedController { details.setPresentationActive(true) }
-    if animated { slideDetailsPanel(details.view, divider: divider, presenting: true) }
+    split.insert(
+      WorkspacePanel(role: .inspector, contentView: details.view),
+      animated: animated
+    )
   }
 
-  /// 收起只移除详情面板自身及分隔线，随后让既有 workspace 重新占满内容区。控制器
-  /// 仍由窗口持有，稍后重开时可复用查询、折叠状态和已经完成的检查结果。
+  /// 收起只移除 Inspector Panel；控制器仍由窗口持有，稍后重开时可复用查询、折叠
+  /// 状态和已经完成的检查结果。
   private func detachDetailsPanelIfNeeded() {
-    guard let divider = detailsPanelDivider, let panel = detailsPanelController?.view,
-      !detailsPanelIsDetaching
-    else { return }
-    detailsPanelIsDetaching = true
-    detailsPanelTransitionToken &+= 1
-    let token = detailsPanelTransitionToken
-    detailsPanelController?.setPresentationActive(false)
-    // 先播收起动画，动画结束再拆约束并移除视图——否则面板会瞬间消失，看不到过渡。
-    slideDetailsPanel(panel, divider: divider, presenting: false) { [weak self] in
-      guard let self, token == detailsPanelTransitionToken else { return }
-      detailsPanelIsDetaching = false
-      detailsPanelDivider = nil
-      NSLayoutConstraint.deactivate(detailsPanelLayoutConstraints)
-      detailsPanelLayoutConstraints.removeAll()
-      divider.removeFromSuperview()
-      panel.removeFromSuperview()
-      // 面板视图会被下次展开复用，位移与透明度必须复位。
-      panel.layer?.transform = CATransform3DIdentity
-      panel.alphaValue = 1
-      workspaceFullWidthConstraint?.isActive = true
-    }
-  }
-
-  /// 面板从右侧滑入 / 滑出。
-  ///
-  /// 动画只作用在 layer 的 transform 上，**不动约束**：布局在动画开始前就一次到位，
-  /// 终端因此只收到一次 resize。若改用宽度约束逐帧动画，每一帧都会给 PTY 发一次
-  /// TIOCSWINSZ，vim / Claude Code 这类 TUI 会在 0.2 秒里被迫重绘十几次。
-  /// 系统开启「减弱动态效果」时直接落到终态。
-  private func slideDetailsPanel(
-    _ panel: NSView,
-    divider: NSView,
-    presenting: Bool,
-    startsFromCurrent: Bool = false,
-    completion: (@MainActor @Sendable () -> Void)? = nil
-  ) {
-    // +1 让分隔线也完全退到窗口外，收起时右边缘不留一条残线。
-    let offset = Self.detailsPanelWidth + 1
-    for view in [panel, divider] { view.wantsLayer = true }
-    guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-      panel.alphaValue = 1
-      completion?()
+    // 关闭动作开始时就为同一颗按钮启动延迟隐藏。按钮在根视图中始终保持原位，
+    // Panel 裁剪与解除挂载都不会导致它移除或重新出现。
+    beginInspectorToggleDelayedHide()
+    guard let split = workspacePanelSplitView else {
       return
     }
-    let to = presenting ? 0 : offset
-    // 反向播放时以当前位置为起点，否则会先跳回完全隐藏再滑入。
-    if !startsFromCurrent {
-      // 起始态必须在同一轮 run loop 里写完，动画才有可插值的起点。
-      let from = presenting ? offset : 0
-      for view in [panel, divider] {
-        view.layer?.transform = CATransform3DMakeTranslation(from, 0, 0)
-      }
-      panel.alphaValue = presenting ? 0 : 1
+    detailsPanelController?.setPresentationActive(false)
+    split.removePanel(.inspector, animated: true) { [weak self] in
+      guard let self, !model.isInspectorPresented else { return }
+      // 真正解除挂载后重新起算，保证同一颗按钮从“Panel 完全关闭”这一刻起
+      // 仍停留 650ms；鼠标不在标题栏时再淡出。
+      self.beginInspectorToggleDelayedHide()
     }
-    panel.layoutSubtreeIfNeeded()
-    NSAnimationContext.runAnimationGroup({ context in
-      context.duration = 0.18
-      context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-      context.allowsImplicitAnimation = true
-      for view in [panel, divider] {
-        view.layer?.transform = CATransform3DMakeTranslation(to, 0, 0)
-      }
-      panel.animator().alphaValue = presenting ? 1 : 0
-    }, completionHandler: {
-      Task { @MainActor in
-        // 只有滑入结束才把 transform 归位。滑出如果也归位，恰好会在这一帧把面板
-        // 弹回可见位置；它的收尾由调用方在移除视图时一并处理。
-        if presenting {
-          for view in [panel, divider] { view.layer?.transform = CATransform3DIdentity }
-        }
-        completion?()
-      }
-    })
   }
 
   /// 把缓存浮层约束到工作区顶层。使用相对两侧的上限约束，在窄窗口中仍保留边距；
@@ -357,6 +293,7 @@ final class WorkspaceViewController: NSViewController {
     let isActive = view.window?.isKeyWindow ?? true
     // 悬停按钮只在键盘焦点窗口露出，窗口失焦/回焦都要按当前指针位置重算一次。
     updateSidebarHoverVisibility(animated: false)
+    updateInspectorToggleVisibility(animated: false)
     // 非活动窗口里的终端停止光标闪烁；后台标签的会话一并同步，切回来时状态已正确。
     for tab in model.tabs {
       for runtime in tab.runtimes.values {
@@ -501,14 +438,17 @@ final class WorkspaceViewController: NSViewController {
   /// 三个入口都只做一件事：按指针的真实位置重算两个按钮各自的可见性。
   override func mouseEntered(with event: NSEvent) {
     updateSidebarHoverVisibility(animated: true)
+    updateInspectorToggleVisibility(pointerInWindow: event.locationInWindow, animated: true)
   }
 
   override func mouseExited(with event: NSEvent) {
     updateSidebarHoverVisibility(animated: true)
+    updateInspectorToggleVisibility(pointerInWindow: event.locationInWindow, animated: true)
   }
 
   override func mouseMoved(with event: NSEvent) {
     updateSidebarHoverVisibility(animated: true)
+    updateInspectorToggleVisibility(pointerInWindow: event.locationInWindow, animated: true)
   }
 
   /// 「+」跟随左栏、「折叠」跟随红绿灯行，各自独立淡入淡出。
@@ -538,6 +478,76 @@ final class WorkspaceViewController: NSViewController {
     return region.convert(region.bounds, to: nil)
   }
 
+  /// 右上角只有一颗根视图覆盖按钮。Inspector 展开时常显；收起后按延迟
+  /// 与标题栏悬停状态决定显隐，不在 Content 与 Panel header 之间交接视图。
+  private func updateInspectorToggleVisibility(
+    pointerInWindow: NSPoint? = nil,
+    animated: Bool,
+    synchronizesPointerFromWindow: Bool = true
+  ) {
+    guard let button = inspectorToggleButton else { return }
+    if model.isInspectorPresented {
+      button.toolTip = "收起详情面板"
+      setHoverButtonVisible(button, true, animated: animated)
+      return
+    }
+    button.toolTip = "展开详情面板"
+
+    if let window = view.window,
+      let titleBarRect = hoverRegionRectInWindow(inspectorTitleBarHoverRegion)
+    {
+      if let pointerInWindow {
+        // 正常事件只会由 `.activeInKeyWindow` tracking area 发送；显式坐标可直接用于
+        // 更新缓存。延迟结束时使用这个事件态，避免读取已经过期的 event stream 坐标。
+        inspectorTitleBarIsHovered = titleBarRect.contains(pointerInWindow)
+      } else if synchronizesPointerFromWindow {
+        inspectorTitleBarIsHovered =
+          window.isKeyWindow
+          && titleBarRect.contains(window.mouseLocationOutsideOfEventStream)
+      }
+    } else if synchronizesPointerFromWindow {
+      inspectorTitleBarIsHovered = false
+    }
+
+    let withinPostCollapseDelay =
+      inspectorToggleRevealDeadline.map {
+        ContinuousClock.now < $0
+      } ?? false
+    setHoverButtonVisible(
+      button,
+      withinPostCollapseDelay || inspectorTitleBarIsHovered,
+      animated: animated
+    )
+  }
+
+  /// 保持根视图上的唯一按钮可见；若指针不在标题栏，650ms 后再淡出。指针仍在
+  /// 标题栏时只结束延迟态，不隐藏按钮。
+  private func beginInspectorToggleDelayedHide() {
+    inspectorToggleHideTask?.cancel()
+    let deadline = ContinuousClock.now.advanced(
+      by: InspectorToggleMetrics.postCollapseHideDelay
+    )
+    inspectorToggleRevealDeadline = deadline
+    updateInspectorToggleVisibility(animated: false)
+    inspectorToggleHideTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: InspectorToggleMetrics.postCollapseHideDelay)
+      guard !Task.isCancelled, let self,
+        self.inspectorToggleRevealDeadline == deadline
+      else { return }
+      self.inspectorToggleRevealDeadline = nil
+      self.updateInspectorToggleVisibility(
+        animated: true,
+        synchronizesPointerFromWindow: false
+      )
+    }
+  }
+
+  private func cancelInspectorToggleDelayedHide() {
+    inspectorToggleHideTask?.cancel()
+    inspectorToggleHideTask = nil
+    inspectorToggleRevealDeadline = nil
+  }
+
   /// 切换单个动作按钮的透明度；不可见时同时 `isHidden`，避免隐形按钮拦截该区域的
   /// 窗口拖动。值没变时直接返回——本方法会在 `viewDidLayout` 里被调用，重复写
   /// `isHidden` 会再触发一轮布局。
@@ -551,23 +561,68 @@ final class WorkspaceViewController: NSViewController {
       button.isHidden = !visible
       return
     }
-    NSAnimationContext.runAnimationGroup({ context in
-      context.duration = 0.15
-      button.animator().alphaValue = targetAlpha
-    }, completionHandler: {
-      // completionHandler 是 @Sendable 闭包，回主 actor 再改 isHidden。
-      Task { @MainActor in
-        button.isHidden = !visible
+    NSAnimationContext.runAnimationGroup(
+      { context in
+        context.duration = 0.15
+        button.animator().alphaValue = targetAlpha
+      },
+      completionHandler: {
+        // completionHandler 是 @Sendable 闭包，回主 actor 再改 isHidden。
+        Task { @MainActor in
+          // 悬停状态可能在动画期间反转。只完成仍然对应当前目标透明度的那次过渡，
+          // 防止旧的淡入 completion 在 Inspector 状态反转后覆盖当前显隐结果。
+          guard abs(button.alphaValue - targetAlpha) < 0.001 else { return }
+          button.isHidden = !visible
+        }
       }
-    })
+    )
   }
 
   private func scheduleRefresh() {
+    guard !settingsPresentationActive else {
+      needsRefreshAfterSettingsDismiss = true
+      return
+    }
     guard !refreshScheduled else { return }
     refreshScheduled = true
     DispatchQueue.main.async { [weak self] in
       self?.refreshScheduled = false
       self?.refresh()
+    }
+  }
+
+  /// 配置在 `@Published` 的 will-change 阶段发出通知，因此先让出当前调用栈，再把新值
+  /// 应用到现存终端。独立设置窗口展示期间不重建工作区；关闭设置时统一补一次布局。
+  private func schedulePreferenceRefresh() {
+    guard settingsPresentationActive else {
+      scheduleRefresh()
+      return
+    }
+    needsRefreshAfterSettingsDismiss = true
+    guard !terminalPreferenceApplyScheduled else { return }
+    terminalPreferenceApplyScheduled = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.terminalPreferenceApplyScheduled = false
+      for tab in self.model.tabs {
+        for pane in tab.layout.allPanes {
+          tab.runtime(for: pane.id)?.terminalSession?.apply(preferences: self.preferences)
+        }
+      }
+    }
+  }
+
+  /// 由 AppDelegate 在唯一设置窗口显示/关闭时同步。关闭时只合并补一次工作区刷新，
+  /// 不把设置窗口的生命周期或视图层级耦合进工作区控制器。
+  func setSettingsPresentationActive(_ active: Bool) {
+    guard settingsPresentationActive != active else { return }
+    settingsPresentationActive = active
+    guard !active else { return }
+    if needsRefreshAfterSettingsDismiss {
+      needsRefreshAfterSettingsDismiss = false
+      refresh()
+    } else if let tab = model.selectedTab {
+      focusActivePane(in: tab)
     }
   }
 
@@ -577,15 +632,15 @@ final class WorkspaceViewController: NSViewController {
     let previouslyFocusedTerminal = view.window?.firstResponder as? AsterTerminalView
     if !model.isOpenQuicklyPresented { openQuicklyController?.invalidateTargets() }
     observeTabs()
-    // `refresh()` 会替换整个布局，先释放指向旧内容区的强约束；详情控制器本身仍按
-    // 当前 Tab 缓存，重建后的内容区会按展示状态重新接入它。
-    detailsPanelLayoutConstraints.removeAll()
-    workspaceFullWidthConstraint = nil
+    // `refresh()` 会替换整个布局；详情控制器本身仍按当前 Tab 缓存，重建后的 Panel
+    // split 会按展示状态重新接入它。
+    workspacePanelSplitView = nil
     workspaceTitlePopover?.close()
     workspaceTitlePopover = nil
     retainedObjects.removeAll()
     paneHosts.removeAll()
     editorTextViews.removeAll()
+    // 设置控制器跨展示复用，保留分类、搜索和滚动位置；只重建工作区临时子控制器。
     children.forEach { $0.removeFromParent() }
     view.removeAllSubviews()
     view.appearance = preferences.preferredAppearance
@@ -602,6 +657,7 @@ final class WorkspaceViewController: NSViewController {
     let layout = makeWorkspaceLayout()
     view.addSubview(layout)
     layout.pinEdges(to: view)
+    installInspectorToggleOverlay()
 
     if let tab = model.selectedTab, model.isComposerPresented,
       model.composerState(for: tab.activePaneID).presentation == .floating
@@ -844,66 +900,54 @@ final class WorkspaceViewController: NSViewController {
 
   private func makeWorkspaceLayout() -> NSView {
     let showsTabs = preferences.configuration.appearance.showsTabBar(tabCount: model.tabs.count)
-    // 折叠态：内容区左上角叠加悬停动作区（+ 新建 / 展开标签栏），鼠标进入顶部
-    // 悬停带时淡入，离开淡出——折叠后无需进设置页也能恢复侧栏。
-    guard showsTabs else { return makeCollapsedContentArea() }
+    var panels: [WorkspacePanel] = []
+    let content: NSView
 
-    switch preferences.tabBarLayout {
-    case .vertical:
-      let stack = NSStackView()
-      stack.orientation = .horizontal
-      stack.spacing = 0
-      stack.distribution = .fill
-      // 侧栏、分隔线与内容区必须等高填满窗口。默认的 centerY 对齐会让内容区退回自身的
-      // 固有高度：上下分屏时 NSSplitView 给每个面板加了 `height == 0 @250` 约束，内容区
-      // 因此只剩「标题栏 + 分隔条」的高度，两个终端都被压成 0。
-      stack.alignment = .height
-      let sidebar = makeVerticalTabBar()
-      sidebar.translatesAutoresizingMaskIntoConstraints = false
-      sidebar.widthAnchor.constraint(equalToConstant: preferences.sidebarWidth).isActive = true
-      stack.addArrangedSubview(sidebar)
-      if preferences.activeTheme.style.sidebarBorderWidth > 0 {
-        stack.addArrangedSubview(
-          makeDivider(
-            color: preferences.activeTheme.style.sidebarBorderColor.map(NSColor.init)
-              ?? AsterTheme.divider,
-            vertical: true,
-            thickness: preferences.activeTheme.style.sidebarBorderWidth
-          ))
-      }
-      let content = makeContentArea()
-      content.setContentHuggingPriority(.defaultLow, for: .horizontal)
-      content.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-      stack.addArrangedSubview(content)
-      content.translatesAutoresizingMaskIntoConstraints = false
-      content.heightAnchor.constraint(equalTo: stack.heightAnchor).isActive = true
-      return stack
-
-    case .top, .bottom:
+    if !showsTabs {
+      // 折叠态：内容区左上角叠加悬停动作区（+ 新建 / 展开标签栏），鼠标进入顶部
+      // 悬停带时淡入，离开淡出——折叠后无需进设置页也能恢复侧栏。
+      content = makeCollapsedContentArea()
+    } else if preferences.tabBarLayout == .vertical {
+      panels.append(WorkspacePanel(role: .sidebar, contentView: makeVerticalTabBar()))
+      content = makeContentArea()
+    } else {
       let stack = NSStackView()
       stack.orientation = .vertical
       stack.spacing = 0
       stack.distribution = .fill
       let bar = makeHorizontalTabBar(isBottom: preferences.tabBarLayout == .bottom)
       let divider = makeDivider(color: AsterTheme.divider, vertical: false)
-      let content = makeContentArea()
-      content.setContentHuggingPriority(.defaultLow, for: .vertical)
-      content.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+      let workspace = makeContentArea()
+      workspace.setContentHuggingPriority(.defaultLow, for: .vertical)
+      workspace.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
       if preferences.tabBarLayout == .top {
         stack.addArrangedSubview(bar)
         stack.addArrangedSubview(divider)
-        stack.addArrangedSubview(content)
+        stack.addArrangedSubview(workspace)
       } else {
-        stack.addArrangedSubview(content)
+        stack.addArrangedSubview(workspace)
         stack.addArrangedSubview(divider)
         stack.addArrangedSubview(bar)
       }
       // 与竖直标签栏布局同理：内容区没有固有宽度，左右分屏会被 NSSplitView 的
       // `width == 0 @250` 回退约束压到最窄。约束必须在入栈之后建立。
-      content.translatesAutoresizingMaskIntoConstraints = false
-      content.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-      return stack
+      workspace.translatesAutoresizingMaskIntoConstraints = false
+      workspace.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+      content = stack
     }
+
+    panels.append(WorkspacePanel(role: .content, contentView: content))
+    if model.isInspectorPresented {
+      let details = detailsControllerForSelectedTab()
+      let resumesCachedController = details.isViewLoaded
+      if details.parent !== self { addChild(details) }
+      details.synchronizeAppearanceIfNeeded()
+      if resumesCachedController { details.setPresentationActive(true) }
+      panels.append(WorkspacePanel(role: .inspector, contentView: details.view))
+    }
+    let split = WorkspacePanelSplitView(panels: panels, layoutStore: panelLayoutStore)
+    workspacePanelSplitView = split
+    return split
   }
 
   private func makeContentArea() -> NSView {
@@ -916,22 +960,12 @@ final class WorkspaceViewController: NSViewController {
     }
     host.addSubview(workspace)
     workspace.translatesAutoresizingMaskIntoConstraints = false
-    let fullWidth = workspace.trailingAnchor.constraint(equalTo: host.trailingAnchor)
     NSLayoutConstraint.activate([
       workspace.leadingAnchor.constraint(equalTo: host.leadingAnchor),
       workspace.topAnchor.constraint(equalTo: host.topAnchor),
       workspace.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-      fullWidth,
+      workspace.trailingAnchor.constraint(equalTo: host.trailingAnchor),
     ])
-    contentAreaHost = host
-    contentAreaWorkspace = workspace
-    workspaceFullWidthConstraint = fullWidth
-    // 整树重建：旧面板的视图与约束已经随内容区一起作废，正在播放的收起动画也就
-    // 失效了，先让它的收尾闭包过期，避免它去动新挂上来的面板。
-    detailsPanelDivider = nil
-    detailsPanelIsDetaching = false
-    detailsPanelTransitionToken &+= 1
-    if model.isInspectorPresented { attachDetailsPanelIfNeeded() }
     return host
   }
 
@@ -1373,6 +1407,8 @@ final class WorkspaceViewController: NSViewController {
     background.translatesAutoresizingMaskIntoConstraints = false
     background.identifier = NSUserInterfaceItemIdentifier("workspace-titlebar")
     background.heightAnchor.constraint(equalToConstant: 28).isActive = true
+    inspectorTitleBarHoverRegion = background
+    background.addTrackingArea(makeHoverTrackingArea())
 
     // 普通状态显示 OSC 2/0 程序标题；悬停切成缩写后的工作目录胶囊。点击入口承载
     // 命名、目录、Git、分屏与查找等动作，不再给标题栏增加独立颜色或常驻图标。
@@ -1390,41 +1426,49 @@ final class WorkspaceViewController: NSViewController {
     background.addSubview(title)
     title.translatesAutoresizingMaskIntoConstraints = false
 
-    // 标题栏右端的详情面板入口。面板展开后这颗按钮隐藏，收起入口移到面板 header
-    // 右侧——两处共用 `InspectorToggleMetrics`，在窗口坐标里完全重合，切换时图标
-    // 停在原地而不是左右横跳。
-    let inspectorToggle = IconHoverButton(
-      symbol: InspectorToggleMetrics.symbol,
-      accessibilityDescription: "详情面板"
-    ) { [weak self] in
-      self?.model.toggleInspector()
-    }
-    inspectorToggle.identifier = NSUserInterfaceItemIdentifier("workspace-inspector-toggle")
-    inspectorToggle.toolTip = "展开详情面板"
-    inspectorToggle.restingTint = theme.style.titlebarForeground.map(NSColor.init)
-      ?? AsterTheme.secondaryInk
-    inspectorToggle.isHidden = model.isInspectorPresented
-    inspectorToggleButton = inspectorToggle
-    background.addSubview(inspectorToggle)
-    inspectorToggle.translatesAutoresizingMaskIntoConstraints = false
-
     NSLayoutConstraint.activate([
       title.centerXAnchor.constraint(equalTo: background.centerXAnchor),
       title.centerYAnchor.constraint(equalTo: background.centerYAnchor),
       title.leadingAnchor.constraint(greaterThanOrEqualTo: background.leadingAnchor, constant: 12),
       title.trailingAnchor.constraint(
-        lessThanOrEqualTo: inspectorToggle.leadingAnchor, constant: -8),
+        lessThanOrEqualTo: background.trailingAnchor, constant: -12),
       title.heightAnchor.constraint(equalToConstant: 24),
-      inspectorToggle.trailingAnchor.constraint(
-        equalTo: background.trailingAnchor, constant: -InspectorToggleMetrics.trailingInset),
-      inspectorToggle.centerYAnchor.constraint(
-        equalTo: background.topAnchor, constant: InspectorToggleMetrics.centerYFromTop),
-      inspectorToggle.widthAnchor.constraint(
-        equalToConstant: InspectorToggleMetrics.buttonSize),
-      inspectorToggle.heightAnchor.constraint(
-        equalToConstant: InspectorToggleMetrics.buttonSize),
     ])
     return background
+  }
+
+  /// 安装工作区唯一的 Inspector 切换按钮。它直接属于根视图，不参与
+  /// Sidebar / Content / Inspector 的 split 宽度求解，因此 Panel 显隐前后实例和
+  /// 窗口坐标都不变。详情 header 只为它预留命中空间。
+  private func installInspectorToggleOverlay() {
+    let theme = preferences.activeTheme
+    let button: IconHoverButton
+    if let existing = inspectorToggleButton {
+      button = existing
+    } else {
+      button = IconHoverButton(
+        symbol: InspectorToggleMetrics.symbol,
+        accessibilityDescription: "详情面板"
+      ) { [weak self] in
+        self?.model.toggleInspector()
+      }
+      button.identifier = NSUserInterfaceItemIdentifier("workspace-inspector-toggle")
+      inspectorToggleButton = button
+    }
+    button.restingTint =
+      theme.style.titlebarForeground.map(NSColor.init)
+      ?? AsterTheme.secondaryInk
+    view.addSubview(button)
+    button.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      button.trailingAnchor.constraint(
+        equalTo: view.trailingAnchor, constant: -InspectorToggleMetrics.trailingInset),
+      button.centerYAnchor.constraint(
+        equalTo: view.topAnchor, constant: InspectorToggleMetrics.centerYFromTop),
+      button.widthAnchor.constraint(equalToConstant: InspectorToggleMetrics.buttonSize),
+      button.heightAnchor.constraint(equalToConstant: InspectorToggleMetrics.buttonSize),
+    ])
+    updateInspectorToggleVisibility(animated: false)
   }
 
   /// 点击路径胶囊显示工作区动作。再次点击同一入口会关闭；弹层关闭后恢复普通程序标题。
@@ -1925,2447 +1969,5 @@ extension WorkspaceViewController: NSPopoverDelegate {
   func popoverDidClose(_ notification: Notification) {
     workspaceTitleButton?.setPopoverPresented(false)
     workspaceTitlePopover = nil
-  }
-}
-
-// MARK: - AppKit components
-
-@MainActor
-private final class AgentComposerTextDelegate: NSObject, NSTextViewDelegate {
-  private weak var model: AppModel?
-  private let paneID: UUID
-
-  init(model: AppModel, paneID: UUID) {
-    self.model = model
-    self.paneID = paneID
-  }
-
-  func textDidChange(_ notification: Notification) {
-    guard let textView = notification.object as? NSTextView else { return }
-    _ = model?.updateComposerDraft(textView.string, paneID: paneID)
-  }
-}
-
-/// 当前 Pane 查找栏的轻量控制器。实时搜索、选项和计数共享同一状态，避免每个按钮
-/// 各自读取一套条件；控制器随工作区本轮视图树一起释放。
-@MainActor
-private final class TerminalFindBarController: NSObject, NSSearchFieldDelegate {
-  private weak var session: TerminalSession?
-  private weak var field: NSSearchField?
-  private weak var caseSensitiveButton: NSButton?
-  private weak var regularExpressionButton: NSButton?
-  private weak var summaryLabel: NSTextField?
-
-  init(
-    session: TerminalSession?,
-    field: NSSearchField,
-    caseSensitiveButton: NSButton,
-    regularExpressionButton: NSButton,
-    summaryLabel: NSTextField
-  ) {
-    self.session = session
-    self.field = field
-    self.caseSensitiveButton = caseSensitiveButton
-    self.regularExpressionButton = regularExpressionButton
-    self.summaryLabel = summaryLabel
-  }
-
-  func controlTextDidChange(_ obj: Notification) {
-    guard let field, !field.stringValue.isEmpty else {
-      session?.clearFind()
-      summaryLabel?.stringValue = "0 / 0"
-      return
-    }
-    _ = perform(previous: false)
-  }
-
-  @objc func findNext(_ sender: Any?) { _ = perform(previous: false) }
-  @objc func findPrevious(_ sender: Any?) { _ = perform(previous: true) }
-  @objc func optionsChanged(_ sender: Any?) {
-    session?.clearFind()
-    _ = perform(previous: false)
-  }
-
-  @discardableResult
-  private func perform(previous: Bool) -> Bool {
-    guard let session, let term = field?.stringValue, !term.isEmpty else { return false }
-    let caseSensitive = caseSensitiveButton?.state == .on
-    let regularExpression = regularExpressionButton?.state == .on
-    let found = session.findNext(
-      term,
-      previous: previous,
-      caseSensitive: caseSensitive,
-      regularExpression: regularExpression
-    )
-    let summary = session.findMatchSummary(
-      term,
-      caseSensitive: caseSensitive,
-      regularExpression: regularExpression
-    )
-    summaryLabel?.stringValue = "\(summary.index) / \(summary.total)"
-    return found
-  }
-}
-
-/// `TABS` 标题右侧的标签整理入口。使用原生 `NSMenu` 保留 macOS 的毛玻璃、阴影、
-/// 键盘导航和辅助功能；菜单展开期间按钮保持截图中的浅灰圆角按下态。
-@MainActor
-private final class SidebarOptionsButton: NSButton {
-  private let menuProvider: () -> NSMenu
-
-  init(menuProvider: @escaping () -> NSMenu) {
-    self.menuProvider = menuProvider
-    super.init(frame: .zero)
-    image = NSImage(systemSymbolName: "line.3.horizontal.decrease", accessibilityDescription: "整理标签")
-    imagePosition = .imageOnly
-    toolTip = "整理标签"
-    isBordered = false
-    wantsLayer = true
-    layer?.cornerRadius = 6
-    layer?.cornerCurve = .continuous
-    translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      widthAnchor.constraint(equalToConstant: 28),
-      heightAnchor.constraint(equalToConstant: 28),
-    ])
-    menu = menuProvider()
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  override func mouseDown(with event: NSEvent) {
-    layer?.backgroundColor = AsterTheme.ink.withAlphaComponent(0.08).cgColor
-    let menu = menuProvider()
-    self.menu = menu
-    menu.popUp(positioning: nil, at: NSPoint(x: bounds.minX, y: bounds.minY - 4), in: self)
-    layer?.backgroundColor = NSColor.clear.cgColor
-  }
-}
-
-/// AppKit 原生标签行直接按 Otty token 设置 layer；悬停、选中、字重、边框和阴影
-/// 都不经过跨框架的 Material/Shape 二次混色。
-@MainActor
-private final class TabRowButton: NSButton {
-  /// 视觉底卡两侧留白；按钮本身仍保持整行命中宽度。
-  private static let sidebarRowInset: CGFloat = 6
-  /// 底卡圆角下限。多数 Otty 主题按「整行铺满」给的是 0，内缩之后必须圆角化。
-  private static let sidebarRowRadius: CGFloat = 8
-  private let tab: TerminalTabItem
-  private let selected: Bool
-  private let style: TerminalTabStyle
-  private let handler: () -> Void
-  private let onDragEnd: (NSPoint) -> Void
-  private var tracking: NSTrackingArea?
-  private weak var verticalAccessory: NSView?
-  private weak var closeButton: NSButton?
-  /// 侧栏行的内缩圆角底。整行仍然是全宽命中区，只有这层底色两侧留边并带圆角，
-  /// 因此指针落在行的任何位置都能点中，视觉上却是一枚独立的圆角卡片。
-  private weak var rowBackground: NSView?
-  private var hovered = false {
-    didSet {
-      guard hovered != oldValue else { return }
-      updateStyle()
-      updateAccessoryVisibility()
-    }
-  }
-
-  init(
-    tab: TerminalTabItem,
-    selected: Bool,
-    horizontal: Bool,
-    theme: TerminalTheme,
-    showsExitStatus: Bool,
-    showsFinished: Bool,
-    showsFailure: Bool,
-    showsAwaitingInput: Bool,
-    onClose: (() -> Void)?,
-    action: @escaping () -> Void,
-    onDragEnd: @escaping (NSPoint) -> Void
-  ) {
-    self.tab = tab
-    self.selected = selected
-    style = horizontal ? (theme.style.horizontalTab ?? theme.style.tab) : theme.style.tab
-    handler = action
-    self.onDragEnd = onDragEnd
-    super.init(frame: .zero)
-    title = horizontal ? tab.title : ""
-    alignment = .left
-    isBordered = false
-    bezelStyle = .inline
-    wantsLayer = true
-    layer?.cornerCurve = .continuous
-    target = self
-    self.action = #selector(invoke)
-    translatesAutoresizingMaskIntoConstraints = false
-    heightAnchor.constraint(equalToConstant: style.height ?? (horizontal ? 31 : 47)).isActive = true
-    if horizontal { widthAnchor.constraint(greaterThanOrEqualToConstant: 92).isActive = true }
-    if horizontal {
-      switch tab.activityBadge {
-      case .running:
-        image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "正在运行")
-      case .awaitingInput where showsAwaitingInput:
-        image = NSImage(systemSymbolName: "hand.raised.fill", accessibilityDescription: "等待输入")
-      case .error where showsFailure && showsExitStatus:
-        image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "执行失败")
-      case .finished where showsFinished && showsExitStatus:
-        image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "已完成")
-      case .completed where showsFinished && showsExitStatus:
-        image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "刚刚完成")
-      default:
-        image = nil
-      }
-      imagePosition = .imageTrailing
-    }
-    if !horizontal {
-      // 内缩圆角底必须先入栈，才能垫在标题与右侧附件下面。
-      let rowBackground = NSView()
-      rowBackground.wantsLayer = true
-      rowBackground.layer?.cornerCurve = .continuous
-      rowBackground.translatesAutoresizingMaskIntoConstraints = false
-      addSubview(rowBackground)
-      NSLayoutConstraint.activate([
-        rowBackground.leadingAnchor.constraint(
-          equalTo: leadingAnchor, constant: Self.sidebarRowInset),
-        rowBackground.trailingAnchor.constraint(
-          equalTo: trailingAnchor, constant: -Self.sidebarRowInset),
-        rowBackground.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-        rowBackground.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
-      ])
-      self.rowBackground = rowBackground
-
-      // 选中与未选中显示同一份 `tab.title`（目录稳定显示名），切换标签时行文案
-      // 不再在「完整路径 / 短名」之间跳变。
-      let primary = makeLabel(
-        tab.title,
-        size: selected ? 11.5 : 11,
-        weight: selected ? .semibold : .regular,
-        color: selected ? (style.activeForeground.map(NSColor.init) ?? AsterTheme.ink)
-          : (style.foreground.map(NSColor.init) ?? AsterTheme.secondaryInk)
-      )
-      addSubview(primary)
-      primary.translatesAutoresizingMaskIntoConstraints = false
-
-      // 右侧 accessory：有前台命令在运行时显示 spinner（业务状态来源为
-      // TerminalSession 的前台进程组检测），否则选中行显示 shell 名。
-      let accessory: NSView
-      switch tab.activityBadge {
-      case .running:
-        let spinner = NSProgressIndicator()
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isIndeterminate = true
-        spinner.isDisplayedWhenStopped = false
-        spinner.startAnimation(nil)
-        accessory = spinner
-      case .awaitingInput where showsAwaitingInput:
-        accessory = makeLabel(
-          "✋", size: 11, weight: .semibold, color: AsterTheme.warning
-        )
-      case .error where showsFailure && showsExitStatus:
-        accessory = makeLabel(
-          tab.lastCommandExitStatus.map(String.init) ?? "!",
-          size: 10,
-          weight: .semibold,
-          color: AsterTheme.warning,
-          monospaced: true
-        )
-      case .finished where showsFinished && showsExitStatus:
-        accessory = makeLabel("●", size: 9, weight: .semibold, color: AsterTheme.accent)
-      case .completed where showsFinished && showsExitStatus:
-        accessory = makeLabel("✓", size: 11, weight: .semibold, color: AsterTheme.accent)
-      default:
-        accessory = makeLabel(
-          selected
-            ? URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh").lastPathComponent
-            : "",
-          size: 10,
-          color: AsterTheme.tertiaryInk,
-          monospaced: true
-        )
-      }
-      // 状态附件与关闭按钮共用固定 28pt 槽位，悬停切换时标题不会
-      // 水平抖动。关闭动作直接针对该 tab，不先选中后台标签。
-      let accessorySlot = NSView()
-      accessorySlot.translatesAutoresizingMaskIntoConstraints = false
-      addSubview(accessorySlot)
-      accessory.translatesAutoresizingMaskIntoConstraints = false
-      accessorySlot.addSubview(accessory)
-      let close = ActionButton(symbol: "xmark", bezelStyle: .inline) {
-        onClose?()
-      }
-      close.identifier = NSUserInterfaceItemIdentifier("sidebar-tab-close-\(tab.id.uuidString)")
-      close.toolTip = "关闭标签页"
-      close.isBordered = false
-      close.contentTintColor = AsterTheme.secondaryInk
-      close.setAccessibilityLabel("关闭标签页 \(tab.title)")
-      close.translatesAutoresizingMaskIntoConstraints = false
-      accessorySlot.addSubview(close)
-      verticalAccessory = accessory
-      closeButton = close
-      NSLayoutConstraint.activate([
-        // 文案与右侧槽位都按圆角底的内缘对齐，卡片左右各留出 10pt 内边距。
-        primary.leadingAnchor.constraint(equalTo: rowBackground.leadingAnchor, constant: 10),
-        primary.centerYAnchor.constraint(equalTo: centerYAnchor),
-        primary.trailingAnchor.constraint(
-          lessThanOrEqualTo: accessorySlot.leadingAnchor, constant: -8),
-        accessorySlot.trailingAnchor.constraint(
-          equalTo: rowBackground.trailingAnchor, constant: -4),
-        accessorySlot.centerYAnchor.constraint(equalTo: centerYAnchor),
-        accessorySlot.widthAnchor.constraint(equalToConstant: 28),
-        accessorySlot.heightAnchor.constraint(equalToConstant: 28),
-        accessory.centerXAnchor.constraint(equalTo: accessorySlot.centerXAnchor),
-        accessory.centerYAnchor.constraint(equalTo: accessorySlot.centerYAnchor),
-        close.centerXAnchor.constraint(equalTo: accessorySlot.centerXAnchor),
-        close.centerYAnchor.constraint(equalTo: accessorySlot.centerYAnchor),
-        close.widthAnchor.constraint(equalToConstant: 24),
-        close.heightAnchor.constraint(equalToConstant: 24),
-      ])
-      updateAccessoryVisibility()
-    }
-    updateStyle()
-  }
-
-  /// 在 mouseDown 立即派发选择，不依赖 mouseUp 的 target/action：终端输出会触发
-  /// 侧栏整树重建，若等到 mouseUp，按钮可能已在按下与抬起之间被销毁，点击就会丢失。
-  override func mouseDown(with event: NSEvent) {
-    handler()
-    guard let window else { return }
-    let origin = event.locationInWindow
-    var draggedPoint: NSPoint?
-    window.trackEvents(
-      matching: [.leftMouseDragged, .leftMouseUp],
-      timeout: .greatestFiniteMagnitude,
-      mode: .eventTracking
-    ) { tracked, stop in
-      guard let tracked else {
-        stop.pointee = true
-        return
-      }
-      if tracked.type == .leftMouseDragged {
-        let delta = hypot(
-          tracked.locationInWindow.x - origin.x,
-          tracked.locationInWindow.y - origin.y
-        )
-        if delta >= 5 { draggedPoint = window.convertPoint(toScreen: tracked.locationInWindow) }
-      } else if tracked.type == .leftMouseUp {
-        if draggedPoint != nil {
-          draggedPoint = window.convertPoint(toScreen: tracked.locationInWindow)
-        }
-        stop.pointee = true
-      }
-    }
-    if let draggedPoint { onDragEnd(draggedPoint) }
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  override func updateTrackingAreas() {
-    super.updateTrackingAreas()
-    if let tracking { removeTrackingArea(tracking) }
-    let area = NSTrackingArea(rect: bounds, options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect], owner: self)
-    addTrackingArea(area)
-    tracking = area
-  }
-
-  override func mouseEntered(with event: NSEvent) { hovered = true }
-  override func mouseExited(with event: NSEvent) { hovered = false }
-
-  private func updateAccessoryVisibility() {
-    verticalAccessory?.isHidden = hovered
-    closeButton?.isHidden = !hovered
-  }
-
-  private func updateStyle() {
-    let foreground = selected ? style.activeForeground : style.foreground
-    contentTintColor = foreground.map(NSColor.init) ?? AsterTheme.ink
-    font = NSFont.systemFont(
-      ofSize: selected ? 12.5 : 12,
-      weight: selected ? NSFont.Weight(cssWeight: style.activeFontWeight) : .regular
-    )
-    // 侧栏行的装饰画在内缩底层上；横向标签栏仍然直接用按钮自身的 layer。
-    let decoration = rowBackground?.layer ?? layer
-    if rowBackground != nil {
-      // 行本体保持透明，否则内缩底外面会再糊一层直角色块。
-      layer?.backgroundColor = NSColor.clear.cgColor
-      layer?.borderWidth = 0
-      layer?.shadowOpacity = 0
-      // 主题给的是「整行铺满」语义下的圆角（多数为 0）。内缩成卡片后必须有可见
-      // 圆角，取一个下限；主题本来就更圆时沿用主题值。
-      decoration?.cornerRadius = max(style.radius, Self.sidebarRowRadius)
-    } else {
-      decoration?.cornerRadius = style.radius
-    }
-    let background: NSColor
-    if selected { background = style.activeBackground.map(NSColor.init) ?? AsterTheme.ink.withAlphaComponent(0.075) }
-    else if hovered {
-      // 主题没给悬停色时也必须有反馈，否则鼠标扫过侧栏毫无变化。
-      background = style.hoverBackground.map(NSColor.init) ?? AsterTheme.ink.withAlphaComponent(0.05)
-    } else { background = .clear }
-    decoration?.backgroundColor = background.cgColor
-    decoration?.borderWidth = selected ? style.activeBorderWidth : 0
-    decoration?.borderColor = style.activeBorderColor.map(NSColor.init)?.cgColor
-    if selected, let shadow = style.activeShadow {
-      decoration?.shadowColor = NSColor(shadow.color).cgColor
-      decoration?.shadowOpacity = 1
-      decoration?.shadowRadius = shadow.blur
-      decoration?.shadowOffset = NSSize(width: shadow.x, height: -shadow.y)
-    } else {
-      decoration?.shadowOpacity = 0
-    }
-  }
-
-  @objc private func invoke() { handler() }
-}
-
-/// 递归分屏使用 `NSSplitView`，拖动结束后的比例写回领域模型以供会话恢复。
-///
-/// 分隔条默认是一条 1pt 灰线；指针进入命中区后加粗为主题强调色，双击恢复等分。
-@MainActor
-private final class PersistedSplitView: NSSplitView, NSSplitViewDelegate {
-  /// 命中区比可见线宽得多：1pt 的线几乎抓不住，Otty 同样用一条细线 + 宽感应带。
-  private static let hitThickness: CGFloat = 6
-  private let ratio: Double
-  private let onRatioChanged: (Double) -> Void
-  private var positioned = false
-  private var isUserResizing = false
-  private var isHoveringDivider = false {
-    didSet { if oldValue != isHoveringDivider { needsDisplay = true } }
-  }
-  private var dividerTrackingArea: NSTrackingArea?
-
-  init(axis: SplitAxis, ratio: Double, onRatioChanged: @escaping (Double) -> Void) {
-    self.ratio = ratio
-    self.onRatioChanged = onRatioChanged
-    super.init(frame: .zero)
-    isVertical = axis == .horizontal
-    dividerStyle = .thin
-    delegate = self
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  override var dividerThickness: CGFloat { Self.hitThickness }
-
-  /// 只画中间 1pt（悬停时 2pt）的线，命中区其余部分留白透出容器底色，
-  /// 视觉上仍是 Otty 那条细分隔线。
-  override func drawDivider(in rect: NSRect) {
-    // 窗口不是键盘焦点窗口时一律画成灰线：非活动窗口不应该有强调色。
-    let isHoveringDivider = self.isHoveringDivider && (window?.isKeyWindow ?? false)
-    let thickness: CGFloat = isHoveringDivider ? 2 : 1
-    let line =
-      isVertical
-      ? NSRect(x: rect.midX - thickness / 2, y: rect.minY, width: thickness, height: rect.height)
-      : NSRect(x: rect.minX, y: rect.midY - thickness / 2, width: rect.width, height: thickness)
-    (isHoveringDivider ? AsterTheme.accent : AsterTheme.divider).setFill()
-    line.fill()
-  }
-
-  /// 两个子视图之间的空隙就是分隔条命中区；不依赖 `NSSplitView` 的坐标翻转约定。
-  private var dividerHitRect: NSRect? {
-    guard arrangedSubviews.count == 2 else { return nil }
-    let first = arrangedSubviews[0].frame
-    let second = arrangedSubviews[1].frame
-    if isVertical {
-      return NSRect(
-        x: min(first.maxX, second.maxX), y: 0, width: dividerThickness, height: bounds.height)
-    }
-    return NSRect(
-      x: 0, y: min(first.maxY, second.maxY), width: bounds.width, height: dividerThickness)
-  }
-
-  override func updateTrackingAreas() {
-    super.updateTrackingAreas()
-    if let dividerTrackingArea { removeTrackingArea(dividerTrackingArea) }
-    guard let rect = dividerHitRect else {
-      isHoveringDivider = false
-      return
-    }
-    let area = NSTrackingArea(
-      rect: rect,
-      options: [.mouseEnteredAndExited, .activeInKeyWindow],
-      owner: self
-    )
-    addTrackingArea(area)
-    dividerTrackingArea = area
-    // 移除感应区不会补发 mouseExited：指针正好停在旧感应区里时高亮会一直卡住。
-    // 每次重建后按指针的真实位置对齐一次状态。
-    syncHoverState()
-  }
-
-  /// 高亮只在「本窗口是键盘焦点窗口，且指针确实压在分隔条命中区上」时成立。
-  private func syncHoverState() {
-    guard let window, window.isKeyWindow, let rect = dividerHitRect else {
-      isHoveringDivider = false
-      return
-    }
-    let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
-    isHoveringDivider = rect.contains(point)
-  }
-
-  override func viewDidMoveToWindow() {
-    super.viewDidMoveToWindow()
-    syncHoverState()
-  }
-
-  override func mouseEntered(with event: NSEvent) { isHoveringDivider = true }
-  override func mouseExited(with event: NSEvent) { isHoveringDivider = false }
-
-  /// `NSSplitView` 把「分隔条厚度」当作与分隔方向垂直的固有尺寸（水平分隔时固有高度
-  /// 只有 1pt），因为它的子视图走 autoresizing、无法反推内容尺寸。放进 `NSStackView`
-  /// 后这个固有高度会把整个内容区压成一条线：上下分屏只剩分隔条，两个终端高度都是 0。
-  /// 分屏区域的尺寸完全由外层容器给定，这里直接取消固有尺寸。
-  override var intrinsicContentSize: NSSize {
-    NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
-  }
-
-  /// 比例针对「扣掉分隔条之后的可用长度」，否则第一块会固定多出一个分隔条的厚度，
-  /// 等分看起来是歪的。
-  private var contentLength: CGFloat {
-    max(0, (isVertical ? bounds.width : bounds.height) - dividerThickness)
-  }
-
-  override func layout() {
-    super.layout()
-    guard !positioned, arrangedSubviews.count == 2 else { return }
-    // 首轮布局可能在拿到真实尺寸前发生；此时定位分隔条会把比例锁在无效值上。
-    guard contentLength > 1 else { return }
-    positioned = true
-    setPosition(max(1, contentLength * ratio), ofDividerAt: 0)
-  }
-
-  func splitViewDidResizeSubviews(_ notification: Notification) {
-    // 命中区是由两个子视图的间隙算出来的，自身 frame 不变时 AppKit 不会重建它，
-    // 拖完分隔条后感应区就会停在旧位置。
-    updateTrackingAreas()
-    guard positioned, isUserResizing, arrangedSubviews.count == 2 else { return }
-    let first = isVertical ? arrangedSubviews[0].frame.width : arrangedSubviews[0].frame.height
-    guard contentLength > 0 else { return }
-    onRatioChanged(min(max(first / contentLength, 0.05), 0.95))
-  }
-
-  override func mouseDown(with event: NSEvent) {
-    // 双击分隔条恢复等分，与参考应用一致；单击进入原生拖动，比例在拖动中写回。
-    if event.clickCount == 2, let rect = dividerHitRect,
-      rect.contains(convert(event.locationInWindow, from: nil))
-    {
-      guard contentLength > 1 else { return }
-      setPosition(contentLength * 0.5, ofDividerAt: 0)
-      onRatioChanged(0.5)
-      return
-    }
-    isUserResizing = true
-    super.mouseDown(with: event)
-    isUserResizing = false
-  }
-}
-
-/// Pane 拖放的落点几何。与 AppKit 状态无关的纯函数：给定目标面板矩形和指针位置，
-/// 得出该落在哪一侧（或中心），以及要高亮的区域。
-enum PaneDropGeometry {
-  /// 四边各占 25%——比例太小会难以命中，太大则中心的「交换」区域几乎消失。
-  static let edgeFraction: CGFloat = 0.25
-
-  /// - Returns: `direction` 为 nil 表示落在中心（交换语义），此时 `rect` 是整个面板。
-  static func zone(
-    in frame: NSRect,
-    at point: NSPoint,
-    edgeFraction: CGFloat = edgeFraction
-  ) -> (direction: SplitDirection?, rect: NSRect) {
-    let local = NSPoint(x: point.x - frame.minX, y: point.y - frame.minY)
-    let halfWidth = frame.width / 2
-    let halfHeight = frame.height / 2
-    let edgeX = frame.width * edgeFraction
-    let edgeY = frame.height * edgeFraction
-    // AppKit 非翻转坐标：y 越小越靠近底边，因此 `.down` 用 local.y、`.up` 用其补数。
-    let candidates: [(direction: SplitDirection, distance: CGFloat, limit: CGFloat, rect: NSRect)] = [
-      (.left, local.x, edgeX,
-       NSRect(x: frame.minX, y: frame.minY, width: halfWidth, height: frame.height)),
-      (.right, frame.width - local.x, edgeX,
-       NSRect(x: frame.midX, y: frame.minY, width: halfWidth, height: frame.height)),
-      (.down, local.y, edgeY,
-       NSRect(x: frame.minX, y: frame.minY, width: frame.width, height: halfHeight)),
-      (.up, frame.height - local.y, edgeY,
-       NSRect(x: frame.minX, y: frame.midY, width: frame.width, height: halfHeight)),
-    ]
-    guard let nearest = candidates.filter({ $0.distance <= $0.limit }).min(by: {
-      $0.distance < $1.distance
-    }) else {
-      return (nil, frame)
-    }
-    return (nearest.direction, nearest.rect)
-  }
-}
-
-/// 窗口失去键盘焦点时叠在工作区之上的褪色遮罩。
-///
-/// AppKit 只会自动灰化系统控件，终端网格、侧栏和自绘视图都不受影响，非活动窗口
-/// 看起来仍然「亮着」，多窗口下分不清哪个在接收输入。遮罩用主题窗口底色，
-/// 因此深浅主题都是朝各自背景褪色，而不是压一层固定的灰。
-@MainActor
-private final class InactiveWindowOverlayView: NSView {
-  /// 覆盖层不参与命中测试：失焦窗口的第一次点击仍应正常落到下面的终端上。
-  override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-  override func draw(_ dirtyRect: NSRect) {
-    AsterTheme.paper.withAlphaComponent(0.45).setFill()
-    dirtyRect.fill()
-  }
-}
-
-/// 拖动 Pane 时覆盖在工作区之上的落点提示层。参考应用用两种颜色区分语义：
-/// 面板边缘（强调色）＝插到这一侧，面板中心（绿色）＝与该面板交换位置。
-@MainActor
-private final class PaneDropOverlayView: NSView {
-  var highlight: (rect: NSRect, isSwap: Bool)? {
-    didSet { needsDisplay = true }
-  }
-
-  /// 拖动全程由 `trackEvents` 驱动，覆盖层不参与命中测试。
-  override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-  override func draw(_ dirtyRect: NSRect) {
-    guard let highlight else { return }
-    let color = highlight.isSwap ? NSColor.systemGreen : AsterTheme.accent
-    let path = NSBezierPath(roundedRect: highlight.rect.insetBy(dx: 2, dy: 2), xRadius: 6, yRadius: 6)
-    color.withAlphaComponent(0.20).setFill()
-    path.fill()
-    color.withAlphaComponent(0.85).setStroke()
-    path.lineWidth = 2
-    path.stroke()
-  }
-}
-
-/// Pane 顶边的胶囊拖动把手。参考应用的说法是「move the pointer near the top and a small
-/// capsule appears」：靠近顶边淡入短胶囊，指针压在胶囊上时变长并换成抓手光标，
-/// 按住即可把整个 Pane 拖到别处。
-@MainActor
-private final class PaneDragHandleView: NSView {
-  private static let collapsedWidth: CGFloat = 28
-  private static let expandedWidth: CGFloat = 56
-  private let capsule = NSView()
-  private var capsuleWidth: NSLayoutConstraint?
-  private var trackingArea: NSTrackingArea?
-  private let onDragStart: (NSEvent) -> Void
-  /// 指针是否靠近 Pane 顶边（由上层的点击穿透感应带驱动）。
-  var isRevealed = false {
-    didSet { if oldValue != isRevealed { updateAppearance() } }
-  }
-  private var isHovered = false {
-    didSet { if oldValue != isHovered { updateAppearance() } }
-  }
-
-  init(onDragStart: @escaping (NSEvent) -> Void) {
-    self.onDragStart = onDragStart
-    super.init(frame: .zero)
-    wantsLayer = true
-    capsule.wantsLayer = true
-    capsule.layer?.cornerRadius = 2
-    capsule.layer?.cornerCurve = .continuous
-    capsule.layer?.backgroundColor = AsterTheme.tertiaryInk.cgColor
-    capsule.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(capsule)
-    let width = capsule.widthAnchor.constraint(equalToConstant: Self.collapsedWidth)
-    capsuleWidth = width
-    NSLayoutConstraint.activate([
-      capsule.centerXAnchor.constraint(equalTo: centerXAnchor),
-      capsule.centerYAnchor.constraint(equalTo: centerYAnchor),
-      capsule.heightAnchor.constraint(equalToConstant: 4),
-      width,
-    ])
-    alphaValue = 0
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  /// 完全透明时不参与命中测试，否则 Pane 顶部中央会出现一块点不到终端的死区。
-  override func hitTest(_ point: NSPoint) -> NSView? {
-    alphaValue > 0.01 ? super.hitTest(point) : nil
-  }
-
-  override func updateTrackingAreas() {
-    super.updateTrackingAreas()
-    if let trackingArea { removeTrackingArea(trackingArea) }
-    let area = NSTrackingArea(
-      rect: bounds,
-      options: [.mouseEnteredAndExited, .activeInKeyWindow, .cursorUpdate],
-      owner: self
-    )
-    addTrackingArea(area)
-    trackingArea = area
-  }
-
-  override func mouseEntered(with event: NSEvent) { isHovered = true }
-  override func mouseExited(with event: NSEvent) { isHovered = false }
-  override func cursorUpdate(with event: NSEvent) {
-    if isRevealed { NSCursor.openHand.set() } else { super.cursorUpdate(with: event) }
-  }
-
-  override func mouseDown(with event: NSEvent) {
-    guard isRevealed else {
-      super.mouseDown(with: event)
-      return
-    }
-    onDragStart(event)
-  }
-
-  private func updateAppearance() {
-    let expanded = isRevealed && isHovered
-    capsule.layer?.backgroundColor =
-      (expanded ? AsterTheme.accent : AsterTheme.tertiaryInk).cgColor
-    NSAnimationContext.runAnimationGroup { context in
-      context.duration = 0.14
-      context.allowsImplicitAnimation = true
-      animator().alphaValue = isRevealed ? 1 : 0
-      capsuleWidth?.animator().constant = expanded ? Self.expandedWidth : Self.collapsedWidth
-      superview?.layoutSubtreeIfNeeded()
-    }
-  }
-}
-
-/// 全点击穿透的透明悬停带：只承载 tracking area 探测鼠标进入窗口顶部，
-/// 自身与子视图不参与命中测试，不会拦截下方终端的点击与拖选。
-private final class ClickThroughStripView: NSView {
-  override func hitTest(_ point: NSPoint) -> NSView? { nil }
-}
-
-/// 侧栏悬停动作按钮的容器：自身不参与命中测试，只把点击交给真正可见的按钮子视图。
-/// 两个按钮都隐藏时，这块区域仍然属于标题栏，用户可以在上面拖动窗口。
-private final class HoverActionsContainerView: NSView {
-  override func hitTest(_ point: NSPoint) -> NSView? {
-    let hit = super.hitTest(point)
-    return hit === self ? nil : hit
-  }
-}
-
-/// 外部对象落在 Pane 边缘的语义。最靠边的蓝区打开对象 Pane；相邻的绿色内半区仅对
-/// 目录有效，用该目录创建终端。文本不区分区域，始终粘贴到目标终端。
-struct ExternalPaneDropZone: Equatable {
-  let direction: SplitDirection
-  let opensTerminal: Bool
-}
-
-@MainActor
-private final class ActivePaneHostView: NSView {
-  /// 所属面板的 ID：窗口级点击监视器沿 superview 链命中本视图后据此激活对应面板。
-  /// 顶边感应带与把手的高度：太矮抓不到，太高会让顶部一整条都在触发淡入。
-  private static let handleRevealHeight: CGFloat = 14
-  let paneID: UUID
-  private let activation: () -> Void
-  private let onExternalDrop: (NSPasteboard, ExternalPaneDropZone) -> Bool
-  private var dragHandle: PaneDragHandleView?
-  private var handleTrackingArea: NSTrackingArea?
-  private var inactiveOverlay: NSView?
-  private var externalDropZone: ExternalPaneDropZone?
-  /// 焦点状态可原地切换：切换聚焦面板只改这层遮罩的可见性，不重建视图树。
-  var isActivePane: Bool {
-    didSet { inactiveOverlay?.isHidden = isActivePane }
-  }
-
-  init(
-    paneID: UUID,
-    isActive: Bool,
-    onExternalDrop: @escaping (NSPasteboard, ExternalPaneDropZone) -> Bool,
-    activation: @escaping () -> Void
-  ) {
-    self.paneID = paneID
-    self.activation = activation
-    self.onExternalDrop = onExternalDrop
-    isActivePane = isActive
-    super.init(frame: .zero)
-    wantsLayer = true
-    registerForDraggedTypes([.fileURL, .URL, .string])
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  override func mouseDown(with event: NSEvent) {
-    activation()
-    super.mouseDown(with: event)
-  }
-
-  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-    updateExternalDropZone(sender)
-  }
-
-  override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-    updateExternalDropZone(sender)
-  }
-
-  override func draggingExited(_ sender: NSDraggingInfo?) {
-    externalDropZone = nil
-    layer?.borderWidth = 0
-  }
-
-  override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-    defer { draggingExited(sender) }
-    guard let externalDropZone else { return false }
-    activation()
-    return onExternalDrop(sender.draggingPasteboard, externalDropZone)
-  }
-
-  private func updateExternalDropZone(_ sender: NSDraggingInfo) -> NSDragOperation {
-    let point = convert(sender.draggingLocation, from: nil)
-    guard bounds.contains(point), bounds.width > 0, bounds.height > 0 else { return [] }
-    let distances: [(SplitDirection, CGFloat)] = [
-      (.left, point.x), (.right, bounds.width - point.x),
-      (.down, point.y), (.up, bounds.height - point.y),
-    ]
-    guard let nearest = distances.min(by: { $0.1 < $1.1 }) else { return [] }
-    let dimension = nearest.0.isHorizontal ? bounds.width : bounds.height
-    guard nearest.1 <= dimension * 0.30 else { return [] }
-    externalDropZone = ExternalPaneDropZone(
-      direction: nearest.0,
-      opensTerminal: nearest.1 > dimension * 0.15
-    )
-    layer?.borderWidth = 2
-    layer?.borderColor = (externalDropZone?.opensTerminal == true
-      ? NSColor.systemGreen : AsterTheme.accent).cgColor
-    return .copy
-  }
-
-  /// 顶边感应带：指针靠近 Pane 顶部时淡入拖动把手。用 `NSTrackingArea` 而不是叠一层
-  /// 视图——终端要占满整个 Pane，任何实体覆盖层都会吃掉那一条上的点击与拖选。
-  override func updateTrackingAreas() {
-    super.updateTrackingAreas()
-    if let handleTrackingArea { removeTrackingArea(handleTrackingArea) }
-    guard dragHandle != nil else { return }
-    let strip = NSRect(
-      x: 0, y: max(0, bounds.height - Self.handleRevealHeight),
-      width: bounds.width, height: min(bounds.height, Self.handleRevealHeight))
-    let area = NSTrackingArea(
-      rect: strip,
-      options: [.mouseEnteredAndExited, .activeInKeyWindow],
-      owner: self
-    )
-    addTrackingArea(area)
-    handleTrackingArea = area
-  }
-
-  override func mouseEntered(with event: NSEvent) { dragHandle?.isRevealed = true }
-  override func mouseExited(with event: NSEvent) { dragHandle?.isRevealed = false }
-
-  /// 给非聚焦的 Pane 铺一层褪色遮罩。取代过去那条强调色顶边——遮罩把「哪个 Pane
-  /// 在接收输入」表达为整块对比，而不是一条比终端内容还抢眼的装饰线。
-  /// 遮罩必须叠在内容之上、且点击穿透：点非活动 Pane 的第一下要能同时激活它并落到终端。
-  func installInactiveOverlay() {
-    guard inactiveOverlay == nil else { return }
-    let overlay = ClickThroughStripView()
-    overlay.wantsLayer = true
-    overlay.layer?.backgroundColor = AsterTheme.paper.withAlphaComponent(0.30).cgColor
-    overlay.isHidden = isActivePane
-    addSubview(overlay)
-    overlay.pinEdges(to: self)
-    inactiveOverlay = overlay
-  }
-
-  /// 安装顶边拖动把手；只有存在多个 Pane 时才有意义（单 Pane 无处可拖）。
-  func installDragHandle(onDragStart: @escaping (UUID, NSEvent) -> Void) {
-    guard dragHandle == nil else { return }
-    let paneID = paneID
-    let handle = PaneDragHandleView { event in onDragStart(paneID, event) }
-    handle.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(handle)
-    NSLayoutConstraint.activate([
-      handle.centerXAnchor.constraint(equalTo: centerXAnchor),
-      handle.topAnchor.constraint(equalTo: topAnchor),
-      handle.widthAnchor.constraint(equalToConstant: 96),
-      handle.heightAnchor.constraint(equalToConstant: Self.handleRevealHeight),
-    ])
-    dragHandle = handle
-  }
-
-}
-
-@MainActor
-private final class DocumentTextDelegate: NSObject, NSTextViewDelegate {
-  weak var runtime: WorkspacePaneRuntime?
-  init(runtime: WorkspacePaneRuntime) { self.runtime = runtime }
-  func textDidChange(_ notification: Notification) {
-    guard let text = notification.object as? NSTextView else { return }
-    runtime?.updateDocument(text.string)
-  }
-}
-
-@MainActor
-private final class FileBrowserViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
-  private let runtime: WorkspacePaneRuntime
-  private weak var tab: TerminalTabItem?
-  private let model: AppModel
-  private var directory: URL
-  private var entries: [URL] = []
-  private let table = NSTableView()
-
-  init(runtime: WorkspacePaneRuntime, tab: TerminalTabItem, model: AppModel) {
-    self.runtime = runtime
-    self.tab = tab
-    self.model = model
-    directory = URL(fileURLWithPath: runtime.descriptor.resourcePath ?? runtime.descriptor.workingDirectory)
-    super.init(nibName: nil, bundle: nil)
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  override func loadView() {
-    let column = NSStackView()
-    column.orientation = .vertical
-    column.spacing = 0
-    let toolbar = NSView()
-    toolbar.wantsLayer = true
-    toolbar.layer?.backgroundColor = AsterTheme.panel.cgColor
-    toolbar.translatesAutoresizingMaskIntoConstraints = false
-    toolbar.heightAnchor.constraint(equalToConstant: 36).isActive = true
-    let back = ActionButton(symbol: "chevron.left") { [weak self] in self?.goUp() }
-    let refresh = ActionButton(symbol: "arrow.clockwise") { [weak self] in self?.reload() }
-    let title = makeLabel(directory.lastPathComponent, size: 11, weight: .semibold)
-    let row = NSStackView(views: [back, title, NSView(), refresh])
-    row.orientation = .horizontal
-    row.edgeInsets = NSEdgeInsets(top: 4, left: 9, bottom: 4, right: 9)
-    toolbar.addSubview(row)
-    row.pinEdges(to: toolbar)
-    column.addArrangedSubview(toolbar)
-
-    table.headerView = nil
-    table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name")))
-    table.dataSource = self
-    table.delegate = self
-    table.target = self
-    table.doubleAction = #selector(openSelected)
-    table.backgroundColor = AsterTheme.paper
-    let contextMenu = NSMenu()
-    contextMenu.delegate = self
-    table.menu = contextMenu
-    let scroll = NSScrollView()
-    scroll.hasVerticalScroller = true
-    scroll.documentView = table
-    column.addArrangedSubview(scroll)
-    view = column
-    reload()
-  }
-
-  func numberOfRows(in tableView: NSTableView) -> Int { entries.count }
-
-  func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-    guard entries.indices.contains(row) else { return nil }
-    let url = entries[row]
-    let cell = NSTableCellView()
-    let directory = isDirectory(url)
-    let image = NSImageView(image: NSImage(systemSymbolName: directory ? "folder" : "doc", accessibilityDescription: nil) ?? NSImage())
-    image.contentTintColor = directory ? AsterTheme.accent : AsterTheme.secondaryInk
-    let label = makeLabel(url.lastPathComponent, size: 11.5)
-    let stack = NSStackView(views: [image, label])
-    stack.orientation = .horizontal
-    stack.spacing = 8
-    cell.addSubview(stack)
-    stack.pinEdges(to: cell, insets: NSEdgeInsets(top: 2, left: 8, bottom: 2, right: 8))
-    return cell
-  }
-
-  private func reload() {
-    do {
-      entries = try FileManager.default.contentsOfDirectory(
-        at: directory,
-        includingPropertiesForKeys: [.isDirectoryKey],
-        options: [.skipsHiddenFiles]
-      ).sorted {
-        let left = isDirectory($0)
-        let right = isDirectory($1)
-        return left == right
-          ? $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
-          : left
-      }
-    } catch { entries = [] }
-    table.reloadData()
-  }
-
-  private func goUp() {
-    let parent = directory.deletingLastPathComponent()
-    guard parent.path != directory.path else { return }
-    directory = parent
-    reload()
-  }
-
-  @objc private func openSelected() {
-    guard entries.indices.contains(table.selectedRow) else { return }
-    let url = entries[table.selectedRow]
-    if isDirectory(url) { directory = url; reload() }
-    else { tab?.openFile(url) }
-  }
-
-  /// 根据当前右键命中的行动态生成菜单，避免在目录刷新后菜单仍引用失效 URL。
-  func menuWillOpen(_ menu: NSMenu) {
-    menu.removeAllItems()
-    let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
-    guard entries.indices.contains(row) else { return }
-    table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-    let url = entries[row]
-    menu.addItem(ActionMenuItem(title: isDirectory(url) ? "打开文件夹" : "打开") { [weak self] in
-      self?.openURL(url)
-    })
-    if !isDirectory(url) {
-      menu.addItem(ActionMenuItem(title: "在预览中打开") { [weak self] in
-        self?.tab?.openPreview(url)
-      })
-      menu.addItem(ActionMenuItem(title: "发送到 Chat") { [weak self] in
-        self?.model.sendFileToChat(url)
-      })
-    }
-    menu.addItem(.separator())
-    menu.addItem(ActionMenuItem(title: "复制绝对路径") {
-      NSPasteboard.general.clearContents()
-      NSPasteboard.general.setString(url.path, forType: .string)
-    })
-    menu.addItem(ActionMenuItem(title: "在新终端中打开所在目录") { [weak tab] in
-      let directory = self.isDirectory(url) ? url.path : url.deletingLastPathComponent().path
-      tab?.split(direction: .right, workingDirectory: directory)
-    })
-    menu.addItem(ActionMenuItem(title: "在当前终端中 cd 到所在目录") { [weak tab] in
-      let directory = self.isDirectory(url) ? url.path : url.deletingLastPathComponent().path
-      _ = tab?.openDirectoryInTerminal(directory)
-    })
-    menu.addItem(.separator())
-    menu.addItem(ActionMenuItem(title: "在 Finder 中显示") {
-      NSWorkspace.shared.activateFileViewerSelecting([url])
-    })
-    menu.addItem(ActionMenuItem(title: "使用默认应用打开") {
-      NSWorkspace.shared.open(url)
-    })
-  }
-
-  private func openURL(_ url: URL) {
-    if isDirectory(url) {
-      directory = url
-      reload()
-    } else {
-      tab?.openFile(url)
-    }
-  }
-
-  private func isDirectory(_ url: URL) -> Bool {
-    (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-  }
-}
-
-/// Open Quickly 展示时覆盖工作区的轻量 scrim。点击浮层外部关闭，但不抢占
-/// 面板内部的鼠标和键盘事件。
-@MainActor
-private final class OpenQuicklyBackdropView: NSView {
-  private let dismiss: () -> Void
-
-  init(dismiss: @escaping () -> Void) {
-    self.dismiss = dismiss
-    super.init(frame: .zero)
-    wantsLayer = true
-    layer?.backgroundColor = NSColor.black.withAlphaComponent(0.055).cgColor
-    identifier = NSUserInterfaceItemIdentifier("open-quickly-backdrop")
-    setAccessibilityElement(true)
-    setAccessibilityLabel("关闭 Open Quickly")
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  override func mouseDown(with event: NSEvent) { dismiss() }
-  override func rightMouseDown(with event: NSEvent) { dismiss() }
-  override func otherMouseDown(with event: NSEvent) { dismiss() }
-}
-
-/// 只在真正的搜索框范围保留 I-beam，面板其余区域显式使用普通箭头。
-/// AppKit 在 borderless 搜索框上偶尔会留下过大的 cursor rect，四个外围矩形
-/// 能在不干扰搜索框文本定位的前提下覆盖它。
-@MainActor
-private final class OpenQuicklyPanelView: NSView {
-  weak var searchInputView: NSView?
-
-  override func resetCursorRects() {
-    super.resetCursorRects()
-    guard let searchInputView else {
-      addCursorRect(bounds, cursor: .arrow)
-      return
-    }
-    let searchRect = convert(searchInputView.bounds, from: searchInputView)
-      .intersection(bounds)
-    let rects = [
-      NSRect(x: bounds.minX, y: bounds.minY, width: searchRect.minX - bounds.minX,
-        height: bounds.height),
-      NSRect(x: searchRect.maxX, y: bounds.minY, width: bounds.maxX - searchRect.maxX,
-        height: bounds.height),
-      NSRect(x: searchRect.minX, y: bounds.minY, width: searchRect.width,
-        height: searchRect.minY - bounds.minY),
-      NSRect(x: searchRect.minX, y: searchRect.maxY, width: searchRect.width,
-        height: bounds.maxY - searchRect.maxY),
-    ]
-    for rect in rects where rect.width > 0 && rect.height > 0 {
-      addCursorRect(rect, cursor: .arrow)
-    }
-  }
-}
-
-/// Borderless NSSearchField 的图标/文本布局。起点基于 bounds 而不是 bezel，
-/// 因此关闭系统边框后仍保持 8pt 图标左边距和 8pt 图文间距。
-@MainActor
-private final class OpenQuicklySearchFieldCell: NSSearchFieldCell {
-  override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
-    let size: CGFloat = 16
-    return NSRect(x: rect.minX + 4, y: rect.midY - size / 2, width: size, height: size)
-  }
-
-  override func searchTextRect(forBounds rect: NSRect) -> NSRect {
-    var textRect = super.searchTextRect(forBounds: rect)
-    let leading = rect.minX + 28
-    let consumed = max(0, leading - textRect.minX)
-    textRect.origin.x = leading
-    textRect.size.width = max(0, textRect.width - consumed)
-    return textRect
-  }
-}
-
-/// Open Quickly 浮层:标签条过滤 + 双行结果列表(图标/相对时间/类型徽章)+ 底部
-/// 快捷键栏。数据与匹配在 AsterCore 的 OpenQuicklyIndex,这里只负责展示与动作接线。
-@MainActor
-private final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDelegate {
-  /// 可跳转目标:action 是 ↩ 主动作,menuActions 供 ⌘K 弹出的上下文菜单。
-  private struct Target {
-    let item: OpenQuicklyItem
-    let symbol: String
-    let badge: String
-    /// 运行中的命令行用 accent 图标突出,其余保持 secondaryInk。
-    let accented: Bool
-    let actionTitle: String
-    let action: () -> Void
-    var menuActions: [(title: String, handler: () -> Void)] = []
-  }
-
-  private let model: AppModel
-  private let resultsStack = NSStackView()
-  private let search = OverlaySearchField()
-  private var chips: [OpenQuicklyFilter: OpenQuicklyChip] = [:]
-  private var selectedFilter: OpenQuicklyFilter
-  private var targets: [Target] = []
-  private var targetsByID: [String: Target] = [:]
-  private var searchIndex = OpenQuicklyIndex(items: [])
-  private var visibleTargets: [Target] = []
-  /// 顶部过滤器和搜索输入复用可见行，避免每次点击都创建几十个 NSView 与约束。
-  private var rowPool: [OpenQuicklyRowView] = []
-  private var rows: [OpenQuicklyRowView] = []
-  private var selectedIndex = 0
-  private var historyCancellable: AnyCancellable?
-  private var targetsNeedRefresh = true
-  private var showsCommandHints = false
-  /// 浮层事件监视只在展示期间存活；关闭后立即移除，避免拦截终端的
-  /// `⌘W` / `⌘R` 等既有快捷键。`deinit` 是 nonisolated，因此句柄标为 unsafe。
-  private nonisolated(unsafe) var overlayEventMonitor: Any?
-
-  init(model: AppModel) {
-    self.model = model
-    self.selectedFilter = model.openQuicklyInitialFilter
-    super.init(nibName: nil, bundle: nil)
-    historyCancellable = model.agentHistoriesChanged.sink { [weak self] _ in
-      guard let self, self.isViewLoaded else { return }
-      self.rebuildTargets()
-      self.reload()
-    }
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  deinit {
-    if let overlayEventMonitor { NSEvent.removeMonitor(overlayEventMonitor) }
-  }
-
-  override func loadView() {
-    let host = OpenQuicklyPanelView()
-    host.wantsLayer = true
-    host.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.99).cgColor
-    host.layer?.cornerRadius = 16
-    host.layer?.borderWidth = 1
-    host.layer?.borderColor = AsterTheme.hairline.withAlphaComponent(0.90).cgColor
-    host.layer?.shadowColor = NSColor.black.cgColor
-    host.layer?.shadowOpacity = 0.22
-    host.layer?.shadowRadius = 24
-    host.layer?.shadowOffset = CGSize(width: 0, height: -10)
-    host.layer?.masksToBounds = false
-    host.identifier = NSUserInterfaceItemIdentifier("open-quickly-overlay")
-
-    // 系统 borderless NSSearchField 不会自动为搜索图标重新计算文本起点，
-    // 使用显式 cell 留出 24pt，避免 placeholder 与图标重叠。
-    search.cell = OpenQuicklySearchFieldCell(textCell: "")
-    search.placeholderString = "搜索命令、URL、文件…"
-    search.identifier = NSUserInterfaceItemIdentifier("open-quickly-search")
-    // 保留 NSSearchField 的搜索图标、IME 和文本编辑能力，只去掉会形成蓝色
-    // 长条的系统 bezel/focus ring；插入光标仍清晰表示输入焦点。
-    search.isBezeled = false
-    search.drawsBackground = false
-    search.focusRingType = .none
-    search.cell?.focusRingType = .none
-    search.font = NSFont.systemFont(ofSize: 15)
-    search.translatesAutoresizingMaskIntoConstraints = false
-    search.heightAnchor.constraint(equalToConstant: 36).isActive = true
-    search.setContentHuggingPriority(.required, for: .vertical)
-    search.setContentCompressionResistancePriority(.required, for: .vertical)
-    search.delegate = self
-    search.onMove = { [weak self] delta in self?.moveSelection(delta) }
-    search.onActivate = { [weak self] _ in self?.activateSelection() }
-    search.onCancel = { [weak model] in model?.isOpenQuicklyPresented = false }
-    search.onQuickSelect = { [weak self] digit in self?.quickSelect(digit) }
-    search.onShowActions = { [weak self] in self?.showActionsMenu() }
-    host.searchInputView = search
-
-    let column = NSStackView()
-    column.orientation = .vertical
-    column.alignment = .width
-    column.spacing = 8
-    column.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 10, right: 14)
-    let filterStrip = makeFilterStrip()
-    let resultsScroll = makeResultsScroll()
-    let separator = makeSeparator()
-    let footer = makeFooter()
-    let fullWidthViews = [search, filterStrip, resultsScroll, separator, footer]
-    for arrangedView in fullWidthViews {
-      column.addArrangedSubview(arrangedView)
-      arrangedView.translatesAutoresizingMaskIntoConstraints = false
-      arrangedView.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -28).isActive = true
-    }
-    host.addSubview(column)
-    column.pinEdges(to: host)
-    view = host
-    rebuildTargets()
-    reload()
-    DispatchQueue.main.async { [weak search] in search?.window?.makeFirstResponder(search) }
-  }
-
-  /// 展示边界安装本地事件监视。使用 local monitor 而不是仅覆写搜索框
-  /// `keyDown`，因为 AppKit 会在 first responder 之前处理 `⌘W` 等菜单等价键。
-  func didPresent() {
-    setCommandHintsVisible(NSEvent.modifierFlags.contains(.command))
-    if let window = view.window {
-      // `initialFirstResponder` 保证浮层恰在窗口激活过程中打开时，成为 key
-      // 后仍落到搜索框；已经是 key window 时则由 `makeFirstResponder` 立即生效。
-      window.initialFirstResponder = search
-      window.makeFirstResponder(search)
-    }
-    guard overlayEventMonitor == nil else { return }
-    overlayEventMonitor = NSEvent.addLocalMonitorForEvents(
-      matching: [.flagsChanged, .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]
-    ) { [weak self] event in
-      guard let self else { return event }
-      return self.handleOverlayEvent(event)
-    }
-  }
-
-  /// 关闭时同步清除监视和可见提示，重开时不会泄漏上一次 modifier 状态。
-  func didDismiss() {
-    if view.window?.initialFirstResponder === search {
-      view.window?.initialFirstResponder = nil
-    }
-    if let overlayEventMonitor {
-      NSEvent.removeMonitor(overlayEventMonitor)
-      self.overlayEventMonitor = nil
-    }
-    setCommandHintsVisible(false)
-  }
-
-  private func handleOverlayEvent(_ event: NSEvent) -> NSEvent? {
-    if [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type) {
-      guard let window = view.window, event.window === window else { return event }
-      // 直接把浮层 bounds 投影到 window 坐标后判定，与 `event.locationInWindow`
-      // 使用同一坐标系。反向转换事件点在 full-size content view 与标题栏共存时
-      // 可能把搜索框内点击误判成外部点击。
-      let overlayRectInWindow = view.convert(view.bounds, to: nil)
-      if !overlayRectInWindow.contains(event.locationInWindow) {
-        model.isOpenQuicklyPresented = false
-      }
-      return event
-    }
-    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-    if event.type == .flagsChanged {
-      setCommandHintsVisible(modifiers.contains(.command))
-      return event
-    }
-    guard event.type == .keyDown else { return event }
-    if event.keyCode == 53 {
-      model.isOpenQuicklyPresented = false
-      return nil
-    }
-    guard modifiers.contains(.command),
-      !modifiers.contains(.option), !modifiers.contains(.control), !modifiers.contains(.shift),
-      let character = event.charactersIgnoringModifiers?.lowercased()
-    else { return event }
-    let shortcuts: [String: OpenQuicklyFilter] = [
-      "0": .all, "w": .opened, "r": .recent, "z": .folder,
-      "s": .ssh, "g": .agent, "j": .current, "e": .recipe,
-    ]
-    guard let filter = shortcuts[character] else { return event }
-    selectFilter(filter)
-    return nil
-  }
-
-  /// 重开缓存浮层时恢复初始过滤器和空查询。目标只在展示边界更新；过滤器切换和逐字
-  /// 搜索只访问内存索引，不重复读取 SSH config、Recipes 或 Agent 历史。
-  func prepareForPresentation(filter: OpenQuicklyFilter, refreshesTargets: Bool) {
-    selectedFilter = filter
-    guard isViewLoaded else { return }
-    search.stringValue = ""
-    for (key, chip) in chips { chip.isChipSelected = key == filter }
-    if refreshesTargets || targetsNeedRefresh { rebuildTargets() }
-    selectedIndex = 0
-    reload()
-  }
-
-  private func rebuildTargets() {
-    targets = makeTargets()
-    targetsByID = Dictionary(uniqueKeysWithValues: targets.map { ($0.item.id, $0) })
-    searchIndex = OpenQuicklyIndex(items: targets.map(\.item))
-    targetsNeedRefresh = false
-  }
-
-  func invalidateTargets() { targetsNeedRefresh = true }
-
-  /// 顶部分类标签条:替代原 NSPopUpButton,与参考设计一致。
-  private func makeFilterStrip() -> NSView {
-    let strip = NSStackView()
-    strip.orientation = .horizontal
-    strip.spacing = 4
-    let titles: [OpenQuicklyFilter: String] = [
-      .all: "全部", .opened: "已打开", .recent: "最近", .folder: "文件夹",
-      .ssh: "SSH", .agent: "智能体", .current: "当前", .recipe: "Recipes",
-    ]
-    for filter in OpenQuicklyFilter.allCases {
-      let chip = OpenQuicklyChip(
-        title: titles[filter] ?? filter.rawValue,
-        commandHint: Self.commandHint(for: filter)
-      ) { [weak self] in
-        self?.selectFilter(filter)
-      }
-      chip.identifier = NSUserInterfaceItemIdentifier("open-quickly-chip-\(filter.rawValue)")
-      chip.isChipSelected = filter == selectedFilter
-      chips[filter] = chip
-      strip.addArrangedSubview(chip)
-    }
-    let spacer = NSView()
-    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    strip.addArrangedSubview(spacer)
-    return strip
-  }
-
-  /// 快捷键与用户按住 ⌘ 时 chip 下方的动态提示保持同一数据源。
-  private static func commandHint(for filter: OpenQuicklyFilter) -> String {
-    switch filter {
-    case .all: "⌘0"
-    case .opened: "⌘W"
-    case .recent: "⌘R"
-    case .folder: "⌘Z"
-    case .ssh: "⌘S"
-    case .agent: "⌘G"
-    case .current: "⌘J"
-    case .recipe: "⌘E"
-    }
-  }
-
-  /// 结果区滚动容器:内容不足时收缩,超出 400pt 滚动;沿用详情面板的顶部锚定模式。
-  private func makeResultsScroll() -> NSView {
-    resultsStack.orientation = .vertical
-    resultsStack.alignment = .width
-    resultsStack.spacing = 2
-    resultsStack.identifier = NSUserInterfaceItemIdentifier("open-quickly-results")
-    let scroll = NSScrollView()
-    scroll.drawsBackground = false
-    scroll.hasVerticalScroller = true
-    scroll.autohidesScrollers = true
-    let document = FlippedDocumentView()
-    document.addSubview(resultsStack)
-    scroll.documentView = document
-    resultsStack.translatesAutoresizingMaskIntoConstraints = false
-    document.translatesAutoresizingMaskIntoConstraints = false
-    scroll.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-      document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-      document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-      document.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor),
-      resultsStack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
-      resultsStack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
-      resultsStack.topAnchor.constraint(equalTo: document.topAnchor),
-      document.bottomAnchor.constraint(greaterThanOrEqualTo: resultsStack.bottomAnchor),
-      scroll.heightAnchor.constraint(lessThanOrEqualToConstant: 400),
-    ])
-    return scroll
-  }
-
-  private func makeSeparator() -> NSView {
-    let line = NSView()
-    line.wantsLayer = true
-    line.layer?.backgroundColor = AsterTheme.hairline.cgColor
-    line.translatesAutoresizingMaskIntoConstraints = false
-    line.heightAnchor.constraint(equalToConstant: 1).isActive = true
-    return line
-  }
-
-  /// 底部快捷键栏:左 Quick Select 提示,右「跳转到 ↩」与「操作 ⌘K」按钮。
-  private func makeFooter() -> NSView {
-    let quickSelect = makeLabel("Quick Select ⌘1–9", size: 10, color: AsterTheme.tertiaryInk)
-    let jump = makeLabel("跳转到 ↩", size: 10, color: AsterTheme.tertiaryInk)
-    let actions = ActionButton(title: "操作 ⌘K", bezelStyle: .inline) { [weak self] in
-      self?.showActionsMenu()
-    }
-    actions.font = NSFont.systemFont(ofSize: 10)
-    let row = NSStackView(views: [quickSelect, NSView(), jump, actions])
-    row.orientation = .horizontal
-    row.spacing = 8
-    return row
-  }
-
-  private func selectFilter(_ filter: OpenQuicklyFilter) {
-    guard filter != selectedFilter else { return }
-    selectedFilter = filter
-    for (key, chip) in chips { chip.isChipSelected = key == filter }
-    selectedIndex = 0
-    reload()
-  }
-
-  func controlTextDidChange(_ obj: Notification) {
-    selectedIndex = 0
-    reload()
-  }
-
-  private func reload() {
-    rows.forEach { $0.detachFromResultsStack() }
-    resultsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-    let items = searchIndex.search(
-      query: search.stringValue,
-      filter: selectedFilter,
-      maximumResults: 50
-    )
-    visibleTargets = items.compactMap { targetsByID[$0.id] }
-    rows.removeAll()
-    if visibleTargets.isEmpty {
-      resultsStack.addArrangedSubview(
-        makeLabel("没有匹配项", size: 11, color: AsterTheme.secondaryInk))
-      return
-    }
-    // 多类型视图(.all / .current)按 kind 分组并显示小节标题;单类型过滤器下
-    // 标签条已说明类型,不再重复标题。
-    let showHeaders = selectedFilter == .all || selectedFilter == .current
-    for section in OpenQuicklyIndex.sections(for: items) {
-      if showHeaders {
-        let header = makeLabel(
-          Self.sectionTitle(for: section.kind), size: 10, weight: .semibold,
-          color: AsterTheme.tertiaryInk)
-        header.alignment = .left
-        header.translatesAutoresizingMaskIntoConstraints = false
-        let wrapper = NSView()
-        wrapper.addSubview(header)
-        header.pinEdges(to: wrapper, insets: NSEdgeInsets(top: 6, left: 4, bottom: 2, right: 4))
-        resultsStack.addArrangedSubview(wrapper)
-      }
-      for item in section.items {
-        guard let target = targetsByID[item.id] else { continue }
-        let rowIndex = rows.count
-        let row: OpenQuicklyRowView
-        if rowPool.indices.contains(rowIndex) {
-          row = rowPool[rowIndex]
-        } else {
-          row = OpenQuicklyRowView()
-          rowPool.append(row)
-        }
-        row.configure(
-          item: item, symbol: target.symbol, badge: target.badge,
-          accented: target.accented
-        ) { [weak self] in
-          guard let self, let index = self.visibleTargets.firstIndex(where: {
-            $0.item.id == item.id
-          }) else { return }
-          self.selectedIndex = index
-          self.activateSelection()
-        }
-        resultsStack.addArrangedSubview(row)
-        row.attach(to: resultsStack)
-        rows.append(row)
-      }
-    }
-    selectedIndex = min(selectedIndex, rows.count - 1)
-    updateCommandHintAppearance()
-    updateSelectionAppearance()
-  }
-
-  /// 小节标题与徽章文案共用同一套中文映射。
-  private static func sectionTitle(for kind: OpenQuicklyKind) -> String {
-    switch kind {
-    case .opened: "已打开"
-    case .current: "当前"
-    case .prompt: "提示词"
-    case .recent: "最近"
-    case .folder: "文件夹"
-    case .ssh: "SSH"
-    case .agent: "智能体"
-    case .recipe: "Recipes"
-    }
-  }
-
-  private func moveSelection(_ delta: Int) {
-    guard !rows.isEmpty else { return }
-    selectedIndex = (selectedIndex + delta + rows.count) % rows.count
-    updateSelectionAppearance()
-  }
-
-  /// ⌘1…9 按可见顺序(跨小节连续编号)直接激活对应行。
-  private func quickSelect(_ digit: Int) {
-    let index = digit - 1
-    guard visibleTargets.indices.contains(index) else { return }
-    selectedIndex = index
-    updateSelectionAppearance()
-    activateSelection()
-  }
-
-  private func activateSelection() {
-    guard visibleTargets.indices.contains(selectedIndex) else { return }
-    visibleTargets[selectedIndex].action()
-  }
-
-  /// ⌘K / 底部按钮:弹出选中行的操作菜单,首项是主动作,其余为 kind 附加动作。
-  private func showActionsMenu() {
-    guard visibleTargets.indices.contains(selectedIndex),
-      rows.indices.contains(selectedIndex)
-    else { return }
-    let target = visibleTargets[selectedIndex]
-    let menu = NSMenu()
-    menu.addItem(ActionMenuItem(title: target.actionTitle) { target.action() })
-    if !target.menuActions.isEmpty {
-      menu.addItem(.separator())
-      for entry in target.menuActions {
-        menu.addItem(ActionMenuItem(title: entry.title) { entry.handler() })
-      }
-    }
-    let row = rows[selectedIndex]
-    menu.popUp(
-      positioning: nil,
-      at: NSPoint(x: row.bounds.maxX - 24, y: row.bounds.midY),
-      in: row)
-  }
-
-  private func updateSelectionAppearance() {
-    for (index, row) in rows.enumerated() {
-      row.isRowSelected = index == selectedIndex
-    }
-  }
-
-  /// 修饰键变化只更新已复用的 chip/行外观，不重做搜索或创建视图。
-  private func setCommandHintsVisible(_ visible: Bool) {
-    guard showsCommandHints != visible else { return }
-    showsCommandHints = visible
-    for chip in chips.values { chip.showsCommandHint = visible }
-    updateCommandHintAppearance()
-  }
-
-  private func updateCommandHintAppearance() {
-    for (index, row) in rows.enumerated() {
-      row.setCommandHint(index < 9 ? "⌘\(index + 1)" : nil, visible: showsCommandHints)
-    }
-  }
-
-  /// 构建全部候选目标。每类目标的 symbol/badge/菜单在创建时确定,reload 只做过滤。
-  private func makeTargets() -> [Target] {
-    var result: [Target] = []
-    for tab in model.tabs {
-      result.append(Target(
-        item: .init(
-          id: "opened:\(tab.id.uuidString)", kind: .opened, title: tab.title,
-          detail: tab.workingDirectory),
-        symbol: "macwindow", badge: "标签", accented: false, actionTitle: "跳转到标签"
-      ) { [weak model, weak tab] in
-        guard let tab else { return }
-        model?.select(tab)
-        model?.isOpenQuicklyPresented = false
-      })
-      result[result.count - 1].menuActions = [(
-        title: "关闭标签",
-        handler: { [weak model, weak tab] in
-          guard let tab else { return }
-          model?.select(tab)
-          model?.isOpenQuicklyPresented = false
-          model?.closeSelectedTab()
-        }
-      )]
-    }
-    if let current = model.selectedTab {
-      for (index, pane) in current.layout.allPanes.enumerated() {
-        let session = current.runtime(for: pane.id)?.terminalSession
-        let command = session?.foregroundCommandName
-        // 运行中的前台命令(如 kimi)直接显示命令名;关联时间取同 provider 最新会话。
-        let matchedHistory: AgentSessionHistory? = session?.activeAgentProvider.flatMap {
-          provider in
-          model.agentHistories
-            .filter { $0.metadata.configuration.provider == provider }
-            .max { $0.metadata.updatedAt < $1.metadata.updatedAt }
-        }
-        result.append(Target(
-          item: .init(
-            id: "current:\(current.id.uuidString):\(pane.id.uuidString)", kind: .current,
-            title: command ?? "Pane \(index + 1) · \(pane.kind.rawValue)",
-            detail: pane.workingDirectory,
-            timestamp: matchedHistory?.metadata.updatedAt),
-          symbol: pane.kind == .terminal ? "terminal" : "doc.text",
-          badge: command != nil ? "Cmd" : "Pane",
-          accented: command != nil, actionTitle: "聚焦 Pane"
-        ) { [weak model, weak current] in
-          guard let current else { return }
-          model?.revealWorkspaceLocation(tabID: current.id, paneID: pane.id)
-        })
-      }
-      result.append(contentsOf: makePromptTargets(tab: current))
-    }
-    for snapshot in model.recentlyClosedSnapshots {
-      let directory = snapshot.layout.allPanes.first?.workingDirectory ?? ""
-      result.append(Target(
-        item: .init(
-          id: "recent:\(snapshot.id.uuidString)", kind: .recent, title: snapshot.title,
-          detail: directory),
-        symbol: "clock.arrow.circlepath", badge: "最近", accented: false,
-        actionTitle: "恢复标签"
-      ) { [weak model] in _ = model?.reopenClosedTab(id: snapshot.id) })
-    }
-    for match in model.frequentFolderMatches(limit: 200) {
-      result.append(Target(
-        item: .init(
-          id: "folder:\(match.path)", kind: .folder,
-          title: URL(fileURLWithPath: match.path).lastPathComponent,
-          detail: match.path, score: match.score),
-        symbol: "folder", badge: "文件夹", accented: false, actionTitle: "新建标签"
-      ) { [weak model] in model?.newTab(workingDirectory: match.path, hasContent: true) })
-      result[result.count - 1].menuActions = [(
-        title: "在 Finder 中显示",
-        handler: { [weak model] in
-          NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: match.path)
-          model?.isOpenQuicklyPresented = false
-        }
-      )]
-    }
-    for host in readSSHHosts() {
-      result.append(Target(
-        item: .init(id: "ssh:\(host.alias)", kind: .ssh, title: host.alias, detail: host.destination),
-        symbol: "network", badge: "SSH", accented: false, actionTitle: "连接"
-      ) { [weak model] in model?.openSSHHost(host) })
-    }
-    for provider in model.enabledAgentProviders {
-      result.append(Target(
-        item: .init(
-          id: "agent-launch:\(provider.rawValue)",
-          kind: .agent,
-          title: "启动 \(provider.commandName)",
-          detail: "在当前目录创建新的 Agent 会话"
-        ),
-        symbol: "sparkles", badge: "Agent", accented: false, actionTitle: "启动"
-      ) { [weak model] in model?.launchAgent(provider) })
-    }
-    for history in model.agentHistories.prefix(500) {
-      let metadata = history.metadata
-      result.append(Target(
-        item: .init(
-          id: "agent:\(metadata.configuration.provider.rawValue):\(metadata.id)",
-          kind: .agent,
-          title: metadata.title,
-          detail: "\(metadata.configuration.provider.commandName) · \(metadata.projectDirectory)",
-          timestamp: metadata.updatedAt
-        ),
-        symbol: "bubble.left.and.bubble.right", badge: "会话", accented: false,
-        actionTitle: "继续会话"
-      ) { [weak model] in model?.continueAgentSession(metadata, kind: .resume) })
-      result[result.count - 1].menuActions = [(
-        title: "Fork 会话",
-        handler: { [weak model] in model?.continueAgentSession(metadata, kind: .fork) }
-      )]
-    }
-    for url in readRecipeURLs() {
-      result.append(Target(
-        item: .init(
-          id: "recipe:\(url.path)", kind: .recipe,
-          title: url.deletingPathExtension().lastPathComponent, detail: url.path),
-        symbol: "doc.text", badge: "Recipe", accented: false, actionTitle: "打开 Recipe"
-      ) { [weak model] in model?.openRecipe(from: url) })
-      result[result.count - 1].menuActions = [(
-        title: "在 Finder 中显示",
-        handler: { [weak model] in
-          NSWorkspace.shared.selectFile(
-            url.lastPathComponent,
-            inFileViewerRootedAtPath: url.deletingLastPathComponent().path)
-          model?.isOpenQuicklyPresented = false
-        }
-      )]
-    }
-    return result
-  }
-
-  /// 「当前」页的提示词分组:pane ↔ session 没有可靠映射(metadata 不含 tty/pid),
-  /// 用启发式取当前 tab 中正在运行 Agent 的 pane(优先聚焦 pane)的同 provider、
-  /// updatedAt 最新会话,列出其最近 6 条 user prompt,点击粘贴回终端输入行。
-  private func makePromptTargets(tab: TerminalTabItem) -> [Target] {
-    let agentPanes = tab.layout.allPanes.compactMap {
-      pane -> (paneID: UUID, provider: AgentProvider)? in
-      guard let provider = tab.runtime(for: pane.id)?.terminalSession?.activeAgentProvider
-      else { return nil }
-      return (pane.id, provider)
-    }
-    let ordered = agentPanes.sorted { lhs, _ in lhs.paneID == tab.activePaneID }
-    guard let match = ordered.first,
-      let history = model.agentHistories
-        .filter({ $0.metadata.configuration.provider == match.provider })
-        .max(by: { $0.metadata.updatedAt < $1.metadata.updatedAt })
-    else { return [] }
-    let prompts = history.transcript.entries.filter {
-      if case .message(role: .user) = $0.kind { return !$0.text.isEmpty }
-      return false
-    }.suffix(6)
-    return prompts.reversed().map { entry in
-      let collapsed = entry.text
-        .components(separatedBy: .whitespacesAndNewlines)
-        .filter { !$0.isEmpty }
-        .joined(separator: " ")
-      var target = Target(
-        item: .init(
-          id: "prompt:\(history.metadata.id):\(entry.sourceRecordIndex)", kind: .prompt,
-          title: collapsed, detail: history.metadata.title, timestamp: entry.timestamp),
-        symbol: "quote.bubble", badge: "Prompt", accented: false, actionTitle: "粘贴到终端"
-      ) { [weak model] in
-        model?.insertPromptIntoPane(tabID: tab.id, paneID: match.paneID, text: entry.text)
-      }
-      target.menuActions = [(
-        title: "复制到剪贴板",
-        handler: { [weak model] in
-          NSPasteboard.general.clearContents()
-          NSPasteboard.general.setString(entry.text, forType: .string)
-          model?.isOpenQuicklyPresented = false
-        }
-      )]
-      return target
-    }
-  }
-
-  private func readSSHHosts() -> [SSHHost] {
-    let url = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".ssh/config")
-    guard let text = readRegularTextFile(url, maximumBytes: 1 * 1_024 * 1_024) else { return [] }
-    return SSHConfigParser.parse(text)
-  }
-
-  private func readRecipeURLs() -> [URL] {
-    let root = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Application Support/Aster/Recipes", isDirectory: true)
-    guard let entries = try? FileManager.default.contentsOfDirectory(
-      at: root,
-      includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
-      options: [.skipsHiddenFiles, .skipsPackageDescendants]
-    ) else { return [] }
-    return entries.filter { url in
-      guard ["asterrecipe", "ottyrecipe"].contains(url.pathExtension.lowercased()),
-        let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-      else { return false }
-      return values.isRegularFile == true && values.isSymbolicLink != true
-    }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-      .prefix(200).map { $0 }
-  }
-
-  private func readRegularTextFile(_ url: URL, maximumBytes: Int) -> String? {
-    guard let values = try? url.resourceValues(forKeys: [
-      .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
-    ]), values.isRegularFile == true, values.isSymbolicLink != true,
-      let size = values.fileSize, size <= maximumBytes,
-      let data = try? Data(contentsOf: url, options: [.mappedIfSafe]), data.count <= maximumBytes
-    else { return nil }
-    return String(data: data, encoding: .utf8)
-  }
-}
-
-/// Open Quickly 顶部过滤器 chip:未选中次要文字无底色,选中 accent 文字 + accent 浅底。
-@MainActor
-private final class OpenQuicklyChip: NSButton {
-  var isChipSelected = false {
-    didSet { applyAppearance() }
-  }
-  var showsCommandHint = false {
-    didSet {
-      guard showsCommandHint != oldValue else { return }
-      invalidateIntrinsicContentSize()
-      applyAppearance()
-    }
-  }
-
-  private let fullTitle: String
-  private let commandHint: String
-  private let stableWidth: CGFloat
-
-  /// 创建文字 chip;点击经闭包桥接,避免 target/action 样板。
-  init(title: String, commandHint: String, handler: @escaping () -> Void) {
-    fullTitle = title
-    self.commandHint = commandHint
-    let titleWidth = (title as NSString).size(withAttributes: [
-      .font: NSFont.systemFont(ofSize: 12, weight: .semibold)
-    ]).width
-    let hintWidth = (commandHint as NSString).size(withAttributes: [
-      .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .medium)
-    ]).width
-    stableWidth = ceil(max(titleWidth, hintWidth)) + 20
-    super.init(frame: .zero)
-    isBordered = false
-    wantsLayer = true
-    layer?.cornerRadius = 12
-    layer?.borderWidth = 1
-    target = self
-    action = #selector(invoke)
-    self.handler = handler
-    translatesAutoresizingMaskIntoConstraints = false
-    applyAppearance()
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  private var handler: (() -> Void)?
-
-  @objc private func invoke() { handler?() }
-
-  /// 宽度按标题和快捷键的较大者预留，按下/松开 ⌘ 只改变高度，不让标签条
-  /// 水平跳动。快捷键可见时增高为双行 pill。
-  override var intrinsicContentSize: NSSize {
-    NSSize(width: stableWidth, height: showsCommandHint ? 42 : 26)
-  }
-
-  override func viewDidChangeEffectiveAppearance() {
-    super.viewDidChangeEffectiveAppearance()
-    applyAppearance()
-  }
-
-  private func applyAppearance() {
-    let color = isChipSelected ? AsterTheme.accent : AsterTheme.secondaryInk
-    let paragraph = NSMutableParagraphStyle()
-    paragraph.alignment = .center
-    let text = NSMutableAttributedString(
-      string: fullTitle,
-      attributes: [
-        .font: NSFont.systemFont(ofSize: 12, weight: isChipSelected ? .semibold : .regular),
-        .foregroundColor: color,
-        .paragraphStyle: paragraph,
-      ])
-    if showsCommandHint {
-      text.append(NSAttributedString(
-        string: "\n\(commandHint)",
-        attributes: [
-          .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .medium),
-          .foregroundColor: isChipSelected
-            ? AsterTheme.accent.withAlphaComponent(0.88) : AsterTheme.tertiaryInk,
-          .paragraphStyle: paragraph,
-        ]))
-    }
-    attributedTitle = text
-    layer?.cornerRadius = showsCommandHint ? 16 : 12
-    layer?.backgroundColor = isChipSelected
-      ? AsterTheme.accent.withAlphaComponent(0.14).cgColor : NSColor.clear.cgColor
-    layer?.borderColor = (isChipSelected ? AsterTheme.accent : AsterTheme.hairline)
-      .withAlphaComponent(isChipSelected ? 0.70 : 0.72).cgColor
-    setAccessibilityLabel(showsCommandHint ? "\(fullTitle), \(commandHint)" : fullTitle)
-  }
-}
-
-/// Open Quickly 单行结果:SF Symbol 图标 + 标题/副标题双行 + 右侧相对时间与类型徽章。
-@MainActor
-private final class OpenQuicklyRowView: NSButton {
-  var isRowSelected = false {
-    didSet { applySelection() }
-  }
-
-  private let icon = NSImageView()
-  private let titleLabel = makeLabel("", size: 13, color: AsterTheme.ink)
-  private let detailLabel = makeLabel("", size: 11, color: AsterTheme.secondaryInk)
-  private let timestampLabel = makeLabel("", size: 11, color: AsterTheme.tertiaryInk)
-  private let badgeLabel = makeLabel("", size: 9, weight: .medium, color: AsterTheme.secondaryInk)
-  private let badgeBackground = NSView()
-  private let shortcutLabel = makeLabel(
-    "", size: 10, weight: .medium, color: AsterTheme.secondaryInk)
-  private let shortcutBackground = NSView()
-  private var handler: (() -> Void)?
-  private var resultsWidthConstraint: NSLayoutConstraint?
-
-  /// 结构和约束只创建一次；`configure` 更新文本与动作，使过滤器切换只改现有行内容。
-  init() {
-    super.init(frame: .zero)
-    title = ""
-    isBordered = false
-    wantsLayer = true
-    layer?.cornerRadius = 8
-    target = self
-    action = #selector(invoke)
-
-    icon.translatesAutoresizingMaskIntoConstraints = false
-    icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
-    icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
-
-    shortcutBackground.wantsLayer = true
-    shortcutBackground.layer?.cornerRadius = 4
-    shortcutBackground.layer?.backgroundColor = AsterTheme.panel.cgColor
-    shortcutBackground.layer?.borderWidth = 1
-    shortcutBackground.layer?.borderColor = AsterTheme.hairline.withAlphaComponent(0.72).cgColor
-    shortcutBackground.addSubview(shortcutLabel)
-    shortcutLabel.pinEdges(
-      to: shortcutBackground, insets: NSEdgeInsets(top: 2, left: 5, bottom: 2, right: 5))
-    shortcutBackground.isHidden = true
-
-    titleLabel.lineBreakMode = .byTruncatingTail
-    detailLabel.lineBreakMode = .byTruncatingMiddle
-    let textColumn = NSStackView(views: [titleLabel, detailLabel])
-    textColumn.orientation = .vertical
-    textColumn.spacing = 1
-    textColumn.alignment = .leading
-
-    let trailing = NSStackView()
-    trailing.orientation = .horizontal
-    trailing.spacing = 8
-    trailing.alignment = .centerY
-    trailing.addArrangedSubview(timestampLabel)
-    badgeBackground.wantsLayer = true
-    badgeBackground.layer?.cornerRadius = 4
-    badgeBackground.layer?.backgroundColor = AsterTheme.secondaryInk
-      .withAlphaComponent(0.12).cgColor
-    badgeBackground.addSubview(badgeLabel)
-    badgeLabel.pinEdges(
-      to: badgeBackground, insets: NSEdgeInsets(top: 2, left: 5, bottom: 2, right: 5))
-    trailing.addArrangedSubview(badgeBackground)
-
-    let spacer = NSView()
-    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    let row = NSStackView(views: [shortcutBackground, icon, textColumn, spacer, trailing])
-    row.orientation = .horizontal
-    row.spacing = 10
-    row.alignment = .centerY
-    addSubview(row)
-    row.pinEdges(to: self, insets: NSEdgeInsets(top: 6, left: 10, bottom: 6, right: 10))
-    textColumn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-    textColumn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    translatesAutoresizingMaskIntoConstraints = false
-    heightAnchor.constraint(equalToConstant: 44).isActive = true
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  /// 跨视图宽度约束只在行已经加入 Stack 后激活；复用前先停用，避免约束引用已经
-  /// 移出层级的行。这样既得到整行选中背景，也不会触发 no-common-ancestor 异常。
-  func attach(to stack: NSStackView) {
-    resultsWidthConstraint?.isActive = false
-    let constraint = widthAnchor.constraint(equalTo: stack.widthAnchor)
-    constraint.isActive = true
-    resultsWidthConstraint = constraint
-  }
-
-  func detachFromResultsStack() {
-    resultsWidthConstraint?.isActive = false
-    resultsWidthConstraint = nil
-  }
-
-  /// 复用行时完整覆盖所有可见状态，防止上一过滤器的时间、徽章或动作泄漏到新结果。
-  func configure(
-    item: OpenQuicklyItem, symbol: String, badge: String, accented: Bool,
-    handler: @escaping () -> Void
-  ) {
-    self.handler = handler
-    identifier = NSUserInterfaceItemIdentifier("open-quickly-row-\(item.id)")
-    icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: badge)
-    icon.contentTintColor = accented ? AsterTheme.accent : AsterTheme.secondaryInk
-    titleLabel.stringValue = item.title
-    detailLabel.stringValue = item.detail
-    detailLabel.isHidden = item.detail.isEmpty
-    timestampLabel.stringValue = item.timestamp.map { RelativeTime.string(since: $0) } ?? ""
-    timestampLabel.isHidden = item.timestamp == nil
-    badgeLabel.stringValue = badge
-    badgeBackground.identifier = NSUserInterfaceItemIdentifier("open-quickly-badge-\(item.id)")
-    shortcutBackground.identifier = NSUserInterfaceItemIdentifier(
-      "open-quickly-shortcut-\(item.id)")
-    toolTip = item.detail.isEmpty ? item.title : "\(item.title)\n\(item.detail)"
-    setAccessibilityLabel(item.title)
-  }
-
-  /// 按住 ⌘ 时，前九行用与实际 Quick Select 一致的键帽替换图标；
-  /// 其余行仍保留类型图标，避免暗示不存在的快捷键。
-  func setCommandHint(_ hint: String?, visible: Bool) {
-    let showsHint = visible && hint != nil
-    shortcutLabel.stringValue = hint ?? ""
-    shortcutBackground.isHidden = !showsHint
-    icon.isHidden = showsHint
-  }
-
-  @objc private func invoke() { handler?() }
-
-  private func applySelection() {
-    layer?.backgroundColor = isRowSelected
-      ? AsterTheme.accent.withAlphaComponent(0.16).cgColor : NSColor.clear.cgColor
-  }
-}
-
-@MainActor
-private final class GlobalFindOverlayViewController: NSViewController, NSSearchFieldDelegate {
-  private let model: AppModel
-  private let stack = NSStackView()
-  private let search = OverlaySearchField()
-  private let caseSensitive = NSButton(title: "Aa", target: nil, action: nil)
-  private let regularExpression = NSButton(title: ".*", target: nil, action: nil)
-  private let documents: [WorkspaceSearchDocument]
-  private var results: [WorkspaceSearchResult] = []
-  private var buttons: [NSButton] = []
-  private var selectedIndex = 0
-
-  init(model: AppModel) {
-    self.model = model
-    documents = model.workspaceSearchDocuments()
-    super.init(nibName: nil, bundle: nil)
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  override func loadView() {
-    let host = NSView()
-    host.wantsLayer = true
-    host.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.98).cgColor
-    host.layer?.cornerRadius = 12
-    host.layer?.borderWidth = 1
-    host.layer?.borderColor = AsterTheme.hairline.cgColor
-    host.shadow = NSShadow()
-    host.shadow?.shadowBlurRadius = 24
-    host.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.22)
-    stack.orientation = .vertical
-    stack.spacing = 6
-    stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-    search.placeholderString = "在全部终端和已打开文件中查找…"
-    search.delegate = self
-    search.onMove = { [weak self] delta in self?.moveSelection(delta) }
-    search.onActivate = { [weak self] _ in self?.activateSelection() }
-    search.onCancel = { [weak model] in model?.isGlobalFindPresented = false }
-    for button in [caseSensitive, regularExpression] {
-      button.setButtonType(.toggle)
-      button.bezelStyle = .inline
-      button.target = self
-      button.action = #selector(optionsChanged(_:))
-    }
-    caseSensitive.toolTip = "区分大小写"
-    regularExpression.toolTip = "正则表达式"
-    let header = NSStackView(views: [search, caseSensitive, regularExpression])
-    header.orientation = .horizontal
-    header.spacing = 8
-    stack.addArrangedSubview(header)
-    host.addSubview(stack)
-    stack.pinEdges(to: host)
-    view = host
-    reload()
-    DispatchQueue.main.async { [weak search] in search?.window?.makeFirstResponder(search) }
-  }
-
-  func controlTextDidChange(_ obj: Notification) {
-    selectedIndex = 0
-    reload()
-  }
-
-  @objc private func optionsChanged(_ sender: Any?) {
-    selectedIndex = 0
-    reload()
-  }
-
-  private func reload() {
-    while stack.arrangedSubviews.count > 1 {
-      stack.arrangedSubviews.last?.removeFromSuperview()
-    }
-    results = GlobalWorkspaceSearch.search(
-      documents: documents,
-      query: search.stringValue,
-      options: .init(
-        caseSensitive: caseSensitive.state == .on,
-        regularExpression: regularExpression.state == .on
-      ),
-      maximumResults: 500
-    )
-    buttons.removeAll()
-    if search.stringValue.isEmpty {
-      stack.addArrangedSubview(makeLabel("输入内容以搜索当前窗口的全部 Pane。", size: 11, color: AsterTheme.secondaryInk))
-      return
-    }
-    if results.isEmpty {
-      stack.addArrangedSubview(makeLabel("没有匹配项", size: 11, color: AsterTheme.secondaryInk))
-      return
-    }
-    for result in results.prefix(12) {
-      let button = ActionButton(
-        title: "\(result.title):\(result.line)    \(result.preview)", bezelStyle: .inline
-      ) { [weak model] in
-        model?.revealWorkspaceLocation(
-          tabID: result.tabID,
-          paneID: result.paneID,
-          absoluteRow: result.absoluteRow
-        )
-      }
-      button.alignment = .left
-      button.isBordered = false
-      button.translatesAutoresizingMaskIntoConstraints = false
-      button.heightAnchor.constraint(equalToConstant: 34).isActive = true
-      stack.addArrangedSubview(button)
-      buttons.append(button)
-    }
-    selectedIndex = min(selectedIndex, buttons.count - 1)
-    updateSelectionAppearance()
-  }
-
-  private func moveSelection(_ delta: Int) {
-    guard !buttons.isEmpty else { return }
-    selectedIndex = (selectedIndex + delta + buttons.count) % buttons.count
-    updateSelectionAppearance()
-  }
-
-  private func activateSelection() {
-    guard results.indices.contains(selectedIndex) else { return }
-    let result = results[selectedIndex]
-    model.revealWorkspaceLocation(
-      tabID: result.tabID,
-      paneID: result.paneID,
-      absoluteRow: result.absoluteRow
-    )
-  }
-
-  private func updateSelectionAppearance() {
-    for (index, button) in buttons.enumerated() {
-      button.wantsLayer = true
-      button.layer?.cornerRadius = 6
-      button.layer?.backgroundColor = index == selectedIndex
-        ? AsterTheme.accent.withAlphaComponent(0.16).cgColor : NSColor.clear.cgColor
-    }
-  }
-}
-
-@MainActor
-private final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDelegate {
-  private let model: AppModel
-  private let search = OverlaySearchField()
-  private let resultsStack = NSStackView()
-  private let transcript = NSTextView()
-  private var histories: [AgentSessionHistory] = []
-  private var selectedIndex = 0
-  private var historyCancellable: AnyCancellable?
-
-  init(model: AppModel) {
-    self.model = model
-    super.init(nibName: nil, bundle: nil)
-    historyCancellable = model.agentHistoriesChanged.sink { [weak self] _ in
-      guard let self, self.isViewLoaded else { return }
-      self.reload()
-    }
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  override func loadView() {
-    let host = NSView()
-    host.wantsLayer = true
-    host.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.99).cgColor
-    host.layer?.cornerRadius = 12
-    host.layer?.borderWidth = 1
-    host.layer?.borderColor = AsterTheme.hairline.cgColor
-    host.shadow = NSShadow()
-    host.shadow?.shadowBlurRadius = 24
-    host.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.22)
-
-    search.placeholderString = "搜索 Agent 标题、项目、模型或 transcript…"
-    search.delegate = self
-    search.onMove = { [weak self] delta in self?.moveSelection(delta) }
-    search.onActivate = { [weak self] _ in self?.resumeSelection() }
-    search.onCancel = { [weak model] in model?.isAgentHistoryPresented = false }
-    let refresh = ActionButton(symbol: "arrow.clockwise") { [weak model] in
-      model?.reloadAgentHistory()
-    }
-    let close = ActionButton(symbol: "xmark") { [weak model] in
-      model?.isAgentHistoryPresented = false
-    }
-    let header = NSStackView(views: [search, refresh, close])
-    header.orientation = .horizontal
-    header.spacing = 8
-
-    resultsStack.orientation = .vertical
-    resultsStack.spacing = 4
-    let resultsScroll = NSScrollView()
-    resultsScroll.hasVerticalScroller = true
-    resultsScroll.drawsBackground = false
-    resultsScroll.documentView = resultsStack
-    resultsStack.translatesAutoresizingMaskIntoConstraints = false
-    resultsStack.widthAnchor.constraint(equalTo: resultsScroll.contentView.widthAnchor).isActive = true
-    resultsScroll.translatesAutoresizingMaskIntoConstraints = false
-    resultsScroll.widthAnchor.constraint(equalToConstant: 270).isActive = true
-
-    transcript.isEditable = false
-    transcript.isSelectable = true
-    transcript.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-    transcript.textColor = AsterTheme.ink
-    transcript.backgroundColor = AsterTheme.paper
-    transcript.textContainerInset = NSSize(width: 12, height: 12)
-    let transcriptScroll = NSScrollView()
-    transcriptScroll.hasVerticalScroller = true
-    transcriptScroll.documentView = transcript
-    let body = NSStackView(views: [resultsScroll, transcriptScroll])
-    body.orientation = .horizontal
-    body.spacing = 8
-    body.distribution = .fill
-
-    let resume = ActionButton(title: "Resume", bezelStyle: .rounded) { [weak self] in
-      self?.continueSelection(.resume)
-    }
-    let fork = ActionButton(title: "Fork / Branch", bezelStyle: .rounded) { [weak self] in
-      self?.continueSelection(.fork)
-    }
-    let footer = NSStackView(views: [NSView(), fork, resume])
-    footer.orientation = .horizontal
-    footer.spacing = 8
-    let column = NSStackView(views: [header, body, footer])
-    column.orientation = .vertical
-    column.spacing = 8
-    column.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-    host.addSubview(column)
-    column.pinEdges(to: host)
-    view = host
-    reload()
-    DispatchQueue.main.async { [weak search] in search?.window?.makeFirstResponder(search) }
-  }
-
-  func controlTextDidChange(_ obj: Notification) {
-    selectedIndex = 0
-    reload()
-  }
-
-  private func reload() {
-    resultsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-    let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-    if query.isEmpty {
-      histories = Array(model.agentHistories.prefix(100))
-    } else if let matches = try? AgentHistorySearch.search(
-      query: query, histories: model.agentHistories, limit: 100
-    ) {
-      histories = matches.compactMap { match in
-        model.agentHistories.first { $0.metadata == match.metadata }
-      }
-    } else {
-      histories = []
-    }
-    selectedIndex = min(selectedIndex, max(0, histories.count - 1))
-    if histories.isEmpty {
-      resultsStack.addArrangedSubview(
-        makeLabel("没有 Agent 历史", size: 11, color: AsterTheme.secondaryInk))
-      transcript.string = ""
-      return
-    }
-    for (index, history) in histories.enumerated() {
-      let metadata = history.metadata
-      let button = ActionButton(
-        title: "\(metadata.title)\n\(metadata.configuration.provider.commandName)",
-        bezelStyle: .inline
-      ) { [weak self] in
-        self?.selectedIndex = index
-        self?.updateSelection()
-      }
-      button.alignment = .left
-      button.isBordered = false
-      button.translatesAutoresizingMaskIntoConstraints = false
-      button.heightAnchor.constraint(equalToConstant: 46).isActive = true
-      resultsStack.addArrangedSubview(button)
-    }
-    updateSelection()
-  }
-
-  private func moveSelection(_ delta: Int) {
-    guard !histories.isEmpty else { return }
-    selectedIndex = (selectedIndex + delta + histories.count) % histories.count
-    updateSelection()
-  }
-
-  private func updateSelection() {
-    for (index, view) in resultsStack.arrangedSubviews.enumerated() {
-      view.wantsLayer = true
-      view.layer?.cornerRadius = 6
-      view.layer?.backgroundColor = index == selectedIndex
-        ? AsterTheme.accent.withAlphaComponent(0.16).cgColor : NSColor.clear.cgColor
-    }
-    guard histories.indices.contains(selectedIndex) else {
-      transcript.string = ""
-      return
-    }
-    let history = histories[selectedIndex]
-    transcript.string = history.transcript.entries.map { entry in
-      let label: String = switch entry.kind {
-      case .message(let role): role.rawValue.uppercased()
-      case .reasoning: "REASONING"
-      case .toolCall(let name): "TOOL · \(name)"
-      case .attachment(let name): "ATTACHMENT · \(name ?? "file")"
-      }
-      return "[\(label)]\n\(entry.text)"
-    }.joined(separator: "\n\n")
-    transcript.scrollToBeginningOfDocument(nil)
-  }
-
-  private func resumeSelection() { continueSelection(.resume) }
-
-  private func continueSelection(_ kind: AgentContinuationKind) {
-    guard histories.indices.contains(selectedIndex) else { return }
-    model.continueAgentSession(histories[selectedIndex].metadata, kind: kind)
-  }
-}
-
-@MainActor
-private final class PaletteOverlayViewController: NSViewController, NSSearchFieldDelegate {
-  private let model: AppModel
-  private let stack = NSStackView()
-  private let search = OverlaySearchField()
-  private var commands: [PaletteCommand] = []
-  private var buttons: [NSButton] = []
-  private var selectedIndex = 0
-
-  init(model: AppModel) {
-    self.model = model
-    super.init(nibName: nil, bundle: nil)
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  override func loadView() {
-    let host = NSView()
-    host.wantsLayer = true
-    host.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.98).cgColor
-    host.layer?.cornerRadius = 12
-    host.layer?.borderWidth = 1
-    host.layer?.borderColor = AsterTheme.hairline.cgColor
-    host.shadow = NSShadow()
-    host.shadow?.shadowBlurRadius = 24
-    host.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.22)
-    stack.orientation = .vertical
-    stack.spacing = 6
-    stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-    search.placeholderString = "输入命令或操作…"
-    search.delegate = self
-    search.onMove = { [weak self] delta in self?.moveSelection(delta) }
-    search.onActivate = { [weak self] keepsOpen in self?.activateSelection(keepsOpen: keepsOpen) }
-    search.onCancel = { [weak model] in model?.isPalettePresented = false }
-    stack.addArrangedSubview(search)
-    host.addSubview(stack)
-    stack.pinEdges(to: host)
-    view = host
-    reload()
-    DispatchQueue.main.async { [weak search] in search?.window?.makeFirstResponder(search) }
-  }
-
-  func controlTextDidChange(_ obj: Notification) { reload() }
-
-  private func reload() {
-    while stack.arrangedSubviews.count > 1 {
-      stack.arrangedSubviews.last?.removeFromSuperview()
-    }
-    commands = CommandPalette.filter(model.paletteCommands, query: search.stringValue)
-    selectedIndex = min(selectedIndex, max(0, commands.count - 1))
-    buttons.removeAll()
-    for command in commands.prefix(9) {
-      let scope = switch command.scope {
-      case .pane: "Pane"
-      case .window: "Window"
-      case .application: "App"
-      }
-      let button = ActionButton(title: "\(command.title)    [\(scope)]", bezelStyle: .inline) { [weak self] in
-        self?.model.performPaletteCommand(command)
-      }
-      button.alignment = .left
-      button.isBordered = false
-      button.contentTintColor = AsterTheme.ink
-      button.translatesAutoresizingMaskIntoConstraints = false
-      button.heightAnchor.constraint(equalToConstant: 34).isActive = true
-      stack.addArrangedSubview(button)
-      buttons.append(button)
-    }
-    updateSelectionAppearance()
-  }
-
-  private func moveSelection(_ delta: Int) {
-    guard !buttons.isEmpty else { return }
-    selectedIndex = (selectedIndex + delta + buttons.count) % buttons.count
-    updateSelectionAppearance()
-  }
-
-  private func activateSelection(keepsOpen: Bool) {
-    guard commands.indices.contains(selectedIndex) else { return }
-    model.performPaletteCommand(commands[selectedIndex], dismissesPalette: !keepsOpen)
-    if keepsOpen { reload() }
-  }
-
-  private func updateSelectionAppearance() {
-    for (index, button) in buttons.enumerated() {
-      button.wantsLayer = true
-      button.layer?.cornerRadius = 6
-      button.layer?.backgroundColor = index == selectedIndex
-        ? AsterTheme.accent.withAlphaComponent(0.16).cgColor : NSColor.clear.cgColor
-    }
-  }
-}
-
-/// 命令面板、Open Quickly 与全局搜索共用的键盘导航搜索框。只截获列表导航键，
-/// 其它组合键继续由 NSSearchField 处理，IME 与系统文本编辑行为不受影响。
-@MainActor
-private final class OverlaySearchField: NSSearchField {
-  var onMove: ((Int) -> Void)?
-  var onActivate: ((Bool) -> Void)?
-  var onCancel: (() -> Void)?
-  /// ⌘1…9 快速选中第 N 行；仅 Open Quickly 接线。
-  var onQuickSelect: ((Int) -> Void)?
-  /// ⌘K 弹出选中行的操作菜单；仅 Open Quickly 接线。
-  var onShowActions: (() -> Void)?
-
-  override func keyDown(with event: NSEvent) {
-    // ⌘ 组合键优先于导航键判断:数字走 Quick Select,K 走操作菜单,其余放行。
-    if event.modifierFlags.contains(.command),
-      let character = event.charactersIgnoringModifiers?.first
-    {
-      if let digit = character.wholeNumberValue, (1...9).contains(digit) {
-        onQuickSelect?(digit)
-        return
-      }
-      if character == "k" {
-        onShowActions?()
-        return
-      }
-    }
-    switch event.keyCode {
-    case 125:
-      onMove?(1)
-    case 126:
-      onMove?(-1)
-    case 36, 76:
-      onActivate?(event.modifierFlags.contains(.command))
-    case 53:
-      onCancel?()
-    default:
-      super.keyDown(with: event)
-    }
-  }
-}
-
-private extension NSView {
-  func addTopBorder(color: NSColor) {
-    let border = NSView()
-    border.wantsLayer = true
-    border.layer?.backgroundColor = color.cgColor
-    addSubview(border)
-    border.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      border.leadingAnchor.constraint(equalTo: leadingAnchor),
-      border.trailingAnchor.constraint(equalTo: trailingAnchor),
-      border.topAnchor.constraint(equalTo: topAnchor),
-      border.heightAnchor.constraint(equalToConstant: 1),
-    ])
-  }
-
-  func addBottomBorder(color: NSColor) {
-    let border = NSView()
-    border.wantsLayer = true
-    border.layer?.backgroundColor = color.cgColor
-    addSubview(border)
-    border.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      border.leadingAnchor.constraint(equalTo: leadingAnchor),
-      border.trailingAnchor.constraint(equalTo: trailingAnchor),
-      border.bottomAnchor.constraint(equalTo: bottomAnchor),
-      border.heightAnchor.constraint(equalToConstant: 1),
-    ])
   }
 }

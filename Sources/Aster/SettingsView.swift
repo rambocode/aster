@@ -7,6 +7,11 @@ import UniformTypeIdentifiers
 /// 当前终端会话通过其 Combine 订阅即时获得字体、配色、Meta 键和鼠标设置变化。
 @MainActor
 final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
+  /// 与上次提交中的独立设置窗口保持一致。`700×460pt` 是设置页的固定兼容性约束，
+  /// 禁止根据分类、内容量或布局调整该尺寸；新增内容必须使用现有滚动区域承载。
+  /// 独立设置窗口始终遵守该约束，不得联动修改主工作区窗口 frame。
+  static let defaultContentSize = NSSize(width: 700, height: 460)
+
   enum Section: String, CaseIterable {
     case general = "通用"
     case shell = "Shell"
@@ -35,6 +40,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   let sections = Section.allCases
   private let preferences: AppPreferences
+  private let panelLayoutBinding: WorkspacePanelSettingsBinding
   private let agentSetupService: AgentSetupService
   private var selection: Section = .general
   private var searchText = ""
@@ -53,6 +59,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private var message: String?
   private var cancellables: Set<AnyCancellable> = []
   private var refreshScheduled = false
+  /// 原生控件已经在点击时就地更新自己的视觉状态。控件回调同步写配置期间，忽略这次
+  /// `objectWillChange`，避免下一轮主队列销毁正在播放切换动画的控件并重建整页。
+  /// 外部配置变化仍走订阅刷新；确有行级联动的控件由工厂参数显式请求一次刷新。
+  private var isApplyingLocalControlAction = false
   private var retainedObjects: [AnyObject] = []
   private weak var sidebarSearchField: NSSearchField?
   // 滚动位置保持：全量重建会丢掉 NSScrollView 状态，这里按分类分桶记录偏移。
@@ -78,9 +88,11 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   init(
     preferences: AppPreferences,
+    panelLayoutBinding: WorkspacePanelSettingsBinding = WorkspacePanelSettingsBinding(),
     agentSetupService: AgentSetupService = AgentSetupService()
   ) {
     self.preferences = preferences
+    self.panelLayoutBinding = panelLayoutBinding
     self.agentSetupService = agentSetupService
     super.init(nibName: nil, bundle: nil)
   }
@@ -89,12 +101,18 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   override func loadView() {
     // 设置页保持既有 700×460pt 窗口尺寸；内容超出高度时由各分类的滚动视图承载。
-    view = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 460))
+    view = NSView(frame: NSRect(origin: .zero, size: Self.defaultContentSize))
   }
 
   override func viewDidLoad() {
     super.viewDidLoad()
     preferences.objectWillChange
+      .sink { [weak self] _ in
+        guard let self, !self.isApplyingLocalControlAction else { return }
+        self.scheduleRefresh()
+      }
+      .store(in: &cancellables)
+    panelLayoutBinding.objectWillChange
       .sink { [weak self] _ in self?.scheduleRefresh() }
       .store(in: &cancellables)
     NotificationCenter.default.publisher(for: .terminalNotificationAuthorizationDidChange)
@@ -110,6 +128,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     refresh()
   }
 
+  /// 设置页完成挂载后把输入焦点交给搜索框；工作区终端仍保留在下层且不会重启。
+  func focusInitialControl() {
+    guard let field = sidebarSearchField else { return }
+    field.window?.makeFirstResponder(field)
+  }
+
   private func scheduleRefresh() {
     guard !isPickingThemeColor else {
       needsRefreshAfterColorPick = true
@@ -121,6 +145,20 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       self?.refreshScheduled = false
       self?.refresh()
     }
+  }
+
+  /// 把一次原生控件操作标记为本页发起的局部更新。配置持久化和其它消费者通知照常
+  /// 发生，仅设置页自身跳过无意义的整树重建，保证点击反馈不被主线程布局工作打断。
+  private func performLocalControlAction(
+    refreshAfterAction: Bool = false,
+    _ action: () -> Void
+  ) {
+    isApplyingLocalControlAction = true
+    defer {
+      isApplyingLocalControlAction = false
+      if refreshAfterAction { scheduleRefresh() }
+    }
+    action()
   }
 
   /// 全量重建整个设置页视图树；重建前后按分类保存/恢复滚动位置，避免开关一次就跳回顶部。
@@ -1274,9 +1312,16 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       ) { [weak self] index in
         self?.preferences.appearance = AppPreferences.Appearance.allCases[index]
       },
-      sliderRow("垂直侧栏宽度", "", value: preferences.sidebarWidth, range: 180...360, suffix: "pt") { [weak self] value in
-        self?.preferences.sidebarWidth = value
-      },
+      panelWidthSliderRow(
+        "左侧 Panel 宽度",
+        role: .sidebar,
+        fallback: preferences.sidebarWidth
+      ),
+      panelWidthSliderRow(
+        "右侧 Panel 宽度",
+        role: .inspector,
+        fallback: WorkspacePanelLayoutPolicy.inspectorDefaultWidth
+      ),
     ]))
 
     views.append(sectionTitle("Dock"))
@@ -1306,7 +1351,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     views.append(toggleRow(
       "深色模式使用独立主题",
       "跟随系统配色时，浅色与深色模式分别使用两套主题",
-      value: preferences.configuration.appearance.useSeparateDarkTheme
+      value: preferences.configuration.appearance.useSeparateDarkTheme,
+      refreshAfterAction: true
     ) { [weak self] value in
       self?.preferences.configuration.appearance.useSeparateDarkTheme = value
     })
@@ -1320,16 +1366,16 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         self?.pickColor(for: slot, anchor: anchor)
       })
     let actions = NSStackView(views: [
-      ActionButton(title: "复制") { [weak self] in self?.duplicateTheme() },
-      ActionButton(title: "编辑当前主题") { [weak self] in self?.beginEditingTheme() },
-      ActionButton(title: "打开主题文件夹") { [weak self] in self?.openThemesFolder() },
-      ActionButton(title: "导入主题…") { [weak self] in self?.importTheme() },
+      contentActionButton(title: "复制") { [weak self] in self?.duplicateTheme() },
+      contentActionButton(title: "编辑当前主题") { [weak self] in self?.beginEditingTheme() },
+      contentActionButton(title: "打开主题文件夹") { [weak self] in self?.openThemesFolder() },
+      contentActionButton(title: "导入主题…") { [weak self] in self?.importTheme() },
       NSView(),
     ])
     // 覆盖是可撤销的：有覆盖时才给出入口，没改过就不要多一个永远点不动的按钮。
     if !preferences.themeOverrides(for: focusedTheme.id).isEmpty {
       actions.insertArrangedSubview(
-        ActionButton(title: "恢复主题原色") { [weak self] in self?.resetThemeOverrides() },
+        contentActionButton(title: "恢复主题原色") { [weak self] in self?.resetThemeOverrides() },
         at: actions.arrangedSubviews.count - 1
       )
     }
@@ -1465,7 +1511,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       self.refresh()
     }
     let scopeRow = NSStackView(views: [
-      makeLabel("设置范围", size: 12, color: SettingsTheme.secondaryInk),
+      makeLabel("设置范围", size: SettingsMetrics.controlTextSize, color: SettingsTheme.secondaryInk),
       scope,
       NSView(),
     ])
@@ -1484,7 +1530,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         infoRow("字体（粗体）", "当前实际字形", fonts.bold.fontName),
         infoRow("字体（斜体）", "当前实际字形", fonts.italic.fontName),
         infoRow("字体（粗斜体）", "当前实际字形", fonts.boldItalic.fontName),
-        toggleRow("自动匹配粗细与样式", "关闭后把当前匹配结果固定到全局设置", value: automatic) {
+        toggleRow(
+          "自动匹配粗细与样式",
+          "关闭后把当前匹配结果固定到全局设置",
+          value: automatic,
+          refreshAfterAction: true
+        ) {
           [weak self] enabled in
           guard let self else { return }
           if enabled {
@@ -1544,8 +1595,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
     let actions = NSStackView(views: [
       NSView(),
-      ActionButton(title: "安装字体") { NSFontManager.shared.orderFrontFontPanel(nil) },
-      ActionButton(title: "打开字体文件夹") { [weak self] in self?.openFontsFolder() },
+      contentActionButton(title: "安装字体") { NSFontManager.shared.orderFrontFontPanel(nil) },
+      contentActionButton(title: "打开字体文件夹") { [weak self] in self?.openFontsFolder() },
     ])
     actions.orientation = .horizontal
     actions.spacing = 10
@@ -1797,8 +1848,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       accessory: makeANSIColorEditor(draft.palette.ansiColors)
     ))
     let buttons = NSStackView(views: [
-      ActionButton(title: "保存") { [weak self] in self?.saveThemeDraft() },
-      ActionButton(title: "取消") { [weak self] in self?.themeDraft = nil; self?.refresh() },
+      contentActionButton(title: "保存") { [weak self] in self?.saveThemeDraft() },
+      contentActionButton(title: "取消") { [weak self] in self?.themeDraft = nil; self?.refresh() },
     ])
     buttons.orientation = .horizontal
     buttons.spacing = 8
@@ -1932,11 +1983,27 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   }
 
   private func infoRow(_ title: String, _ detail: String, _ value: String) -> NSView {
-    rowShell(title, detail, accessory: makeLabel(value, size: 11, color: SettingsTheme.secondaryInk))
+    rowShell(
+      title,
+      detail,
+      accessory: makeLabel(value, size: SettingsMetrics.rowDetailSize, color: SettingsTheme.secondaryInk)
+    )
   }
 
-  private func toggleRow(_ title: String, _ detail: String, value: Bool, action: @escaping (Bool) -> Void) -> NSView {
-    rowShell(title, detail, accessory: ClosureSwitch(value: value, action: action))
+  private func toggleRow(
+    _ title: String,
+    _ detail: String,
+    value: Bool,
+    refreshAfterAction: Bool = false,
+    action: @escaping (Bool) -> Void
+  ) -> NSView {
+    let control = ClosureSwitch(value: value) { [weak self] value in
+      guard let self else { return }
+      self.performLocalControlAction(refreshAfterAction: refreshAfterAction) {
+        action(value)
+      }
+    }
+    return rowShell(title, detail, accessory: control)
   }
 
   private func textRow(_ title: String, _ detail: String, value: String, action: @escaping (String) -> Void) -> NSView {
@@ -1971,18 +2038,56 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   ]
 
   /// 滑杆行；`fractionDigits` 控制数值标签的小数位（行高倍数等非整数设置需要）。
-  private func sliderRow(_ title: String, _ detail: String, value: Double, range: ClosedRange<Double>, suffix: String, fractionDigits: Int = 0, action: @escaping (Double) -> Void) -> NSView {
+  private func sliderRow(
+    _ title: String,
+    _ detail: String,
+    value: Double,
+    range: ClosedRange<Double>,
+    suffix: String,
+    fractionDigits: Int = 0,
+    identifier: String? = nil,
+    enabled: Bool = true,
+    action: @escaping (Double) -> Void
+  ) -> NSView {
     let slider = ClosureSlider(value: value, range: range, action: action)
+    slider.identifier = identifier.map { NSUserInterfaceItemIdentifier($0) }
+    slider.isEnabled = enabled
     slider.translatesAutoresizingMaskIntoConstraints = false
     slider.widthAnchor.constraint(equalToConstant: 180).isActive = true
     let text = fractionDigits == 0
       ? "\(Int(value)) \(suffix)"
       : String(format: "%.\(fractionDigits)f \(suffix)", value)
-    let valueLabel = makeLabel(text, size: 10.5, color: SettingsTheme.secondaryInk)
+    let valueLabel = makeLabel(
+      text,
+      size: SettingsMetrics.rowDetailSize,
+      color: SettingsTheme.secondaryInk
+    )
     let stack = NSStackView(views: [slider, valueLabel])
     stack.orientation = .horizontal
     stack.spacing = 8
     return rowShell(title, detail, accessory: stack)
+  }
+
+  /// Panel 宽度属于最近活动工作区，而不是全局主题配置。无工作区可绑定时仍显示默认
+  /// 数值以解释合法范围，但禁用控件，避免用户误以为修改已经应用到某个窗口。
+  private func panelWidthSliderRow(
+    _ title: String,
+    role: WorkspacePanelRole,
+    fallback: Double
+  ) -> NSView {
+    guard let range = WorkspacePanelLayoutPolicy.widthRange(for: role) else { return NSView() }
+    let value = panelLayoutBinding.state?.preferredWidth(for: role) ?? fallback
+    return sliderRow(
+      title,
+      "控制最近活动的工作区窗口；也可直接拖动主窗口分隔线",
+      value: value,
+      range: range,
+      suffix: "pt",
+      identifier: "settings-panel-width-\(role.rawValue)",
+      enabled: panelLayoutBinding.isBound
+    ) { [weak panelLayoutBinding] value in
+      panelLayoutBinding?.setPreferredWidth(value, for: role)
+    }
   }
 
   private func stepperRow(_ title: String, _ detail: String, value: Double, range: ClosedRange<Double>, action: @escaping (Double) -> Void) -> NSView {
@@ -1990,7 +2095,17 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   }
 
   private func actionRow(_ title: String, _ detail: String, title buttonTitle: String, action: @escaping () -> Void) -> NSView {
-    rowShell(title, detail, accessory: ActionButton(title: buttonTitle, handler: action))
+    rowShell(title, detail, accessory: contentActionButton(title: buttonTitle, handler: action))
+  }
+
+  /// 设置内容区的按钮统一使用较小字号，与左侧 13pt 导航形成清晰层级。
+  private func contentActionButton(
+    title: String,
+    handler: @escaping () -> Void
+  ) -> ActionButton {
+    let button = ActionButton(title: title, handler: handler)
+    button.font = NSFont.systemFont(ofSize: SettingsMetrics.controlTextSize)
+    return button
   }
 
   /// 分组小标题：灰色小号加字距，identifier 供内容栈识别并收紧「标题 → 卡片」间距。
@@ -2106,6 +2221,7 @@ private final class ClosurePopUpButton: NSPopUpButton {
   init(items: [String], selected: Int, action: @escaping (Int) -> Void) {
     handler = action
     super.init(frame: .zero, pullsDown: false)
+    font = NSFont.systemFont(ofSize: SettingsMetrics.controlTextSize)
     addItems(withTitles: items)
     selectItem(at: min(max(selected, 0), max(items.count - 1, 0)))
     target = self
@@ -2125,6 +2241,7 @@ private final class ClosureSegmentedControl: NSSegmentedControl {
     // 从 Swift 子类调用时会把工厂 selector 错发给已经分配的子类实例并在运行时崩溃。
     // 使用指定初始化器逐项配置，既保留相同行为，也保证子类初始化路径有效。
     super.init(frame: .zero)
+    font = NSFont.systemFont(ofSize: SettingsMetrics.controlTextSize)
     segmentCount = labels.count
     trackingMode = .selectOne
     for (index, label) in labels.enumerated() {
@@ -2169,6 +2286,7 @@ private final class ClosureTextField: NSTextField, NSTextFieldDelegate {
     handler = action
     super.init(frame: .zero)
     stringValue = value
+    font = NSFont.systemFont(ofSize: SettingsMetrics.controlTextSize)
     delegate = self
   }
   required init?(coder: NSCoder) { nil }
@@ -2192,7 +2310,7 @@ private final class ClosureStepper: NSView {
     stepper.target = self
     stepper.action = #selector(changed(_:))
     label.stringValue = "\(Int(value))"
-    label.font = NSFont.systemFont(ofSize: 14)
+    label.font = NSFont.systemFont(ofSize: SettingsMetrics.rowTitleSize)
     let stack = NSStackView(views: [label, stepper])
     stack.orientation = .horizontal
     stack.spacing = 8
@@ -2250,7 +2368,11 @@ private final class LayoutChoiceButton: NSButton {
     )
     image.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 25, weight: .regular)
     image.contentTintColor = SettingsTheme.secondaryInk
-    let label = makeLabel(data.1, size: 12, color: SettingsTheme.secondaryInk)
+    let label = makeLabel(
+      data.1,
+      size: SettingsMetrics.controlTextSize,
+      color: SettingsTheme.secondaryInk
+    )
     label.alignment = .center
     let stack = NSStackView(views: [image, label])
     stack.orientation = .vertical
@@ -2295,7 +2417,11 @@ private final class ThemeCardButton: NSButton {
     // 同上：主题卡选中描边使用主题强调色。
     layer?.borderColor = SettingsTheme.accent.cgColor
     let preview = ThemeMiniPreviewView(theme: theme)
-    let label = makeLabel(theme.name, size: 11.5, color: SettingsTheme.secondaryInk)
+    let label = makeLabel(
+      theme.name,
+      size: SettingsMetrics.controlTextSize,
+      color: SettingsTheme.secondaryInk
+    )
     label.alignment = .center
     // 一行四列后单卡只有 95pt 左右，「Solarized Light」这类长名必须换行显示；
     // 同时压低横向抗压优先级，名称不会反过来把等分的列撑宽。
@@ -2428,7 +2554,12 @@ private final class ThemeDetailView: NSView {
     let slots = theme.colorSlots
     let grouped = Dictionary(grouping: slots, by: \.group)
 
-    let title = makeLabel(theme.name, size: 14, weight: .semibold, color: SettingsTheme.ink)
+    let title = makeLabel(
+      theme.name,
+      size: SettingsMetrics.rowTitleSize,
+      weight: .semibold,
+      color: SettingsTheme.ink
+    )
     let mode = makeLabel(
       theme.mode == .dark ? "深色" : "浅色", size: 10, color: SettingsTheme.secondaryInk)
     let header = NSStackView(views: [title, NSView(), mode])

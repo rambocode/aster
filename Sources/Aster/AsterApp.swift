@@ -53,6 +53,35 @@ enum AsterApplication {
   }
 }
 
+/// 唯一设置窗口的固定外壳。尺寸与红绿灯能力集中在这里，避免入口或分类根据内容量
+/// 各自调整窗口；`700×460pt` 是兼容性约束，较长内容只能由设置页内部滚动承载。
+@MainActor
+final class AsterSettingsWindowController: NSWindowController {
+  init(content: SettingsViewController, appearance: NSAppearance?) {
+    let window = NSWindow(
+      contentRect: NSRect(origin: .zero, size: SettingsViewController.defaultContentSize),
+      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+      backing: .buffered,
+      defer: false
+    )
+    window.title = "Aster 设置"
+    window.titleVisibility = .hidden
+    window.titlebarAppearsTransparent = true
+    window.contentViewController = content
+    let fixedFrameSize = window.frame.size
+    window.minSize = fixedFrameSize
+    window.maxSize = fixedFrameSize
+    window.standardWindowButton(.miniaturizeButton)?.isEnabled = false
+    window.standardWindowButton(.zoomButton)?.isEnabled = false
+    window.isReleasedWhenClosed = false
+    window.appearance = appearance
+    window.center()
+    super.init(window: window)
+  }
+
+  required init?(coder: NSCoder) { nil }
+}
+
 @MainActor
 final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private struct WorkspaceWindowRecord {
@@ -64,7 +93,13 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   let model = AppModel()
   let preferences = AppPreferences()
   private var mainWindowController: NSWindowController?
-  private var settingsWindowController: NSWindowController?
+  /// 设置使用唯一独立窗口；Panel 宽度编辑仍绑定最近成为 key 的工作区窗口。
+  private var settingsWindowController: AsterSettingsWindowController?
+  private let panelSettingsBinding = WorkspacePanelSettingsBinding()
+  private var panelLayoutStores: [ObjectIdentifier: WorkspacePanelLayoutStore] = [:]
+  /// 记录工作区窗口的 key 顺序。当前工作区关闭后，绑定回退到最近使用的仍存活窗口，
+  /// 而不是依赖 Dictionary 的不稳定遍历顺序。
+  private var activeWorkspaceWindowOrder: [ObjectIdentifier] = []
   private var pictureInPictureController: PanePictureInPictureController?
   /// CLI 使用受保护文件传输而非常驻 socket。主线程定时器只消费已经落盘的小型
   /// 请求头；实际 `run/exec` 完成由 Shell Integration 回调异步写回，不阻塞界面。
@@ -229,20 +264,40 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
   private func showMainWindow() {
     if let mainWindowController {
+      if let window = mainWindowController.window,
+        let content = window.contentViewController as? WorkspaceViewController
+      {
+        // 主窗口关闭后 NSWindowController 仍被 AppDelegate 持有，Dock reopen 会复用它。
+        // `windowWillClose` 已移除旧映射，因此重新显示前必须把同一 store 注册回来。
+        panelLayoutStores[ObjectIdentifier(window)] = content.panelLayoutStore
+      }
       mainWindowController.showWindow(nil)
       mainWindowController.window?.makeKeyAndOrderFront(nil)
       return
     }
-    let controller = makeWorkspaceWindow(model: model, autosaveName: "Aster.MainWindow")
+    let controller = makeWorkspaceWindow(
+      model: model,
+      defaults: .standard,
+      autosaveName: "Aster.MainWindow"
+    )
     mainWindowController = controller
     controller.showWindow(nil)
   }
 
   private func makeWorkspaceWindow(
     model: AppModel,
+    defaults: UserDefaults,
     autosaveName: String?
   ) -> NSWindowController {
-    let content = WorkspaceViewController(model: model, preferences: preferences)
+    let panelLayoutStore = WorkspacePanelLayoutStore(
+      defaults: defaults,
+      legacySidebarWidth: preferences.sidebarWidth
+    )
+    let content = WorkspaceViewController(
+      model: model,
+      preferences: preferences,
+      panelLayoutStore: panelLayoutStore
+    )
     let configuredSize = NSSize(
       width: preferences.configuration.appearance.windowWidth,
       height: preferences.configuration.appearance.windowHeight
@@ -260,6 +315,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     window.minSize = NSSize(width: 820, height: 520)
     window.contentViewController = content
     window.delegate = self
+    panelLayoutStores[ObjectIdentifier(window)] = panelLayoutStore
     if let autosaveName { window.setFrameAutosaveName(autosaveName) }
     window.center()
     window.appearance = preferences.preferredAppearance
@@ -274,9 +330,32 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     preferences.configuration.appearance.windowHeight = window.contentLayoutRect.height
   }
 
+  func windowDidBecomeKey(_ notification: Notification) {
+    guard let window = notification.object as? NSWindow,
+      let store = panelLayoutStores[ObjectIdentifier(window)]
+    else { return }
+    let identifier = ObjectIdentifier(window)
+    activeWorkspaceWindowOrder.removeAll { $0 == identifier }
+    activeWorkspaceWindowOrder.append(identifier)
+    panelSettingsBinding.bind(store)
+  }
+
   func windowWillClose(_ notification: Notification) {
     guard let window = notification.object as? NSWindow else { return }
+    if window === settingsWindowController?.window {
+      setWorkspaceSettingsPresentationActive(false)
+      return
+    }
     let identifier = ObjectIdentifier(window)
+    activeWorkspaceWindowOrder.removeAll { $0 == identifier }
+    if let closingStore = panelLayoutStores.removeValue(forKey: identifier),
+      panelSettingsBinding.isBound(to: closingStore)
+    {
+      let replacement = activeWorkspaceWindowOrder.reversed().lazy.compactMap {
+        self.panelLayoutStores[$0]
+      }.first
+      panelSettingsBinding.bind(replacement)
+    }
     guard let record = additionalWorkspaceWindows.removeValue(forKey: identifier) else {
       return
     }
@@ -307,40 +386,51 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   }
 
   @objc func showSettings(_ sender: Any?) {
+    // 设置窗口独立展示，但主工作区也必须可见；无 key window 时先走正式恢复路径。
+    if NSApp.keyWindow == nil { showMainWindow() }
+    setWorkspaceSettingsPresentationActive(true)
     if let settingsWindowController {
       settingsWindowController.showWindow(sender)
       settingsWindowController.window?.makeKeyAndOrderFront(sender)
+      (settingsWindowController.contentViewController as? SettingsViewController)?
+        .focusInitialControl()
       return
     }
-    let content = SettingsViewController(preferences: preferences)
-    // fullSizeContentView + 透明标题栏让侧栏延伸到窗口顶部（Otty 式全高侧栏），
-    // 红绿灯悬浮在侧栏上方，由侧栏顶部内边距让位。
-    let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 700, height: 460),
-      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-      backing: .buffered,
-      defer: false
+
+    let content = SettingsViewController(
+      preferences: preferences,
+      panelLayoutBinding: panelSettingsBinding
     )
-    window.title = "Aster 设置"
-    window.titleVisibility = .hidden
-    window.titlebarAppearsTransparent = true
-    // 保持原始窗口宽高；外观页主题网格使用三列，较长内容由纵向滚动承载。
-    window.minSize = NSSize(width: 700, height: 420)
-    window.contentViewController = content
-    window.isReleasedWhenClosed = false
-    window.appearance = preferences.preferredAppearance
-    window.center()
-    let controller = NSWindowController(window: window)
+    let controller = AsterSettingsWindowController(
+      content: content,
+      appearance: preferences.preferredAppearance
+    )
+    guard let window = controller.window else { return }
+    window.delegate = self
     settingsWindowController = controller
     controller.showWindow(sender)
+    window.makeKeyAndOrderFront(sender)
+    DispatchQueue.main.async { [weak content] in content?.focusInitialControl() }
   }
 
-  /// 标题工作区弹层等深链入口先复用唯一设置窗口，再切到目标分类；不会改变设置页
-  /// 原有的 700×460pt 默认尺寸，也不会为单一入口创建第二个设置窗口。
+  /// 深链入口复用唯一设置窗口，并直接切到目标分类。
   func showSettings(section: SettingsViewController.Section) {
     showSettings(nil)
     (settingsWindowController?.contentViewController as? SettingsViewController)?
       .showSection(section)
+  }
+
+  /// 设置控件会广播全局配置。打开设置期间让所有工作区只就地更新现存终端，并把
+  /// 结构刷新合并到设置窗口关闭时执行一次，避免独立窗口中的 NSSwitch 动画卡顿。
+  private func setWorkspaceSettingsPresentationActive(_ active: Bool) {
+    let controllers =
+      [mainWindowController?.window?.contentViewController as? WorkspaceViewController]
+      + additionalWorkspaceWindows.values.map {
+        $0.controller.window?.contentViewController as? WorkspaceViewController
+      }
+    for controller in controllers.compactMap({ $0 }) {
+      controller.setSettingsPresentationActive(active)
+    }
   }
 
   private func applyAppearance() {
@@ -364,11 +454,17 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
   }
 
-  private var activeWorkspaceModel: AppModel {
+  private var activeWorkspaceViewController: WorkspaceViewController? {
     guard let keyWindow = NSApp.keyWindow,
       let controller = keyWindow.contentViewController as? WorkspaceViewController
-    else { return model }
-    return controller.model
+    else {
+      return mainWindowController?.window?.contentViewController as? WorkspaceViewController
+    }
+    return controller
+  }
+
+  private var activeWorkspaceModel: AppModel {
+    activeWorkspaceViewController?.model ?? model
   }
 
   @objc private func newWindow(_ sender: Any?) {
@@ -411,7 +507,11 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     } else if let initialPane {
       windowModel.openResourceInNewTab(initialPane)
     }
-    let controller = makeWorkspaceWindow(model: windowModel, autosaveName: nil)
+    let controller = makeWorkspaceWindow(
+      model: windowModel,
+      defaults: defaults,
+      autosaveName: nil
+    )
     guard let window = controller.window else {
       defaults.removePersistentDomain(forName: suiteName)
       return false

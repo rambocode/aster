@@ -29,8 +29,8 @@ open dist/Aster.app
 
 - **`AsterPTY`**（C）：`forkpty` 等 POSIX PTY 原语，供 `PTYShellProcess` 使用。
 - **`SwiftTerm`**（vendored，Swift 5 语言模式）：VT100/xterm 网格与渲染。
-- **`AsterCore`**（无 AppKit 依赖，纯值语义）：领域模型与持久化格式。除工作区本体（`WorkspaceLayout`/`WorkspaceState`/`WorkspacePersistence`/`AsterConfiguration`/`TerminalTheme`+`OttyBuiltInThemes`）外，还承载 Agent 域（`AgentState`/`AgentProvider`/`AgentComposer`/`AgentPromptQueue`/`AgentHistory`/`AgentChatContext`）、Workflow 域（`WorkflowRecipe`/`WorkflowRecipeSecurity`/`WorkflowCLI`/`WorkflowDeepLink`/`WorkflowRecovery`）、终端语义域（`TerminalInput`/`TerminalClipboard`/`TerminalActivity`/`TerminalPaneMode`/`TerminalIdentification`/`ShellIntegration`/`Autocomplete`/`DetectedTarget`）。所有类型 `Codable + Equatable + Sendable`。**测试真值都放在这里**：能写成纯函数的逻辑不要留在 AppKit 层。
-- **`Aster`**（可执行，全部 AppKit）：`AsterApp.swift`（自定义 `@main` → `AsterAppDelegate`，管理多窗口与菜单）、`AppModel`（每窗口一个，持有标签与快照）、`WorkspaceViewController`（`WorkspaceView.swift`，主窗口组合根）、`SettingsViewController`（九类设置）、`TerminalSession`（SwiftTerm 的**唯一**适配边界）、`DesignSystem.swift`（`ThemeRuntime` + 动态 `NSColor` + `ThemeVisualEffectView`）。其余是无状态或单一职责的服务层：`AsterCLIRequestService`、`WorkflowRuntimeService`、`AgentIntegrationService`/`AgentSetupService`、`AutocompleteService`、`ShellIntegrationInstaller`、`WorkspaceInspectionService`、`SecureInputCoordinator`、`TerminalNotificationService`、`DockActivityCoordinator`、`TerminalTargetOpenCoordinator`、`PanePictureInPictureController`。新增能力优先加服务文件，不要继续膨胀 `WorkspaceView.swift`（已 4000+ 行）。
+- **`AsterCore`**（无 AppKit 依赖，纯值语义）：领域模型与持久化格式。除工作区本体（`WorkspaceLayout`/`WorkspaceState`/`WorkspacePersistence`/`WorkspacePanelLayout`/`AsterConfiguration`/`TerminalTheme`+`OttyBuiltInThemes`）外，还承载 Agent 域（`AgentState`/`AgentProvider`/`AgentComposer`/`AgentPromptQueue`/`AgentHistory`/`AgentChatContext`）、Workflow 域（`WorkflowRecipe`/`WorkflowRecipeSecurity`/`WorkflowCLI`/`WorkflowDeepLink`/`WorkflowRecovery`）、终端语义域（`TerminalInput`/`TerminalClipboard`/`TerminalActivity`/`TerminalPaneMode`/`TerminalIdentification`/`ShellIntegration`/`Autocomplete`/`DetectedTarget`）。所有类型 `Codable + Equatable + Sendable`。**测试真值都放在这里**：能写成纯函数的逻辑不要留在 AppKit 层。
+- **`Aster`**（可执行，全部 AppKit）：`AsterApp.swift`（自定义 `@main` → `AsterAppDelegate`，管理多窗口与菜单）、`AppModel`（每窗口一个，持有标签与快照）、`WorkspaceViewController`（`WorkspaceView.swift`，主窗口组合根）、`SettingsViewController`（九类设置）、`TerminalSession`（SwiftTerm 的**唯一**适配边界）、`DesignSystem.swift`（`ThemeRuntime` + 动态 `NSColor` + `ThemeVisualEffectView`）。主窗口辅助代码按语义放在 `Workspace/Panels`、`Workspace/Sidebar`、`Workspace/Panes`、`Workspace/FileBrowser`、`Workspace/Overlays` 和 `Workspace/Components`；新增能力进入对应目录或独立服务，不得重新堆回组合根。其余是无状态或单一职责的服务层：`AsterCLIRequestService`、`WorkflowRuntimeService`、`AgentIntegrationService`/`AgentSetupService`、`AutocompleteService`、`ShellIntegrationInstaller`、`WorkspaceInspectionService`、`SecureInputCoordinator`、`TerminalNotificationService`、`DockActivityCoordinator`、`TerminalTargetOpenCoordinator`、`PanePictureInPictureController`。
 
 ### 描述符与运行态必须分离
 
@@ -40,7 +40,7 @@ open dist/Aster.app
 
 1. `Sources/Aster` **不得导入 SwiftUI**，不得创建 `NSHostingView`/`NSHostingController`。`AppKitMigrationTests` 会静态扫描视图树里是否出现 `NSHosting*` 类名并使测试失败。
 2. `TerminalSession` 强持有唯一 `LocalProcessTerminalView`；AppKit 布局重建/标签切换**不得重启 PTY**。Session 生命周期内有稳定的终端容器视图，刷新只重新安放外层容器。
-3. 递归 Pane 树用 `PersistedSplitView`（原生 `NSSplitView`）渲染，只在用户拖动分隔线时把 `0.05...0.95` 的比例写回快照。
+3. Window 第一层用 `WorkspacePanelSplitView` 组合 Sidebar / Content / Inspector，边缘宽度按窗口保存 point 值；递归 Pane 树只存在于 Content 内，由 `PersistedSplitView` 渲染并保存 `0.05...0.95` 比例。Panel 与 Pane 不得混名或共用状态。
 4. 主题色只能经由 `ThemeRuntime` 的动态 `NSColor` 和 `ThemeVisualEffectView` 进入视图，**不要在视图里散落固定色值**。
 5. Pane 容器在**宽和高两个方向**都需要必需尺寸约束。`NSStackView` 的固有尺寸推断会把 SwiftTerm 网格压成 0：`NSSplitView` 给每个子面板加了 `PreferredSize/FallbackSize`（`== 0 @250`）回退约束，缺高度约束时上下分屏会把整个内容区塌成一条分隔条。约束链是「内容区绑定外层 stack 宽高 → wrapper 钉 stack 底边 → 状态栏钉 inner 底边 → Pane 区填充剩余」。设置页滚动文档用 `FlippedDocumentView`（左上原点）从 `NSClipView` 顶部锚定，内部放标准 `NSStackView`——不要直接翻转 StackView，AppKit 会同时反转 arrangedSubviews 的垂直排布。
 6. 切换聚焦 Pane 只做局部更新（焦点指示线 + first responder），**不触发整树重建**；Outline/Shell Integration 时间线变化也走专用事件局部刷新。
@@ -81,7 +81,7 @@ open dist/Aster.app
 
 ### 持久化
 
-全部走 `UserDefaults`，键带版本后缀：`aster.configuration.v2`、`aster.theme-library.v1`、`aster.workspace.snapshot.v1`、`aster.workspace.{additional-window-suites,recently-closed,closed-items}.v1`、`aster.sidebar.tab-{grouping,order}.v1`、`aster.inspector.{presented,section}.v1`、`aster.frequent-folders.v1`、`aster.workflow-recipe-trust.v1`、`aster.session.{running,end-reason,crash-count}.v1`、`aster.migration.compact-sidebar.v1`。配置以单个 JSON blob 原子写入；终端相关配置改动后立即同步到已存在的终端视图（`TerminalSession.apply`）。加迁移时沿用「只迁移旧默认值、不动用户显式设置」的做法（见 compact-sidebar 迁移）。
+全部走 `UserDefaults`，键带版本后缀：`aster.configuration.v2`、`aster.theme-library.v1`、`aster.workspace.snapshot.v1`、`aster.workspace.panel-layout.v1`、`aster.workspace.{additional-window-suites,recently-closed,closed-items}.v1`、`aster.sidebar.tab-{grouping,order}.v1`、`aster.inspector.{presented,section}.v1`、`aster.frequent-folders.v1`、`aster.workflow-recipe-trust.v1`、`aster.session.{running,end-reason,crash-count}.v1`、`aster.migration.compact-sidebar.v1`。配置以单个 JSON blob 原子写入；Panel 布局写入对应工作区窗口的 suite；终端相关配置改动后立即同步到已存在的终端视图（`TerminalSession.apply`）。加迁移时沿用「只迁移旧默认值、不动用户显式设置」的做法（见 compact-sidebar 迁移）。
 
 ## 测试约定
 

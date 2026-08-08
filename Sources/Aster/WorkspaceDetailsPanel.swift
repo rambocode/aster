@@ -193,20 +193,24 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
 
   // MARK: - Header
 
-  /// 页签 chip 行：未选中仅显示图标并保持统一收起宽度，选中项灰底并展开文字，最右侧
-  /// 是收起面板按钮。间距固定，因此展开只挤占右侧 spacer，不会改变已收起页签的排布节奏。
+  /// 页签 chip 行：未选中仅显示图标并保持统一收起宽度，选中项灰底并展开文字。
+  /// 右端为根视图上的唯一 Inspector 按钮预留空间，避免 chip 进入它的命中区域。
   private func makeHeader() -> NSView {
     let row = NSStackView()
     row.orientation = .horizontal
     row.spacing = 6
     row.edgeInsets = NSEdgeInsets(
-      top: 0, left: 10, bottom: 0, right: InspectorToggleMetrics.trailingInset)
-    // 行高固定成「中心线 × 2」，chip 与收起按钮就都落在距面板顶边 14pt 的中心线上，
-    // 正好是工作区标题栏（高 28pt）里那颗切换按钮的中心线，两处图标完全重合。
-    // 用行高而不是内边距来定位，chip 或按钮改尺寸时对齐关系不会失效。
+      top: 0,
+      left: 10,
+      bottom: 0,
+      right: InspectorToggleMetrics.trailingReservedWidth
+    )
+    // 行高固定成「中心线 × 2」，chip 与根视图覆盖按钮落在同一条水平中心线上。
+    // Panel 本身不再创建第二颗关闭按钮。
     row.translatesAutoresizingMaskIntoConstraints = false
     row.heightAnchor.constraint(
-      equalToConstant: InspectorToggleMetrics.centerYFromTop * 2).isActive = true
+      equalToConstant: InspectorToggleMetrics.centerYFromTop * 2
+    ).isActive = true
     for section in Section.allCases {
       let chip = PanelTabChip(title: section.title, symbol: section.symbol) { [weak self] in
         self?.selectSection(section)
@@ -219,20 +223,6 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     let spacer = NSView()
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
     row.addArrangedSubview(spacer)
-    let close = IconHoverButton(
-      symbol: InspectorToggleMetrics.symbol,
-      accessibilityDescription: "收起详情面板"
-    ) { [weak self] in
-      self?.model.toggleInspector()
-    }
-    close.toolTip = "收起详情面板"
-    close.identifier = NSUserInterfaceItemIdentifier("details-panel-close")
-    close.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      close.widthAnchor.constraint(equalToConstant: InspectorToggleMetrics.buttonSize),
-      close.heightAnchor.constraint(equalToConstant: InspectorToggleMetrics.buttonSize),
-    ])
-    row.addArrangedSubview(close)
     return row
   }
 

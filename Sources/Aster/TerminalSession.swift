@@ -77,6 +77,9 @@ struct TerminalTextSnapshot: Equatable {
 /// `Default` 只给出初始状态，之后接受 DECSCUSR / DEC mode 12；`Always` 把用户设置
 /// 作为最终真值，并在 SwiftTerm 回调返回后纠正程序端写入。
 final class AsterTerminalView: LocalProcessTerminalView {
+  /// 观察 SwiftTerm 网格尺寸真正变化的测试 seam。生产环境保持 nil；测试用它区分
+  /// 一次合法终态 reflow 与 Panel 过渡导致的重复 resize，不保存终端内容或尺寸历史。
+  var onGridSizeChange: ((Int, Int) -> Void)?
   /// SwiftTerm 在 macOS 的标题回调存在缺失和顺序差异；此回调按 PTY 原始顺序校正。
   var onObservedTitleUpdate: ((Int, String) -> Void)?
   /// 所有链接打开请求必须先进入 Aster 的解析与授权层，禁止调用 SwiftTerm 默认的
@@ -215,6 +218,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
 
   override func sizeChanged(source: Terminal) {
     super.sizeChanged(source: source)
+    onGridSizeChange?(source.cols, source.rows)
     switch paneModeState.navigationMode {
     case .normal:
       break
