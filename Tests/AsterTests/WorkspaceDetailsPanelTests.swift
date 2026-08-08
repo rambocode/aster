@@ -1090,8 +1090,9 @@ func outlineTracksCompletedTerminalCommands() async throws {
   preferences.inspectorSection = 1
   let model = AppModel(defaults: defaults)
   model.ensureInitialTab()
-  let session = try #require(model.selectedTab?.activeSession)
-  defer { session.stop(immediately: true) }
+  let tab = try #require(model.selectedTab)
+  let session = try #require(tab.activeSession)
+  defer { tab.stop(immediately: true) }
   let terminalView = session.makeTerminalView(preferences: preferences)
   terminalView.resize(cols: 40, rows: 6)
   let controller = DetailsPanelViewController(model: model, preferences: preferences)
@@ -1111,6 +1112,14 @@ func outlineTracksCompletedTerminalCommands() async throws {
       .allDescendants.compactMap { ($0 as? NSButton)?.title } ?? []
   }
   #expect(titles.contains { $0.contains("echo outline") })
+
+  // 切换到异步解析的编辑器 Pane 时，旧终端条目和动作必须同步撤下；根表格继续复用。
+  let document = FileManager.default.temporaryDirectory
+    .appendingPathComponent("aster-outline-switch-\(UUID().uuidString).md")
+  try Data("# Editor\n".utf8).write(to: document)
+  defer { try? FileManager.default.removeItem(at: document) }
+  tab.split(direction: .right, kind: .editor, resourcePath: document.path)
+  #expect(outlineTable.numberOfRows == 0)
 }
 
 @Test("终端目录变化只刷新 Files 数据且不重建工作区或夺走输入焦点")

@@ -272,6 +272,10 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         self.requestedFilesDirectory = nil
         self.outlineTask?.cancel()
         self.outlineNeedsRefresh = true
+        // 保留同一个 NSTableView 与行复用池，但同步撤下旧 Pane 的行模型；否则新编辑器
+        // 的后台解析完成前，用户仍能点击绑定旧 Pane 的跳转闭包。
+        let outlinePath = tab.activeRuntime?.descriptor.resourcePath ?? tab.workingDirectory
+        self.applyOutlineRows([], path: outlinePath, latest: nil, emptyMessage: "正在更新 Outline…")
         self.updateInformationContent()
         self.updateGitContent()
         self.rebuildFileTreeProjection()
