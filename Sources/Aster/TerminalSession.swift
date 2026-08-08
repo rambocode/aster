@@ -1242,6 +1242,24 @@ final class AsterTerminalView: LocalProcessTerminalView {
     return true
   }
 
+  /// 将应用内文本按普通键入写入 PTY，但不确认提交。此入口刻意不走剪贴板的
+  /// bracketed-paste 编码：协议未经协商时发送 `CSI 200~` 会让部分 Agent TUI 丢弃内容。
+  @discardableResult
+  func typePromptText(_ text: String) -> Bool {
+    guard !text.isEmpty, permitsUserInputAction() else { return false }
+    send(data: Array(text.utf8)[...])
+    return true
+  }
+
+  /// 将应用内 Prompt Queue 的用户文本模拟为键入并立即确认。队列语义要求它在同一个
+  /// 当前 CLI 中执行，因此先复用普通键入门禁，再单独发送 Return。
+  @discardableResult
+  func submitPromptQueueText(_ text: String) -> Bool {
+    guard typePromptText(text) else { return false }
+    send(data: [UInt8(13)][...])
+    return true
+  }
+
   @objc func pasteSelection(_ sender: Any?) {
     guard let selection = getSelection() else { return }
     pasteText(selection)
@@ -2108,6 +2126,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalView?.pasteText(text, forceBracketed: true) ?? false
   }
 
+  /// 以普通 UTF-8 键入方式预填 Agent 输入框，不带 Return，也不强制 bracketed paste。
+  /// 该入口只供 Prompt Queue 与“发送到聊天”使用，避免影响 Open Quickly 的既有安全粘贴。
+  @discardableResult
+  func typePromptText(_ text: String) -> Bool {
+    terminalView?.typePromptText(text) ?? false
+  }
+
   /// Composer 使用 bracketed paste 一次写入多行内容，再单独发送 Return。这样 Agent
   /// TUI 能把多行当作一个 prompt；粘贴保护和 Read-only 仍由终端视图统一执行。
   @discardableResult
@@ -2117,6 +2142,14 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     else { return false }
     terminalView.send(data: [UInt8(13)][...])
     return true
+  }
+
+  /// Prompt Queue 的内容由用户在 Aster 内亲自编辑，不是来自剪贴板；因此按真实键入的
+  /// UTF-8 字节写入后立即发送 Return，而不强制插入 bracketed-paste 控制序列。部分
+  /// Codex/Claude TUI 未协商该模式时会忽略强制序列，导致看似发送成功但输入框无变化。
+  @discardableResult
+  func submitPromptQueueText(_ text: String) -> Bool {
+    terminalView?.submitPromptQueueText(text) ?? false
   }
 
   func interrupt() {

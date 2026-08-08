@@ -14,6 +14,26 @@ enum WorkflowRecipeCommandReview {
   }
 }
 
+/// 聊天目标只保存稳定的 Tab/Pane 身份和展示信息；真实 PTY 在发送时重新查找，避免
+/// 弹窗停留期间 Pane 被关闭或 Agent 已退出后仍向陈旧对象写入。
+struct AgentChatDestination: Identifiable, Equatable {
+  var id: UUID { paneID }
+  let tabID: UUID
+  let paneID: UUID
+  let provider: AgentProvider
+  let title: String
+}
+
+/// 打开“发送到聊天”面板时冻结的来源快照。终端输出只存在内存中，绝不写入工作区
+/// 快照或日志；发送前仍由 `AgentChatContextBuilder` 进行清理和脱敏。
+struct AgentChatPresentation: Equatable {
+  let originPaneID: UUID
+  let destinations: [AgentChatDestination]
+  let selection: String?
+  let transcript: String
+  let transcriptHasError: Bool
+}
+
 /// 在 Recipe 边界递归转换 Pane 描述中的目录和资源路径，保持 UUID、嵌套方向与比例。
 /// 领域模型只处理模板语法，不触碰文件系统，也不把运行态对象写入 Recipe。
 enum WorkflowRecipeWorkspaceMapper {
@@ -220,7 +240,6 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// 目录变化由 Tab 专用回调上送给窗口级 frecency 数据库，不经 `objectWillChange`，
   /// 避免单次 `cd` 同时触发无关界面刷新。
   var onWorkingDirectoryChanged: ((String) -> Void)?
-  var onAgentStateChanged: ((UUID, AgentTaskState) -> Void)?
   var onCommandFinished: ((UUID) -> Void)?
   /// 被临时放大（缩放拆分）的面板。它是纯 UI 态，不进快照——恢复会话时应当回到
   /// 完整分屏，而不是停在某次临时放大的状态。
@@ -694,7 +713,9 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     // 侧栏和状态栏观察的是 Tab，而终端运行状态属于子 Session。只定向转发 UI 真正
     // 消费的字段（运行态、spinner、退出码、启动错误）；不要转发 objectWillChange
     // 全量事件——OSC 标题在命令运行期间高频变化，全量转发会让侧栏整树重建、
-    // spinner 每帧重启（可见闪烁）。目录变化由下方专用 sink 经 layout/title 触发刷新。
+    // spinner 每帧重启（可见闪烁）。Agent task state 与未读完成状态同样不能走这里：
+    // 它们在输入后立即变化，若重建会让 Files 回退到 Pane 初始目录并打断 Agent TUI。
+    // 目录变化由下方专用 sink 经 layout/title 触发刷新。
     if let session = runtime.terminalSession {
       session.onTitleUpdate = { [weak self] code, text in
         self?.applyProgramTitle(paneID: descriptor.id, code: code, text: text)
@@ -710,20 +731,10 @@ final class TerminalTabItem: ObservableObject, Identifiable {
         session.$awaitingInput.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$showsCompletedFlash.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$explicitBadge.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
-        session.$activeAgentProvider.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
-        session.$agentTaskState.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
-        session.$agentTaskCompletionUnread.removeDuplicates().dropFirst().map { _ in () }
-          .eraseToAnyPublisher()
+        session.$activeAgentProvider.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
       )
       .sink { [weak self] _ in self?.objectWillChange.send() }
       .store(in: &cancellables)
-      session.$agentTaskState
-        .removeDuplicates()
-        .dropFirst()
-        .sink { [weak self] state in
-          self?.onAgentStateChanged?(descriptor.id, state)
-        }
-        .store(in: &cancellables)
     }
     runtime.terminalSession?.$currentWorkingDirectory
       .removeDuplicates()
@@ -809,6 +820,12 @@ final class AppModel: ObservableObject {
   @Published var isGlobalFindPresented = false
   @Published var isComposerPresented = false
   @Published var isAgentHistoryPresented = false
+  /// Prompt Queue 仅局部挂载到活动 Pane，不能通过 `objectWillChange` 触发整棵终端
+  /// 视图重建，否则正在输入的 TUI 会短暂失焦。
+  let promptQueuePresentationChanged = PassthroughSubject<UUID?, Never>()
+  private(set) var presentedPromptQueuePaneID: UUID?
+  /// 发送弹窗同样由专用事件展示；领域模型只提供安全的冻结来源和目标清单。
+  let agentChatPresentationRequested = PassthroughSubject<AgentChatPresentation, Never>()
   /// 历史扫描可能在启动后任意时刻完成；独立事件只更新消费历史的局部面板，避免一次
   /// 后台 I/O 完成把整个终端工作区重建。
   let agentHistoriesChanged = PassthroughSubject<[AgentSessionHistory], Never>()
@@ -859,6 +876,7 @@ final class AppModel: ObservableObject {
   private var shouldRestoreInitialWorkspace = true
   private var agentComposers: [UUID: AgentComposerState] = [:]
   private var agentPromptQueues: [UUID: AgentPromptQueue] = [:]
+  private var promptQueueDrafts: [UUID: String] = [:]
   private var didRequestAgentHistory = false
   private var pendingRecipeCommands: [UUID: [String]] = [:]
   /// `.oneByOne` 模式按 Pane 记录逐条确认要求；命令发送完成、跳过或停止时同步清理，
@@ -1305,6 +1323,174 @@ final class AppModel: ObservableObject {
   func toggleFind() { isFindPresented.toggle() }
   func toggleComposer() { isComposerPresented.toggle() }
 
+  /// Prompt 队列是当前终端 Pane 的手动输入工作流，不依赖 Claude/Codex 的识别结果。
+  /// 识别状态会随 Agent 生命周期变化，不能用它禁用菜单或让已入队的命令失去发送入口。
+  var canPresentPromptQueue: Bool {
+    selectedTab?.activeSession != nil
+  }
+
+  func togglePromptQueue() {
+    guard let paneID = selectedTab?.activePaneID, canPresentPromptQueue else {
+      notice = "请先选择一个终端 Pane。"
+      return
+    }
+    presentedPromptQueuePaneID = presentedPromptQueuePaneID == paneID ? nil : paneID
+    promptQueuePresentationChanged.send(presentedPromptQueuePaneID)
+  }
+
+  func hidePromptQueue(paneID: UUID) {
+    guard presentedPromptQueuePaneID == paneID else { return }
+    presentedPromptQueuePaneID = nil
+    promptQueuePresentationChanged.send(nil)
+  }
+
+  func promptQueueDraft(for paneID: UUID) -> String { promptQueueDrafts[paneID] ?? "" }
+
+  /// 草稿沿用队列的单条 64 KiB 上限，关闭输入条后仍只保留在本次运行内，不会进入
+  /// 会话快照。返回 false 时 UI 保持用户原有文本并展示错误反馈。
+  @discardableResult
+  func updatePromptQueueDraft(_ value: String, paneID: UUID) -> Bool {
+    guard value.utf8.count <= AgentPromptQueue().maximumPromptBytes else {
+      notice = "队列提示词超过 64 KiB 上限。"
+      return false
+    }
+    promptQueueDrafts[paneID] = value
+    return true
+  }
+
+  @discardableResult
+  func enqueuePromptQueueDraft(paneID: UUID) -> Bool {
+    var queue = promptQueue(for: paneID)
+    do {
+      try queue.enqueue(.init(text: promptQueueDraft(for: paneID)))
+      promptQueueDrafts[paneID] = ""
+      agentPromptQueues[paneID] = queue
+      // 只重建底部条以显示新增列表项；不能用 objectWillChange 打断整个终端 Pane 树。
+      promptQueuePresentationChanged.send(presentedPromptQueuePaneID == paneID ? paneID : nil)
+      return true
+    } catch {
+      notice = "加入队列失败：\(error.localizedDescription)"
+      return false
+    }
+  }
+
+  /// 当前 Pane 中尚未发送的 FIFO 项。队列项只是本次进程内的临时工作清单，不会进入
+  /// 工作区快照；用户可通过列表行左侧的发送按钮选择准确的一项立即提交。
+  func promptQueueItems(for paneID: UUID) -> [AgentQueuedPrompt] {
+    promptQueue(for: paneID).pending
+  }
+
+  /// 把指定的待发送项模拟为当前 Pane 的键入并提交 Return。只有 PTY 接受完整文本后
+  /// 才从队列移除，写入失败时保留原项，避免用户丢失命令。
+  @discardableResult
+  func sendPromptQueueItem(id: UUID, paneID: UUID) -> Bool {
+    guard let session = tabs.lazy.compactMap({ $0.runtime(for: paneID)?.terminalSession }).first
+    else {
+      notice = "当前终端 Pane 已关闭。"
+      return false
+    }
+
+    var queue = promptQueue(for: paneID)
+    guard let item = queue.pending.first(where: { $0.id == id }) else {
+      notice = "该队列项已不存在。"
+      return false
+    }
+    guard session.submitPromptQueueText(item.text) else {
+      notice = "无法写入当前 CLI 输入框，队列项已保留。"
+      return false
+    }
+    _ = queue.remove(id: id)
+    agentPromptQueues[paneID] = queue
+    promptQueuePresentationChanged.send(presentedPromptQueuePaneID == paneID ? paneID : nil)
+    return true
+  }
+
+  /// 仅删除还未发送的指定项。已经由用户发出的内容不会留在队列中，因此不会出现撤销
+  /// 已送入 Agent 的假象。
+  func removePromptQueueItem(id: UUID, paneID: UUID) {
+    var queue = promptQueue(for: paneID)
+    guard queue.remove(id: id) != nil else { return }
+    agentPromptQueues[paneID] = queue
+    promptQueuePresentationChanged.send(presentedPromptQueuePaneID == paneID ? paneID : nil)
+  }
+
+  /// 捕获当前 Pane 的选区与最近滚动缓冲区，随后由面板让用户决定是否各自附加。目标
+  /// 覆盖当前工作区的全部标签，但只接受仍运行中的 Claude Code/Codex 会话。
+  func presentAgentChat() {
+    guard let tab = selectedTab,
+      let runtime = tab.activeRuntime,
+      let session = runtime.terminalSession
+    else {
+      notice = "请先选择一个终端 Pane。"
+      return
+    }
+    let destinations = agentChatDestinations()
+    guard !destinations.isEmpty else {
+      notice = "当前工作区没有可接收聊天内容的 Claude Code 或 Codex。"
+      return
+    }
+    let transcript = session.textSnapshot().lines.suffix(2_000).joined(separator: "\n")
+    agentChatPresentationRequested.send(
+      AgentChatPresentation(
+        originPaneID: runtime.id,
+        destinations: destinations,
+        selection: session.selectedTextForAgentContext,
+        transcript: transcript,
+        transcriptHasError: session.lastCommandExitStatus.map { $0 != 0 } ?? false
+      )
+    )
+  }
+
+  /// 将已确认的上下文按普通键入预填到目标 Agent 的原生输入框。该动作不发送 Return，
+  /// 也不强制 bracketed paste；目标 Pane 可在弹窗停留期间变化，故这里按 UUID 重查
+  /// provider 和运行态。
+  @discardableResult
+  func prefillAgentChat(
+    destination: AgentChatDestination,
+    comment: String,
+    selection: String?,
+    transcript: String?
+  ) -> Bool {
+    let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmedComment.utf8.count <= AgentChatContextBudget().reservedPromptBytes else {
+      notice = "Comment 超过 8 KiB 上限。"
+      return false
+    }
+    guard let target = tabs.first(where: { $0.id == destination.tabID })?.runtime(for: destination.paneID),
+      let session = target.terminalSession,
+      session.activeAgentProvider == destination.provider,
+      destination.provider == .claudeCode || destination.provider == .codex
+    else {
+      notice = "目标 Agent 已退出或 Pane 已关闭。"
+      return false
+    }
+
+    do {
+      var builder = AgentChatContextBuilder()
+      if let selection, !selection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        try builder.add(source: .terminalSelection, content: selection)
+      }
+      if let transcript, !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        try builder.add(source: .lastCommandOutput, content: transcript)
+      }
+      let context = builder.renderedForPrompt
+      guard !trimmedComment.isEmpty || !context.isEmpty else {
+        notice = "请填写 Comment 或至少选择一项上下文。"
+        return false
+      }
+      let text = [trimmedComment, context].filter { !$0.isEmpty }.joined(separator: "\n\n")
+      guard session.typePromptText(text) else {
+        notice = "目标 Agent 当前无法接收聊天内容。"
+        return false
+      }
+      notice = "已预填到 \(destination.title) 的输入框，等待你确认发送。"
+      return true
+    } catch {
+      notice = "无法构造聊天上下文：\(error.localizedDescription)"
+      return false
+    }
+  }
+
   func toggleAgentHistory() {
     let presents = !isAgentHistoryPresented
     dismissWorkspaceOverlays()
@@ -1312,23 +1498,10 @@ final class AppModel: ObservableObject {
     if presents { reloadAgentHistory() }
   }
 
-  /// 把当前终端选区作为不可信上下文放进该 Pane 的 Composer。上下文先清理终端控制
-  /// 字符并遮盖常见 secret；是否发送及附加什么问题仍由用户在 Composer 中决定。
+  /// 终端右键入口复用“发送到聊天”确认面板，并默认携带当前选区；发送前仍可改选
+  /// transcript、目标 Agent 与 Comment，最终只预填输入框而不会自动回车。
   func sendTerminalSelectionToChat() {
-    guard let paneID = selectedTab?.activePaneID,
-      let selection = selectedTab?.activeSession?.selectedTextForAgentContext,
-      !selection.isEmpty
-    else {
-      notice = "请先在终端中选择要发送的内容。"
-      return
-    }
-    do {
-      var builder = AgentChatContextBuilder()
-      try builder.add(source: .terminalSelection, content: selection)
-      appendToComposer(builder.renderedForPrompt, paneID: paneID)
-    } catch {
-      notice = "无法添加聊天上下文：\(error.localizedDescription)"
-    }
+    presentAgentChat()
   }
 
   /// 文件浏览器的 Send to Chat 只读取普通、非符号链接、UTF-8 小文件，并复用
@@ -1532,7 +1705,8 @@ final class AppModel: ObservableObject {
       }
       agentComposers[paneID] = composer
       agentPromptQueues[paneID] = queue
-      dispatchQueuedPromptIfPossible(paneID: paneID)
+      // Queue 只记录待发送项；点击 Prompt Queue 列表里的发送按钮才会写入 Agent。
+      promptQueuePresentationChanged.send(presentedPromptQueuePaneID == paneID ? paneID : nil)
       objectWillChange.send()
     } catch {
       notice = "加入队列失败：\(error.localizedDescription)"
@@ -1557,20 +1731,22 @@ final class AppModel: ObservableObject {
     return result
   }
 
-  private func dispatchQueuedPromptIfPossible(paneID: UUID) {
-    guard let session = tabs.lazy.compactMap({ $0.runtime(for: paneID)?.terminalSession }).first,
-      session.activeAgentProvider != nil
-    else { return }
-    var queue = promptQueue(for: paneID)
-    _ = queue.observeAgentState(session.agentTaskState)
-    guard let prompt = queue.dispatchNext(when: .agent(session.agentTaskState)) else {
-      agentPromptQueues[paneID] = queue
-      return
+  private func agentChatDestinations() -> [AgentChatDestination] {
+    tabs.flatMap { tab in
+      tab.layout.allPanes.compactMap { descriptor in
+        guard let session = tab.runtime(for: descriptor.id)?.terminalSession,
+          session.statusIsRunning,
+          let provider = session.activeAgentProvider,
+          provider == .claudeCode || provider == .codex
+        else { return nil }
+        return AgentChatDestination(
+          tabID: tab.id,
+          paneID: descriptor.id,
+          provider: provider,
+          title: "\(tab.windowTitle) · \(provider.commandName)"
+        )
+      }
     }
-    if !session.submitComposerText(prompt.text) {
-      notice = "队列无法写入当前 Agent。"
-    }
-    agentPromptQueues[paneID] = queue
   }
 
   /// 全局跳转必须同时恢复标签与 Pane 焦点；终端行号仅在目标仍位于 scrollback 时
@@ -2632,7 +2808,8 @@ final class AppModel: ObservableObject {
       .init(id: "hint-mode", title: "打开链接（Hint Mode）", keywords: ["terminal", "url", "path"]),
       .init(id: "read-only", title: "切换只读模式", keywords: ["terminal", "lock", "input"]),
       .init(id: "composer", title: "切换 Composer", keywords: ["agent", "prompt", "queue"]),
-      .init(id: "send-to-chat", title: "把终端选区发送到 Chat", keywords: ["agent", "selection", "context"]),
+      .init(id: "prompt-queue", title: "切换 Prompt 队列", keywords: ["agent", "prompt", "queue"]),
+      .init(id: "send-to-chat", title: "发送到聊天", keywords: ["agent", "selection", "transcript", "context"]),
       .init(id: "agent-history", title: "Agent 历史", keywords: ["resume", "fork", "transcript"], scope: .window),
       .init(id: "close-pane", title: "关闭当前面板", keywords: ["pane", "close"]),
       .init(id: "close-tab", title: "关闭标签页", keywords: ["tab", "close"], scope: .window),
@@ -2685,7 +2862,8 @@ final class AppModel: ObservableObject {
     case "hint-mode": selectedTab?.activeSession?.openHintMode()
     case "read-only": toggleActivePaneReadOnly()
     case "composer": toggleComposer()
-    case "send-to-chat": sendTerminalSelectionToChat()
+    case "prompt-queue": togglePromptQueue()
+    case "send-to-chat": presentAgentChat()
     case "agent-history": toggleAgentHistory()
     case "close-pane": closeActivePane()
     case "close-tab": closeSelectedTab()
@@ -2715,9 +2893,6 @@ final class AppModel: ObservableObject {
     tab.onWorkspaceChanged = { [weak self] in self?.persistWorkspace() }
     tab.onWorkingDirectoryChanged = { [weak self] directory in
       self?.recordVisitedFolderIfEnabled(directory)
-    }
-    tab.onAgentStateChanged = { [weak self] paneID, _ in
-      self?.dispatchQueuedPromptIfPossible(paneID: paneID)
     }
     tab.onCommandFinished = { [weak self] paneID in
       self?.completeWorkflowCLICommand(paneID: paneID)

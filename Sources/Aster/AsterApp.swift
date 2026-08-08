@@ -656,8 +656,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     activeWorkspaceModel.toggleActivePaneReadOnly()
   }
   @objc private func toggleComposer(_ sender: Any?) { activeWorkspaceModel.toggleComposer() }
+  @objc private func togglePromptQueue(_ sender: Any?) { activeWorkspaceModel.togglePromptQueue() }
   @objc private func showAgentHistory(_ sender: Any?) { activeWorkspaceModel.toggleAgentHistory() }
-  @objc private func sendSelectionToChat(_ sender: Any?) { activeWorkspaceModel.sendTerminalSelectionToChat() }
+  @objc private func sendToChat(_ sender: Any?) { activeWorkspaceModel.presentAgentChat() }
   @objc private func togglePinWindow(_ sender: Any?) {
     togglePinWindow(for: activeWorkspaceModel)
   }
@@ -774,6 +775,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       action: #selector(AsterTerminalView.pasteAndContinueInComposer(_:)), keyEquivalent: "")
     pasteAsItem.submenu = pasteAsMenu
     submenu.addItem(pasteAsItem)
+    submenu.addItem(.separator())
+    submenu.addItem(menuItem("Prompt 队列", #selector(togglePromptQueue(_:)), "", modifiers: []))
+    submenu.addItem(menuItem("发送到聊天", #selector(sendToChat(_:)), "", modifiers: []))
     submenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     submenu.addItem(.separator())
     submenu.addItem(menuItem("查找", #selector(find(_:)), "f"))
@@ -806,7 +810,6 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(
       menuItem("Composer", #selector(toggleComposer(_:)), "\r", modifiers: [.command, .shift]))
     submenu.addItem(menuItem("Agent 历史", #selector(showAgentHistory(_:)), "", modifiers: []))
-    submenu.addItem(menuItem("把终端选区发送到 Chat", #selector(sendSelectionToChat(_:)), "", modifiers: []))
     submenu.addItem(.separator())
     submenu.addItem(
       menuItem("只读模式", #selector(toggleActivePaneReadOnly(_:)), "", modifiers: []))
@@ -1076,6 +1079,9 @@ extension AsterAppDelegate: NSMenuItemValidation {
     if action == #selector(toggleActivePaneReadOnly(_:)) {
       menuItem.state = activeWorkspaceModel.activePaneIsReadOnly ? .on : .off
       return activeWorkspaceModel.selectedTab?.activeRuntime != nil
+    }
+    if action == #selector(togglePromptQueue(_:)) {
+      return activeWorkspaceModel.canPresentPromptQueue
     }
     guard Self.splitOnlySelectors.contains(action) else { return true }
     return activeWorkspaceModel.selectedTabHasSplits

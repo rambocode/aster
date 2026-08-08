@@ -12,7 +12,7 @@ Aster 把 Otty 的工作区流程、CLI 与代码 Agent 能力放在同一安全
 - `WorkflowSessionRecoveryPlanner`：根据正常退出、崩溃、更新和 crash loop 决定恢复行为。
 - `AgentProvider` / `AgentSetupPlan`：七类 provider 的能力和最小增量安装步骤。
 - `AgentTaskStateReducer`：按单调 lifecycle sequence 折叠 `processing / awaiting-input / idle`。
-- `AgentComposerState` / `AgentPromptQueue`：Pane 级草稿、附件和仅在空闲 Prompt 派发的队列。
+- `AgentComposerState` / `AgentPromptQueue`：Pane 级草稿、附件和由用户显式发送的临时 Prompt 列表。
 
 ## 核心规则
 
@@ -21,9 +21,9 @@ Aster 把 Otty 的工作区流程、CLI 与代码 Agent 能力放在同一安全
 3. 工作区快照只保存描述符。主窗口和最多 16 个 UUID suite 附加窗口可恢复；用户主动关闭的附加窗口立即删除其 suite。退出先确认全部窗口，再统一写快照和终止 PTY，取消时不得部分提交。
 4. Agent 安装/卸载只修改 Aster managed JSON 项、TOML marker 区块或独立 artifact；不得覆盖用户 hook。Codex `hooks = true` 在卸载时保留，因为无法证明该值由 Aster 独占。
 5. lifecycle hook 只向所属 TTY 写有界 OSC 6974 状态，不记录 prompt、tool 参数或输出。
-6. Send to Chat 先清除控制字符、遮盖常见 secret、按 UTF-8 字节限制，再包装为 `untrusted-context`；最终发送仍由用户确认。
+6. Send to Chat 可同时携带当前终端选区与可见 scrollback 尾部；面板只列出当前工作区中仍运行的 Claude Code/Codex Pane。每项先清除控制字符、遮盖常见 secret、按 UTF-8 字节限制，再包装为 `untrusted-context`；点击 Send 以原始 UTF-8 模拟键入目标输入框，不强制 bracketed paste，也不发送 Return。
 7. 自定义 Agent 启动命令保存为 argv。恢复、Fork 和新建会话统一经 shell 参数编码器，不重新解释任意 shell 源码。
-8. Prompt Queue 的 in-flight 项只有在观察到非 idle 生命周期后再次回到 idle 才完成；发送后残留的旧 idle 不能释放队列锁。
+8. Prompt Queue 对活动终端 Pane 提供精简底部输入条，不依赖 Claude/Codex 的瞬时识别状态。普通 Return 或右下角上箭头只把草稿加入列表；每项左侧的发送图标才会模拟键入原始 UTF-8 文本并发送 Return，不强制 bracketed paste。队列不监听 Agent 空闲事件；发送失败时保留该项，关闭输入条不会清空本次运行的列表或草稿。
 
 ## 业务流程
 
@@ -59,4 +59,4 @@ flowchart LR
 
 ## 测试与验收
 
-纯领域测试覆盖 Recipe TOML/信任、CLI 解析、恢复策略、Agent provider/状态/Composer/队列/上下文与窗口 suite 规范化；AppKit 目标测试覆盖文件传输、Agent 安装卸载、lifecycle、字体注册和 AppModel 路由。发布前运行 `swift test --no-parallel`、warnings-as-errors 构建、App 打包与签名验证。按项目要求不执行 UI 自动化，视觉清单见 `docs/developer/design-qa.md`。
+纯领域测试覆盖 Recipe TOML/信任、CLI 解析、恢复策略、Agent provider/状态/Composer/队列/上下文与窗口 suite 规范化；AppKit 目标测试覆盖文件传输、Agent 安装卸载、lifecycle、跨标签聊天目标、预填边界和 AppModel 路由。发布前运行 `swift test --no-parallel`、warnings-as-errors 构建、App 打包与签名验证。按项目要求不执行 UI 自动化，视觉清单见 `docs/developer/design-qa.md`。

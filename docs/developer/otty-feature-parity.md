@@ -41,7 +41,7 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 
 - **接入与状态**：以最小增量安装 Claude、Codex、OpenCode、Cursor、Kimi、Pi、omp hook/plugin；上报 processing/idle/awaiting，驱动 badge、通知、防睡与恢复。
 - **历史与分支**：识别各 Agent 的会话文件，渲染 transcript，搜索/resume；在 split/tab/window 中使用原生命令 fork/branch，保留 provider/model/system prompt。
-- **输入工作流**：Composer 多行编辑、草稿、富粘贴、pin/float；Prompt Queue 在空闲 Prompt 串行派发；Send to Chat 把终端/文件上下文送入现有或新 Agent 会话。
+- **输入工作流**：Composer 多行编辑、草稿、富粘贴、pin/float；Prompt Queue 在任意终端用 Return 入队、按列表项左侧按钮显式发送；Send to Chat 把终端/文件上下文预填到现有 Agent 会话。
 
 ## 页面清单
 

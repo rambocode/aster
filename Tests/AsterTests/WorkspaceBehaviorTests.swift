@@ -1,3 +1,4 @@
+import AppKit
 import AsterCore
 import Foundation
 import Testing
@@ -10,6 +11,11 @@ private func behaviorTestDefaults() -> UserDefaults {
   let defaults = UserDefaults(suiteName: suite)!
   defaults.removePersistentDomain(forName: suite)
   return defaults
+}
+
+private extension NSView {
+  /// 本文件的轻量视图树遍历，用于验证 Prompt Queue 的真实按钮接线而非仅测模型回调。
+  var descendantViews: [NSView] { subviews + subviews.flatMap(\.descendantViews) }
 }
 
 @Test("自动新标签位置把空标签放在当前分组末尾，把内容标签放在当前标签后")
@@ -230,6 +236,159 @@ func appModelAddsSafeFileContextToComposer() throws {
   #expect(draft.contains(file.path))
   #expect(draft.contains("TOKEN=[REDACTED]"))
   #expect(!draft.contains("secret-value"))
+}
+
+@Test("发送到聊天只发现运行中的 Claude 或 Codex，并且仅预填不回车")
+@MainActor
+func appModelPrefillsSelectedAgentChatWithoutSubmitting() async throws {
+  let model = AppModel(defaults: behaviorTestDefaults())
+  model.ensureInitialTab()
+  let session = try #require(model.selectedTab?.activeSession)
+  let preferences = AppPreferences(defaults: behaviorTestDefaults())
+  let terminal = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+
+  terminal.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .idle))
+  var requested: AgentChatPresentation?
+  let cancellable = model.agentChatPresentationRequested.sink { requested = $0 }
+  defer { cancellable.cancel() }
+
+  model.presentAgentChat()
+
+  let presentation = try #require(requested)
+  #expect(presentation.destinations.count == 1)
+  #expect(presentation.destinations[0].provider == .codex)
+
+  var encoded: [UInt8] = []
+  terminal.onEncodedInput = { encoded.append(contentsOf: $0) }
+  #expect(
+    model.prefillAgentChat(
+      destination: presentation.destinations[0],
+      comment: "__CHAT_PREFILL_DELIVERED__",
+      selection: nil,
+      transcript: nil
+    )
+  )
+  #expect(encoded.contains(13) == false)
+  // “发送到聊天”与 Prompt 队列一样必须按普通键入传输。强制 bracketed paste 在部分
+  // Codex/Claude TUI 中会被忽略，表现为弹窗提示成功但目标输入框没有文字。
+  #expect(String(decoding: encoded, as: UTF8.self).contains("\u{001B}[200~") == false)
+  #expect(String(decoding: encoded, as: UTF8.self).contains("__CHAT_PREFILL_DELIVERED__"))
+
+  // 仅观察编码回调不能证明真实终端收到字节。预填不回车时，运行中的 zsh 仍会回显普通
+  // 输入；因此等待 grid 出现 marker，覆盖“弹窗显示成功但 PTY 没有收到内容”的回归。
+  for _ in 0..<20 {
+    if session.textSnapshot().lines.joined(separator: "\n").contains("__CHAT_PREFILL_DELIVERED__") {
+      break
+    }
+    try await Task.sleep(for: .milliseconds(25))
+  }
+  #expect(session.textSnapshot().lines.joined(separator: "\n").contains("__CHAT_PREFILL_DELIVERED__"))
+}
+
+@Test("Prompt 队列只在用户点击发送时立即提交指定项")
+@MainActor
+func appModelSendsPromptQueueItemOnlyWhenExplicitlyRequested() throws {
+  let model = AppModel(defaults: behaviorTestDefaults())
+  model.ensureInitialTab()
+  let paneID = try #require(model.selectedTab?.activePaneID)
+  let session = try #require(model.selectedTab?.activeSession)
+  let terminal = try #require(
+    session.makeTerminalView(preferences: AppPreferences(defaults: behaviorTestDefaults()))
+      as? AsterTerminalView
+  )
+  defer { session.stop(immediately: true) }
+
+  var encoded: [UInt8] = []
+  terminal.onEncodedInput = { encoded.append(contentsOf: $0) }
+  terminal.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .processing))
+  #expect(model.updatePromptQueueDraft("next task", paneID: paneID))
+  #expect(model.enqueuePromptQueueDraft(paneID: paneID))
+  #expect(encoded.isEmpty)
+  let queuedItem = try #require(model.promptQueueItems(for: paneID).first)
+
+  // 即使 Agent 之后报告 idle，队列也不自动写入，发送时机完全由用户的列表行操作决定。
+  terminal.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .idle))
+  #expect(session.agentTaskState == .idle)
+  #expect(model.promptQueueItems(for: paneID).count == 1)
+  #expect(encoded.isEmpty)
+
+  #expect(model.sendPromptQueueItem(id: queuedItem.id, paneID: paneID))
+  #expect(model.promptQueueItems(for: paneID).isEmpty)
+  #expect(String(decoding: encoded, as: UTF8.self).contains("next task"))
+  #expect(encoded.contains(13))
+}
+
+@Test("Prompt 队列卡片左侧发送按钮会写入当前 CLI 并回车")
+@MainActor
+func promptQueueCardSendButtonSubmitsToCurrentCLI() async throws {
+  let defaults = behaviorTestDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  model.ensureInitialTab()
+  let paneID = try #require(model.selectedTab?.activePaneID)
+  let session = try #require(model.selectedTab?.activeSession)
+  let terminal = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+
+  var encoded: [UInt8] = []
+  terminal.onEncodedInput = { encoded.append(contentsOf: $0) }
+  // Prompt Queue 是终端输入工作流，不依赖 Claude/Codex 的瞬时识别状态；普通 CLI
+  // 也必须能打开列表并由左侧按钮完成粘贴加 Return。
+  #expect(model.canPresentPromptQueue)
+  #expect(model.updatePromptQueueDraft("printf '__PROMPT_QUEUE_DELIVERED__\\n'", paneID: paneID))
+  #expect(model.enqueuePromptQueueDraft(paneID: paneID))
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  controller.loadViewIfNeeded()
+  model.togglePromptQueue()
+  controller.view.layoutSubtreeIfNeeded()
+
+  let button = try #require(
+    controller.view.descendantViews.compactMap { $0 as? NSButton }.first {
+      $0.toolTip == "立即发送此命令"
+    }
+  )
+  let buttonCenter = button.convert(
+    NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: controller.view)
+  let hitView = controller.view.hitTest(buttonCenter)
+  #expect(hitView === button || hitView?.isDescendant(of: button) == true)
+
+  button.performClick(nil)
+
+  // 不以 `onEncodedInput` 代替 PTY 验收：必须等真实子进程回显 marker，才能证明按钮
+  // 的文本和 Return 穿过 AppKit/SwiftTerm 并抵达当前 CLI。
+  try await Task.sleep(for: .milliseconds(500))
+
+  #expect(model.promptQueueItems(for: paneID).isEmpty)
+  #expect(String(decoding: encoded, as: UTF8.self).contains("__PROMPT_QUEUE_DELIVERED__"))
+  #expect(String(decoding: encoded, as: UTF8.self).contains("\u{001B}[200~") == false)
+  #expect(encoded.contains(13))
+  #expect(session.textSnapshot().lines.joined(separator: "\n").contains("__PROMPT_QUEUE_DELIVERED__"))
+}
+
+@Test("Agent 状态变化不重建工作区，Files 保留当前目录")
+@MainActor
+func agentTaskStateChangeDoesNotRebuildWorkspaceLayout() async throws {
+  let defaults = behaviorTestDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  model.ensureInitialTab()
+  let session = try #require(model.selectedTab?.activeSession)
+  let terminal = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+
+  // 先建立同一 Codex 会话的 idle 基线；后续 processing 是队列发送后真实会收到的 hook 状态。
+  terminal.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .idle))
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  controller.loadViewIfNeeded()
+  try await Task.sleep(for: .milliseconds(40))
+  let originalLayout = try #require(controller.view.subviews.first)
+
+  terminal.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .processing))
+  try await Task.sleep(for: .milliseconds(40))
+
+  #expect(controller.view.subviews.contains { $0 === originalLayout })
 }
 
 @Test("启用的 Agent 出现在命令面板且自定义前缀用于会话续接")

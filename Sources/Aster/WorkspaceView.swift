@@ -24,6 +24,10 @@ final class WorkspaceViewController: NSViewController {
   /// 不重建视图树。
   private var paneHosts: [UUID: ActivePaneHostView] = [:]
   private var editorTextViews: [UUID: NSTextView] = [:]
+  /// Prompt Queue 叠在单个活动 Pane 底部，不参与外层工作区 stack 的尺寸推导；这样
+  /// 显隐不会拆下其它 Pane 或重启终端容器。
+  private weak var promptQueueBar: PromptQueueBarView?
+  private var agentChatSheet: AgentChatSendSheetController?
   // `nonisolated(unsafe)`：只在主线程读写，但 deinit 是 nonisolated，需要能取回它
   // 来注销监视器，否则控制器释放后事件监视器仍然存活。
   private nonisolated(unsafe) var paneClickMonitor: Any?
@@ -114,6 +118,12 @@ final class WorkspaceViewController: NSViewController {
         preferences?.inspectorPresented = presented
         self?.setInspectorPresented(presented)
       }
+      .store(in: &modelSubscriptions)
+    model.promptQueuePresentationChanged
+      .sink { [weak self] paneID in self?.setPromptQueuePresented(for: paneID) }
+      .store(in: &modelSubscriptions)
+    model.agentChatPresentationRequested
+      .sink { [weak self] presentation in self?.presentAgentChatSheet(presentation) }
       .store(in: &modelSubscriptions)
     preferences.objectWillChange
       .sink { [weak self] _ in self?.schedulePreferenceRefresh() }
@@ -658,6 +668,9 @@ final class WorkspaceViewController: NSViewController {
     view.addSubview(layout)
     layout.pinEdges(to: view)
     installInspectorToggleOverlay()
+    if let paneID = model.presentedPromptQueuePaneID {
+      setPromptQueuePresented(for: paneID)
+    }
 
     if let tab = model.selectedTab, model.isComposerPresented,
       model.composerState(for: tab.activePaneID).presentation == .floating
@@ -1681,6 +1694,52 @@ final class WorkspaceViewController: NSViewController {
     }
     if opened { model.persistWorkspace() }
     return opened
+  }
+
+  /// 局部挂载 Prompt Queue。队列条覆盖当前 Pane 的底部留白而非重建分屏树，终端的
+  /// SwiftTerm 视图仍是同一个实例；切换 Pane、关闭条或刷新后都由 stable Pane UUID
+  /// 重新定位。
+  private func setPromptQueuePresented(for paneID: UUID?) {
+    promptQueueBar?.removeFromSuperview()
+    promptQueueBar = nil
+    guard let paneID,
+      let host = paneHosts[paneID],
+      model.canPresentPromptQueue,
+      model.selectedTab?.activePaneID == paneID
+    else { return }
+    let bar = PromptQueueBarView(
+      draft: model.promptQueueDraft(for: paneID),
+      items: model.promptQueueItems(for: paneID),
+      onDraftChanged: { [weak model] value in
+        model?.updatePromptQueueDraft(value, paneID: paneID) ?? false
+      },
+      onEnqueue: { [weak model] in model?.enqueuePromptQueueDraft(paneID: paneID) ?? false },
+      onSend: { [weak model] id in model?.sendPromptQueueItem(id: id, paneID: paneID) ?? false },
+      onRemove: { [weak model] id in model?.removePromptQueueItem(id: id, paneID: paneID) },
+      onClose: { [weak model] in model?.hidePromptQueue(paneID: paneID) }
+    )
+    host.addSubview(bar)
+    NSLayoutConstraint.activate([
+      bar.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 10),
+      bar.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -10),
+      bar.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -10),
+    ])
+    promptQueueBar = bar
+  }
+
+  private func presentAgentChatSheet(_ presentation: AgentChatPresentation) {
+    guard let window = view.window else {
+      model.notice = "无法显示发送到聊天窗口。"
+      return
+    }
+    // 一个工作区窗口同时只允许一个确认面板，重复触发时保留已经填写的 Comment。
+    guard agentChatSheet == nil else { return }
+    let sheet = AgentChatSendSheetController(model: model, presentation: presentation)
+    agentChatSheet = sheet
+    sheet.present(on: window) { [weak self, weak sheet] in
+      guard self?.agentChatSheet === sheet else { return }
+      self?.agentChatSheet = nil
+    }
   }
 
   private func makeTerminalPane(_ runtime: WorkspacePaneRuntime, tab: TerminalTabItem) -> NSView {
