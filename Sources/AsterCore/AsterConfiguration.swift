@@ -278,6 +278,9 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
   public var autocompleteOnDeviceLearning: Bool? = true
   public var autocompleteHistoryIgnore: [String]? = []
   public var autocompleteDescriptionLanguage: AutocompleteDescriptionLanguage? = .system
+  /// Pane IPC 写入默认关闭；敏感会话必须在第一层写权限之外再次显式放行。
+  public var ipcAllowSendKeys: Bool? = false
+  public var ipcAllowSensitiveSessions: Bool? = false
 
   public init() {}
 
@@ -338,6 +341,10 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
   public var resolvedAutocompleteDescriptionLanguage: AutocompleteDescriptionLanguage {
     autocompleteDescriptionLanguage ?? .system
   }
+
+  public var resolvedIPCAllowSendKeys: Bool { ipcAllowSendKeys ?? false }
+
+  public var resolvedIPCAllowSensitiveSessions: Bool { ipcAllowSensitiveSessions ?? false }
 
   public var resolvedTargetSecurityPolicy: TargetSecurityPolicy {
     TargetSecurityPolicy(
@@ -420,6 +427,9 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
 
 public struct AgentConfiguration: Codable, Equatable, Sendable {
   public var enabledAgents = ["claude", "codex", "kimi"]
+  /// key 为 AgentProvider.rawValue，value 为结构化 argv（首项是可执行文件）。可选字段
+  /// 保持旧配置可解码；命令不以 shell 字符串保存，避免恢复时重新解释 `$()` 等语法。
+  public var customLaunchCommands: [String: [String]]?
   public var badgeProcessing = true
   public var badgeTaskComplete = true
   public var badgeAwaitingInput = true
@@ -427,6 +437,14 @@ public struct AgentConfiguration: Codable, Equatable, Sendable {
   public var notifyAwaitingInput = true
   public var preventSleepWhileProcessing = false
   public var resumeSessions = true
+
+  public func launchComponents(for provider: AgentProvider) -> [String] {
+    guard let components = customLaunchCommands?[provider.rawValue],
+      let executable = components.first,
+      (try? AgentLaunchPrefix(executable: executable, arguments: Array(components.dropFirst()))) != nil
+    else { return [provider.commandName] }
+    return components
+  }
 }
 
 /// Aster 的完整用户配置。持久化入口在解码后统一规范化所有外部可控数值。
@@ -495,6 +513,23 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
         .filter { !$0.isEmpty && $0.utf8.count <= 128 }
         .prefix(128)
     )
+    if let commands = result.agents.customLaunchCommands {
+      result.agents.customLaunchCommands = commands.reduce(into: [:]) { normalized, entry in
+        guard let provider = AgentProvider(rawValue: entry.key),
+          let executable = entry.value.first,
+          entry.value.allSatisfy({ component in
+            !component.unicodeScalars.contains(where: {
+              CharacterSet.controlCharacters.contains($0)
+            })
+          }),
+          (try? AgentLaunchPrefix(
+            executable: executable,
+            arguments: Array(entry.value.dropFirst())
+          )) != nil
+        else { return }
+        normalized[provider.rawValue] = entry.value
+      }
+    }
     return result
   }
 

@@ -115,6 +115,168 @@ func appModelPersistsAndReopensClosedTabs() throws {
   #expect(!restored.reopenLastClosedTab())
 }
 
+@Test("Pane 与 Tab 共用最近关闭顺序且 Pane 以新运行态恢复")
+@MainActor
+func appModelRestoresClosedPaneFromUnifiedHistory() {
+  let defaults = behaviorTestDefaults()
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  model.splitSelectedTab(.right)
+  let restoredPaneID = model.selectedTab?.activePaneID
+
+  model.closeActivePane()
+  #expect(model.selectedTab?.layout.allPanes.count == 1)
+  #expect(model.reopenLastClosedTab())
+
+  #expect(model.selectedTab?.layout.allPanes.count == 2)
+  #expect(model.selectedTab?.activePaneID == restoredPaneID)
+  #expect(model.selectedTab?.activeSession?.statusIsRunning == false)
+}
+
+@Test("普通退出遵循启动偏好，连续异常恢复会绕过损坏快照")
+@MainActor
+func applicationSessionRecoveryDistinguishesCleanLaunchAndCrashLoop() throws {
+  let snapshot = WorkspaceTabSnapshot(
+    id: UUID(),
+    title: "restored",
+    layout: .leaf(
+      PaneDescriptor(kind: .editor, workingDirectory: "/tmp", resourcePath: "/tmp/a.txt"))
+  )
+
+  let cleanDefaults = behaviorTestDefaults()
+  cleanDefaults.set(
+    try JSONEncoder().encode(WorkspaceSnapshot(selectedTabID: snapshot.id, tabs: [snapshot])),
+    forKey: "aster.workspace.snapshot.v1"
+  )
+  let clean = AppModel(defaults: cleanDefaults)
+  clean.beginApplicationSession(launchBehavior: .newWindow)
+  clean.ensureInitialTab()
+  #expect(clean.tabs.first?.title != "restored")
+
+  let crashDefaults = behaviorTestDefaults()
+  crashDefaults.set(
+    try JSONEncoder().encode(WorkspaceSnapshot(selectedTabID: snapshot.id, tabs: [snapshot])),
+    forKey: "aster.workspace.snapshot.v1"
+  )
+  crashDefaults.set(true, forKey: "aster.session.running.v1")
+  crashDefaults.set(2, forKey: "aster.session.crash-count.v1")
+  let crashLoop = AppModel(defaults: crashDefaults)
+  crashLoop.beginApplicationSession(launchBehavior: .restoreLastSession)
+  crashLoop.ensureInitialTab()
+  #expect(crashLoop.tabs.first?.title != "restored")
+}
+
+@Test("CLI 新窗口与命令面板窗口动作通过显式 AppKit 路由且不污染当前标签")
+@MainActor
+func appModelRoutesWindowOnlyActionsWithoutLocalFallback() throws {
+  let defaults = behaviorTestDefaults()
+  let model = AppModel(defaults: defaults)
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "aster-window-route-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let file = root.appendingPathComponent("notes.md")
+  try "hello".write(to: file, atomically: true, encoding: .utf8)
+  var requestedPane: PaneDescriptor?
+  var emptyWindowRequests = 0
+  var pinRequests = 0
+  var pictureInPictureModes: [Bool] = []
+  model.onRequestNewWindow = { descriptor in
+    if let descriptor { requestedPane = descriptor } else { emptyWindowRequests += 1 }
+    return true
+  }
+  model.onRequestToggleWindowPin = { pinRequests += 1 }
+  model.onRequestPictureInPicture = { pictureInPictureModes.append($0) }
+  var response: WorkflowCLIExecutionResponse?
+
+  model.executeWorkflowCLI(
+    .openTarget(.init(target: .localPath(file.path), mode: .edit, placement: .newWindow)),
+    allowSendKeys: false,
+    allowSensitiveSessions: false
+  ) { response = $0 }
+
+  #expect(response?.exitCode == 0)
+  #expect(requestedPane?.kind == .editor)
+  #expect(requestedPane?.resourcePath == file.path)
+  #expect(model.tabs.isEmpty)
+
+  for identifier in ["new-window", "pin-window", "picture-in-picture", "picture-in-picture-follow"] {
+    let command = try #require(model.paletteCommands.first { $0.id == identifier })
+    model.performPaletteCommand(command)
+  }
+  #expect(emptyWindowRequests == 1)
+  #expect(pinRequests == 1)
+  #expect(pictureInPictureModes == [false, true])
+}
+
+@Test("文件 Send to Chat 只接受有界 UTF-8 普通文件并写入终端 Composer")
+@MainActor
+func appModelAddsSafeFileContextToComposer() throws {
+  let model = AppModel(defaults: behaviorTestDefaults())
+  model.ensureInitialTab()
+  let paneID = try #require(model.selectedTab?.activePaneID)
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "aster-file-chat-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let file = root.appendingPathComponent("context.txt")
+  try "TOKEN=secret-value\nhello".write(to: file, atomically: true, encoding: .utf8)
+
+  model.sendFileToChat(file)
+
+  let draft = model.composerState(for: paneID).draft
+  #expect(model.isComposerPresented)
+  #expect(draft.contains("source=\"file-selection\""))
+  #expect(draft.contains(file.path))
+  #expect(draft.contains("TOKEN=[REDACTED]"))
+  #expect(!draft.contains("secret-value"))
+}
+
+@Test("启用的 Agent 出现在命令面板且自定义前缀用于会话续接")
+@MainActor
+func appModelPublishesEnabledAgentLaunchCommands() throws {
+  let model = AppModel(defaults: behaviorTestDefaults())
+  model.enabledAgentProviders = [.codex, .claudeCode]
+  model.agentLaunchCommands = [AgentProvider.codex.rawValue: ["env", "PROFILE=work", "codex"]]
+
+  #expect(model.paletteCommands.contains { $0.id == "launch-agent:codex" })
+  #expect(model.paletteCommands.contains { $0.id == "launch-agent:claudeCode" })
+  #expect(!model.paletteCommands.contains { $0.id == "launch-agent:openCode" })
+}
+
+@Test("附加窗口恢复注册表只接受有界去重的 Aster UUID suite")
+func additionalWindowRegistryRejectsForgedAndUnboundedDomains() {
+  let valid = (0..<(AdditionalWorkspaceWindowRegistry.maximumWindows + 4)).map {
+    _ in AdditionalWorkspaceWindowRegistry.prefix + UUID().uuidString
+  }
+  let result = AdditionalWorkspaceWindowRegistry.normalized(
+    ["com.example.foreign", AdditionalWorkspaceWindowRegistry.prefix + "not-a-uuid"]
+      + valid + [valid[0]]
+  )
+
+  #expect(result == Array(valid.prefix(AdditionalWorkspaceWindowRegistry.maximumWindows)))
+}
+
+@Test("跨窗口标签转移保持同一运行对象并让源工作区保持非空")
+@MainActor
+func appModelTransfersTabsWithoutRecreatingRuntime() throws {
+  let source = AppModel(defaults: behaviorTestDefaults())
+  let destination = AppModel(defaults: behaviorTestDefaults())
+  source.ensureInitialTab()
+  destination.ensureInitialTab()
+  let tab = try #require(source.selectedTab)
+  let runtime = try #require(tab.activeRuntime)
+
+  let transferred = try #require(source.detachTabForTransfer(id: tab.id))
+  destination.receiveTransferredTab(transferred)
+
+  #expect(transferred === tab)
+  #expect(destination.selectedTab === tab)
+  #expect(destination.selectedTab?.activeRuntime === runtime)
+  #expect(source.tabs.count == 1)
+  #expect(source.tabs[0] !== tab)
+}
+
 @Test("标签标题覆盖与程序标题通道会进入工作区快照")
 @MainActor
 func terminalTabPersistsIndependentTitleState() {
@@ -150,6 +312,18 @@ func terminalTabUsesFocusedPaneTitleChannel() throws {
   tab.setActivePane(firstPane)
   #expect(tab.title == "background")
   #expect(tab.windowTitle == "background")
+}
+
+@Test("Recipe 分屏从创建时就使用声明的工作目录")
+@MainActor
+func terminalTabSplitUsesRequestedWorkingDirectory() {
+  let tab = TerminalTabItem(title: "Recipe", workingDirectory: "/tmp/first")
+
+  tab.split(direction: .right, workingDirectory: "/tmp/second")
+
+  let descriptor = tab.runtime(for: tab.activePaneID)?.descriptor
+  #expect(descriptor?.workingDirectory == "/tmp/second")
+  #expect(tab.layout.allPanes.last?.workingDirectory == "/tmp/second")
 }
 
 @Test("空固定名称恢复自动模式且目录回退会进入快照")

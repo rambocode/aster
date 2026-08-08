@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import AsterCore
@@ -204,4 +205,19 @@ func promptSelectionDeletionPolicyRejectsAmbiguousRanges() {
       commandRunning: true
     ) == nil
   )
+}
+
+@Test("命令完成标记记录本地结束时间")
+func shellCommandTimelineStampsFinishedAt() {
+  var timeline = ShellCommandTimeline()
+  timeline.receive(.promptStart, at: TerminalGridPoint(column: 0, row: 0))
+  timeline.receive(.inputStart, at: TerminalGridPoint(column: 2, row: 0))
+  timeline.receive(.commandStart, at: TerminalGridPoint(column: 0, row: 1))
+  let before = Date()
+  timeline.receive(.commandFinished(exitStatus: 0), at: TerminalGridPoint(column: 0, row: 4))
+  let after = Date()
+
+  let finishedAt = timeline.marks.last?.finishedAt
+  #expect(finishedAt != nil)
+  #expect(finishedAt.map { $0 >= before && $0 <= after } == true)
 }

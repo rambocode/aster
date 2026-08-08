@@ -28,6 +28,29 @@ func terminalViewTracksShellIntegrationMarkers() {
   #expect(snapshots.last?.isCommandRunning == false)
 }
 
+@Test("终端缓冲快照和命令大纲保留稳定绝对行号")
+@MainActor
+func terminalViewExportsBoundedSearchAndOutlineSnapshots() {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  view.resize(cols: 20, rows: 4)
+  view.installShellIntegrationHandler()
+  let output =
+    "first\r\n"
+    + "\u{1B}]133;A\u{7}$ \u{1B}]133;B\u{7}echo one\r\n"
+    + "\u{1B}]133;C\u{7}one\r\n\u{1B}]133;D;0\u{7}"
+  view.dataReceived(slice: Array(output.utf8)[...])
+
+  let snapshot = view.boundedTextSnapshot(maximumLines: 20, maximumCharacters: 1_000)
+  let outline = view.commandOutlineEntries()
+
+  #expect(snapshot.lines.contains("first"))
+  #expect(snapshot.lines.contains("$ echo one"))
+  #expect(outline.map(\.title) == ["echo one"])
+  #expect(outline.first?.exitStatus == 0)
+  #expect(view.revealAbsoluteRow(outline[0].absoluteRow))
+  #expect(!view.revealAbsoluteRow(-1))
+}
+
 @Test("非法 OSC 133 payload 不改变命令时间线")
 @MainActor
 func terminalViewRejectsMalformedShellMarkers() {
@@ -62,11 +85,13 @@ func terminalViewObservesProgressAndNotifications() {
   var notifications: [TerminalNotification] = []
   var responses: [String] = []
   var badgeDirectives: [TerminalBadgeDirective] = []
+  var agentDirectives: [AgentTerminalDirective] = []
   var visibleCursorLines: [String] = []
   view.onTerminalProgress = { progress.append($0) }
   view.onTerminalNotification = { notifications.append($0) }
   view.onTerminalProtocolResponse = { responses.append($0) }
   view.onTerminalBadgeDirective = { badgeDirectives.append($0) }
+  view.onAgentTerminalDirective = { agentDirectives.append($0) }
   view.onTerminalOutputActivity = { visibleCursorLines.append($0) }
   view.installActivityHandlers()
 
@@ -78,6 +103,7 @@ func terminalViewObservesProgressAndNotifications() {
     + "\u{1B}]99;i=k:p=body:e=1;\(encodedBody)\u{1B}\\"
     + "\u{1B}]99;i=ping:p=?;\u{1B}\\"
     + "Password:\u{1B}]6974;Badge=awaiting-input\u{7}"
+    + "\u{1B}]6974;AgentState=processing;Provider=codex\u{7}"
     + "\u{1B}]9;4;4;50\u{7}"
     + "\u{1B}]9;4;5;0;watch\u{7}"
   view.dataReceived(slice: Array(output.utf8)[...])
@@ -89,6 +115,7 @@ func terminalViewObservesProgressAndNotifications() {
   #expect(notifications[2].body == "Body")
   #expect(responses == ["\u{1B}]99;i=ping:p=?;ok\u{1B}\\"])
   #expect(badgeDirectives == [.set(.awaitingInput)])
+  #expect(agentDirectives == [.init(provider: .codex, signal: .processing)])
   #expect(visibleCursorLines.last == "Password:")
   #expect(view.getTerminal().ignoresPausedProgressReports)
 }

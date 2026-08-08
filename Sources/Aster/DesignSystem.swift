@@ -63,6 +63,22 @@ final class ThemeRuntime: @unchecked Sendable {
   }
 }
 
+/// 共享的相对时间格式化（如「15 秒前」），供 Open Quickly 与详情面板等浮层共用。
+/// @MainActor 隔离保证非 Sendable 的 formatter 不会跨线程共享。
+@MainActor
+enum RelativeTime {
+  private static let formatter: RelativeDateTimeFormatter = {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .abbreviated
+    return formatter
+  }()
+
+  /// 返回 date 相对 reference(默认现在)的本地化相对时间字符串。
+  static func string(since date: Date, relativeTo reference: Date = Date()) -> String {
+    formatter.localizedString(for: date, relativeTo: reference)
+  }
+}
+
 /// AppKit 版角色化视觉令牌。动态颜色会跟随窗口 appearance 自动解析。
 enum AsterTheme {
   static let paper = dynamic(.window)

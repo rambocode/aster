@@ -1,5 +1,6 @@
 import AppKit
 import AsterCore
+import Combine
 import Darwin
 import Foundation
 import SwiftTerm
@@ -56,6 +57,22 @@ private final class TerminalRetirementCoordinator {
   }
 }
 
+/// 终端 Outline 的只读投影。命令正文只从当前内存中的网格读取，不持久化；当对应
+/// scrollback 已被裁剪时不生成条目，避免跳转到错误位置。
+struct TerminalCommandOutlineEntry: Equatable {
+  let title: String
+  let absoluteRow: Int
+  let exitStatus: Int?
+  let finishedAt: Date?
+}
+
+/// 全局搜索使用的终端文本快照。`firstAbsoluteRow` 保留 SwiftTerm 的单调行号，搜索
+/// 结果可在输出继续增长后尽可能稳定地跳回原位置。
+struct TerminalTextSnapshot: Equatable {
+  let firstAbsoluteRow: Int
+  let lines: [String]
+}
+
 /// SwiftTerm 视图子类：把设置里的光标形状当作唯一真值，屏蔽程序端的 DECSCUSR 改写。
 ///
 /// Claude Code、vim、fzf 等 TUI 会主动发送 `CSI Ps SP q` 把光标改成方块或下划线；
@@ -97,6 +114,8 @@ final class AsterTerminalView: LocalProcessTerminalView {
   var pasteBracketedSafe = true
   /// Composer 在对应 Agent 批次接入；存在回调时“粘贴并在 Composer 中继续”可用。
   var onPasteIntoComposer: ((String) -> Void)?
+  /// Send to Chat 由工作区模型负责清理和预算；终端视图只提供当前原生选区入口。
+  var onSendSelectionToChat: (() -> Void)?
   var onConfirmPaste: @MainActor (PasteAnalysis) -> Bool =
     AsterTerminalView.presentPasteConfirmation
   /// PTY termios 变化没有独立通知；输出到达和用户输入发送前都触发一次同步，既让
@@ -120,6 +139,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
   var onTerminalProgress: ((TerminalProgressState) -> Void)?
   var onTerminalNotification: ((TerminalNotification) -> Void)?
   var onTerminalBadgeDirective: ((TerminalBadgeDirective) -> Void)?
+  var onAgentTerminalDirective: ((AgentTerminalDirective) -> Void)?
   /// Kitty capability query 必须直接回到 PTY，不能经过用户输入和补全跟踪器。
   var onTerminalProtocolResponse: ((String) -> Void)?
   var terminalBellEnabled = true
@@ -614,6 +634,72 @@ final class AsterTerminalView: LocalProcessTerminalView {
     )
   }
 
+  /// 读取完整 scrollback 的有界纯文本副本。默认限制高于 SwiftTerm 的常规历史容量，
+  /// 但仍设置行数与字符数双重上限，防止全局搜索因异常超长输出占用无界内存。
+  func boundedTextSnapshot(
+    maximumLines: Int = 100_000,
+    maximumCharacters: Int = 4_000_000
+  ) -> TerminalTextSnapshot {
+    let terminal = getTerminal()
+    let range = terminal.scrollInvariantLineRange
+    let lineLimit = max(0, min(maximumLines, 200_000))
+    let characterLimit = max(0, min(maximumCharacters, 16_000_000))
+    guard lineLimit > 0, characterLimit > 0, !range.isEmpty else {
+      return .init(firstAbsoluteRow: range.lowerBound, lines: [])
+    }
+    let lowerBound = max(range.lowerBound, range.upperBound - lineLimit)
+    var lines: [String] = []
+    var characters = 0
+    for row in lowerBound..<range.upperBound {
+      guard let line = terminal.getScrollInvariantLine(row: row) else { continue }
+      let text = line.translateToString(trimRight: true)
+      guard characters + text.count <= characterLimit else { break }
+      lines.append(text)
+      characters += text.count
+    }
+    return .init(firstAbsoluteRow: lowerBound, lines: lines)
+  }
+
+  /// 从 OSC 133 锚点和网格文本生成命令列表。只取输入起点所在行；复杂多行命令仍可
+  /// 通过行锚点跳转，但标题保持有界，且不会把输出区误当成命令正文。
+  func commandOutlineEntries(maximumItems: Int = 1_000) -> [TerminalCommandOutlineEntry] {
+    let terminal = getTerminal()
+    let range = terminal.scrollInvariantLineRange
+    let limit = max(0, min(maximumItems, 5_000))
+    return shellCommandTimeline.marks.suffix(limit).compactMap { mark in
+      guard range.contains(mark.inputStart.row),
+        let line = terminal.getScrollInvariantLine(row: mark.inputStart.row)
+      else { return nil }
+      let upperColumn = min(terminal.cols, max(mark.inputStart.column, 0))
+      let text = line.translateToString(trimRight: true)
+      // OSC 133 的列是网格列；常见命令提示符为 ASCII，按 Character 裁切即可得到
+      // 准确标题。宽字符提示符存在歧义时保留整行，比丢失命令正文更可诊断。
+      let title: String
+      if text.unicodeScalars.allSatisfy({ $0.isASCII }), upperColumn <= text.count {
+        title = String(text.dropFirst(upperColumn))
+      } else {
+        title = text
+      }
+      let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
+      return TerminalCommandOutlineEntry(
+        title: normalized.isEmpty ? "命令" : String(normalized.prefix(240)),
+        absoluteRow: mark.promptStart.row,
+        exitStatus: mark.exitStatus,
+        finishedAt: mark.finishedAt
+      )
+    }
+  }
+
+  /// 将 scroll-invariant 行号转换回当前 Buffer 坐标并滚动。已被裁剪的锚点返回 false，
+  /// 调用方可保持当前视口，不会误跳到同下标的新内容。
+  @discardableResult
+  func revealAbsoluteRow(_ absoluteRow: Int) -> Bool {
+    let terminal = getTerminal()
+    guard let row = terminal.bufferRow(forAbsoluteRow: absoluteRow) else { return false }
+    scrollTo(row: row)
+    return true
+  }
+
   private func applyViSelection() {
     guard let selection = viEngine?.selection else {
       isApplyingModeSelection = true
@@ -1005,10 +1091,14 @@ final class AsterTerminalView: LocalProcessTerminalView {
       }
     }
     terminal.registerOscHandler(code: 6_974) { [weak self] bytes in
-      guard let payload = String(bytes: bytes, encoding: .ascii),
-        let directive = TerminalBadgeDirective(payload: payload)
+      guard bytes.count <= AgentTerminalDirective.maximumPayloadBytes,
+        let payload = String(bytes: bytes, encoding: .ascii)
       else { return }
-      self?.onTerminalBadgeDirective?(directive)
+      if let directive = TerminalBadgeDirective(payload: payload) {
+        self?.onTerminalBadgeDirective?(directive)
+      } else if let directive = AgentTerminalDirective(payload: payload) {
+        self?.onAgentTerminalDirective?(directive)
+      }
     }
   }
 
@@ -1165,6 +1255,11 @@ final class AsterTerminalView: LocalProcessTerminalView {
     onPasteIntoComposer?(text)
   }
 
+  @objc func sendSelectionToChat(_ sender: Any?) {
+    guard selectionActive else { return }
+    onSendSelectionToChat?()
+  }
+
   /// 右键菜单补齐复制、粘贴与 Paste As。动作走 responder 自身，不依赖主菜单焦点。
   override func menu(for event: NSEvent) -> NSMenu? {
     let menu = NSMenu(title: "终端")
@@ -1172,6 +1267,15 @@ final class AsterTerminalView: LocalProcessTerminalView {
     copyItem.target = self
     copyItem.isEnabled = selectionActive
     menu.addItem(copyItem)
+    let sendToChatItem = NSMenuItem(
+      title: "发送选区到 Chat",
+      action: #selector(sendSelectionToChat(_:)),
+      keyEquivalent: ""
+    )
+    sendToChatItem.target = self
+    sendToChatItem.isEnabled = selectionActive && onSendSelectionToChat != nil
+    menu.addItem(sendToChatItem)
+    menu.addItem(.separator())
     let pasteItem = NSMenuItem(title: "粘贴", action: #selector(paste(_:)), keyEquivalent: "")
     pasteItem.target = self
     menu.addItem(pasteItem)
@@ -1243,6 +1347,8 @@ final class AsterTerminalView: LocalProcessTerminalView {
       return NSPasteboard.general.string(forType: .string) != nil
     case #selector(pasteAndContinueInComposer(_:)):
       return onPasteIntoComposer != nil
+    case #selector(sendSelectionToChat(_:)):
+      return selectionActive && onSendSelectionToChat != nil
     default:
       return super.validateUserInterfaceItem(item)
     }
@@ -1539,6 +1645,9 @@ extension SwiftTerm.CursorStyle {
 final class TerminalSession: NSObject, ObservableObject, Identifiable {
   let id = UUID()
   let workingDirectory: String
+  /// Outline 页只关心命令时间线结构变化；使用专用事件避免把高频终端输出提升为
+  /// `objectWillChange`，也让已打开的大纲能在命令完成后局部更新。
+  let outlineChanged = PassthroughSubject<Void, Never>()
 
   @Published private(set) var isRunning = false
   @Published private(set) var currentWorkingDirectory: String
@@ -1563,6 +1672,25 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 成功完成后短暂显示 checkmark，随后退化为未读完成圆点。
   @Published private(set) var showsCompletedFlash = false
   @Published private(set) var explicitBadge: TerminalBadgeState?
+  /// 当前前台命令可明确识别为受支持 Agent 时发布 provider 与折叠状态。识别仅来自
+  /// 用户提交命令的首个 token；不会扫描任意输出或把相似进程名误判为 Agent。
+  @Published private(set) var activeAgentProvider: AgentProvider?
+  @Published private(set) var agentTaskState = AgentTaskState.idle
+  @Published private(set) var agentTaskCompletionUnread = false
+  /// 当前前台命令的展示名:优先 Agent provider 名,否则取已提交命令的首个 token;
+  /// 没有前台命令时为 nil。供 Open Quickly「当前」页显示运行中的命令(如 kimi)。
+  var foregroundCommandName: String? {
+    guard hasRunningCommand else { return nil }
+    if let activeAgentProvider { return activeAgentProvider.commandName }
+    guard let submittedCommand else { return nil }
+    let executable = ShellCommandTokenizer.tokenize(submittedCommand).tokens.first ?? ""
+    return executable.isEmpty ? nil : (executable as NSString).lastPathComponent
+  }
+  /// Hook 状态一旦到达即成为当前 Agent 命令的权威来源；否则保留前台进程与输出
+  /// 探针回退，未安装集成的 Agent 仍能显示基本 processing 状态。
+  private var agentLifecycleIsAuthoritative = false
+  private var agentLifecycleSequence: UInt64 = 0
+  private var agentStateReducer = AgentTaskStateReducer()
 
   private var foregroundPollTask: Task<Void, Never>?
   // 输出活跃度探针：可见屏幕内容哈希。Claude Code 等 TUI 思考时在原位重绘状态行
@@ -1574,6 +1702,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var automaticSecureInputEnabled = true
   private weak var preferences: AppPreferences?
   private var submittedCommand: String?
+  private var submittedCommandOrigin = WorkflowRecipeCommandOrigin.shellIntegration
+  private var pendingCommandOrigin: WorkflowRecipeCommandOrigin?
+  private(set) var recipeCommandCandidates: [WorkflowRecipeCommandCandidate] = []
   private var activityOutputTail = ""
   private var awaitingInputTask: Task<Void, Never>?
   private var completedFlashTask: Task<Void, Never>?
@@ -1586,6 +1717,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   var onTitleUpdate: ((Int, String) -> Void)?
   /// Vi `/` 或 `?` 请求显示现有查找栏；工作区拥有展示状态，Session 只保存方向。
   var onRequestFind: (() -> Void)?
+  var onCommandFinished: (() -> Void)?
+  var onPasteIntoComposer: ((String) -> Void)? {
+    didSet { terminalView?.onPasteIntoComposer = onPasteIntoComposer }
+  }
+  var onSendSelectionToChat: (() -> Void)? {
+    didSet { terminalView?.onSendSelectionToChat = onSendSelectionToChat }
+  }
   private var pendingViSearchDirection: TerminalViSearchDirection?
   private var lastFindTerm = ""
   private var lastFindWasPrevious = false
@@ -1598,6 +1736,42 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 但分屏恢复期间回调与视图挂载顺序可能让缓存短暂过期，状态栏必须读取真实值。
   var statusIsRunning: Bool {
     terminalView?.process.running ?? isRunning
+  }
+
+  /// 当前 Pane 的 Shell PID。仅用于只读进程/端口检查，不保存到工作区快照。
+  var processIdentifier: Int32? {
+    guard let process = terminalView?.process, process.running, process.shellPid > 0 else {
+      return nil
+    }
+    return process.shellPid
+  }
+
+  /// CLI 写入 SSH/sudo/su Pane 需要第二个显式权限。判断只使用当前 Shell Integration
+  /// 命令首 token 与远端 OSC 7 状态，不扫描终端输出，避免提示文字造成误判。
+  var isSensitiveAutomationSession: Bool {
+    if !currentWorkingDirectoryIsLocal { return true }
+    guard let command = submittedCommand else { return false }
+    let executable = ShellCommandTokenizer.tokenize(command).tokens.first.map {
+      URL(fileURLWithPath: $0).lastPathComponent
+    }
+    return ["ssh", "mosh", "sudo", "su"].contains(executable)
+  }
+
+  /// 标签层消费的 Agent 专属徽章。若用户关闭某类徽章，返回 nil 让聚合器忽略
+  /// Agent 的长寿命前台进程，而不是回退成普通 shell spinner。
+  var agentActivityBadge: TerminalBadgeState? {
+    guard activeAgentProvider != nil, let agents = preferences?.configuration.agents else {
+      return nil
+    }
+    switch agentTaskState {
+    case .processing:
+      return agents.badgeProcessing ? .running(percent: nil) : TerminalBadgeState.none
+    case .awaitingInput:
+      return agents.badgeAwaitingInput ? .awaitingInput : TerminalBadgeState.none
+    case .idle:
+      return agents.badgeTaskComplete && agentTaskCompletionUnread
+        ? .finished : TerminalBadgeState.none
+    }
   }
 
   init(workingDirectory: String) {
@@ -1646,9 +1820,14 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.onPaneModeActivated = { [weak self] in
       self?.autocompleteController?.dismissForPaneMode()
     }
+    view.onPasteIntoComposer = onPasteIntoComposer
+    view.onSendSelectionToChat = onSendSelectionToChat
     view.onTerminalIO = { [weak self] in self?.refreshAutomaticSecureInput() }
     view.onTerminalOutputActivity = { [weak self] line in self?.receiveActivityOutput(line) }
-    view.onTerminalUserInput = { [weak self] in self?.clearAwaitingInput() }
+    view.onTerminalUserInput = { [weak self] in self?.handleTerminalUserInput() }
+    view.onAgentTerminalDirective = { [weak self] directive in
+      self?.handleAgentTerminalDirective(directive)
+    }
     view.onShellIntegrationStateChange = { [weak self] timeline in
       self?.handleShellIntegrationTimeline(timeline)
     }
@@ -1665,7 +1844,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         }
       )
       autocomplete.attach(to: view)
-      autocomplete.onCommandSubmitted = { [weak self] command in self?.submittedCommand = command }
+      autocomplete.onCommandSubmitted = { [weak self] command in
+        guard let self else { return }
+        self.submittedCommand = command
+        self.submittedCommandOrigin = self.pendingCommandOrigin ?? .shellIntegration
+        self.pendingCommandOrigin = nil
+      }
       view.onAutocompleteInput = { [weak autocomplete] in autocomplete?.receiveInput($0) }
       view.onAutocompleteOutput = { [weak autocomplete] in autocomplete?.receiveOutput($0) }
       view.onShellIntegrationEvent = { [weak self, weak autocomplete] event in
@@ -1850,11 +2034,58 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalView.send(data: bytes[...])
   }
 
+  @discardableResult
+  func sendRecipeCommand(_ command: String) -> Bool {
+    guard terminalView?.process.running == true else { return false }
+    pendingCommandOrigin = .recipeReplay
+    send(command)
+    return true
+  }
+
   /// 把文本原样写入 PTY（不带回车）：用于把命令预填到提示符，执行与否由用户确认。
   func typeText(_ text: String) {
     guard let terminalView, terminalView.process.running else { return }
     let bytes = Array(text.utf8)
     terminalView.send(data: bytes[...])
+  }
+
+  /// IPC send-text/send-keys 的原始用户输入入口。仍经 `AsterTerminalView.send`，因此
+  /// Read-only、Vi/Hint 本地模式、选择清理与输入活跃度规则不会被自动化绕过。
+  @discardableResult
+  func sendAutomationBytes(_ bytes: [UInt8]) -> Bool {
+    guard let terminalView, terminalView.process.running, !bytes.isEmpty,
+      bytes.count <= WorkflowCLIInputDecoder.maximumBytes
+    else { return false }
+    terminalView.send(data: bytes[...])
+    return true
+  }
+
+  var selectedTextForAgentContext: String? {
+    terminalView?.getSelection()
+  }
+
+  /// 外部拖入的文本与普通粘贴共享风险分析、确认、bracketed paste 和只读门禁。
+  @discardableResult
+  func pasteDroppedText(_ text: String) -> Bool {
+    terminalView?.pasteText(text) ?? false
+  }
+
+  /// 把提示词以 bracketed paste 写入终端输入行但不回车，供 Open Quickly「当前」页
+  /// 复用历史 prompt；粘贴保护与只读门禁仍由终端视图统一执行。
+  @discardableResult
+  func pastePromptText(_ text: String) -> Bool {
+    terminalView?.pasteText(text, forceBracketed: true) ?? false
+  }
+
+  /// Composer 使用 bracketed paste 一次写入多行内容，再单独发送 Return。这样 Agent
+  /// TUI 能把多行当作一个 prompt；粘贴保护和 Read-only 仍由终端视图统一执行。
+  @discardableResult
+  func submitComposerText(_ text: String) -> Bool {
+    guard let terminalView, terminalView.process.running,
+      terminalView.pasteText(text, forceBracketed: true)
+    else { return false }
+    terminalView.send(data: [UInt8(13)][...])
+    return true
   }
 
   func interrupt() {
@@ -1871,7 +2102,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   /// 在完整滚动缓冲区内查找并选中下一处匹配文本。
   @discardableResult
-  func findNext(_ term: String, previous: Bool = false) -> Bool {
+  func findNext(
+    _ term: String,
+    previous: Bool = false,
+    caseSensitive: Bool = false,
+    regularExpression: Bool = false
+  ) -> Bool {
     guard let terminalView, !term.isEmpty else { return false }
     let resolvedPrevious: Bool
     if previous {
@@ -1883,14 +2119,48 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     } else {
       resolvedPrevious = false
     }
+    let options = SearchOptions(caseSensitive: caseSensitive, regex: regularExpression)
     let found = resolvedPrevious
-      ? terminalView.findPrevious(term)
-      : terminalView.findNext(term)
+      ? terminalView.findPrevious(term, options: options)
+      : terminalView.findNext(term, options: options)
     if found {
       lastFindTerm = term
       lastFindWasPrevious = resolvedPrevious
     }
     return found
+  }
+
+  /// 当前选中匹配与总匹配数，供查找栏显示 `N / M`。总数在 SwiftTerm 内部有界，
+  /// 不会因为频繁输入搜索词而扫描或分配无界结果数组。
+  func findMatchSummary(
+    _ term: String,
+    caseSensitive: Bool = false,
+    regularExpression: Bool = false
+  ) -> (index: Int, total: Int) {
+    guard let terminalView, !term.isEmpty else { return (0, 0) }
+    return terminalView.searchMatchSummary(
+      term,
+      options: SearchOptions(caseSensitive: caseSensitive, regex: regularExpression)
+    )
+  }
+
+  func clearFind() {
+    terminalView?.clearSearch()
+    lastFindTerm = ""
+    pendingViSearchDirection = nil
+  }
+
+  func textSnapshot() -> TerminalTextSnapshot {
+    terminalView?.boundedTextSnapshot() ?? .init(firstAbsoluteRow: 0, lines: [])
+  }
+
+  func commandOutlineEntries() -> [TerminalCommandOutlineEntry] {
+    terminalView?.commandOutlineEntries() ?? []
+  }
+
+  @discardableResult
+  func revealAbsoluteRow(_ row: Int) -> Bool {
+    terminalView?.revealAbsoluteRow(row) ?? false
   }
 
   private func repeatLastFind(reverse: Bool) {
@@ -2116,6 +2386,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     if lastCommandExitStatus != timeline.latestExitStatus {
       lastCommandExitStatus = timeline.latestExitStatus
     }
+    outlineChanged.send()
+    updateAgentTaskState()
   }
 
   private func handleShellIntegrationEvent(_ event: ShellIntegrationEvent) {
@@ -2127,13 +2399,41 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       completedFlashTask?.cancel()
       showsCompletedFlash = false
       activityOutputTail = ""
+      if let command = submittedCommand {
+        let executable = ShellCommandTokenizer.tokenize(command).tokens.first ?? ""
+        activeAgentProvider = AgentProvider.detect(executablePath: executable)
+      } else {
+        activeAgentProvider = nil
+      }
+      agentLifecycleIsAuthoritative = false
+      agentLifecycleSequence = 0
+      agentStateReducer = AgentTaskStateReducer()
+      updateAgentTaskState()
       guard let command = submittedCommand,
         let shell = preferences?.configuration.shell,
         AutomaticProgressMatcher(prefixes: shell.resolvedAutoProgressCommands).matches(command)
       else { return }
       progressState = .indeterminate
     case .commandFinished(let exitStatus):
+      defer { onCommandFinished?() }
       clearAwaitingInput()
+      agentTaskState = .idle
+      activeAgentProvider = nil
+      agentTaskCompletionUnread = false
+      agentLifecycleIsAuthoritative = false
+      agentLifecycleSequence = 0
+      agentStateReducer = AgentTaskStateReducer()
+      if let command = submittedCommand, !command.isEmpty,
+        command.utf8.count <= WorkflowRecipeTOML.maximumCommandBytes,
+        !command.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+      {
+        recipeCommandCandidates.append(.init(text: command, origin: submittedCommandOrigin))
+        if recipeCommandCandidates.count > WorkflowRecipeTOML.maximumCommands {
+          recipeCommandCandidates.removeFirst(
+            recipeCommandCandidates.count - WorkflowRecipeTOML.maximumCommands)
+        }
+      }
+      submittedCommandOrigin = .shellIntegration
       guard let status = exitStatus else {
         progressState = .clear
         submittedCommand = nil
@@ -2225,7 +2525,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         self.hasRunningCommand || self.progressState.isWorking
       else { return }
       let detected = AwaitingInputPromptDetector.matches(self.activityOutputTail)
-      if self.awaitingInput != detected { self.awaitingInput = detected }
+      if self.awaitingInput != detected {
+        self.awaitingInput = detected
+        self.updateAgentTaskState()
+      }
     }
   }
 
@@ -2233,6 +2536,90 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     awaitingInputTask?.cancel()
     awaitingInputTask = nil
     if awaitingInput { awaitingInput = false }
+    updateAgentTaskState()
+  }
+
+  private func handleTerminalUserInput() {
+    if agentTaskCompletionUnread { agentTaskCompletionUnread = false }
+    // Hook 成为权威来源后，清理启发式标记不足以改变 reducer 状态；用户输入必须映射
+    // 为同一事件流中的 inputSubmitted，才能从 awaiting-input 恢复 processing。
+    if agentLifecycleIsAuthoritative, agentStateReducer.state == .awaitingInput {
+      consumeAgentTaskStateSignal(.inputSubmitted)
+    }
+    clearAwaitingInput()
+  }
+
+  /// Hook 指令与本地用户提交共享同一单调序列，避免其中任一路径绕过 reducer 的乱序
+  /// 保护，导致后续合法状态被误判为陈旧事件。
+  private func consumeAgentTaskStateSignal(_ signal: AgentTaskStateSignal) {
+    agentLifecycleSequence &+= 1
+    _ = agentStateReducer.consume(.init(
+      sequence: agentLifecycleSequence,
+      signal: signal
+    ))
+  }
+
+  private func updateAgentTaskState() {
+    guard activeAgentProvider != nil else {
+      if agentTaskState != .idle { agentTaskState = .idle }
+      return
+    }
+    if agentLifecycleIsAuthoritative {
+      if agentTaskState != agentStateReducer.state { agentTaskState = agentStateReducer.state }
+      return
+    }
+    let next = AgentTaskState.fold(
+      processing: hasRunningCommand || progressState.isWorking,
+      awaitingInput: awaitingInput
+    )
+    if agentTaskState != next { agentTaskState = next }
+  }
+
+  private func handleAgentTerminalDirective(_ directive: AgentTerminalDirective) {
+    // 已由 shell command 精确识别 provider 时，拒绝其它 provider 向同一 PTY 注入状态；
+    // wrapper 命令无法识别时则允许首个合法 hook 建立关联。
+    if let activeAgentProvider, activeAgentProvider != directive.provider { return }
+    activeAgentProvider = directive.provider
+    agentLifecycleIsAuthoritative = true
+    let previous = agentStateReducer.state
+    consumeAgentTaskStateSignal(directive.signal)
+    if directive.signal == .awaitingInput {
+      awaitingInput = true
+    } else if awaitingInput {
+      awaitingInput = false
+    }
+    switch directive.signal {
+    case .processing, .inputSubmitted:
+      agentTaskCompletionUnread = false
+    case .awaitingInput:
+      if previous != .awaitingInput,
+        preferences?.configuration.agents.notifyAwaitingInput == true
+      {
+        post(
+          TerminalNotification(
+            title: "Agent 等待输入",
+            body: "\(directive.provider.commandName) 正在等待确认或输入。"
+          ),
+          // Agent lifecycle hook 是 Aster 自身的任务状态，不应受 Shell Controlled
+          // 对应用 OSC 通知的开关误伤；沿用命令完成分类获得独立的声音/前台策略。
+          category: .commandFinish
+        )
+      }
+    case .idle:
+      if previous == .processing || previous == .awaitingInput {
+        agentTaskCompletionUnread = true
+        if preferences?.configuration.agents.notifyTaskComplete == true {
+          post(
+            TerminalNotification(
+              title: "Agent 任务已完成",
+              body: "\(directive.provider.commandName) 已结束当前任务。"
+            ),
+            category: .commandFinish
+          )
+        }
+      }
+    }
+    updateAgentTaskState()
   }
 
   private func showCompletedFlash() {

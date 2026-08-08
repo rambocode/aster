@@ -64,6 +64,8 @@ public struct ShellCommandMark: Equatable, Sendable {
   public let outputStart: TerminalGridPoint
   public let outputEnd: TerminalGridPoint
   public let exitStatus: Int?
+  /// 命令完成（OSC 133 D）落记录的本地时间，供 Outline 显示相对时间；仅展示用。
+  public let finishedAt: Date?
 }
 
 /// 将有序 OSC 133 事件折叠成有界命令时间线，供 Outline、命令跳转、退出状态和
@@ -127,7 +129,8 @@ public struct ShellCommandTimeline: Equatable, Sendable {
           inputStart: inputStart,
           outputStart: outputStart,
           outputEnd: point,
-          exitStatus: exitStatus
+          exitStatus: exitStatus,
+          finishedAt: Date()
         )
       )
       if marks.count > capacity {

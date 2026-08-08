@@ -56,15 +56,28 @@ public struct WorkspaceState: Equatable, Sendable {
 }
 
 /// 命令面板中的可搜索动作描述。
+public enum PaletteCommandScope: String, Codable, Equatable, Sendable {
+  case pane
+  case window
+  case application
+}
+
 public struct PaletteCommand: Identifiable, Equatable, Sendable {
   public let id: String
   public let title: String
   public let keywords: [String]
+  public let scope: PaletteCommandScope
 
-  public init(id: String, title: String, keywords: [String] = []) {
+  public init(
+    id: String,
+    title: String,
+    keywords: [String] = [],
+    scope: PaletteCommandScope = .pane
+  ) {
     self.id = id
     self.title = title
     self.keywords = keywords
+    self.scope = scope
   }
 }
 

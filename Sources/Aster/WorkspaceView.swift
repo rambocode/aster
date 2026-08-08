@@ -6,7 +6,7 @@ import Combine
 /// `TerminalSession` 长期持有，标签切换或布局刷新不会重启 PTY、清空滚动历史或 TUI。
 @MainActor
 final class WorkspaceViewController: NSViewController {
-  private let model: AppModel
+  let model: AppModel
   private let preferences: AppPreferences
   private var modelSubscriptions: Set<AnyCancellable> = []
   private var tabSubscriptions: Set<AnyCancellable> = []
@@ -15,6 +15,7 @@ final class WorkspaceViewController: NSViewController {
   /// 当前渲染出来的面板容器。焦点切换只更新这里的指示器与 first responder，
   /// 不重建视图树。
   private var paneHosts: [UUID: ActivePaneHostView] = [:]
+  private var editorTextViews: [UUID: NSTextView] = [:]
   // `nonisolated(unsafe)`：只在主线程读写，但 deinit 是 nonisolated，需要能取回它
   // 来注销监视器，否则控制器释放后事件监视器仍然存活。
   private nonisolated(unsafe) var paneClickMonitor: Any?
@@ -22,6 +23,10 @@ final class WorkspaceViewController: NSViewController {
   /// 垂直侧栏顶部「+ 新建 / 折叠」悬停动作区；refresh 整树重建后重新赋值。
   private weak var sidebarHoverActions: NSView?
   private weak var windowTitleLabel: NSTextField?
+  /// 详情面板在同一标签的常规状态刷新与收起/重开之间保持实例稳定，避免 Files 树和
+  /// 搜索框先被销毁再创建。切换标签后按新 Tab ID 替换，防止订阅继续指向旧标签。
+  private var detailsPanelController: DetailsPanelViewController?
+  private var detailsPanelTabID: UUID?
 
   init(model: AppModel, preferences: AppPreferences) {
     self.model = model
@@ -42,6 +47,19 @@ final class WorkspaceViewController: NSViewController {
       .store(in: &modelSubscriptions)
     preferences.objectWillChange
       .sink { [weak self] _ in self?.scheduleRefresh() }
+      .store(in: &modelSubscriptions)
+    NotificationCenter.default.publisher(
+      for: .panePictureInPictureOwnershipDidChange,
+      object: model
+    )
+    .sink { [weak self] _ in self?.scheduleRefresh() }
+    .store(in: &modelSubscriptions)
+    // 详情面板显隐跟随持久化的偏好值；之后用户的每次切换再写回，重启窗口即恢复。
+    model.isInspectorPresented = preferences.inspectorPresented
+    model.$isInspectorPresented
+      .removeDuplicates()
+      .dropFirst()
+      .sink { [weak preferences] presented in preferences?.inspectorPresented = presented }
       .store(in: &modelSubscriptions)
     model.ensureInitialTab()
     installPaneClickMonitor()
@@ -224,9 +242,13 @@ final class WorkspaceViewController: NSViewController {
   }
 
   private func refresh() {
+    // 终端视图由 Session 长期持有，但从视图树移除时 AppKit 仍可能清掉 first
+    // responder。记录正在输入的实例，重排完成后同步恢复，避免异步回焦前丢一个按键。
+    let previouslyFocusedTerminal = view.window?.firstResponder as? AsterTerminalView
     observeTabs()
     retainedObjects.removeAll()
     paneHosts.removeAll()
+    editorTextViews.removeAll()
     children.forEach { $0.removeFromParent() }
     view.removeAllSubviews()
     view.appearance = preferences.preferredAppearance
@@ -244,6 +266,19 @@ final class WorkspaceViewController: NSViewController {
     view.addSubview(layout)
     layout.pinEdges(to: view)
 
+    if let tab = model.selectedTab, model.isComposerPresented,
+      model.composerState(for: tab.activePaneID).presentation == .floating
+    {
+      let composer = makeAgentComposer(tab)
+      view.addSubview(composer)
+      composer.translatesAutoresizingMaskIntoConstraints = false
+      NSLayoutConstraint.activate([
+        composer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+        composer.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -42),
+        composer.widthAnchor.constraint(equalToConstant: 560),
+      ])
+    }
+
     if model.isPalettePresented {
       let palette = PaletteOverlayViewController(model: model)
       addChild(palette)
@@ -255,6 +290,42 @@ final class WorkspaceViewController: NSViewController {
         palette.view.topAnchor.constraint(equalTo: view.topAnchor, constant: 82),
         palette.view.widthAnchor.constraint(equalToConstant: 520),
         palette.view.heightAnchor.constraint(lessThanOrEqualToConstant: 430),
+      ])
+    } else if model.isOpenQuicklyPresented {
+      let openQuickly = OpenQuicklyOverlayViewController(model: model)
+      addChild(openQuickly)
+      retainedObjects.append(openQuickly)
+      view.addSubview(openQuickly.view)
+      openQuickly.view.translatesAutoresizingMaskIntoConstraints = false
+      NSLayoutConstraint.activate([
+        openQuickly.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+        openQuickly.view.topAnchor.constraint(equalTo: view.topAnchor, constant: 82),
+        openQuickly.view.widthAnchor.constraint(equalToConstant: 640),
+        openQuickly.view.heightAnchor.constraint(lessThanOrEqualToConstant: 560),
+      ])
+    } else if model.isGlobalFindPresented {
+      let globalFind = GlobalFindOverlayViewController(model: model)
+      addChild(globalFind)
+      retainedObjects.append(globalFind)
+      view.addSubview(globalFind.view)
+      globalFind.view.translatesAutoresizingMaskIntoConstraints = false
+      NSLayoutConstraint.activate([
+        globalFind.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+        globalFind.view.topAnchor.constraint(equalTo: view.topAnchor, constant: 82),
+        globalFind.view.widthAnchor.constraint(equalToConstant: 680),
+        globalFind.view.heightAnchor.constraint(lessThanOrEqualToConstant: 520),
+      ])
+    } else if model.isAgentHistoryPresented {
+      let history = AgentHistoryOverlayViewController(model: model)
+      addChild(history)
+      retainedObjects.append(history)
+      view.addSubview(history.view)
+      history.view.translatesAutoresizingMaskIntoConstraints = false
+      NSLayoutConstraint.activate([
+        history.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+        history.view.topAnchor.constraint(equalTo: view.topAnchor, constant: 64),
+        history.view.widthAnchor.constraint(equalToConstant: 760),
+        history.view.heightAnchor.constraint(equalToConstant: 560),
       ])
     }
 
@@ -271,6 +342,18 @@ final class WorkspaceViewController: NSViewController {
       }
     }
 
+    let blocksTerminalFocus = model.isFindPresented || model.isPalettePresented
+      || model.isOpenQuicklyPresented || model.isGlobalFindPresented
+      || model.isAgentHistoryPresented
+    let restoredTerminalFocus: Bool
+    if !blocksTerminalFocus, let terminal = previouslyFocusedTerminal,
+      terminal.window === view.window, let window = view.window
+    {
+      restoredTerminalFocus = window.makeFirstResponder(terminal)
+    } else {
+      restoredTerminalFocus = false
+    }
+
     // 视图树刚重建，first responder 还停在被移除的旧视图上；等本轮布局结束后把
     // 键盘焦点交还给当前面板。只聚焦活动面板——过去对每个终端都调用 focus()，
     // 最后渲染的那个会抢走输入焦点，用户看到的焦点框与真正接收按键的面板不一致。
@@ -278,7 +361,10 @@ final class WorkspaceViewController: NSViewController {
       guard let self else { return }
       // 搜索框和命令面板各自安排 first responder；此时不能再把焦点抢回终端，
       // 否则 Vi `/`/`?` 打开的查找栏虽然可见，却无法接收查询文本。
-      if !self.model.isFindPresented, !self.model.isPalettePresented,
+      if !restoredTerminalFocus,
+        !self.model.isFindPresented, !self.model.isPalettePresented,
+        !self.model.isOpenQuicklyPresented, !self.model.isGlobalFindPresented,
+        !self.model.isAgentHistoryPresented,
         let tab = self.model.selectedTab
       {
         self.focusActivePane(in: tab)
@@ -311,6 +397,11 @@ final class WorkspaceViewController: NSViewController {
         .sink { [weak self, weak tab] title in
           guard let self, let tab, tab.id == self.model.selectedTabID else { return }
           self.updateWindowTitle(title)
+        }
+        .store(in: &tabSubscriptions)
+      tab.documentLineRevealRequested
+        .sink { [weak self] request in
+          self?.revealEditorLine(request.line, paneID: request.paneID)
         }
         .store(in: &tabSubscriptions)
     }
@@ -391,11 +482,29 @@ final class WorkspaceViewController: NSViewController {
   /// 把键盘焦点交给当前面板：终端面板交给 SwiftTerm 视图，其余面板交给容器本身。
   private func focusActivePane(in tab: TerminalTabItem) {
     if let session = tab.activeRuntime?.terminalSession {
+      // PiP 拥有长期终端容器时，主工作区只显示占位；这里也不能跨窗口把
+      // first responder 强行交给 PiP 中的终端。
+      guard !PanePictureInPictureOwnership.isOwnedByPictureInPicture(session) else { return }
       session.focus()
       return
     }
     guard let host = paneHosts[tab.activePaneID], let window = host.window else { return }
     window.makeFirstResponder(host)
+  }
+
+  private func revealEditorLine(_ line: Int, paneID: UUID) {
+    guard let textView = editorTextViews[paneID], line > 0 else { return }
+    let source = textView.string as NSString
+    var location = 0
+    for _ in 1..<line {
+      let range = source.lineRange(for: NSRange(location: location, length: 0))
+      location = NSMaxRange(range)
+      if location >= source.length { break }
+    }
+    let range = source.lineRange(for: NSRange(location: min(location, source.length), length: 0))
+    textView.setSelectedRange(range)
+    textView.scrollRangeToVisible(range)
+    textView.window?.makeFirstResponder(textView)
   }
 
   private func makeWorkspaceLayout() -> NSView {
@@ -474,9 +583,19 @@ final class WorkspaceViewController: NSViewController {
     workspace.translatesAutoresizingMaskIntoConstraints = false
     if model.isInspectorPresented {
       let divider = makeDivider(color: AsterTheme.hairline, vertical: true)
-      let details = DetailsPanelViewController(model: model, preferences: preferences)
-      addChild(details)
-      retainedObjects.append(details)
+      let selectedTabID = model.selectedTabID
+      let details: DetailsPanelViewController
+      if let cached = detailsPanelController, detailsPanelTabID == selectedTabID {
+        details = cached
+      } else {
+        detailsPanelController = nil
+        detailsPanelTabID = nil
+        details = DetailsPanelViewController(model: model, preferences: preferences)
+        detailsPanelController = details
+        detailsPanelTabID = selectedTabID
+      }
+      if details.parent !== self { addChild(details) }
+      details.synchronizeAppearanceIfNeeded()
       host.addSubview(divider)
       host.addSubview(details.view)
       details.view.translatesAutoresizingMaskIntoConstraints = false
@@ -494,6 +613,8 @@ final class WorkspaceViewController: NSViewController {
         details.view.widthAnchor.constraint(equalToConstant: 278),
       ])
     } else {
+      // 收起时仅从布局移除，保留已完成布局的四页与检查结果；同一标签再次展开可
+      // 直接复用。若期间切换标签，展开分支会按 Tab ID 创建新控制器。
       workspace.pinEdges(to: host)
     }
     return host
@@ -580,6 +701,11 @@ final class WorkspaceViewController: NSViewController {
           action: { [weak self, weak tab] in
             guard let tab else { return }
             self?.model.select(tab)
+          },
+          onDragEnd: { [weak self, weak tab] point in
+            guard let self, let tab else { return }
+            (NSApp.delegate as? AsterAppDelegate)?.moveTab(
+              tab.id, from: self.model, toScreenPoint: point)
           }
         )
         button.menu = makeTabContextMenu(tab)
@@ -777,6 +903,11 @@ final class WorkspaceViewController: NSViewController {
         action: { [weak self, weak tab] in
           guard let tab else { return }
           self?.model.select(tab)
+        },
+        onDragEnd: { [weak self, weak tab] point in
+          guard let self, let tab else { return }
+          (NSApp.delegate as? AsterAppDelegate)?.moveTab(
+            tab.id, from: self.model, toScreenPoint: point)
         }
       )
       button.menu = makeTabContextMenu(tab)
@@ -875,6 +1006,10 @@ final class WorkspaceViewController: NSViewController {
     paneHost.addSubview(paneTree)
     paneTree.pinEdges(to: paneHost, insets: NSEdgeInsets(style.padding))
     inner.addArrangedSubview(paneHost)
+    let composer = model.isComposerPresented
+      && model.composerState(for: tab.activePaneID).presentation == .docked
+      ? makeAgentComposer(tab) : nil
+    if let composer { inner.addArrangedSubview(composer) }
     let statusBar = preferences.showStatusBar ? makeStatusBar(tab) : nil
     if let statusBar { inner.addArrangedSubview(statusBar) }
     stack.addArrangedSubview(wrapper)
@@ -889,7 +1024,15 @@ final class WorkspaceViewController: NSViewController {
       paneHost.widthAnchor.constraint(equalTo: inner.widthAnchor),
       paneHost.topAnchor.constraint(equalTo: inner.topAnchor),
     ]
-    if let statusBar {
+    if let composer {
+      constraints.append(paneHost.bottomAnchor.constraint(equalTo: composer.topAnchor))
+      if let statusBar {
+        constraints.append(composer.bottomAnchor.constraint(equalTo: statusBar.topAnchor))
+        constraints.append(statusBar.bottomAnchor.constraint(equalTo: inner.bottomAnchor))
+      } else {
+        constraints.append(composer.bottomAnchor.constraint(equalTo: inner.bottomAnchor))
+      }
+    } else if let statusBar {
       // 状态栏必须先钉在底边，Pane 区才有「剩余空间」可以填充；只写 paneHost 与状态栏
       // 的相邻关系时两者会一起收缩到固有高度，把下方整块留白。
       constraints.append(statusBar.bottomAnchor.constraint(equalTo: inner.bottomAnchor))
@@ -926,11 +1069,37 @@ final class WorkspaceViewController: NSViewController {
     title.alignment = .center
     background.addSubview(title)
     title.translatesAutoresizingMaskIntoConstraints = false
+
+    // 右侧详情面板的悬停切换按钮：指针进入标题栏右端感应区时淡入。面板展开后不
+    // 渲染该按钮（收起入口在面板 header 右侧），标题重新获得完整可用宽度。
+    var titleTrailing: NSLayoutConstraint
+    if model.isInspectorPresented {
+      titleTrailing = title.trailingAnchor.constraint(
+        lessThanOrEqualTo: background.trailingAnchor, constant: -12)
+    } else {
+      let inspectorToggle = ActionButton(symbol: "sidebar.right", bezelStyle: .accessoryBarAction) {
+        [weak self] in self?.model.toggleInspector()
+      }
+      inspectorToggle.isBordered = false
+      inspectorToggle.toolTip = "展开详情面板"
+      inspectorToggle.identifier = NSUserInterfaceItemIdentifier("workspace-inspector-toggle")
+      inspectorToggle.contentTintColor = AsterTheme.secondaryInk
+      let hoverReveal = TitlebarHoverRevealView(content: inspectorToggle)
+      background.addSubview(hoverReveal)
+      hoverReveal.translatesAutoresizingMaskIntoConstraints = false
+      NSLayoutConstraint.activate([
+        hoverReveal.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -2),
+        hoverReveal.topAnchor.constraint(equalTo: background.topAnchor),
+        hoverReveal.bottomAnchor.constraint(equalTo: background.bottomAnchor),
+      ])
+      titleTrailing = title.trailingAnchor.constraint(
+        lessThanOrEqualTo: hoverReveal.leadingAnchor, constant: -8)
+    }
     NSLayoutConstraint.activate([
       title.centerXAnchor.constraint(equalTo: background.centerXAnchor),
       title.centerYAnchor.constraint(equalTo: background.centerYAnchor),
       title.leadingAnchor.constraint(greaterThanOrEqualTo: background.leadingAnchor, constant: 12),
-      title.trailingAnchor.constraint(lessThanOrEqualTo: background.trailingAnchor, constant: -12),
+      titleTrailing,
     ])
     return background
   }
@@ -945,19 +1114,47 @@ final class WorkspaceViewController: NSViewController {
 
     let field = NSSearchField()
     field.placeholderString = "在终端缓冲区中查找"
-    field.target = self
-    field.action = #selector(findNext(_:))
     field.identifier = NSUserInterfaceItemIdentifier(tab.id.uuidString)
-    let previous = ActionButton(symbol: "chevron.up") { [weak tab, weak field] in
-      guard let term = field?.stringValue else { return }
-      _ = tab?.activeSession?.findNext(term, previous: true)
+    let caseSensitive = NSButton(title: "Aa", target: nil, action: nil)
+    caseSensitive.setButtonType(.toggle)
+    caseSensitive.bezelStyle = .inline
+    caseSensitive.toolTip = "区分大小写"
+    let regularExpression = NSButton(title: ".*", target: nil, action: nil)
+    regularExpression.setButtonType(.toggle)
+    regularExpression.bezelStyle = .inline
+    regularExpression.toolTip = "正则表达式"
+    let summary = makeLabel("0 / 0", size: 10, color: AsterTheme.secondaryInk, monospaced: true)
+    summary.alignment = .right
+    summary.translatesAutoresizingMaskIntoConstraints = false
+    summary.widthAnchor.constraint(greaterThanOrEqualToConstant: 46).isActive = true
+    let controller = TerminalFindBarController(
+      session: tab.activeSession,
+      field: field,
+      caseSensitiveButton: caseSensitive,
+      regularExpressionButton: regularExpression,
+      summaryLabel: summary
+    )
+    retainedObjects.append(controller)
+    field.delegate = controller
+    field.target = controller
+    field.action = #selector(TerminalFindBarController.findNext(_:))
+    caseSensitive.target = controller
+    caseSensitive.action = #selector(TerminalFindBarController.optionsChanged(_:))
+    regularExpression.target = controller
+    regularExpression.action = #selector(TerminalFindBarController.optionsChanged(_:))
+    let previous = ActionButton(symbol: "chevron.up") { [weak controller] in
+      controller?.findPrevious(nil)
     }
-    let next = ActionButton(symbol: "chevron.down") { [weak tab, weak field] in
-      guard let term = field?.stringValue else { return }
-      _ = tab?.activeSession?.findNext(term)
+    let next = ActionButton(symbol: "chevron.down") { [weak controller] in
+      controller?.findNext(nil)
     }
-    let close = ActionButton(symbol: "xmark") { [weak self] in self?.model.isFindPresented = false }
-    let row = NSStackView(views: [field, previous, next, close])
+    let close = ActionButton(symbol: "xmark") { [weak self, weak tab] in
+      tab?.activeSession?.clearFind()
+      self?.model.isFindPresented = false
+    }
+    let row = NSStackView(views: [
+      field, summary, caseSensitive, regularExpression, previous, next, close,
+    ])
     row.orientation = .horizontal
     row.spacing = 8
     row.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 10)
@@ -1006,7 +1203,16 @@ final class WorkspaceViewController: NSViewController {
     }
     let host = ActivePaneHostView(
       paneID: descriptor.id,
-      isActive: tab.activePaneID == descriptor.id
+      isActive: tab.activePaneID == descriptor.id,
+      onExternalDrop: { [weak self, weak tab, weak runtime] pasteboard, zone in
+        guard let self, let tab, let runtime else { return false }
+        return self.handleExternalDrop(
+          pasteboard,
+          zone: zone,
+          runtime: runtime,
+          tab: tab
+        )
+      }
     ) { [weak tab] in
       tab?.setActivePane(descriptor.id)
     }
@@ -1016,7 +1222,7 @@ final class WorkspaceViewController: NSViewController {
     case .terminal: content = makeTerminalPane(runtime, tab: tab)
     case .editor: content = makeEditorPane(runtime, tab: tab)
     case .fileBrowser:
-      let controller = FileBrowserViewController(runtime: runtime, tab: tab)
+      let controller = FileBrowserViewController(runtime: runtime, tab: tab, model: model)
       addChild(controller)
       retainedObjects.append(controller)
       content = controller.view
@@ -1035,6 +1241,59 @@ final class WorkspaceViewController: NSViewController {
     return host
   }
 
+  /// Finder/浏览器/其它 App 的标准拖放入口。目录在绿色内半区创建继承该目录的终端，
+  /// 蓝色外半区创建文件浏览器；普通文件创建只读预览，文本走完整粘贴保护链路。
+  private func handleExternalDrop(
+    _ pasteboard: NSPasteboard,
+    zone: ExternalPaneDropZone,
+    runtime: WorkspacePaneRuntime,
+    tab: TerminalTabItem
+  ) -> Bool {
+    let urls = pasteboard.readObjects(
+      forClasses: [NSURL.self],
+      options: [.urlReadingFileURLsOnly: false]
+    ) as? [URL] ?? []
+    if urls.isEmpty, let text = pasteboard.string(forType: .string),
+      let session = runtime.terminalSession
+    {
+      return session.pasteDroppedText(text)
+    }
+    var opened = false
+    for url in urls.prefix(32) {
+      if url.isFileURL {
+        guard let values = try? url.resourceValues(forKeys: [
+          .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
+        ]), values.isSymbolicLink != true
+        else { continue }
+        if values.isDirectory == true {
+          if zone.opensTerminal {
+            tab.split(direction: zone.direction, workingDirectory: url.path)
+          } else {
+            tab.split(
+              direction: zone.direction,
+              kind: .fileBrowser,
+              resourcePath: url.path,
+              workingDirectory: url.path
+            )
+          }
+          opened = true
+        } else if values.isRegularFile == true {
+          tab.split(
+            direction: zone.direction,
+            kind: .preview,
+            resourcePath: url.path,
+            workingDirectory: url.deletingLastPathComponent().path
+          )
+          opened = true
+        }
+      } else if ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+        opened = NSWorkspace.shared.open(url) || opened
+      }
+    }
+    if opened { model.persistWorkspace() }
+    return opened
+  }
+
   private func makeTerminalPane(_ runtime: WorkspacePaneRuntime, tab: TerminalTabItem) -> NSView {
     guard let session = runtime.terminalSession else {
       return makeCenteredMessage(title: "终端不可用", symbol: "terminal")
@@ -1042,7 +1301,29 @@ final class WorkspaceViewController: NSViewController {
     session.onRequestFind = { [weak self] in
       self?.model.isFindPresented = true
     }
+    session.onPasteIntoComposer = { [weak self] text in
+      self?.model.appendToComposer(text, paneID: runtime.id)
+    }
+    session.onSendSelectionToChat = { [weak self] in
+      self?.model.sendTerminalSelectionToChat()
+    }
+    if PanePictureInPictureOwnership.isOwnedByPictureInPicture(session) {
+      let placeholder = makeCenteredMessage(
+        title: "正在 Picture in Picture 中显示",
+        symbol: "pip"
+      )
+      placeholder.identifier = NSUserInterfaceItemIdentifier(
+        "pane-picture-in-picture-placeholder-\(runtime.id.uuidString)"
+      )
+      return placeholder
+    }
     let host = session.makeTerminalHost(preferences: preferences)
+    // PTY 只在 Pane 首次挂载时创建；Recipe 命令因此必须从这里启动。短暂让出主线程，
+    // 给 Shell Integration 安装 prompt hook 的时间，后续命令再由完成事件严格串行推进。
+    Task { @MainActor [weak model] in
+      try? await Task.sleep(for: .milliseconds(350))
+      model?.startPendingRecipeCommands(paneID: runtime.id)
+    }
     host.removeFromSuperview()
     if let error = session.startupError {
       let warning = makeLabel(error, size: 10.5, color: AsterTheme.warning)
@@ -1080,6 +1361,7 @@ final class WorkspaceViewController: NSViewController {
       textView.isAutomaticDashSubstitutionEnabled = false
       let delegate = DocumentTextDelegate(runtime: runtime)
       textView.delegate = delegate
+      editorTextViews[runtime.id] = textView
       retainedObjects.append(delegate)
       let scroll = NSScrollView()
       scroll.hasVerticalScroller = true
@@ -1110,6 +1392,112 @@ final class WorkspaceViewController: NSViewController {
     scroll.documentView = textView
     column.addArrangedSubview(scroll)
     return column
+  }
+
+  /// Composer 属于活动 Pane，但草稿状态保存在 AppModel；工作区因主题、标签或窗口
+  /// 刷新重建视图时，文本与附件仍能恢复。发送与 Queue 都走领域状态机。
+  private func makeAgentComposer(_ tab: TerminalTabItem) -> NSView {
+    let paneID = tab.activePaneID
+    let state = model.composerState(for: paneID)
+    let queue = model.promptQueue(for: paneID)
+    let host = NSView()
+    host.wantsLayer = true
+    host.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.98).cgColor
+    host.layer?.borderWidth = 1
+    host.layer?.borderColor = AsterTheme.hairline.cgColor
+    host.layer?.cornerRadius = state.presentation == .floating ? 12 : 0
+    host.shadow = state.presentation == .floating ? NSShadow() : nil
+    host.shadow?.shadowBlurRadius = 20
+    host.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.2)
+    host.translatesAutoresizingMaskIntoConstraints = false
+    host.heightAnchor.constraint(equalToConstant: 174).isActive = true
+
+    let textView = NSTextView()
+    textView.string = state.draft
+    textView.font = NSFont.systemFont(ofSize: 12)
+    textView.textColor = AsterTheme.ink
+    textView.backgroundColor = AsterTheme.paper
+    textView.isAutomaticQuoteSubstitutionEnabled = false
+    textView.isAutomaticDashSubstitutionEnabled = false
+    textView.textContainerInset = NSSize(width: 8, height: 7)
+    let delegate = AgentComposerTextDelegate(model: model, paneID: paneID)
+    textView.delegate = delegate
+    retainedObjects.append(delegate)
+    let scroll = NSScrollView()
+    scroll.hasVerticalScroller = true
+    scroll.borderType = .noBorder
+    scroll.documentView = textView
+
+    let provider = tab.activeSession?.activeAgentProvider?.commandName ?? "当前终端"
+    let stateLabel: String = switch tab.activeSession?.agentTaskState {
+    case .processing: "处理中"
+    case .awaitingInput: "等待输入"
+    case .idle, nil: "空闲"
+    }
+    let title = makeLabel(
+      "Composer · \(provider) · \(stateLabel)",
+      size: 10.5, weight: .semibold, color: AsterTheme.secondaryInk)
+    let pin = ActionButton(title: state.isPinned ? "取消 Pin" : "Pin", bezelStyle: .inline) {
+      [weak self] in
+      self?.model.setComposerPinned(!state.isPinned, paneID: paneID)
+    }
+    let floatingTitle = state.presentation == .floating ? "停靠" : "浮动"
+    let floating = ActionButton(title: floatingTitle, bezelStyle: .inline) { [weak self] in
+      if state.presentation == .floating {
+        self?.model.dockComposer(paneID: paneID)
+      } else {
+        self?.model.floatComposer(paneID: paneID)
+      }
+    }
+    let close = ActionButton(symbol: "xmark", bezelStyle: .inline) { [weak self] in
+      self?.model.closeComposer(paneID: paneID)
+    }
+    let header = NSStackView(views: [title, NSView(), pin, floating, close])
+    header.orientation = .horizontal
+    header.spacing = 6
+
+    let attachments = NSStackView()
+    attachments.orientation = .horizontal
+    attachments.spacing = 5
+    for attachment in state.attachments {
+      let chip = ActionButton(title: "\(attachment.displayName) ×", bezelStyle: .inline) {
+        [weak self] in
+        self?.model.removeComposerAttachment(attachment.id, paneID: paneID)
+      }
+      chip.toolTip = attachment.fileURL.path
+      attachments.addArrangedSubview(chip)
+    }
+    let queueLabel = makeLabel(
+      "Queue \(queue.pending.count + (queue.inFlight == nil ? 0 : 1))",
+      size: 10, color: AsterTheme.tertiaryInk, monospaced: true)
+    let attach = ActionButton(title: "附件…", bezelStyle: .rounded) { [weak self] in
+      let panel = NSOpenPanel()
+      panel.canChooseFiles = true
+      panel.canChooseDirectories = false
+      panel.allowsMultipleSelection = true
+      guard panel.runModal() == .OK else { return }
+      for url in panel.urls { self?.model.addComposerAttachment(url, paneID: paneID) }
+    }
+    let enqueue = ActionButton(title: "Queue", bezelStyle: .rounded) { [weak self] in
+      self?.model.queueComposer(paneID: paneID)
+    }
+    let send = ActionButton(title: "发送", bezelStyle: .rounded) { [weak self, weak textView] in
+      guard let self else { return }
+      if let value = textView?.string { _ = model.updateComposerDraft(value, paneID: paneID) }
+      model.submitComposer(paneID: paneID)
+    }
+    send.keyEquivalent = "\r"
+    let footer = NSStackView(views: [attachments, NSView(), queueLabel, attach, enqueue, send])
+    footer.orientation = .horizontal
+    footer.spacing = 7
+
+    let column = NSStackView(views: [header, scroll, footer])
+    column.orientation = .vertical
+    column.spacing = 7
+    column.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
+    host.addSubview(column)
+    column.pinEdges(to: host)
+    return host
   }
 
   private func makePaneToolbar(title: String, symbol: String, save: (() -> Void)?) -> NSView {
@@ -1208,12 +1596,86 @@ final class WorkspaceViewController: NSViewController {
   @objc private func insertSidebarDivider() { model.insertDividerAfterSelectedTab() }
   @objc private func removeAllSidebarDividers() { model.removeAllTabDividers() }
   @objc private func showSettings() { (NSApp.delegate as? AsterAppDelegate)?.showSettings(nil) }
-  @objc private func findNext(_ sender: NSSearchField) {
-    _ = model.selectedTab?.activeSession?.findNext(sender.stringValue)
-  }
 }
 
 // MARK: - AppKit components
+
+@MainActor
+private final class AgentComposerTextDelegate: NSObject, NSTextViewDelegate {
+  private weak var model: AppModel?
+  private let paneID: UUID
+
+  init(model: AppModel, paneID: UUID) {
+    self.model = model
+    self.paneID = paneID
+  }
+
+  func textDidChange(_ notification: Notification) {
+    guard let textView = notification.object as? NSTextView else { return }
+    _ = model?.updateComposerDraft(textView.string, paneID: paneID)
+  }
+}
+
+/// 当前 Pane 查找栏的轻量控制器。实时搜索、选项和计数共享同一状态，避免每个按钮
+/// 各自读取一套条件；控制器随工作区本轮视图树一起释放。
+@MainActor
+private final class TerminalFindBarController: NSObject, NSSearchFieldDelegate {
+  private weak var session: TerminalSession?
+  private weak var field: NSSearchField?
+  private weak var caseSensitiveButton: NSButton?
+  private weak var regularExpressionButton: NSButton?
+  private weak var summaryLabel: NSTextField?
+
+  init(
+    session: TerminalSession?,
+    field: NSSearchField,
+    caseSensitiveButton: NSButton,
+    regularExpressionButton: NSButton,
+    summaryLabel: NSTextField
+  ) {
+    self.session = session
+    self.field = field
+    self.caseSensitiveButton = caseSensitiveButton
+    self.regularExpressionButton = regularExpressionButton
+    self.summaryLabel = summaryLabel
+  }
+
+  func controlTextDidChange(_ obj: Notification) {
+    guard let field, !field.stringValue.isEmpty else {
+      session?.clearFind()
+      summaryLabel?.stringValue = "0 / 0"
+      return
+    }
+    _ = perform(previous: false)
+  }
+
+  @objc func findNext(_ sender: Any?) { _ = perform(previous: false) }
+  @objc func findPrevious(_ sender: Any?) { _ = perform(previous: true) }
+  @objc func optionsChanged(_ sender: Any?) {
+    session?.clearFind()
+    _ = perform(previous: false)
+  }
+
+  @discardableResult
+  private func perform(previous: Bool) -> Bool {
+    guard let session, let term = field?.stringValue, !term.isEmpty else { return false }
+    let caseSensitive = caseSensitiveButton?.state == .on
+    let regularExpression = regularExpressionButton?.state == .on
+    let found = session.findNext(
+      term,
+      previous: previous,
+      caseSensitive: caseSensitive,
+      regularExpression: regularExpression
+    )
+    let summary = session.findMatchSummary(
+      term,
+      caseSensitive: caseSensitive,
+      regularExpression: regularExpression
+    )
+    summaryLabel?.stringValue = "\(summary.index) / \(summary.total)"
+    return found
+  }
+}
 
 /// `TABS` 标题右侧的标签整理入口。使用原生 `NSMenu` 保留 macOS 的毛玻璃、阴影、
 /// 键盘导航和辅助功能；菜单展开期间按钮保持截图中的浅灰圆角按下态。
@@ -1258,6 +1720,7 @@ private final class TabRowButton: NSButton {
   private let selected: Bool
   private let style: TerminalTabStyle
   private let handler: () -> Void
+  private let onDragEnd: (NSPoint) -> Void
   private var tracking: NSTrackingArea?
   private var hovered = false { didSet { updateStyle() } }
 
@@ -1270,12 +1733,14 @@ private final class TabRowButton: NSButton {
     showsFinished: Bool,
     showsFailure: Bool,
     showsAwaitingInput: Bool,
-    action: @escaping () -> Void
+    action: @escaping () -> Void,
+    onDragEnd: @escaping (NSPoint) -> Void
   ) {
     self.tab = tab
     self.selected = selected
     style = horizontal ? (theme.style.horizontalTab ?? theme.style.tab) : theme.style.tab
     handler = action
+    self.onDragEnd = onDragEnd
     super.init(frame: .zero)
     title = horizontal ? tab.title : ""
     alignment = .left
@@ -1373,6 +1838,32 @@ private final class TabRowButton: NSButton {
   /// 侧栏整树重建，若等到 mouseUp，按钮可能已在按下与抬起之间被销毁，点击就会丢失。
   override func mouseDown(with event: NSEvent) {
     handler()
+    guard let window else { return }
+    let origin = event.locationInWindow
+    var draggedPoint: NSPoint?
+    window.trackEvents(
+      matching: [.leftMouseDragged, .leftMouseUp],
+      timeout: .greatestFiniteMagnitude,
+      mode: .eventTracking
+    ) { tracked, stop in
+      guard let tracked else {
+        stop.pointee = true
+        return
+      }
+      if tracked.type == .leftMouseDragged {
+        let delta = hypot(
+          tracked.locationInWindow.x - origin.x,
+          tracked.locationInWindow.y - origin.y
+        )
+        if delta >= 5 { draggedPoint = window.convertPoint(toScreen: tracked.locationInWindow) }
+      } else if tracked.type == .leftMouseUp {
+        if draggedPoint != nil {
+          draggedPoint = window.convertPoint(toScreen: tracked.locationInWindow)
+        }
+        stop.pointee = true
+      }
+    }
+    if let draggedPoint { onDragEnd(draggedPoint) }
   }
 
   required init?(coder: NSCoder) { nil }
@@ -1727,26 +2218,84 @@ private final class ClickThroughStripView: NSView {
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
+/// 标题栏右端的悬停揭示容器：内含详情面板切换按钮与一小段感应边距，自持
+/// tracking area（owner 是自身，不与控制器的侧栏悬停处理串扰）。只在面板收起
+/// 时挂载——面板展开后标题栏不再渲染它，收起入口在面板 header 右侧。
+private final class TitlebarHoverRevealView: NSView {
+  init(content: NSView) {
+    super.init(frame: .zero)
+    alphaValue = 0
+    addSubview(content)
+    content.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      content.centerYAnchor.constraint(equalTo: centerYAnchor),
+      content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+      // 感应区向左多延伸 18pt，按钮不必精确命中也能触发揭示。
+      content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
+      topAnchor.constraint(equalTo: content.topAnchor),
+      bottomAnchor.constraint(equalTo: content.bottomAnchor),
+    ])
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    trackingAreas.forEach { removeTrackingArea($0) }
+    addTrackingArea(
+      NSTrackingArea(
+        rect: bounds, options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+        owner: self, userInfo: nil))
+  }
+
+  override func mouseEntered(with event: NSEvent) { setRevealed(true) }
+  override func mouseExited(with event: NSEvent) { setRevealed(false) }
+
+  private func setRevealed(_ revealed: Bool) {
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = 0.15
+      animator().alphaValue = revealed ? 1 : 0
+    }
+  }
+}
+
+/// 外部对象落在 Pane 边缘的语义。最靠边的蓝区打开对象 Pane；相邻的绿色内半区仅对
+/// 目录有效，用该目录创建终端。文本不区分区域，始终粘贴到目标终端。
+struct ExternalPaneDropZone: Equatable {
+  let direction: SplitDirection
+  let opensTerminal: Bool
+}
+
 @MainActor
-private final class ActivePaneHostView: NSView {  /// 所属面板的 ID：窗口级点击监视器沿 superview 链命中本视图后据此激活对应面板。
+private final class ActivePaneHostView: NSView {
+  /// 所属面板的 ID：窗口级点击监视器沿 superview 链命中本视图后据此激活对应面板。
   /// 顶边感应带与把手的高度：太矮抓不到，太高会让顶部一整条都在触发淡入。
   private static let handleRevealHeight: CGFloat = 14
   let paneID: UUID
   private let activation: () -> Void
+  private let onExternalDrop: (NSPasteboard, ExternalPaneDropZone) -> Bool
   private var dragHandle: PaneDragHandleView?
   private var handleTrackingArea: NSTrackingArea?
   private var inactiveOverlay: NSView?
+  private var externalDropZone: ExternalPaneDropZone?
   /// 焦点状态可原地切换：切换聚焦面板只改这层遮罩的可见性，不重建视图树。
   var isActivePane: Bool {
     didSet { inactiveOverlay?.isHidden = isActivePane }
   }
 
-  init(paneID: UUID, isActive: Bool, activation: @escaping () -> Void) {
+  init(
+    paneID: UUID,
+    isActive: Bool,
+    onExternalDrop: @escaping (NSPasteboard, ExternalPaneDropZone) -> Bool,
+    activation: @escaping () -> Void
+  ) {
     self.paneID = paneID
     self.activation = activation
+    self.onExternalDrop = onExternalDrop
     isActivePane = isActive
     super.init(frame: .zero)
     wantsLayer = true
+    registerForDraggedTypes([.fileURL, .URL, .string])
   }
 
   required init?(coder: NSCoder) { nil }
@@ -1754,6 +2303,46 @@ private final class ActivePaneHostView: NSView {  /// 所属面板的 ID：窗�
   override func mouseDown(with event: NSEvent) {
     activation()
     super.mouseDown(with: event)
+  }
+
+  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+    updateExternalDropZone(sender)
+  }
+
+  override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+    updateExternalDropZone(sender)
+  }
+
+  override func draggingExited(_ sender: NSDraggingInfo?) {
+    externalDropZone = nil
+    layer?.borderWidth = 0
+  }
+
+  override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    defer { draggingExited(sender) }
+    guard let externalDropZone else { return false }
+    activation()
+    return onExternalDrop(sender.draggingPasteboard, externalDropZone)
+  }
+
+  private func updateExternalDropZone(_ sender: NSDraggingInfo) -> NSDragOperation {
+    let point = convert(sender.draggingLocation, from: nil)
+    guard bounds.contains(point), bounds.width > 0, bounds.height > 0 else { return [] }
+    let distances: [(SplitDirection, CGFloat)] = [
+      (.left, point.x), (.right, bounds.width - point.x),
+      (.down, point.y), (.up, bounds.height - point.y),
+    ]
+    guard let nearest = distances.min(by: { $0.1 < $1.1 }) else { return [] }
+    let dimension = nearest.0.isHorizontal ? bounds.width : bounds.height
+    guard nearest.1 <= dimension * 0.30 else { return [] }
+    externalDropZone = ExternalPaneDropZone(
+      direction: nearest.0,
+      opensTerminal: nearest.1 > dimension * 0.15
+    )
+    layer?.borderWidth = 2
+    layer?.borderColor = (externalDropZone?.opensTerminal == true
+      ? NSColor.systemGreen : AsterTheme.accent).cgColor
+    return .copy
   }
 
   /// 顶边感应带：指针靠近 Pane 顶部时淡入拖动把手。用 `NSTrackingArea` 而不是叠一层
@@ -1823,13 +2412,15 @@ private final class DocumentTextDelegate: NSObject, NSTextViewDelegate {
 private final class FileBrowserViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
   private let runtime: WorkspacePaneRuntime
   private weak var tab: TerminalTabItem?
+  private let model: AppModel
   private var directory: URL
   private var entries: [URL] = []
   private let table = NSTableView()
 
-  init(runtime: WorkspacePaneRuntime, tab: TerminalTabItem) {
+  init(runtime: WorkspacePaneRuntime, tab: TerminalTabItem, model: AppModel) {
     self.runtime = runtime
     self.tab = tab
+    self.model = model
     directory = URL(fileURLWithPath: runtime.descriptor.resourcePath ?? runtime.descriptor.workingDirectory)
     super.init(nibName: nil, bundle: nil)
   }
@@ -1936,10 +2527,29 @@ private final class FileBrowserViewController: NSViewController, NSTableViewData
       menu.addItem(ActionMenuItem(title: "在预览中打开") { [weak self] in
         self?.tab?.openPreview(url)
       })
+      menu.addItem(ActionMenuItem(title: "发送到 Chat") { [weak self] in
+        self?.model.sendFileToChat(url)
+      })
     }
+    menu.addItem(.separator())
+    menu.addItem(ActionMenuItem(title: "复制绝对路径") {
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(url.path, forType: .string)
+    })
+    menu.addItem(ActionMenuItem(title: "在新终端中打开所在目录") { [weak tab] in
+      let directory = self.isDirectory(url) ? url.path : url.deletingLastPathComponent().path
+      tab?.split(direction: .right, workingDirectory: directory)
+    })
+    menu.addItem(ActionMenuItem(title: "在当前终端中 cd 到所在目录") { [weak tab] in
+      let directory = self.isDirectory(url) ? url.path : url.deletingLastPathComponent().path
+      _ = tab?.openDirectoryInTerminal(directory)
+    })
     menu.addItem(.separator())
     menu.addItem(ActionMenuItem(title: "在 Finder 中显示") {
       NSWorkspace.shared.activateFileViewerSelecting([url])
+    })
+    menu.addItem(ActionMenuItem(title: "使用默认应用打开") {
+      NSWorkspace.shared.open(url)
     })
   }
 
@@ -1957,147 +2567,930 @@ private final class FileBrowserViewController: NSViewController, NSTableViewData
   }
 }
 
+/// Open Quickly 浮层:标签条过滤 + 双行结果列表(图标/相对时间/类型徽章)+ 底部
+/// 快捷键栏。数据与匹配在 AsterCore 的 OpenQuicklyIndex,这里只负责展示与动作接线。
 @MainActor
-private final class DetailsPanelViewController: NSViewController {
-  private let model: AppModel
-  private let preferences: AppPreferences
-  private let contentHost = NSView()
-  private var selection = 0
+private final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDelegate {
+  /// 可跳转目标:action 是 ↩ 主动作,menuActions 供 ⌘K 弹出的上下文菜单。
+  private struct Target {
+    let item: OpenQuicklyItem
+    let symbol: String
+    let badge: String
+    /// 运行中的命令行用 accent 图标突出,其余保持 secondaryInk。
+    let accented: Bool
+    let actionTitle: String
+    let action: () -> Void
+    var menuActions: [(title: String, handler: () -> Void)] = []
+  }
 
-  init(model: AppModel, preferences: AppPreferences) {
+  private let model: AppModel
+  private let resultsStack = NSStackView()
+  private let search = OverlaySearchField()
+  private var chips: [OpenQuicklyFilter: OpenQuicklyChip] = [:]
+  private var selectedFilter: OpenQuicklyFilter
+  private var targets: [Target] = []
+  private var visibleTargets: [Target] = []
+  private var rows: [OpenQuicklyRowView] = []
+  private var selectedIndex = 0
+
+  init(model: AppModel) {
     self.model = model
-    self.preferences = preferences
+    self.selectedFilter = model.openQuicklyInitialFilter
     super.init(nibName: nil, bundle: nil)
   }
 
   required init?(coder: NSCoder) { nil }
 
   override func loadView() {
-    let theme = preferences.activeTheme
-    let background = ThemeVisualEffectView()
-    background.apply(
-      material: theme.palette.material,
-      tint: theme.palette.panelBackground
-    )
+    let host = NSView()
+    host.wantsLayer = true
+    host.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.98).cgColor
+    host.layer?.cornerRadius = 12
+    host.layer?.borderWidth = 1
+    host.layer?.borderColor = AsterTheme.hairline.cgColor
+    host.shadow = NSShadow()
+    host.shadow?.shadowBlurRadius = 24
+    host.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.22)
+
+    search.placeholderString = "打开标签、目录、SSH、Agent 或 Recipe…"
+    search.delegate = self
+    search.onMove = { [weak self] delta in self?.moveSelection(delta) }
+    search.onActivate = { [weak self] _ in self?.activateSelection() }
+    search.onCancel = { [weak model] in model?.isOpenQuicklyPresented = false }
+    search.onQuickSelect = { [weak self] digit in self?.quickSelect(digit) }
+    search.onShowActions = { [weak self] in self?.showActionsMenu() }
+
     let column = NSStackView()
     column.orientation = .vertical
-    column.spacing = 0
-    let selector = NSSegmentedControl(
-      labels: ["信息", "大纲", "Git"],
-      trackingMode: .selectOne,
-      target: self,
-      action: #selector(changeSection(_:))
-    )
-    selector.selectedSegment = selection
-    let selectorHost = NSView()
-    selectorHost.addSubview(selector)
-    selector.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      selector.leadingAnchor.constraint(equalTo: selectorHost.leadingAnchor, constant: 10),
-      selector.trailingAnchor.constraint(equalTo: selectorHost.trailingAnchor, constant: -10),
-      selector.centerYAnchor.constraint(equalTo: selectorHost.centerYAnchor),
-      selectorHost.heightAnchor.constraint(equalToConstant: 48),
-    ])
-    column.addArrangedSubview(selectorHost)
-    column.addArrangedSubview(contentHost)
-    background.addSubview(column)
-    column.pinEdges(to: background)
-    view = background
-    reloadContent()
-  }
-
-  @objc private func changeSection(_ sender: NSSegmentedControl) {
-    selection = max(sender.selectedSegment, 0)
-    reloadContent()
-  }
-
-  /// 详情、大纲与 Git 共享同一原生容器，只替换内容视图，切换时不会重建右侧面板。
-  private func reloadContent() {
-    contentHost.removeAllSubviews()
-    let content: NSView
-    switch selection {
-    case 1: content = makeOutlineContent()
-    case 2: content = makeGitContent()
-    default: content = makeInformationContent()
+    column.spacing = 8
+    column.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 10, right: 12)
+    column.addArrangedSubview(search)
+    column.addArrangedSubview(makeFilterStrip())
+    column.addArrangedSubview(makeResultsScroll())
+    column.addArrangedSubview(makeSeparator())
+    column.addArrangedSubview(makeFooter())
+    host.addSubview(column)
+    column.pinEdges(to: host)
+    view = host
+    targets = makeTargets()
+    reload()
+    // 首次打开时提示词数据可能尚未扫描;只在为空时触发懒加载,避免 @Published
+    // 刷新重建浮层导致正在输入的文本丢失。
+    if model.agentHistories.isEmpty {
+      model.reloadAgentHistory()
     }
-    contentHost.addSubview(content)
-    content.pinEdges(to: contentHost)
+    DispatchQueue.main.async { [weak search] in search?.window?.makeFirstResponder(search) }
   }
 
-  private func makeInformationContent() -> NSView {
-    let info = NSStackView()
-    info.orientation = .vertical
-    info.alignment = .leading
-    info.spacing = 16
-    let tab = model.selectedTab
-    info.addArrangedSubview(makeInfo("标签", tab?.title ?? "—"))
-    info.addArrangedSubview(makeInfo("目录", tab?.workingDirectory ?? "—"))
-    info.addArrangedSubview(makeInfo("面板", "\(tab?.layout.allPanes.count ?? 0)"))
-    info.addArrangedSubview(makeInfo("终端", "xterm-256color"))
-    return makeScrollableContent(info)
-  }
-
-  private func makeOutlineContent() -> NSView {
-    let outline = NSStackView()
-    outline.orientation = .vertical
-    outline.alignment = .leading
-    outline.spacing = 10
-    outline.addArrangedSubview(makeLabel("工作区结构", size: 10, weight: .semibold, color: AsterTheme.tertiaryInk))
-    for (index, pane) in (model.selectedTab?.layout.allPanes ?? []).enumerated() {
-      let presentation: (symbol: String, title: String) = switch pane.kind {
-      case .terminal: ("terminal", "终端")
-      case .editor: ("doc.text", "编辑器")
-      case .preview: ("eye", "预览")
-      case .fileBrowser: ("folder", "文件浏览器")
+  /// 顶部分类标签条:替代原 NSPopUpButton,与参考设计一致。
+  private func makeFilterStrip() -> NSView {
+    let strip = NSStackView()
+    strip.orientation = .horizontal
+    strip.spacing = 4
+    let titles: [OpenQuicklyFilter: String] = [
+      .all: "全部", .opened: "已打开", .recent: "最近", .folder: "文件夹",
+      .ssh: "SSH", .agent: "Agents", .current: "当前", .recipe: "Recipes",
+    ]
+    for filter in OpenQuicklyFilter.allCases {
+      let chip = OpenQuicklyChip(title: titles[filter] ?? filter.rawValue) { [weak self] in
+        self?.selectFilter(filter)
       }
-      let image = NSImageView(image: NSImage(systemSymbolName: presentation.symbol, accessibilityDescription: nil) ?? NSImage())
-      image.contentTintColor = AsterTheme.secondaryInk
-      let row = NSStackView(views: [image, makeLabel("Pane \(index + 1) · \(presentation.title)", size: 11)])
-      row.orientation = .horizontal
-      row.spacing = 8
-      outline.addArrangedSubview(row)
+      chip.isChipSelected = filter == selectedFilter
+      chips[filter] = chip
+      strip.addArrangedSubview(chip)
     }
-    return makeScrollableContent(outline)
+    let spacer = NSView()
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    strip.addArrangedSubview(spacer)
+    return strip
   }
 
-  private func makeGitContent() -> NSView {
-    let message = makeLabel("在终端中使用 Git\n完整保留你现有的命令行工作流。", size: 11, color: AsterTheme.secondaryInk)
-    message.alignment = .center
-    message.maximumNumberOfLines = 2
-    message.lineBreakMode = .byWordWrapping
-    let host = NSView()
-    host.addSubview(message)
-    message.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      message.centerXAnchor.constraint(equalTo: host.centerXAnchor),
-      message.centerYAnchor.constraint(equalTo: host.centerYAnchor),
-      message.leadingAnchor.constraint(greaterThanOrEqualTo: host.leadingAnchor, constant: 18),
-      message.trailingAnchor.constraint(lessThanOrEqualTo: host.trailingAnchor, constant: -18),
-    ])
-    return host
-  }
-
-  private func makeScrollableContent(_ stack: NSStackView) -> NSView {
-    stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
+  /// 结果区滚动容器:内容不足时收缩,超出 400pt 滚动;沿用详情面板的顶部锚定模式。
+  private func makeResultsScroll() -> NSView {
+    resultsStack.orientation = .vertical
+    resultsStack.spacing = 2
     let scroll = NSScrollView()
     scroll.drawsBackground = false
     scroll.hasVerticalScroller = true
     scroll.autohidesScrollers = true
-    scroll.documentView = stack
-    stack.translatesAutoresizingMaskIntoConstraints = false
-    stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
+    let document = FlippedDocumentView()
+    document.addSubview(resultsStack)
+    scroll.documentView = document
+    resultsStack.translatesAutoresizingMaskIntoConstraints = false
+    document.translatesAutoresizingMaskIntoConstraints = false
+    scroll.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+      document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+      document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+      document.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor),
+      resultsStack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+      resultsStack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+      resultsStack.topAnchor.constraint(equalTo: document.topAnchor),
+      document.bottomAnchor.constraint(greaterThanOrEqualTo: resultsStack.bottomAnchor),
+      scroll.heightAnchor.constraint(lessThanOrEqualToConstant: 400),
+    ])
     return scroll
   }
 
-  private func makeInfo(_ title: String, _ value: String) -> NSView {
-    let stack = NSStackView(views: [
-      makeLabel(title.uppercased(), size: 9, weight: .semibold, color: AsterTheme.tertiaryInk),
-      makeLabel(value, size: 11),
-    ])
+  private func makeSeparator() -> NSView {
+    let line = NSView()
+    line.wantsLayer = true
+    line.layer?.backgroundColor = AsterTheme.hairline.cgColor
+    line.translatesAutoresizingMaskIntoConstraints = false
+    line.heightAnchor.constraint(equalToConstant: 1).isActive = true
+    return line
+  }
+
+  /// 底部快捷键栏:左 Quick Select 提示,右「跳转到 ↩」与「操作 ⌘K」按钮。
+  private func makeFooter() -> NSView {
+    let quickSelect = makeLabel("Quick Select ⌘1–9", size: 10, color: AsterTheme.tertiaryInk)
+    let jump = makeLabel("跳转到 ↩", size: 10, color: AsterTheme.tertiaryInk)
+    let actions = ActionButton(title: "操作 ⌘K", bezelStyle: .inline) { [weak self] in
+      self?.showActionsMenu()
+    }
+    actions.font = NSFont.systemFont(ofSize: 10)
+    let row = NSStackView(views: [quickSelect, NSView(), jump, actions])
+    row.orientation = .horizontal
+    row.spacing = 8
+    return row
+  }
+
+  private func selectFilter(_ filter: OpenQuicklyFilter) {
+    guard filter != selectedFilter else { return }
+    selectedFilter = filter
+    for (key, chip) in chips { chip.isChipSelected = key == filter }
+    selectedIndex = 0
+    reload()
+  }
+
+  func controlTextDidChange(_ obj: Notification) {
+    selectedIndex = 0
+    reload()
+  }
+
+  private func reload() {
+    resultsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+    let items = OpenQuicklyIndex(items: targets.map(\.item)).search(
+      query: search.stringValue,
+      filter: selectedFilter,
+      maximumResults: 100
+    )
+    let actions = Dictionary(uniqueKeysWithValues: targets.map { ($0.item.id, $0) })
+    visibleTargets = items.compactMap { actions[$0.id] }
+    rows.removeAll()
+    if visibleTargets.isEmpty {
+      resultsStack.addArrangedSubview(
+        makeLabel("没有匹配项", size: 11, color: AsterTheme.secondaryInk))
+      return
+    }
+    // 多类型视图(.all / .current)按 kind 分组并显示小节标题;单类型过滤器下
+    // 标签条已说明类型,不再重复标题。
+    let showHeaders = selectedFilter == .all || selectedFilter == .current
+    for section in OpenQuicklyIndex.sections(for: items) {
+      if showHeaders {
+        let header = makeLabel(
+          Self.sectionTitle(for: section.kind), size: 10, weight: .semibold,
+          color: AsterTheme.tertiaryInk)
+        header.translatesAutoresizingMaskIntoConstraints = false
+        let wrapper = NSView()
+        wrapper.addSubview(header)
+        header.pinEdges(to: wrapper, insets: NSEdgeInsets(top: 6, left: 4, bottom: 2, right: 4))
+        resultsStack.addArrangedSubview(wrapper)
+      }
+      for item in section.items {
+        guard let target = actions[item.id] else { continue }
+        let row = OpenQuicklyRowView(
+          item: item, symbol: target.symbol, badge: target.badge,
+          accented: target.accented
+        ) { [weak self] in
+          guard let self, let index = self.visibleTargets.firstIndex(where: {
+            $0.item.id == item.id
+          }) else { return }
+          self.selectedIndex = index
+          self.activateSelection()
+        }
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.widthAnchor.constraint(equalTo: resultsStack.widthAnchor).isActive = true
+        resultsStack.addArrangedSubview(row)
+        rows.append(row)
+      }
+    }
+    selectedIndex = min(selectedIndex, rows.count - 1)
+    updateSelectionAppearance()
+  }
+
+  /// 小节标题与徽章文案共用同一套中文映射。
+  private static func sectionTitle(for kind: OpenQuicklyKind) -> String {
+    switch kind {
+    case .opened: "已打开"
+    case .current: "当前"
+    case .prompt: "提示词"
+    case .recent: "最近"
+    case .folder: "文件夹"
+    case .ssh: "SSH"
+    case .agent: "Agents"
+    case .recipe: "Recipes"
+    }
+  }
+
+  private func moveSelection(_ delta: Int) {
+    guard !rows.isEmpty else { return }
+    selectedIndex = (selectedIndex + delta + rows.count) % rows.count
+    updateSelectionAppearance()
+  }
+
+  /// ⌘1…9 按可见顺序(跨小节连续编号)直接激活对应行。
+  private func quickSelect(_ digit: Int) {
+    let index = digit - 1
+    guard visibleTargets.indices.contains(index) else { return }
+    selectedIndex = index
+    updateSelectionAppearance()
+    activateSelection()
+  }
+
+  private func activateSelection() {
+    guard visibleTargets.indices.contains(selectedIndex) else { return }
+    visibleTargets[selectedIndex].action()
+  }
+
+  /// ⌘K / 底部按钮:弹出选中行的操作菜单,首项是主动作,其余为 kind 附加动作。
+  private func showActionsMenu() {
+    guard visibleTargets.indices.contains(selectedIndex),
+      rows.indices.contains(selectedIndex)
+    else { return }
+    let target = visibleTargets[selectedIndex]
+    let menu = NSMenu()
+    menu.addItem(ActionMenuItem(title: target.actionTitle) { target.action() })
+    if !target.menuActions.isEmpty {
+      menu.addItem(.separator())
+      for entry in target.menuActions {
+        menu.addItem(ActionMenuItem(title: entry.title) { entry.handler() })
+      }
+    }
+    let row = rows[selectedIndex]
+    menu.popUp(
+      positioning: nil,
+      at: NSPoint(x: row.bounds.maxX - 24, y: row.bounds.midY),
+      in: row)
+  }
+
+  private func updateSelectionAppearance() {
+    for (index, row) in rows.enumerated() {
+      row.isRowSelected = index == selectedIndex
+    }
+  }
+
+  /// 构建全部候选目标。每类目标的 symbol/badge/菜单在创建时确定,reload 只做过滤。
+  private func makeTargets() -> [Target] {
+    var result: [Target] = []
+    for tab in model.tabs {
+      result.append(Target(
+        item: .init(
+          id: "opened:\(tab.id.uuidString)", kind: .opened, title: tab.title,
+          detail: tab.workingDirectory),
+        symbol: "macwindow", badge: "标签", accented: false, actionTitle: "跳转到标签"
+      ) { [weak model, weak tab] in
+        guard let tab else { return }
+        model?.select(tab)
+        model?.isOpenQuicklyPresented = false
+      })
+      result[result.count - 1].menuActions = [(
+        title: "关闭标签",
+        handler: { [weak model, weak tab] in
+          guard let tab else { return }
+          model?.select(tab)
+          model?.isOpenQuicklyPresented = false
+          model?.closeSelectedTab()
+        }
+      )]
+    }
+    if let current = model.selectedTab {
+      for (index, pane) in current.layout.allPanes.enumerated() {
+        let session = current.runtime(for: pane.id)?.terminalSession
+        let command = session?.foregroundCommandName
+        // 运行中的前台命令(如 kimi)直接显示命令名;关联时间取同 provider 最新会话。
+        let matchedHistory: AgentSessionHistory? = session?.activeAgentProvider.flatMap {
+          provider in
+          model.agentHistories
+            .filter { $0.metadata.configuration.provider == provider }
+            .max { $0.metadata.updatedAt < $1.metadata.updatedAt }
+        }
+        result.append(Target(
+          item: .init(
+            id: "current:\(current.id.uuidString):\(pane.id.uuidString)", kind: .current,
+            title: command ?? "Pane \(index + 1) · \(pane.kind.rawValue)",
+            detail: pane.workingDirectory,
+            timestamp: matchedHistory?.metadata.updatedAt),
+          symbol: pane.kind == .terminal ? "terminal" : "doc.text",
+          badge: command != nil ? "Cmd" : "Pane",
+          accented: command != nil, actionTitle: "聚焦 Pane"
+        ) { [weak model, weak current] in
+          guard let current else { return }
+          model?.revealWorkspaceLocation(tabID: current.id, paneID: pane.id)
+        })
+      }
+      result.append(contentsOf: makePromptTargets(tab: current))
+    }
+    for snapshot in model.recentlyClosedSnapshots {
+      let directory = snapshot.layout.allPanes.first?.workingDirectory ?? ""
+      result.append(Target(
+        item: .init(
+          id: "recent:\(snapshot.id.uuidString)", kind: .recent, title: snapshot.title,
+          detail: directory),
+        symbol: "clock.arrow.circlepath", badge: "最近", accented: false,
+        actionTitle: "恢复标签"
+      ) { [weak model] in _ = model?.reopenClosedTab(id: snapshot.id) })
+    }
+    for match in model.frequentFolderMatches(limit: 200) {
+      result.append(Target(
+        item: .init(
+          id: "folder:\(match.path)", kind: .folder,
+          title: URL(fileURLWithPath: match.path).lastPathComponent,
+          detail: match.path, score: match.score),
+        symbol: "folder", badge: "文件夹", accented: false, actionTitle: "新建标签"
+      ) { [weak model] in model?.newTab(workingDirectory: match.path, hasContent: true) })
+      result[result.count - 1].menuActions = [(
+        title: "在 Finder 中显示",
+        handler: { [weak model] in
+          NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: match.path)
+          model?.isOpenQuicklyPresented = false
+        }
+      )]
+    }
+    for host in readSSHHosts() {
+      result.append(Target(
+        item: .init(id: "ssh:\(host.alias)", kind: .ssh, title: host.alias, detail: host.destination),
+        symbol: "network", badge: "SSH", accented: false, actionTitle: "连接"
+      ) { [weak model] in model?.openSSHHost(host) })
+    }
+    for provider in model.enabledAgentProviders {
+      result.append(Target(
+        item: .init(
+          id: "agent-launch:\(provider.rawValue)",
+          kind: .agent,
+          title: "启动 \(provider.commandName)",
+          detail: "在当前目录创建新的 Agent 会话"
+        ),
+        symbol: "sparkles", badge: "Agent", accented: false, actionTitle: "启动"
+      ) { [weak model] in model?.launchAgent(provider) })
+    }
+    for history in model.agentHistories.prefix(500) {
+      let metadata = history.metadata
+      result.append(Target(
+        item: .init(
+          id: "agent:\(metadata.configuration.provider.rawValue):\(metadata.id)",
+          kind: .agent,
+          title: metadata.title,
+          detail: "\(metadata.configuration.provider.commandName) · \(metadata.projectDirectory)",
+          timestamp: metadata.updatedAt
+        ),
+        symbol: "bubble.left.and.bubble.right", badge: "会话", accented: false,
+        actionTitle: "继续会话"
+      ) { [weak model] in model?.continueAgentSession(metadata, kind: .resume) })
+      result[result.count - 1].menuActions = [(
+        title: "Fork 会话",
+        handler: { [weak model] in model?.continueAgentSession(metadata, kind: .fork) }
+      )]
+    }
+    for url in readRecipeURLs() {
+      result.append(Target(
+        item: .init(
+          id: "recipe:\(url.path)", kind: .recipe,
+          title: url.deletingPathExtension().lastPathComponent, detail: url.path),
+        symbol: "doc.text", badge: "Recipe", accented: false, actionTitle: "打开 Recipe"
+      ) { [weak model] in model?.openRecipe(from: url) })
+      result[result.count - 1].menuActions = [(
+        title: "在 Finder 中显示",
+        handler: { [weak model] in
+          NSWorkspace.shared.selectFile(
+            url.lastPathComponent,
+            inFileViewerRootedAtPath: url.deletingLastPathComponent().path)
+          model?.isOpenQuicklyPresented = false
+        }
+      )]
+    }
+    return result
+  }
+
+  /// 「当前」页的提示词分组:pane ↔ session 没有可靠映射(metadata 不含 tty/pid),
+  /// 用启发式取当前 tab 中正在运行 Agent 的 pane(优先聚焦 pane)的同 provider、
+  /// updatedAt 最新会话,列出其最近 6 条 user prompt,点击粘贴回终端输入行。
+  private func makePromptTargets(tab: TerminalTabItem) -> [Target] {
+    let agentPanes = tab.layout.allPanes.compactMap {
+      pane -> (paneID: UUID, provider: AgentProvider)? in
+      guard let provider = tab.runtime(for: pane.id)?.terminalSession?.activeAgentProvider
+      else { return nil }
+      return (pane.id, provider)
+    }
+    let ordered = agentPanes.sorted { lhs, _ in lhs.paneID == tab.activePaneID }
+    guard let match = ordered.first,
+      let history = model.agentHistories
+        .filter({ $0.metadata.configuration.provider == match.provider })
+        .max(by: { $0.metadata.updatedAt < $1.metadata.updatedAt })
+    else { return [] }
+    let prompts = history.transcript.entries.filter {
+      if case .message(role: .user) = $0.kind { return !$0.text.isEmpty }
+      return false
+    }.suffix(6)
+    return prompts.reversed().map { entry in
+      let collapsed = entry.text
+        .components(separatedBy: .whitespacesAndNewlines)
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+      var target = Target(
+        item: .init(
+          id: "prompt:\(history.metadata.id):\(entry.sourceRecordIndex)", kind: .prompt,
+          title: collapsed, detail: history.metadata.title, timestamp: entry.timestamp),
+        symbol: "quote.bubble", badge: "Prompt", accented: false, actionTitle: "粘贴到终端"
+      ) { [weak model] in
+        model?.insertPromptIntoPane(tabID: tab.id, paneID: match.paneID, text: entry.text)
+      }
+      target.menuActions = [(
+        title: "复制到剪贴板",
+        handler: { [weak model] in
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.setString(entry.text, forType: .string)
+          model?.isOpenQuicklyPresented = false
+        }
+      )]
+      return target
+    }
+  }
+
+  private func readSSHHosts() -> [SSHHost] {
+    let url = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".ssh/config")
+    guard let text = readRegularTextFile(url, maximumBytes: 1 * 1_024 * 1_024) else { return [] }
+    return SSHConfigParser.parse(text)
+  }
+
+  private func readRecipeURLs() -> [URL] {
+    let root = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Application Support/Aster/Recipes", isDirectory: true)
+    guard let entries = try? FileManager.default.contentsOfDirectory(
+      at: root,
+      includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+      options: [.skipsHiddenFiles, .skipsPackageDescendants]
+    ) else { return [] }
+    return entries.filter { url in
+      guard ["asterrecipe", "ottyrecipe"].contains(url.pathExtension.lowercased()),
+        let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+      else { return false }
+      return values.isRegularFile == true && values.isSymbolicLink != true
+    }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+      .prefix(200).map { $0 }
+  }
+
+  private func readRegularTextFile(_ url: URL, maximumBytes: Int) -> String? {
+    guard let values = try? url.resourceValues(forKeys: [
+      .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
+    ]), values.isRegularFile == true, values.isSymbolicLink != true,
+      let size = values.fileSize, size <= maximumBytes,
+      let data = try? Data(contentsOf: url, options: [.mappedIfSafe]), data.count <= maximumBytes
+    else { return nil }
+    return String(data: data, encoding: .utf8)
+  }
+}
+
+/// Open Quickly 顶部过滤器 chip:未选中次要文字无底色,选中 accent 文字 + accent 浅底。
+@MainActor
+private final class OpenQuicklyChip: NSButton {
+  var isChipSelected = false {
+    didSet { applyAppearance() }
+  }
+
+  private let fullTitle: String
+
+  /// 创建文字 chip;点击经闭包桥接,避免 target/action 样板。
+  init(title: String, handler: @escaping () -> Void) {
+    fullTitle = title
+    super.init(frame: .zero)
+    isBordered = false
+    wantsLayer = true
+    layer?.cornerRadius = 7
+    target = self
+    action = #selector(invoke)
+    self.handler = handler
+    translatesAutoresizingMaskIntoConstraints = false
+    applyAppearance()
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  private var handler: (() -> Void)?
+
+  @objc private func invoke() { handler?() }
+
+  /// 文字两侧留 10pt 内边距,固定 24pt 高,形成 pill 轮廓。
+  override var intrinsicContentSize: NSSize {
+    var size = super.intrinsicContentSize
+    size.width += 20
+    size.height = 24
+    return size
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    applyAppearance()
+  }
+
+  private func applyAppearance() {
+    let color = isChipSelected ? AsterTheme.accent : AsterTheme.secondaryInk
+    attributedTitle = NSAttributedString(
+      string: fullTitle,
+      attributes: [
+        .font: NSFont.systemFont(ofSize: 12, weight: isChipSelected ? .semibold : .regular),
+        .foregroundColor: color,
+      ])
+    layer?.backgroundColor = isChipSelected
+      ? AsterTheme.accent.withAlphaComponent(0.14).cgColor : NSColor.clear.cgColor
+  }
+}
+
+/// Open Quickly 单行结果:SF Symbol 图标 + 标题/副标题双行 + 右侧相对时间与类型徽章。
+@MainActor
+private final class OpenQuicklyRowView: NSButton {
+  var isRowSelected = false {
+    didSet { applySelection() }
+  }
+
+  private let badgeBackground = NSView()
+  private var handler: (() -> Void)?
+
+  /// 按展示属性装配行内容;timestamp 非空时显示相对时间。
+  init(
+    item: OpenQuicklyItem, symbol: String, badge: String, accented: Bool,
+    handler: @escaping () -> Void
+  ) {
+    super.init(frame: .zero)
+    title = ""
+    isBordered = false
+    wantsLayer = true
+    layer?.cornerRadius = 8
+    target = self
+    action = #selector(invoke)
+    self.handler = handler
+
+    let icon = NSImageView()
+    icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: badge)
+    icon.contentTintColor = accented ? AsterTheme.accent : AsterTheme.secondaryInk
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+    icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
+
+    let titleLabel = makeLabel(item.title, size: 13, color: AsterTheme.ink)
+    let textColumn = NSStackView(views: [titleLabel])
+    textColumn.orientation = .vertical
+    textColumn.spacing = 1
+    textColumn.alignment = .leading
+    if !item.detail.isEmpty {
+      textColumn.addArrangedSubview(
+        makeLabel(item.detail, size: 11, color: AsterTheme.secondaryInk))
+    }
+
+    let trailing = NSStackView()
+    trailing.orientation = .horizontal
+    trailing.spacing = 8
+    trailing.alignment = .centerY
+    if let timestamp = item.timestamp {
+      trailing.addArrangedSubview(
+        makeLabel(RelativeTime.string(since: timestamp), size: 11, color: AsterTheme.tertiaryInk))
+    }
+    let badgeLabel = makeLabel(badge, size: 9, weight: .medium, color: AsterTheme.secondaryInk)
+    badgeBackground.wantsLayer = true
+    badgeBackground.layer?.cornerRadius = 4
+    badgeBackground.layer?.backgroundColor = AsterTheme.secondaryInk
+      .withAlphaComponent(0.12).cgColor
+    badgeBackground.addSubview(badgeLabel)
+    badgeLabel.pinEdges(
+      to: badgeBackground, insets: NSEdgeInsets(top: 2, left: 5, bottom: 2, right: 5))
+    trailing.addArrangedSubview(badgeBackground)
+
+    let row = NSStackView(views: [icon, textColumn, trailing])
+    row.orientation = .horizontal
+    row.spacing = 10
+    row.alignment = .centerY
+    addSubview(row)
+    row.pinEdges(to: self, insets: NSEdgeInsets(top: 6, left: 10, bottom: 6, right: 10))
+    textColumn.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    textColumn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    translatesAutoresizingMaskIntoConstraints = false
+    heightAnchor.constraint(equalToConstant: 44).isActive = true
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  @objc private func invoke() { handler?() }
+
+  private func applySelection() {
+    layer?.backgroundColor = isRowSelected
+      ? AsterTheme.accent.withAlphaComponent(0.16).cgColor : NSColor.clear.cgColor
+  }
+}
+
+@MainActor
+private final class GlobalFindOverlayViewController: NSViewController, NSSearchFieldDelegate {
+  private let model: AppModel
+  private let stack = NSStackView()
+  private let search = OverlaySearchField()
+  private let caseSensitive = NSButton(title: "Aa", target: nil, action: nil)
+  private let regularExpression = NSButton(title: ".*", target: nil, action: nil)
+  private let documents: [WorkspaceSearchDocument]
+  private var results: [WorkspaceSearchResult] = []
+  private var buttons: [NSButton] = []
+  private var selectedIndex = 0
+
+  init(model: AppModel) {
+    self.model = model
+    documents = model.workspaceSearchDocuments()
+    super.init(nibName: nil, bundle: nil)
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func loadView() {
+    let host = NSView()
+    host.wantsLayer = true
+    host.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.98).cgColor
+    host.layer?.cornerRadius = 12
+    host.layer?.borderWidth = 1
+    host.layer?.borderColor = AsterTheme.hairline.cgColor
+    host.shadow = NSShadow()
+    host.shadow?.shadowBlurRadius = 24
+    host.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.22)
     stack.orientation = .vertical
-    stack.alignment = .leading
-    stack.spacing = 4
-    return stack
+    stack.spacing = 6
+    stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+    search.placeholderString = "在全部终端和已打开文件中查找…"
+    search.delegate = self
+    search.onMove = { [weak self] delta in self?.moveSelection(delta) }
+    search.onActivate = { [weak self] _ in self?.activateSelection() }
+    search.onCancel = { [weak model] in model?.isGlobalFindPresented = false }
+    for button in [caseSensitive, regularExpression] {
+      button.setButtonType(.toggle)
+      button.bezelStyle = .inline
+      button.target = self
+      button.action = #selector(optionsChanged(_:))
+    }
+    caseSensitive.toolTip = "区分大小写"
+    regularExpression.toolTip = "正则表达式"
+    let header = NSStackView(views: [search, caseSensitive, regularExpression])
+    header.orientation = .horizontal
+    header.spacing = 8
+    stack.addArrangedSubview(header)
+    host.addSubview(stack)
+    stack.pinEdges(to: host)
+    view = host
+    reload()
+    DispatchQueue.main.async { [weak search] in search?.window?.makeFirstResponder(search) }
+  }
+
+  func controlTextDidChange(_ obj: Notification) {
+    selectedIndex = 0
+    reload()
+  }
+
+  @objc private func optionsChanged(_ sender: Any?) {
+    selectedIndex = 0
+    reload()
+  }
+
+  private func reload() {
+    while stack.arrangedSubviews.count > 1 {
+      stack.arrangedSubviews.last?.removeFromSuperview()
+    }
+    results = GlobalWorkspaceSearch.search(
+      documents: documents,
+      query: search.stringValue,
+      options: .init(
+        caseSensitive: caseSensitive.state == .on,
+        regularExpression: regularExpression.state == .on
+      ),
+      maximumResults: 500
+    )
+    buttons.removeAll()
+    if search.stringValue.isEmpty {
+      stack.addArrangedSubview(makeLabel("输入内容以搜索当前窗口的全部 Pane。", size: 11, color: AsterTheme.secondaryInk))
+      return
+    }
+    if results.isEmpty {
+      stack.addArrangedSubview(makeLabel("没有匹配项", size: 11, color: AsterTheme.secondaryInk))
+      return
+    }
+    for result in results.prefix(12) {
+      let button = ActionButton(
+        title: "\(result.title):\(result.line)    \(result.preview)", bezelStyle: .inline
+      ) { [weak model] in
+        model?.revealWorkspaceLocation(
+          tabID: result.tabID,
+          paneID: result.paneID,
+          absoluteRow: result.absoluteRow
+        )
+      }
+      button.alignment = .left
+      button.isBordered = false
+      button.translatesAutoresizingMaskIntoConstraints = false
+      button.heightAnchor.constraint(equalToConstant: 34).isActive = true
+      stack.addArrangedSubview(button)
+      buttons.append(button)
+    }
+    selectedIndex = min(selectedIndex, buttons.count - 1)
+    updateSelectionAppearance()
+  }
+
+  private func moveSelection(_ delta: Int) {
+    guard !buttons.isEmpty else { return }
+    selectedIndex = (selectedIndex + delta + buttons.count) % buttons.count
+    updateSelectionAppearance()
+  }
+
+  private func activateSelection() {
+    guard results.indices.contains(selectedIndex) else { return }
+    let result = results[selectedIndex]
+    model.revealWorkspaceLocation(
+      tabID: result.tabID,
+      paneID: result.paneID,
+      absoluteRow: result.absoluteRow
+    )
+  }
+
+  private func updateSelectionAppearance() {
+    for (index, button) in buttons.enumerated() {
+      button.wantsLayer = true
+      button.layer?.cornerRadius = 6
+      button.layer?.backgroundColor = index == selectedIndex
+        ? AsterTheme.accent.withAlphaComponent(0.16).cgColor : NSColor.clear.cgColor
+    }
+  }
+}
+
+@MainActor
+private final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDelegate {
+  private let model: AppModel
+  private let search = OverlaySearchField()
+  private let resultsStack = NSStackView()
+  private let transcript = NSTextView()
+  private var histories: [AgentSessionHistory] = []
+  private var selectedIndex = 0
+
+  init(model: AppModel) {
+    self.model = model
+    super.init(nibName: nil, bundle: nil)
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func loadView() {
+    let host = NSView()
+    host.wantsLayer = true
+    host.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.99).cgColor
+    host.layer?.cornerRadius = 12
+    host.layer?.borderWidth = 1
+    host.layer?.borderColor = AsterTheme.hairline.cgColor
+    host.shadow = NSShadow()
+    host.shadow?.shadowBlurRadius = 24
+    host.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.22)
+
+    search.placeholderString = "搜索 Agent 标题、项目、模型或 transcript…"
+    search.delegate = self
+    search.onMove = { [weak self] delta in self?.moveSelection(delta) }
+    search.onActivate = { [weak self] _ in self?.resumeSelection() }
+    search.onCancel = { [weak model] in model?.isAgentHistoryPresented = false }
+    let refresh = ActionButton(symbol: "arrow.clockwise") { [weak model] in
+      model?.reloadAgentHistory()
+    }
+    let close = ActionButton(symbol: "xmark") { [weak model] in
+      model?.isAgentHistoryPresented = false
+    }
+    let header = NSStackView(views: [search, refresh, close])
+    header.orientation = .horizontal
+    header.spacing = 8
+
+    resultsStack.orientation = .vertical
+    resultsStack.spacing = 4
+    let resultsScroll = NSScrollView()
+    resultsScroll.hasVerticalScroller = true
+    resultsScroll.drawsBackground = false
+    resultsScroll.documentView = resultsStack
+    resultsStack.translatesAutoresizingMaskIntoConstraints = false
+    resultsStack.widthAnchor.constraint(equalTo: resultsScroll.contentView.widthAnchor).isActive = true
+    resultsScroll.translatesAutoresizingMaskIntoConstraints = false
+    resultsScroll.widthAnchor.constraint(equalToConstant: 270).isActive = true
+
+    transcript.isEditable = false
+    transcript.isSelectable = true
+    transcript.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+    transcript.textColor = AsterTheme.ink
+    transcript.backgroundColor = AsterTheme.paper
+    transcript.textContainerInset = NSSize(width: 12, height: 12)
+    let transcriptScroll = NSScrollView()
+    transcriptScroll.hasVerticalScroller = true
+    transcriptScroll.documentView = transcript
+    let body = NSStackView(views: [resultsScroll, transcriptScroll])
+    body.orientation = .horizontal
+    body.spacing = 8
+    body.distribution = .fill
+
+    let resume = ActionButton(title: "Resume", bezelStyle: .rounded) { [weak self] in
+      self?.continueSelection(.resume)
+    }
+    let fork = ActionButton(title: "Fork / Branch", bezelStyle: .rounded) { [weak self] in
+      self?.continueSelection(.fork)
+    }
+    let footer = NSStackView(views: [NSView(), fork, resume])
+    footer.orientation = .horizontal
+    footer.spacing = 8
+    let column = NSStackView(views: [header, body, footer])
+    column.orientation = .vertical
+    column.spacing = 8
+    column.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+    host.addSubview(column)
+    column.pinEdges(to: host)
+    view = host
+    reload()
+    DispatchQueue.main.async { [weak search] in search?.window?.makeFirstResponder(search) }
+  }
+
+  func controlTextDidChange(_ obj: Notification) {
+    selectedIndex = 0
+    reload()
+  }
+
+  private func reload() {
+    resultsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+    let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    if query.isEmpty {
+      histories = Array(model.agentHistories.prefix(100))
+    } else if let matches = try? AgentHistorySearch.search(
+      query: query, histories: model.agentHistories, limit: 100
+    ) {
+      histories = matches.compactMap { match in
+        model.agentHistories.first { $0.metadata == match.metadata }
+      }
+    } else {
+      histories = []
+    }
+    selectedIndex = min(selectedIndex, max(0, histories.count - 1))
+    if histories.isEmpty {
+      resultsStack.addArrangedSubview(
+        makeLabel("没有 Agent 历史", size: 11, color: AsterTheme.secondaryInk))
+      transcript.string = ""
+      return
+    }
+    for (index, history) in histories.enumerated() {
+      let metadata = history.metadata
+      let button = ActionButton(
+        title: "\(metadata.title)\n\(metadata.configuration.provider.commandName)",
+        bezelStyle: .inline
+      ) { [weak self] in
+        self?.selectedIndex = index
+        self?.updateSelection()
+      }
+      button.alignment = .left
+      button.isBordered = false
+      button.translatesAutoresizingMaskIntoConstraints = false
+      button.heightAnchor.constraint(equalToConstant: 46).isActive = true
+      resultsStack.addArrangedSubview(button)
+    }
+    updateSelection()
+  }
+
+  private func moveSelection(_ delta: Int) {
+    guard !histories.isEmpty else { return }
+    selectedIndex = (selectedIndex + delta + histories.count) % histories.count
+    updateSelection()
+  }
+
+  private func updateSelection() {
+    for (index, view) in resultsStack.arrangedSubviews.enumerated() {
+      view.wantsLayer = true
+      view.layer?.cornerRadius = 6
+      view.layer?.backgroundColor = index == selectedIndex
+        ? AsterTheme.accent.withAlphaComponent(0.16).cgColor : NSColor.clear.cgColor
+    }
+    guard histories.indices.contains(selectedIndex) else {
+      transcript.string = ""
+      return
+    }
+    let history = histories[selectedIndex]
+    transcript.string = history.transcript.entries.map { entry in
+      let label: String = switch entry.kind {
+      case .message(let role): role.rawValue.uppercased()
+      case .reasoning: "REASONING"
+      case .toolCall(let name): "TOOL · \(name)"
+      case .attachment(let name): "ATTACHMENT · \(name ?? "file")"
+      }
+      return "[\(label)]\n\(entry.text)"
+    }.joined(separator: "\n\n")
+    transcript.scrollToBeginningOfDocument(nil)
+  }
+
+  private func resumeSelection() { continueSelection(.resume) }
+
+  private func continueSelection(_ kind: AgentContinuationKind) {
+    guard histories.indices.contains(selectedIndex) else { return }
+    model.continueAgentSession(histories[selectedIndex].metadata, kind: kind)
   }
 }
 
@@ -2105,7 +3498,10 @@ private final class DetailsPanelViewController: NSViewController {
 private final class PaletteOverlayViewController: NSViewController, NSSearchFieldDelegate {
   private let model: AppModel
   private let stack = NSStackView()
-  private let search = NSSearchField()
+  private let search = OverlaySearchField()
+  private var commands: [PaletteCommand] = []
+  private var buttons: [NSButton] = []
+  private var selectedIndex = 0
 
   init(model: AppModel) {
     self.model = model
@@ -2129,6 +3525,9 @@ private final class PaletteOverlayViewController: NSViewController, NSSearchFiel
     stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
     search.placeholderString = "输入命令或操作…"
     search.delegate = self
+    search.onMove = { [weak self] delta in self?.moveSelection(delta) }
+    search.onActivate = { [weak self] keepsOpen in self?.activateSelection(keepsOpen: keepsOpen) }
+    search.onCancel = { [weak model] in model?.isPalettePresented = false }
     stack.addArrangedSubview(search)
     host.addSubview(stack)
     stack.pinEdges(to: host)
@@ -2143,9 +3542,16 @@ private final class PaletteOverlayViewController: NSViewController, NSSearchFiel
     while stack.arrangedSubviews.count > 1 {
       stack.arrangedSubviews.last?.removeFromSuperview()
     }
-    let commands = CommandPalette.filter(model.paletteCommands, query: search.stringValue)
+    commands = CommandPalette.filter(model.paletteCommands, query: search.stringValue)
+    selectedIndex = min(selectedIndex, max(0, commands.count - 1))
+    buttons.removeAll()
     for command in commands.prefix(9) {
-      let button = ActionButton(title: command.title, bezelStyle: .inline) { [weak self] in
+      let scope = switch command.scope {
+      case .pane: "Pane"
+      case .window: "Window"
+      case .application: "App"
+      }
+      let button = ActionButton(title: "\(command.title)    [\(scope)]", bezelStyle: .inline) { [weak self] in
         self?.model.performPaletteCommand(command)
       }
       button.alignment = .left
@@ -2154,6 +3560,70 @@ private final class PaletteOverlayViewController: NSViewController, NSSearchFiel
       button.translatesAutoresizingMaskIntoConstraints = false
       button.heightAnchor.constraint(equalToConstant: 34).isActive = true
       stack.addArrangedSubview(button)
+      buttons.append(button)
+    }
+    updateSelectionAppearance()
+  }
+
+  private func moveSelection(_ delta: Int) {
+    guard !buttons.isEmpty else { return }
+    selectedIndex = (selectedIndex + delta + buttons.count) % buttons.count
+    updateSelectionAppearance()
+  }
+
+  private func activateSelection(keepsOpen: Bool) {
+    guard commands.indices.contains(selectedIndex) else { return }
+    model.performPaletteCommand(commands[selectedIndex], dismissesPalette: !keepsOpen)
+    if keepsOpen { reload() }
+  }
+
+  private func updateSelectionAppearance() {
+    for (index, button) in buttons.enumerated() {
+      button.wantsLayer = true
+      button.layer?.cornerRadius = 6
+      button.layer?.backgroundColor = index == selectedIndex
+        ? AsterTheme.accent.withAlphaComponent(0.16).cgColor : NSColor.clear.cgColor
+    }
+  }
+}
+
+/// 命令面板、Open Quickly 与全局搜索共用的键盘导航搜索框。只截获列表导航键，
+/// 其它组合键继续由 NSSearchField 处理，IME 与系统文本编辑行为不受影响。
+@MainActor
+private final class OverlaySearchField: NSSearchField {
+  var onMove: ((Int) -> Void)?
+  var onActivate: ((Bool) -> Void)?
+  var onCancel: (() -> Void)?
+  /// ⌘1…9 快速选中第 N 行；仅 Open Quickly 接线。
+  var onQuickSelect: ((Int) -> Void)?
+  /// ⌘K 弹出选中行的操作菜单；仅 Open Quickly 接线。
+  var onShowActions: (() -> Void)?
+
+  override func keyDown(with event: NSEvent) {
+    // ⌘ 组合键优先于导航键判断:数字走 Quick Select,K 走操作菜单,其余放行。
+    if event.modifierFlags.contains(.command),
+      let character = event.charactersIgnoringModifiers?.first
+    {
+      if let digit = character.wholeNumberValue, (1...9).contains(digit) {
+        onQuickSelect?(digit)
+        return
+      }
+      if character == "k" {
+        onShowActions?()
+        return
+      }
+    }
+    switch event.keyCode {
+    case 125:
+      onMove?(1)
+    case 126:
+      onMove?(-1)
+    case 36, 76:
+      onActivate?(event.modifierFlags.contains(.command))
+    case 53:
+      onCancel?()
+    default:
+      super.keyDown(with: event)
     }
   }
 }

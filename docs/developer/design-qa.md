@@ -57,9 +57,45 @@
 - [ ] macOS 通知权限状态从系统设置返回后自动刷新。
 - [ ] 关闭标题 Shell Controlled 后程序不能改名；标题报告关闭时查询只能收到空值。
 
+## Window / Details / Drag 检查清单
+
+- [ ] `⌘N` 创建独立工作区；退出重开后恢复仍打开窗口，主动关闭的附加窗口不复活。
+- [ ] 标签拖到另一个窗口或窗口外后，原终端命令、滚动历史、标题和 Agent 状态连续；源窗口始终至少保留一个标签。
+- [ ] Pin 只置顶工作区，不误操作设置窗口；PiP 的“当前 Pane”和“跟随活动 Pane”切换正确，主题或工作区刷新时 PiP 不变空，主窗口显示占位，关闭后同一终端恢复。
+- [ ] Finder 文件/目录拖到 Pane 四边时高亮方向正确；内区终端、外区文件浏览器、文件预览和文本粘贴符合帮助文档。
+- [ ] 详情面板的信息、大纲、Git、文件页跟随聚焦 Pane，慢进程/端口检查不阻塞终端输入。
+- [ ] Files 页打开时连续执行 `cd`，旧树到新树的替换无空白或加载态闪烁，终端无需再次点击即可继续输入。
+- [ ] 首次打开详情面板可立即交互；Info / Outline / Git / Files 往返切换和同标签收起后重开不重复构建页面，Files 不等待进程、端口或 Git 检查。
+- [ ] Outline 在终端命令完成和 Markdown 等文档编辑后实时出现条目；点击命令或标题跳到正确终端位置或编辑器行。
+- [ ] 标题栏右端悬停淡入详情面板切换按钮，面板展开后该按钮隐藏（收起入口在面板 header 右侧）；显隐与选中页重启后恢复；Git 页 Commit/stage 按钮把命令预填到终端输入行而不直接执行；运行 claude 的终端在 Info 页出现 Claude Code 分组。
+- [ ] 全局查找和 Open Quickly 的八类过滤器可跳回正确窗口、标签、Pane 或资源。
+- [ ] Open Quickly 顶部标签条切换过滤、选中 chip 高亮正确；结果行显示图标、相对时间与类型徽章；「全部 / 当前」视图按分组显示小节标题，结果超出时可滚动。
+- [ ] Open Quickly 键盘路径完整：`↑`/`↓` 循环选择、`↩` 跳转、`Esc` 关闭、`⌘1`–`⌘9` 按可见顺序快速选中、`⌘K` 弹出操作菜单（关闭标签、Fork 会话、在 Finder 中显示、复制提示词）。
+- [ ] Open Quickly「当前」页显示各 Pane 正在运行的前台命令名（Cmd 徽章）；运行 Agent 的 Pane 出现「提示词」分组，点击提示词粘贴回该 Pane 输入行且不自动回车。
+
+## Workflows / CLI 检查清单
+
+- [ ] `.ottyrecipe` 保存/打开保留嵌套分屏、比例、Pane 类型和资源；重复打开不串联 Pane 状态；外部命令的“从不 / 一次确认 / 逐条确认 / 内容信任”行为一致，修改文件后重新询问。
+- [ ] Recipe 审查可滚动查看全部命令；逐条模式每条均可运行、跳过或停止。多条命令只在上一条结束并回到空闲 Prompt 后继续。
+- [ ] `aster open/view/edit/jump/learn/ignore` 输出和落点正确；`--new-window` 真实创建窗口。
+- [ ] IPC 关闭时 `pane send/run/exec` 明确失败；敏感会话需要第二层授权；capture 保持只读。
+- [ ] Pane/Tab 最近关闭按 LIFO 恢复；正常退出、崩溃恢复和三次 crash-loop 回退符合帮助文档。
+
+## Agents / Fonts 检查清单
+
+- [ ] 七类 Agent 行分别显示 CLI、集成状态；安装、重启、卸载后状态更新且用户自有 hook 不变。
+- [ ] 自定义 Agent 启动命令同时用于命令面板、Open Quickly 和历史 Resume/Fork，带空格参数不会被拆错或执行替换语法。
+- [ ] processing、awaiting-input、idle 正确驱动 badge、通知、Prompt Queue 和防睡；多个窗口中的 Agent 都参与聚合。
+- [ ] Composer 多行、附件、固定/浮动与队列切换不丢草稿；终端/文件 Send to Chat 显示脱敏后的 `untrusted-context`。
+- [ ] 默认基础字体下 Powerline 与补充平面 Nerd 图标可见；切换用户字体后正文和符号 fallback 均保持对齐。
+
 ## 记录
 
 - 2026-08-08：新增 Selection / Scroll 验收项；尚未执行界面测试。
 - 2026-08-08：新增 Shell Integration / Identification 验收项；按用户要求仍未执行界面测试。
 - 2026-08-08：新增 Autocomplete / Inline Suggest 验收项；按用户要求仍未执行界面测试。
 - 2026-08-08：新增 Progress / Notifications 验收项；按用户要求仍未执行界面测试。
+- 2026-08-08：新增 Window / Details / Drag、Workflows / CLI、Agents / Fonts 验收项；按用户要求仍未执行界面测试。
+- 2026-08-08：新增 Files 页目录切换无闪烁且保持终端焦点的验收项；自动回归测试已覆盖，真实窗口尚未手动执行。
+- 2026-08-08：新增详情页缓存、独立 Files 加载与 Outline 实时更新验收项；自动回归测试已覆盖，真实窗口尚未手动执行。
+- 2026-08-08：Open Quickly 改版（标签条、双行结果行、分组、底部栏、⌘1–9/⌘K、当前页前台命令与提示词），新增对应验收项；数据层（prompt 过滤、排序、分组）有自动测试，真实窗口尚未手动执行。

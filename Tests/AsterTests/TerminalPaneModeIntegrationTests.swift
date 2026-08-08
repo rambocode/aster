@@ -218,13 +218,15 @@ private func mouseEvent(_ type: NSEvent.EventType, at point: NSPoint) throws -> 
     ))
 }
 
-@Test("Shell 菜单公开 Pane 模式并保留 Vi 默认快捷键")
+@Test("Shell 菜单公开 Pane 与 Agent 动作并保留 Vi 默认快捷键")
 @MainActor
 func shellMenuPublishesPaneModeActions() throws {
   let menu = try #require(AsterAppDelegate().shellModeMenuItem().submenu)
   #expect(
     menu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
-      "Vi Mode", "Mark Mode", "打开链接（Hint Mode）", "只读模式", "显示/隐藏 Vi 按键提示",
+      "Vi Mode", "Mark Mode", "打开链接（Hint Mode）",
+      "Composer", "Agent 历史", "把终端选区发送到 Chat",
+      "只读模式", "显示/隐藏 Vi 按键提示",
     ])
   let vi = try #require(menu.item(withTitle: "Vi Mode"))
   #expect(vi.keyEquivalent == " ")

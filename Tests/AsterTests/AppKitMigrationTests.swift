@@ -243,7 +243,8 @@ func workspaceTitlebarMatchesOttyChrome() throws {
     $0.identifier?.rawValue == "workspace-titlebar"
   }
   let titlebarMaterial = titlebar as? NSVisualEffectView
-  // 标题区本身保持纯净（无按钮）；侧栏顶部的悬停动作按钮不属于标题区，不参与断言。
+  // 标题区只有详情面板的悬停切换按钮（2026-08 设计变更）：默认完全透明且不参与
+  // 视觉布局，指针进入右端感应区才淡入；侧栏顶部的悬停动作按钮不属于标题区。
   let titlebarButtons = (titlebar?.descendants ?? []).filter {
     String(describing: type(of: $0)).contains("ActionButton")
   }
@@ -251,7 +252,9 @@ func workspaceTitlebarMatchesOttyChrome() throws {
   #expect(titlebar != nil)
   #expect(abs((titlebar?.frame.height ?? 0) - 28) < 0.5)
   #expect(titlebarMaterial?.blendingMode == .withinWindow)
-  #expect(titlebarButtons.isEmpty)
+  #expect(titlebarButtons.count == 1)
+  #expect(titlebarButtons.first?.identifier?.rawValue == "workspace-inspector-toggle")
+  #expect(titlebarButtons.first?.superview?.alphaValue == 0)
   #expect(labels.contains("~"))
 }
 

@@ -2,7 +2,9 @@
 set -euo pipefail
 
 PROJECT_DIR="${0:A:h:h}"
-BUILD_DIR="$PROJECT_DIR/.build"
+# 默认沿用 SwiftPM 的标准构建目录；发布验证或并行开发可显式指定隔离目录，
+# 避免与正在运行的调试构建争用同一把 SwiftPM 锁。
+BUILD_DIR="${ASTER_BUILD_PATH:-$PROJECT_DIR/.build}"
 DIST_DIR="$PROJECT_DIR/dist"
 APP_DIR="$DIST_DIR/Aster.app"
 CONTENTS_DIR="$APP_DIR/Contents"
@@ -11,7 +13,7 @@ ICONSET_DIR="$BUILD_DIR/AsterIcon.iconset"
 ICON_PREVIEW_DIR="$BUILD_DIR/icon-preview"
 
 cd "$PROJECT_DIR"
-swift build -c release
+swift build --scratch-path "$BUILD_DIR" -c release
 
 # 每次从空 bundle 开始，避免删掉源码后旧资源仍残留在交付包。目标路径由项目目录
 # 和固定相对路径组成。拒绝符号链接形式的 dist，避免固定文本路径实际跳转到项目外。
@@ -35,6 +37,9 @@ cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$PROJECT_DIR/THIRD-PARTY-NOTICES.md" "$RESOURCES_DIR/THIRD-PARTY-NOTICES.md"
 cp -R "$PROJECT_DIR/Resources/shell-integration" "$RESOURCES_DIR/shell-integration"
 cp -R "$PROJECT_DIR/Resources/autocomplete" "$RESOURCES_DIR/autocomplete"
+cp -R "$PROJECT_DIR/Resources/agent-integration" "$RESOURCES_DIR/agent-integration"
+chmod 755 "$RESOURCES_DIR/agent-integration/aster-agent-hook.sh"
+cp -R "$PROJECT_DIR/Resources/fonts" "$RESOURCES_DIR/fonts"
 
 # Aster 自有 terminfo 在构建期编译进签名 Bundle。运行时只读取资源，不生成隐藏脚本
 # 或修改系统数据库；TERMINFO_DIRS 会把该目录放在系统条目前面。

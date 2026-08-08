@@ -35,6 +35,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   let sections = Section.allCases
   private let preferences: AppPreferences
+  private let agentSetupService: AgentSetupService
   private var selection: Section = .general
   private var searchText = ""
   private var focusedThemeID: String?
@@ -49,8 +50,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private var scrollOffsets: [Section: CGPoint] = [:]
   private var renderedSection: Section?
 
-  init(preferences: AppPreferences) {
+  init(
+    preferences: AppPreferences,
+    agentSetupService: AgentSetupService = AgentSetupService()
+  ) {
     self.preferences = preferences
+    self.agentSetupService = agentSetupService
     super.init(nibName: nil, bundle: nil)
   }
 
@@ -660,6 +665,21 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.controls.focusFollowsMouse = value
         },
       ]),
+      sectionTitle("CLI 与 IPC"),
+      card([
+        toggleRow(
+          "允许发送输入", "允许已鉴权的本机 aster CLI 向终端 Pane 发送文本、按键或命令",
+          value: preferences.configuration.controls.resolvedIPCAllowSendKeys
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.ipcAllowSendKeys = value
+        },
+        toggleRow(
+          "允许敏感会话", "额外允许 CLI 写入正在运行 ssh 或 sudo 的 Pane；需要先开启发送输入",
+          value: preferences.configuration.controls.resolvedIPCAllowSensitiveSessions
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.ipcAllowSensitiveSessions = value
+        },
+      ]),
       sectionTitle("选择"),
       card([
         toggleRow(
@@ -881,12 +901,21 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   }
 
   private func agentViews() -> [NSView] {
-    let commands = [("Claude Code", "claude"), ("Codex", "codex"), ("Kimi", "kimi")]
+    let providers: [(name: String, provider: AgentProvider)] = [
+      ("Claude Code", .claudeCode),
+      ("Codex", .codex),
+      ("OpenCode", .openCode),
+      ("Cursor CLI", .cursorCLI),
+      ("Kimi Code", .kimiCode),
+      ("Pi", .pi),
+      ("omp", .omp),
+    ]
     // enabledAgents 是命令名数组：开关按「包含与否」读写，保持数组内不重复。
-    let agentRows = commands.map { name, command in
-      toggleRow(
+    let agentRows = providers.map { name, provider in
+      let command = provider.commandName
+      return toggleRow(
         name,
-        "\(command) · \(executableExists(command) ? "已安装" : "未检测到")",
+        "\(command) · 是否启用 Aster 的 Agent 行为",
         value: preferences.configuration.agents.enabledAgents.contains(command)
       ) { [weak self] enabled in
         guard let self else { return }
@@ -896,9 +925,25 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         self.preferences.configuration.agents.enabledAgents = agents
       }
     }
+    let setupRows = providers.map { agentSetupRow(name: $0.name, provider: $0.provider) }
+    let launchRows = providers.map { name, provider in
+      textRow(
+        name,
+        "启动命令；支持带引号参数，留空恢复 \(provider.commandName)",
+        value: WorkflowShellCommandEncoder.encode(
+          preferences.configuration.agents.launchComponents(for: provider)
+        )
+      ) { [weak self] value in
+        self?.updateAgentLaunchCommand(value, provider: provider, displayName: name)
+      }
+    }
     return [
       sectionTitle("已启用的智能体"),
       card(agentRows),
+      sectionTitle("Agent 集成"),
+      card(setupRows),
+      sectionTitle("启动命令"),
+      card(launchRows),
       sectionTitle("标签徽章"),
       card([
         toggleRow(
@@ -953,6 +998,102 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     ]
   }
 
+  private func updateAgentLaunchCommand(
+    _ value: String,
+    provider: AgentProvider,
+    displayName: String
+  ) {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    var commands = preferences.configuration.agents.customLaunchCommands ?? [:]
+    if trimmed.isEmpty {
+      commands.removeValue(forKey: provider.rawValue)
+      preferences.configuration.agents.customLaunchCommands = commands
+      return
+    }
+    let components = ShellCommandTokenizer.tokenize(trimmed).tokens
+    guard let executable = components.first,
+      !components.contains(where: { component in
+        component.unicodeScalars.contains(where: {
+          CharacterSet.controlCharacters.contains($0)
+        })
+      }),
+      (try? AgentLaunchPrefix(
+        executable: executable,
+        arguments: Array(components.dropFirst())
+      )) != nil
+    else {
+      message = "\(displayName) 启动命令无效，已保留原设置。"
+      refresh()
+      return
+    }
+    commands[provider.rawValue] = components
+    preferences.configuration.agents.customLaunchCommands = commands
+  }
+
+  /// 每个 provider 都从同一安全服务读取状态；设置页不根据文件是否存在自行猜测，
+  /// 因而外部同名文件、损坏配置或未启用的 Codex hooks 不会显示为“已安装”。
+  private func agentSetupRow(name: String, provider: AgentProvider) -> NSView {
+    do {
+      let status = try agentSetupService.status(for: provider)
+      let detail: String
+      let buttonTitle: String
+      if status.managedIntegrationInstalled {
+        detail = "\(provider.commandName) · 已安装集成"
+        buttonTitle = "卸载"
+      } else if status.executableAvailable {
+        detail = agentSetupMissingDetail(status)
+        buttonTitle = "安装"
+      } else {
+        detail = "\(provider.commandName) · 未在 PATH 中检测到 CLI"
+        buttonTitle = "检测"
+      }
+      return actionRow(name, detail, title: buttonTitle) { [weak self] in
+        self?.performAgentSetupAction(provider, displayName: name)
+      }
+    } catch {
+      return actionRow(
+        name,
+        "\(provider.commandName) · 配置不可安全读取：\(error.localizedDescription)",
+        title: "检测"
+      ) { [weak self] in
+        self?.performAgentSetupAction(provider, displayName: name)
+      }
+    }
+  }
+
+  private func agentSetupMissingDetail(_ status: AgentSetupStatus) -> String {
+    if status.provider == .codex,
+      status.managedIntegrationInstalled,
+      status.requiredFeatureEnabled != true
+    {
+      return "codex · Hooks 已安装，但 config.toml 尚未启用 hooks"
+    }
+    return "\(status.provider.commandName) · 已检测到 CLI，集成尚未安装"
+  }
+
+  /// 已安装状态执行精确卸载；未安装状态保持检测/安装语义。所有写入都由安全服务按
+  /// Aster 所有权标记处理，设置页不直接编辑 provider 配置。
+  private func performAgentSetupAction(_ provider: AgentProvider, displayName: String) {
+    do {
+      let current = try agentSetupService.status(for: provider)
+      if current.managedIntegrationInstalled {
+        _ = try agentSetupService.uninstall(provider)
+        message = "\(displayName) 集成已卸载；请重启该 Agent。"
+      } else if current.executableAvailable {
+        let lifecycleHint = current.plan.linksAfterNextLifecycleEvent
+          ? " 启动后发送一条消息即可关联当前会话。"
+          : ""
+        _ = try agentSetupService.install(provider)
+        message = "\(displayName) 集成已安装；请重启该 Agent。\(lifecycleHint)"
+      } else {
+        message = "未检测到 \(provider.commandName)，请先安装 \(displayName) CLI。"
+      }
+    } catch {
+      message = "\(displayName) 集成失败：\(error.localizedDescription)"
+    }
+    refresh()
+  }
+
   private func recipeViews() -> [NSView] {
     [
       sectionTitle("命令重放"),
@@ -966,7 +1107,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       ]),
       sectionTitle("格式"),
       card([
-        infoRow("Recipe 包含", "标签页、分屏方向、目录、文件和可选命令", ".asterrecipe"),
+        infoRow("Recipe 包含", "标签页、分屏方向、目录、文件和可选命令", ".ottyrecipe"),
         infoRow("安全边界", "不会保存 PID、文件描述符、令牌或临时焦点", "可移植"),
       ]),
     ]
@@ -1544,11 +1685,6 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private static let groupTitleIdentifier = NSUserInterfaceItemIdentifier("settings.group-title")
   /// 标记分组卡片视图，`makeContentScroll` 据此对卡片施加显式左右边距约束。
   private static let cardIdentifier = NSUserInterfaceItemIdentifier("settings.card")
-
-  private func executableExists(_ command: String) -> Bool {
-    let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
-    return paths.contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(command)") }
-  }
 
   private func exportConfiguration() {
     let panel = NSSavePanel()

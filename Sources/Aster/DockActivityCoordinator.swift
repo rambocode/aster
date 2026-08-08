@@ -6,49 +6,91 @@ import Combine
 /// Dock 后会选择一个失败标签并确认当前错误，后续新错误仍会再次标红。
 @MainActor
 final class DockActivityCoordinator {
-  private let model: AppModel
+  private var models: [ObjectIdentifier: AppModel] = [:]
   private let preferences: AppPreferences
-  private var cancellables: Set<AnyCancellable> = []
+  private var modelCancellables: [ObjectIdentifier: AnyCancellable] = [:]
+  private var preferencesCancellable: AnyCancellable?
+  private var isStarted = false
   private var acknowledgedErrorTabIDs: Set<UUID> = []
   private var animationTimer: Timer?
+  private var agentSleepActivity: NSObjectProtocol?
   private var animationPhase = 0
   private let imageView = NSImageView()
 
   init(model: AppModel, preferences: AppPreferences) {
-    self.model = model
     self.preferences = preferences
+    models[ObjectIdentifier(model)] = model
   }
 
   func start() {
-    model.objectWillChange
+    guard !isStarted else { return }
+    isStarted = true
+    for model in models.values { subscribe(to: model) }
+    preferencesCancellable = preferences.objectWillChange
       .sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
-      .store(in: &cancellables)
-    preferences.objectWillChange
-      .sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
-      .store(in: &cancellables)
     refresh()
+  }
+
+  func addModel(_ model: AppModel) {
+    let identifier = ObjectIdentifier(model)
+    guard models[identifier] == nil else { return }
+    models[identifier] = model
+    if isStarted { subscribe(to: model) }
+    refresh()
+  }
+
+  func removeModel(_ model: AppModel) {
+    let identifier = ObjectIdentifier(model)
+    modelCancellables[identifier]?.cancel()
+    modelCancellables[identifier] = nil
+    models[identifier] = nil
+    refresh()
+  }
+
+  func stop() {
+    animationTimer?.invalidate()
+    animationTimer = nil
+    isStarted = false
+    modelCancellables.values.forEach { $0.cancel() }
+    modelCancellables.removeAll()
+    preferencesCancellable?.cancel()
+    preferencesCancellable = nil
+    if let activity = agentSleepActivity {
+      ProcessInfo.processInfo.endActivity(activity)
+      agentSleepActivity = nil
+    }
   }
 
   @discardableResult
   func acknowledgeAndSelectNextError() -> Bool {
-    let failing = model.tabs.filter { $0.activityBadge == .error }
-    guard let target = failing.first(where: { !acknowledgedErrorTabIDs.contains($0.id) })
+    let failing = models.values.flatMap { model in
+      model.tabs.filter { $0.activityBadge == .error }.map { (model, $0) }
+    }
+    guard let target = failing.first(where: { !acknowledgedErrorTabIDs.contains($0.1.id) })
       ?? failing.first
     else { return false }
-    model.select(target)
-    acknowledgedErrorTabIDs.formUnion(failing.map(\.id))
+    target.0.select(target.1)
+    acknowledgedErrorTabIDs.formUnion(failing.map { $0.1.id })
     refresh()
     return true
   }
 
+  private func subscribe(to model: AppModel) {
+    let identifier = ObjectIdentifier(model)
+    modelCancellables[identifier] = model.objectWillChange
+      .sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
+  }
+
   private func refresh() {
-    let failingIDs = Set(model.tabs.filter { $0.activityBadge == .error }.map(\.id))
+    let tabs = models.values.flatMap(\.tabs)
+    let failingIDs = Set(tabs.filter { $0.activityBadge == .error }.map(\.id))
     acknowledgedErrorTabIDs.formIntersection(failingIDs)
-    let badges = model.tabs.map { tab -> TerminalBadgeState in
+    let badges = tabs.map { tab -> TerminalBadgeState in
       if tab.activityBadge == .error, acknowledgedErrorTabIDs.contains(tab.id) { return .none }
       return tab.activityBadge
     }
     let appearance = preferences.configuration.appearance
+    updateAgentSleepActivity()
     apply(
       DockActivityResolver.resolve(
         badges: badges,
@@ -56,6 +98,20 @@ final class DockActivityCoordinator {
         redOnError: appearance.resolvedRedDockIconOnError
       )
     )
+  }
+
+  private func updateAgentSleepActivity() {
+    let shouldPreventSleep = preferences.configuration.agents.preventSleepWhileProcessing
+      && models.values.flatMap(\.tabs).contains(where: \.hasProcessingAgent)
+    if shouldPreventSleep, agentSleepActivity == nil {
+      agentSleepActivity = ProcessInfo.processInfo.beginActivity(
+        options: [.idleSystemSleepDisabled, .userInitiated],
+        reason: "Aster Agent 正在处理任务"
+      )
+    } else if !shouldPreventSleep, let activity = agentSleepActivity {
+      ProcessInfo.processInfo.endActivity(activity)
+      agentSleepActivity = nil
+    }
   }
 
   private func apply(_ state: DockActivityState) {

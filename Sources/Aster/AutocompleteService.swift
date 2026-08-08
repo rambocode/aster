@@ -27,12 +27,13 @@ enum AutocompleteLearnURLResult: Equatable {
   case learned
 }
 
-/// 设置页安装的 POSIX sh 启动器。保持为单一常量，便于代码测试执行 `sh -n`；脚本
-/// 不解释命令内容，只将明确的 `learn` 参数和当前目录编码为十六进制 URL 字段。
+/// 设置页安装的 POSIX sh 启动器。保持为单一常量，便于代码测试执行 `sh -n`。
+/// `watch` 与标签徽章直接操作当前 TTY；其余参数按原边界编码到私有 requests
+/// 目录，并同步等待应用响应，不通过 URL、网络或 socket 传输命令内容。
 enum AsterCLIScript {
   static let contents = #"""
     #!/bin/sh
-    # Aster CLI 启动器：任务包装和标签徽章直接写当前 TTY，其余动作交给应用 URL。
+    # Aster CLI 启动器：任务包装和标签徽章直接写当前 TTY，其余动作交给本机文件传输。
     if [ "${1-}" = "watch" ]; then
       shift
       quiet=0
@@ -76,31 +77,193 @@ enum AsterCLIScript {
           ;;
       esac
     fi
-    if [ "${1-}" = "learn" ]; then
-      shift
-      if [ "$#" -eq 0 ]; then
-        echo "usage: aster learn <command>" >&2
+
+    umask 077
+    state_directory="$HOME/Library/Application Support/Aster/Autocomplete"
+    token_file="$state_directory/cli-token"
+    requests_directory="$state_directory/requests"
+    ready_file="$state_directory/cli-server-ready"
+    current_uid=$(/usr/bin/id -u)
+
+    server_is_ready() {
+      [ -f "$token_file" ] && [ -r "$token_file" ] && [ ! -L "$token_file" ] || return 1
+      [ -d "$requests_directory" ] && [ ! -L "$requests_directory" ] || return 1
+      [ -f "$ready_file" ] && [ -r "$ready_file" ] && [ ! -L "$ready_file" ] || return 1
+      [ "$(/usr/bin/stat -f '%u:%Lp' "$token_file" 2>/dev/null)" = "$current_uid:600" ] || return 1
+      [ "$(/usr/bin/stat -f '%u:%Lp' "$requests_directory" 2>/dev/null)" = "$current_uid:700" ] || return 1
+      [ "$(/usr/bin/stat -f '%u:%Lp' "$ready_file" 2>/dev/null)" = "$current_uid:600" ] || return 1
+      server_pid=$(/bin/cat "$ready_file" 2>/dev/null)
+      case "$server_pid" in
+        ''|*[!0-9]*) return 1 ;;
+      esac
+      /bin/kill -0 "$server_pid" 2>/dev/null
+    }
+
+    if ! server_is_ready; then
+      /usr/bin/open -gj -a "Aster" >/dev/null 2>&1 || true
+      attempts=0
+      while ! server_is_ready && [ "$attempts" -lt 50 ]; do
+        /bin/sleep 0.1
+        attempts=$((attempts + 1))
+      done
+    fi
+    if ! server_is_ready; then
+      echo "aster: Aster CLI service is unavailable; launch Aster once and retry" >&2
+      exit 69
+    fi
+
+    token=$(/bin/cat "$token_file" 2>/dev/null)
+    if [ "${#token}" -ne 64 ]; then
+      echo "aster: Aster CLI token is invalid" >&2
+      exit 77
+    fi
+    case "$token" in
+      *[!0-9a-f]*)
+        echo "aster: Aster CLI token is invalid" >&2
+        exit 77
+        ;;
+    esac
+    if [ "$#" -gt 256 ]; then
+      echo "aster: too many CLI arguments" >&2
+      exit 64
+    fi
+
+    # 只有 `pane send-text --stdin` 消费 stdin。其它命令即使把 `--stdin` 作为被执行
+    # 命令参数，也不会被启动器提前读取，参数语义仍完全交给 WorkflowCLIParser。
+    reads_stdin=0
+    scan_state=global
+    skip_global_value=0
+    for argument do
+      if [ "$skip_global_value" -eq 1 ]; then
+        skip_global_value=0
+        continue
+      fi
+      case "$scan_state:$argument" in
+        global:otty) ;;
+        global:--format) skip_global_value=1 ;;
+        global:--json|global:-q|global:--quiet) ;;
+        global:pane) scan_state=pane ;;
+        global:*) scan_state=other ;;
+        pane:send-text) scan_state=send-text ;;
+        pane:*) scan_state=other ;;
+        send-text:--stdin) reads_stdin=1 ;;
+      esac
+    done
+
+    temporary=$(/usr/bin/mktemp "$requests_directory/.request.XXXXXXXXXX") || {
+      echo "aster: cannot create CLI request" >&2
+      exit 73
+    }
+    temporary_name=${temporary##*/}
+    request_id=${temporary_name#.request.}
+    request_file="$requests_directory/$request_id.request"
+    response_file="$requests_directory/$request_id.response"
+    stdin_file="$temporary.stdin"
+    cleanup() {
+      /bin/rm -f "$temporary" "$stdin_file" "$request_file" "$response_file"
+    }
+    trap cleanup 0 1 2 15
+
+    stdin_hex=
+    if [ "$reads_stdin" -eq 1 ]; then
+      /bin/dd bs=1048577 count=1 of="$stdin_file" 2>/dev/null
+      stdin_size=$(/usr/bin/stat -f '%z' "$stdin_file" 2>/dev/null)
+      case "$stdin_size" in
+        ''|*[!0-9]*)
+          echo "aster: cannot read standard input" >&2
+          exit 74
+          ;;
+      esac
+      if [ "$stdin_size" -gt 1048576 ]; then
+        echo "aster: standard input exceeds 1048576 bytes" >&2
         exit 64
       fi
-      token_file="$HOME/Library/Application Support/Aster/Autocomplete/cli-token"
-      if [ ! -r "$token_file" ]; then
-        open -gj -a "Aster"
-        attempts=0
-        while [ ! -r "$token_file" ] && [ "$attempts" -lt 50 ]; do
-          sleep 0.1
-          attempts=$((attempts + 1))
-        done
-      fi
-      if [ ! -r "$token_file" ]; then
-        echo "aster: Aster CLI token is unavailable; launch Aster once and retry" >&2
-        exit 69
-      fi
-      token=$(/bin/cat "$token_file")
-      command_hex=$(printf '%s' "$*" | /usr/bin/xxd -p | /usr/bin/tr -d '\n')
-      directory_hex=$(printf '%s' "$PWD" | /usr/bin/xxd -p | /usr/bin/tr -d '\n')
-      exec open "aster://learn?token=$token&command=$command_hex&directory=$directory_hex"
+      stdin_hex=$(/usr/bin/xxd -p "$stdin_file" | /usr/bin/tr -d '\n')
     fi
-    exec open -a "Aster" "$@"
+
+    {
+      printf 'ASTER_CLI_REQUEST_V1\n'
+      printf '%s\n' "$token"
+      printf '%s' "$PWD" | /usr/bin/xxd -p | /usr/bin/tr -d '\n'
+      printf '\n%s\n%s\n' "$stdin_hex" "$#"
+      for argument do
+        printf '%s' "$argument" | /usr/bin/xxd -p | /usr/bin/tr -d '\n'
+        printf '\n'
+      done
+    } > "$temporary" || {
+      echo "aster: cannot encode CLI request" >&2
+      exit 74
+    }
+    request_size=$(/usr/bin/stat -f '%z' "$temporary" 2>/dev/null)
+    case "$request_size" in
+      ''|*[!0-9]*)
+        echo "aster: cannot inspect CLI request" >&2
+        exit 74
+        ;;
+    esac
+    if [ "$request_size" -gt 3145728 ]; then
+      echo "aster: CLI request exceeds size limit" >&2
+      exit 64
+    fi
+    /bin/chmod 600 "$temporary" || exit 74
+    /bin/mv "$temporary" "$request_file" || exit 74
+
+    attempts=0
+    while [ ! -e "$response_file" ] && [ "$attempts" -lt 3000 ]; do
+      /bin/sleep 0.1
+      attempts=$((attempts + 1))
+    done
+    if [ ! -f "$response_file" ] || [ -L "$response_file" ]; then
+      echo "aster: timed out waiting for Aster CLI response" >&2
+      exit 75
+    fi
+    if [ "$(/usr/bin/stat -f '%u:%Lp' "$response_file" 2>/dev/null)" != "$current_uid:600" ]; then
+      echo "aster: insecure Aster CLI response" >&2
+      exit 74
+    fi
+    response_size=$(/usr/bin/stat -f '%z' "$response_file" 2>/dev/null)
+    case "$response_size" in
+      ''|*[!0-9]*)
+        echo "aster: invalid Aster CLI response" >&2
+        exit 74
+        ;;
+    esac
+    if [ "$response_size" -gt 8389632 ]; then
+      echo "aster: Aster CLI response exceeds size limit" >&2
+      exit 74
+    fi
+
+    {
+      IFS= read -r response_magic
+      IFS= read -r exit_code
+      IFS= read -r stdout_hex
+      IFS= read -r stderr_hex
+    } < "$response_file"
+    if [ "$response_magic" != "ASTER_CLI_RESPONSE_V1" ]; then
+      echo "aster: invalid Aster CLI response" >&2
+      exit 74
+    fi
+    case "$exit_code" in
+      ''|*[!0-9]*)
+        echo "aster: invalid Aster CLI exit code" >&2
+        exit 74
+        ;;
+    esac
+    if [ "$exit_code" -gt 255 ]; then
+      echo "aster: invalid Aster CLI exit code" >&2
+      exit 74
+    fi
+    case "$stdout_hex$stderr_hex" in
+      *[!0-9a-f]*)
+        echo "aster: invalid Aster CLI response encoding" >&2
+        exit 74
+        ;;
+    esac
+    printf '%s' "$stdout_hex" | /usr/bin/xxd -r -p
+    printf '%s' "$stderr_hex" | /usr/bin/xxd -r -p >&2
+    trap - 0 1 2 15
+    cleanup
+    exit "$exit_code"
 
     """#
 }
@@ -258,6 +421,7 @@ final class AutocompleteService {
 
   private(set) var specDatabase: AutocompleteSpecDatabase
   private(set) var cliToken: String
+  let cliRequestService: AsterCLIRequestService
 
   init(
     baseDirectory: URL,
@@ -273,6 +437,10 @@ final class AutocompleteService {
 
     try Self.prepareStateDirectory(self.baseDirectory, fileManager: fileManager)
     cliToken = try Self.loadOrCreateCLIToken(at: cliTokenURL, fileManager: fileManager)
+    cliRequestService = try AsterCLIRequestService(
+      baseDirectory: self.baseDirectory,
+      fileManager: fileManager
+    )
     guard let bundledData = try? Self.readRegularFile(
       at: bundledSpecURL,
       maximumBytes: AutocompleteSpecStore.maximumEncodedBytes,
@@ -634,6 +802,9 @@ final class AutocompleteService {
     if fileManager.fileExists(atPath: url.path) {
       let data = try readRegularFile(at: url, maximumBytes: 128, fileManager: fileManager)
       if let token = String(data: data, encoding: .utf8), isValidCLIToken(token) {
+        // 旧版本可能在较宽松 umask 下创建 token；每次加载都收紧到 0600，确保
+        // CLI 文件传输启用前不会继续使用组或其他用户可读的鉴权材料。
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         return token
       }
     }

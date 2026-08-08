@@ -51,6 +51,20 @@ final class AppPreferences: ObservableObject {
     didSet { defaults.set(sidebarTabOrder.rawValue, forKey: Keys.sidebarTabOrder) }
   }
 
+  /// 右侧详情面板的显隐与选中页属于轻量 UI 状态，随 UserDefaults 持久化但不进入
+  /// 配置 JSON（与侧栏分组/排序同级）。刻意不用 @Published：显隐变化已由
+  /// `AppModel.isInspectorPresented` 驱动刷新，选中页由面板本地即时生效，再广播
+  /// 一次只会引发整树重建与检查数据重取的闪烁。
+  var inspectorPresented: Bool {
+    get { defaults.bool(forKey: Keys.inspectorPresented) }
+    set { defaults.set(newValue, forKey: Keys.inspectorPresented) }
+  }
+
+  var inspectorSection: Int {
+    get { min(max(defaults.integer(forKey: Keys.inspectorSection), 0), 3) }
+    set { defaults.set(min(max(newValue, 0), 3), forKey: Keys.inspectorSection) }
+  }
+
   private let defaults: UserDefaults
 
   init(defaults: UserDefaults = .standard) {
@@ -112,8 +126,9 @@ final class AppPreferences: ObservableObject {
   var terminalIdentity: String { configuration.appearance.terminalIdentity }
 
   var terminalFont: NSFont {
-    NSFont(name: configuration.appearance.fontFamily, size: fontSize)
+    let base = NSFont(name: configuration.appearance.fontFamily, size: fontSize)
       ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+    return BundledFontRegistry.addingNerdSymbolsFallback(to: base)
   }
 
   var terminalForegroundColor: NSColor {
@@ -302,5 +317,7 @@ final class AppPreferences: ObservableObject {
     static let compactSidebarMigration = "aster.migration.compact-sidebar.v1"
     static let sidebarTabGrouping = "aster.sidebar.tab-grouping.v1"
     static let sidebarTabOrder = "aster.sidebar.tab-order.v1"
+    static let inspectorPresented = "aster.inspector.presented.v1"
+    static let inspectorSection = "aster.inspector.section.v1"
   }
 }

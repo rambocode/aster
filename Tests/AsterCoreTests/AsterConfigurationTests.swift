@@ -3,6 +3,22 @@ import Testing
 
 @testable import AsterCore
 
+@Test("Agent 自定义启动命令按结构化 argv 规范化且非法值回退默认")
+func agentCustomLaunchCommandsAreNormalized() throws {
+  var configuration = AsterConfiguration()
+  configuration.agents.customLaunchCommands = [
+    AgentProvider.codex.rawValue: ["env", "PROFILE=work", "codex"],
+    AgentProvider.claudeCode.rawValue: ["bad\ncommand"],
+    "unknown": ["unknown"],
+  ]
+
+  let normalized = configuration.normalized()
+
+  #expect(normalized.agents.launchComponents(for: .codex) == ["env", "PROFILE=work", "codex"])
+  #expect(normalized.agents.launchComponents(for: .claudeCode) == ["claude"])
+  #expect(normalized.agents.customLaunchCommands?.keys.sorted() == [AgentProvider.codex.rawValue])
+}
+
 @Test("默认配置与参考应用的主工作区一致")
 func defaultConfigurationMatchesReferenceWorkspace() {
   let configuration = AsterConfiguration.default
@@ -24,6 +40,8 @@ func defaultConfigurationMatchesReferenceWorkspace() {
   #expect(configuration.controls.resolvedPasteBracketedSafe)
   #expect(configuration.controls.resolvedClipboardWriteAccess == .allow)
   #expect(configuration.controls.resolvedClipboardReadAccess == .ask)
+  #expect(!configuration.controls.resolvedIPCAllowSendKeys)
+  #expect(!configuration.controls.resolvedIPCAllowSensitiveSessions)
   #expect(configuration.controls.resolvedScrollPastLastLine == .disabled)
   #expect(configuration.controls.resolvedScrollPastFirstLine == .disabled)
   #expect(configuration.shell.resolvedNotifyOnWatchFinish)

@@ -240,7 +240,9 @@ func asterCLIScriptIsSyntacticallyValid() throws {
   process.waitUntilExit()
 
   #expect(process.terminationStatus == 0)
-  #expect(AsterCLIScript.contents.contains("aster://learn?token="))
+  #expect(AsterCLIScript.contents.contains("ASTER_CLI_REQUEST_V1"))
+  #expect(AsterCLIScript.contents.contains("requests_directory=\"$state_directory/requests\""))
+  #expect(!AsterCLIScript.contents.contains("aster://learn?token="))
   #expect(AsterCLIScript.contents.contains("/usr/bin/xxd -p"))
   #expect(AsterCLIScript.contents.contains("9;4;5;%s;watch"))
   #expect(AsterCLIScript.contents.contains("6974;Badge=%s"))

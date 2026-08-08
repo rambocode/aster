@@ -26,7 +26,10 @@
     <array>
         <dict>
             <key>CFBundleTypeExtensions</key>
-            <array><string>asterrecipe</string></array>
+            <array>
+                <string>asterrecipe</string>
+                <string>ottyrecipe</string>
+            </array>
             <key>CFBundleTypeName</key>
             <string>Aster Recipe</string>
             <key>CFBundleTypeRole</key>
@@ -53,6 +56,7 @@
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>aster</string>
+                <string>otty</string>
             </array>
         </dict>
     </array>

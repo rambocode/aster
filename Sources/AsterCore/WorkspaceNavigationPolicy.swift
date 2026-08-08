@@ -196,6 +196,13 @@ public struct RecentlyClosedTabs: Codable, Equatable, Sendable {
     entries.popLast()
   }
 
+  /// Open Quickly 可从历史中选择任意条目。按 ID 移除并返回，保持其余历史顺序；
+  /// 已恢复或不存在的 ID 返回 nil，因此重复触发不会创建重复标签。
+  public mutating func reopen(id: UUID) -> WorkspaceTabSnapshot? {
+    guard let index = entries.lastIndex(where: { $0.id == id }) else { return nil }
+    return entries.remove(at: index)
+  }
+
   public mutating func removeEntries(withIDs identifiers: Set<UUID>) {
     guard !identifiers.isEmpty else { return }
     entries.removeAll { identifiers.contains($0.id) }
