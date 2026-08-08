@@ -23,10 +23,6 @@ open dist/Aster.app
 
 `build-app.sh` 默认使用 ad-hoc 签名；正式分发通过 `ASTER_SIGN_IDENTITY="Developer ID Application: ..."` 覆盖。该脚本还会用 `qlmanage` 把 `Resources/AsterIcon.svg` 渲染成 iconset，并把 SwiftTerm 的 Metal shader bundle 复制到 `Contents/Resources`（放在 .app 根目录会破坏签名）。
 
-## Worktree 工作流
-
-默认会话在仓库根目录的 `master` 工作区开始。任务一旦明确进入某个 feature worktree，后续针对同一任务的排查、实现、测试和提交都继续在该 worktree 完成；`master` 只用于合并和合并后的验证。新任务仍从 `master` 开始。开始执行前以 `git worktree list` 和当前任务上下文确认归属；只有在用户明确切换、任务已合并收口，或归属无法判断时才改变工作目录。
-
 ## 架构分层
 
 四个 target 的边界是本项目最重要的约束：
