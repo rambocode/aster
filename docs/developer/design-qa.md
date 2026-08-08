@@ -101,6 +101,8 @@
 - [ ] 自定义 Agent 启动命令同时用于命令面板、Open Quickly 和历史 Resume/Fork，带空格参数不会被拆错或执行替换语法。
 - [ ] processing、awaiting-input、idle 正确驱动 badge、通知、Prompt Queue 和防睡；多个窗口中的 Agent 都参与聚合。
 - [ ] Composer 多行、附件、固定/浮动与队列切换不丢草稿；终端/文件 Send to Chat 显示脱敏后的 `untrusted-context`。
+- [ ] Prompt Queue 底部条为两类 44pt 圆角卡片、间距 8pt：队列行左 ↳ 右垃圾桶，输入行为「关闭 / 展开 / 实心圆发送」；四个图标悬停都有底色与指针变化，展开后图标翻转为收起。
+- [ ] 装好 hook 的 Claude Code / Codex 中，Agent 执行期间入队只堆列表，本轮结束后自动逐条发出；权限确认界面不会被队列自动回车。
 - [ ] 默认基础字体下 Powerline 与补充平面 Nerd 图标可见；切换用户字体后正文和符号 fallback 均保持对齐。
 - [ ] 外观页在 920pt 最小宽度下保持四列主题卡片，浅色 9 套、深色 15 套完整可达；选择态、悬停态和长主题名不挤压相邻卡片。
 - [ ] `.ottytheme` 导入面板可直接选择 `~/.config/otty/themes` 中的文件；非法调色板、符号链接和超限文件报错后不改变当前主题。

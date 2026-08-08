@@ -27,6 +27,9 @@ final class WorkspaceViewController: NSViewController {
   /// Prompt Queue 叠在单个活动 Pane 底部，不参与外层工作区 stack 的尺寸推导；这样
   /// 显隐不会拆下其它 Pane 或重启终端容器。
   private weak var promptQueueBar: PromptQueueBarView?
+  /// 队列条当前挂在哪个 Pane 上。移除时要按这个 ID 把内容底边还回去，否则旧 host
+  /// 会一直保留被顶起的高度。
+  private var promptQueueBarHostPaneID: UUID?
   private var agentChatSheet: AgentChatSendSheetController?
   // `nonisolated(unsafe)`：只在主线程读写，但 deinit 是 nonisolated，需要能取回它
   // 来注销监视器，否则控制器释放后事件监视器仍然存活。
@@ -1644,8 +1647,7 @@ final class WorkspaceViewController: NSViewController {
       retainedObjects.append(controller)
       content = controller.view
     }
-    host.addSubview(content)
-    content.pinEdges(to: host)
+    host.installContent(content)
     // 单 Pane 既无处可拖，也不需要区分聚焦状态；两种装饰都只在分屏时安装。
     // 遮罩先于把手安装，把手才会浮在遮罩之上。
     if tab.layout.allPanes.count > 1 {
@@ -1710,12 +1712,16 @@ final class WorkspaceViewController: NSViewController {
     return opened
   }
 
-  /// 局部挂载 Prompt Queue。队列条覆盖当前 Pane 的底部留白而非重建分屏树，终端的
-  /// SwiftTerm 视图仍是同一个实例；切换 Pane、关闭条或刷新后都由 stable Pane UUID
-  /// 重新定位。
+  /// 局部挂载 Prompt Queue。队列条作为 Pane 的底部附件占据布局空间（不是覆盖层），
+  /// 终端因此少绘几行而不是被挡住最后的输出；分屏树不重建，SwiftTerm 视图仍是同一
+  /// 个实例，切换 Pane、关闭条或刷新后都由 stable Pane UUID 重新定位。
   private func setPromptQueuePresented(for paneID: UUID?) {
+    if let previous = promptQueueBarHostPaneID, let host = paneHosts[previous] {
+      host.setBottomAccessory(nil)
+    }
     promptQueueBar?.removeFromSuperview()
     promptQueueBar = nil
+    promptQueueBarHostPaneID = nil
     guard let paneID,
       let host = paneHosts[paneID],
       model.canPresentPromptQueue,
@@ -1732,13 +1738,9 @@ final class WorkspaceViewController: NSViewController {
       onRemove: { [weak model] id in model?.removePromptQueueItem(id: id, paneID: paneID) },
       onClose: { [weak model] in model?.hidePromptQueue(paneID: paneID) }
     )
-    host.addSubview(bar)
-    NSLayoutConstraint.activate([
-      bar.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 10),
-      bar.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -10),
-      bar.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -10),
-    ])
+    host.setBottomAccessory(bar)
     promptQueueBar = bar
+    promptQueueBarHostPaneID = paneID
   }
 
   private func presentAgentChatSheet(_ presentation: AgentChatPresentation) {

@@ -299,6 +299,9 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// 避免单次 `cd` 同时触发无关界面刷新。
   var onWorkingDirectoryChanged: ((String) -> Void)?
   var onCommandFinished: ((UUID) -> Void)?
+  /// Agent 生命周期状态变化的定向出口。它只服务 Prompt Queue 的自动派发，不能并入
+  /// `objectWillChange`：Agent 状态在每次输入后立即变化，整树重建会打断 Agent TUI。
+  var onAgentTaskStateChanged: ((UUID, AgentTaskState) -> Void)?
   /// 被临时放大（缩放拆分）的面板。它是纯 UI 态，不进快照——恢复会话时应当回到
   /// 完整分屏，而不是停在某次临时放大的状态。
   @Published private(set) var zoomedPaneID: UUID?
@@ -822,6 +825,14 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       )
       .sink { [weak self] _ in self?.objectWillChange.send() }
       .store(in: &cancellables)
+
+      // `@Published` 在 `willSet` 阶段发布，此刻回读 `session.agentTaskState` 仍是旧值，
+      // 因此新状态必须随事件一起上送。
+      session.$agentTaskState
+        .removeDuplicates()
+        .dropFirst()
+        .sink { [weak self] state in self?.onAgentTaskStateChanged?(descriptor.id, state) }
+        .store(in: &cancellables)
     }
     runtime.terminalSession?.$currentWorkingDirectory
       .removeDuplicates()
@@ -1515,6 +1526,8 @@ final class AppModel: ObservableObject {
       agentPromptQueues[paneID] = queue
       // 只重建底部条以显示新增列表项；不能用 objectWillChange 打断整个终端 Pane 树。
       promptQueuePresentationChanged.send(presentedPromptQueuePaneID == paneID ? paneID : nil)
+      // Agent 已经在等输入时不会再有状态变化事件，入队本身就是可派发时机。
+      advancePromptQueue(paneID: paneID)
       return true
     } catch {
       notice = "加入队列失败：\(error.localizedDescription)"
@@ -1544,13 +1557,49 @@ final class AppModel: ObservableObject {
       return false
     }
     guard session.submitPromptQueueText(item.text) else {
-      notice = "无法写入当前 CLI 输入框，队列项已保留。"
+      notice = "无法写入当前 CLI 输入框（\(session.promptWriteBlocker ?? "输入被前台程序拒绝")），队列项已保留。"
       return false
     }
     _ = queue.remove(id: id)
     agentPromptQueues[paneID] = queue
     promptQueuePresentationChanged.send(presentedPromptQueuePaneID == paneID ? paneID : nil)
     return true
+  }
+
+  /// Agent lifecycle hook 驱动的自动派发，是队列的常规发送路径：hook 报告 idle 才
+  /// 代表当前轮次已结束、Agent 正在等下一条指令。严格单 in-flight —— 只有观察到
+  /// 上一条从 processing/awaiting-input 回到 idle 才发下一条，否则多条 prompt 会挤进
+  /// 同一轮对话。
+  ///
+  /// awaiting-input 刻意不派发：它来自 PermissionRequest hook，屏幕上是权限确认选择
+  /// 器，此时写入文本加 Return 等于替用户批准了一次工具调用。
+  private func advancePromptQueue(paneID: UUID, reportedState: AgentTaskState? = nil) {
+    guard var queue = agentPromptQueues[paneID],
+      queue.inFlight != nil || !queue.pending.isEmpty,
+      let session = tabs.lazy.compactMap({ $0.runtime(for: paneID)?.terminalSession }).first
+    else { return }
+
+    // 状态变化事件带着新值进来；入队等主动调用没有事件，回读当前值即可。
+    let state = reportedState ?? session.agentTaskState
+    let completed = queue.observeAgentState(state)
+    var dispatched = false
+    if session.hasAuthoritativeAgentLifecycle, session.activeAgentProvider != nil,
+      let next = queue.dispatchNext(when: .agent(state))
+    {
+      if session.submitPromptQueueText(next.text) {
+        dispatched = true
+      } else {
+        // 写入失败（只读 Pane、输入模式限制、PTY 已退出）时把 prompt 放回队首，
+        // 用户仍能改用列表行的立即发送按钮。
+        queue.restoreInFlight()
+        notice = "无法自动写入当前 CLI 输入框（\(session.promptWriteBlocker ?? "输入被前台程序拒绝")），队列项已保留。"
+      }
+    }
+    // 无论本次是否派发都要写回：`observeAgentState` 记下的「in-flight 已真正开始」
+    // 是隐式状态，丢掉它会让后续 idle 永远无法释放锁，队列卡在第一条上。
+    agentPromptQueues[paneID] = queue
+    guard completed != nil || dispatched else { return }
+    promptQueuePresentationChanged.send(presentedPromptQueuePaneID == paneID ? paneID : nil)
   }
 
   /// 仅删除还未发送的指定项。已经由用户发出的内容不会留在队列中，因此不会出现撤销
@@ -1853,9 +1902,9 @@ final class AppModel: ObservableObject {
       }
       agentComposers[paneID] = composer
       agentPromptQueues[paneID] = queue
-      // Queue 只记录待发送项；点击 Prompt Queue 列表里的发送按钮才会写入 Agent。
       promptQueuePresentationChanged.send(presentedPromptQueuePaneID == paneID ? paneID : nil)
       objectWillChange.send()
+      advancePromptQueue(paneID: paneID)
     } catch {
       notice = "加入队列失败：\(error.localizedDescription)"
     }
@@ -3028,6 +3077,9 @@ final class AppModel: ObservableObject {
     tab.onCommandFinished = { [weak self] paneID in
       self?.completeWorkflowCLICommand(paneID: paneID)
       self?.dispatchNextRecipeCommand(paneID: paneID)
+    }
+    tab.onAgentTaskStateChanged = { [weak self] paneID, state in
+      self?.advancePromptQueue(paneID: paneID, reportedState: state)
     }
   }
 

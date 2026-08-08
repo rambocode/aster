@@ -98,3 +98,16 @@ import Testing
     try queue.enqueue(AgentQueuedPrompt(text: "second"))
   }
 }
+
+@Test func promptQueueRestoresAFailedDispatchToTheFrontOfTheQueue() throws {
+  var queue = AgentPromptQueue()
+  try queue.enqueue(AgentQueuedPrompt(text: "first"))
+  try queue.enqueue(AgentQueuedPrompt(text: "second"))
+  #expect(queue.dispatchNext(when: .agent(.idle))?.text == "first")
+
+  // 真实写入失败后回滚：prompt 回到队首而不是队尾，锁同时释放，下一次 idle 会重试。
+  #expect(queue.restoreInFlight()?.text == "first")
+  #expect(queue.inFlight == nil)
+  #expect(queue.pending.map(\.text) == ["first", "second"])
+  #expect(queue.restoreInFlight() == nil)
+}

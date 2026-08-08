@@ -352,6 +352,9 @@ final class ActivePaneHostView: NSView {
   private var handleTrackingArea: NSTrackingArea?
   private var inactiveOverlay: NSView?
   private var externalDropZone: ExternalPaneDropZone?
+  private weak var contentView: NSView?
+  private var contentBottomConstraint: NSLayoutConstraint?
+  private var bottomAccessory: NSView?
   /// 焦点状态可原地切换：切换聚焦面板只改这层遮罩的可见性，不重建视图树。
   var isActivePane: Bool {
     didSet { inactiveOverlay?.isHidden = isActivePane }
@@ -373,6 +376,50 @@ final class ActivePaneHostView: NSView {
   }
 
   required init?(coder: NSCoder) { nil }
+
+  /// 安装 Pane 主体内容。底边单独保留可替换的约束，底部附件出现时把内容顶上去，
+  /// 而不是压在内容之上。
+  func installContent(_ view: NSView) {
+    addSubview(view)
+    view.translatesAutoresizingMaskIntoConstraints = false
+    let bottom = view.bottomAnchor.constraint(equalTo: bottomAnchor)
+    NSLayoutConstraint.activate([
+      view.leadingAnchor.constraint(equalTo: leadingAnchor),
+      view.trailingAnchor.constraint(equalTo: trailingAnchor),
+      view.topAnchor.constraint(equalTo: topAnchor),
+      bottom,
+    ])
+    contentView = view
+    contentBottomConstraint = bottom
+  }
+
+  /// 安装或移除底部附件（当前只有 Prompt Queue）。附件必须占据布局空间：覆盖在
+  /// 终端上会挡住最后几行输出，用户恰好看不到刚发出去那条命令的结果。传 nil 时
+  /// 内容底边回到 Pane 底边，终端随之恢复原有行数。
+  func setBottomAccessory(_ accessory: NSView?, inset: CGFloat = 8) {
+    guard bottomAccessory !== accessory else { return }
+    bottomAccessory?.removeFromSuperview()
+    bottomAccessory = accessory
+    contentBottomConstraint?.isActive = false
+    guard let contentView else { return }
+    guard let accessory else {
+      let bottom = contentView.bottomAnchor.constraint(equalTo: bottomAnchor)
+      bottom.isActive = true
+      contentBottomConstraint = bottom
+      return
+    }
+    addSubview(accessory)
+    accessory.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      accessory.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+      accessory.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+      accessory.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
+    ])
+    let bottom = contentView.bottomAnchor.constraint(
+      equalTo: accessory.topAnchor, constant: -inset)
+    bottom.isActive = true
+    contentBottomConstraint = bottom
+  }
 
   override func mouseDown(with event: NSEvent) {
     activation()

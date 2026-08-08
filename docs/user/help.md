@@ -106,8 +106,9 @@ Preview 支持 Markdown（含 GFM 表格、任务列表等）、reStructuredText
 - 粘贴保护默认开启。内容包含多行、末尾换行、`sudo`/`su` 或不可见控制字符时，Aster 会显示有界预览并要求选择“仍然粘贴”或“取消”。全屏 TUI 或可信 bracketed paste 可跳过普通多行告警，但不可见控制字符始终要求确认；内嵌的 bracketed 结束标记会被转换成可见文本，不能提前执行后续命令。
 - “编辑 → 粘贴为”或终端右键“粘贴为”提供：粘贴当前终端选区、选择普通文件并粘贴 Base64、把剪贴板安全转义为单个 POSIX Shell 参数、强制括号粘贴。文件上限为 8 MiB；目录、符号链接、管道、socket、设备和读取期间变化的文件不会被读取。
 - “粘贴并在 Composer 中继续”会在 Agent Composer 可用时交接剪贴板文本；未打开 Composer 能力时该右键项置灰。
-- “编辑 → Prompt 队列”在当前终端 Pane 中可用，不会因 Claude Code 或 Codex 的识别状态变化而置灰。它在 Pane 底部打开输入条；按 Return 或右下角上箭头只会把内容加入上方列表，不会自动发送。点击某项左侧发送图标，才会模拟键入内容到当前 CLI 输入框并回车提交；右侧垃圾桶可移除尚未发送的项。关闭输入条不会取消队列，展开按钮可输入多行，队列仍受只读和终端输入模式限制。
-- “编辑 → 发送到聊天”以及终端右键“发送选区到 Chat”会打开确认面板。可同时选择当前选区与当前终端 transcript，并从当前工作区所有运行中的 Claude Code/Codex Pane 选择接收端；点击 Send 会以普通键入预填 Comment 和清理、脱敏后的上下文，不强制 bracketed paste，也不会自动回车。
+- “编辑 → Prompt 队列”在当前终端 Pane 中可用，不会因 Claude Code 或 Codex 的识别状态变化而置灰。它在 Pane 底部打开输入条；按 Return 或右下角上箭头把内容加入上方列表。已在设置里安装 lifecycle hook 的 Claude Code / Codex，队列会自动发送：Agent 空闲（等你输入下一条）时立刻发出队首，正在执行时先排队、等这一轮结束再发，并且一次只发一条。等待权限确认（awaiting-input）时不会自动发送 —— 那时屏幕上是确认选择器，替你回车等于批准了一次工具调用。没有安装 hook 的普通 CLI 保持全手动。
+- 任何时候都可以点击某项左侧的 ↳ 图标立即插队提交，右侧垃圾桶可移除尚未发送的项。关闭输入条不会取消队列，展开按钮可输入多行，队列仍受只读和终端输入模式限制。
+- “编辑 → 发送到聊天”以及终端右键“发送选区到 Chat”会打开确认面板。可同时选择当前选区与当前终端 transcript，并从当前工作区所有运行中的 Claude Code/Codex Pane 选择接收端；点击 Send 会以普通键入预填 Comment 和清理、脱敏后的上下文，不会自动回车。
 
 终端程序可用 OSC 52 请求访问系统剪贴板。“设置 → 控制 → 复制与粘贴”分别提供“允许 / 每次询问 / 拒绝”：写入默认允许，读取默认每次询问。每次询问只授权当前请求，不会记住；连续请求在提示后有 5 秒安全冷却。导入配置不能把读取权限静默改成“允许”；拒绝或超限请求不会读取剪贴板。
 
@@ -225,8 +226,8 @@ Aster 支持 Claude Code、Codex、OpenCode、Cursor CLI、Kimi Code、Pi 和 om
 
 - lifecycle hook 把 `processing / idle / awaiting-input` 归一到所属 PTY，驱动标签徽章、完成/等待通知和“处理期间阻止睡眠”。不会读取或保存 prompt 正文。
 - “Agent 历史”与 Open Quickly 可搜索已知 provider 的本机会话记录，并使用 provider 原生命令 Resume 或 Fork；不支持 Fork 的 provider 会明确拒绝。
-- Composer 支持多行草稿、普通文件附件、固定/浮动与取消；发送时使用 bracketed paste，仍服从只读和粘贴保护。Prompt Queue 不会根据 `processing`、`awaiting-input` 或 `idle` 自动派发；每一项都必须由你点击左侧发送图标提交。
-- Send to Chat 可接收终端选区、当前可见 transcript 或文件上下文。上下文被包在 `untrusted-context` 中，移除终端控制字符、遮盖常见密钥并执行 128 KiB 总预算；Aster 不声称能识别所有业务敏感信息，发送前仍应复核。终端发送面板会以普通键入预填目标 Agent 输入框，不强制 bracketed paste，最终提交始终由你决定。
+- Composer 支持多行草稿、普通文件附件、固定/浮动与取消；发送时使用 bracketed paste，仍服从只读和粘贴保护。Prompt Queue 只按 lifecycle hook 的 `idle` 自动派发，`processing` 与 `awaiting-input` 都只排队；未安装 hook 时不自动发送，每一项都由你点击左侧发送图标提交。
+- Send to Chat 可接收终端选区、当前可见 transcript 或文件上下文。上下文被包在 `untrusted-context` 中，移除终端控制字符、遮盖常见密钥并执行 128 KiB 总预算；Aster 不声称能识别所有业务敏感信息，发送前仍应复核。终端发送面板会以普通键入预填目标 Agent 输入框，最终提交始终由你决定。
 
 ## 九类设置
 

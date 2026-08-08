@@ -1242,23 +1242,38 @@ final class AsterTerminalView: LocalProcessTerminalView {
     return true
   }
 
-  /// 将应用内文本按普通键入写入 PTY，但不确认提交。此入口刻意不走剪贴板的
-  /// bracketed-paste 编码：协议未经协商时发送 `CSI 200~` 会让部分 Agent TUI 丢弃内容。
+  /// 将应用内文本写入当前前台程序的输入框，但不确认提交。编码按目标是否协商过
+  /// bracketed paste 决定：Claude Code / Codex 这类 TUI 打开输入框时会 DECSET 2004，
+  /// 此时整段文本必须作为一个粘贴块投递，否则输入框把它按逐键解释，`/`、`@`、
+  /// 方向键和候选列表会吃掉大部分内容，用户看到的就是“输入框没有变化”。未协商的
+  /// 目标仍发裸 UTF-8 —— 对它们发 `CSI 200~` 同样会被当作乱码丢弃。
   @discardableResult
   func typePromptText(_ text: String) -> Bool {
     guard !text.isEmpty, permitsUserInputAction() else { return false }
-    send(data: Array(text.utf8)[...])
+    let bytes = PasteTransmissionEncoder.encode(
+      text, bracketed: getTerminal().bracketedPasteMode)
+    send(data: bytes[...])
     return true
   }
 
-  /// 将应用内 Prompt Queue 的用户文本模拟为键入并立即确认。队列语义要求它在同一个
-  /// 当前 CLI 中执行，因此先复用普通键入门禁，再单独发送 Return。
+  /// 将应用内 Prompt Queue 的用户文本写入当前 CLI 输入框并确认。队列语义要求它在
+  /// 同一个当前 CLI 中执行，因此先复用普通键入门禁，再单独发送 Return。
   @discardableResult
   func submitPromptQueueText(_ text: String) -> Bool {
     guard typePromptText(text) else { return false }
-    send(data: [UInt8(13)][...])
+    // Return 必须与文本分批到达：TUI 要一次事件循环才能把粘贴块并入输入框，同批
+    // 到达的 CR 会被算进粘贴内容变成换行，表现为「只多了一行、没有提交」。
+    Task { @MainActor [weak self] in
+      try? await Task.sleep(for: Self.promptSubmitReturnDelay)
+      guard let self, process.running else { return }
+      send(data: [UInt8(13)][...])
+    }
     return true
   }
+
+  /// 粘贴块与 Return 之间的间隔。取值只需覆盖 TUI 的一帧重绘，过长会让用户察觉到
+  /// 队列项“发出去但没提交”的中间态。
+  private static let promptSubmitReturnDelay = Duration.milliseconds(60)
 
   @objc func pasteSelection(_ sender: Any?) {
     guard let selection = getSelection() else { return }
@@ -1727,6 +1742,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @Published private(set) var activeAgentSessionID: String?
   @Published private(set) var agentTaskState = AgentTaskState.idle
   @Published private(set) var agentTaskCompletionUnread = false
+  /// Hook 是否已成为该 Pane 的权威状态源。Prompt Queue 的自动派发只接受 hook 结论：
+  /// 输出探针推断出来的 idle 只说明屏幕安静了一会儿，据此写入会打断运行中的 TUI。
+  var hasAuthoritativeAgentLifecycle: Bool { agentLifecycleIsAuthoritative }
   /// 当前前台命令的展示名:优先 Agent provider 名,否则取已提交命令的首个 token;
   /// 没有前台命令时为 nil。供 Open Quickly「当前」页显示运行中的命令(如 kimi)。
   var foregroundCommandName: String? {
@@ -2127,11 +2145,21 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalView?.pasteText(text, forceBracketed: true) ?? false
   }
 
-  /// 以普通 UTF-8 键入方式预填 Agent 输入框，不带 Return，也不强制 bracketed paste。
-  /// 该入口只供 Prompt Queue 与“发送到聊天”使用，避免影响 Open Quickly 的既有安全粘贴。
+  /// 以普通键入方式预填 Agent 输入框，不带 Return。该入口只供 Prompt Queue 与
+  /// “发送到聊天”使用，避免影响 Open Quickly 的既有安全粘贴。
   @discardableResult
   func typePromptText(_ text: String) -> Bool {
     terminalView?.typePromptText(text) ?? false
+  }
+
+  /// 当前阻止 Prompt 写入前台程序的原因，可写入时为 nil。失败提示必须能落到具体
+  /// 动作上：只说“写入失败”，用户无从判断该解锁 Pane、退出 Vi 还是等终端就绪。
+  var promptWriteBlocker: String? {
+    guard let terminalView else { return "终端视图尚未就绪" }
+    guard terminalView.process.running else { return "终端进程已退出" }
+    if terminalView.isReadOnly { return "Pane 处于只读模式" }
+    if terminalView.navigationMode != .normal { return "Pane 处于 Vi/Hint 模式" }
+    return nil
   }
 
   /// Composer 使用 bracketed paste 一次写入多行内容，再单独发送 Return。这样 Agent

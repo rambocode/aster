@@ -105,6 +105,17 @@ public struct AgentPromptQueue: Equatable, Sendable {
     return prompt
   }
 
+  /// 派发决策成立但真实写入失败时的回滚。prompt 回到队首而不是队尾，保持 FIFO 与
+  /// 用户看到的顺序一致；没有 in-flight 时是空操作。
+  @discardableResult
+  public mutating func restoreInFlight() -> AgentQueuedPrompt? {
+    guard let prompt = inFlight else { return nil }
+    inFlight = nil
+    inFlightHasStarted = false
+    pending.insert(prompt, at: 0)
+    return prompt
+  }
+
   /// 消费 Agent 的折叠生命周期。返回值仅在观察到当前 in-flight 从非 idle 回到
   /// idle 时产生；调用方可随后安全派发下一项，而不能把发送前残留的 idle 当完成。
   @discardableResult

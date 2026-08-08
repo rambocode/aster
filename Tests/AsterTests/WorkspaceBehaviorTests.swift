@@ -351,9 +351,9 @@ func appModelPrefillsSelectedAgentChatWithoutSubmitting() async throws {
   #expect(session.textSnapshot().lines.joined(separator: "\n").contains("__CHAT_PREFILL_DELIVERED__"))
 }
 
-@Test("Prompt 队列只在用户点击发送时立即提交指定项")
+@Test("Prompt 队列在 Agent 执行期间只排队，手动发送仍可插队提交")
 @MainActor
-func appModelSendsPromptQueueItemOnlyWhenExplicitlyRequested() throws {
+func appModelKeepsPromptQueuedWhileAgentIsProcessing() async throws {
   let model = AppModel(defaults: behaviorTestDefaults())
   model.ensureInitialTab()
   let paneID = try #require(model.selectedTab?.activePaneID)
@@ -372,16 +372,87 @@ func appModelSendsPromptQueueItemOnlyWhenExplicitlyRequested() throws {
   #expect(encoded.isEmpty)
   let queuedItem = try #require(model.promptQueueItems(for: paneID).first)
 
-  // 即使 Agent 之后报告 idle，队列也不自动写入，发送时机完全由用户的列表行操作决定。
-  terminal.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .idle))
-  #expect(session.agentTaskState == .idle)
+  // 等待权限确认时同样不自动写入：屏幕上是选择器，回车会替用户批准一次工具调用。
+  terminal.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .codex, signal: .awaitingInput))
+  #expect(session.agentTaskState == .awaitingInput)
   #expect(model.promptQueueItems(for: paneID).count == 1)
   #expect(encoded.isEmpty)
 
   #expect(model.sendPromptQueueItem(id: queuedItem.id, paneID: paneID))
   #expect(model.promptQueueItems(for: paneID).isEmpty)
   #expect(String(decoding: encoded, as: UTF8.self).contains("next task"))
+  // Return 刻意与文本分批投递，先确认它没有混在同一批里，再等它单独抵达。
+  #expect(encoded.contains(13) == false)
+  try await Task.sleep(for: .milliseconds(250))
   #expect(encoded.contains(13))
+}
+
+@Test("Agent hook 报告 idle 后 Prompt 队列自动逐条派发")
+@MainActor
+func promptQueueAutoDispatchesWhenAgentHookReportsIdle() throws {
+  let model = AppModel(defaults: behaviorTestDefaults())
+  model.ensureInitialTab()
+  let paneID = try #require(model.selectedTab?.activePaneID)
+  let session = try #require(model.selectedTab?.activeSession)
+  let terminal = try #require(
+    session.makeTerminalView(preferences: AppPreferences(defaults: behaviorTestDefaults()))
+      as? AsterTerminalView
+  )
+  defer { session.stop(immediately: true) }
+
+  var encoded: [UInt8] = []
+  terminal.onEncodedInput = { encoded.append(contentsOf: $0) }
+  terminal.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .processing))
+  for text in ["first task", "second task"] {
+    #expect(model.updatePromptQueueDraft(text, paneID: paneID))
+    #expect(model.enqueuePromptQueueDraft(paneID: paneID))
+  }
+  #expect(encoded.isEmpty)
+
+  // Stop hook 到达即当前轮次结束，队首自动写入；但严格单 in-flight，第二条必须等
+  // 这一条真正跑完，否则两条 prompt 会挤进同一轮对话。
+  terminal.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .idle))
+  #expect(String(decoding: encoded, as: UTF8.self).contains("first task"))
+  #expect(String(decoding: encoded, as: UTF8.self).contains("second task") == false)
+  #expect(model.promptQueueItems(for: paneID).map(\.text) == ["second task"])
+
+  terminal.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .processing))
+  #expect(String(decoding: encoded, as: UTF8.self).contains("second task") == false)
+  terminal.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .idle))
+  #expect(String(decoding: encoded, as: UTF8.self).contains("second task"))
+  #expect(model.promptQueueItems(for: paneID).isEmpty)
+}
+
+@Test("Agent 空闲时入队立即派发，未安装 hook 的 Pane 保持手动")
+@MainActor
+func promptQueueDispatchesOnEnqueueOnlyWithAuthoritativeHook() throws {
+  let model = AppModel(defaults: behaviorTestDefaults())
+  model.ensureInitialTab()
+  let paneID = try #require(model.selectedTab?.activePaneID)
+  let session = try #require(model.selectedTab?.activeSession)
+  let terminal = try #require(
+    session.makeTerminalView(preferences: AppPreferences(defaults: behaviorTestDefaults()))
+      as? AsterTerminalView
+  )
+  defer { session.stop(immediately: true) }
+
+  var encoded: [UInt8] = []
+  terminal.onEncodedInput = { encoded.append(contentsOf: $0) }
+
+  // 没有 hook 的普通 CLI：输出探针推断的 idle 不足以证明可以写入，队列只排队。
+  #expect(model.updatePromptQueueDraft("manual only", paneID: paneID))
+  #expect(model.enqueuePromptQueueDraft(paneID: paneID))
+  #expect(encoded.isEmpty)
+  #expect(model.promptQueueItems(for: paneID).count == 1)
+  model.removePromptQueueItem(id: try #require(model.promptQueueItems(for: paneID).first).id, paneID: paneID)
+
+  // hook 已经把 Pane 标记为 idle 时不会再有状态变化事件，入队本身就是派发时机。
+  terminal.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .idle))
+  #expect(model.updatePromptQueueDraft("auto now", paneID: paneID))
+  #expect(model.enqueuePromptQueueDraft(paneID: paneID))
+  #expect(String(decoding: encoded, as: UTF8.self).contains("auto now"))
+  #expect(model.promptQueueItems(for: paneID).isEmpty)
 }
 
 @Test("Prompt 队列卡片左侧发送按钮会写入当前 CLI 并回车")
@@ -431,6 +502,43 @@ func promptQueueCardSendButtonSubmitsToCurrentCLI() async throws {
   // 单独抵达，marker 回显则证明整条命令确实进了当前 CLI 而不是被 TUI 逐键吃掉。
   #expect(encoded.contains(13))
   #expect(session.textSnapshot().lines.joined(separator: "\n").contains("__PROMPT_QUEUE_DELIVERED__"))
+}
+
+@Test("Prompt 队列条按设计稿呈现队列行与输入行控件")
+@MainActor
+func promptQueueBarMatchesDesignLayout() throws {
+  let defaults = behaviorTestDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  model.ensureInitialTab()
+  let paneID = try #require(model.selectedTab?.activePaneID)
+  let session = try #require(model.selectedTab?.activeSession)
+  defer { session.stop(immediately: true) }
+  #expect(model.updatePromptQueueDraft("设计稿如图", paneID: paneID))
+  #expect(model.enqueuePromptQueueDraft(paneID: paneID))
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  controller.loadViewIfNeeded()
+  model.togglePromptQueue()
+  controller.view.layoutSubtreeIfNeeded()
+
+  // 设计稿的五个可点控件都必须有 toolTip：图标本身没有文字标签，缺一个用户就无从
+  // 判断该图标是发送、移除还是展开。
+  let buttons = controller.view.descendantViews.compactMap { $0 as? NSButton }
+  let toolTips = Set(buttons.compactMap(\.toolTip))
+  for expected in [
+    "立即发送此命令", "从队列移除", "关闭 Prompt 队列输入条", "展开/收起多行输入", "加入队列（Return）",
+  ] {
+    #expect(toolTips.contains(expected))
+  }
+
+  // 队列行与输入行同为 44pt 卡片；行高一旦漂移，底部条会额外吃掉终端网格的行数。
+  let sendButton = try #require(buttons.first { $0.toolTip == "立即发送此命令" })
+  let itemCard = try #require(sendButton.superview?.superview)
+  #expect(itemCard.frame.height == 44)
+  let enqueueButton = try #require(buttons.first { $0.toolTip == "加入队列（Return）" })
+  let inputCard = try #require(enqueueButton.superview?.superview)
+  #expect(inputCard.frame.height == 44)
 }
 
 @Test("Agent 状态变化不重建工作区，Files 保留当前目录")
@@ -759,4 +867,75 @@ func appModelDoesNotRecordInitialDirectoryPublisherValue() throws {
   let scoreAfterSplit = try #require(
     model.frequentFolderMatches(query: directory.lastPathComponent).first?.score)
   #expect(scoreAfterSplit == scoreBeforeSplit)
+}
+
+@Test("Prompt 队列条占据 Pane 底部空间且不覆盖终端内容")
+@MainActor
+func promptQueueBarReservesSpaceInsteadOfCoveringTerminal() throws {
+  let defaults = behaviorTestDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  model.ensureInitialTab()
+  let paneID = try #require(model.selectedTab?.activePaneID)
+  let session = try #require(model.selectedTab?.activeSession)
+  defer { session.stop(immediately: true) }
+  #expect(model.updatePromptQueueDraft("等待中的一条", paneID: paneID))
+  #expect(model.enqueuePromptQueueDraft(paneID: paneID))
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  controller.loadViewIfNeeded()
+  controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+  model.togglePromptQueue()
+  controller.view.layoutSubtreeIfNeeded()
+
+  let host = try #require(
+    controller.view.descendantViews.compactMap { $0 as? ActivePaneHostView }
+      .first { $0.paneID == paneID }
+  )
+  let bar = try #require(
+    controller.view.descendantViews.compactMap { $0 as? PromptQueueBarView }.first)
+  let barFrameInHost = bar.convert(bar.bounds, to: host)
+  // Pane 主体必须整体位于队列条上方：覆盖式布局会挡住最后几行输出，用户恰好看不到
+  // 刚发出去那条命令的结果。
+  let content = try #require(host.subviews.first { $0 !== bar && !($0 is PromptQueueBarView) })
+  #expect(content.frame.minY >= barFrameInHost.maxY)
+  #expect(barFrameInHost.maxY < host.bounds.maxY)
+  // 队列行与输入行同宽是设计稿要求，两者都由队列条统一撑满可用宽度。
+  let cards = bar.descendantViews.filter { $0.className.contains("PromptQueueItemView") }
+  for card in cards {
+    #expect(abs(card.frame.width - bar.bounds.width) < 1)
+  }
+}
+
+@Test("Prompt 队列输入框展开按钮会真正放大输入区")
+@MainActor
+func promptQueueExpandButtonGrowsTheInputCard() throws {
+  let defaults = behaviorTestDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  model.ensureInitialTab()
+  let session = try #require(model.selectedTab?.activeSession)
+  defer { session.stop(immediately: true) }
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  controller.loadViewIfNeeded()
+  controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+  model.togglePromptQueue()
+  controller.view.layoutSubtreeIfNeeded()
+
+  let bar = try #require(
+    controller.view.descendantViews.compactMap { $0 as? PromptQueueBarView }.first)
+  let expand = try #require(
+    controller.view.descendantViews.compactMap { $0 as? NSButton }
+      .first { $0.toolTip == "展开/收起多行输入" }
+  )
+  let collapsedHeight = bar.frame.height
+
+  expand.performClick(nil)
+  controller.view.layoutSubtreeIfNeeded()
+  #expect(bar.frame.height > collapsedHeight)
+
+  expand.performClick(nil)
+  controller.view.layoutSubtreeIfNeeded()
+  #expect(abs(bar.frame.height - collapsedHeight) < 1)
 }
