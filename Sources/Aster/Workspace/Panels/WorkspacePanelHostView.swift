@@ -38,8 +38,13 @@ final class WorkspaceEdgePanelHostView: NSView {
 
   /// 开始收拢/展开时冻结内容宽度。Host 继续改变 frame，内容只沿外侧边缘定位，
   /// 其内部 Auto Layout 不会在 0...首选宽度之间反复求解。
-  func beginFrameTransition() {
-    stableContentWidth = max(stableContentWidth, max(bounds.width, contentView.frame.width))
+  func beginFrameTransition(minimumContentWidth: CGFloat) {
+    // 首次展开时 Host 仍是 0pt 覆盖层，内容也尚未得到最终 frame。显式传入目标宽度，
+    // 才能从第一帧就冻结 Inspector 的内部布局，并沿 trailing edge 做稳定裁剪。
+    stableContentWidth = max(
+      stableContentWidth,
+      max(minimumContentWidth, max(bounds.width, contentView.frame.width))
+    )
     preservesContentWidth = true
     needsLayout = true
     layoutSubtreeIfNeeded()
