@@ -49,7 +49,7 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 
 - 完成：[Window, Tab and Split](https://docs.otty.sh/user-interface/window-tab-split) — 多窗口与恢复、Pin、当前/跟随 PiP、OSC 独立标题、三种标签布局、分组/排序/分隔线、跨窗口标签拖动、递归分屏、缩放/移动/交换/等分/聚焦及关闭恢复均已接入。
 - 完成：[Details Panel](https://docs.otty.sh/user-interface/details-panel) — Info、Outline、Git、Files 跟随活动 Pane；进程、端口、仓库和文件读取均有界且不在主线程执行外部命令。
-- 不适用：[Status Bar](https://docs.otty.sh/user-interface/status-bar) — 上游页面明确标记为 Planned，没有已描述的可实现功能；Aster 现有状态栏属于自身能力。
+- 不适用：[Status Bar](https://docs.otty.sh/user-interface/status-bar) — 上游页面明确标记为 Planned，没有已描述的可实现功能；Aster 不再渲染自定义底部状态栏。
 - 完成：[Files and Links](https://docs.otty.sh/user-interface/files-and-links) — 路径/行列/URL/OSC 8 解析、安全打开、预览、编辑、复制、Finder、默认应用、终端目录动作和 Send to Chat 使用同一文件安全边界。
 - 完成：[Drag and Drop](https://docs.otty.sh/user-interface/drag-and-drop) — 文件、目录、URL、文本、标签和 Pane 均有明确落点；标签跨窗口保留运行对象，Pane 内部重排不重启 PTY。
 - 完成：[Find](https://docs.otty.sh/user-interface/find) — Pane 查找支持大小写/正则/上下跳转，全局查找覆盖终端、编辑器与预览并可定位回源。

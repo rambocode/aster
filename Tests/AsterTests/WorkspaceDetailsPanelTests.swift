@@ -106,6 +106,220 @@ func togglingInspectorPersistsPresentationState() {
   #expect(preferences.inspectorPresented == false)
 }
 
+@Test("Open Quickly 局部挂载浮层且不会重建工作区")
+@MainActor
+func openQuicklyPresentsWithoutRebuildingWorkspace() throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  controller.loadViewIfNeeded()
+  let originalTabsLabel = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTextField }
+      .first { $0.stringValue == "TABS" })
+
+  model.toggleOpenQuickly()
+
+  let searchFields = controller.view.allDescendants.compactMap { $0 as? NSSearchField }
+  #expect(searchFields.contains { $0.placeholderString?.contains("搜索命令") == true })
+  #expect(controller.view.allDescendants.contains { $0 === originalTabsLabel })
+  let originalOverlay = try #require(controller.view.allDescendants.first {
+    $0.identifier?.rawValue == "open-quickly-overlay"
+  })
+
+  model.toggleOpenQuickly()
+  #expect(!controller.view.allDescendants.contains { $0 === originalOverlay })
+  model.toggleOpenQuickly()
+  #expect(controller.view.allDescendants.contains { $0 === originalOverlay })
+  #expect(controller.view.allDescendants.contains { $0 === originalTabsLabel })
+
+  let escape = try #require(NSEvent.keyEvent(
+    with: .keyDown,
+    location: .zero,
+    modifierFlags: [],
+    timestamp: 0,
+    windowNumber: 0,
+    context: nil,
+    characters: "\u{1b}",
+    charactersIgnoringModifiers: "\u{1b}",
+    isARepeat: false,
+    keyCode: 53
+  ))
+  let search = try #require(searchFields.first)
+  search.keyDown(with: escape)
+  #expect(model.isOpenQuicklyPresented == false)
+  #expect(!controller.view.allDescendants.contains { $0 === originalOverlay })
+
+  model.toggleOpenQuickly()
+  NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+  #expect(model.isOpenQuicklyPresented == false)
+  #expect(!controller.view.allDescendants.contains { $0 === originalOverlay })
+}
+
+@Test("Open Quickly 搜索、过滤器和结果共享横向基线且切换复用结果行")
+@MainActor
+func openQuicklyAlignsContentAndReusesRows() throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+    styleMask: [.titled, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  model.toggleOpenQuickly()
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let overlay = try #require(controller.view.allDescendants.first {
+    $0.identifier?.rawValue == "open-quickly-overlay"
+  })
+  let backdrop = try #require(controller.view.allDescendants.first {
+    $0.identifier?.rawValue == "open-quickly-backdrop"
+  })
+  let search = try #require(controller.view.allDescendants.compactMap { $0 as? NSSearchField }
+    .first { $0.identifier?.rawValue == "open-quickly-search" })
+  let resultsStack = try #require(controller.view.allDescendants.compactMap { $0 as? NSStackView }
+    .first { $0.identifier?.rawValue == "open-quickly-results" })
+  let firstRow = try #require(controller.view.allDescendants.compactMap { $0 as? NSButton }
+    .first { $0.identifier?.rawValue.hasPrefix("open-quickly-row-") == true })
+  let firstBadge = try #require(controller.view.allDescendants.first {
+    $0.identifier?.rawValue.hasPrefix("open-quickly-badge-") == true
+  })
+  let firstSectionHeader = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTextField }
+      .first { $0.stringValue == "已打开" })
+  let originalOverlayWidth = overlay.bounds.width
+  #expect(abs(originalOverlayWidth - 700) < 1)
+  #expect(backdrop.frame == controller.view.bounds)
+  #expect((overlay.layer?.shadowOpacity ?? 0) >= 0.20)
+  #expect(search.isBezeled == false)
+  #expect(search.focusRingType == .none)
+  #expect(abs(search.bounds.height - 36) < 1)
+  let searchCell = try #require(search.cell as? NSSearchFieldCell)
+  let searchIconRect = searchCell.searchButtonRect(forBounds: search.bounds)
+  let searchTextRect = searchCell.searchTextRect(forBounds: search.bounds)
+  #expect(searchIconRect.maxX + 6 <= searchTextRect.minX)
+  #expect(abs(searchIconRect.midY - searchTextRect.midY) < 1)
+  #expect(search.frame.width >= overlay.bounds.width - 32)
+  #expect(abs(firstRow.frame.width - resultsStack.bounds.width) < 1)
+  let badgeFrameInRow = firstBadge.convert(firstBadge.bounds, to: firstRow)
+  #expect(firstRow.bounds.maxX - badgeFrameInRow.maxX <= 12)
+  let headerFrameInOverlay = firstSectionHeader.convert(firstSectionHeader.bounds, to: overlay)
+  #expect(headerFrameInOverlay.minX < overlay.bounds.midX)
+
+  // modifier monitor 需要经 NSApplication 事件通道验证：按住 ⌘ 后 chip 和
+  // 前九条结果出现键帽，松开后收起，不会重建结果行。
+  let commandDown = try #require(NSEvent.keyEvent(
+    with: .flagsChanged,
+    location: .zero,
+    modifierFlags: [.command],
+    timestamp: 0,
+    windowNumber: window.windowNumber,
+    context: nil,
+    characters: "",
+    charactersIgnoringModifiers: "",
+    isARepeat: false,
+    keyCode: 55
+  ))
+  NSApp.sendEvent(commandDown)
+  window.contentView?.layoutSubtreeIfNeeded()
+  let openedChipWithHint = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSButton }
+      .first { $0.identifier?.rawValue == "open-quickly-chip-opened" })
+  let firstShortcut = try #require(controller.view.allDescendants.first {
+    $0.identifier?.rawValue.hasPrefix("open-quickly-shortcut-") == true
+  })
+  #expect(openedChipWithHint.attributedTitle.string.contains("⌘W"))
+  #expect(firstShortcut.isHidden == false)
+
+  let commandUp = try #require(NSEvent.keyEvent(
+    with: .flagsChanged,
+    location: .zero,
+    modifierFlags: [],
+    timestamp: 1,
+    windowNumber: window.windowNumber,
+    context: nil,
+    characters: "",
+    charactersIgnoringModifiers: "",
+    isARepeat: false,
+    keyCode: 55
+  ))
+  NSApp.sendEvent(commandUp)
+  #expect(openedChipWithHint.attributedTitle.string.contains("⌘W") == false)
+  #expect(firstShortcut.isHidden)
+
+  let currentShortcut = try #require(NSEvent.keyEvent(
+    with: .keyDown,
+    location: .zero,
+    modifierFlags: [.command],
+    timestamp: 2,
+    windowNumber: window.windowNumber,
+    context: nil,
+    characters: "j",
+    charactersIgnoringModifiers: "j",
+    isARepeat: false,
+    keyCode: 38
+  ))
+  NSApp.sendEvent(currentShortcut)
+  let currentChip = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSButton }
+      .first { $0.identifier?.rawValue == "open-quickly-chip-current" })
+  #expect((currentChip.layer?.backgroundColor?.alpha ?? 0) > 0.10)
+
+  let openedChip = try #require(controller.view.allDescendants.compactMap { $0 as? NSButton }
+    .first { $0.identifier?.rawValue == "open-quickly-chip-opened" })
+  openedChip.performClick(nil)
+  window.contentView?.layoutSubtreeIfNeeded()
+  let reusedFirstRow = try #require(controller.view.allDescendants.compactMap { $0 as? NSButton }
+    .first { $0.identifier?.rawValue.hasPrefix("open-quickly-row-") == true })
+  #expect(abs(overlay.bounds.width - originalOverlayWidth) < 1)
+  #expect(reusedFirstRow === firstRow)
+
+  // 浮层内部鼠标事件不得被“外部点击关闭”误判；搜索框点击后
+  // 仍保持展示并成为窗口文本编辑器的客户端。
+  let insideClick = try #require(NSEvent.mouseEvent(
+    with: .leftMouseDown,
+    location: search.convert(
+      NSPoint(x: search.bounds.midX, y: search.bounds.midY), to: nil),
+    modifierFlags: [],
+    timestamp: 2.5,
+    windowNumber: window.windowNumber,
+    context: nil,
+    eventNumber: 2,
+    clickCount: 1,
+    pressure: 1
+  ))
+  NSApp.sendEvent(insideClick)
+  RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+  #expect(model.isOpenQuicklyPresented)
+  #expect(controller.view.allDescendants.contains { $0 === overlay })
+  #expect(window.initialFirstResponder === search)
+
+  let outsideClick = try #require(NSEvent.mouseEvent(
+    with: .leftMouseDown,
+    location: NSPoint(x: 4, y: 4),
+    modifierFlags: [],
+    timestamp: 3,
+    windowNumber: window.windowNumber,
+    context: nil,
+    eventNumber: 1,
+    clickCount: 1,
+    pressure: 1
+  ))
+  NSApp.sendEvent(outsideClick)
+  #expect(model.isOpenQuicklyPresented == false)
+  #expect(!controller.view.allDescendants.contains { $0 === overlay })
+}
+
 @Test("详情面板切走再切回会复用已构建页而不是重建大文件树")
 @MainActor
 func detailsPanelTabSwitchReusesCachedSectionViews() throws {

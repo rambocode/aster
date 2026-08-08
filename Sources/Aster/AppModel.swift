@@ -759,11 +759,24 @@ final class AppModel: ObservableObject {
   @Published private(set) var tabs: [TerminalTabItem] = []
   @Published var selectedTabID: UUID?
   @Published var isPalettePresented = false
-  @Published var isOpenQuicklyPresented = false
+  /// Open Quickly 是工作区上的临时浮层，显隐不应触发 `ObservableObject` 的整窗口
+  /// 重绘。独立事件让 AppKit 控制器只挂载或移除浮层，并保留终端与侧栏实例。
+  let openQuicklyPresentationChanged = PassthroughSubject<Bool, Never>()
+  var isOpenQuicklyPresented = false {
+    didSet {
+      guard isOpenQuicklyPresented != oldValue else { return }
+      openQuicklyPresentationChanged.send(isOpenQuicklyPresented)
+    }
+  }
   @Published var isGlobalFindPresented = false
   @Published var isComposerPresented = false
   @Published var isAgentHistoryPresented = false
-  @Published private(set) var agentHistories: [AgentSessionHistory] = []
+  /// 历史扫描可能在启动后任意时刻完成；独立事件只更新消费历史的局部面板，避免一次
+  /// 后台 I/O 完成把整个终端工作区重建。
+  let agentHistoriesChanged = PassthroughSubject<[AgentSessionHistory], Never>()
+  private(set) var agentHistories: [AgentSessionHistory] = [] {
+    didSet { agentHistoriesChanged.send(agentHistories) }
+  }
   @Published var isInspectorPresented = false
   @Published var isFindPresented = false
   @Published var notice: String?
@@ -1027,10 +1040,17 @@ final class AppModel: ObservableObject {
   }
 
   func closeSelectedTab() {
-    guard let selectedTabID,
-      let index = tabs.firstIndex(where: { $0.id == selectedTabID })
-    else { return }
+    guard let selectedTabID else { return }
+    closeTab(id: selectedTabID)
+  }
+
+  /// 关闭指定标签，用于侧栏行内关闭等不应先改变当前选中项的入口。
+  /// 若目标就是当前标签，选中相邻标签；关闭后台标签时保持当前选中项。
+  /// 未保存文档拒绝关闭时不改变任何模型状态。
+  func closeTab(id: UUID) {
+    guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
     guard tabs[index].confirmCloseDocuments() else { return }
+    let wasSelected = selectedTabID == id
     let snapshot = tabs[index].snapshot
     recentlyClosedTabs.record(snapshot)
     recordClosedWorkspaceItem(.init(
@@ -1046,8 +1066,10 @@ final class AppModel: ObservableObject {
     tabs.remove(at: index)
     if tabs.isEmpty {
       newTab()
-    } else {
+    } else if wasSelected {
       self.selectedTabID = tabs[min(index, tabs.count - 1)].id
+      persistWorkspace()
+    } else {
       persistWorkspace()
     }
   }
@@ -1225,10 +1247,12 @@ final class AppModel: ObservableObject {
   }
 
   func dismissWorkspaceOverlays() {
-    isPalettePresented = false
-    isOpenQuicklyPresented = false
-    isGlobalFindPresented = false
-    isAgentHistoryPresented = false
+    // `@Published` 即使写入相同值也会发送 objectWillChange；只修改真实打开的浮层，
+    // 避免单纯打开 Open Quickly 时先制造多次无意义的整窗口刷新。
+    if isPalettePresented { isPalettePresented = false }
+    if isOpenQuicklyPresented { isOpenQuicklyPresented = false }
+    if isGlobalFindPresented { isGlobalFindPresented = false }
+    if isAgentHistoryPresented { isAgentHistoryPresented = false }
   }
 
   func toggleInspector() { isInspectorPresented.toggle() }

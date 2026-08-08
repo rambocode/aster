@@ -72,11 +72,17 @@ enum WorkspaceInspectionService {
   }
 
   /// Files 页只依赖目录枚举，不应排在可能触发秒级超时的 ps/lsof/Git 检查之后。
-  /// 独立 utility 任务让面板先得到有界文件树，顶部页签切换也不会阻塞主线程。
+  /// 独立 user-initiated 任务让面板先得到有界文件树，顶部页签切换也不会阻塞主线程；外层
+  /// 刷新取消时必须同步取消扫描，否则快速 cd 或关闭面板会积累已经无用的目录遍历。
   static func inspectFiles(directory: String) async -> [WorkspaceFileNode] {
-    await Task.detached(priority: .utility) {
+    let scan = Task.detached(priority: .userInitiated) {
       WorkspaceFileTree.enumerate(root: URL(fileURLWithPath: directory))
-    }.value
+    }
+    return await withTaskCancellationHandler {
+      await scan.value
+    } onCancel: {
+      scan.cancel()
+    }
   }
 
   /// `Process` 的输出读取必须与子进程并行，否则大输出会填满 pipe 并与 wait 互锁。

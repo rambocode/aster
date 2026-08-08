@@ -1244,9 +1244,6 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       sliderRow("垂直侧栏宽度", "", value: preferences.sidebarWidth, range: 180...360, suffix: "pt") { [weak self] value in
         self?.preferences.sidebarWidth = value
       },
-      toggleRow("显示状态栏", "显示目录、编码和 Pane 数量", value: preferences.showStatusBar) { [weak self] value in
-        self?.preferences.showStatusBar = value
-      },
     ]))
 
     views.append(sectionTitle("Dock"))

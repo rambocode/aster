@@ -27,6 +27,12 @@ final class WorkspaceViewController: NSViewController {
   /// 搜索框先被销毁再创建。切换标签后按新 Tab ID 替换，防止订阅继续指向旧标签。
   private var detailsPanelController: DetailsPanelViewController?
   private var detailsPanelTabID: UUID?
+  /// Open Quickly 通过独立 presentation 事件局部挂载；控制器跨关闭保留，以复用搜索框、
+  /// 结果行与约束，普通开关不再重建侧栏、终端和详情面板。
+  private var openQuicklyController: OpenQuicklyOverlayViewController?
+  /// 底层 scrim 与面板分开：它只负责压低工作区对比度和接收外部点击，
+  /// 不参与搜索或结果布局，避免深色阴影影响内容对齐。
+  private var openQuicklyBackdrop: OpenQuicklyBackdropView?
 
   init(model: AppModel, preferences: AppPreferences) {
     self.model = model
@@ -44,6 +50,9 @@ final class WorkspaceViewController: NSViewController {
     super.viewDidLoad()
     model.objectWillChange
       .sink { [weak self] _ in self?.scheduleRefresh() }
+      .store(in: &modelSubscriptions)
+    model.openQuicklyPresentationChanged
+      .sink { [weak self] presented in self?.setOpenQuicklyPresented(presented) }
       .store(in: &modelSubscriptions)
     preferences.objectWillChange
       .sink { [weak self] _ in self?.scheduleRefresh() }
@@ -67,6 +76,71 @@ final class WorkspaceViewController: NSViewController {
     refresh()
   }
 
+  /// 局部显示或移除 Open Quickly。关闭后终端焦点同步恢复，避免等待下一轮 run loop
+  /// 时用户输入的第一个字符丢失。
+  private func setOpenQuicklyPresented(_ presented: Bool) {
+    guard isViewLoaded else { return }
+    if presented {
+      attachOpenQuicklyOverlay(refreshesTargets: false)
+    } else {
+      openQuicklyController?.didDismiss()
+      openQuicklyController?.view.removeFromSuperview()
+      openQuicklyController?.removeFromParent()
+      openQuicklyBackdrop?.removeFromSuperview()
+      if let tab = model.selectedTab { focusActivePane(in: tab) }
+    }
+  }
+
+  /// 把缓存浮层约束到工作区顶层。使用相对两侧的上限约束，在窄窗口中仍保留边距；
+  /// 700pt 首选宽度比旧实现更接近 Otty 的横向密度。
+  private func attachOpenQuicklyOverlay(refreshesTargets: Bool) {
+    let overlay: OpenQuicklyOverlayViewController
+    if let cached = openQuicklyController {
+      overlay = cached
+      overlay.prepareForPresentation(
+        filter: model.openQuicklyInitialFilter,
+        refreshesTargets: refreshesTargets
+      )
+    } else {
+      overlay = OpenQuicklyOverlayViewController(model: model)
+      openQuicklyController = overlay
+    }
+    if overlay.parent !== self { addChild(overlay) }
+    // `didPresent` 需要立即更新已构建的 chip；先加载视图，使用户仍按住
+    // 打开面板时的 ⌘ 时，首帧就能显示快捷键提示。
+    overlay.loadViewIfNeeded()
+    if openQuicklyBackdrop?.superview !== view {
+      let backdrop = OpenQuicklyBackdropView { [weak model] in
+        model?.isOpenQuicklyPresented = false
+      }
+      openQuicklyBackdrop = backdrop
+      view.addSubview(backdrop)
+      backdrop.pinEdges(to: view)
+    }
+    guard overlay.view.superview !== view else {
+      view.addSubview(overlay.view, positioned: .above, relativeTo: openQuicklyBackdrop)
+      overlay.didPresent()
+      return
+    }
+    view.addSubview(overlay.view)
+    overlay.view.translatesAutoresizingMaskIntoConstraints = false
+    let preferredWidth = overlay.view.widthAnchor.constraint(equalToConstant: 700)
+    // 750 会被 All/文件夹页的长路径固有宽度挤破，导致不同过滤器下浮层忽宽忽窄。
+    // 999 固定正常窗口宽度；required 的两侧边距约束在窄窗口中仍可优先让它收缩。
+    preferredWidth.priority = NSLayoutConstraint.Priority(999)
+    NSLayoutConstraint.activate([
+      overlay.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      overlay.view.topAnchor.constraint(equalTo: view.topAnchor, constant: 68),
+      preferredWidth,
+      overlay.view.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 28),
+      overlay.view.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -28),
+      overlay.view.heightAnchor.constraint(lessThanOrEqualToConstant: 520),
+    ])
+    // 必须在视图已连到 window 之后再建立搜索焦点；提前调用时
+    // `makeFirstResponder` 只会留在 NSWindow，用户第一次点击无法直接输入。
+    overlay.didPresent()
+  }
+
   /// 跟踪本窗口的键盘焦点状态。通知按窗口过滤，多窗口时互不影响。
   private func observeWindowActivation() {
     let center = NotificationCenter.default
@@ -78,6 +152,14 @@ final class WorkspaceViewController: NSViewController {
         }
         .store(in: &modelSubscriptions)
     }
+    center.publisher(for: NSApplication.didResignActiveNotification)
+      .sink { [weak self] _ in
+        // Open Quickly 是短暂的键盘导航层，不应跨应用切换保留；
+        // 回到 Aster 后由用户再次显式打开，避免隐藏层突然接收输入。
+        guard self?.model.isOpenQuicklyPresented == true else { return }
+        self?.model.isOpenQuicklyPresented = false
+      }
+      .store(in: &modelSubscriptions)
   }
 
   /// 当前是否叠着失焦遮罩（供测试断言）。
@@ -245,6 +327,7 @@ final class WorkspaceViewController: NSViewController {
     // 终端视图由 Session 长期持有，但从视图树移除时 AppKit 仍可能清掉 first
     // responder。记录正在输入的实例，重排完成后同步恢复，避免异步回焦前丢一个按键。
     let previouslyFocusedTerminal = view.window?.firstResponder as? AsterTerminalView
+    if !model.isOpenQuicklyPresented { openQuicklyController?.invalidateTargets() }
     observeTabs()
     retainedObjects.removeAll()
     paneHosts.removeAll()
@@ -292,17 +375,7 @@ final class WorkspaceViewController: NSViewController {
         palette.view.heightAnchor.constraint(lessThanOrEqualToConstant: 430),
       ])
     } else if model.isOpenQuicklyPresented {
-      let openQuickly = OpenQuicklyOverlayViewController(model: model)
-      addChild(openQuickly)
-      retainedObjects.append(openQuickly)
-      view.addSubview(openQuickly.view)
-      openQuickly.view.translatesAutoresizingMaskIntoConstraints = false
-      NSLayoutConstraint.activate([
-        openQuickly.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-        openQuickly.view.topAnchor.constraint(equalTo: view.topAnchor, constant: 82),
-        openQuickly.view.widthAnchor.constraint(equalToConstant: 640),
-        openQuickly.view.heightAnchor.constraint(lessThanOrEqualToConstant: 560),
-      ])
+      attachOpenQuicklyOverlay(refreshesTargets: true)
     } else if model.isGlobalFindPresented {
       let globalFind = GlobalFindOverlayViewController(model: model)
       addChild(globalFind)
@@ -521,7 +594,7 @@ final class WorkspaceViewController: NSViewController {
       stack.distribution = .fill
       // 侧栏、分隔线与内容区必须等高填满窗口。默认的 centerY 对齐会让内容区退回自身的
       // 固有高度：上下分屏时 NSSplitView 给每个面板加了 `height == 0 @250` 约束，内容区
-      // 因此只剩「标题栏 + 分隔条 + 状态栏」的高度，两个终端都被压成 0。
+      // 因此只剩「标题栏 + 分隔条」的高度，两个终端都被压成 0。
       stack.alignment = .height
       let sidebar = makeVerticalTabBar()
       sidebar.translatesAutoresizingMaskIntoConstraints = false
@@ -698,6 +771,10 @@ final class WorkspaceViewController: NSViewController {
           showsFinished: preferences.configuration.shell.resolvedBadgeCommandFinish,
           showsFailure: preferences.configuration.shell.resolvedBadgeCommandFailure,
           showsAwaitingInput: preferences.configuration.shell.badgeAwaitingInput,
+          onClose: { [weak self, weak tab] in
+            guard let tab else { return }
+            self?.model.closeTab(id: tab.id)
+          },
           action: { [weak self, weak tab] in
             guard let tab else { return }
             self?.model.select(tab)
@@ -900,6 +977,7 @@ final class WorkspaceViewController: NSViewController {
         showsFinished: preferences.configuration.shell.resolvedBadgeCommandFinish,
         showsFailure: preferences.configuration.shell.resolvedBadgeCommandFailure,
         showsAwaitingInput: preferences.configuration.shell.badgeAwaitingInput,
+        onClose: nil,
         action: { [weak self, weak tab] in
           guard let tab else { return }
           self?.model.select(tab)
@@ -1010,8 +1088,6 @@ final class WorkspaceViewController: NSViewController {
       && model.composerState(for: tab.activePaneID).presentation == .docked
       ? makeAgentComposer(tab) : nil
     if let composer { inner.addArrangedSubview(composer) }
-    let statusBar = preferences.showStatusBar ? makeStatusBar(tab) : nil
-    if let statusBar { inner.addArrangedSubview(statusBar) }
     stack.addArrangedSubview(wrapper)
     // 这些内容容器没有 intrinsicContentSize；两个方向都必须显式绑定，否则 NSStackView
     // 会退回「固有尺寸」布局。上下分屏尤其致命：NSSplitView 给每个面板加了
@@ -1026,17 +1102,7 @@ final class WorkspaceViewController: NSViewController {
     ]
     if let composer {
       constraints.append(paneHost.bottomAnchor.constraint(equalTo: composer.topAnchor))
-      if let statusBar {
-        constraints.append(composer.bottomAnchor.constraint(equalTo: statusBar.topAnchor))
-        constraints.append(statusBar.bottomAnchor.constraint(equalTo: inner.bottomAnchor))
-      } else {
-        constraints.append(composer.bottomAnchor.constraint(equalTo: inner.bottomAnchor))
-      }
-    } else if let statusBar {
-      // 状态栏必须先钉在底边，Pane 区才有「剩余空间」可以填充；只写 paneHost 与状态栏
-      // 的相邻关系时两者会一起收缩到固有高度，把下方整块留白。
-      constraints.append(statusBar.bottomAnchor.constraint(equalTo: inner.bottomAnchor))
-      constraints.append(paneHost.bottomAnchor.constraint(equalTo: statusBar.topAnchor))
+      constraints.append(composer.bottomAnchor.constraint(equalTo: inner.bottomAnchor))
     } else {
       constraints.append(paneHost.bottomAnchor.constraint(equalTo: inner.bottomAnchor))
     }
@@ -1519,28 +1585,6 @@ final class WorkspaceViewController: NSViewController {
     return bar
   }
 
-  private func makeStatusBar(_ tab: TerminalTabItem) -> NSView {
-    let bar = NSView()
-    bar.wantsLayer = true
-    bar.layer?.backgroundColor = AsterTheme.panel.cgColor
-    bar.translatesAutoresizingMaskIntoConstraints = false
-    bar.heightAnchor.constraint(equalToConstant: 26).isActive = true
-    bar.addTopBorder(color: AsterTheme.hairline)
-    let state = tab.activeSession?.statusIsRunning == false ? "●  session ended" : "●  workspace"
-    let path = tab.workingDirectory.replacingOccurrences(of: NSHomeDirectory(), with: "~")
-    let label = makeLabel("\(state)  ·  \(path)", size: 9.5, weight: .medium, color: AsterTheme.tertiaryInk, monospaced: true)
-    // 放大态下其它分屏不可见，状态栏必须给出提示，否则会被误读成分屏丢失。
-    let paneCount = tab.layout.allPanes.count
-    let zoomHint = tab.zoomedPaneID != nil && paneCount > 1 ? "ZOOMED   " : ""
-    let right = makeLabel("\(zoomHint)\(paneCount) PANE\(paneCount == 1 ? "" : "S")   UTF-8", size: 9.5, weight: .medium, color: AsterTheme.tertiaryInk, monospaced: true)
-    let row = NSStackView(views: [label, NSView(), right])
-    row.orientation = .horizontal
-    row.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-    bar.addSubview(row)
-    row.pinEdges(to: bar)
-    return bar
-  }
-
   private func makeEmptyWorkspace() -> NSView {
     makeCenteredMessage(title: "新建标签页开始使用 Aster", symbol: "terminal")
   }
@@ -1722,7 +1766,15 @@ private final class TabRowButton: NSButton {
   private let handler: () -> Void
   private let onDragEnd: (NSPoint) -> Void
   private var tracking: NSTrackingArea?
-  private var hovered = false { didSet { updateStyle() } }
+  private weak var verticalAccessory: NSView?
+  private weak var closeButton: NSButton?
+  private var hovered = false {
+    didSet {
+      guard hovered != oldValue else { return }
+      updateStyle()
+      updateAccessoryVisibility()
+    }
+  }
 
   init(
     tab: TerminalTabItem,
@@ -1733,6 +1785,7 @@ private final class TabRowButton: NSButton {
     showsFinished: Bool,
     showsFailure: Bool,
     showsAwaitingInput: Bool,
+    onClose: (() -> Void)?,
     action: @escaping () -> Void,
     onDragEnd: @escaping (NSPoint) -> Void
   ) {
@@ -1821,15 +1874,42 @@ private final class TabRowButton: NSButton {
           monospaced: true
         )
       }
-      addSubview(accessory)
+      // 状态附件与关闭按钮共用固定 28pt 槽位，悬停切换时标题不会
+      // 水平抖动。关闭动作直接针对该 tab，不先选中后台标签。
+      let accessorySlot = NSView()
+      accessorySlot.translatesAutoresizingMaskIntoConstraints = false
+      addSubview(accessorySlot)
       accessory.translatesAutoresizingMaskIntoConstraints = false
+      accessorySlot.addSubview(accessory)
+      let close = ActionButton(symbol: "xmark", bezelStyle: .inline) {
+        onClose?()
+      }
+      close.identifier = NSUserInterfaceItemIdentifier("sidebar-tab-close-\(tab.id.uuidString)")
+      close.toolTip = "关闭标签页"
+      close.isBordered = false
+      close.contentTintColor = AsterTheme.secondaryInk
+      close.setAccessibilityLabel("关闭标签页 \(tab.title)")
+      close.translatesAutoresizingMaskIntoConstraints = false
+      accessorySlot.addSubview(close)
+      verticalAccessory = accessory
+      closeButton = close
       NSLayoutConstraint.activate([
         primary.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
         primary.centerYAnchor.constraint(equalTo: centerYAnchor),
-        primary.trailingAnchor.constraint(lessThanOrEqualTo: accessory.leadingAnchor, constant: -8),
-        accessory.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-        accessory.centerYAnchor.constraint(equalTo: centerYAnchor),
+        primary.trailingAnchor.constraint(
+          lessThanOrEqualTo: accessorySlot.leadingAnchor, constant: -8),
+        accessorySlot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+        accessorySlot.centerYAnchor.constraint(equalTo: centerYAnchor),
+        accessorySlot.widthAnchor.constraint(equalToConstant: 28),
+        accessorySlot.heightAnchor.constraint(equalToConstant: 28),
+        accessory.centerXAnchor.constraint(equalTo: accessorySlot.centerXAnchor),
+        accessory.centerYAnchor.constraint(equalTo: accessorySlot.centerYAnchor),
+        close.centerXAnchor.constraint(equalTo: accessorySlot.centerXAnchor),
+        close.centerYAnchor.constraint(equalTo: accessorySlot.centerYAnchor),
+        close.widthAnchor.constraint(equalToConstant: 24),
+        close.heightAnchor.constraint(equalToConstant: 24),
       ])
+      updateAccessoryVisibility()
     }
     updateStyle()
   }
@@ -1878,6 +1958,11 @@ private final class TabRowButton: NSButton {
 
   override func mouseEntered(with event: NSEvent) { hovered = true }
   override func mouseExited(with event: NSEvent) { hovered = false }
+
+  private func updateAccessoryVisibility() {
+    verticalAccessory?.isHidden = hovered
+    closeButton?.isHidden = !hovered
+  }
 
   private func updateStyle() {
     let foreground = selected ? style.activeForeground : style.foreground
@@ -2567,6 +2652,79 @@ private final class FileBrowserViewController: NSViewController, NSTableViewData
   }
 }
 
+/// Open Quickly 展示时覆盖工作区的轻量 scrim。点击浮层外部关闭，但不抢占
+/// 面板内部的鼠标和键盘事件。
+@MainActor
+private final class OpenQuicklyBackdropView: NSView {
+  private let dismiss: () -> Void
+
+  init(dismiss: @escaping () -> Void) {
+    self.dismiss = dismiss
+    super.init(frame: .zero)
+    wantsLayer = true
+    layer?.backgroundColor = NSColor.black.withAlphaComponent(0.055).cgColor
+    identifier = NSUserInterfaceItemIdentifier("open-quickly-backdrop")
+    setAccessibilityElement(true)
+    setAccessibilityLabel("关闭 Open Quickly")
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func mouseDown(with event: NSEvent) { dismiss() }
+  override func rightMouseDown(with event: NSEvent) { dismiss() }
+  override func otherMouseDown(with event: NSEvent) { dismiss() }
+}
+
+/// 只在真正的搜索框范围保留 I-beam，面板其余区域显式使用普通箭头。
+/// AppKit 在 borderless 搜索框上偶尔会留下过大的 cursor rect，四个外围矩形
+/// 能在不干扰搜索框文本定位的前提下覆盖它。
+@MainActor
+private final class OpenQuicklyPanelView: NSView {
+  weak var searchInputView: NSView?
+
+  override func resetCursorRects() {
+    super.resetCursorRects()
+    guard let searchInputView else {
+      addCursorRect(bounds, cursor: .arrow)
+      return
+    }
+    let searchRect = convert(searchInputView.bounds, from: searchInputView)
+      .intersection(bounds)
+    let rects = [
+      NSRect(x: bounds.minX, y: bounds.minY, width: searchRect.minX - bounds.minX,
+        height: bounds.height),
+      NSRect(x: searchRect.maxX, y: bounds.minY, width: bounds.maxX - searchRect.maxX,
+        height: bounds.height),
+      NSRect(x: searchRect.minX, y: bounds.minY, width: searchRect.width,
+        height: searchRect.minY - bounds.minY),
+      NSRect(x: searchRect.minX, y: searchRect.maxY, width: searchRect.width,
+        height: bounds.maxY - searchRect.maxY),
+    ]
+    for rect in rects where rect.width > 0 && rect.height > 0 {
+      addCursorRect(rect, cursor: .arrow)
+    }
+  }
+}
+
+/// Borderless NSSearchField 的图标/文本布局。起点基于 bounds 而不是 bezel，
+/// 因此关闭系统边框后仍保持 8pt 图标左边距和 8pt 图文间距。
+@MainActor
+private final class OpenQuicklySearchFieldCell: NSSearchFieldCell {
+  override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
+    let size: CGFloat = 16
+    return NSRect(x: rect.minX + 4, y: rect.midY - size / 2, width: size, height: size)
+  }
+
+  override func searchTextRect(forBounds rect: NSRect) -> NSRect {
+    var textRect = super.searchTextRect(forBounds: rect)
+    let leading = rect.minX + 28
+    let consumed = max(0, leading - textRect.minX)
+    textRect.origin.x = leading
+    textRect.size.width = max(0, textRect.width - consumed)
+    return textRect
+  }
+}
+
 /// Open Quickly 浮层:标签条过滤 + 双行结果列表(图标/相对时间/类型徽章)+ 底部
 /// 快捷键栏。数据与匹配在 AsterCore 的 OpenQuicklyIndex,这里只负责展示与动作接线。
 @MainActor
@@ -2589,58 +2747,184 @@ private final class OpenQuicklyOverlayViewController: NSViewController, NSSearch
   private var chips: [OpenQuicklyFilter: OpenQuicklyChip] = [:]
   private var selectedFilter: OpenQuicklyFilter
   private var targets: [Target] = []
+  private var targetsByID: [String: Target] = [:]
+  private var searchIndex = OpenQuicklyIndex(items: [])
   private var visibleTargets: [Target] = []
+  /// 顶部过滤器和搜索输入复用可见行，避免每次点击都创建几十个 NSView 与约束。
+  private var rowPool: [OpenQuicklyRowView] = []
   private var rows: [OpenQuicklyRowView] = []
   private var selectedIndex = 0
+  private var historyCancellable: AnyCancellable?
+  private var targetsNeedRefresh = true
+  private var showsCommandHints = false
+  /// 浮层事件监视只在展示期间存活；关闭后立即移除，避免拦截终端的
+  /// `⌘W` / `⌘R` 等既有快捷键。`deinit` 是 nonisolated，因此句柄标为 unsafe。
+  private nonisolated(unsafe) var overlayEventMonitor: Any?
 
   init(model: AppModel) {
     self.model = model
     self.selectedFilter = model.openQuicklyInitialFilter
     super.init(nibName: nil, bundle: nil)
+    historyCancellable = model.agentHistoriesChanged.sink { [weak self] _ in
+      guard let self, self.isViewLoaded else { return }
+      self.rebuildTargets()
+      self.reload()
+    }
   }
 
   required init?(coder: NSCoder) { nil }
 
-  override func loadView() {
-    let host = NSView()
-    host.wantsLayer = true
-    host.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.98).cgColor
-    host.layer?.cornerRadius = 12
-    host.layer?.borderWidth = 1
-    host.layer?.borderColor = AsterTheme.hairline.cgColor
-    host.shadow = NSShadow()
-    host.shadow?.shadowBlurRadius = 24
-    host.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.22)
+  deinit {
+    if let overlayEventMonitor { NSEvent.removeMonitor(overlayEventMonitor) }
+  }
 
-    search.placeholderString = "打开标签、目录、SSH、Agent 或 Recipe…"
+  override func loadView() {
+    let host = OpenQuicklyPanelView()
+    host.wantsLayer = true
+    host.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.99).cgColor
+    host.layer?.cornerRadius = 16
+    host.layer?.borderWidth = 1
+    host.layer?.borderColor = AsterTheme.hairline.withAlphaComponent(0.90).cgColor
+    host.layer?.shadowColor = NSColor.black.cgColor
+    host.layer?.shadowOpacity = 0.22
+    host.layer?.shadowRadius = 24
+    host.layer?.shadowOffset = CGSize(width: 0, height: -10)
+    host.layer?.masksToBounds = false
+    host.identifier = NSUserInterfaceItemIdentifier("open-quickly-overlay")
+
+    // 系统 borderless NSSearchField 不会自动为搜索图标重新计算文本起点，
+    // 使用显式 cell 留出 24pt，避免 placeholder 与图标重叠。
+    search.cell = OpenQuicklySearchFieldCell(textCell: "")
+    search.placeholderString = "搜索命令、URL、文件…"
+    search.identifier = NSUserInterfaceItemIdentifier("open-quickly-search")
+    // 保留 NSSearchField 的搜索图标、IME 和文本编辑能力，只去掉会形成蓝色
+    // 长条的系统 bezel/focus ring；插入光标仍清晰表示输入焦点。
+    search.isBezeled = false
+    search.drawsBackground = false
+    search.focusRingType = .none
+    search.cell?.focusRingType = .none
+    search.font = NSFont.systemFont(ofSize: 15)
+    search.translatesAutoresizingMaskIntoConstraints = false
+    search.heightAnchor.constraint(equalToConstant: 36).isActive = true
+    search.setContentHuggingPriority(.required, for: .vertical)
+    search.setContentCompressionResistancePriority(.required, for: .vertical)
     search.delegate = self
     search.onMove = { [weak self] delta in self?.moveSelection(delta) }
     search.onActivate = { [weak self] _ in self?.activateSelection() }
     search.onCancel = { [weak model] in model?.isOpenQuicklyPresented = false }
     search.onQuickSelect = { [weak self] digit in self?.quickSelect(digit) }
     search.onShowActions = { [weak self] in self?.showActionsMenu() }
+    host.searchInputView = search
 
     let column = NSStackView()
     column.orientation = .vertical
+    column.alignment = .width
     column.spacing = 8
-    column.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 10, right: 12)
-    column.addArrangedSubview(search)
-    column.addArrangedSubview(makeFilterStrip())
-    column.addArrangedSubview(makeResultsScroll())
-    column.addArrangedSubview(makeSeparator())
-    column.addArrangedSubview(makeFooter())
+    column.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 10, right: 14)
+    let filterStrip = makeFilterStrip()
+    let resultsScroll = makeResultsScroll()
+    let separator = makeSeparator()
+    let footer = makeFooter()
+    let fullWidthViews = [search, filterStrip, resultsScroll, separator, footer]
+    for arrangedView in fullWidthViews {
+      column.addArrangedSubview(arrangedView)
+      arrangedView.translatesAutoresizingMaskIntoConstraints = false
+      arrangedView.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -28).isActive = true
+    }
     host.addSubview(column)
     column.pinEdges(to: host)
     view = host
-    targets = makeTargets()
+    rebuildTargets()
     reload()
-    // 首次打开时提示词数据可能尚未扫描;只在为空时触发懒加载,避免 @Published
-    // 刷新重建浮层导致正在输入的文本丢失。
-    if model.agentHistories.isEmpty {
-      model.reloadAgentHistory()
-    }
     DispatchQueue.main.async { [weak search] in search?.window?.makeFirstResponder(search) }
   }
+
+  /// 展示边界安装本地事件监视。使用 local monitor 而不是仅覆写搜索框
+  /// `keyDown`，因为 AppKit 会在 first responder 之前处理 `⌘W` 等菜单等价键。
+  func didPresent() {
+    setCommandHintsVisible(NSEvent.modifierFlags.contains(.command))
+    if let window = view.window {
+      // `initialFirstResponder` 保证浮层恰在窗口激活过程中打开时，成为 key
+      // 后仍落到搜索框；已经是 key window 时则由 `makeFirstResponder` 立即生效。
+      window.initialFirstResponder = search
+      window.makeFirstResponder(search)
+    }
+    guard overlayEventMonitor == nil else { return }
+    overlayEventMonitor = NSEvent.addLocalMonitorForEvents(
+      matching: [.flagsChanged, .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]
+    ) { [weak self] event in
+      guard let self else { return event }
+      return self.handleOverlayEvent(event)
+    }
+  }
+
+  /// 关闭时同步清除监视和可见提示，重开时不会泄漏上一次 modifier 状态。
+  func didDismiss() {
+    if view.window?.initialFirstResponder === search {
+      view.window?.initialFirstResponder = nil
+    }
+    if let overlayEventMonitor {
+      NSEvent.removeMonitor(overlayEventMonitor)
+      self.overlayEventMonitor = nil
+    }
+    setCommandHintsVisible(false)
+  }
+
+  private func handleOverlayEvent(_ event: NSEvent) -> NSEvent? {
+    if [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type) {
+      guard let window = view.window, event.window === window else { return event }
+      // 直接把浮层 bounds 投影到 window 坐标后判定，与 `event.locationInWindow`
+      // 使用同一坐标系。反向转换事件点在 full-size content view 与标题栏共存时
+      // 可能把搜索框内点击误判成外部点击。
+      let overlayRectInWindow = view.convert(view.bounds, to: nil)
+      if !overlayRectInWindow.contains(event.locationInWindow) {
+        model.isOpenQuicklyPresented = false
+      }
+      return event
+    }
+    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    if event.type == .flagsChanged {
+      setCommandHintsVisible(modifiers.contains(.command))
+      return event
+    }
+    guard event.type == .keyDown else { return event }
+    if event.keyCode == 53 {
+      model.isOpenQuicklyPresented = false
+      return nil
+    }
+    guard modifiers.contains(.command),
+      !modifiers.contains(.option), !modifiers.contains(.control), !modifiers.contains(.shift),
+      let character = event.charactersIgnoringModifiers?.lowercased()
+    else { return event }
+    let shortcuts: [String: OpenQuicklyFilter] = [
+      "0": .all, "w": .opened, "r": .recent, "z": .folder,
+      "s": .ssh, "g": .agent, "j": .current, "e": .recipe,
+    ]
+    guard let filter = shortcuts[character] else { return event }
+    selectFilter(filter)
+    return nil
+  }
+
+  /// 重开缓存浮层时恢复初始过滤器和空查询。目标只在展示边界更新；过滤器切换和逐字
+  /// 搜索只访问内存索引，不重复读取 SSH config、Recipes 或 Agent 历史。
+  func prepareForPresentation(filter: OpenQuicklyFilter, refreshesTargets: Bool) {
+    selectedFilter = filter
+    guard isViewLoaded else { return }
+    search.stringValue = ""
+    for (key, chip) in chips { chip.isChipSelected = key == filter }
+    if refreshesTargets || targetsNeedRefresh { rebuildTargets() }
+    selectedIndex = 0
+    reload()
+  }
+
+  private func rebuildTargets() {
+    targets = makeTargets()
+    targetsByID = Dictionary(uniqueKeysWithValues: targets.map { ($0.item.id, $0) })
+    searchIndex = OpenQuicklyIndex(items: targets.map(\.item))
+    targetsNeedRefresh = false
+  }
+
+  func invalidateTargets() { targetsNeedRefresh = true }
 
   /// 顶部分类标签条:替代原 NSPopUpButton,与参考设计一致。
   private func makeFilterStrip() -> NSView {
@@ -2649,12 +2933,16 @@ private final class OpenQuicklyOverlayViewController: NSViewController, NSSearch
     strip.spacing = 4
     let titles: [OpenQuicklyFilter: String] = [
       .all: "全部", .opened: "已打开", .recent: "最近", .folder: "文件夹",
-      .ssh: "SSH", .agent: "Agents", .current: "当前", .recipe: "Recipes",
+      .ssh: "SSH", .agent: "智能体", .current: "当前", .recipe: "Recipes",
     ]
     for filter in OpenQuicklyFilter.allCases {
-      let chip = OpenQuicklyChip(title: titles[filter] ?? filter.rawValue) { [weak self] in
+      let chip = OpenQuicklyChip(
+        title: titles[filter] ?? filter.rawValue,
+        commandHint: Self.commandHint(for: filter)
+      ) { [weak self] in
         self?.selectFilter(filter)
       }
+      chip.identifier = NSUserInterfaceItemIdentifier("open-quickly-chip-\(filter.rawValue)")
       chip.isChipSelected = filter == selectedFilter
       chips[filter] = chip
       strip.addArrangedSubview(chip)
@@ -2665,10 +2953,26 @@ private final class OpenQuicklyOverlayViewController: NSViewController, NSSearch
     return strip
   }
 
+  /// 快捷键与用户按住 ⌘ 时 chip 下方的动态提示保持同一数据源。
+  private static func commandHint(for filter: OpenQuicklyFilter) -> String {
+    switch filter {
+    case .all: "⌘0"
+    case .opened: "⌘W"
+    case .recent: "⌘R"
+    case .folder: "⌘Z"
+    case .ssh: "⌘S"
+    case .agent: "⌘G"
+    case .current: "⌘J"
+    case .recipe: "⌘E"
+    }
+  }
+
   /// 结果区滚动容器:内容不足时收缩,超出 400pt 滚动;沿用详情面板的顶部锚定模式。
   private func makeResultsScroll() -> NSView {
     resultsStack.orientation = .vertical
+    resultsStack.alignment = .width
     resultsStack.spacing = 2
+    resultsStack.identifier = NSUserInterfaceItemIdentifier("open-quickly-results")
     let scroll = NSScrollView()
     scroll.drawsBackground = false
     scroll.hasVerticalScroller = true
@@ -2730,14 +3034,14 @@ private final class OpenQuicklyOverlayViewController: NSViewController, NSSearch
   }
 
   private func reload() {
+    rows.forEach { $0.detachFromResultsStack() }
     resultsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-    let items = OpenQuicklyIndex(items: targets.map(\.item)).search(
+    let items = searchIndex.search(
       query: search.stringValue,
       filter: selectedFilter,
-      maximumResults: 100
+      maximumResults: 50
     )
-    let actions = Dictionary(uniqueKeysWithValues: targets.map { ($0.item.id, $0) })
-    visibleTargets = items.compactMap { actions[$0.id] }
+    visibleTargets = items.compactMap { targetsByID[$0.id] }
     rows.removeAll()
     if visibleTargets.isEmpty {
       resultsStack.addArrangedSubview(
@@ -2752,6 +3056,7 @@ private final class OpenQuicklyOverlayViewController: NSViewController, NSSearch
         let header = makeLabel(
           Self.sectionTitle(for: section.kind), size: 10, weight: .semibold,
           color: AsterTheme.tertiaryInk)
+        header.alignment = .left
         header.translatesAutoresizingMaskIntoConstraints = false
         let wrapper = NSView()
         wrapper.addSubview(header)
@@ -2759,8 +3064,16 @@ private final class OpenQuicklyOverlayViewController: NSViewController, NSSearch
         resultsStack.addArrangedSubview(wrapper)
       }
       for item in section.items {
-        guard let target = actions[item.id] else { continue }
-        let row = OpenQuicklyRowView(
+        guard let target = targetsByID[item.id] else { continue }
+        let rowIndex = rows.count
+        let row: OpenQuicklyRowView
+        if rowPool.indices.contains(rowIndex) {
+          row = rowPool[rowIndex]
+        } else {
+          row = OpenQuicklyRowView()
+          rowPool.append(row)
+        }
+        row.configure(
           item: item, symbol: target.symbol, badge: target.badge,
           accented: target.accented
         ) { [weak self] in
@@ -2770,13 +3083,13 @@ private final class OpenQuicklyOverlayViewController: NSViewController, NSSearch
           self.selectedIndex = index
           self.activateSelection()
         }
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.widthAnchor.constraint(equalTo: resultsStack.widthAnchor).isActive = true
         resultsStack.addArrangedSubview(row)
+        row.attach(to: resultsStack)
         rows.append(row)
       }
     }
     selectedIndex = min(selectedIndex, rows.count - 1)
+    updateCommandHintAppearance()
     updateSelectionAppearance()
   }
 
@@ -2789,7 +3102,7 @@ private final class OpenQuicklyOverlayViewController: NSViewController, NSSearch
     case .recent: "最近"
     case .folder: "文件夹"
     case .ssh: "SSH"
-    case .agent: "Agents"
+    case .agent: "智能体"
     case .recipe: "Recipes"
     }
   }
@@ -2838,6 +3151,20 @@ private final class OpenQuicklyOverlayViewController: NSViewController, NSSearch
   private func updateSelectionAppearance() {
     for (index, row) in rows.enumerated() {
       row.isRowSelected = index == selectedIndex
+    }
+  }
+
+  /// 修饰键变化只更新已复用的 chip/行外观，不重做搜索或创建视图。
+  private func setCommandHintsVisible(_ visible: Bool) {
+    guard showsCommandHints != visible else { return }
+    showsCommandHints = visible
+    for chip in chips.values { chip.showsCommandHint = visible }
+    updateCommandHintAppearance()
+  }
+
+  private func updateCommandHintAppearance() {
+    for (index, row) in rows.enumerated() {
+      row.setCommandHint(index < 9 ? "⌘\(index + 1)" : nil, visible: showsCommandHints)
     }
   }
 
@@ -3059,16 +3386,34 @@ private final class OpenQuicklyChip: NSButton {
   var isChipSelected = false {
     didSet { applyAppearance() }
   }
+  var showsCommandHint = false {
+    didSet {
+      guard showsCommandHint != oldValue else { return }
+      invalidateIntrinsicContentSize()
+      applyAppearance()
+    }
+  }
 
   private let fullTitle: String
+  private let commandHint: String
+  private let stableWidth: CGFloat
 
   /// 创建文字 chip;点击经闭包桥接,避免 target/action 样板。
-  init(title: String, handler: @escaping () -> Void) {
+  init(title: String, commandHint: String, handler: @escaping () -> Void) {
     fullTitle = title
+    self.commandHint = commandHint
+    let titleWidth = (title as NSString).size(withAttributes: [
+      .font: NSFont.systemFont(ofSize: 12, weight: .semibold)
+    ]).width
+    let hintWidth = (commandHint as NSString).size(withAttributes: [
+      .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .medium)
+    ]).width
+    stableWidth = ceil(max(titleWidth, hintWidth)) + 20
     super.init(frame: .zero)
     isBordered = false
     wantsLayer = true
-    layer?.cornerRadius = 7
+    layer?.cornerRadius = 12
+    layer?.borderWidth = 1
     target = self
     action = #selector(invoke)
     self.handler = handler
@@ -3082,12 +3427,10 @@ private final class OpenQuicklyChip: NSButton {
 
   @objc private func invoke() { handler?() }
 
-  /// 文字两侧留 10pt 内边距,固定 24pt 高,形成 pill 轮廓。
+  /// 宽度按标题和快捷键的较大者预留，按下/松开 ⌘ 只改变高度，不让标签条
+  /// 水平跳动。快捷键可见时增高为双行 pill。
   override var intrinsicContentSize: NSSize {
-    var size = super.intrinsicContentSize
-    size.width += 20
-    size.height = 24
-    return size
+    NSSize(width: stableWidth, height: showsCommandHint ? 42 : 26)
   }
 
   override func viewDidChangeEffectiveAppearance() {
@@ -3097,14 +3440,32 @@ private final class OpenQuicklyChip: NSButton {
 
   private func applyAppearance() {
     let color = isChipSelected ? AsterTheme.accent : AsterTheme.secondaryInk
-    attributedTitle = NSAttributedString(
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.alignment = .center
+    let text = NSMutableAttributedString(
       string: fullTitle,
       attributes: [
         .font: NSFont.systemFont(ofSize: 12, weight: isChipSelected ? .semibold : .regular),
         .foregroundColor: color,
+        .paragraphStyle: paragraph,
       ])
+    if showsCommandHint {
+      text.append(NSAttributedString(
+        string: "\n\(commandHint)",
+        attributes: [
+          .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .medium),
+          .foregroundColor: isChipSelected
+            ? AsterTheme.accent.withAlphaComponent(0.88) : AsterTheme.tertiaryInk,
+          .paragraphStyle: paragraph,
+        ]))
+    }
+    attributedTitle = text
+    layer?.cornerRadius = showsCommandHint ? 16 : 12
     layer?.backgroundColor = isChipSelected
       ? AsterTheme.accent.withAlphaComponent(0.14).cgColor : NSColor.clear.cgColor
+    layer?.borderColor = (isChipSelected ? AsterTheme.accent : AsterTheme.hairline)
+      .withAlphaComponent(isChipSelected ? 0.70 : 0.72).cgColor
+    setAccessibilityLabel(showsCommandHint ? "\(fullTitle), \(commandHint)" : fullTitle)
   }
 }
 
@@ -3115,14 +3476,20 @@ private final class OpenQuicklyRowView: NSButton {
     didSet { applySelection() }
   }
 
+  private let icon = NSImageView()
+  private let titleLabel = makeLabel("", size: 13, color: AsterTheme.ink)
+  private let detailLabel = makeLabel("", size: 11, color: AsterTheme.secondaryInk)
+  private let timestampLabel = makeLabel("", size: 11, color: AsterTheme.tertiaryInk)
+  private let badgeLabel = makeLabel("", size: 9, weight: .medium, color: AsterTheme.secondaryInk)
   private let badgeBackground = NSView()
+  private let shortcutLabel = makeLabel(
+    "", size: 10, weight: .medium, color: AsterTheme.secondaryInk)
+  private let shortcutBackground = NSView()
   private var handler: (() -> Void)?
+  private var resultsWidthConstraint: NSLayoutConstraint?
 
-  /// 按展示属性装配行内容;timestamp 非空时显示相对时间。
-  init(
-    item: OpenQuicklyItem, symbol: String, badge: String, accented: Bool,
-    handler: @escaping () -> Void
-  ) {
+  /// 结构和约束只创建一次；`configure` 更新文本与动作，使过滤器切换只改现有行内容。
+  init() {
     super.init(frame: .zero)
     title = ""
     isBordered = false
@@ -3130,34 +3497,33 @@ private final class OpenQuicklyRowView: NSButton {
     layer?.cornerRadius = 8
     target = self
     action = #selector(invoke)
-    self.handler = handler
 
-    let icon = NSImageView()
-    icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: badge)
-    icon.contentTintColor = accented ? AsterTheme.accent : AsterTheme.secondaryInk
     icon.translatesAutoresizingMaskIntoConstraints = false
     icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
     icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
 
-    let titleLabel = makeLabel(item.title, size: 13, color: AsterTheme.ink)
-    let textColumn = NSStackView(views: [titleLabel])
+    shortcutBackground.wantsLayer = true
+    shortcutBackground.layer?.cornerRadius = 4
+    shortcutBackground.layer?.backgroundColor = AsterTheme.panel.cgColor
+    shortcutBackground.layer?.borderWidth = 1
+    shortcutBackground.layer?.borderColor = AsterTheme.hairline.withAlphaComponent(0.72).cgColor
+    shortcutBackground.addSubview(shortcutLabel)
+    shortcutLabel.pinEdges(
+      to: shortcutBackground, insets: NSEdgeInsets(top: 2, left: 5, bottom: 2, right: 5))
+    shortcutBackground.isHidden = true
+
+    titleLabel.lineBreakMode = .byTruncatingTail
+    detailLabel.lineBreakMode = .byTruncatingMiddle
+    let textColumn = NSStackView(views: [titleLabel, detailLabel])
     textColumn.orientation = .vertical
     textColumn.spacing = 1
     textColumn.alignment = .leading
-    if !item.detail.isEmpty {
-      textColumn.addArrangedSubview(
-        makeLabel(item.detail, size: 11, color: AsterTheme.secondaryInk))
-    }
 
     let trailing = NSStackView()
     trailing.orientation = .horizontal
     trailing.spacing = 8
     trailing.alignment = .centerY
-    if let timestamp = item.timestamp {
-      trailing.addArrangedSubview(
-        makeLabel(RelativeTime.string(since: timestamp), size: 11, color: AsterTheme.tertiaryInk))
-    }
-    let badgeLabel = makeLabel(badge, size: 9, weight: .medium, color: AsterTheme.secondaryInk)
+    trailing.addArrangedSubview(timestampLabel)
     badgeBackground.wantsLayer = true
     badgeBackground.layer?.cornerRadius = 4
     badgeBackground.layer?.backgroundColor = AsterTheme.secondaryInk
@@ -3167,19 +3533,67 @@ private final class OpenQuicklyRowView: NSButton {
       to: badgeBackground, insets: NSEdgeInsets(top: 2, left: 5, bottom: 2, right: 5))
     trailing.addArrangedSubview(badgeBackground)
 
-    let row = NSStackView(views: [icon, textColumn, trailing])
+    let spacer = NSView()
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    let row = NSStackView(views: [shortcutBackground, icon, textColumn, spacer, trailing])
     row.orientation = .horizontal
     row.spacing = 10
     row.alignment = .centerY
     addSubview(row)
     row.pinEdges(to: self, insets: NSEdgeInsets(top: 6, left: 10, bottom: 6, right: 10))
-    textColumn.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    textColumn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
     textColumn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     translatesAutoresizingMaskIntoConstraints = false
     heightAnchor.constraint(equalToConstant: 44).isActive = true
   }
 
   required init?(coder: NSCoder) { nil }
+
+  /// 跨视图宽度约束只在行已经加入 Stack 后激活；复用前先停用，避免约束引用已经
+  /// 移出层级的行。这样既得到整行选中背景，也不会触发 no-common-ancestor 异常。
+  func attach(to stack: NSStackView) {
+    resultsWidthConstraint?.isActive = false
+    let constraint = widthAnchor.constraint(equalTo: stack.widthAnchor)
+    constraint.isActive = true
+    resultsWidthConstraint = constraint
+  }
+
+  func detachFromResultsStack() {
+    resultsWidthConstraint?.isActive = false
+    resultsWidthConstraint = nil
+  }
+
+  /// 复用行时完整覆盖所有可见状态，防止上一过滤器的时间、徽章或动作泄漏到新结果。
+  func configure(
+    item: OpenQuicklyItem, symbol: String, badge: String, accented: Bool,
+    handler: @escaping () -> Void
+  ) {
+    self.handler = handler
+    identifier = NSUserInterfaceItemIdentifier("open-quickly-row-\(item.id)")
+    icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: badge)
+    icon.contentTintColor = accented ? AsterTheme.accent : AsterTheme.secondaryInk
+    titleLabel.stringValue = item.title
+    detailLabel.stringValue = item.detail
+    detailLabel.isHidden = item.detail.isEmpty
+    timestampLabel.stringValue = item.timestamp.map { RelativeTime.string(since: $0) } ?? ""
+    timestampLabel.isHidden = item.timestamp == nil
+    badgeLabel.stringValue = badge
+    badgeBackground.identifier = NSUserInterfaceItemIdentifier("open-quickly-badge-\(item.id)")
+    shortcutBackground.identifier = NSUserInterfaceItemIdentifier(
+      "open-quickly-shortcut-\(item.id)")
+    toolTip = item.detail.isEmpty ? item.title : "\(item.title)\n\(item.detail)"
+    setAccessibilityLabel(item.title)
+  }
+
+  /// 按住 ⌘ 时，前九行用与实际 Quick Select 一致的键帽替换图标；
+  /// 其余行仍保留类型图标，避免暗示不存在的快捷键。
+  func setCommandHint(_ hint: String?, visible: Bool) {
+    let showsHint = visible && hint != nil
+    shortcutLabel.stringValue = hint ?? ""
+    shortcutBackground.isHidden = !showsHint
+    icon.isHidden = showsHint
+  }
 
   @objc private func invoke() { handler?() }
 
@@ -3333,10 +3747,15 @@ private final class AgentHistoryOverlayViewController: NSViewController, NSSearc
   private let transcript = NSTextView()
   private var histories: [AgentSessionHistory] = []
   private var selectedIndex = 0
+  private var historyCancellable: AnyCancellable?
 
   init(model: AppModel) {
     self.model = model
     super.init(nibName: nil, bundle: nil)
+    historyCancellable = model.agentHistoriesChanged.sink { [weak self] _ in
+      guard let self, self.isViewLoaded else { return }
+      self.reload()
+    }
   }
 
   required init?(coder: NSCoder) { nil }

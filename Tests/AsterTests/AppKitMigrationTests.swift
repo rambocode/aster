@@ -197,6 +197,70 @@ func verticalSidebarUsesFullWidthRows() throws {
   #expect(controller.view.descendants.compactMap { ($0 as? NSTextField)?.stringValue }.contains { $0.contains("LOCAL") } == false)
 }
 
+@Test("左侧标签悬停显示关闭按钮且可直接关闭后台标签")
+@MainActor
+func verticalSidebarHoverCloseClosesTargetTabWithoutSelectingIt() throws {
+  let defaults = isolatedDefaults()
+  let model = try makeNonTerminalTestModel(
+    defaults: defaults,
+    directories: [NSHomeDirectory(), "/tmp"]
+  )
+  let preferences = AppPreferences(defaults: defaults)
+  let selectedTabID = try #require(model.selectedTabID)
+  let backgroundTab = try #require(model.tabs.first { $0.id != selectedTabID })
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let closeButton = try #require(
+    controller.view.descendants.compactMap { $0 as? NSButton }.first {
+      $0.identifier?.rawValue == "sidebar-tab-close-\(backgroundTab.id.uuidString)"
+    })
+  let tabRow = try #require(closeButton.superview?.superview as? NSButton)
+  #expect(closeButton.isHidden)
+
+  let hoverEvent = try #require(NSEvent.mouseEvent(
+    with: .mouseMoved,
+    location: tabRow.convert(
+      NSPoint(x: tabRow.bounds.midX, y: tabRow.bounds.midY), to: nil),
+    modifierFlags: [],
+    timestamp: 0,
+    windowNumber: window.windowNumber,
+    context: nil,
+    eventNumber: 1,
+    clickCount: 0,
+    pressure: 0
+  ))
+  tabRow.mouseEntered(with: hoverEvent)
+  #expect(closeButton.isHidden == false)
+
+  closeButton.performClick(nil)
+
+  #expect(model.tabs.contains { $0.id == backgroundTab.id } == false)
+  #expect(model.selectedTabID == selectedTabID)
+}
+
+@Test("终端工作区不再渲染底部状态栏")
+@MainActor
+func terminalWorkspaceOmitsBottomStatusBar() throws {
+  let defaults = isolatedDefaults()
+  let model = try makeNonTerminalTestModel(defaults: defaults, directories: [NSHomeDirectory()])
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.appearance.showStatusBar = true
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let labels = controller.view.descendants.compactMap { ($0 as? NSTextField)?.stringValue }
+  #expect(labels.contains { $0.contains("●  workspace") } == false)
+  #expect(labels.contains { $0.contains("UTF-8") } == false)
+
+  let settings = SettingsViewController(preferences: preferences)
+  settings.loadViewIfNeeded()
+  let settingLabels = settings.view.descendants.compactMap { ($0 as? NSTextField)?.stringValue }
+  #expect(settingLabels.contains("显示状态栏") == false)
+}
+
 @Test("折叠标签栏后顶部提供悬停恢复入口")
 @MainActor
 func collapsedTabBarOffersHoverRecovery() throws {

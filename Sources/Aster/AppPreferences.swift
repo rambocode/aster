@@ -111,11 +111,6 @@ final class AppPreferences: ObservableObject {
     set { configuration.appearance.sidebarWidth = min(max(newValue, 180), 360) }
   }
 
-  var showStatusBar: Bool {
-    get { configuration.appearance.showStatusBar }
-    set { configuration.appearance.showStatusBar = newValue }
-  }
-
   var tabBarLayout: TabBarLayout {
     get { configuration.tabBarLayout }
     set { configuration.tabBarLayout = newValue }

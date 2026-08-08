@@ -71,6 +71,13 @@ final class DetailsPanelViewController: NSViewController {
     self.preferences = preferences
     self.selection = Section(rawValue: preferences.inspectorSection) ?? .info
     super.init(nibName: nil, bundle: nil)
+    model.agentHistoriesChanged
+      .sink { [weak self] _ in
+        guard let self else { return }
+        self.cachedContent.removeValue(forKey: .info)
+        if self.selection == .info { self.showSelectedContent() }
+      }
+      .store(in: &cancellables)
     observeActivePane()
   }
 

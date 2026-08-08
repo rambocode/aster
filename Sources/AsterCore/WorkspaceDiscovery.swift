@@ -648,8 +648,11 @@ public enum WorkspaceFileTree {
     else { return [] }
 
     var result: [WorkspaceFileNode] = []
+    func isCancelled() -> Bool {
+      withUnsafeCurrentTask { $0?.isCancelled == true }
+    }
     func visit(_ directory: URL, depth: Int) {
-      guard depth <= depthLimit, result.count < itemLimit else { return }
+      guard !isCancelled(), depth <= depthLimit, result.count < itemLimit else { return }
       let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .isHiddenKey]
       guard let entries = try? fileManager.contentsOfDirectory(
         at: directory,
@@ -660,6 +663,7 @@ public enum WorkspaceFileTree {
         $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
       }
       for entry in sorted where result.count < itemLimit {
+        guard !isCancelled() else { return }
         guard let values = try? entry.resourceValues(forKeys: keys), values.isHidden != true else {
           continue
         }
