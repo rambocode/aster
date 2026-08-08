@@ -1706,6 +1706,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 当前前台命令可明确识别为受支持 Agent 时发布 provider 与折叠状态。识别仅来自
   /// 用户提交命令的首个 token；不会扫描任意输出或把相似进程名误判为 Agent。
   @Published private(set) var activeAgentProvider: AgentProvider?
+  @Published private(set) var activeAgentSessionID: String?
   @Published private(set) var agentTaskState = AgentTaskState.idle
   @Published private(set) var agentTaskCompletionUnread = false
   /// 当前前台命令的展示名:优先 Agent provider 名,否则取已提交命令的首个 token;
@@ -2446,6 +2447,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         activeAgentProvider = nil
       }
       agentLifecycleIsAuthoritative = false
+      activeAgentSessionID = nil
       agentLifecycleSequence = 0
       agentStateReducer = AgentTaskStateReducer()
       updateAgentTaskState()
@@ -2459,6 +2461,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       clearAwaitingInput()
       agentTaskState = .idle
       activeAgentProvider = nil
+      activeAgentSessionID = nil
       agentTaskCompletionUnread = false
       agentLifecycleIsAuthoritative = false
       agentLifecycleSequence = 0
@@ -2620,6 +2623,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // wrapper 命令无法识别时则允许首个合法 hook 建立关联。
     if let activeAgentProvider, activeAgentProvider != directive.provider { return }
     activeAgentProvider = directive.provider
+    if let sessionID = directive.sessionID { activeAgentSessionID = sessionID }
     agentLifecycleIsAuthoritative = true
     let previous = agentStateReducer.state
     consumeAgentTaskStateSignal(directive.signal)

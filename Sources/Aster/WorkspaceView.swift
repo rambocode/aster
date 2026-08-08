@@ -1609,13 +1609,27 @@ final class WorkspaceViewController: NSViewController {
     let content: NSView
     switch descriptor.kind {
     case .terminal: content = makeTerminalPane(runtime, tab: tab)
-    case .editor: content = makeEditorPane(runtime, tab: tab)
+    case .editor, .preview:
+      let controller = FilePaneViewController(
+        runtime: runtime,
+        tab: tab,
+        model: model,
+        preferences: preferences
+      )
+      addChild(controller)
+      retainedObjects.append(controller)
+      content = controller.view
+      if let textView = controller.sourceTextView {
+        editorTextViews[runtime.id] = textView
+      }
+      controller.onSourceTextViewChanged = { [weak self] textView in
+        self?.editorTextViews[runtime.id] = textView
+      }
     case .fileBrowser:
       let controller = FileBrowserViewController(runtime: runtime, tab: tab, model: model)
       addChild(controller)
       retainedObjects.append(controller)
       content = controller.view
-    case .preview: content = makePreviewPane(runtime)
     }
     host.addSubview(content)
     content.pinEdges(to: host)

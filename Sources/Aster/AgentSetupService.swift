@@ -591,18 +591,23 @@ struct AgentSetupService {
         import { closeSync, openSync, writeSync } from "node:fs";
 
         const provider = "\(provider.rawValue)";
-        const emit = (state: "processing" | "idle") => {
+        const sessionID = (value: unknown) =>
+          typeof value === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : undefined;
+        const emit = (state: "processing" | "idle", rawSessionID?: unknown) => {
           let descriptor: number | undefined;
           try {
             descriptor = openSync("/dev/tty", "w");
-            writeSync(descriptor, `\\u001B]6974;AgentState=${state};Provider=${provider}\\u0007`);
+            const id = sessionID(rawSessionID);
+            const suffix = id ? `;SessionID=${id}` : "";
+            writeSync(descriptor, `\\u001B]6974;AgentState=${state};Provider=${provider}${suffix}\\u0007`);
           } catch {} finally {
             if (descriptor !== undefined) try { closeSync(descriptor); } catch {}
           }
         };
 
         export default function (api: any) {
-          api.on("session_start", async () => emit("idle"));
+          api.on("session_start", async (event: any) =>
+            emit("idle", event?.session_id ?? event?.sessionId ?? event?.id));
           api.on("agent_start", async () => emit("processing"));
           api.on("tool_call", async () => emit("processing"));
           api.on("agent_end", async () => emit("idle"));
@@ -614,11 +619,15 @@ struct AgentSetupService {
     import { closeSync, openSync, writeSync } from "node:fs";
 
     const provider = "\(provider.rawValue)";
-    const emit = (state: "processing" | "idle" | "awaiting-input") => {
+    const sessionID = (value: unknown) =>
+      typeof value === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : undefined;
+    const emit = (state: "processing" | "idle" | "awaiting-input", rawSessionID?: unknown) => {
       let descriptor: number | undefined;
       try {
         descriptor = openSync("/dev/tty", "w");
-        writeSync(descriptor, `\\u001B]6974;AgentState=${state};Provider=${provider}\\u0007`);
+        const id = sessionID(rawSessionID);
+        const suffix = id ? `;SessionID=${id}` : "";
+        writeSync(descriptor, `\\u001B]6974;AgentState=${state};Provider=${provider}${suffix}\\u0007`);
       } catch {} finally {
         if (descriptor !== undefined) try { closeSync(descriptor); } catch {}
       }
@@ -626,12 +635,14 @@ struct AgentSetupService {
 
     export const AsterAgentIntegration = async () => ({
       event: async ({ event }: { event: { type?: string; properties?: any } }) => {
+        const id = event.properties?.sessionID ?? event.properties?.session?.id
+          ?? event.properties?.info?.id;
         if (event.type === "session.created" || event.type === "session.idle"
-          || event.type === "tui.session.select" || event.type === "session.error") emit("idle");
+          || event.type === "tui.session.select" || event.type === "session.error") emit("idle", id);
         if (event.type === "session.status") {
           const state = event.properties?.status?.type ?? event.properties?.status;
-          if (state === "idle") emit("idle");
-          if (state === "busy" || state === "retry") emit("processing");
+          if (state === "idle") emit("idle", id);
+          if (state === "busy" || state === "retry") emit("processing", id);
         }
       },
       "permission.ask": async () => emit("awaiting-input"),

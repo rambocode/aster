@@ -21,6 +21,15 @@ import Testing
   try buffer.save()
   #expect(!buffer.isDirty)
   #expect(try String(contentsOf: file, encoding: .utf8) == "hello, Aster")
+
+  buffer.updateText("unsaved rename")
+  let renamed = directory.appendingPathComponent("renamed.md")
+  try FileManager.default.moveItem(at: file, to: renamed)
+  var relocated = buffer.relocated(to: renamed)
+  #expect(relocated.isDirty)
+  #expect(relocated.text == "unsaved rename")
+  try relocated.save()
+  #expect(try String(contentsOf: renamed, encoding: .utf8) == "unsaved rename")
 }
 
 @Test func recipeStoreRoundTripsAndRejectsWrongExtension() throws {

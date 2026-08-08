@@ -7,6 +7,7 @@ Aster 是一个完全使用 AppKit 构建的原生 macOS 终端工作区，采�
 - 完整 VT100/xterm 终端、ANSI 真彩色、鼠标、超链接和全屏 TUI
 - 多标签，垂直/顶部/底部三种标签布局
 - 左右/上下递归分屏，可混合终端、文件浏览器、编辑器和预览
+- Files 严格资源菜单与统一 File Pane，支持源码、Markdown/RST、图片、PDF、Quick Look、diff、hex 和 Agent transcript
 - 终端缓冲区查找、命令面板、详情面板和快捷键
 - `.asterrecipe` 工作区导入/导出及启动会话恢复
 - OSC 1/2/0 独立标题、固定名称/动态前缀，以及 `⇧⌘T` 最近关闭标签恢复
@@ -51,6 +52,7 @@ notarization/stapling。
 
 - [工作区领域与实现](docs/developer/terminal-domain.md)
 - [AppKit 界面架构](docs/developer/appkit-interface.md)
+- [文件、链接与 File Pane 领域](docs/developer/files-and-links-domain.md)
 - [外观主题领域与实现](docs/developer/theme-system.md)
 - [用户帮助](docs/user/help.md)
 - [第三方许可](THIRD-PARTY-NOTICES.md)

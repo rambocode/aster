@@ -209,6 +209,71 @@ func appModelRoutesWindowOnlyActionsWithoutLocalFallback() throws {
   #expect(pictureInPictureModes == [false, true])
 }
 
+@Test("统一资源路由保持 placement 与 view edit 模式语义")
+@MainActor
+func appModelOpensResourcesThroughUnifiedPlacementRouter() throws {
+  let defaults = behaviorTestDefaults()
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "aster-resource-router-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+  defer {
+    model.tabs.forEach { $0.stop(immediately: true) }
+    try? FileManager.default.removeItem(at: root)
+  }
+  let file = root.appendingPathComponent("notes.md")
+  try Data("# Notes".utf8).write(to: file)
+
+  #expect(model.openResource(file, mode: .view, placement: .split(.right)))
+  #expect(model.selectedTab?.layout.allPanes.count == 2)
+  #expect(model.selectedTab?.activeRuntime?.descriptor.kind == .preview)
+  #expect(model.selectedTab?.activeRuntime?.isReadOnly == true)
+
+  #expect(model.openResource(file, mode: .edit, placement: .newTab))
+  #expect(model.tabs.count == 2)
+  #expect(model.selectedTab?.activeRuntime?.descriptor.kind == .editor)
+  #expect(model.selectedTab?.activeRuntime?.isReadOnly == false)
+
+  var newWindowPane: PaneDescriptor?
+  model.onRequestNewWindow = { newWindowPane = $0; return true }
+  #expect(model.openResource(file, mode: .view, placement: .newWindow))
+  #expect(newWindowPane?.kind == .preview)
+
+  #expect(model.openResource(root, mode: .edit, placement: .newTab))
+  #expect(model.selectedTab?.activeRuntime?.descriptor.kind == .fileBrowser)
+  #expect(model.selectedTab?.activeRuntime?.descriptor.resourcePath == root.path)
+}
+
+@Test("重命名资源会同步已打开文件及其目录后代 Pane")
+@MainActor
+func appModelRelocatesOpenResourcePathsAfterRename() throws {
+  let model = AppModel(defaults: behaviorTestDefaults())
+  model.ensureInitialTab()
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "aster-relocate-\(UUID().uuidString)", isDirectory: true)
+  let oldFolder = root.appendingPathComponent("Old", isDirectory: true)
+  let newFolder = root.appendingPathComponent("New", isDirectory: true)
+  try FileManager.default.createDirectory(at: oldFolder, withIntermediateDirectories: true)
+  defer {
+    model.tabs.forEach { $0.stop(immediately: true) }
+    try? FileManager.default.removeItem(at: root)
+  }
+  let file = oldFolder.appendingPathComponent("note.txt")
+  try Data("hello".utf8).write(to: file)
+  #expect(model.openResource(file, mode: .edit, placement: .split(.right)))
+  model.selectedTab?.activeRuntime?.updateDocument("unsaved")
+  try FileManager.default.moveItem(at: oldFolder, to: newFolder)
+
+  model.relocateOpenResources(from: oldFolder, to: newFolder)
+
+  #expect(model.selectedTab?.activeRuntime?.descriptor.resourcePath == newFolder.appendingPathComponent("note.txt").path)
+  #expect(model.selectedTab?.activeRuntime?.documentText == "unsaved")
+  #expect(model.selectedTab?.activeRuntime?.isDirty == true)
+  model.selectedTab?.activeRuntime?.saveDocument()
+  #expect(try String(contentsOf: newFolder.appendingPathComponent("note.txt"), encoding: .utf8) == "unsaved")
+}
+
 @Test("文件 Send to Chat 只接受有界 UTF-8 普通文件并写入终端 Composer")
 @MainActor
 func appModelAddsSafeFileContextToComposer() throws {

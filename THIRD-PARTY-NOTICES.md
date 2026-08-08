@@ -1,5 +1,20 @@
 # Third-Party Notices
 
+## HighlighterSwift
+
+HighlighterSwift is copyright Tony Smith and contributors and is distributed under the MIT
+License. It embeds Highlight.js, which is distributed under the BSD 3-Clause License.
+
+Source: https://github.com/smittytone/HighlighterSwift
+
+## Swift Markdown and cmark-gfm
+
+Swift Markdown is copyright Apple Inc. and the Swift project authors and is distributed under
+the Apache License 2.0 with Runtime Library Exception. Its cmark-gfm dependency is distributed
+under the BSD 2-Clause License.
+
+Source: https://github.com/swiftlang/swift-markdown
+
 ## SwiftTerm
 
 Copyright (c) 2020 Miguel de Icaza

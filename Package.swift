@@ -11,7 +11,12 @@ let package = Package(
     .library(name: "AsterCore", targets: ["AsterCore"]),
     .executable(name: "Aster", targets: ["Aster"]),
   ],
-  dependencies: [],
+  dependencies: [
+    // File Pane 使用固定版本的 GFM 解析器和 highlight.js 包装。精确版本避免
+    // 上游语法、资源 bundle 或 Swift 工具链要求在普通构建中漂移。
+    .package(url: "https://github.com/smittytone/HighlighterSwift.git", exact: "3.1.0"),
+    .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.8.0"),
+  ],
   targets: [
     .target(
       name: "AsterPTY",
@@ -19,7 +24,10 @@ let package = Package(
     ),
     .target(
       name: "AsterCore",
-      dependencies: ["AsterPTY"]
+      dependencies: [
+        "AsterPTY",
+        .product(name: "Markdown", package: "swift-markdown"),
+      ]
     ),
     // Aster 需要在终端内核边界实现原生键盘选区、矩形选区与像素级滚动；
     // SwiftTerm 1.15 没有公开这些状态，因此以锁定上游 revision 的本地 target
@@ -40,6 +48,7 @@ let package = Package(
       dependencies: [
         "AsterCore",
         "SwiftTerm",
+        .product(name: "Highlighter", package: "HighlighterSwift"),
       ]
     ),
     .testTarget(
