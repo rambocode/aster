@@ -31,35 +31,37 @@ extension WorkspacePanelSplitView {
       presenting
       ? resolvedPanelFrames(for: panelRoles)
       : resolvedCollapsedPanelFrames(for: role)
+    let stableContentWidth = presenting
+      ? targetFrames[role]?.width ?? view.bounds.width
+      : max(view.bounds.width, view.frame.width)
+    (view as? WorkspaceEdgePanelHostView)?.beginFrameTransition(
+      minimumContentWidth: stableContentWidth
+    )
 
     guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-      applyPanelFrames(targetFrames, transitioning: role, presenting: presenting)
+      applyPanelFramesImmediately(targetFrames, transitioning: role)
       completion?()
       return
     }
 
     if presenting, !startsFromCurrent {
-      // 新挂载的 Panel 先从合法的折叠布局起步；它仍是 arrangedSubview，因此过渡态
-      // 暂时保留相邻 1pt divider，避免 NSSplitView 认为子视图次序发生重叠。
-      applyPanelFrames(
-        resolvedCollapsedPanelFrames(for: role),
-        transitioning: role,
-        presenting: false
-      )
+      // 新挂载的 Panel 仍是 detached overlay。先在动画上下文之外放到折叠起点，
+      // Content 的 frame 与收起态相同，因此不会产生一次无意义的终端 resize。
+      applyPanelFramesImmediately(resolvedCollapsedPanelFrames(for: role), transitioning: role)
     }
 
-    for targetRole in targetFrames.keys {
-      panelView(for: targetRole)?.wantsLayer = true
-    }
+    // Content 必须在进入 NSAnimationContext 之前一次布局到终态。仅用 CATransaction
+    // 禁用 layer action 不够：AppKit Auto Layout 仍会继承外层动画上下文并逐帧改变
+    // 终端子树，造成连续 TIOCSWINSZ 与 TUI 重绘。
+    applyNonTransitioningPanelFramesImmediately(targetFrames, transitioning: role)
 
     NSAnimationContext.runAnimationGroup(
       { context in
         context.duration = 0.18
         context.timingFunction = CAMediaTimingFunction(name: .easeOut)
         context.allowsImplicitAnimation = true
-        // 直接写最终 frame 让模型层立即进入一致终态；`allowsImplicitAnimation`
-        // 负责从当前 presentation frame 平滑插值，Content 与边缘 Panel 同步变化。
-        applyPanelFrames(targetFrames, transitioning: role, presenting: presenting)
+        // 动画上下文中只写边缘 Host；Content 已经在上方完成终态布局。
+        applyTransitioningPanelFrame(targetFrames[role], role: role)
       },
       completionHandler: {
         Task { @MainActor in completion?() }
@@ -118,37 +120,40 @@ extension WorkspacePanelSplitView {
     return result
   }
 
-  private func applyPanelFrames(
+  private func applyPanelFramesImmediately(
     _ frames: [WorkspacePanelRole: NSRect],
-    transitioning role: WorkspacePanelRole,
-    presenting: Bool
+    transitioning role: WorkspacePanelRole
   ) {
-    let remainingRoles = panelRoles.filter { $0 != role && frames[$0] != nil }
-    // NSSplitView 会在每次 frame 写入后校验 arrangedSubview 顺序。收起目标已经
-    // 暂时脱离 arranged 布局；展开时先让其余 Panel 腾位，再展开边缘 Host。
-    // 两条路径都避免 arranged frame 重叠或越界。
-    let orderedRoles = presenting ? remainingRoles + [role] : [role] + remainingRoles
-    for targetRole in orderedRoles {
-      guard let frame = frames[targetRole] else { continue }
-      guard let panelView = panelView(for: targetRole) else { continue }
-      if targetRole == role {
-        panelView.frame = frame
-        (panelView as? WorkspaceEdgePanelHostView)?.updateTransitionViewport()
-      } else {
-        // 边缘 Panel 显隐时，Content 的模型 frame 一次到位即可。禁止它的
-        // layer 跟随外层 NSAnimationContext 插值，否则终端已经按新列数
-        // 重绘的网格还会被显示层二次拉伸，呈现为抖动和闪烁。
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        panelView.frame = frame
-        (panelView as? WorkspaceEdgePanelHostView)?.updateTransitionViewport()
-        // Content 的根 frame 一次到位后，必须在同一个禁动画事务内
-        // 同步完成标题栏与终端子树布局。若延迟到外层动画或 completion，
-        // 标题内容与终端都会在动画末帧再做一次 reflow。
-        panelView.layoutSubtreeIfNeeded()
-        CATransaction.commit()
+    applyNonTransitioningPanelFramesImmediately(frames, transitioning: role)
+    applyTransitioningPanelFrame(frames[role], role: role)
+    needsDisplay = true
+  }
+
+  /// 非目标 Panel 完全位于动画上下文之外。显式禁用 Core Animation action，并同步
+  /// 布局整个子树，保证 Content 中的 SwiftTerm 只看到最终网格尺寸。
+  private func applyNonTransitioningPanelFramesImmediately(
+    _ frames: [WorkspacePanelRole: NSRect],
+    transitioning role: WorkspacePanelRole
+  ) {
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
+    for targetRole in panelRoles where targetRole != role {
+      guard let frame = frames[targetRole], let panelView = panelView(for: targetRole) else {
+        continue
       }
+      panelView.frame = frame
+      (panelView as? WorkspaceEdgePanelHostView)?.updateTransitionViewport()
+      panelView.needsLayout = true
+      panelView.layoutSubtreeIfNeeded()
     }
+  }
+
+  /// 过渡目标只有边缘 Host。Content 和其它 Panel 不得从这里进入动画上下文。
+  private func applyTransitioningPanelFrame(_ frame: NSRect?, role: WorkspacePanelRole) {
+    guard let frame, let panelView = panelView(for: role) else { return }
+    panelView.frame = frame
+    (panelView as? WorkspaceEdgePanelHostView)?.updateTransitionViewport()
     needsDisplay = true
   }
 }

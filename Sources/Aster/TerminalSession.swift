@@ -216,6 +216,18 @@ final class AsterTerminalView: LocalProcessTerminalView {
     }
   }
 
+  /// SwiftTerm 的像素尺寸变化经 `setFrameSize` 计算网格并调用它自己的
+  /// `TerminalViewDelegate`，不会进入下面接收显式 `resize(cols:rows:)` 的重载。
+  /// 在这里比较前后网格，测试才能准确捕获 Panel 布局产生的真实 reflow。
+  override func setFrameSize(_ newSize: NSSize) {
+    let terminal = getTerminal()
+    let previousSize = (columns: terminal.cols, rows: terminal.rows)
+    super.setFrameSize(newSize)
+    let currentSize = (columns: terminal.cols, rows: terminal.rows)
+    guard currentSize != previousSize else { return }
+    onGridSizeChange?(currentSize.columns, currentSize.rows)
+  }
+
   override func sizeChanged(source: Terminal) {
     super.sizeChanged(source: source)
     onGridSizeChange?(source.cols, source.rows)

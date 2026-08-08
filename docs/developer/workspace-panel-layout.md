@@ -28,7 +28,7 @@
 5. 用户拖动结束、双击复位或设置页滑杆修改时才写首选宽度。普通窗口缩放只计算当前 frame，不反写首选值。
 6. Sidebar 和 Inspector 的宽度按工作区窗口的 `UserDefaults` suite 独立持久化到 `aster.workspace.panel-layout.v1`。旧配置中的 `appearance.sidebarWidth` 只作为首次建库的迁移种子。
 7. 设置页的两个滑杆绑定最近成为 key 的工作区窗口。设置窗口本身成为 key window 时不清空绑定；另一个工作区激活时立即切换目标。
-8. Inspector 显隐复用同一个详情内容视图。收起开始时，边缘 Host 暂时脱离 `arrangedSubviews`，但仍作为同一 split 的动画覆盖层保留；Content 一次进入移除 Inspector 后的终态 frame，禁止自身 layer 再做 bounds/position 插值。只有边缘 Host 执行显示层折叠动画，并从内侧裁剪保持稳定宽度的内容。剩余 Panel 直接使用终态 divider 数量，解除挂载时不再触发 1pt 末帧 resize。Inspector trailing edge 和右上角按钮因此固定不动。动画结束后才解除视图挂载，快速反向切换会把同一 Host 重新接回 arranged 布局，并通过 transition token 取消过期完成回调。若工作区刷新把内容迁移到新 split，旧 split 不再拥有移除权。
+8. Inspector 显隐复用同一个详情内容视图。展开与收起期间，边缘 Host 都暂时脱离 `arrangedSubviews`，作为同一 split 的动画覆盖层；动画完成后才接入或解除 arranged 布局。Content 在 `NSAnimationContext` 外一次进入终态 frame 并同步完成终端子树布局，每次切换只产生一次网格 resize；动画上下文只改变边缘 Host，并从内侧裁剪保持稳定宽度的内容。剩余 Panel 直接使用终态 divider 数量，解除挂载时不再触发 1pt 末帧 resize。Inspector trailing edge 和右上角按钮因此固定不动。快速反向切换通过 transition token 取消过期完成回调；若工作区刷新把内容迁移到新 split，旧 split 不再拥有移除权。
 9. 系统开启“减弱动态效果”时直接落到终态。
 10. 工作区根视图只创建一颗 `workspace-inspector-toggle`，固定覆盖在右上角，不参与 Content / Inspector 的宽度求解；Panel header 只预留命中空间，不创建第二颗按钮。Inspector 展开时该按钮常显；关闭后仍是同一实例和坐标，并从解除挂载完成时重新起算 650ms 停留时间。鼠标不在标题栏时随后淡出，位于标题栏时持续显示。
 
@@ -79,7 +79,7 @@ flowchart TD
 - 默认值、越界 clamp、宽窗口与窄窗口求解、可选 Panel 组合。
 - 多窗口 suite 的宽度隔离、损坏 JSON 回退、最近活动窗口设置绑定。
 - 三个 Panel 的语义顺序、实际 frame、视图身份复用、divider 角色映射与双击复位。
-- Inspector 非动画/动画移除、整块裁剪、Content 无显示层缩放与无末帧 1pt resize、按钮固定位置、延迟隐藏、快速反向显隐、跨 split 迁移所有权和禁止折叠。
+- Inspector 非动画/动画显隐、整块裁剪、每次切换仅一次终端网格 resize、重复开关不复制缓冲区内容、按钮固定位置、延迟隐藏、快速反向显隐、跨 split 迁移所有权和禁止折叠。
 - 垂直标签布局与顶部标签布局的真实 `WorkspaceViewController` 组合。
 - 设置页同时提供左右 Panel 宽度滑杆。
 

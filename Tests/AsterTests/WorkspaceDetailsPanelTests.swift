@@ -67,6 +67,7 @@ func inspectorToggleKeepsIdenticalPositionAcrossPresentation() throws {
   preferences.inspectorPresented = false
   let model = AppModel(defaults: defaults)
   model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
   let controller = WorkspaceViewController(model: model, preferences: preferences)
   let window = NSWindow(
     contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
@@ -103,12 +104,14 @@ func inspectorToggleKeepsIdenticalPositionAcrossPresentation() throws {
 
 @Test("展开详情面板走 Panel 裁剪动画，布局与终端宽度一次到位")
 @MainActor
-func inspectorPresentationAnimatesWithoutRelayoutingTerminalEachFrame() throws {
+func inspectorPresentationAnimatesWithoutRelayoutingTerminalEachFrame() async throws {
+  _ = NSApplication.shared
   let defaults = panelTestDefaults()
   let preferences = AppPreferences(defaults: defaults)
   preferences.inspectorPresented = false
   let model = AppModel(defaults: defaults)
   model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
   let controller = WorkspaceViewController(model: model, preferences: preferences)
   let window = NSWindow(
     contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
@@ -117,7 +120,19 @@ func inspectorPresentationAnimatesWithoutRelayoutingTerminalEachFrame() throws {
     defer: false
   )
   window.contentViewController = controller
+  window.makeKeyAndOrderFront(nil)
+  defer { window.orderOut(nil) }
   window.contentView?.layoutSubtreeIfNeeded()
+  try await Task.sleep(for: .milliseconds(50))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let terminal = try #require(
+    controller.view.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
+  let initialTerminalWidth = terminal.frame.width
+  var gridSizes: [(columns: Int, rows: Int)] = []
+  terminal.onGridSizeChange = { columns, rows in
+    gridSizes.append((columns, rows))
+  }
 
   model.toggleInspector()
   window.contentView?.layoutSubtreeIfNeeded()
@@ -140,6 +155,71 @@ func inspectorPresentationAnimatesWithoutRelayoutingTerminalEachFrame() throws {
     ) < 1
   )
   #expect(panel.wantsLayer)
+  try await Task.sleep(for: .milliseconds(250))
+  window.contentView?.layoutSubtreeIfNeeded()
+  #expect(terminal.frame.width < initialTerminalWidth)
+  // 展开只能把终端从收起态宽度直接切到展开态宽度。若先布局到终态、再退回
+  // 折叠动画起点、最后再次进入终态，这里会记录三次网格变化，TUI 的 SIGWINCH
+  // 重绘就会作为真实内容重复进入缓冲区。
+  #expect(gridSizes.count == 1)
+}
+
+@Test("重复开关详情面板不复制终端缓冲区内容")
+@MainActor
+func repeatedInspectorTransitionsKeepOneTerminalReflowPerToggle() async throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorPresented = false
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+    styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  window.makeKeyAndOrderFront(nil)
+  defer { window.orderOut(nil) }
+  window.contentView?.layoutSubtreeIfNeeded()
+  try await Task.sleep(for: .milliseconds(50))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let terminal = try #require(
+    controller.view.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
+  let session = try #require(model.selectedTab?.activeSession)
+  let sentinel = "ASTER_PANEL_REFLOW_SENTINEL"
+  terminal.dataReceived(slice: Array("\r\n\(sentinel)\r\n".utf8)[...])
+  let occurrencesBefore = session.textSnapshot().lines.filter { $0.contains(sentinel) }.count
+  var gridSizes: [(columns: Int, rows: Int)] = []
+  terminal.onGridSizeChange = { columns, rows in gridSizes.append((columns, rows)) }
+
+  for _ in 0..<3 {
+    let beforePresentation = gridSizes.count
+    model.toggleInspector()
+    try await Task.sleep(for: .milliseconds(250))
+    window.contentView?.layoutSubtreeIfNeeded()
+    #expect(gridSizes.count - beforePresentation == 1)
+
+    let beforeRemoval = gridSizes.count
+    model.toggleInspector()
+    try await Task.sleep(for: .milliseconds(250))
+    window.contentView?.layoutSubtreeIfNeeded()
+    #expect(gridSizes.count - beforeRemoval == 1)
+  }
+
+  let currentTerminal = try #require(
+    controller.view.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
+  let occurrencesAfter = session.textSnapshot().lines.filter { $0.contains(sentinel) }.count
+  #expect(currentTerminal === terminal)
+  #expect(occurrencesBefore == 1)
+  #expect(occurrencesAfter == occurrencesBefore)
+  #expect(gridSizes.count == 6)
+  #expect(Set(gridSizes.map(\.columns)).count == 2)
 }
 
 @Test("关闭详情面板不对终端子树做 frame 动画")

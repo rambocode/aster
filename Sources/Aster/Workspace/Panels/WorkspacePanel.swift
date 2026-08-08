@@ -98,11 +98,18 @@ final class WorkspacePanelSplitView: NSSplitView, NSSplitViewDelegate {
     let mountedPanel = MountedWorkspacePanel(panel)
     panels.insert(mountedPanel, at: insertionIndex)
     preparePanelViewForOwnership(mountedPanel.layoutView)
-    insertArrangedSubview(mountedPanel.layoutView, at: insertionIndex)
-    needsLayout = true
-    layoutSubtreeIfNeeded()
-    updateTrackingAreas()
-    guard animated else { return }
+    guard animated else {
+      insertArrangedSubview(mountedPanel.layoutView, at: insertionIndex)
+      needsLayout = true
+      layoutSubtreeIfNeeded()
+      updateTrackingAreas()
+      return
+    }
+    // 展开动画与收起动画保持对称：新 Host 先作为普通覆盖层挂载，不能提前加入
+    // arrangedSubviews。否则 NSSplitView 会先把 Content 布局到展开终态，动画代码随后
+    // 又退回折叠起点，终端会经历多次甚至 0 高度的中间 frame。
+    addSubview(mountedPanel.layoutView)
+    transitionDetachedPanelRoles.insert(panel.role)
     let token = beginTransition(for: panel.role, animated: true)
     animate(mountedPanel.layoutView, role: panel.role, presenting: true) { [weak self] in
       self?.completePresentation(for: panel.role, token: token)
@@ -141,7 +148,7 @@ final class WorkspacePanelSplitView: NSSplitView, NSSplitViewDelegate {
         self.preparePanelViewForOwnership(layoutView)
       }
       self.transitionDetachedPanelRoles.remove(role)
-      self.restorePanelAutoresizingMasksIfStable()
+      self.finishPanelTransitionsIfStable()
       self.needsLayout = true
       self.layoutSubtreeIfNeeded()
       self.updateTrackingAreas()
@@ -382,17 +389,9 @@ extension WorkspacePanelSplitView {
     transitionTokens[role, default: 0] &+= 1
     if animated {
       transitioningPanelRoles.insert(role)
-      // Split 自身由 Auto Layout 定位时，arrangedSubview 的 autoresizing mask 会生成
-      // 锁死当前 frame 的临时约束。过渡期间关闭转换，让统一 frame 动画成为唯一布局
-      // owner；终态再恢复，避免 Inspector 的 278pt 约束把 0 宽动画立即弹回去。
-      for panel in panels {
-        panel.layoutView.translatesAutoresizingMaskIntoConstraints = false
-      }
-      panels.first { $0.role == role }?.edgeHost?.beginFrameTransition()
-      updateConstraintsForSubtreeIfNeeded()
     } else {
       transitioningPanelRoles.remove(role)
-      restorePanelAutoresizingMasksIfStable()
+      finishPanelTransitionsIfStable()
     }
     return transitionTokens[role, default: 0]
   }
@@ -408,7 +407,7 @@ extension WorkspacePanelSplitView {
     guard transitionTokens[role] == token else { return }
     reattachTransitionPanelIfNeeded(role)
     guard finishTransition(for: role, token: token) else { return }
-    restorePanelAutoresizingMasksIfStable()
+    finishPanelTransitionsIfStable()
     needsLayout = true
     layoutSubtreeIfNeeded()
     updateTrackingAreas()
@@ -428,12 +427,11 @@ extension WorkspacePanelSplitView {
 
   /// 多个边缘 Panel 理论上可同时过渡；只有最后一个完成后才能恢复约束转换，否则
   /// 先结束的动画会在另一个动画中途重新锁住所有 frame。
-  fileprivate func restorePanelAutoresizingMasksIfStable() {
+  /// 多个边缘 Panel 理论上可以同时过渡；最后一个完成后再统一恢复 Host 内容布局。
+  fileprivate func finishPanelTransitionsIfStable() {
     guard transitioningPanelRoles.isEmpty else { return }
     for panel in panels {
       panel.edgeHost?.finishFrameTransition()
-      panel.layoutView.translatesAutoresizingMaskIntoConstraints = true
     }
-    updateConstraintsForSubtreeIfNeeded()
   }
 }
