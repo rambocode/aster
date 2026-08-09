@@ -120,7 +120,7 @@ Workflows 与 Agent 的详细边界见 `workflows-and-agents.md`。Recipe 信任
 
 复制粘贴由 `PasteRiskAnalyzer`、`PasteProtectionPolicy` 与 `PasteTransmissionEncoder` 组成纯领域链路，AppKit 只负责系统剪贴板、确认和 PTY 写入；bracketed 结束标记会被中和，控制字符不会因可信模式跳过。`TerminalOSCStreamLimiter` 在 SwiftTerm parser 前对普通 OSC、OSC 52、通知 OSC 分别实施 16 MiB、8 MiB、约 8 KiB 的跨分片硬上限，自定义 handler 再执行解码后限长和动态权限；配置导入会降级无提示读取授权，Ask 有重入保护与冷却。`TerminalFilePasteEncoder` 拒绝符号链接，并在打开前后复验文件身份和变更时间，避免特殊文件读取与路径替换竞态。
 
-菜单层补齐 Otty 的字号、全屏与插入链路：字号命令修改共享配置并同步所有终端，原生全屏动作定位当前工作区窗口；文件选择、交互式截屏和 AppKit Continuity Camera 都只把经过 Shell 转义的路径预填到当前前台程序输入框，Codex/Claude TUI 复用 bracketed-paste 交付且不自动提交。手机与截屏结果经 `TerminalImportedFileStore` 约束类型、32 MiB 上限、普通文件身份以及 `0700/0600` 临时权限。Carbon 安全输入真实启用时，中央工作区标题栏右侧同步显示 `SECURE INPUT` 状态胶囊。
+菜单层补齐 Otty 的字号、全屏与插入链路：字号命令修改共享配置并同步所有终端，原生全屏动作定位当前工作区窗口；文件选择、交互式截屏和 AppKit Continuity Camera 都只把经过 Shell 转义的路径预填到当前前台程序输入框，Codex/Claude TUI 复用 bracketed-paste 交付且不自动提交。Continuity Camera 结果由标准 `readSelectionFromPasteboard:` responder selector 接收；手机与截屏结果经 `TerminalImportedFileStore` 约束类型、32 MiB 上限、普通文件身份以及 `0700/0600` 临时权限。Open Quickly 的历史 Prompt 在没有运行中 Agent 时同样可用，并回退写入当前终端。Carbon 安全输入真实启用时，中央工作区标题栏右侧同步显示 `SECURE INPUT` 状态胶囊。
 
 ## 测试与验收
 

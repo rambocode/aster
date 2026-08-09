@@ -4,6 +4,7 @@ import Metal
 import Testing
 
 @testable import Aster
+@testable import SwiftTerm
 
 @Test("终端输出消息总线按字节顺序分批，并在末批后交付结束事件")
 @MainActor
@@ -149,6 +150,30 @@ func terminalViewActivatesMetalRendererWhenAttachedToWindow() {
   window.contentView?.addSubview(view)
 
   #expect(view.isUsingMetalRenderer)
+}
+
+@Test("修改字号会立即请求 Metal renderer 绘制新帧")
+@MainActor
+func terminalFontChangeRequestsMetalRedraw() throws {
+  guard MTLCreateSystemDefaultDevice() != nil else { return }
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 640, height: 400),
+    styleMask: [.titled],
+    backing: .buffered,
+    defer: false
+  )
+  let view = AsterTerminalView(frame: window.contentView?.bounds ?? .zero)
+  window.contentView?.addSubview(view)
+  _ = try #require(view.metalView)
+  var displayRequestCount = 0
+  view.onMetalDisplayRequest = { displayRequestCount += 1 }
+
+  let nextSize = view.font.pointSize + 1
+  let nextFont = NSFont.monospacedSystemFont(ofSize: nextSize, weight: .regular)
+  view.setFonts(normal: nextFont, bold: nextFont, italic: nextFont, boldItalic: nextFont)
+
+  #expect(view.font.pointSize == nextSize)
+  #expect(displayRequestCount == 1)
 }
 
 @MainActor

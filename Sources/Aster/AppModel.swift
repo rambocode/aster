@@ -960,6 +960,13 @@ final class AppModel: ObservableObject {
   private(set) var agentHistories: [AgentSessionHistory] = [] {
     didSet { agentHistoriesChanged.send(agentHistories) }
   }
+#if DEBUG
+  /// Test seam for exercising history-backed Open Quickly routes without scanning the user's
+  /// real Agent session directories or exposing a mutable production history collection.
+  func replaceAgentHistoriesForTesting(_ histories: [AgentSessionHistory]) {
+    agentHistories = histories
+  }
+#endif
   /// 详情面板与 Open Quickly 一样属于局部展示状态。显隐只改变内容区约束，不得通过
   /// `objectWillChange` 触发整个工作区重建，否则终端、侧栏和 Pane 树都会被拆下再挂回。
   let inspectorPresentationChanged = PassthroughSubject<Bool, Never>()
@@ -2033,8 +2040,9 @@ final class AppModel: ObservableObject {
     }
   }
 
-  /// 聚焦指定 Pane 并把提示词粘贴进其终端输入行（不自动回车），供 Open Quickly
-  /// 「当前」页的提示词条目复用历史 prompt；多行文本经 bracketed paste 防注入。
+  /// 聚焦指定 Pane 并把提示词预填进其终端输入行（不自动回车），供 Open Quickly
+  /// 「当前」页复用历史 Prompt。编码服从前台程序实际协商的 bracketed-paste 状态：
+  /// Agent TUI 获得完整粘贴块，普通 Shell/CLI 则直接接收文本，不要求 Agent 正在运行。
   func insertPromptIntoPane(tabID: UUID, paneID: UUID, text: String) {
     guard let tab = tabs.first(where: { $0.id == tabID }),
       let session = tab.runtime(for: paneID)?.terminalSession
@@ -2042,7 +2050,7 @@ final class AppModel: ObservableObject {
     revealWorkspaceLocation(tabID: tabID, paneID: paneID)
     // 视图重建在下一轮主队列完成，延后粘贴确保终端已是 first responder。
     DispatchQueue.main.async {
-      session.pastePromptText(text)
+      session.typePromptText(text)
     }
   }
 

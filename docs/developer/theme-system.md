@@ -76,7 +76,7 @@ flowchart LR
 
 容器背景的解析遵循「与终端画布连续」：主题未显式声明 `container` 时回退到终端背景本身（透明 `none` 保持透明以透出玻璃材质），**不借用 panel** —— panel 是侧栏等面板的底色，借用它会让 April 这类「panel 灰绿 + 终端纯白」的主题在右侧内容区套上一层 panel 色，与终端画布视觉割裂。
 
-`TerminalSession.apply` 在每次偏好更新时同步 SwiftTerm 的四种角色字体、默认前景/背景、选区前景/背景、光标前景/文字、光标不透明度和 ANSI 16 色。主题视觉令牌集中由 `AsterTerminalView.applyThemePalette` 下发；工作区同时更新全部存活 Session，并扫描当前可见终端补发一次，覆盖 AppKit 整树替换期间仍在屏幕上的旧 Pane host。透明浅色终端的 `terminalCanvasBackgroundColor` 保留 Otty 原始 alpha，并同步到 SwiftTerm backing layer；`renderedTerminalBackground` 只给 PiP、候选面板等没有材质宿主的浮层提供主题 `surface`。SwiftTerm 以 ANSI 16 色派生完整 256 色调色板。下划线渲染、字体平滑、连字、行高和 SGR 闪烁同样立即作用于已有会话；行高扩大的是终端网格和行间留白，竖线光标仍按未放大的字体自然高度从基线侧对齐，避免伸入上一行。Metal 路径在平滑策略变化时同时清空 glyph atlas 与行缓存，避免继续显示旧策略生成的字形。
+`TerminalSession.apply` 在每次偏好更新时同步 SwiftTerm 的四种角色字体、默认前景/背景、选区前景/背景、光标前景/文字、光标不透明度和 ANSI 16 色。主题视觉令牌集中由 `AsterTerminalView.applyThemePalette` 下发；工作区同时更新全部存活 Session，并扫描当前可见终端补发一次，覆盖 AppKit 整树替换期间仍在屏幕上的旧 Pane host。透明浅色终端的 `terminalCanvasBackgroundColor` 保留 Otty 原始 alpha，并同步到 SwiftTerm backing layer；`renderedTerminalBackground` 只给 PiP、候选面板等没有材质宿主的浮层提供主题 `surface`。SwiftTerm 以 ANSI 16 色派生完整 256 色调色板。下划线渲染、字体平滑、连字、行高和 SGR 闪烁同样立即作用于已有会话；行高扩大的是终端网格和行间留白，竖线光标仍按未放大的字体自然高度从基线侧对齐，避免伸入上一行。Core Graphics 的 `CaretView` 与默认启用的 Metal renderer 必须使用相同规则，不能因性能后端切换而改变光标高度。Metal 的 `MTKView` 采用暂停并按需绘制，字号或字体变化除了更新网格尺寸，还必须显式请求新帧，使缓存签名按新字体重建行数据并立即呈现；平滑策略变化时则同时清空 glyph atlas 与行缓存，避免继续显示旧策略生成的字形。
 
 浅色内置主题未显式声明选区背景时，Aster 使用终端前景的 30% 透明度（8-bit alpha 为 77）；显式的选区前景/背景始终优先。这样既保持 Otty 缺省语义，也避免浅色主题选中文字时被不透明前景色遮住。本阶段不改变深色内置主题的既有回退。
 
@@ -96,7 +96,7 @@ flowchart LR
 - Otty 显式定义的光标文字、选区前景与透明 Glass 背景不会被近似值覆盖。
 - `.astertheme` 安全往返，以及 `.ottytheme` 的颜色、样式、字体映射和 ANSI 调色板完整性。
 - 符号链接、FIFO、设备文件、超限文件与不支持后缀均在读取内容前拒绝。
-- 字体角色解析、主题候选跳过、用户回退顺序、光标颜色/文字色/不透明度，以及 Default/Always 的 DECSCUSR 优先级。
+- 字体角色解析、主题候选跳过、用户回退顺序、字号变化显式触发 Metal 新帧、光标颜色/文字色/不透明度、Core Graphics/Metal 竖线高度一致性，以及 Default/Always 的 DECSCUSR 优先级。
 - Otty `tab-bar.tab` 继承、缺失 mode 的亮度推断，以及非有限/超范围布局数值的安全规范化。
 - 9 套浅色主题逐套建立真实 AppKit 工作区，核对详情页中的 Terminal、Window、Container、Panel、Sidebar、Titlebar、Tabbar、Tab、Accents、光标、选区和 ANSI 16 色是否到达对应渲染对象。
 - 给无宽度的容器或活动标签边框设置颜色时自动启用 1pt，确保可编辑 token 不会“保存成功但不可见”。

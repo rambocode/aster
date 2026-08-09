@@ -1131,7 +1131,8 @@ final class AsterTerminalView: LocalProcessTerminalView {
 
   /// AppKit 在 iPhone/iPad 捕获完成后调用该 responder 方法。图片先保存成私有临时文件，
   /// 再以单个 POSIX Shell 参数插入；失败不会把半截路径或原始二进制写进 PTY。
-  @objc func readSelection(from pasteboard: NSPasteboard) -> Bool {
+  @objc(readSelectionFromPasteboard:)
+  func readSelection(from pasteboard: NSPasteboard) -> Bool {
     guard permitsUserInputAction() else { return false }
     for type in TerminalImportedFileStore.supportedPasteboardTypes {
       guard let data = pasteboard.data(forType: type) else { continue }

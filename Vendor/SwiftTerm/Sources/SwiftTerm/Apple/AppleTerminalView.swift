@@ -304,8 +304,23 @@ extension TerminalView {
             resize(cols: newCols, rows: newRows)
         }
         updateCaretView()
-        
-        #if os(macOS)
+
+        // MTKView is paused and renders only on explicit demand. Marking the parent terminal
+        // view dirty does not reliably schedule a Metal frame, so font-size/family changes can
+        // update grid metrics while leaving the old glyphs on screen until unrelated output or
+        // resize activity arrives. The renderer's cache signature contains the new font metrics
+        // and rebuilds its rows when this request is consumed.
+        #if canImport(MetalKit)
+        if metalView != nil {
+            requestMetalDisplay()
+        } else {
+            #if os(macOS)
+            needsDisplay = true
+            #else
+            setNeedsDisplay(frame)
+            #endif
+        }
+        #elseif os(macOS)
         needsDisplay = true
         #else
         setNeedsDisplay(frame)
@@ -2120,6 +2135,9 @@ extension TerminalView {
         guard let metalView = metalView else {
             return
         }
+#if DEBUG && os(macOS)
+        onMetalDisplayRequest?()
+#endif
         metalView.setNeedsDisplay(metalView.bounds)
     }
 

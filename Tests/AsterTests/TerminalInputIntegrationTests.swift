@@ -144,3 +144,14 @@ func importedPathsPrefillCodexInputWithoutSubmitting() {
   #expect(text.contains(ShellPasteEscaper.escape(paths[1].path)))
   #expect(!encoded.contains(13))
 }
+
+@Test("Continuity Camera 使用 AppKit 标准 pasteboard responder selector")
+@MainActor
+func continuityCameraUsesStandardPasteboardResponderSelector() {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+
+  // `Insert from iPhone` 由 AppKit 固定发送 `readSelectionFromPasteboard:`。仅提供
+  // Swift 自动推导的 `readSelectionFrom:` 时，菜单可以出现并完成拍摄，但结果不会
+  // 到达终端 responder，用户看到的就是 Codex 输入框没有任何变化。
+  #expect(view.responds(to: NSSelectorFromString("readSelectionFromPasteboard:")))
+}

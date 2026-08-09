@@ -1315,6 +1315,78 @@ func openQuicklyPresentsWithoutRebuildingWorkspace() throws {
   #expect(!controller.view.allDescendants.contains { $0 === originalOverlay })
 }
 
+@Test("Esc 在搜索框失焦后仍关闭工作区级临时浮层")
+@MainActor
+func escapeDismissesWorkspaceOverlaysRegardlessOfFirstResponder() throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  let terminal = try #require(model.selectedTab?.activeSession?.makeTerminalView(
+    preferences: preferences) as? AsterTerminalView)
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+    styleMask: [.titled, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+
+  let presentations: [(present: () -> Void, isPresented: () -> Bool)] = [
+    ({ model.togglePalette() }, { model.isPalettePresented }),
+    ({ model.toggleGlobalFind() }, { model.isGlobalFindPresented }),
+    ({ model.toggleAgentHistory() }, { model.isAgentHistoryPresented }),
+    ({ model.toggleOpenQuickly() }, { model.isOpenQuicklyPresented }),
+  ]
+  for presentation in presentations {
+    presentation.present()
+    RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    // 模拟用户点到结果、按钮或后方终端：Esc 不能依赖 OverlaySearchField 仍是
+    // first responder，必须由当前工作区窗口的展示边界统一接住。
+    #expect(window.makeFirstResponder(terminal))
+    let escape = try #require(NSEvent.keyEvent(
+      with: .keyDown,
+      location: .zero,
+      modifierFlags: [],
+      timestamp: 0,
+      windowNumber: window.windowNumber,
+      context: nil,
+      characters: "\u{1b}",
+      charactersIgnoringModifiers: "\u{1b}",
+      isARepeat: false,
+      keyCode: 53
+    ))
+    NSApp.sendEvent(escape)
+    #expect(presentation.isPresented() == false)
+  }
+
+  model.togglePalette()
+  let otherWindow = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 320, height: 240),
+    styleMask: [.titled],
+    backing: .buffered,
+    defer: false
+  )
+  let otherWindowEscape = try #require(NSEvent.keyEvent(
+    with: .keyDown,
+    location: .zero,
+    modifierFlags: [],
+    timestamp: 1,
+    windowNumber: otherWindow.windowNumber,
+    context: nil,
+    characters: "\u{1b}",
+    charactersIgnoringModifiers: "\u{1b}",
+    isARepeat: false,
+    keyCode: 53
+  ))
+  NSApp.sendEvent(otherWindowEscape)
+  #expect(model.isPalettePresented)
+  model.dismissWorkspaceOverlays()
+}
+
 @Test("Open Quickly 搜索、过滤器和结果共享横向基线且切换复用结果行")
 @MainActor
 func openQuicklyAlignsContentAndReusesRows() throws {
@@ -1345,6 +1417,7 @@ func openQuicklyAlignsContentAndReusesRows() throws {
     .first { $0.identifier?.rawValue == "open-quickly-search" })
   let resultsStack = try #require(controller.view.allDescendants.compactMap { $0 as? NSStackView }
     .first { $0.identifier?.rawValue == "open-quickly-results" })
+  let resultsScroll = try #require(resultsStack.enclosingScrollView)
   let firstRow = try #require(controller.view.allDescendants.compactMap { $0 as? NSButton }
     .first { $0.identifier?.rawValue.hasPrefix("open-quickly-row-") == true })
   let firstBadge = try #require(controller.view.allDescendants.first {
@@ -1377,6 +1450,9 @@ func openQuicklyAlignsContentAndReusesRows() throws {
   #expect(abs(iconFrame.midY - fieldAlignmentRect.midY) < 1)
   #expect((searchIcon as? NSImageView)?.imageAlignment == .alignCenter)
   #expect((searchIcon as? NSImageView)?.imageScaling == .scaleProportionallyDown)
+  // NSScrollView 没有能向 NSStackView 传播的固有高度；结果区必须显式采用内容高度，
+  // 否则目标和行都已创建，真实窗口里仍会被压成 0 高度而完全不可见。
+  #expect(resultsScroll.bounds.height > 0)
   #expect(abs(searchRow.frame.width - resultsStack.bounds.width) < 1)
   #expect(abs(firstRow.frame.width - resultsStack.bounds.width) < 1)
   let badgeFrameInRow = firstBadge.convert(firstBadge.bounds, to: firstRow)
@@ -1539,6 +1615,57 @@ func openQuicklySearchFocusAndInsideClickStayPresented() throws {
   NSApp.sendEvent(click)
   #expect(model.isOpenQuicklyPresented)
   #expect(controller.view.allDescendants.contains { $0.identifier?.rawValue == "open-quickly-overlay" })
+}
+
+@Test("未运行 Agent CLI 时 Open Quickly Prompt 仍写入当前终端")
+@MainActor
+func openQuicklyPromptFallsBackToActiveTerminalWithoutAgent() async throws {
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let session = try #require(model.selectedTab?.activeSession)
+  let terminal = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+
+  let prompt = "explain this terminal output"
+  let metadata = AgentSessionMetadata(
+    id: "history-without-live-agent",
+    configuration: .init(provider: .codex),
+    projectDirectory: "/tmp",
+    title: "Previous Codex session",
+    createdAt: .distantPast,
+    updatedAt: Date(),
+    transcriptFileURL: URL(fileURLWithPath: "/tmp/history-without-live-agent.jsonl")
+  )
+  model.replaceAgentHistoriesForTesting([
+    AgentSessionHistory(
+      metadata: metadata,
+      transcript: AgentTranscriptReport(
+        entries: [
+          AgentTranscriptEntry(
+            sourceRecordIndex: 0,
+            kind: .message(role: .user),
+            timestamp: Date(),
+            text: prompt)
+        ],
+        skippedRecordCount: 0,
+        truncatedEntryCount: 0
+      )
+    )
+  ])
+  var encoded: [UInt8] = []
+  terminal.onEncodedInput = { encoded.append(contentsOf: $0) }
+
+  let controller = OpenQuicklyOverlayViewController(model: model)
+  controller.loadViewIfNeeded()
+  let targetID = try #require(controller.promptTargetIDsForTesting.first)
+  controller.activateTargetForTesting(id: targetID)
+  try await Task.sleep(for: .milliseconds(50))
+
+  #expect(String(decoding: encoded, as: UTF8.self).contains(prompt))
+  #expect(!encoded.contains(13))
 }
 
 @Test("详情面板切走再切回会复用已构建页而不是重建大文件树")

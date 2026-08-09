@@ -48,3 +48,21 @@ func lineHeightExpandsGridWithoutStretchingBarCursor() throws {
   #expect(view.caretFrame.height > ceil(view.font.ascender - view.font.descender))
   #expect(paintedRows <= Int(ceil(view.font.pointSize)) + 1)
 }
+
+@Test("Metal 竖线光标与 AppKit 一样保留行间距")
+@MainActor
+func metalBarCursorDoesNotConsumeLineSpacing() {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 240))
+  view.lineSpacing = 2
+  let scale: CGFloat = 2
+
+  let metalHeight = MetalTerminalRenderer.barCursorHeightPixels(
+    cellHeight: view.caretFrame.height,
+    fontPointSize: view.font.pointSize,
+    scale: scale
+  )
+
+  // 竖线只覆盖字号高度；cell 因 line-height 增加的区域必须留空，避免光标顶到上一行。
+  #expect(metalHeight <= ceil(view.font.pointSize * scale))
+  #expect(metalHeight < view.caretFrame.height * scale)
+}

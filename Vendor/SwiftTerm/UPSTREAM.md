@@ -28,6 +28,11 @@ record the new version and revision here.
 - `Apple/Metal/MetalTerminalRenderer.swift` resolves the SwiftPM shader bundle from packaged app
   resources and the structured `--test-bundle-path` supplied by SwiftPM's test launcher, without
   touching the generated accessor that can terminate after its build-machine path becomes stale.
+  Its bar-cursor geometry also matches the AppKit caret: line spacing expands the grid while the
+  visible bar stays at font height, so enabling Metal cannot make it touch the preceding row.
+- `Apple/AppleTerminalView.swift` explicitly requests a frame from the paused Metal view after a
+  font change. Invalidating only the parent AppKit view can otherwise update grid metrics without
+  presenting glyphs at the new size until later terminal activity.
 - `Terminal.swift` and `Buffer.swift` expose stable absolute buffer coordinates and an opt-in
   embedder identity used for conservative DA1/DA2 and XTVERSION replies. `Terminal.swift` also
   exposes the active-buffer cursor position used by Vi Mode and distinguishes protocol replies

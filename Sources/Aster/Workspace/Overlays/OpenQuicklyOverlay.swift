@@ -78,6 +78,9 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
 
   private let model: AppModel
   private let resultsStack = NSStackView()
+  /// `NSScrollView` 不会把 documentView 的固有高度传给外层 NSStackView，因此由结果
+  /// 内容显式驱动高度；否则数据和行都已创建时，滚动区仍可能被压缩成 0。
+  private var resultsHeightConstraint: NSLayoutConstraint?
   private let search = OverlaySearchField()
   private var chips: [OpenQuicklyFilter: OpenQuicklyChip] = [:]
   private var selectedFilter: OpenQuicklyFilter
@@ -306,6 +309,18 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
 
   func invalidateTargets() { targetsNeedRefresh = true }
 
+#if DEBUG
+  /// Test seam for verifying that Prompt history remains actionable when no Agent CLI is active.
+  var promptTargetIDsForTesting: [String] {
+    targets.map(\.item.id).filter { $0.hasPrefix("prompt:") }
+  }
+
+  /// Executes the same target closure used by Return/click without depending on row hit testing.
+  func activateTargetForTesting(id: String) {
+    targetsByID[id]?.action()
+  }
+#endif
+
   /// 顶部分类标签条:替代原 NSPopUpButton,与参考设计一致。
   private func makeFilterStrip() -> NSView {
     let strip = NSStackView()
@@ -363,6 +378,8 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     resultsStack.translatesAutoresizingMaskIntoConstraints = false
     document.translatesAutoresizingMaskIntoConstraints = false
     scroll.translatesAutoresizingMaskIntoConstraints = false
+    let heightConstraint = scroll.heightAnchor.constraint(equalToConstant: 1)
+    resultsHeightConstraint = heightConstraint
     NSLayoutConstraint.activate([
       document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
       document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
@@ -372,9 +389,18 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
       resultsStack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
       resultsStack.topAnchor.constraint(equalTo: document.topAnchor),
       document.bottomAnchor.constraint(greaterThanOrEqualTo: resultsStack.bottomAnchor),
-      scroll.heightAnchor.constraint(lessThanOrEqualToConstant: 400),
+      heightConstraint,
     ])
     return scroll
+  }
+
+  /// 按当前 arrangedSubviews 的真实 fitting height 更新滚动区，最多展示 400pt；超出
+  /// 部分继续由 NSScrollView 滚动。最小 1pt 避免空内容造成不确定的零高约束。
+  private func updateResultsHeight() {
+    resultsStack.needsLayout = true
+    resultsStack.layoutSubtreeIfNeeded()
+    let contentHeight = ceil(resultsStack.fittingSize.height)
+    resultsHeightConstraint?.constant = min(400, max(1, contentHeight))
   }
 
   private func makeSeparator() -> NSView {
@@ -426,6 +452,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     if visibleTargets.isEmpty {
       resultsStack.addArrangedSubview(
         makeLabel("没有匹配项", size: 11, color: AsterTheme.secondaryInk))
+      updateResultsHeight()
       return
     }
     // 多类型视图(.all / .current)按 kind 分组并显示小节标题;单类型过滤器下
@@ -470,6 +497,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
         rows.append(row)
       }
     }
+    updateResultsHeight()
     selectedIndex = min(selectedIndex, rows.count - 1)
     updateCommandHintAppearance()
     updateSelectionAppearance()
@@ -699,22 +727,34 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     return result
   }
 
-  /// 「当前」页的提示词分组:pane ↔ session 没有可靠映射(metadata 不含 tty/pid),
-  /// 用启发式取当前 tab 中正在运行 Agent 的 pane(优先聚焦 pane)的同 provider、
-  /// updatedAt 最新会话,列出其最近 6 条 user prompt,点击粘贴回终端输入行。
+  /// 「当前」页的提示词分组：pane ↔ session 没有可靠映射（metadata 不含 tty/pid）。
+  /// 有运行中的 Agent 时沿用同 provider 最新历史并优先写回对应 Pane；没有 Agent 时，
+  /// 使用全部 provider 中最近的历史，并把 Prompt 写入当前可用终端。历史 Prompt 因而
+  /// 是通用终端输入能力，不依赖前台恰好运行 Codex、Claude Code 等 Agent CLI。
   private func makePromptTargets(tab: TerminalTabItem) -> [Target] {
-    let agentPanes = tab.layout.allPanes.compactMap {
-      pane -> (paneID: UUID, provider: AgentProvider)? in
-      guard let provider = tab.runtime(for: pane.id)?.terminalSession?.activeAgentProvider
-      else { return nil }
-      return (pane.id, provider)
+    let terminalPanes = tab.layout.allPanes.compactMap {
+      pane -> (paneID: UUID, provider: AgentProvider?)? in
+      guard let session = tab.runtime(for: pane.id)?.terminalSession else { return nil }
+      return (pane.id, session.activeAgentProvider)
     }
-    let ordered = agentPanes.sorted { lhs, _ in lhs.paneID == tab.activePaneID }
-    guard let match = ordered.first,
-      let history = model.agentHistories
-        .filter({ $0.metadata.configuration.provider == match.provider })
-        .max(by: { $0.metadata.updatedAt < $1.metadata.updatedAt })
+    guard let activeTerminal = terminalPanes.first(where: { $0.paneID == tab.activePaneID })
+      ?? terminalPanes.first
     else { return [] }
+    let agentTerminal = terminalPanes.first {
+      $0.paneID == tab.activePaneID && $0.provider != nil
+    } ?? terminalPanes.first { $0.provider != nil }
+    let destination = agentTerminal ?? activeTerminal
+    let candidateHistories: [AgentSessionHistory]
+    if let provider = agentTerminal?.provider {
+      candidateHistories = model.agentHistories.filter {
+        $0.metadata.configuration.provider == provider
+      }
+    } else {
+      candidateHistories = model.agentHistories
+    }
+    guard let history = candidateHistories.max(by: {
+      $0.metadata.updatedAt < $1.metadata.updatedAt
+    }) else { return [] }
     let prompts = history.transcript.entries.filter {
       if case .message(role: .user) = $0.kind { return !$0.text.isEmpty }
       return false
@@ -730,7 +770,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
           title: collapsed, detail: history.metadata.title, timestamp: entry.timestamp),
         symbol: "quote.bubble", badge: "Prompt", accented: false, actionTitle: "粘贴到终端"
       ) { [weak model] in
-        model?.insertPromptIntoPane(tabID: tab.id, paneID: match.paneID, text: entry.text)
+        model?.insertPromptIntoPane(tabID: tab.id, paneID: destination.paneID, text: entry.text)
       }
       target.menuActions = [
         (

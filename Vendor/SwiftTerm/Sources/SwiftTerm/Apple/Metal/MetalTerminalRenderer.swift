@@ -178,6 +178,18 @@ struct CacheSignature: Hashable {
 }
 
 final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
+    /// Returns the vertical size used by the Metal bar cursor in backing pixels.
+    /// Kept as a small test seam because the AppKit caret and Metal renderer are
+    /// separate drawing paths that must preserve identical line-spacing semantics.
+    static func barCursorHeightPixels(cellHeight: CGFloat,
+                                      fontPointSize: CGFloat,
+                                      scale: CGFloat) -> CGFloat {
+        // Match `CaretView.drawCursor`: line-height expands the terminal grid, while a bar
+        // cursor remains tied to the configured font size and sits at the cell bottom. Drawing
+        // the full cell here makes the Metal-only caret touch the text in the row above.
+        min(cellHeight * scale, max(1, ceil(fontPointSize) * scale))
+    }
+
 #if canImport(os)
     private static let profileLog = OSLog(subsystem: "org.tirania.SwiftTerm", category: "MetalProfile")
     private static let profileEnabled = ProcessInfo.processInfo.environment["SWIFTTERM_PROFILE"] == "1"
@@ -2300,10 +2312,15 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         switch cursorStyle {
         case .blinkBar, .steadyBar:
             let barWidth = max(1, 2 * scale)
+            let barHeight = Self.barCursorHeightPixels(
+                cellHeight: cellHeight,
+                fontPointSize: terminalView.fontSet.normal.pointSize,
+                scale: scale
+            )
             colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
                                                           y0: CGFloat(y0),
                                                           x1: CGFloat(x0 + barWidth),
-                                                          y1: CGFloat(y1),
+                                                          y1: CGFloat(y0 + barHeight),
                                                           color: cursorColor))
             return (colorVertices, [], [])
         case .blinkUnderline, .steadyUnderline:

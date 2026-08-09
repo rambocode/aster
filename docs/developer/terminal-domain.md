@@ -179,7 +179,7 @@ Edit 菜单和终端右键菜单提供粘贴选区、普通文件 Base64、POSIX
 
 `TerminalInputEncoder` 将 AppKit 的行首/行尾、词移动、行/词删除和撤销动作编码为可移植的 readline/Emacs 字节。Edit 菜单的快捷键通过 responder chain 进入 `AsterTerminalView`；仅在普通屏幕且没有 Kitty 增强键盘协商时启用，alternate screen 与现代协议继续由 SwiftTerm 编码。不同 Shell 没有通用 Redo 字节，因此在 Shell Integration 提供明确绑定前不伪装支持。`Option as Meta` 的新安装默认值为关闭，保留系统输入法产生重音和特殊字符的能力；用户显式开启后仍由 SwiftTerm 发送 Esc 前缀。
 
-Edit 菜单的“插入”提供文件/目录路径和交互式截屏，均把每个绝对路径编码为独立 POSIX Shell 参数后，通过 `typePromptText` 预填到当前前台程序的输入框，不发送 Return；Codex/Claude 等协商 bracketed paste 的 TUI 会收到完整粘贴块。“Insert from iPhone”使用 `NSMenuItem.importFromDeviceIdentifier` 接入 AppKit Continuity Camera，并复用同一输入框交付入口；终端只在可写时成为图片 requestor，捕获结果限制为 PNG、TIFF、JPEG、HEIC 或 PDF 且最大 32 MiB，保存到 `0700` 临时目录与 `0600` 普通文件后再插入路径。截屏通过固定 `/usr/sbin/screencapture -i -o -t png` 参数数组运行，结束后复验普通文件、大小与权限；取消不报错，失败显示明确反馈。
+Edit 菜单的“插入”提供文件/目录路径和交互式截屏，均把每个绝对路径编码为独立 POSIX Shell 参数后，通过 `typePromptText` 预填到当前前台程序的输入框，不发送 Return；Codex/Claude 等协商 bracketed paste 的 TUI 会收到完整粘贴块。“Insert from iPhone”使用 `NSMenuItem.importFromDeviceIdentifier` 接入 AppKit Continuity Camera，并以 AppKit 固定的 `readSelectionFromPasteboard:` responder selector 接收结果；Swift 方法名不能依赖自动推导，否则菜单和拍摄可完成但 pasteboard 不会送达。终端只在可写时成为图片 requestor，捕获结果限制为 PNG、TIFF、JPEG、HEIC 或 PDF 且最大 32 MiB，保存到 `0700` 临时目录与 `0600` 普通文件后再通过同一输入框入口插入路径。截屏通过固定 `/usr/sbin/screencapture -i -o -t png` 参数数组运行，结束后复验普通文件、大小与权限；取消不报错，失败显示明确反馈。
 
 同一菜单按 Otty 顺序提供“编辑器”(`⇧⌘E`)、“Prompt 队列…”(`⇧⌘M`) 与“发送到聊天…”。“编辑器”实际映射到 `toggleComposer()`：默认在当前活动 Pane 底部渲染 `AgentComposer`，不会创建文件选择器或资源 Pane；本地文件编辑继续经“文件”、文件树或路径入口的 `openResource(..., mode: .edit)` 创建。后两项直接调用既有 Prompt Queue 与 Agent Chat 领域流程，不创建菜单层状态副本。
 

@@ -49,6 +49,9 @@ final class WorkspaceViewController: NSViewController {
   // `nonisolated(unsafe)`：只在主线程读写，但 deinit 是 nonisolated，需要能取回它
   // 来注销监视器，否则控制器释放后事件监视器仍然存活。
   private nonisolated(unsafe) var paneClickMonitor: Any?
+  /// 命令面板、Open Quickly、全局查找和 Agent 历史共用窗口级 Esc 兜底。搜索框
+  /// 失焦后事件不会经过 `OverlaySearchField`，因此不能只依赖控件自己的 keyDown。
+  private nonisolated(unsafe) var workspaceOverlayKeyMonitor: Any?
   private var inactiveOverlay: InactiveWindowOverlayView?
   /// 主题选择器是独立 key Panel；展示期间后方工作区仍是实时预览画布，不能套用普通
   /// 非活动窗口的褪色遮罩，也不能暂停终端光标状态。
@@ -179,6 +182,7 @@ final class WorkspaceViewController: NSViewController {
     model.isInspectorPresented = preferences.inspectorPresented
     model.ensureInitialTab()
     installPaneClickMonitor()
+    installWorkspaceOverlayKeyMonitor()
     observeWindowActivation()
     refresh()
   }
@@ -368,6 +372,7 @@ final class WorkspaceViewController: NSViewController {
 
   deinit {
     if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
+    if let workspaceOverlayKeyMonitor { NSEvent.removeMonitor(workspaceOverlayKeyMonitor) }
   }
 
   /// 用窗口级事件监视器跟踪「点了哪个分屏」。终端和文本视图会自己消费 `mouseDown`
@@ -379,6 +384,22 @@ final class WorkspaceViewController: NSViewController {
     { [weak self] event in
       self?.activatePane(from: event)
       return event
+    }
+  }
+
+  /// 工作区级临时浮层无论当前 first responder 是搜索框、结果按钮还是终端，都由
+  /// 所属窗口消费 Esc 并统一关闭。事件严格按 window 过滤，多窗口之间互不影响；
+  /// 没有浮层时原样放行，保留终端、Vi Mode 与 Autocomplete 的既有 Esc 语义。
+  private func installWorkspaceOverlayKeyMonitor() {
+    workspaceOverlayKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+      [weak self] event in
+      guard let self, event.keyCode == 53,
+        let window = self.view.window, event.window === window,
+        self.model.isPalettePresented || self.model.isOpenQuicklyPresented
+          || self.model.isGlobalFindPresented || self.model.isAgentHistoryPresented
+      else { return event }
+      self.model.dismissWorkspaceOverlays()
+      return nil
     }
   }
 

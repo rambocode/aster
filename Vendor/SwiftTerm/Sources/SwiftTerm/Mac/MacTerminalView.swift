@@ -300,6 +300,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var isUsingMetalRenderer: Bool {
         return useMetalRenderer
     }
+#if DEBUG
+    /// Test seam for verifying that visual-only configuration changes explicitly wake the
+    /// paused MTKView instead of relying on an AppKit parent-view invalidation side effect.
+    var onMetalDisplayRequest: (() -> Void)?
+#endif
 #endif
 
     var cellDimension: CellDimension!
