@@ -826,6 +826,7 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       }
       session.onCommandFinished = { [weak self] in self?.onCommandFinished?(descriptor.id) }
       Publishers.MergeMany(
+        session.$lifecycleState.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$isRunning.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$hasRunningCommand.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$exitCode.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),

@@ -70,7 +70,7 @@ PiP 与主工作区共享同一个长期 `TerminalSession` 容器。`PanePicture
 
 `WorkspaceViewController` 使用 `NSStackView` 组合三种标签栏布局，用递归 `PersistedSplitView` 渲染 `PaneLayout`；`ActivePaneHostView` 不再画当前 Pane 的 2 pt 强调色顶边（在聚焦窗口里比终端内容还抢眼），改为给**非**聚焦 Pane 铺整块褪色遮罩（`AsterTheme.paper` 30%，`ClickThroughStripView` 点击穿透，点非活动 Pane 的第一下要能同时激活它并落到终端）。遮罩先于拖动把手安装，把手才浮在其上；切换聚焦只翻转 `isActivePane`（`didSet` 改遮罩可见性），不重建视图树。
 
-**窗口活动状态**：窗口失去 key 状态时叠加 `InactiveWindowOverlayView`（主题 `paper` 色 45% 透明、`hitTest` 返回 nil，失焦窗口的第一次点击照常落到终端）。AppKit 只会自动灰化系统控件，终端网格与自绘视图不受影响，没有这层遮罩时非活动窗口看起来仍然「亮着」。通知按 `notification.object === view.window` 过滤，多窗口互不影响；`refresh()` 会清空子视图，因此刷新末尾要重新安放遮罩。分隔条的强调色在窗口非 key 时也一律退回灰线。窗口活动状态还会下发到所有会话：`AsterTerminalView` 在失焦时把生效样式换成 `preferredCursorStyle.nonBlinking`，终端光标停止闪烁但形状不变——SwiftTerm 的 `caretView.focused` 只切换实心/空心，闪烁完全由 `CursorStyle` 的 blink 变体决定，而窗口失焦并不会触发 `resignFirstResponder`。`preferredCursorStyle` 仍是用户配置的唯一真值，DECSCUSR 拦截按「生效样式」比较。
+**窗口与 Pane 活动状态**：窗口失去 key 状态时叠加 `InactiveWindowOverlayView`（主题 `paper` 色 45% 透明、`hitTest` 返回 nil，失焦窗口的第一次点击照常落到终端）。AppKit 只会自动灰化系统控件，终端网格与自绘视图不受影响，没有这层遮罩时非活动窗口看起来仍然「亮着」。通知按 `notification.object === view.window` 过滤，多窗口互不影响；`refresh()` 会清空子视图，因此刷新末尾要重新安放遮罩。分隔条的强调色在窗口非 key 时也一律退回灰线。窗口状态下发到全部会话，Pane 状态则由稳定 `activePaneID` 在初次挂载和局部切换时下发。`AsterTerminalView` 关闭 SwiftTerm 的 `caretViewTracksFocus`，避免其把竖线或下划线失焦光标无条件改成空心方块；非活动窗口或 Pane 只把当前样式换成同形状的 `nonBlinking` 变体。用户配置仍是光标几何唯一真值，DECSCUSR 在 Default 模式只贡献 blink 位，Always 模式则连 blink 位也不能覆盖。
 
 SwiftTerm 的 overlay `NSScroller` 在 `AsterTerminalView.didAddSubview` 里被隐藏：它是一条 5.5 pt 灰条，随滚动闪现又消失、并盖住右侧文字。SwiftTerm 的 `reservedScrollerWidth` 在 scroller 隐藏时归零，终端网格会自动收回这几个点，不会留白。
 

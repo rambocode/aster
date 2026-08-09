@@ -49,6 +49,8 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 20. `TERM=auto` 解析为 `xterm-256color`；自定义名称只有真实 terminfo 存在时才能进入子进程，终端不得冒充其它产品。
 21. Autocomplete 只在 OSC 133 确认的可靠 prompt 中工作；接受候选只发送尚未输入的后缀，不自动发送回车。
 22. 命令学习必须先脱敏并遵守忽略模式；关闭本机学习时不得读取历史/README、运行 help 探测或生成纠错。
+23. Shell 自然结束或崩溃后必须保留最后终端画面并显示明确原因；只允许用户显式创建全新 PTY 重启，禁止自动重启循环，旧代次回调不得结束新进程。
+24. 光标几何始终服从用户外观设置；程序请求只可按闪烁优先级改变 blink 位。Agent 处理、非活动 Pane 和非活动窗口只暂停闪烁，不得替换成通用空心方块。
 
 ## 业务流程
 
@@ -121,6 +123,19 @@ Session 的退出状态。测试直接在主线程调用 `dataReceived` 时保�
 该路径。这个模块是 PTY 到 UI 的唯一并发 seam；各页面只继续消费现有的主线程领域事件，
 不订阅或共享后台 PTY 队列。队列以读游标消费 partial chunks，只在完全排空或跨过半数后
 批量压缩数组，避免持续小片段输出因反复 `removeFirst()` 退化为 O(n²)。
+
+#### Shell 结束与恢复
+
+`TerminalSessionLifecycleState` 区分未启动、启动中、运行中、已结束、启动失败和主动停止。
+SwiftTerm 回传的是 `waitpid` 原始状态，`TerminalProcessTermination` 将其归一化为正常退出码、
+终止信号或 PTY I/O 失败，避免把 `exit 7` 显示为 `1792`。结束卡片覆盖在最后一帧之上，
+卡片外区域仍可选择和复制历史内容；正常 `exit` 不会被当成需要自动重启的错误。
+
+用户点击“重新启动 Shell”时，Session 保留 Pane 身份和稳定 host view，但丢弃旧
+`AsterTerminalView`，创建新的 `LocalProcess`、PTY 和输出总线。每个新 view 定义一个进程
+代次，终止回调必须匹配当前 view 身份；旧 DispatchIO/monitor 的迟到回调只写诊断事件，
+不能覆盖新进程状态。
+重启失败会继续显示可操作状态，不做后台重试或形成崩溃循环。
 
 #### dirty-row Metal 渲染
 
@@ -254,7 +269,9 @@ SwiftTerm 视图只在 `process.running` 为真时按当前 `shellPid` 终止进
 - Recipe 后缀或 JSON 无效：拒绝导入并显示提示。
 - Recipe 结构超限、UUID 重复或比例非法：在启动 Shell 前拒绝导入。
 - 关闭 dirty 编辑器：保存失败或用户取消时中止关闭事务。
-- Shell 结束：终端保留滚动内容并显示结束状态；关闭 Pane/标签负责最终清理。
+- Shell 正常退出：终端保留滚动内容并显示退出状态，不自动重启；用户可在原 Pane 显式启动全新 Shell。
+- Shell 非零退出、信号终止或 PTY I/O 失败：显示归一化原因并记录不含命令、正文和路径的诊断事件；恢复同样创建全新 PTY。
+- 旧进程终止回调迟到：按终端 view 身份忽略，不能把已经重启的新 Shell 标记为结束。
 - 配置导入失败：保留当前配置，不写入部分结果。
 - Frequent Folders 数据损坏：丢弃非法路径、非有限分数和重复项；单个 OSC 7 记录失败不影响工作区目录同步。
 - 粘贴保护取消：不写入任何 PTY 字节；剪贴板正文不记录日志。
@@ -271,7 +288,7 @@ SwiftTerm 视图只在 `process.running` 为真时按当前 `shellPid` 终止进
 
 ## 测试与发布
 
-测试覆盖纯 AppKit 迁移、配置编码、24 套主题真值、颜色解析、递归分屏、方向聚焦与分隔条调整、分屏面板在两个方向/两种标签栏布局下的真实 frame、⌘W 的面板优先语义、比例更新、移除节点、文档 dirty/原子保存、Recipe 往返、FIFO 和累计资源预算、恶意结构上限、会话快照、UTF-8 分块、ANSI 边界、线性/矩形选区、鼠标报告绕过、像素滚动与首尾边界、PTY 输出顺序/背压/64 KiB 解析预算、Metal 自动激活与 shader bundle、粘贴风险、括号序列、OSC 52 权限/限长、OSC 9;4/9/99/777、通知策略、标题权限、Shell 受管文件、真实 zsh/Bash FTCS、命令时间线、提示符删除、TERM 回退、DA/XTVERSION/DSR、Base64 文件边界和真实 PTY 生命周期。发布前必须运行：
+测试覆盖纯 AppKit 迁移、配置编码、24 套主题真值、颜色解析、递归分屏、方向聚焦与分隔条调整、分屏面板在两个方向/两种标签栏布局下的真实 frame、⌘W 的面板优先语义、比例更新、移除节点、文档 dirty/原子保存、Recipe 往返、FIFO 和累计资源预算、恶意结构上限、会话快照、UTF-8 分块、ANSI 边界、线性/矩形选区、鼠标报告绕过、像素滚动与首尾边界、PTY 输出顺序/背压/64 KiB 解析预算、Metal 自动激活与 shader bundle、粘贴风险、括号序列、OSC 52 权限/限长、OSC 9;4/9/99/777、通知策略、标题权限、Shell 受管文件、真实 zsh/Bash FTCS、命令时间线、提示符删除、TERM 回退、DA/XTVERSION/DSR、Base64 文件边界、`waitpid` 状态归一化、异常退出恢复、迟到回调隔离、隐私安全日志和真实 PTY 生命周期。发布前必须运行：
 
 ```bash
 swift test --no-parallel

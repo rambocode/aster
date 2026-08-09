@@ -31,7 +31,7 @@ Aster 0.4.0 将内置主题升级为 Otty 1.3.1 的完整主题集，并由纯 A
 8. 标签栏自动隐藏只在开启该选项且工作区只有一个标签页时生效。
 9. Otty 的 `background = "none"` 必须保留为透明 RGBA；终端 `nativeBackgroundColor` 与 backing layer 同步使用该 RGBA，让 workspace 的原生材质直接透出。不得把截图采样灰、固定黑色透明度或主题 `surface` 当作 Glass 的真实终端背景。脱离工作区材质宿主的 PiP、候选面板等浮层仍使用主题 `surface`。旧版 `Catppuccin` 选择迁移为 `Catppuccin Mocha`。
 10. 字体按“全局角色字体 → 主题 `token.font-mono` → JetBrains Mono”解析，粗体、斜体、粗斜体允许独立覆盖；Nerd Symbols 与用户回退字体只参与缺字级联，不替换正文主字体。
-11. 光标的“默认”闪烁模式允许终端程序通过 DECSCUSR 临时调整形状和闪烁；“始终”模式固定用户选择。颜色覆盖、不透明度、平滑动画和失焦停止闪烁均在两种模式下生效。
+11. 光标形状始终以用户配置为真值；“默认”闪烁模式只允许终端程序通过 DECSCUSR 临时调整 blink 位，“始终”模式连 blink 位也固定。颜色覆盖、不透明度、平滑动画、Agent 处理期间及失焦停止闪烁均在两种模式下生效。
 12. 设置详情与最终 AppKit 对象必须共用 `TerminalTheme.resolvedColor(forSlot:)` 的级联结果。窗口、容器、左右 Sidebar、标题栏、标签栏、标签、光标、选区和 ANSI 颜色不得在视图层另设近似回退。
 13. 对原本没有宽度的 `container.border` 或 `tab.activeBorderColor` 写入颜色时，同时启用 1pt 边框，保证设置项在最终画面中可见。
 14. 设置窗口打开期间，主题选择、主题颜色覆盖和明暗外观变化必须立即重建所有工作区的主题对象；其它配置仍可合并到关闭设置时刷新，避免普通控件操作造成无关的工作区抖动。
@@ -80,7 +80,7 @@ flowchart LR
 
 浅色内置主题未显式声明选区背景时，Aster 使用终端前景的 30% 透明度（8-bit alpha 为 77）；显式的选区前景/背景始终优先。这样既保持 Otty 缺省语义，也避免浅色主题选中文字时被不透明前景色遮住。本阶段不改变深色内置主题的既有回退。
 
-`AsterTerminalView` 保存程序最近一次 DECSCUSR 请求：`default-off/default-on` 以用户设定作为初始状态，之后接受程序控制；`always-off/always-on` 在 SwiftTerm 回调完成后重新固定用户形状，避免其后写入覆盖配置。窗口失焦时实际光标使用同形状的非闪烁变体。空心方块在 AppKit caret、共享栅格和 Metal 绘制路径都有独立轮廓；AppKit caret 与 Metal renderer 都会为同一行的短距离移动做 100 ms 插值，并在“减少动态效果”开启时自动停用。
+`AsterTerminalView` 保存程序最近一次 DECSCUSR 请求，并把请求拆成几何与 blink 两部分：几何始终来自 `preferredCursorStyle`，`default-off/default-on` 只接受程序的 blink 位，`always-off/always-on` 连 blink 位也固定为用户值。SwiftTerm 的通用失焦策略会把所有形状画成空心方块，因此 Aster 关闭 `caretViewTracksFocus`，改由窗口活动状态和稳定 `activePaneID` 把当前样式切换为同形状的非闪烁变体。Agent 领域状态为 `processing` 时也临时使用该变体，进入 `awaiting-input` / `idle` 后恢复配置。空心方块在 AppKit caret、共享栅格和 Metal 绘制路径都有独立轮廓；AppKit caret 与 Metal renderer 都会为同一行的短距离移动做 100 ms 插值，并在“减少动态效果”开启时自动停用。
 
 ## 失败语义
 
@@ -96,7 +96,7 @@ flowchart LR
 - Otty 显式定义的光标文字、选区前景与透明 Glass 背景不会被近似值覆盖。
 - `.astertheme` 安全往返，以及 `.ottytheme` 的颜色、样式、字体映射和 ANSI 调色板完整性。
 - 符号链接、FIFO、设备文件、超限文件与不支持后缀均在读取内容前拒绝。
-- 字体角色解析、主题候选跳过、用户回退顺序、字号变化显式触发 Metal 新帧、光标颜色/文字色/不透明度、Core Graphics/Metal 竖线高度一致性，以及 Default/Always 的 DECSCUSR 优先级。
+- 字体角色解析、主题候选跳过、用户回退顺序、字号变化显式触发 Metal 新帧、光标颜色/文字色/不透明度、Core Graphics/Metal 竖线高度一致性、DECSCUSR 只改变 blink 位、Agent 处理期间暂停闪烁，以及 Pane 切换保持光标几何。
 - Otty `tab-bar.tab` 继承、缺失 mode 的亮度推断，以及非有限/超范围布局数值的安全规范化。
 - 9 套浅色主题逐套建立真实 AppKit 工作区，核对详情页中的 Terminal、Window、Container、Panel、Sidebar、Titlebar、Tabbar、Tab、Accents、光标、选区和 ANSI 16 色是否到达对应渲染对象。
 - 给无宽度的容器或活动标签边框设置颜色时自动启用 1pt，确保可编辑 token 不会“保存成功但不可见”。

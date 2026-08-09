@@ -113,7 +113,7 @@
 - [ ] 依次选择 9 套浅色主题，详情中的 Terminal、Window、Container、Panel、Sidebar、Titlebar、Tabbar、Tab、Accents、光标、选区与 ANSI 16 色均和工作区最终呈现一致；左右两栏同用 Sidebar，中央标题与 Pane 共用连续 surface，常驻目录胶囊只使用显式 Titlebar 背景与文字。
 - [ ] 文本开关、四类字体来源、回退顺序和行高会立即更新已有 Pane；缺少粗体/斜体字面时安全回退且 Nerd Symbols 仍可见。
 - [ ] 宽松行高扩大网格留白但不拉伸竖线光标；竖线高度不超过字号，重复重绘会清除旧 backing pixels，光标顶部不进入上一行且输入无残影。
-- [ ] 光标预览与终端中的颜色、文字色、不透明度、四种形状、四种闪烁优先级一致；Default 接受 DECSCUSR，Always 固定用户形状，失焦停止闪烁。
+- [ ] 光标预览与终端中的颜色、文字色、不透明度、四种形状、四种闪烁优先级一致；形状始终服从用户设置，Default 只接受 DECSCUSR 的 blink 位，Always 连 blink 位也固定；Agent 处理、非活动 Pane 和失焦窗口停止闪烁且不变成空心方块。
 - [ ] Dock 旋转、错误变红和通知跳动可以独立切换；开启旋转时显示耗电提示，关闭后不残留计时器或动画。
 
 ## 记录

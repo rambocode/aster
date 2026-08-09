@@ -14,6 +14,8 @@ func authoritativeAgentAwaitingInputConsumesUserSubmission() throws {
   defer { defaults.removePersistentDomain(forName: suiteName) }
 
   let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.appearance.cursorStyle = .bar
+  preferences.configuration.appearance.cursorBlinkMode = .alwaysOn
   let session = TerminalSession(workingDirectory: "/tmp")
   let terminalView = try #require(
     session.makeTerminalView(preferences: preferences) as? AsterTerminalView
@@ -25,17 +27,21 @@ func authoritativeAgentAwaitingInputConsumesUserSubmission() throws {
   )
   let awaitingSequence = try agentLifecycleSequence(of: session)
   #expect(session.agentTaskState == .awaitingInput)
+  #expect(terminalView.getTerminal().options.cursorStyle == .blinkBar)
 
   // 直接触发终端视图已经安装的用户输入回调，覆盖真实输入链路而不依赖键盘 UI 自动化。
   terminalView.onTerminalUserInput?()
   let submittedSequence = try agentLifecycleSequence(of: session)
   #expect(session.agentTaskState == .processing)
+  // Codex 输出期间输入框仍保留用户设置的竖线，但暂停闪烁；回到等待输入后再恢复。
+  #expect(terminalView.getTerminal().options.cursorStyle == .steadyBar)
   #expect(submittedSequence == awaitingSequence + 1)
 
   terminalView.onAgentTerminalDirective?(
     AgentTerminalDirective(provider: .codex, signal: .idle)
   )
   #expect(session.agentTaskState == .idle)
+  #expect(terminalView.getTerminal().options.cursorStyle == .blinkBar)
   #expect(try agentLifecycleSequence(of: session) == submittedSequence + 1)
 }
 

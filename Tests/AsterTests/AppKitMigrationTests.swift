@@ -1374,6 +1374,87 @@ func displayFontCommandsRefreshExistingTerminalViews() async throws {
   #expect(terminal.font.pointSize == initialSize + 1)
 }
 
+@Test("Shell 异常退出会显示可恢复状态并重启同一 Pane")
+@MainActor
+func abnormalShellExitShowsRecoveryInsteadOfZombiePane() async throws {
+  _ = NSApplication.shared
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let session = try #require(model.selectedTab?.activeSession)
+  defer { session.stop(immediately: true) }
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+  let originalTerminal = try #require(
+    controller.view.descendants.compactMap { $0 as? AsterTerminalView }.first)
+
+  // 使用真实登录 Shell 退出路径，而不是直接改 Session 标志。该路径覆盖 PTY 尾部输出、
+  // waitpid 状态转换、工作区刷新和用户最终看到的 Pane，能稳定抓住“旧画面仍在但无法
+  // 输入，也没有任何结束提示”的僵尸终端缺陷。
+  session.send("exit 7")
+  for _ in 0..<100 where session.statusIsRunning {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(!session.statusIsRunning)
+
+  let overlayIdentifier = "terminal-ended-overlay-\(session.id.uuidString)"
+  var endedOverlay: NSView?
+  for _ in 0..<50 {
+    window.contentView?.layoutSubtreeIfNeeded()
+    endedOverlay = controller.view.descendants.first {
+      $0.identifier?.rawValue == overlayIdentifier
+    }
+    if endedOverlay != nil { break }
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  let overlay = try #require(endedOverlay)
+  let labels = overlay.descendants.compactMap { ($0 as? NSTextField)?.stringValue }
+  #expect(labels.contains { $0.contains("Shell 异常退出") })
+  #expect(labels.contains { $0.contains("状态码 7") })
+
+  let restartIdentifier = "terminal-restart-shell-\(session.id.uuidString)"
+  let restart = try #require(
+    overlay.descendants.compactMap { $0 as? NSButton }.first {
+      $0.identifier?.rawValue == restartIdentifier
+    })
+  restart.performClick(nil)
+  for _ in 0..<100 where !session.statusIsRunning {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(session.statusIsRunning)
+  for _ in 0..<50 {
+    window.contentView?.layoutSubtreeIfNeeded()
+    if controller.view.descendants.contains(where: {
+      $0.identifier?.rawValue == overlayIdentifier
+    }) == false { break }
+    try await Task.sleep(for: .milliseconds(20))
+  }
+
+  let restartedTerminal = try #require(
+    controller.view.descendants.compactMap { $0 as? AsterTerminalView }.first)
+  #expect(restartedTerminal !== originalTerminal)
+  #expect(controller.view.descendants.contains {
+    $0.identifier?.rawValue == overlayIdentifier
+  } == false)
+
+  // 模拟上一代输出总线/进程 monitor 在新 PTY 已启动后才送达的迟到通知。该通知必须
+  // 按 View 身份被忽略，否则刚恢复的终端会再次落入“屏幕存在但输入无效”的僵尸状态。
+  session.processTerminated(source: originalTerminal, exitCode: 9)
+  try await Task.sleep(for: .milliseconds(20))
+  #expect(session.statusIsRunning)
+  #expect(session.lifecycleState == .running)
+
+  let sentinel = "ASTER_RESTARTED_\(UUID().uuidString.prefix(8))"
+  session.send("printf '\(sentinel)\\n'")
+  for _ in 0..<100 where !session.textSnapshot().lines.contains(where: { $0.contains(sentinel) }) {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(session.textSnapshot().lines.contains { $0.contains(sentinel) })
+}
+
 @Test("手动安全键盘输入在工作区标题栏显示状态胶囊")
 @MainActor
 func workspaceShowsSecureInputIndicator() async throws {
@@ -1699,20 +1780,49 @@ func programmaticCursorStyleDoesNotOverrideConfiguration() async throws {
   #expect(terminal.options.cursorStyle == .blinkUnderline)
 }
 
-@Test("光标默认模式接受程序控制而始终模式固定用户形状")
+@Test("光标默认模式只接受程序控制闪烁而不覆盖用户形状")
 @MainActor
 func cursorBlinkPriorityMatchesOttyDefaultAndAlwaysModes() async throws {
   let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 240))
   let terminal = view.getTerminal()
 
-  view.configureCursor(initialStyle: .blinkBar, pinsProgramControl: false)
-  terminal.setCursorStyle(.steadyUnderline)
-  #expect(terminal.options.cursorStyle == .steadyUnderline)
+  // Codex 等 TUI 会用 DECSCUSR 请求方块光标。Default 模式允许它改变“是否闪烁”，
+  // 但光标几何始终属于 Aster 外观设置，用户选择的竖线不能被程序改成方块。
+  view.configureCursor(initialStyle: .steadyBar, pinsProgramBlinking: false)
+  terminal.setCursorStyle(.blinkBlock)
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(terminal.options.cursorStyle == .blinkBar)
 
-  view.configureCursor(initialStyle: .steadyHollowBlock, pinsProgramControl: true)
+  terminal.setCursorStyle(.steadyHollowBlock)
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(terminal.options.cursorStyle == .steadyBar)
+
+  view.configureCursor(initialStyle: .steadyHollowBlock, pinsProgramBlinking: true)
   terminal.setCursorStyle(.blinkBlock)
   try await Task.sleep(for: .milliseconds(50))
   #expect(terminal.options.cursorStyle == .steadyHollowBlock)
+}
+
+@Test("Pane 切换停止旧光标闪烁但不把竖线改成镂空方框")
+@MainActor
+func paneFocusPreservesConfiguredCursorGeometry() throws {
+  let left = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 300, height: 220))
+  let right = AsterTerminalView(frame: NSRect(x: 300, y: 0, width: 300, height: 220))
+  left.configureCursor(initialStyle: .blinkBar, pinsProgramBlinking: true)
+  right.configureCursor(initialStyle: .blinkBar, pinsProgramBlinking: true)
+
+  left.setPaneActive(true)
+  right.setPaneActive(false)
+  #expect(left.getTerminal().options.cursorStyle == .blinkBar)
+  #expect(right.getTerminal().options.cursorStyle == .steadyBar)
+
+  left.setPaneActive(false)
+  right.setPaneActive(true)
+  #expect(left.getTerminal().options.cursorStyle == .steadyBar)
+  #expect(right.getTerminal().options.cursorStyle == .blinkBar)
+  // 失焦只暂停闪烁；SwiftTerm 的通用 hollow-block 替代样式不能覆盖用户选择的竖线。
+  #expect(!left.caretViewTracksFocus)
+  #expect(!right.caretViewTracksFocus)
 }
 
 /// 合成一次落在窗口中心的左键按下，用于驱动自绘控件的 `mouseDown`。

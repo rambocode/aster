@@ -75,6 +75,32 @@ struct TerminalTextSnapshot: Equatable {
   let lines: [String]
 }
 
+/// 一个终端 Pane 的进程生命周期。该状态不持久化：恢复工作区时始终创建新的本地 PTY，
+/// 不能复用旧 PID、文件描述符或结束状态。
+enum TerminalSessionLifecycleState: Equatable {
+  case notStarted
+  case starting
+  case running
+  case ended(TerminalProcessTermination)
+  case startFailed
+  case stopping
+}
+
+extension TerminalSessionLifecycleState {
+  fileprivate var diagnosticReason: String {
+    switch self {
+    case .notStarted: "not_started"
+    case .starting: "starting"
+    case .running: "running"
+    case .ended(.exited(let code)): code == 0 ? "exit_zero" : "exit_nonzero"
+    case .ended(.signaled): "signal"
+    case .ended(.ioFailure): "io_failure"
+    case .startFailed: "start_failed"
+    case .stopping: "stopping"
+    }
+  }
+}
+
 /// SwiftTerm 视图子类：实现 Otty 的 `Default` / `Always` 光标优先级。
 /// `Default` 只给出初始状态，之后接受 DECSCUSR / DEC mode 12；`Always` 把用户设置
 /// 作为最终真值，并在 SwiftTerm 回调返回后纠正程序端写入。
@@ -186,6 +212,9 @@ final class AsterTerminalView: LocalProcessTerminalView {
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect, processDispatchQueue: outputQueue)
+    // Aster 自己按 Pane/窗口焦点暂停闪烁，并始终保留用户选择的光标几何。SwiftTerm
+    // 默认会把任何失焦光标替换成空心方块，这会覆盖“竖线/下划线”等外观设置。
+    caretViewTracksFocus = false
     outputMessageBus = makeOutputMessageBus()
   }
 
@@ -193,6 +222,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
     // 运行时全部以代码创建终端视图；保留 coder 路径以满足 AppKit 解码契约。该路径
     // 没有可注入的父类队列参数，因此仍使用默认队列，但输出处理同样经过消息总线。
     super.init(coder: coder)
+    caretViewTracksFocus = false
     outputMessageBus = makeOutputMessageBus()
   }
 
@@ -269,20 +299,40 @@ final class AsterTerminalView: LocalProcessTerminalView {
     didSet { applyEffectiveCursorStyle() }
   }
   private var programCursorStyle: SwiftTerm.CursorStyle?
-  /// 窗口是否持有键盘焦点。非活动窗口停止光标闪烁（形状不变），与系统终端一致：
-  /// 同屏多个窗口时只有正在输入的那个在闪。SwiftTerm 的 `caretView.focused` 只切换
-  /// 实心/空心，闪烁完全由 `CursorStyle` 的 blink 变体决定，所以必须换样式。
+  /// `Default` 只允许 DECSCUSR / DEC mode 12 改变闪烁，不允许程序覆盖外观设置中的
+  /// 方块/竖线/下划线几何；`Always` 连闪烁状态也固定为用户值。
+  private var pinsProgramCursorBlinking = true
+  /// 窗口和当前 Pane 都处于活动状态时才允许闪烁。Aster 禁用 SwiftTerm 的通用失焦
+  /// 空心方块后，必须用稳定 Pane ID 独立管理活动状态，避免后台 Pane 继续闪烁。
   private var isWindowActive = true
+  private var isPaneActive = true
+  /// Codex/Claude 等 Agent 正在输出时暂停输入框光标闪烁；等待用户输入或任务结束后恢复
+  /// 配置行为。只改变 blink 位，绝不改变用户选择的光标形状。
+  private var isCursorBlinkSuppressed = false
 
-  /// 实际下发给 SwiftTerm 的样式：窗口失焦时取同形状的不闪烁变体。
+  /// 实际下发给 SwiftTerm 的样式：程序请求只贡献 blink 位；失焦或 Agent 正在处理时
+  /// 再取同形状的不闪烁变体。
   private var effectiveCursorStyle: SwiftTerm.CursorStyle? {
-    guard let style = preferredCursorStyle ?? programCursorStyle else { return nil }
-    return isWindowActive ? style : style.nonBlinking
+    let style: SwiftTerm.CursorStyle
+    if let preferredCursorStyle {
+      let blinks = pinsProgramCursorBlinking
+        ? preferredCursorStyle.isBlinking
+        : (programCursorStyle?.isBlinking ?? preferredCursorStyle.isBlinking)
+      style = preferredCursorStyle.withBlinking(blinks)
+    } else if let programCursorStyle {
+      style = programCursorStyle
+    } else {
+      return nil
+    }
+    let allowsBlinking = isWindowActive && isPaneActive && !isCursorBlinkSuppressed
+    return allowsBlinking ? style : style.nonBlinking
   }
 
-  func configureCursor(initialStyle: SwiftTerm.CursorStyle, pinsProgramControl: Bool) {
+  func configureCursor(initialStyle: SwiftTerm.CursorStyle, pinsProgramBlinking: Bool) {
+    pinsProgramCursorBlinking = pinsProgramBlinking
     programCursorStyle = initialStyle
-    preferredCursorStyle = pinsProgramControl ? initialStyle : nil
+    // 光标形状始终来自用户配置；Default / Always 的差异只作用于 blink 位。
+    preferredCursorStyle = initialStyle
     applyEffectiveCursorStyle()
   }
 
@@ -292,9 +342,23 @@ final class AsterTerminalView: LocalProcessTerminalView {
     applyEffectiveCursorStyle()
   }
 
+  func setPaneActive(_ active: Bool) {
+    guard isPaneActive != active else { return }
+    isPaneActive = active
+    applyEffectiveCursorStyle()
+  }
+
+  func setCursorBlinkSuppressed(_ suppressed: Bool) {
+    guard isCursorBlinkSuppressed != suppressed else { return }
+    isCursorBlinkSuppressed = suppressed
+    applyEffectiveCursorStyle()
+  }
+
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
-    setWindowActive(window?.isKeyWindow ?? true)
+    // 从可见标签移除后按非活动处理；重新挂入 key window 时恢复。Pane 内部焦点由
+    // Workspace 的稳定 activePaneID 管理，避免依赖 SwiftTerm 不开放的 responder seam。
+    setWindowActive(window?.isKeyWindow ?? false)
     activatePreferredRendererIfNeeded()
   }
 
@@ -1915,14 +1979,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
   }
 
   override func cursorStyleChanged(source: Terminal, newStyle: SwiftTerm.CursorStyle) {
-    if preferredCursorStyle == nil {
-      programCursorStyle = newStyle
-      super.cursorStyleChanged(source: source, newStyle: newStyle)
-      if !isWindowActive {
-        Task { @MainActor [weak self] in self?.applyEffectiveCursorStyle() }
-      }
-      return
-    }
+    programCursorStyle = newStyle
     guard let effective = effectiveCursorStyle, newStyle != effective else {
       super.cursorStyleChanged(source: source, newStyle: newStyle)
       return
@@ -1983,14 +2040,27 @@ extension NSEvent {
 }
 
 extension SwiftTerm.CursorStyle {
+  var isBlinking: Bool {
+    switch self {
+    case .blinkBlock, .blinkHollowBlock, .blinkUnderline, .blinkBar: true
+    case .steadyBlock, .steadyHollowBlock, .steadyUnderline, .steadyBar: false
+    }
+  }
+
+  /// 保留方块、空心方块、下划线或竖线几何，只替换闪烁位。
+  func withBlinking(_ blinking: Bool) -> SwiftTerm.CursorStyle {
+    switch self {
+    case .blinkBlock, .steadyBlock: blinking ? .blinkBlock : .steadyBlock
+    case .blinkHollowBlock, .steadyHollowBlock:
+      blinking ? .blinkHollowBlock : .steadyHollowBlock
+    case .blinkUnderline, .steadyUnderline: blinking ? .blinkUnderline : .steadyUnderline
+    case .blinkBar, .steadyBar: blinking ? .blinkBar : .steadyBar
+    }
+  }
+
   /// 同一形状的不闪烁变体。
   var nonBlinking: SwiftTerm.CursorStyle {
-    switch self {
-    case .blinkBlock, .steadyBlock: .steadyBlock
-    case .blinkHollowBlock, .steadyHollowBlock: .steadyHollowBlock
-    case .blinkUnderline, .steadyUnderline: .steadyUnderline
-    case .blinkBar, .steadyBar: .steadyBar
-    }
+    withBlinking(false)
   }
 }
 
@@ -2013,6 +2083,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @Published private(set) var currentWorkingDirectoryIsLocal = true
   @Published private(set) var terminalTitle = "Shell"
   @Published private(set) var terminalIconTitle = ""
+  @Published private(set) var lifecycleState = TerminalSessionLifecycleState.notStarted
   @Published private(set) var exitCode: Int32?
   @Published private(set) var startupError: String?
   /// Shell Integration 已观察到至少一个合法 OSC 133 标记；用于停用进程轮询回退。
@@ -2074,6 +2145,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 通知交付属于应用基础设施边界；默认使用真实系统服务，测试可注入记录器验证
   /// lifecycle 到通知请求的转换，而不申请权限或写入用户通知中心。
   private let notificationPoster: any TerminalNotificationPosting
+  /// 结构化诊断只记录 Session UUID、进程代次、结束类型和数值状态。命令、输出、路径、
+  /// 环境与本地化错误均不进入日志；测试可注入独立目录验证真实生命周期事件。
+  private let diagnostics: DiagnosticsCenter
 
   private var terminalView: AsterTerminalView?
   private var targetOpenCoordinator: TerminalTargetOpenCoordinator?
@@ -2093,6 +2167,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var lastFindTerm = ""
   private var lastFindWasPrevious = false
   private var readOnly = false
+  private var processGeneration = 0
+  private var processStartedAt: Date?
+  /// 主动关闭 Pane/应用时，旧 View 的迟到回调属于预期退休，不能再把它标成异常终止。
+  private var intentionallyRetiredViews: Set<ObjectIdentifier> = []
   /// SwiftTerm 视图一旦启动就保持在同一个 AppKit 容器中。工作区刷新只移动该容器，
   /// 不直接反复把 Metal-backed 终端视图从 superview 拆下，避免分屏后网格停止绘制。
   private var terminalHostView: NSView?
@@ -2101,6 +2179,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 但分屏恢复期间回调与视图挂载顺序可能让缓存短暂过期，状态栏必须读取真实值。
   var statusIsRunning: Bool {
     terminalView?.process.running ?? isRunning
+  }
+
+  var canRestart: Bool {
+    switch lifecycleState {
+    case .ended, .startFailed: true
+    case .notStarted, .starting, .running, .stopping: false
+    }
   }
 
   /// 当前 Pane 的 Shell PID。仅用于只读进程/端口检查，不保存到工作区快照。
@@ -2141,11 +2226,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   init(
     workingDirectory: String,
-    notificationPoster: any TerminalNotificationPosting = TerminalNotificationService.shared
+    notificationPoster: any TerminalNotificationPosting = TerminalNotificationService.shared,
+    diagnostics: DiagnosticsCenter = .shared
   ) {
     self.workingDirectory = workingDirectory
     currentWorkingDirectory = workingDirectory
     self.notificationPoster = notificationPoster
+    self.diagnostics = diagnostics
     super.init()
   }
 
@@ -2157,6 +2244,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       return terminalView
     }
 
+    prepareForProcessLaunch()
+    processGeneration += 1
     let view = AsterTerminalView(frame: .zero)
     view.processDelegate = self
     view.onObservedTitleUpdate = { [weak self] code, title in
@@ -2299,7 +2388,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     let entries = launchEnvironment.environment
       .sorted { $0.key < $1.key }
       .map { "\($0.key)=\($0.value)" }
-    var launchDirectory = currentWorkingDirectory
+    // SSH/mosh 会把 Pane 标为远端；重新启动的是本地登录 Shell，不能把远端 OSC 7 路径
+    // 当成本机目录。优先复用最近可靠的本地目录，否则回到 Pane 的原始工作目录。
+    var launchDirectory = currentWorkingDirectoryIsLocal ? currentWorkingDirectory : workingDirectory
     var isDirectory: ObjCBool = false
     if !FileManager.default.fileExists(atPath: launchDirectory, isDirectory: &isDirectory)
       || !isDirectory.boolValue
@@ -2308,6 +2399,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       currentWorkingDirectory = launchDirectory
       appendStartupWarning("原工作目录不可用，已回退到主目录。")
     }
+    currentWorkingDirectory = launchDirectory
+    currentWorkingDirectoryIsLocal = true
+    // 先登记当前 View，再启动 PTY。极短命 Shell 可能在 `startProcess` 返回前退出；其
+    // 回调必须能按对象身份归属到本代，不能被误判为已被替换的迟到旧回调。
+    terminalView = view
+    processStartedAt = Date()
     view.startProcess(
       executable: shell,
       args: Self.launchArguments(forShell: shell),
@@ -2315,13 +2412,25 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       currentDirectory: launchDirectory
     )
 
-    terminalView = view
-    isRunning = view.process?.running == true
+    isRunning = view.process.running
     if !isRunning {
+      lifecycleState = .startFailed
       if startupError == nil { startupError = "无法创建本地终端进程。" }
       // PTY 启动失败只记录稳定状态，不记录 Shell 路径、工作目录或环境变量。
-      DiagnosticsCenter.shared.record(
-        "terminal.process_start_failed", level: .error, category: .terminal)
+      diagnostics.record(
+        "terminal.process_start_failed",
+        level: .error,
+        category: .terminal,
+        attributes: processDiagnosticAttributes(launch: processGeneration == 1 ? "initial" : "restart")
+      )
+    } else {
+      lifecycleState = .running
+      diagnostics.record(
+        "terminal.process_started",
+        level: .info,
+        category: .terminal,
+        attributes: processDiagnosticAttributes(launch: processGeneration == 1 ? "initial" : "restart")
+      )
     }
     if isRunning { startForegroundPolling() }
     return view
@@ -2381,15 +2490,76 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     let terminal = makeTerminalView(preferences: preferences)
     if let terminalHostView {
       terminalHostView.layer?.backgroundColor = preferences.terminalCanvasBackgroundColor.cgColor
+      if terminal.superview !== terminalHostView {
+        // 视图树刷新若留下旧终端而当前代 View 未重新挂入，用户会同时看到“不能输入、
+        // 字号不更新”。每次构建 Pane 都校验唯一绑定并原位修复，不创建第二个 PTY。
+        attachTerminal(terminal, to: terminalHostView)
+        diagnostics.record(
+          "terminal.view_binding_repaired",
+          level: .warning,
+          category: .terminal,
+          attributes: processDiagnosticAttributes()
+        )
+      }
       return terminalHostView
     }
     let host = NSView()
     host.wantsLayer = true
     host.layer?.backgroundColor = preferences.terminalCanvasBackgroundColor.cgColor
-    host.addSubview(terminal)
-    terminal.pinEdges(to: host)
+    attachTerminal(terminal, to: host)
     terminalHostView = host
     return host
+  }
+
+  /// 丢弃已结束的 SwiftTerm View，使用同一 Session、Pane ID 和最近可靠本地目录创建
+  /// 全新 PTY。旧 LocalProcess 不原地复用，避免 DispatchIO、进程 monitor 或迟到回调
+  /// 穿过代次边界，把刚恢复的终端再次错误标成已结束。
+  @discardableResult
+  func restart() -> Bool {
+    guard canRestart, !statusIsRunning else { return false }
+    guard let preferences else {
+      diagnostics.record(
+        "terminal.process_restart_failed",
+        level: .error,
+        category: .terminal,
+        attributes: processDiagnosticAttributes(extra: ["reason": "preferences_unavailable"])
+      )
+      return false
+    }
+
+    let previousReason = lifecycleState.diagnosticReason
+    diagnostics.record(
+      "terminal.process_restart_requested",
+      level: .notice,
+      category: .terminal,
+      attributes: processDiagnosticAttributes(extra: ["previous_reason": previousReason])
+    )
+
+    let previousView = terminalView
+    previousView?.processDelegate = nil
+    previousView?.removeFromSuperview()
+    if let previousView { TerminalRetirementCoordinator.shared.complete(previousView) }
+    terminalView = nil
+    targetOpenCoordinator = nil
+    autocompleteController = nil
+
+    let replacement = makeTerminalView(preferences: preferences)
+    if let terminalHostView {
+      attachTerminal(replacement, to: terminalHostView)
+    }
+    if statusIsRunning { focus() }
+    return statusIsRunning
+  }
+
+  private func attachTerminal(_ terminal: NSView, to host: NSView) {
+    guard terminal.superview !== host else { return }
+    terminal.removeFromSuperview()
+    if let firstSubview = host.subviews.first {
+      host.addSubview(terminal, positioned: .below, relativeTo: firstSubview)
+    } else {
+      host.addSubview(terminal)
+    }
+    terminal.pinEdges(to: host)
   }
 
   func apply(preferences: AppPreferences) {
@@ -2638,13 +2808,29 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     }
   }
 
+  /// 同步分屏领域焦点。SwiftTerm 的 responder 失焦样式固定为空心方块，Aster 改由
+  /// activePaneID 控制同形状光标的闪烁状态，Pane 切换不会覆盖用户外观设置。
+  func setPaneActive(_ active: Bool) {
+    terminalView?.setPaneActive(active)
+  }
+
   /// 停止当前 Shell。关闭 Pane 时先给予 750ms 正常退出窗口；应用即将终止时必须
   /// 立即结束进程组，因为主事件循环不会继续存活到延迟升级任务执行。
   func stop(immediately: Bool = false) {
+    lifecycleState = .stopping
     guard let view = terminalView else {
       isRunning = false
       return
     }
+    intentionallyRetiredViews.insert(ObjectIdentifier(view))
+    diagnostics.record(
+      "terminal.process_stop_requested",
+      level: .debug,
+      category: .terminal,
+      attributes: processDiagnosticAttributes(extra: [
+        "mode": immediately ? "immediate" : "graceful"
+      ])
+    )
     terminalView = nil
     terminalHostView = nil
     targetOpenCoordinator = nil
@@ -2661,6 +2847,90 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // 后保留旧 PID。托管器只接受仍运行的 View，并在 Session 释放后继续负责升级
     // 信号及等待 monitor 回收，避免僵尸进程和 PID 复用后的误杀。
     TerminalRetirementCoordinator.shared.retire(view, immediately: immediately)
+  }
+
+  /// 新进程不能继承上一代 Shell/TUI 的瞬态状态。Pane 的稳定身份、只读开关、回调和
+  /// 最近可靠目录保留；进程、命令、Agent、搜索与通知状态全部重新初始化。
+  private func prepareForProcessLaunch() {
+    lifecycleState = .starting
+    isRunning = false
+    exitCode = nil
+    startupError = nil
+    terminalTitle = "Shell"
+    terminalIconTitle = ""
+    shellIntegrationDetected = false
+    lastCommandExitStatus = nil
+    hasRunningCommand = false
+    progressState = .clear
+    awaitingInput = false
+    showsCompletedFlash = false
+    explicitBadge = nil
+    activeAgentProvider = nil
+    activeAgentSessionID = nil
+    agentTaskState = .idle
+    agentTaskCompletionUnread = false
+    agentLifecycleIsAuthoritative = false
+    agentLifecycleSequence = 0
+    agentStateReducer = AgentTaskStateReducer()
+    submittedCommand = nil
+    pendingCommandOrigin = nil
+    recipeCommandCandidates.removeAll(keepingCapacity: true)
+    activityOutputTail = ""
+    pendingViSearchDirection = nil
+    lastFindTerm = ""
+    lastFindWasPrevious = false
+    lastScreenHash = 0
+    lastActivityAt = .distantPast
+    processStartedAt = nil
+    foregroundPollTask?.cancel()
+    foregroundPollTask = nil
+    awaitingInputTask?.cancel()
+    awaitingInputTask = nil
+    completedFlashTask?.cancel()
+    completedFlashTask = nil
+    progressExpiryTask?.cancel()
+    progressExpiryTask = nil
+    SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
+  }
+
+  /// 诊断关联值均为有界、非内容型元数据。额外字段只能由本文件的固定调用点提供，且仍
+  /// 会经过 DiagnosticsCenter 的敏感键过滤，禁止把命令、路径或环境透传进来。
+  private func processDiagnosticAttributes(
+    launch: String? = nil,
+    extra: [String: String] = [:]
+  ) -> [String: String] {
+    var attributes = [
+      "session_id": id.uuidString.lowercased(),
+      "generation": "\(processGeneration)",
+      "state": lifecycleState.diagnosticReason,
+    ]
+    if let launch { attributes["launch"] = launch }
+    if let processStartedAt {
+      let milliseconds = max(0, Int(Date().timeIntervalSince(processStartedAt) * 1_000))
+      attributes["uptime_ms"] = "\(milliseconds)"
+    }
+    for (key, value) in extra { attributes[key] = value }
+    return attributes
+  }
+
+  private func terminationDiagnosticAttributes(
+    _ termination: TerminalProcessTermination,
+    rawWaitStatus: Int32?
+  ) -> [String: String] {
+    var extra: [String: String] = [:]
+    if let rawWaitStatus { extra["raw_wait_status"] = "\(rawWaitStatus)" }
+    switch termination {
+    case .exited(let code):
+      extra["outcome"] = "exited"
+      extra["exit_code"] = "\(code)"
+    case .signaled(let signal, let coreDumped):
+      extra["outcome"] = "signaled"
+      extra["signal"] = "\(signal)"
+      extra["core_dumped"] = coreDumped ? "true" : "false"
+    case .ioFailure:
+      extra["outcome"] = "io_failure"
+    }
+    return processDiagnosticAttributes(extra: extra)
   }
 
   private func apply(preferences: AppPreferences, to view: AsterTerminalView) {
@@ -2722,7 +2992,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       preferences.configuration.appearance.cursorStyle.rawValue,
       blinks: blinkMode.initiallyBlinks
     )
-    view.configureCursor(initialStyle: cursorStyle, pinsProgramControl: blinkMode.pinsProgramControl)
+    view.configureCursor(
+      initialStyle: cursorStyle,
+      pinsProgramBlinking: blinkMode.pinsProgramControl
+    )
     view.needsDisplay = true
   }
 
@@ -2955,19 +3228,21 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   private func updateAgentTaskState() {
-    guard activeAgentProvider != nil else {
-      if agentTaskState != .idle { agentTaskState = .idle }
-      return
+    let next: AgentTaskState
+    if activeAgentProvider == nil {
+      next = .idle
+    } else if agentLifecycleIsAuthoritative {
+      next = agentStateReducer.state
+    } else {
+      next = AgentTaskState.fold(
+        processing: hasRunningCommand || progressState.isWorking,
+        awaitingInput: awaitingInput
+      )
     }
-    if agentLifecycleIsAuthoritative {
-      if agentTaskState != agentStateReducer.state { agentTaskState = agentStateReducer.state }
-      return
-    }
-    let next = AgentTaskState.fold(
-      processing: hasRunningCommand || progressState.isWorking,
-      awaitingInput: awaitingInput
-    )
     if agentTaskState != next { agentTaskState = next }
+    // Agent 仍在生成内容时，固定显示不闪烁的用户光标；进入 awaiting-input / idle 后
+    // 恢复设置中的 blink 模式。普通 Shell/TUI 不受该领域状态影响。
+    terminalView?.setCursorBlinkSuppressed(activeAgentProvider != nil && next == .processing)
   }
 
   private func handleAgentTerminalDirective(_ directive: AgentTerminalDirective) {
@@ -3123,15 +3398,56 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
 
   nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
     Task { @MainActor [weak self] in
+      defer { TerminalRetirementCoordinator.shared.complete(source) }
+      guard let self else { return }
       // SwiftTerm 在 PTY 读端出现瞬时 EOF 时可能给出无退出码通知；若本地进程仍在
       // 运行，该事件不是最终终止，不能把活跃分屏错误标成 session ended。
       if let localView = source as? LocalProcessTerminalView, localView.process.running {
+        self.diagnostics.record(
+          "terminal.transient_termination_ignored",
+          level: .warning,
+          category: .terminal,
+          attributes: self.processDiagnosticAttributes()
+        )
         return
       }
-      self?.exitCode = exitCode
-      self?.isRunning = false
-      if let self { SecureInputCoordinator.shared.releaseAutomaticRequest(for: self.id) }
-      TerminalRetirementCoordinator.shared.complete(source)
+
+      let sourceIdentifier = ObjectIdentifier(source)
+      if self.intentionallyRetiredViews.remove(sourceIdentifier) != nil {
+        return
+      }
+      // 新进程已经替换旧 View 时，旧输出总线或 monitor 的迟到通知只能被记录并忽略。
+      // 不做对象身份门禁会把刚重启成功的新 PTY 再次标成结束，形成原问题中的僵尸 Tab。
+      guard source === self.terminalView else {
+        self.diagnostics.record(
+          "terminal.stale_termination_ignored",
+          level: .warning,
+          category: .terminal,
+          attributes: self.processDiagnosticAttributes()
+        )
+        return
+      }
+
+      let termination = TerminalProcessTermination(rawWaitStatus: exitCode)
+      self.lifecycleState = .ended(termination)
+      self.exitCode = termination.shellExitCode
+      self.isRunning = false
+      self.hasRunningCommand = false
+      self.awaitingInput = false
+      self.activeAgentProvider = nil
+      self.activeAgentSessionID = nil
+      self.agentTaskState = .idle
+      self.foregroundPollTask?.cancel()
+      self.foregroundPollTask = nil
+      self.awaitingInputTask?.cancel()
+      self.awaitingInputTask = nil
+      SecureInputCoordinator.shared.releaseAutomaticRequest(for: self.id)
+      self.diagnostics.record(
+        "terminal.process_terminated",
+        level: termination.isUnexpected ? .error : .notice,
+        category: .terminal,
+        attributes: self.terminationDiagnosticAttributes(termination, rawWaitStatus: exitCode)
+      )
     }
   }
 }

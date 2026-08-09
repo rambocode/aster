@@ -998,7 +998,9 @@ final class WorkspaceViewController: NSViewController {
   /// first responder 提供；不能再叠加褪色层改变主题的终端背景。
   private func updatePaneActivationOverlays(in tab: TerminalTabItem) {
     for (paneID, host) in paneHosts {
-      host.isActivePane = paneID == tab.activePaneID
+      let isActive = paneID == tab.activePaneID
+      host.isActivePane = isActive
+      tab.runtime(for: paneID)?.terminalSession?.setPaneActive(isActive)
     }
   }
 
@@ -1956,6 +1958,9 @@ final class WorkspaceViewController: NSViewController {
       return placeholder
     }
     let host = session.makeTerminalHost(preferences: preferences)
+    // Pane 焦点是工作区领域状态；在新 View 挂入可见树之前同步，保证非活动分屏第一帧
+    // 就使用不闪烁的同形状光标，而不是 SwiftTerm 默认的失焦空心方块。
+    session.setPaneActive(tab.activePaneID == runtime.id)
     // PTY 只在 Pane 首次挂载时创建；Recipe 命令因此必须从这里启动。短暂让出主线程，
     // 给 Shell Integration 安装 prompt hook 的时间，后续命令再由完成事件严格串行推进。
     Task { @MainActor [weak model] in
@@ -1963,8 +1968,17 @@ final class WorkspaceViewController: NSViewController {
       model?.startPendingRecipeCommands(paneID: runtime.id)
     }
     host.removeFromSuperview()
-    if let error = session.startupError {
+    // Session 的终端 Host 会跨工作区刷新长期复用；先移除上一轮短生命周期状态视图，
+    // 避免重复 warning/结束卡堆叠在同一个 Metal-backed 终端之上。
+    host.subviews.filter {
+      guard let identifier = $0.identifier?.rawValue else { return false }
+      return identifier.hasPrefix("terminal-startup-warning-")
+        || identifier.hasPrefix("terminal-ended-overlay-")
+    }.forEach { $0.removeFromSuperview() }
+    if let error = session.startupError, session.lifecycleState != .startFailed {
       let warning = makeLabel(error, size: 10.5, color: AsterTheme.warning)
+      warning.identifier = NSUserInterfaceItemIdentifier(
+        "terminal-startup-warning-\(session.id.uuidString)")
       warning.wantsLayer = true
       warning.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.92).cgColor
       warning.layer?.cornerRadius = 7
@@ -1974,6 +1988,10 @@ final class WorkspaceViewController: NSViewController {
         warning.centerXAnchor.constraint(equalTo: host.centerXAnchor),
         warning.topAnchor.constraint(equalTo: host.topAnchor, constant: 9),
       ])
+    }
+    if let endedOverlay = TerminalLifecycleOverlayView(session: session) {
+      host.addSubview(endedOverlay)
+      endedOverlay.pinEdges(to: host)
     }
     return host
   }
