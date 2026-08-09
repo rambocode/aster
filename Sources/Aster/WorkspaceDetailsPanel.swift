@@ -112,6 +112,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   /// 控制器在面板收起后继续缓存，但隐藏期间不得因 CWD、Pane 或文档事件重新启动工作。
   private var isPresentationActive = true
   private let editorLocator: @MainActor () -> [DetectedEditor]
+  private let editorOpener: @MainActor ([URL], DetectedEditor) -> Void
 
   init(
     model: AppModel,
@@ -121,7 +122,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     now: @escaping @MainActor () -> Date = Date.init,
     // 编辑器探测走 NSWorkspace，结果取决于本机安装了什么；注入后测试才能稳定断言
     // 「在编辑器中打开」入口的存在与标题。
-    editorLocator: @escaping @MainActor () -> [DetectedEditor] = { WorkspaceEditorLocator.detect() }
+    editorLocator: @escaping @MainActor () -> [DetectedEditor] = { WorkspaceEditorLocator.detect() },
+    // 打开动作也允许注入，菜单选择即执行时测试不能真的启动本机编辑器。
+    editorOpener: @escaping @MainActor ([URL], DetectedEditor) -> Void = {
+      WorkspaceEditorLocator.open($0, in: $1)
+    }
   ) {
     self.model = model
     self.preferences = preferences
@@ -129,6 +134,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     self.fileActionService = fileActionService
     self.now = now
     self.editorLocator = editorLocator
+    self.editorOpener = editorOpener
     self.selection = Section(rawValue: preferences.inspectorSection) ?? .info
     super.init(nibName: nil, bundle: nil)
     model.agentHistoriesChanged
@@ -1045,19 +1051,18 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     guard let editor = preferredEditor(),
       let directory = model.selectedTab?.workingDirectory
     else { return }
-    WorkspaceEditorLocator.open(directory: URL(fileURLWithPath: directory), in: editor)
+    editorOpener([URL(fileURLWithPath: directory)], editor)
   }
 
   private func openChangeInPreferredEditor(_ change: GitChange) {
     guard let editor = preferredEditor(),
       let directory = model.selectedTab?.workingDirectory
     else { return }
-    WorkspaceEditorLocator.open(
-      [URL(fileURLWithPath: directory).appendingPathComponent(change.path)], in: editor)
+    editorOpener([URL(fileURLWithPath: directory).appendingPathComponent(change.path)], editor)
   }
 
-  /// 编辑器按钮的下拉：列出本机探测到的全部编辑器，选中项打勾并写回偏好。切换后同时
-  /// 刷新行内图标的 tooltip，因此这里重建 Git 行而不是只改按钮标题。
+  /// 编辑器按钮的下拉：选择后保存偏好并立即用该编辑器打开当前目录，避免用户还要再点
+  /// 一次左侧主按钮。切换后同时刷新行内图标的 tooltip，因此这里重建 Git 行。
   func makeEditorMenu() -> NSMenu {
     let menu = NSMenu()
     let editors = editorLocator()
@@ -1069,6 +1074,8 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         self.preferences.inspectorGitEditorBundleIdentifier = editor.bundleIdentifier
         self.updateGitEditorButton()
         self.updateGitContent()
+        guard let directory = self.model.selectedTab?.workingDirectory else { return }
+        self.editorOpener([URL(fileURLWithPath: directory)], editor)
       }
       item.state = editor.bundleIdentifier == current?.bundleIdentifier ? .on : .off
       item.image = Self.applicationIcon(for: editor)
@@ -1984,13 +1991,13 @@ struct GitChangeRowActions {
   let preview: (NSView) -> Void
 }
 
-/// 分离式下拉按钮：左侧主动作 + 右侧箭头菜单。AppKit 没有对应控件（`NSPopUpButton`
-/// 的 pull-down 会把标题和箭头合成一体、点标题也弹菜单），因此用两个原生按钮拼出
-/// 参考实现的形态，主动作仍然一键可达。
+/// 分离式下拉按钮：左侧主动作与右侧箭头共享同一个圆角背景，只用细分隔线表达两个命中
+/// 区域。两个区域分别提供悬停、按压和手型指针反馈，视觉上仍是一个完整控件。
 @MainActor
 final class SplitActionButton: NSStackView {
-  let primaryButton: ActionButton
-  private let arrowButton: ActionButton
+  let primaryButton: SplitActionSegmentButton
+  let arrowButton: SplitActionSegmentButton
+  private let separator = NSView()
 
   init(
     title: String,
@@ -1998,9 +2005,9 @@ final class SplitActionButton: NSStackView {
     primary: @escaping () -> Void,
     menu: @escaping () -> NSMenu
   ) {
-    primaryButton = ActionButton(title: title, symbol: symbol, bezelStyle: .rounded, handler: primary)
-    var arrow: ActionButton!
-    arrow = ActionButton(symbol: "chevron.down", bezelStyle: .rounded) {
+    primaryButton = SplitActionSegmentButton(title: title, symbol: symbol, handler: primary)
+    var arrow: SplitActionSegmentButton!
+    arrow = SplitActionSegmentButton(symbol: "chevron.down") {
       let popup = menu()
       // 菜单从箭头按钮左下角展开，与参考实现一致；`nil` 定位项避免高亮首项。
       popup.popUp(
@@ -2012,17 +2019,130 @@ final class SplitActionButton: NSStackView {
     super.init(frame: .zero)
     orientation = .horizontal
     alignment = .centerY
-    spacing = 1
+    spacing = 0
+    wantsLayer = true
+    layer?.cornerRadius = 7
+    layer?.masksToBounds = true
+    applyAppearance()
     primaryButton.controlSize = .regular
     arrowButton.controlSize = .regular
     arrowButton.imagePosition = .imageOnly
+    arrowButton.toolTip = "更多操作"
+    arrowButton.setAccessibilityLabel("更多操作")
+    separator.wantsLayer = true
+    separator.translatesAutoresizingMaskIntoConstraints = false
+    separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
+    separator.heightAnchor.constraint(equalToConstant: 18).isActive = true
     arrowButton.translatesAutoresizingMaskIntoConstraints = false
-    arrowButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
+    arrowButton.widthAnchor.constraint(equalToConstant: 30).isActive = true
     addArrangedSubview(primaryButton)
+    addArrangedSubview(separator)
     addArrangedSubview(arrowButton)
   }
 
   required init?(coder: NSCoder) { nil }
+
+  override var isHidden: Bool {
+    didSet {
+      guard isHidden else { return }
+      primaryButton.resetInteractionState()
+      arrowButton.resetInteractionState()
+    }
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    applyAppearance()
+  }
+
+  private func applyAppearance() {
+    layer?.backgroundColor = AsterTheme.ink.withAlphaComponent(0.08).cgColor
+    separator.layer?.backgroundColor = AsterTheme.ink.withAlphaComponent(0.12).cgColor
+  }
+}
+
+/// 统一背景中的单个命中区域。无边框避免左右各画一层圆角；悬停和按压底色只覆盖当前
+/// 区域，让用户在整体造型下仍能明确预判本次点击会执行主动作还是打开菜单。
+@MainActor
+final class SplitActionSegmentButton: NSButton {
+  private let handler: () -> Void
+  private var isHovering = false
+  private var isPressing = false
+  private var hoverTrackingArea: NSTrackingArea?
+
+  init(title: String = "", symbol: String? = nil, handler: @escaping () -> Void) {
+    self.handler = handler
+    super.init(frame: .zero)
+    self.title = title
+    isBordered = false
+    wantsLayer = true
+    if let symbol {
+      image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+      imagePosition = title.isEmpty ? .imageOnly : .imageLeading
+    }
+    target = self
+    action = #selector(invoke)
+    translatesAutoresizingMaskIntoConstraints = false
+    heightAnchor.constraint(equalToConstant: 28).isActive = true
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+    let area = NSTrackingArea(
+      rect: .zero,
+      options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+      owner: self,
+      userInfo: nil)
+    addTrackingArea(area)
+    hoverTrackingArea = area
+  }
+
+  override func mouseEntered(with event: NSEvent) {
+    super.mouseEntered(with: event)
+    isHovering = true
+    applyAppearance()
+  }
+
+  override func mouseExited(with event: NSEvent) {
+    super.mouseExited(with: event)
+    isHovering = false
+    applyAppearance()
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    isPressing = true
+    applyAppearance()
+    super.mouseDown(with: event)
+    isPressing = false
+    applyAppearance()
+  }
+
+  override func resetCursorRects() {
+    super.resetCursorRects()
+    addCursorRect(bounds, cursor: .pointingHand)
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    applyAppearance()
+  }
+
+  private func applyAppearance() {
+    let alpha: CGFloat = isPressing ? 0.12 : (isHovering ? 0.06 : 0)
+    layer?.backgroundColor = alpha > 0
+      ? AsterTheme.ink.withAlphaComponent(alpha).cgColor : NSColor.clear.cgColor
+  }
+
+  func resetInteractionState() {
+    isHovering = false
+    isPressing = false
+    applyAppearance()
+  }
+
+  @objc private func invoke() { handler() }
 }
 
 /// 带右侧指向箭头的气泡背板。圆角矩形与箭头必须是同一条填充路径，分开画会在接缝处

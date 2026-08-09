@@ -751,7 +751,8 @@ func gitChangesUseVirtualizedRows() throws {
 @MainActor
 private func makeGitPanelFixture(
   editors: [DetectedEditor] = [],
-  diff: String = ""
+  diff: String = "",
+  editorOpener: @escaping @MainActor ([URL], DetectedEditor) -> Void = { _, _ in }
 ) -> (controller: DetailsPanelViewController, model: AppModel, window: NSWindow) {
   let defaults = panelTestDefaults()
   let preferences = AppPreferences(defaults: defaults)
@@ -774,7 +775,8 @@ private func makeGitPanelFixture(
     model: model,
     preferences: preferences,
     inspectionClient: client,
-    editorLocator: { editors }
+    editorLocator: { editors },
+    editorOpener: editorOpener
   )
   let window = NSWindow(
     contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
@@ -826,12 +828,16 @@ func gitCommitMenuOffersRemoteAndBranchOperations() async throws {
   let menu = fixture.controller.makeGitOperationsMenu()
   #expect(menu.items.map(\.title) == ["Push", "Pull", "Fetch", "", "Merge…", "Rebase…"])
   #expect(menu.items[3].isSeparatorItem)
-  // Commit 主按钮与下拉箭头是同一个分离式控件的两部分。
+  // Commit 主按钮与下拉箭头共享一个圆角背景，不再各画一块独立 bezel。
   let commit = try #require(
     fixture.controller.view.allDescendants.compactMap { $0 as? SplitActionButton }
       .first { $0.identifier?.rawValue == "details-git-commit" })
   #expect(commit.primaryButton.title == "Commit")
   #expect(commit.isHidden == false)
+  #expect(commit.spacing == 0)
+  #expect(commit.primaryButton.isBordered == false)
+  #expect(commit.arrowButton.isBordered == false)
+  #expect(commit.layer?.cornerRadius == 7)
 }
 
 @Test("Git 页编辑器入口使用偏好的已安装编辑器并可切换")
@@ -846,7 +852,12 @@ func gitEditorButtonUsesPreferredInstalledEditor() async throws {
       name: "Cursor", bundleIdentifier: "com.todesktop.230313mzl4w4u92",
       appURL: URL(fileURLWithPath: "/Applications/Cursor.app")),
   ]
-  let fixture = makeGitPanelFixture(editors: editors)
+  var openedEditor: DetectedEditor?
+  var openedURLs: [URL] = []
+  let fixture = makeGitPanelFixture(editors: editors) { urls, editor in
+    openedURLs = urls
+    openedEditor = editor
+  }
   defer { fixture.model.selectedTab?.stop(immediately: true) }
   await Task.yield()
   await Task.yield()
@@ -866,6 +877,8 @@ func gitEditorButtonUsesPreferredInstalledEditor() async throws {
 
   #expect(editorButton.primaryButton.title == "Cursor")
   #expect(fixture.controller.makeEditorMenu().items[1].state == .on)
+  #expect(openedEditor?.bundleIdentifier == "com.todesktop.230313mzl4w4u92")
+  #expect(openedURLs == [URL(fileURLWithPath: fixture.model.selectedTab?.workingDirectory ?? "")])
 }
 
 @Test("Git 变更行悬停才显示暂存、编辑器与预览三个动作")
