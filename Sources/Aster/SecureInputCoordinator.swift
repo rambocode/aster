@@ -1,10 +1,11 @@
 import Carbon.HIToolbox
+import Combine
 import Foundation
 
 /// 进程级安全键盘输入协调器。Carbon 的 Secure Event Input 是全局状态，多窗口和多 Pane
 /// 必须共享引用计数；任何一个自动或手动请求仍存在时都不能提前调用 Disable。
 @MainActor
-final class SecureInputCoordinator {
+final class SecureInputCoordinator: ObservableObject {
   typealias EnableSystemProtection = @MainActor () -> Bool
   typealias DisableSystemProtection = @MainActor () -> Bool
 
@@ -18,7 +19,9 @@ final class SecureInputCoordinator {
   private var automaticOwners: Set<UUID> = []
   private var isApplicationActive = true
   private(set) var isManualRequestActive = false
-  private(set) var isSystemProtectionActive = false
+  /// 主窗口状态胶囊订阅系统保护的真实结果，而不是仅订阅用户请求。系统 API 启用失败
+  /// 时不显示“已保护”，应用失活释放后也会立即隐藏，避免给用户错误的安全保证。
+  @Published private(set) var isSystemProtectionActive = false
 
   var isProtectionRequested: Bool {
     isApplicationActive && (isManualRequestActive || !automaticOwners.isEmpty)

@@ -126,6 +126,9 @@ final class AsterTerminalView: LocalProcessTerminalView {
   var shiftArrowSelectionEnabled = true
   var pasteProtectionEnabled = true
   var pasteBracketedSafe = true
+  /// 交互式截屏期间强持有进程，并阻止用户重复启动多个系统选区。进程结束后只在主线程
+  /// 校验目标并插入路径；后台 termination handler 不触碰 AppKit 或终端状态。
+  private var screenshotCaptureProcess: Process?
   /// Composer 在对应 Agent 批次接入；存在回调时“粘贴并在 Composer 中继续”可用。
   var onPasteIntoComposer: ((String) -> Void)?
   /// Send to Chat 由工作区模型负责清理和预算；终端视图只提供当前原生选区入口。
@@ -1111,6 +1114,42 @@ final class AsterTerminalView: LocalProcessTerminalView {
     pasteText(text)
   }
 
+  /// Continuity Camera 通过 responder chain 询问谁能接收图片。只有当前终端仍可写时
+  /// 才声明接收，避免系统完成手机拍摄后才发现 Pane 已经只读或进程已经退出。
+  override func validRequestor(
+    forSendType sendType: NSPasteboard.PasteboardType?,
+    returnType: NSPasteboard.PasteboardType?
+  ) -> Any? {
+    if let returnType,
+      TerminalImportedFileStore.supports(returnType),
+      acceptsUserInput
+    {
+      return self
+    }
+    return super.validRequestor(forSendType: sendType, returnType: returnType)
+  }
+
+  /// AppKit 在 iPhone/iPad 捕获完成后调用该 responder 方法。图片先保存成私有临时文件，
+  /// 再以单个 POSIX Shell 参数插入；失败不会把半截路径或原始二进制写进 PTY。
+  @objc func readSelection(from pasteboard: NSPasteboard) -> Bool {
+    guard permitsUserInputAction() else { return false }
+    for type in TerminalImportedFileStore.supportedPasteboardTypes {
+      guard let data = pasteboard.data(forType: type) else { continue }
+      do {
+        let file = try TerminalImportedFileStore.save(data, type: type)
+        guard insertPathsIntoCurrentInput([file]) else {
+          try? FileManager.default.removeItem(at: file)
+          return false
+        }
+        return true
+      } catch {
+        Self.presentImportError(error, title: "无法插入手机内容")
+        return false
+      }
+    }
+    return false
+  }
+
   @objc func undo(_ sender: Any?) {
     _ = sendNaturalEditing(.undo)
   }
@@ -1464,6 +1503,79 @@ final class AsterTerminalView: LocalProcessTerminalView {
     onPasteIntoComposer?(text)
   }
 
+  /// 选择一个或多个文件/目录，并把每个绝对路径分别编码为 Shell 参数。该动作只预填，
+  /// 不发送 Return；即使用户选择可执行文件，也不会绕过终端里的最终人工确认。
+  @objc func insertFilePath(_ sender: Any?) {
+    guard permitsUserInputAction() else { return }
+    let panel = NSOpenPanel()
+    panel.title = "插入文件路径"
+    panel.prompt = "插入"
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = true
+    panel.canCreateDirectories = false
+    guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+    _ = insertPathsIntoCurrentInput(panel.urls)
+  }
+
+  /// 文件选择、系统截屏和 Continuity Camera 统一经过 Codex/Claude TUI 的输入框交付
+  /// 语义：整段路径按目标协商的 bracketed-paste 模式预填，但绝不附加 Return。
+  @discardableResult
+  func insertPathsIntoCurrentInput(_ urls: [URL]) -> Bool {
+    guard !urls.isEmpty else { return false }
+    let escapedPaths = urls.map { ShellPasteEscaper.escape($0.path) }.joined(separator: " ")
+    return typePromptText(escapedPaths)
+  }
+
+  /// 调用 macOS 自带的交互式截屏 UI。`-o` 排除鼠标指针，`-t png` 固定输出格式；
+  /// 截屏完成后仍复验普通文件、大小和权限，不能只根据子进程退出码信任目标。
+  @objc func insertScreenshot(_ sender: Any?) {
+    guard permitsUserInputAction(), screenshotCaptureProcess == nil else { return }
+    let destination: URL
+    do {
+      destination = try TerminalImportedFileStore.makeScreenshotDestination()
+    } catch {
+      Self.presentImportError(error, title: "无法开始截屏")
+      return
+    }
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+    process.arguments = ["-i", "-o", "-t", "png", destination.path]
+    process.terminationHandler = { [weak self] finishedProcess in
+      DispatchQueue.main.async { [weak self] in
+        self?.finishScreenshotCapture(finishedProcess, destination: destination)
+      }
+    }
+    do {
+      try process.run()
+      screenshotCaptureProcess = process
+    } catch {
+      try? FileManager.default.removeItem(at: destination)
+      Self.presentImportError(error, title: "无法开始截屏")
+    }
+  }
+
+  private func finishScreenshotCapture(_ process: Process, destination: URL) {
+    guard screenshotCaptureProcess === process else { return }
+    screenshotCaptureProcess = nil
+    guard process.terminationStatus == 0 else {
+      // 用户按 Esc 取消是正常结果，不弹错误；系统工具可能已经创建空文件，顺手清理。
+      try? FileManager.default.removeItem(at: destination)
+      return
+    }
+    do {
+      try TerminalImportedFileStore.validateCapturedFile(at: destination)
+      guard insertPathsIntoCurrentInput([destination]) else {
+        try? FileManager.default.removeItem(at: destination)
+        return
+      }
+    } catch {
+      try? FileManager.default.removeItem(at: destination)
+      Self.presentImportError(error, title: "无法插入截屏")
+    }
+  }
+
   @objc func sendSelectionToChat(_ sender: Any?) {
     guard selectionActive else { return }
     onSendSelectionToChat?()
@@ -1556,6 +1668,10 @@ final class AsterTerminalView: LocalProcessTerminalView {
       return NSPasteboard.general.string(forType: .string) != nil
     case #selector(pasteAndContinueInComposer(_:)):
       return onPasteIntoComposer != nil
+    case #selector(insertFilePath(_:)):
+      return acceptsUserInput
+    case #selector(insertScreenshot(_:)):
+      return acceptsUserInput && screenshotCaptureProcess == nil
     case #selector(sendSelectionToChat(_:)):
       return selectionActive && onSendSelectionToChat != nil
     default:
@@ -1591,6 +1707,11 @@ final class AsterTerminalView: LocalProcessTerminalView {
 
   /// 菜单动作在编码前先调用此门禁，避免 Read-only 仍弹出粘贴确认或文件选择器。
   /// 键盘和 IME 的最终兜底仍是 `send(source: TerminalView, ...)`，两层共同覆盖入口。
+  private var acceptsUserInput: Bool {
+    if case .forwardToProcess = paneModeState.inputDecision { return true }
+    return false
+  }
+
   private func permitsUserInputAction() -> Bool {
     switch paneModeState.inputDecision {
     case .forwardToProcess:
@@ -1665,6 +1786,24 @@ final class AsterTerminalView: LocalProcessTerminalView {
       alert.informativeText = "只能读取普通文件，不能读取目录、管道、socket 或设备。"
     default:
       alert.informativeText = "文件不可读或在读取期间发生变化。"
+    }
+    alert.addButton(withTitle: "好")
+    alert.runModal()
+  }
+
+  private static func presentImportError(_ error: Error, title: String) {
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = title
+    switch error {
+    case TerminalImportError.emptyData, TerminalImportError.invalidCapturedFile:
+      alert.informativeText = "系统没有返回可用的图片文件。"
+    case TerminalImportError.fileTooLarge:
+      alert.informativeText = "图片超过 32 MiB 限制。"
+    case TerminalImportError.unsupportedType:
+      alert.informativeText = "仅支持 PNG、JPEG、HEIC、TIFF 或 PDF。"
+    default:
+      alert.informativeText = "无法创建或读取临时文件。"
     }
     alert.addButton(withTitle: "好")
     alert.runModal()

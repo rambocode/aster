@@ -1353,6 +1353,69 @@ func themePreviewRefreshesEveryRunningTerminalPane() async throws {
   }
 }
 
+@Test("显示菜单字号命令会刷新已经运行的终端字体")
+@MainActor
+func displayFontCommandsRefreshExistingTerminalViews() async throws {
+  _ = NSApplication.shared
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+  let terminal = try #require(
+    controller.view.descendants.compactMap { $0 as? AsterTerminalView }.first)
+  let initialSize = terminal.font.pointSize
+
+  preferences.adjustFontSize(by: 1)
+  try await Task.sleep(for: .milliseconds(50))
+
+  #expect(terminal.font.pointSize == initialSize + 1)
+}
+
+@Test("手动安全键盘输入在工作区标题栏显示状态胶囊")
+@MainActor
+func workspaceShowsSecureInputIndicator() async throws {
+  _ = NSApplication.shared
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  let coordinator = SecureInputCoordinator(
+    enableSystemProtection: { true },
+    disableSystemProtection: { true }
+  )
+  model.ensureInitialTab()
+  let controller = WorkspaceViewController(
+    model: model,
+    preferences: preferences,
+    secureInputCoordinator: coordinator
+  )
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  func currentIndicator() -> NSView? {
+    controller.view.descendants.first {
+      $0.identifier?.rawValue == "workspace-secure-input-indicator"
+    }
+  }
+  #expect(try #require(currentIndicator()).isHidden)
+
+  coordinator.setManualRequest(active: true)
+  await Task.yield()
+  let activeIndicator = try #require(currentIndicator())
+  #expect(!activeIndicator.isHidden)
+  #expect(activeIndicator.layer?.backgroundColor == SecureInputIndicatorView.secureBackgroundColor.cgColor)
+  let indicatorLabels = activeIndicator.descendants.compactMap {
+    ($0 as? NSTextField)?.stringValue
+  }
+  #expect(indicatorLabels.contains("SECURE INPUT"))
+
+  coordinator.setManualRequest(active: false)
+  await Task.yield()
+  #expect(try #require(currentIndicator()).isHidden)
+}
+
 @Suite("浅色 Otty 主题呈现矩阵", .serialized)
 @MainActor
 struct LightThemeRenderParityTests {

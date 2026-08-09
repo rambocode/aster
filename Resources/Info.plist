@@ -82,6 +82,8 @@
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>Aster 使用 iPhone 或 iPad 拍摄照片或扫描文稿，并将文件路径插入终端。</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
 </dict>

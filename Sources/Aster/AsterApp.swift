@@ -642,6 +642,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   @objc private func reopenLastClosedTab(_ sender: Any?) { _ = activeWorkspaceModel.reopenLastClosedTab() }
   @objc private func renameTab(_ sender: Any?) { activeWorkspaceModel.promptRenameSelectedTab() }
   @objc private func openFile(_ sender: Any?) { activeWorkspaceModel.openFile() }
+  @objc private func openEditor(_ sender: Any?) { activeWorkspaceModel.openEditor() }
   @objc private func openFolder(_ sender: Any?) { activeWorkspaceModel.openFolder() }
   @objc private func closeTab(_ sender: Any?) { activeWorkspaceModel.closeSelectedTab() }
   /// ⌘W：标签内还有分屏时只关闭聚焦面板，最后一个面板才关闭整个标签页。
@@ -702,6 +703,12 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 折叠/展开标签栏：与垂直侧栏悬停出现的折叠按钮共用同一配置开关。
   @objc private func toggleTabBarVisibility(_ sender: Any?) {
     preferences.configuration.appearance.showTabBar.toggle()
+  }
+  @objc private func increaseFontSize(_ sender: Any?) { preferences.adjustFontSize(by: 1) }
+  @objc private func decreaseFontSize(_ sender: Any?) { preferences.adjustFontSize(by: -1) }
+  @objc private func resetFontSize(_ sender: Any?) { preferences.resetFontSize() }
+  @objc private func toggleFullScreen(_ sender: Any?) {
+    workspaceWindow(for: activeWorkspaceModel)?.toggleFullScreen(sender)
   }
   @objc private func toggleSecureKeyboardEntry(_ sender: Any?) {
     SecureInputCoordinator.shared.toggleManualRequest()
@@ -809,7 +816,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     return item
   }
 
-  private func editMenuItem() -> NSMenuItem {
+  func editMenuItem() -> NSMenuItem {
     let item = NSMenuItem()
     let submenu = NSMenu(title: "编辑")
     submenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
@@ -840,8 +847,26 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     pasteAsItem.submenu = pasteAsMenu
     submenu.addItem(pasteAsItem)
     submenu.addItem(.separator())
-    submenu.addItem(menuItem("Prompt 队列", #selector(togglePromptQueue(_:)), "", modifiers: []))
-    submenu.addItem(menuItem("发送到聊天", #selector(sendToChat(_:)), "", modifiers: []))
+    submenu.addItem(insertMenuItem())
+    let importFromDevice = NSMenuItem(
+      title: "Insert from iPhone",
+      action: nil,
+      keyEquivalent: ""
+    )
+    importFromDevice.identifier = NSMenuItem.importFromDeviceIdentifier
+    submenu.addItem(importFromDevice)
+    submenu.addItem(
+      menuItem(
+        "编辑器", #selector(openEditor(_:)), "e", modifiers: [.command, .shift],
+        symbol: "rectangle.and.pencil.and.ellipsis"))
+    submenu.addItem(
+      menuItem(
+        "Prompt 队列…", #selector(togglePromptQueue(_:)), "m", modifiers: [.command, .shift],
+        symbol: "list.bullet"))
+    submenu.addItem(
+      menuItem(
+        "发送到聊天…", #selector(sendToChat(_:)), "", modifiers: [], symbol: "message"))
+    submenu.addItem(.separator())
     submenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     submenu.addItem(.separator())
     submenu.addItem(menuItem("查找", #selector(find(_:)), "f"))
@@ -851,6 +876,21 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(
       menuItem(
         "安全键盘输入", #selector(toggleSecureKeyboardEntry(_:)), "", modifiers: []))
+    item.submenu = submenu
+    return item
+  }
+
+  /// Otty 的“插入”只预填路径，不自动回车。文件选择和截屏都通过 responder chain
+  /// 定位当前终端，因此编辑器 Pane 或只读终端会由真实接收者自动置灰。
+  private func insertMenuItem() -> NSMenuItem {
+    let item = NSMenuItem(title: "插入", action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: "插入")
+    submenu.addItem(
+      responderMenuItem(
+        "文件路径…", #selector(AsterTerminalView.insertFilePath(_:)), "", modifiers: []))
+    submenu.addItem(
+      responderMenuItem(
+        "截屏", #selector(AsterTerminalView.insertScreenshot(_:)), "", modifiers: []))
     item.submenu = submenu
     return item
   }
@@ -970,7 +1010,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
   /// 「显示」菜单：分屏的完整命令集（拆分方向、缩放、调整大小、聚焦面板）
   /// 按参考应用的分组组织，两个子菜单分别对应「调整拆分大小」和「聚焦面板」。
-  private func workspaceMenuItem() -> NSMenuItem {
+  func workspaceMenuItem() -> NSMenuItem {
     let item = NSMenuItem()
     let submenu = NSMenu(title: "显示")
     submenu.addItem(menuItem("向右拆分", #selector(splitRight(_:)), "d"))
@@ -993,6 +1033,11 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(menuItem("Open Quickly · 当前", #selector(openQuicklyCurrent(_:)), "j"))
     submenu.addItem(menuItem("显示/隐藏详情面板", #selector(toggleInspector(_:)), "", modifiers: []))
     submenu.addItem(menuItem("显示/隐藏标签栏", #selector(toggleTabBarVisibility(_:)), "", modifiers: []))
+    submenu.addItem(.separator())
+    submenu.addItem(menuItem("增大字号", #selector(increaseFontSize(_:)), "="))
+    submenu.addItem(menuItem("减小字号", #selector(decreaseFontSize(_:)), "-"))
+    submenu.addItem(menuItem("重置字号", #selector(resetFontSize(_:)), "0"))
+    submenu.addItem(.separator())
     submenu.addItem(menuItem("Pin Window", #selector(togglePinWindow(_:)), "", modifiers: []))
     let pip = NSMenuItem(title: "Picture in Picture", action: nil, keyEquivalent: "")
     let pipMenu = NSMenu(title: "Picture in Picture")
@@ -1007,6 +1052,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(.separator())
     submenu.addItem(menuItem("打开 Recipe…", #selector(openRecipe(_:)), "", modifiers: []))
     submenu.addItem(menuItem("保存为 Recipe…", #selector(saveRecipe(_:)), "", modifiers: []))
+    submenu.addItem(.separator())
+    submenu.addItem(
+      menuItem(
+        "进入全屏幕", #selector(toggleFullScreen(_:)), "f", modifiers: [.function]))
     item.submenu = submenu
     return item
   }
@@ -1115,11 +1164,15 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     _ title: String,
     _ action: Selector,
     _ key: String,
-    modifiers: NSEvent.ModifierFlags = .command
+    modifiers: NSEvent.ModifierFlags = .command,
+    symbol: String? = nil
   ) -> NSMenuItem {
     let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
     item.keyEquivalentModifierMask = modifiers
     item.target = self
+    if let symbol {
+      item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+    }
     return item
   }
 }
@@ -1139,6 +1192,20 @@ extension AsterAppDelegate: NSMenuItemValidation {
     guard let action = menuItem.action else { return true }
     if action == #selector(toggleSecureKeyboardEntry(_:)) {
       menuItem.state = SecureInputCoordinator.shared.isManualRequestActive ? .on : .off
+      return true
+    }
+    if action == #selector(increaseFontSize(_:)) {
+      return preferences.fontSize < 32
+    }
+    if action == #selector(decreaseFontSize(_:)) {
+      return preferences.fontSize > 9
+    }
+    if action == #selector(resetFontSize(_:)) {
+      return preferences.fontSize != AsterConfiguration.default.appearance.fontSize
+    }
+    if action == #selector(toggleFullScreen(_:)) {
+      guard let window = workspaceWindow(for: activeWorkspaceModel) else { return false }
+      menuItem.title = window.styleMask.contains(.fullScreen) ? "退出全屏幕" : "进入全屏幕"
       return true
     }
     if action == #selector(toggleActivePaneReadOnly(_:)) {

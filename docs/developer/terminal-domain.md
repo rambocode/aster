@@ -179,7 +179,13 @@ Edit 菜单和终端右键菜单提供粘贴选区、普通文件 Base64、POSIX
 
 `TerminalInputEncoder` 将 AppKit 的行首/行尾、词移动、行/词删除和撤销动作编码为可移植的 readline/Emacs 字节。Edit 菜单的快捷键通过 responder chain 进入 `AsterTerminalView`；仅在普通屏幕且没有 Kitty 增强键盘协商时启用，alternate screen 与现代协议继续由 SwiftTerm 编码。不同 Shell 没有通用 Redo 字节，因此在 Shell Integration 提供明确绑定前不伪装支持。`Option as Meta` 的新安装默认值为关闭，保留系统输入法产生重音和特殊字符的能力；用户显式开启后仍由 SwiftTerm 发送 Esc 前缀。
 
-`TerminalSession` 在终端输出到达、用户输入写入 PTY 前、Pane 获焦和配置开启时立即对 PTY master 调用 `tcgetattr`，既有一秒轮询只作兜底。当自动保护开启、窗口与 Pane 聚焦、`ECHO` 关闭且 `ICANON` 仍开启时，向 `SecureInputCoordinator` 注册当前 Session；raw-mode TUI、失焦、恢复回显、进程结束、关闭 Pane 或关闭设置都会释放。协调器只在首个自动/手动请求时调用 `EnableSecureEventInput`，最后一个请求释放时调用 `DisableSecureEventInput`；启用或关闭失败都保留真实状态并允许后续同步重试。手动开关位于 Edit 菜单且不持久化为导入配置；应用失活时只暂停系统保护，重新激活后按用户开关恢复。
+Edit 菜单的“插入”提供文件/目录路径和交互式截屏，均把每个绝对路径编码为独立 POSIX Shell 参数后，通过 `typePromptText` 预填到当前前台程序的输入框，不发送 Return；Codex/Claude 等协商 bracketed paste 的 TUI 会收到完整粘贴块。“Insert from iPhone”使用 `NSMenuItem.importFromDeviceIdentifier` 接入 AppKit Continuity Camera，并复用同一输入框交付入口；终端只在可写时成为图片 requestor，捕获结果限制为 PNG、TIFF、JPEG、HEIC 或 PDF 且最大 32 MiB，保存到 `0700` 临时目录与 `0600` 普通文件后再插入路径。截屏通过固定 `/usr/sbin/screencapture -i -o -t png` 参数数组运行，结束后复验普通文件、大小与权限；取消不报错，失败显示明确反馈。
+
+同一菜单按 Otty 顺序提供“编辑器”(`⇧⌘E`)、“Prompt 队列…”(`⇧⌘M`) 与“发送到聊天…”。编辑器入口通过 `openResource(..., mode: .edit)` 在右侧创建 Pane，继续复用普通文件、符号链接和关闭事务校验；后两项直接调用既有 Prompt Queue 与 Agent Chat 领域流程，不创建菜单层状态副本。
+
+`TerminalSession` 在终端输出到达、用户输入写入 PTY 前、Pane 获焦和配置开启时立即对 PTY master 调用 `tcgetattr`，既有一秒轮询只作兜底。当自动保护开启、窗口与 Pane 聚焦、`ECHO` 关闭且 `ICANON` 仍开启时，向 `SecureInputCoordinator` 注册当前 Session；raw-mode TUI、失焦、恢复回显、进程结束、关闭 Pane 或关闭设置都会释放。协调器只在首个自动/手动请求时调用 `EnableSecureEventInput`，最后一个请求释放时调用 `DisableSecureEventInput`；启用或关闭失败都保留真实状态并允许后续同步重试。`isSystemProtectionActive` 是主窗口标题栏 `SECURE INPUT` 胶囊的唯一真值，只有 Carbon API 已真实启用时才显示。手动开关位于 Edit 菜单且不持久化为导入配置；应用失活时只暂停系统保护，重新激活后按用户开关恢复。
+
+Display 菜单的 `⌘=`、`⌘-` 与 `⌘0` 直接调整全局 `appearance.fontSize`（9...32pt，默认 13pt），沿用配置广播就地刷新全部存活终端；边界上的增减命令会置灰。`Fn+F` 路由到当前工作区窗口的原生 `toggleFullScreen`，菜单标题随窗口状态切换为“进入全屏幕”或“退出全屏幕”。
 
 ### 原生选区与滚动视口
 

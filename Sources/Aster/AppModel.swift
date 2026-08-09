@@ -2149,6 +2149,19 @@ final class AppModel: ObservableObject {
     _ = openResource(url, mode: .view, placement: .split(.right))
   }
 
+  /// “编辑 → 编辑器”选择一个本地普通文件，并在当前 Pane 右侧打开可编辑 Pane。
+  /// 文件类型和符号链接仍由 `openResource` 统一复验，菜单入口不会绕过资源安全边界。
+  func openEditor() {
+    let panel = NSOpenPanel()
+    panel.title = "在编辑器中打开"
+    panel.prompt = "打开"
+    panel.canChooseDirectories = false
+    panel.canChooseFiles = true
+    panel.allowsMultipleSelection = false
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    _ = openResource(url, mode: .edit, placement: .split(.right))
+  }
+
   func openFolder() {
     let panel = NSOpenPanel()
     panel.canChooseDirectories = true

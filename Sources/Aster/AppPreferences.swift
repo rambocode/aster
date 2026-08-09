@@ -143,6 +143,16 @@ final class AppPreferences: ObservableObject {
     set { configuration.appearance.fontSize = min(max(newValue, 9), 32) }
   }
 
+  /// 菜单字号命令与设置页共用同一个全局配置值。每次只移动 1pt，并继续经过属性边界
+  /// 夹紧；`WorkspaceViewController` 的既有订阅会把结果同步到所有存活终端。
+  func adjustFontSize(by delta: Double) {
+    fontSize += delta
+  }
+
+  func resetFontSize() {
+    fontSize = AsterConfiguration.default.appearance.fontSize
+  }
+
   /// 0.4.x 全局侧栏宽度兼容字段。新窗口只在尚无 Panel 布局状态时读取它作为迁移
   /// 种子；运行期间的左右 Panel 宽度由窗口级 `WorkspacePanelLayoutStore` 管理。
   var sidebarWidth: Double {

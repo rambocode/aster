@@ -102,6 +102,32 @@ func readOnlySuppressesTerminalMouseReports() throws {
   #expect(view.selectionActive)
 }
 
+@Test("Codex 输入框保留常用 Control 行编辑按键")
+@MainActor
+func codexInputPreservesCommonControlEditingKeys() throws {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  var encoded: [UInt8] = []
+  view.onEncodedInput = { encoded.append(contentsOf: $0) }
+  let keys: [(characters: String, ignoring: String, keyCode: UInt16)] = [
+    ("\u{01}", "a", 0),
+    ("\u{05}", "e", 14),
+    ("\u{0B}", "k", 40),
+    ("\u{15}", "u", 32),
+    ("\u{17}", "w", 13),
+  ]
+
+  for key in keys {
+    view.keyDown(with: try keyEvent(
+      key.characters,
+      ignoringModifiers: key.ignoring,
+      modifiers: [.control],
+      keyCode: key.keyCode
+    ))
+  }
+
+  #expect(encoded == [0x01, 0x05, 0x0B, 0x15, 0x17])
+}
+
 @Test("Vi Mode 消费按键、支持计数移动并且不写入 PTY")
 @MainActor
 func viModeRoutesKeysLocally() throws {
@@ -185,7 +211,8 @@ func hintModeExitsWhenTerminalResizes() {
 private func keyEvent(
   _ characters: String,
   ignoringModifiers: String? = nil,
-  modifiers: NSEvent.ModifierFlags = []
+  modifiers: NSEvent.ModifierFlags = [],
+  keyCode: UInt16 = 0
 ) throws -> NSEvent {
   try #require(
     NSEvent.keyEvent(
@@ -198,7 +225,7 @@ private func keyEvent(
       characters: characters,
       charactersIgnoringModifiers: ignoringModifiers ?? characters,
       isARepeat: false,
-      keyCode: 0
+      keyCode: keyCode
     ))
 }
 

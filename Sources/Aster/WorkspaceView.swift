@@ -8,6 +8,9 @@ import Combine
 final class WorkspaceViewController: NSViewController {
   let model: AppModel
   private let preferences: AppPreferences
+  /// 安全输入是进程级能力，生产窗口共享单例；测试可注入无副作用实现，避免调用全局
+  /// Carbon 状态。窗口只观察真实系统保护状态，不自行维护第二份开关。
+  private let secureInputCoordinator: SecureInputCoordinator
   /// 每个窗口独立串行文件渲染，避免多个 Pane 同时驱动 Highlighter/Markdown，
   /// 也避免窗口之间共享队列造成无关工作区互相阻塞。
   private let fileRenderer: any FileRendering
@@ -61,6 +64,9 @@ final class WorkspaceViewController: NSViewController {
   private weak var titleBarHoverRegion: NSView?
   /// 顶部标题按钮只在悬停/弹层打开时切换成路径胶囊；普通状态继续显示活动程序标题。
   private weak var workspaceTitleButton: WorkspaceTitleButton?
+  /// 安全输入活动时显示在中央工作区标题栏右侧，位置与 Otty 一致；状态变化只更新
+  /// 该视图，不重建终端树或打断当前 TUI 输入。
+  private weak var secureInputIndicator: SecureInputIndicatorView?
   /// 根视图右上角唯一的详情面板入口。面板显隐只更新这一实例的显示策略，不在
   /// Content 与 Inspector header 之间创建、移动或交换按钮。
   /// 强持有以跨 `refresh()` 复用同一实例；按钮回调弱捕获控制器，不形成引用环。
@@ -94,18 +100,24 @@ final class WorkspaceViewController: NSViewController {
     model: AppModel,
     preferences: AppPreferences,
     panelLayoutStore: WorkspacePanelLayoutStore,
-    fileRenderer: any FileRendering = FileRenderPipeline()
+    fileRenderer: any FileRendering = FileRenderPipeline(),
+    secureInputCoordinator: SecureInputCoordinator = .shared
   ) {
     self.model = model
     self.preferences = preferences
     self.panelLayoutStore = panelLayoutStore
     self.fileRenderer = fileRenderer
+    self.secureInputCoordinator = secureInputCoordinator
     super.init(nibName: nil, bundle: nil)
   }
 
   /// 兼容单元测试和独立预览的临时入口。生产窗口必须显式注入与 `AppModel` 相同的
   /// defaults suite；临时入口使用唯一 suite，避免测试污染标准偏好域。
-  convenience init(model: AppModel, preferences: AppPreferences) {
+  convenience init(
+    model: AppModel,
+    preferences: AppPreferences,
+    secureInputCoordinator: SecureInputCoordinator = .shared
+  ) {
     let suite = "Aster.WorkspacePanelPreview.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     defaults.removePersistentDomain(forName: suite)
@@ -115,7 +127,8 @@ final class WorkspaceViewController: NSViewController {
       panelLayoutStore: WorkspacePanelLayoutStore(
         defaults: defaults,
         legacySidebarWidth: preferences.sidebarWidth
-      )
+      ),
+      secureInputCoordinator: secureInputCoordinator
     )
   }
 
@@ -151,6 +164,10 @@ final class WorkspaceViewController: NSViewController {
       .store(in: &modelSubscriptions)
     preferences.objectWillChange
       .sink { [weak self] _ in self?.schedulePreferenceRefresh() }
+      .store(in: &modelSubscriptions)
+    secureInputCoordinator.$isSystemProtectionActive
+      .removeDuplicates()
+      .sink { [weak self] active in self?.updateSecureInputIndicator(active: active) }
       .store(in: &modelSubscriptions)
     NotificationCenter.default.publisher(
       for: .panePictureInPictureOwnershipDidChange,
@@ -1562,6 +1579,13 @@ final class WorkspaceViewController: NSViewController {
     background.addSubview(title)
     title.translatesAutoresizingMaskIntoConstraints = false
 
+    let secureInput = SecureInputIndicatorView()
+    secureInput.identifier = NSUserInterfaceItemIdentifier("workspace-secure-input-indicator")
+    secureInput.isHidden = !secureInputCoordinator.isSystemProtectionActive
+    secureInputIndicator = secureInput
+    background.addSubview(secureInput)
+    secureInput.translatesAutoresizingMaskIntoConstraints = false
+
     NSLayoutConstraint.activate([
       title.centerXAnchor.constraint(equalTo: background.centerXAnchor),
       title.centerYAnchor.constraint(equalTo: background.centerYAnchor),
@@ -1569,8 +1593,16 @@ final class WorkspaceViewController: NSViewController {
       title.trailingAnchor.constraint(
         lessThanOrEqualTo: background.trailingAnchor, constant: -12),
       title.heightAnchor.constraint(equalToConstant: 24),
+      secureInput.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -12),
+      secureInput.centerYAnchor.constraint(equalTo: background.centerYAnchor),
     ])
     return background
+  }
+
+  /// 协调器已经把请求、应用激活状态和 Carbon API 结果收敛成真实状态；这里仅做局部
+  /// 显隐，不根据菜单勾选或某个 Pane 的推测重复判断。
+  private func updateSecureInputIndicator(active: Bool) {
+    secureInputIndicator?.isHidden = !active
   }
 
   /// 安装工作区唯一的 Inspector 切换按钮。它直接属于根视图，不参与
