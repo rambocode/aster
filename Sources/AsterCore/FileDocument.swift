@@ -17,7 +17,7 @@ public enum FilePresentationKind: String, Equatable, Sendable {
 
   public var supportsSourcePreviewToggle: Bool {
     switch self {
-    case .markdown, .restructuredText, .html, .svg, .agentTranscript: true
+    case .markdown, .restructuredText, .html, .svg: true
     default: false
     }
   }

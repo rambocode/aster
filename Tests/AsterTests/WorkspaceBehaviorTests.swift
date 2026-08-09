@@ -241,6 +241,13 @@ func appModelOpensResourcesThroughUnifiedPlacementRouter() throws {
   #expect(model.selectedTab?.activeRuntime?.descriptor.kind == .editor)
   #expect(model.selectedTab?.activeRuntime?.isReadOnly == false)
 
+  #expect(model.openResource(file, mode: .automatic, placement: .currentPane))
+  #expect(model.selectedTab?.activeRuntime?.descriptor.kind == .editor)
+  let image = root.appendingPathComponent("preview.png")
+  try Data([0x89, 0x50, 0x4E, 0x47]).write(to: image)
+  #expect(model.openResource(image, mode: .automatic, placement: .currentPane))
+  #expect(model.selectedTab?.activeRuntime?.descriptor.kind == .preview)
+
   var newWindowPane: PaneDescriptor?
   model.onRequestNewWindow = { newWindowPane = $0; return true }
   #expect(model.openResource(file, mode: .view, placement: .newWindow))

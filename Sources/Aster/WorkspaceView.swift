@@ -8,6 +8,9 @@ import Combine
 final class WorkspaceViewController: NSViewController {
   let model: AppModel
   private let preferences: AppPreferences
+  /// 每个窗口独立串行文件渲染，避免多个 Pane 同时驱动 Highlighter/Markdown，
+  /// 也避免窗口之间共享队列造成无关工作区互相阻塞。
+  private let fileRenderer: any FileRendering
   /// 与当前窗口 UserDefaults suite 一一对应的 Panel 布局状态。左右栏拖动只写这里，
   /// 不再通过全局 `AppPreferences` 把所有窗口强制同步成同一宽度。
   let panelLayoutStore: WorkspacePanelLayoutStore
@@ -78,11 +81,13 @@ final class WorkspaceViewController: NSViewController {
   init(
     model: AppModel,
     preferences: AppPreferences,
-    panelLayoutStore: WorkspacePanelLayoutStore
+    panelLayoutStore: WorkspacePanelLayoutStore,
+    fileRenderer: any FileRendering = FileRenderPipeline()
   ) {
     self.model = model
     self.preferences = preferences
     self.panelLayoutStore = panelLayoutStore
+    self.fileRenderer = fileRenderer
     super.init(nibName: nil, bundle: nil)
   }
 
@@ -779,6 +784,9 @@ final class WorkspaceViewController: NSViewController {
         .sink { [weak self] _ in self?.scheduleRefresh() }
         .store(in: &tabSubscriptions)
       for runtime in tab.runtimes.values {
+        // Terminal 的只读态会改变终端 HUD，仍需刷新；File Pane 自己就地更新编辑器和
+        // 模式胶囊，不能为一次锁定拆掉整个分屏树和 WebKit/终端视图。
+        guard runtime.descriptor.kind == .terminal else { continue }
         runtime.$isReadOnly
           .dropFirst()
           .sink { [weak self] _ in self?.scheduleRefresh() }
@@ -1630,7 +1638,8 @@ final class WorkspaceViewController: NSViewController {
         runtime: runtime,
         tab: tab,
         model: model,
-        preferences: preferences
+        preferences: preferences,
+        renderer: fileRenderer
       )
       addChild(controller)
       retainedObjects.append(controller)

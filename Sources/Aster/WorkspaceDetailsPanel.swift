@@ -1380,7 +1380,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       NSWorkspace.shared.activateFileViewerSelecting([url])
       return
     }
-    _ = model.openResource(url, mode: .view, placement: .split(.right))
+    _ = model.openResource(url, mode: .automatic, placement: .split(.right))
   }
 
   /// 根据右键命中行即时生成菜单，避免树刷新后仍引用失效节点。
@@ -1407,15 +1407,15 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     let openInAster = NSMenuItem(title: "Open in Aster", action: nil, keyEquivalent: "")
     let asterMenu = NSMenu(title: "Open in Aster")
     asterMenu.addItem(ActionMenuItem(title: "Current Pane") { [weak self] in
-      _ = self?.model.openResource(url, mode: .view, placement: .currentPane)
+      _ = self?.model.openResource(url, mode: .automatic, placement: .currentPane)
     })
     asterMenu.addItem(.separator())
     asterMenu.addItem(ActionMenuItem(title: "New Tab") { [weak self] in
-      _ = self?.model.openResource(url, mode: .view, placement: .newTab)
+      _ = self?.model.openResource(url, mode: .automatic, placement: .newTab)
     })
     asterMenu.addItem(.separator())
     asterMenu.addItem(ActionMenuItem(title: "New Window") { [weak self] in
-      _ = self?.model.openResource(url, mode: .view, placement: .newWindow)
+      _ = self?.model.openResource(url, mode: .automatic, placement: .newWindow)
     })
     asterMenu.addItem(.separator())
     for (title, direction) in [
@@ -1425,7 +1425,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       ("Split Bottom", .down),
     ] {
       asterMenu.addItem(ActionMenuItem(title: title) { [weak self] in
-        _ = self?.model.openResource(url, mode: .view, placement: .split(direction))
+        _ = self?.model.openResource(url, mode: .automatic, placement: .split(direction))
       })
     }
     openInAster.submenu = asterMenu

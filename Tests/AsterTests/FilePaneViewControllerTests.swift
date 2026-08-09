@@ -6,6 +6,19 @@ import WebKit
 
 @testable import Aster
 
+@Test("后台源码渲染支持 highlight.js operator token")
+func fileRenderPipelineSupportsOperatorToken() async throws {
+  let artifact = await FileRenderPipeline().renderSource(
+    "let selected = preferred ?? fallback",
+    language: "swift"
+  )
+  guard case .highlightedRTF(let data)? = artifact else {
+    Issue.record("源码渲染没有返回 RTF")
+    return
+  }
+  #expect(!data.isEmpty)
+}
+
 @Test("Preview File Pane 默认只读并展示统一保存关闭工具栏")
 @MainActor
 func previewFilePaneStartsReadOnlyWithUnifiedToolbar() throws {
@@ -99,6 +112,21 @@ func markdownPreviewFilePaneRendersDocumentContent() async throws {
 
   #expect(renderedText.contains("Visible heading"))
   #expect(renderedText.contains("Rendered paragraph."))
+
+  // Source/Preview 往返只交换缓存视图，不应重新创建昂贵的 WKWebView。
+  let firstWebView = webView
+  let mode = try #require(
+    controller.view.descendants.compactMap { $0 as? NSSegmentedControl }
+      .first { $0.identifier?.rawValue == "file-pane-presentation" })
+  mode.selectedSegment = 0
+  mode.sendAction(mode.action, to: mode.target)
+  let sourceTextView = try #require(controller.sourceTextView)
+  mode.selectedSegment = 1
+  mode.sendAction(mode.action, to: mode.target)
+  #expect(controller.previewWebView === firstWebView)
+  mode.selectedSegment = 0
+  mode.sendAction(mode.action, to: mode.target)
+  #expect(controller.sourceTextView === sourceTextView)
 }
 
 @Test("只读 Source File Pane 渲染带参数的 Swift 源码")
@@ -141,6 +169,16 @@ func readOnlySourceFilePaneHighlightsSwiftParameters() throws {
   let textView = try #require(controller.sourceTextView)
   #expect(textView.string == source)
   #expect(!textView.isEditable)
+
+  let mode = try #require(
+    controller.view.descendants.compactMap { $0 as? NSSegmentedControl }
+      .first { $0.identifier?.rawValue == "file-pane-presentation" })
+  #expect(mode.selectedSegment == 1)
+  mode.selectedSegment = 0
+  mode.sendAction(mode.action, to: mode.target)
+  #expect(!runtime.isReadOnly)
+  #expect(textView.isEditable)
+  #expect(controller.sourceTextView === textView)
 }
 
 extension NSView {
