@@ -642,7 +642,6 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   @objc private func reopenLastClosedTab(_ sender: Any?) { _ = activeWorkspaceModel.reopenLastClosedTab() }
   @objc private func renameTab(_ sender: Any?) { activeWorkspaceModel.promptRenameSelectedTab() }
   @objc private func openFile(_ sender: Any?) { activeWorkspaceModel.openFile() }
-  @objc private func openEditor(_ sender: Any?) { activeWorkspaceModel.openEditor() }
   @objc private func openFolder(_ sender: Any?) { activeWorkspaceModel.openFolder() }
   @objc private func closeTab(_ sender: Any?) { activeWorkspaceModel.closeSelectedTab() }
   /// ⌘W：标签内还有分屏时只关闭聚焦面板，最后一个面板才关闭整个标签页。
@@ -857,7 +856,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(importFromDevice)
     submenu.addItem(
       menuItem(
-        "编辑器", #selector(openEditor(_:)), "e", modifiers: [.command, .shift],
+        "编辑器", #selector(toggleComposer(_:)), "e", modifiers: [.command, .shift],
         symbol: "rectangle.and.pencil.and.ellipsis"))
     submenu.addItem(
       menuItem(

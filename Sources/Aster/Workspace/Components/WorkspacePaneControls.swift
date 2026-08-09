@@ -2,6 +2,34 @@ import AppKit
 import AsterCore
 import Combine
 
+/// Composer 使用多行 `NSTextView`，AppKit 没有原生 placeholder。空草稿时在绘制层显示
+/// 提示，既不写入草稿，也不会影响发送或队列的字节内容。
+@MainActor
+final class ComposerTextView: NSTextView {
+  var placeholder = "" {
+    didSet { needsDisplay = true }
+  }
+
+  override func didChangeText() {
+    super.didChangeText()
+    needsDisplay = true
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    guard string.isEmpty, !placeholder.isEmpty else { return }
+    let attributes: [NSAttributedString.Key: Any] = [
+      .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+      .foregroundColor: AsterTheme.tertiaryInk,
+    ]
+    let origin = NSPoint(
+      x: textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0),
+      y: textContainerInset.height
+    )
+    (placeholder as NSString).draw(at: origin, withAttributes: attributes)
+  }
+}
+
 /// Pane 输入与查找控件的 AppKit 适配对象。
 ///
 /// 这些对象服务于工作区编排，但不负责 Panel 或 Pane 的布局生命周期。

@@ -310,6 +310,45 @@ func appModelAddsSafeFileContextToComposer() throws {
   #expect(!draft.contains("secret-value"))
 }
 
+@Test("编辑器入口打开当前 Pane 的停靠 Composer 输入区")
+@MainActor
+func appModelOpensComposerForTheActivePane() async throws {
+  let defaults = behaviorTestDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  model.ensureInitialTab()
+  model.splitSelectedTab(.right)
+  let activePaneID = try #require(model.selectedTab?.activePaneID)
+  defer { model.tabs.forEach { $0.stop(immediately: true) } }
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+    styleMask: [.titled, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  defer { window.orderOut(nil) }
+
+  model.toggleComposer()
+  try await Task.sleep(for: .milliseconds(50))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  #expect(model.isComposerPresented)
+  #expect(model.composerState(for: activePaneID).presentation == .docked)
+  #expect(model.composerState(for: activePaneID).draft.isEmpty)
+  #expect(model.selectedTab?.activePaneID == activePaneID)
+  let composer = try #require(
+    controller.view.descendantViews.first { $0.identifier?.rawValue == "agent-composer" })
+  let input = try #require(
+    controller.view.descendantViews.compactMap { $0 as? ComposerTextView }
+      .first { $0.identifier?.rawValue == "agent-composer-input" })
+  #expect(composer.frame.height == 174)
+  #expect(input.isEditable)
+  #expect(input.placeholder == "Type here...")
+}
+
 @Test("发送到聊天只发现运行中的 Claude 或 Codex，并且仅预填不回车")
 @MainActor
 func appModelPrefillsSelectedAgentChatWithoutSubmitting() async throws {

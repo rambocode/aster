@@ -2018,6 +2018,7 @@ final class WorkspaceViewController: NSViewController {
     let state = model.composerState(for: paneID)
     let queue = model.promptQueue(for: paneID)
     let host = NSView()
+    host.identifier = NSUserInterfaceItemIdentifier("agent-composer")
     host.wantsLayer = true
     host.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.98).cgColor
     host.layer?.borderWidth = 1
@@ -2029,8 +2030,11 @@ final class WorkspaceViewController: NSViewController {
     host.translatesAutoresizingMaskIntoConstraints = false
     host.heightAnchor.constraint(equalToConstant: 174).isActive = true
 
-    let textView = NSTextView()
+    let textView = ComposerTextView()
+    textView.identifier = NSUserInterfaceItemIdentifier("agent-composer-input")
     textView.string = state.draft
+    // 空草稿必须提示可在当前 Pane 直接输入，避免被误认为只读终端日志。
+    textView.placeholder = "Type here..."
     textView.font = NSFont.systemFont(ofSize: 12)
     textView.textColor = AsterTheme.ink
     textView.backgroundColor = AsterTheme.paper

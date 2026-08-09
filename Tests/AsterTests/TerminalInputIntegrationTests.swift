@@ -67,6 +67,8 @@ func nativeMenusExposeOttyDisplayAndInsertionCommands() throws {
   #expect(editor.keyEquivalent == "e")
   #expect(editor.keyEquivalentModifierMask == [.command, .shift])
   #expect(editor.image != nil)
+  // Otty 的 ⇧⌘E 是 Composer，不是文件选择器；文件编辑仍经 File/路径入口创建 Pane。
+  #expect(NSStringFromSelector(try #require(editor.action)) == "toggleComposer:")
   let promptQueue = try #require(edit.item(withTitle: "Prompt 队列…"))
   #expect(promptQueue.keyEquivalent == "m")
   #expect(promptQueue.keyEquivalentModifierMask == [.command, .shift])
