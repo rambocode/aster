@@ -46,8 +46,14 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   private let fileActionService: WorkspaceFileActionService
   private let now: @MainActor () -> Date
   private let contentHost = NSView()
+  /// Pane 切换后的新快照返回前，旧内容继续作为稳定视觉帧显示；该透明屏障覆盖内容区，
+  /// 拦截仍绑定旧 Pane 的行内动作，并用不参与布局的轻量提示反馈刷新状态。
+  private let paneRefreshOverlay = DetailsPaneRefreshOverlay()
   private var chips: [Section: PanelTabChip] = [:]
   private var selection: Section
+  /// 隐藏页同样需要记录失效状态。用户在 Pane 切换后才打开某页时，必须先屏蔽旧快照，
+  /// 直到该页按当前 Tab/Pane/revision 校验的新结果原子提交。
+  private var sectionsAwaitingPaneRefresh: Set<Section> = []
   private var information: WorkspaceInformationSnapshot?
   private var informationPaneID: UUID?
   private var requestedInformationPaneID: UUID?
@@ -162,6 +168,8 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     column.addArrangedSubview(contentHost)
     background.addSubview(column)
     column.pinEdges(to: background)
+    contentHost.addSubview(paneRefreshOverlay)
+    paneRefreshOverlay.pinEdges(to: contentHost)
     view = background
     showSelectedContent()
     prepareSelectedSection()
@@ -185,8 +193,10 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     if let background = view as? ThemeVisualEffectView {
       background.apply(material: theme.palette.material, tint: theme.palette.panelBackground)
     }
+    paneRefreshOverlay.synchronizeAppearance()
+    // 刷新屏障是控制器级稳定实例，主题切换只重建页内容，不能把屏障一起移除。
+    for content in cachedContent.values { content.removeFromSuperview() }
     cachedContent.removeAll()
-    contentHost.removeAllSubviews()
     showSelectedContent()
   }
 
@@ -195,9 +205,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   func setPresentationActive(_ active: Bool) {
     isPresentationActive = active
     if active {
+      updatePaneRefreshOverlay()
       prepareSelectedSection()
     } else {
       for section in Section.allCases { cancelInspection(for: section) }
+      updatePaneRefreshOverlay()
     }
   }
 
@@ -248,6 +260,31 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     prepareSelectedSection()
   }
 
+  /// Pane 焦点变化会让四页快照同时失效，但不能立即清空行模型：Files/Git 的外部检查
+  /// 与编辑器 Outline 解析都跨事件循环，先清空会把“旧内容 → 空白 → 新内容”真实绘制
+  /// 成闪烁。旧内容只作为不可交互视觉帧保留，新结果仍由既有身份校验决定能否提交。
+  private func beginPaneRefresh() {
+    sectionsAwaitingPaneRefresh.formUnion(Section.allCases)
+    // 视觉内容保留，但 VoiceOver 也不能继续触发旧 Pane 的按钮；新快照提交后逐页恢复。
+    for content in cachedContent.values { content.setAccessibilityHidden(true) }
+    updatePaneRefreshOverlay()
+  }
+
+  /// 只有通过当前 Tab/Pane/目录/revision 校验的结果才能调用这里。隐藏页完成时只更新
+  /// 状态；当前页完成时同步撤下屏障，内容替换与恢复交互发生在同一个主线程事务内。
+  private func completePaneRefresh(for section: Section) {
+    sectionsAwaitingPaneRefresh.remove(section)
+    cachedContent[section]?.setAccessibilityHidden(false)
+    updatePaneRefreshOverlay()
+  }
+
+  private func updatePaneRefreshOverlay() {
+    let refreshing = isPresentationActive && sectionsAwaitingPaneRefresh.contains(selection)
+    cachedContent[selection]?.setAccessibilityHidden(refreshing)
+    paneRefreshOverlay.setAccessibilityHidden(!refreshing)
+    paneRefreshOverlay.setRefreshing(refreshing, sectionTitle: selection.title)
+  }
+
   /// 页签离开后立即终止该页仍未完成的昂贵工作，避免隐藏页继续占用子进程或解析 CPU。
   /// 已完成快照不会清理，因此回切时仍可直接显示；Outline 的未完成解析则标记为待刷新。
   private func cancelInspection(for section: Section) {
@@ -271,28 +308,22 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     tab.activePaneChanged
       .sink { [weak self] _ in
         guard let self else { return }
+        self.beginPaneRefresh()
         self.informationTask?.cancel()
         self.gitTask?.cancel()
-        self.information = nil
         self.informationPaneID = nil
         self.requestedInformationPaneID = nil
-        self.gitStatus = nil
         self.gitDirectory = nil
         self.requestedGitDirectory = nil
         self.gitInspectedAt = nil
+        self.dismissGitDiffPreview()
         self.filesTask?.cancel()
-        self.fileNodes = nil
         self.filesDirectory = nil
         self.requestedFilesDirectory = nil
         self.outlineTask?.cancel()
         self.outlineNeedsRefresh = true
-        // 保留同一个 NSTableView 与行复用池，但同步撤下旧 Pane 的行模型；否则新编辑器
-        // 的后台解析完成前，用户仍能点击绑定旧 Pane 的跳转闭包。
-        let outlinePath = tab.activeRuntime?.descriptor.resourcePath ?? tab.workingDirectory
-        self.applyOutlineRows([], path: outlinePath, latest: nil, emptyMessage: "正在更新 Outline…")
-        self.updateInformationContent()
-        self.updateGitContent()
-        self.rebuildFileTreeProjection()
+        // 旧 Info/Outline/Git/Files 模型留在原表格中，只由覆盖层拦截交互；新快照通过
+        // 既有身份守卫后再一次性替换，避免视图层经历可见的空白中间态。
         self.observeOutlineChanges()
         guard self.isPresentationActive else { return }
         self.prepareSelectedSection()
@@ -370,6 +401,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       self.information = value
       self.informationPaneID = paneID
       self.updateInformationContent()
+      self.completePaneRefresh(for: .info)
     }
   }
 
@@ -401,6 +433,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       self.gitInspectedAt = self.now()
       if self.cachedContent[.git] != nil { self.updateGitContent() }
       if self.selection == .git && self.cachedContent[.git] == nil { self.showSelectedContent() }
+      self.completePaneRefresh(for: .git)
     }
   }
 
@@ -425,6 +458,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       self.fileNodes = value
       self.filesDirectory = directory
       self.rebuildFileTreeProjection()
+      self.completePaneRefresh(for: .files)
     }
   }
 
@@ -457,12 +491,14 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       case .info: content = makeInformationContent()
       }
       cachedContent[selection] = content
-      contentHost.addSubview(content)
+      // 控制器级刷新屏障永远位于页内容之上；后续首次创建隐藏页时也不能盖住屏障。
+      contentHost.addSubview(content, positioned: .below, relativeTo: paneRefreshOverlay)
       content.pinEdges(to: contentHost)
     }
     for (section, content) in cachedContent {
       content.isHidden = section != selection
     }
+    updatePaneRefreshOverlay()
   }
 
   // MARK: - Info
@@ -760,6 +796,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     outlineEmptyLabel?.stringValue = emptyMessage
     outlineEmptyLabel?.isHidden = !rows.isEmpty
     outlineTable.reloadData()
+    completePaneRefresh(for: .outline)
   }
 
   // MARK: - Git
@@ -1675,6 +1712,113 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         .font: NSFont.systemFont(ofSize: 12),
       ])
     return button
+  }
+}
+
+/// Pane 切换期间覆盖在已渲染详情页上的透明交互屏障。它不改变旧内容的 alpha、frame
+/// 或约束，只在右上角显示一个紧凑状态胶囊；因此刷新反馈可见，但不会再次引入布局抖动。
+/// `hitTest` 始终截获覆盖区事件，保证旧 Files/Git/Outline 行绑定的动作不会落到新 Pane。
+private final class DetailsPaneRefreshOverlay: NSView {
+  /// 快速检查通常在一帧内完成；延迟状态胶囊可避免“为消除内容闪烁又新增 spinner 闪烁”。
+  private static let statusRevealDelay = Duration.milliseconds(120)
+
+  private let statusBackground = NSView()
+  private let spinner = NSProgressIndicator()
+  private let statusLabel = NSTextField(labelWithString: "")
+  private var statusRevealTask: Task<Void, Never>?
+  private var isRefreshing = false
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    identifier = NSUserInterfaceItemIdentifier("details-pane-refresh-overlay")
+    isHidden = true
+    statusBackground.isHidden = true
+    setAccessibilityElement(true)
+    setAccessibilityLabel("正在更新详情")
+
+    statusBackground.wantsLayer = true
+    statusBackground.layer?.cornerRadius = 7
+
+    spinner.style = .spinning
+    spinner.controlSize = .small
+    spinner.isDisplayedWhenStopped = false
+
+    statusLabel.font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
+    statusLabel.lineBreakMode = .byClipping
+
+    let status = NSStackView(views: [spinner, statusLabel])
+    status.orientation = .horizontal
+    status.alignment = .centerY
+    status.spacing = 5
+    statusBackground.addSubview(status)
+    status.pinEdges(
+      to: statusBackground,
+      insets: NSEdgeInsets(top: 4, left: 7, bottom: 4, right: 8)
+    )
+    addSubview(statusBackground)
+    statusBackground.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      statusBackground.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+      statusBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+    ])
+    synchronizeAppearance()
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  deinit {
+    statusRevealTask?.cancel()
+  }
+
+  override var acceptsFirstResponder: Bool { true }
+
+  override func hitTest(_ point: NSPoint) -> NSView? {
+    guard !isHidden, bounds.contains(point) else { return nil }
+    return self
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    synchronizeAppearance()
+  }
+
+  func setRefreshing(_ refreshing: Bool, sectionTitle: String) {
+    statusLabel.stringValue = "正在更新 \(sectionTitle)…"
+    setAccessibilityLabel(statusLabel.stringValue)
+    guard refreshing != isRefreshing else { return }
+    isRefreshing = refreshing
+    statusRevealTask?.cancel()
+    statusRevealTask = nil
+
+    if !refreshing {
+      statusBackground.isHidden = true
+      spinner.stopAnimation(nil)
+      isHidden = true
+      return
+    }
+
+    // 交互屏障立即生效；仅视觉状态延迟显示，短刷新期间用户看到的仍是完整稳定旧帧。
+    isHidden = false
+    statusBackground.isHidden = true
+    spinner.stopAnimation(nil)
+    statusRevealTask = Task { @MainActor [weak self] in
+      do { try await Task.sleep(for: Self.statusRevealDelay) }
+      catch { return }
+      guard let self, self.isRefreshing else { return }
+      self.statusBackground.isHidden = false
+      if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        self.spinner.startAnimation(nil)
+      }
+      self.statusRevealTask = nil
+    }
+  }
+
+  func synchronizeAppearance() {
+    statusBackground.layer?.backgroundColor =
+      AsterTheme.panel.withAlphaComponent(0.94).cgColor
+    statusBackground.layer?.borderColor = AsterTheme.hairline.withAlphaComponent(0.65).cgColor
+    statusBackground.layer?.borderWidth = 0.5
+    statusLabel.textColor = AsterTheme.secondaryInk
   }
 }
 
