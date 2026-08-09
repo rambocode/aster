@@ -92,6 +92,28 @@ flowchart LR
 
 界面使用 SwiftTerm 的 `LocalProcessTerminalView` 承载 VT100/xterm 网格、本地进程、alternate screen、ANSI 颜色、宽字符、选择、鼠标报告、超链接和窗口尺寸同步。`TerminalSession` 是唯一适配边界，负责延迟创建视图、设置 `TERM=xterm-256color`、发送命令和 Ctrl+C、查找滚动缓冲区、同步标题/目录以及终止进程。
 
+#### PTY 输出消息总线
+
+每个 `AsterTerminalView` 还持有独立的 `TerminalOutputMessageBus`。`LocalProcess` 把 PTY
+读取回调投递到该 Pane 的串行输出队列；该队列只复制并发布原始字节，不直接触碰 AppKit、
+`TerminalSession` 或任一工作区页面。消息总线在主线程按 8 KiB 有界批次依序交给
+SwiftTerm 解析，并在批次之间延后下一次提交，让鼠标、键盘、Inspector 页签与其它窗口事件
+优先得到 RunLoop 调度机会。
+
+```mermaid
+flowchart LR
+  P[PTY read queue] --> Q[Pane output queue]
+  Q --> B[TerminalOutputMessageBus]
+  B -->|8 KiB ordered batch| M[Main-thread terminal grid]
+  M --> E[title shell agent UI events]
+```
+
+总线最多缓存 4 MiB 原始输出；超过上限时输出队列等待总线降到半阈值，由 PTY 内核背压
+生产端，绝不丢弃终端字节。进程结束也经同一总线排队，保证最后一段输出先显示、再更新
+Session 的退出状态。测试直接在主线程调用 `dataReceived` 时保留同步 seam，真实 PTY 不走
+该路径。这个模块是 PTY 到 UI 的唯一并发 seam；各页面只继续消费现有的主线程领域事件，
+不订阅或共享后台 PTY 队列。
+
 `AsterCore` 中原有的 `PTYShellProcess`、`ANSICleaner` 和 `TerminalTranscript` 仍作为底层行为测试与备用基础设施保留，但主 UI 不再以滚动纯文本模拟终端。
 
 ### 递归分屏

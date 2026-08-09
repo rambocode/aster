@@ -79,6 +79,15 @@ struct TerminalTextSnapshot: Equatable {
 /// `Default` 只给出初始状态，之后接受 DECSCUSR / DEC mode 12；`Always` 把用户设置
 /// 作为最终真值，并在 SwiftTerm 回调返回后纠正程序端写入。
 final class AsterTerminalView: LocalProcessTerminalView {
+  /// PTY 回调先落在专用串行队列，再经有界消息总线分批回到主线程。终端网格和 AppKit
+  /// 子视图仍只在主线程变更；后台线程只复制并排队原始字节，避免跨线程读写 UI 状态。
+  private let outputQueue = DispatchQueue(
+    label: "io.aster.terminal.output",
+    qos: .userInitiated
+  )
+  /// 在视图构造的主线程创建。之后后台 PTY 回调只读取该不可变引用并入队，不会触碰
+  /// `AsterTerminalView` 的其它状态。
+  private var outputMessageBus: TerminalOutputMessageBus!
   /// 观察 SwiftTerm 网格尺寸真正变化的测试 seam。生产环境保持 nil；测试用它区分
   /// 一次合法终态 reflow 与 Panel 过渡导致的重复 resize，不保存终端内容或尺寸历史。
   var onGridSizeChange: ((Int, Int) -> Void)?
@@ -168,6 +177,25 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// 仅在 SwiftTerm 自己生成协议响应时置位，避免 Read-only 把协议握手一起截断。
   private var isForwardingTerminalProtocolResponse = false
   private lazy var paneModeHUD = TerminalPaneModeHUD(frame: bounds)
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect, processDispatchQueue: outputQueue)
+    outputMessageBus = makeOutputMessageBus()
+  }
+
+  required init?(coder: NSCoder) {
+    // 运行时全部以代码创建终端视图；保留 coder 路径以满足 AppKit 解码契约。该路径
+    // 没有可注入的父类队列参数，因此仍使用默认队列，但输出处理同样经过消息总线。
+    super.init(coder: coder)
+    outputMessageBus = makeOutputMessageBus()
+  }
+
+  /// 把 UI 消费闭包集中在构造期创建，避免首次 PTY 输出在后台触发 lazy 属性初始化。
+  private func makeOutputMessageBus() -> TerminalOutputMessageBus {
+    TerminalOutputMessageBus { [weak self] bytes in
+      self?.consumeTerminalOutput(bytes[...])
+    }
+  }
 
   private struct HintTarget {
     let link: Terminal.VisibleLink
@@ -304,7 +332,21 @@ final class AsterTerminalView: LocalProcessTerminalView {
     return true
   }
 
+  /// `LocalProcess` 在 `outputQueue` 调用此入口。这里只执行消息入队；所有 SwiftTerm
+  /// 解析、OSC 回调和视图更新都由 `consumeTerminalOutput(_:)` 在主线程串行完成。
   override func dataReceived(slice: ArraySlice<UInt8>) {
+    // 直接调用是测试与少量 AppKit fixture 的同步 seam；真实 PTY 已由专用输出队列
+    // 投递，因此不会走此分支，也不会重新把持续流式输出压回主线程。
+    if Thread.isMainThread {
+      consumeTerminalOutput(slice)
+      return
+    }
+    outputMessageBus.enqueue(slice)
+  }
+
+  /// 主线程消费者：保留原始输出处理顺序，但每次只接收消息总线限定的一小批字节。
+  private func consumeTerminalOutput(_ slice: ArraySlice<UInt8>) {
+    precondition(Thread.isMainThread)
     onTerminalIO?()
     // 先让 SwiftTerm 完成渲染和内部标题栈操作，再按 PTY 字节顺序重放本分片的全部
     // 标题事件。重放排在 SwiftTerm 错误、缺失或提前入队的 macOS delegate 回调之后，
@@ -351,6 +393,18 @@ final class AsterTerminalView: LocalProcessTerminalView {
       // 仍需消费字节以保持跨分片解析状态同步，只丢弃其业务副作用。
       _ = titleStackObserver.consume(safeBytes)
     }
+  }
+
+  /// PTY EOF 与最后一批输出可能同时抵达。退出事件经同一消息总线延后交付，确保终端
+  /// 缓冲区先显示尾部文本，再让 Session 切换为已结束状态。
+  override func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+    outputMessageBus.finish { [weak self] in
+      self?.forwardProcessTermination(source, exitCode: exitCode)
+    }
+  }
+
+  private func forwardProcessTermination(_ source: LocalProcess, exitCode: Int32?) {
+    super.processTerminated(source, exitCode: exitCode)
   }
 
   override func send(source: TerminalView, data: ArraySlice<UInt8>) {

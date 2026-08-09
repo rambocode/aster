@@ -67,15 +67,31 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
 open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
     
     public internal(set) var process: LocalProcess!
+    /// Host applications may route PTY callbacks through a dedicated serial queue before they
+    /// submit bounded UI work to the main thread. `nil` preserves SwiftTerm's historic main-queue
+    /// delivery, so existing embedders retain their current threading model.
+    private let processDispatchQueue: DispatchQueue?
 
     public override init (frame: CGRect)
     {
+        processDispatchQueue = nil
+        super.init (frame: frame)
+        setup ()
+    }
+
+    /// Creates a terminal view whose PTY callbacks are delivered on `processDispatchQueue`.
+    /// The queue must be serial when callers depend on byte ordering. UI-affine work still belongs
+    /// to the embedding application; SwiftTerm only guarantees ordered delegate delivery here.
+    public init (frame: CGRect, processDispatchQueue: DispatchQueue?)
+    {
+        self.processDispatchQueue = processDispatchQueue
         super.init (frame: frame)
         setup ()
     }
     
     public required init? (coder: NSCoder)
     {
+        processDispatchQueue = nil
         super.init (coder: coder)
         setup ()
     }
@@ -83,7 +99,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
     func setup ()
     {
         terminalDelegate = self
-        process = LocalProcess (delegate: self)
+        process = LocalProcess (delegate: self, dispatchQueue: processDispatchQueue)
     }
     
     /**
