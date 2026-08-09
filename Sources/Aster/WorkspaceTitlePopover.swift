@@ -1,8 +1,8 @@
 import AppKit
 import AsterCore
 
-/// 工作区标题的双态按钮。普通状态显示程序标题，悬停或弹层打开时显示当前目录；
-/// 两种状态共用同一个标题栏背景，胶囊只给可点击目标提供局部反馈。
+/// 工作区标题按钮。Otty 在左侧标签布局中常驻显示当前目录胶囊；程序标题仍保存在
+/// `programTitle` 中供窗口标题和辅助语义使用，但不会替换用户定位工作区所需的路径。
 @MainActor
 final class WorkspaceTitleButton: NSButton {
   var programTitle: String {
@@ -13,6 +13,9 @@ final class WorkspaceTitleButton: NSButton {
   }
 
   private let foregroundColor: NSColor
+  /// Otty 的 `[titlebar].background` 只涂目录胶囊，胶囊外的整条标题区继承 Window。
+  /// 未显式声明该 token 的主题保持透明，不能拿派生终端色造出一块白色药丸。
+  private let backgroundColor: NSColor?
   private let handler: (WorkspaceTitleButton) -> Void
   private var hoverTrackingArea: NSTrackingArea?
   private var isHovered = false
@@ -22,11 +25,13 @@ final class WorkspaceTitleButton: NSButton {
     programTitle: String,
     workingDirectory: String,
     foregroundColor: NSColor,
+    backgroundColor: NSColor?,
     handler: @escaping (WorkspaceTitleButton) -> Void
   ) {
     self.programTitle = programTitle
     self.workingDirectory = workingDirectory
     self.foregroundColor = foregroundColor
+    self.backgroundColor = backgroundColor
     self.handler = handler
     super.init(frame: .zero)
     isBordered = false
@@ -76,15 +81,18 @@ final class WorkspaceTitleButton: NSButton {
   }
 
   private func updatePresentation() {
-    let revealsPath = isHovered || isPopoverPresented
-    title = revealsPath
-      ? "\((workingDirectory as NSString).abbreviatingWithTildeInPath) ⋯"
-      : (programTitle.isEmpty ? "Aster" : programTitle)
-    toolTip = revealsPath ? workingDirectory : "工作区详情"
-    contentTintColor = revealsPath ? AsterTheme.secondaryInk : foregroundColor
-    layer?.backgroundColor = revealsPath
-      ? AsterTheme.ink.withAlphaComponent(0.075).cgColor
-      : NSColor.clear.cgColor
+    title = "\((workingDirectory as NSString).abbreviatingWithTildeInPath) ⋯"
+    toolTip = workingDirectory
+    // 路径始终使用 titlebar.foreground；悬停只能为未显式设置胶囊背景的主题补充
+    // 轻量反馈，不能覆盖 April / Ayu / Pink 等主题声明的 titlebar.background。
+    contentTintColor = foregroundColor
+    if let backgroundColor {
+      layer?.backgroundColor = backgroundColor.cgColor
+    } else if isHovered || isPopoverPresented {
+      layer?.backgroundColor = AsterTheme.ink.withAlphaComponent(0.075).cgColor
+    } else {
+      layer?.backgroundColor = NSColor.clear.cgColor
+    }
   }
 
   @objc private func invoke() { handler(self) }

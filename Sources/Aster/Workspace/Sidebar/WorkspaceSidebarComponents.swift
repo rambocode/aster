@@ -49,6 +49,11 @@ final class TabRowButton: NSButton {
   private let tab: TerminalTabItem
   private let selected: Bool
   private let style: TerminalTabStyle
+  private let resolvedForeground: NSColor
+  private let resolvedActiveForeground: NSColor
+  private let resolvedHoverBackground: NSColor
+  private let resolvedActiveBackground: NSColor
+  private let resolvedActiveBorder: NSColor
   private let handler: () -> Void
   private let onDragEnd: (NSPoint) -> Void
   private var tracking: NSTrackingArea?
@@ -80,7 +85,28 @@ final class TabRowButton: NSButton {
   ) {
     self.tab = tab
     self.selected = selected
-    style = horizontal ? (theme.style.horizontalTab ?? theme.style.tab) : theme.style.tab
+    let resolvedStyle = horizontal ? (theme.style.horizontalTab ?? theme.style.tab) : theme.style.tab
+    style = resolvedStyle
+    resolvedForeground = NSColor(
+      resolvedStyle.foreground
+        ?? theme.resolvedColor(forSlot: "tab.foreground") ?? theme.palette.secondaryForeground
+    )
+    resolvedActiveForeground = NSColor(
+      resolvedStyle.activeForeground
+        ?? theme.resolvedColor(forSlot: "tab.activeForeground") ?? theme.palette.foreground
+    )
+    resolvedHoverBackground = NSColor(
+      resolvedStyle.hoverBackground
+        ?? theme.resolvedColor(forSlot: "tab.hoverBackground") ?? theme.palette.panelBackground
+    )
+    resolvedActiveBackground = NSColor(
+      resolvedStyle.activeBackground
+        ?? theme.resolvedColor(forSlot: "tab.activeBackground") ?? theme.palette.panelBackground
+    )
+    resolvedActiveBorder = NSColor(
+      resolvedStyle.activeBorderColor
+        ?? theme.resolvedColor(forSlot: "tab.activeBorderColor") ?? theme.palette.panelBackground
+    )
     handler = action
     self.onDragEnd = onDragEnd
     super.init(frame: .zero)
@@ -117,6 +143,8 @@ final class TabRowButton: NSButton {
     if !horizontal {
       // 内缩圆角底必须先入栈，才能垫在标题与右侧附件下面。
       let rowBackground = NSView()
+      rowBackground.identifier = NSUserInterfaceItemIdentifier(
+        "workspace-tab-background-\(tab.id.uuidString)")
       rowBackground.wantsLayer = true
       rowBackground.layer?.cornerCurve = .continuous
       rowBackground.translatesAutoresizingMaskIntoConstraints = false
@@ -137,9 +165,7 @@ final class TabRowButton: NSButton {
         tab.title,
         size: selected ? 11.5 : 11,
         weight: selected ? .semibold : .regular,
-        color: selected
-          ? (style.activeForeground.map(NSColor.init) ?? AsterTheme.ink)
-          : (style.foreground.map(NSColor.init) ?? AsterTheme.secondaryInk)
+        color: selected ? resolvedActiveForeground : resolvedForeground
       )
       addSubview(primary)
       primary.translatesAutoresizingMaskIntoConstraints = false
@@ -277,8 +303,7 @@ final class TabRowButton: NSButton {
   }
 
   private func updateStyle() {
-    let foreground = selected ? style.activeForeground : style.foreground
-    contentTintColor = foreground.map(NSColor.init) ?? AsterTheme.ink
+    contentTintColor = selected ? resolvedActiveForeground : resolvedForeground
     font = NSFont.systemFont(
       ofSize: selected ? 12.5 : 12,
       weight: selected ? NSFont.Weight(cssWeight: style.activeFontWeight) : .regular
@@ -298,18 +323,16 @@ final class TabRowButton: NSButton {
     }
     let background: NSColor
     if selected {
-      background =
-        style.activeBackground.map(NSColor.init) ?? AsterTheme.ink.withAlphaComponent(0.075)
+      background = resolvedActiveBackground
     } else if hovered {
       // 主题没给悬停色时也必须有反馈，否则鼠标扫过侧栏毫无变化。
-      background =
-        style.hoverBackground.map(NSColor.init) ?? AsterTheme.ink.withAlphaComponent(0.05)
+      background = resolvedHoverBackground
     } else {
       background = .clear
     }
     decoration?.backgroundColor = background.cgColor
     decoration?.borderWidth = selected ? style.activeBorderWidth : 0
-    decoration?.borderColor = style.activeBorderColor.map(NSColor.init)?.cgColor
+    decoration?.borderColor = resolvedActiveBorder.cgColor
     if selected, let shadow = style.activeShadow {
       decoration?.shadowColor = NSColor(shadow.color).cgColor
       decoration?.shadowOpacity = 1

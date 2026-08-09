@@ -87,6 +87,46 @@ func everySlotIsWritableAndUnknownIsIgnored() throws {
   #expect(theme.applyingColor(probe, toSlot: "nope.nope") == theme)
 }
 
+@Test("给无宽度边框设置颜色时自动启用一像素边框")
+func applyingBorderColorMakesTheResultVisible() throws {
+  let theme = makeSparseTheme()
+  let probe = HexColor("#0A0B0CFF")!
+
+  let container = theme.applyingColor(probe, toSlot: "container.border")
+  #expect(container.style.container.borderColor == probe)
+  #expect(container.style.container.borderWidth == 1)
+
+  let tab = theme.applyingColor(probe, toSlot: "tab.activeBorderColor")
+  #expect(tab.style.tab.activeBorderColor == probe)
+  #expect(tab.style.tab.activeBorderWidth == 1)
+}
+
+@Test("标签改色同步继承字段但保留横向专属覆盖")
+func applyingTabColorRespectsHorizontalOverrides() throws {
+  var theme = makeSparseTheme()
+  let inherited = HexColor("#111111FF")!
+  let horizontalOnly = HexColor("#222222FF")!
+  let probe = HexColor("#0A0B0CFF")!
+  theme.style.tab.foreground = inherited
+  theme.style.tab.hoverBackground = inherited
+  theme.style.horizontalTab = TerminalTabStyle(
+    foreground: inherited,
+    hoverBackground: horizontalOnly
+  )
+
+  let foreground = theme.applyingColor(probe, toSlot: "tab.foreground")
+  #expect(foreground.style.tab.foreground == probe)
+  #expect(foreground.style.horizontalTab?.foreground == probe)
+
+  let hover = theme.applyingColor(probe, toSlot: "tab.hoverBackground")
+  #expect(hover.style.tab.hoverBackground == probe)
+  #expect(hover.style.horizontalTab?.hoverBackground == horizontalOnly)
+
+  let border = theme.applyingColor(probe, toSlot: "tab.activeBorderColor")
+  #expect(border.style.horizontalTab?.activeBorderColor == probe)
+  #expect(border.style.horizontalTab?.activeBorderWidth == 1)
+}
+
 @Test("改 window 一侧只带动仍在派生的 token")
 func changingWindowMovesOnlyDerivedTokens() throws {
   let green = HexColor("#00FF00FF")!

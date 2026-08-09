@@ -2179,12 +2179,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   func makeTerminalHost(preferences: AppPreferences) -> NSView {
     let terminal = makeTerminalView(preferences: preferences)
     if let terminalHostView {
-      terminalHostView.layer?.backgroundColor = preferences.terminalBackgroundColor.cgColor
+      terminalHostView.layer?.backgroundColor = preferences.terminalCanvasBackgroundColor.cgColor
       return terminalHostView
     }
     let host = NSView()
     host.wantsLayer = true
-    host.layer?.backgroundColor = preferences.terminalBackgroundColor.cgColor
+    host.layer?.backgroundColor = preferences.terminalCanvasBackgroundColor.cgColor
     host.addSubview(terminal)
     terminal.pinEdges(to: host)
     terminalHostView = host
@@ -2491,7 +2491,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.getTerminal().options.widenedEastAsianAmbiguousBlocks = swiftTermAmbiguousWidthBlocks(
       preferences.configuration.appearance.resolvedWidenedEastAsianAmbiguousBlocks)
     view.nativeForegroundColor = preferences.terminalForegroundColor
-    view.nativeBackgroundColor = preferences.terminalBackgroundColor
+    view.nativeBackgroundColor = preferences.terminalCanvasBackgroundColor
     view.caretColor = preferences.cursorColor
     view.caretTextColor = preferences.cursorTextColor
     view.selectedTextForegroundColor = preferences.selectionForegroundColor

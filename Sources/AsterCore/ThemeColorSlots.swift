@@ -92,6 +92,14 @@ public struct ThemeColorSlot: Identifiable, Equatable, Sendable {
 }
 
 extension TerminalTheme {
+  /// 返回设置页某个颜色位当前真正生效的值。
+  ///
+  /// 工作区渲染也必须调用这个入口，不能在 AppKit 层重新抄一套 fallback；否则详情色板
+  /// 显示的是一个颜色，窗口、侧栏或标签栏却会按另一条级联规则绘制。
+  public func resolvedColor(forSlot id: String) -> HexColor? {
+    colorSlots.first { $0.id == id }?.resolved
+  }
+
   /// 详情色板的完整 token 表。顺序稳定，界面直接按 `group` 分段渲染。
   ///
   /// 只列出真实存在的 token，不为了凑视觉格数造不存在的颜色——色板要能当作
@@ -164,7 +172,11 @@ extension TerminalTheme {
     case "terminal.background": copy.palette.windowBackground = color
     case "interface.window": copy.palette.interfaceWindowBackground = color
     case "container.background": copy.style.container.background = color
-    case "container.border": copy.style.container.borderColor = color
+    case "container.border":
+      copy.style.container.borderColor = color
+      // 颜色位是用户可操作设置；若原主题没有边框，改单色后至少启用 1pt，避免出现
+      // “设置已经保存但画面完全没变化”的假成功。
+      if copy.style.container.borderWidth == 0 { copy.style.container.borderWidth = 1 }
     case "panel.background": copy.palette.panelBackground = color
     case "panel.surface": copy.palette.panelSurface = color
     case "panel.border": copy.palette.interfaceBorder = color
@@ -175,11 +187,39 @@ extension TerminalTheme {
     case "titlebar.foreground": copy.style.titlebarForeground = color
     case "tabbar.background": copy.style.horizontalTabBarBackground = color
     case "tabbar.border": copy.style.horizontalTabBarBorderColor = color
-    case "tab.foreground": copy.style.tab.foreground = color
-    case "tab.hoverBackground": copy.style.tab.hoverBackground = color
-    case "tab.activeBackground": copy.style.tab.activeBackground = color
-    case "tab.activeForeground": copy.style.tab.activeForeground = color
-    case "tab.activeBorderColor": copy.style.tab.activeBorderColor = color
+    case "tab.foreground":
+      // Parser 会把 `[tab-bar.tab]` 的继承结果展开成完整值。改色时以“改前是否与
+      // 基础字段相等”识别继承字段并同步更新；真正不同的横向专属覆盖继续保留。
+      let horizontalInherited = copy.style.horizontalTab?.foreground == copy.style.tab.foreground
+      copy.style.tab.foreground = color
+      if horizontalInherited { copy.style.horizontalTab?.foreground = color }
+    case "tab.hoverBackground":
+      let horizontalInherited =
+        copy.style.horizontalTab?.hoverBackground == copy.style.tab.hoverBackground
+      copy.style.tab.hoverBackground = color
+      if horizontalInherited { copy.style.horizontalTab?.hoverBackground = color }
+    case "tab.activeBackground":
+      let horizontalInherited =
+        copy.style.horizontalTab?.activeBackground == copy.style.tab.activeBackground
+      copy.style.tab.activeBackground = color
+      if horizontalInherited { copy.style.horizontalTab?.activeBackground = color }
+    case "tab.activeForeground":
+      let horizontalInherited =
+        copy.style.horizontalTab?.activeForeground == copy.style.tab.activeForeground
+      copy.style.tab.activeForeground = color
+      if horizontalInherited { copy.style.horizontalTab?.activeForeground = color }
+    case "tab.activeBorderColor":
+      let horizontalInherited =
+        copy.style.horizontalTab?.activeBorderColor == copy.style.tab.activeBorderColor
+        && copy.style.horizontalTab?.activeBorderWidth == copy.style.tab.activeBorderWidth
+      copy.style.tab.activeBorderColor = color
+      if copy.style.tab.activeBorderWidth == 0 { copy.style.tab.activeBorderWidth = 1 }
+      if horizontalInherited {
+        copy.style.horizontalTab?.activeBorderColor = color
+        if copy.style.horizontalTab?.activeBorderWidth == 0 {
+          copy.style.horizontalTab?.activeBorderWidth = 1
+        }
+      }
     case "interface.accent": copy.palette.accent = color
     case "interface.foreground": copy.palette.interfaceForeground = color
     case "interface.secondaryForeground": copy.palette.secondaryForeground = color

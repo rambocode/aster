@@ -14,12 +14,12 @@ final class ThemeRuntime: @unchecked Sendable {
   private let lock = NSLock()
   private var light = TerminalThemeCatalog.resolve(
     named: "Ayu Light", customThemes: [], mode: .light
-  ).palette
+  )
   private var dark = TerminalThemeCatalog.resolve(
     named: "Ayu Dark", customThemes: [], mode: .dark
-  ).palette
+  )
 
-  func update(light: TerminalThemePalette, dark: TerminalThemePalette) {
+  func update(light: TerminalTheme, dark: TerminalTheme) {
     lock.lock()
     self.light = light
     self.dark = dark
@@ -28,28 +28,28 @@ final class ThemeRuntime: @unchecked Sendable {
 
   func color(for role: Role, appearance: NSAppearance) -> NSColor {
     lock.lock()
-    let palette = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+    let theme = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
     lock.unlock()
 
+    let palette = theme.palette
     let value: HexColor
     switch role {
-    case .window: value = palette.interfaceWindowBackground ?? palette.windowBackground
-    case .container: value = palette.containerBackground
-    case .panel: value = palette.panelBackground
-    case .surface: value = palette.panelSurface ?? palette.panelBackground
-    case .foreground: value = palette.interfaceForeground ?? palette.foreground
-    case .secondary: value = palette.secondaryForeground
-    case .tertiary: value = palette.tertiaryForeground ?? palette.secondaryForeground
+    case .window: value = theme.resolvedColor(forSlot: "interface.window") ?? palette.windowBackground
+    case .container: value = theme.resolvedColor(forSlot: "container.background") ?? palette.containerBackground
+    case .panel: value = theme.resolvedColor(forSlot: "panel.background") ?? palette.panelBackground
+    case .surface: value = theme.resolvedColor(forSlot: "panel.surface") ?? palette.panelBackground
+    case .foreground: value = theme.resolvedColor(forSlot: "interface.foreground") ?? palette.foreground
+    case .secondary:
+      value = theme.resolvedColor(forSlot: "interface.secondaryForeground")
+        ?? palette.secondaryForeground
+    case .tertiary:
+      value = theme.resolvedColor(forSlot: "interface.tertiaryForeground")
+        ?? palette.secondaryForeground
     case .border:
-      value = palette.interfaceBorder
-        ?? HexColor(
-          red: palette.secondaryForeground.red,
-          green: palette.secondaryForeground.green,
-          blue: palette.secondaryForeground.blue,
-          alpha: 61
-        )
-    case .accent: value = palette.accent
-    case .selection: value = palette.selection
+      value = theme.resolvedColor(forSlot: "interface.border")
+        ?? palette.secondaryForeground
+    case .accent: value = theme.resolvedColor(forSlot: "interface.accent") ?? palette.accent
+    case .selection: value = theme.resolvedColor(forSlot: "selection.background") ?? palette.selection
     case .warning: value = palette.ansiColors[1]
     }
     return NSColor(value)
@@ -163,6 +163,15 @@ enum AsterTheme {
 /// 将 Otty 的 window/sidebar/titlebar material 映射为原生 `NSVisualEffectView`。
 /// 主题色只以半透明 tint 叠加，保留桌面内容透过玻璃后的真实颜色与动态模糊。
 final class ThemeVisualEffectView: NSVisualEffectView {
+  /// 保留最后一次应用的原始 Otty token，供布局同步和自动化验收读取。layer 上的颜色会
+  /// 因 material 叠加透明度，不能反推出用户在主题详情里看到的原始值。
+  private(set) var appliedThemeTint: HexColor?
+  private(set) var appliedThemeMaterial: TerminalThemeMaterial?
+  /// `NSVisualEffectView` 会把自己的系统 material 画在 backing layer 上方，仅设置
+  /// `layer.backgroundColor` 会让 April/Pink/Paper 等实色最终被洗成系统白色。主题 tint
+  /// 必须作为首个内容子视图画在 material 上方，其它业务子视图再覆盖到它上方。
+  private weak var themeTintOverlay: ThemeTintOverlayView?
+
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
     wantsLayer = true
@@ -176,27 +185,64 @@ final class ThemeVisualEffectView: NSVisualEffectView {
   }
 
   func apply(material themeMaterial: TerminalThemeMaterial?, tint: HexColor) {
+    appliedThemeTint = tint
+    appliedThemeMaterial = themeMaterial
     state = .active
     isEmphasized = true
     switch themeMaterial {
     case .glass:
       material = .hudWindow
       blendingMode = .behindWindow
-      layer?.backgroundColor = NSColor(tint).withAlphaComponent(0.24).cgColor
     case .vibrancyThin:
       material = .sidebar
       blendingMode = .behindWindow
-      layer?.backgroundColor = NSColor(tint).withAlphaComponent(0.20).cgColor
     case .vibrancyRegular:
       material = .underWindowBackground
       blendingMode = .behindWindow
-      layer?.backgroundColor = NSColor(tint).withAlphaComponent(0.34).cgColor
     case .some(.none), nil:
       material = .contentBackground
       blendingMode = .withinWindow
-      layer?.backgroundColor = NSColor(tint).cgColor
+    }
+    layer?.backgroundColor = NSColor.clear.cgColor
+    let overlay: ThemeTintOverlayView
+    if let themeTintOverlay, themeTintOverlay.superview === self {
+      overlay = themeTintOverlay
+    } else {
+      overlay = ThemeTintOverlayView(frame: bounds)
+      overlay.autoresizingMask = [.width, .height]
+      addSubview(overlay, positioned: .below, relativeTo: subviews.first)
+      themeTintOverlay = overlay
+    }
+    let sourceAlpha = CGFloat(tint.alpha) / 255
+    let alpha: CGFloat = switch themeMaterial {
+    // Otty 用 alpha=0 的 sidebar tint 表示“只显示玻璃材质”。不能把透明 token
+    // 强行改成 24% 不透明白色，否则 Ayu/Floating/Glass 三套侧栏都会明显发白。
+    case .glass: sourceAlpha * 0.24
+    case .vibrancyThin: sourceAlpha * 0.20
+    case .vibrancyRegular: sourceAlpha * 0.34
+    case .some(.none), nil: CGFloat(tint.alpha) / 255
+    }
+    if themeMaterial == .glass, sourceAlpha == 0 {
+      // Otty 的透明 Glass surface 在当前浅色窗口截图中形成约 17% 的中性遮光层；
+      // AppKit `.hudWindow` 自身明显更亮。只对明确 alpha=0 的 Glass token补这层，
+      // 不污染 Floating Card 根窗口等带实色 tint 的材质。
+      overlay.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.17).cgColor
+    } else {
+      overlay.layer?.backgroundColor = NSColor(tint).withAlphaComponent(alpha).cgColor
     }
   }
+}
+
+/// 纯绘制层不参与命中测试，空白侧栏、标题栏和详情区的鼠标事件仍由原容器处理。
+private final class ThemeTintOverlayView: NSView {
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    wantsLayer = true
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 extension NSColor {

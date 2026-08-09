@@ -89,6 +89,9 @@ final class AppPreferences: ObservableObject {
   }
 
   private let defaults: UserDefaults
+  /// 菜单主题选择器的临时预览值。预览必须作用到完整工作区，但在用户点击或按回车
+  /// 确认前不能写入配置；这样按 `Esc` 或点到面板外时可以无损回到原选择。
+  private var previewedTheme: TerminalTheme?
 
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
@@ -209,6 +212,19 @@ final class AppPreferences: ObservableObject {
     NSColor(activeTheme.palette.renderedTerminalBackground)
   }
 
+  /// SwiftTerm 的终端 `Color` 会丢弃 alpha，直接传透明色会变成黑底。浅色 Glass
+  /// 画布因此预合成到 Otty 实际窗口材质的 70% 中性亮度；窗口和 Sidebar 仍使用
+  /// 原生 `NSVisualEffectView`，两边在截图里保持连续而不会把终端洗成 surface 白色。
+  var terminalCanvasBackgroundColor: NSColor {
+    let theme = activeTheme
+    if theme.mode == .light, theme.palette.windowBackground.alpha == 0,
+      theme.palette.material != nil
+    {
+      return NSColor(srgbRed: 0.70, green: 0.70, blue: 0.70, alpha: 1)
+    }
+    return NSColor(theme.palette.renderedTerminalBackground)
+  }
+
   var cursorColor: NSColor {
     let source = configuration.appearance.cursorColorOverride ?? activeTheme.palette.cursor
     return NSColor(source).withAlphaComponent(
@@ -253,6 +269,7 @@ final class AppPreferences: ObservableObject {
   }
 
   var activeTheme: TerminalTheme {
+    if let previewedTheme { return previewedTheme }
     if usesDarkAppearance {
       return configuration.appearance.useSeparateDarkTheme ? darkTheme : lightTheme
     }
@@ -271,6 +288,33 @@ final class AppPreferences: ObservableObject {
     } else {
       configuration.appearance.themeName = theme.name
     }
+  }
+
+  /// 临时应用一套主题，不修改持久化选择。调用方可以连续传入方向键或悬停命中的
+  /// 主题；`objectWillChange` 会让所有工作区在下一轮 run loop 合并刷新。
+  func previewTheme(_ theme: TerminalTheme) {
+    guard previewedTheme != theme else { return }
+    objectWillChange.send()
+    previewedTheme = theme
+    synchronizeThemeRuntime()
+  }
+
+  /// 保存当前预览。先把主题写入对应明暗模式的正式字段，再清掉临时值，避免工作区
+  /// 在两个通知之间短暂闪回原主题。
+  func commitThemePreview() {
+    guard let previewedTheme else { return }
+    selectTheme(previewedTheme)
+    self.previewedTheme = nil
+    synchronizeThemeRuntime()
+    objectWillChange.send()
+  }
+
+  /// 放弃当前预览并恢复持久化主题。没有预览时保持幂等，面板重复关闭不会多刷新。
+  func cancelThemePreview() {
+    guard previewedTheme != nil else { return }
+    objectWillChange.send()
+    previewedTheme = nil
+    synchronizeThemeRuntime()
   }
 
   /// 改一个 token 的颜色：写进覆盖表，原主题（含内置真值表）保持不动。
@@ -452,9 +496,17 @@ final class AppPreferences: ObservableObject {
   }
 
   private func synchronizeThemeRuntime() {
-    let darkPalette =
-      configuration.appearance.useSeparateDarkTheme ? darkTheme.palette : lightTheme.palette
-    ThemeRuntime.shared.update(light: lightTheme.palette, dark: darkPalette)
+    // 关闭独立深色主题时必须复用完整浅色主题，而不只是调色板。ThemeRuntime 还需要
+    // titlebar/sidebar/container 等 style token；只替换 palette 会在系统切到深色外观时
+    // 又悄悄套回另一套主题的级联规则。
+    let persistedLightTheme = lightTheme
+    let persistedDarkTheme =
+      configuration.appearance.useSeparateDarkTheme ? darkTheme : persistedLightTheme
+    let effectiveLightTheme =
+      previewedTheme?.mode == .light ? previewedTheme ?? persistedLightTheme : persistedLightTheme
+    let effectiveDarkTheme =
+      previewedTheme?.mode == .dark ? previewedTheme ?? persistedDarkTheme : persistedDarkTheme
+    ThemeRuntime.shared.update(light: effectiveLightTheme, dark: effectiveDarkTheme)
   }
 
   private enum Keys {

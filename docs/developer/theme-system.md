@@ -29,9 +29,13 @@ Aster 0.4.0 将内置主题升级为 Otty 1.3.1 的完整主题集，并由纯 A
 6. 浅色和深色主题可以独立选择；关闭独立主题后，两种系统外观使用同一套主题令牌。
 7. 主题变更必须同步更新 AppKit 工作区、设置窗口、终端前景/背景、ANSI 256 色派生、选区前景/背景和光标前景/文字。
 8. 标签栏自动隐藏只在开启该选项且工作区只有一个标签页时生效。
-9. Otty 的 `background = "none"` 必须保留为透明 RGBA；由于 SwiftTerm 的内部颜色没有 alpha，实际终端栅格使用主题自身的 `surface` 预合成，避免透明黑错误显示成纯黑。旧版 `Catppuccin` 选择迁移为 `Catppuccin Mocha`。
+9. Otty 的 `background = "none"` 必须保留为透明 RGBA；SwiftTerm 的内部终端颜色没有 alpha，浅色 Glass 终端网格需预合成到 Otty 窗口材质的中性亮度，不能直接传透明黑，也不能使用接近白色的 `surface` 覆盖材质。脱离工作区的 PiP、候选面板等浮层仍使用主题 `surface`。旧版 `Catppuccin` 选择迁移为 `Catppuccin Mocha`。
 10. 字体按“全局角色字体 → 主题 `token.font-mono` → JetBrains Mono”解析，粗体、斜体、粗斜体允许独立覆盖；Nerd Symbols 与用户回退字体只参与缺字级联，不替换正文主字体。
 11. 光标的“默认”闪烁模式允许终端程序通过 DECSCUSR 临时调整形状和闪烁；“始终”模式固定用户选择。颜色覆盖、不透明度、平滑动画和失焦停止闪烁均在两种模式下生效。
+12. 设置详情与最终 AppKit 对象必须共用 `TerminalTheme.resolvedColor(forSlot:)` 的级联结果。窗口、容器、左右 Sidebar、标题栏、标签栏、标签、光标、选区和 ANSI 颜色不得在视图层另设近似回退。
+13. 对原本没有宽度的 `container.border` 或 `tab.activeBorderColor` 写入颜色时，同时启用 1pt 边框，保证设置项在最终画面中可见。
+14. 设置窗口打开期间，主题选择、主题颜色覆盖和明暗外观变化必须立即重建所有工作区的主题对象；其它配置仍可合并到关闭设置时刷新，避免普通控件操作造成无关的工作区抖动。
+15. “显示 → 主题”提供 Otty 同路径的快速选择器：方向键与悬停只写入内存预览，点击或回车才保存，`Esc`、点击面板外或应用失焦必须恢复打开前的持久化主题。选择器是独立 Panel，预览重建工作区时不能销毁自身，也不能让后方工作区套上失焦褪色层。
 
 ## 业务流程
 
@@ -51,6 +55,9 @@ flowchart LR
   L[导入 .astertheme 或 .ottytheme] --> M[后缀、普通文件与大小校验]
   M --> N[名称与 ANSI 调色板校验]
   N --> I
+  O[显示菜单打开主题选择器] --> P[方向键或悬停临时预览]
+  P -->|点击或回车| C
+  P -->|Esc 或点到面板外| Q[恢复持久化主题]
 ```
 
 ## 关键实现
@@ -61,13 +68,17 @@ flowchart LR
 
 颜色覆盖的读写只有一条路径：`AppPreferences.resolved(_:)` 把覆盖叠到基础主题上，`lightTheme` / `darkTheme` / `themes(for:)` 全部经过它——任何绕过它的读取都会让终端与界面看到不同版本的同一套主题。覆盖持久化在 `aster.theme-overrides.v1`，并同步写进主题文件夹里的同名 `.ottytheme`：文件保留原主题内容不动，末尾以 `# --- aster overrides (managed) ---` 起一段，每个键前带 `# otty-added: <section>.<key>` 注释，用户能直接看出哪些行是 Aster 写的、删掉某行即撤销该条覆盖。重写前先按 marker 截断上一轮内容，否则同一个键会在文件尾部越堆越多。`interface.*` 这类 Aster 自有的界面 token 在 Otty 里没有对应键，只留在应用内的覆盖表、不写进文件。覆盖应用顺序按 key 排序固定：`sidebar.foreground` 与 `interface.foreground` 写的是同一个字段，字典遍历顺序不稳定会让结果抖动。
 
-`ThemeRuntime` 使用锁保护当前浅色和深色调色板。`AsterTheme` 将 Otty 的 window、panel、surface、token foreground/secondary/tertiary 等令牌映射为动态 `NSColor` Provider，因此设置页与主工作区可以共同实时换肤；`ThemeVisualEffectView` 把 Glass 与 Vibrancy 映射为 macOS 原生 `NSVisualEffectView.Material`。
+`ThemeRuntime` 使用锁保护当前浅色和深色完整主题。`AsterTheme` 通过 `TerminalTheme.resolvedColor(forSlot:)` 将详情页展示的 window、panel、sidebar、surface、token foreground/secondary/tertiary 等令牌映射为动态 `NSColor` Provider，因此设置页、主工作区和终端共享同一条缺省值级联；`ThemeVisualEffectView` 把 Glass 与 Vibrancy 映射为 macOS 原生 `NSVisualEffectView.Material`，并保留应用前的原始 tint/material 供对象级验收。主题 tint 以最底层内容 overlay 画在系统 material 上方：实色不会被 `NSVisualEffectView` 自带的白底覆盖，透明 Glass token 仍按原 alpha 透出材质。
 
-`TerminalThemeStyle` 逐项保留 Otty 的 sidebar/titlebar/tab/horizontal-tab/container 数据。AppKit 工作区根据主题设置标签高度、活动前景和背景、顶部选中线、容器圆角、边框、阴影及不同标签方向下的外边距，不再用一套固定卡片样式近似所有主题。
+`ThemeSwitcherPanelController` 在工作区窗口上方展示独立、可聚焦的主题 Panel；`ThemeSwitcherViewController` 负责搜索、方向键、悬停和色点列表。`AppPreferences.previewTheme(_:)` 只更新内存中的临时主题与 `ThemeRuntime`，不修改配置 JSON；`commitThemePreview()` 将预览写入当前明暗模式，`cancelThemePreview()` 恢复持久化选择。菜单跟踪结束后的下一轮 run loop 才让 Panel 成为 key，避免菜单收起时主窗口抢回焦点并误触取消。
+
+`TerminalThemeStyle` 逐项保留 Otty 的 sidebar/titlebar/tab/horizontal-tab/container 数据。AppKit 工作区让窗口根层消费 `window`，中央卡片消费 `container`，左右两栏（含各自顶部）共同消费 `sidebar`；在左侧标签布局中，中央标题条继续显示 `window` 的背景与材质，常驻的工作目录胶囊才消费显式 `titlebar.background` 和 `titlebar.foreground`。这种分层与 Otty 截图一致：April 的白色中央标题区上有灰绿胶囊，Glass Light 则不会被派生终端色切出一条白带。横向标签栏及其下沿消费 `tabbar`，标签行消费 `tab`；标签高度、活动前景和背景、顶部选中线、容器圆角、边框、阴影及不同标签方向下的外边距也直接取自主题。`tab-bar.tab` 未声明的颜色、边框、字重和阴影按 Otty 规则逐字段继承基础 `[tab]`，不再用固定卡片样式或 AppKit 近似色替代。
 
 容器背景的解析遵循「与终端画布连续」：主题未显式声明 `container` 时回退到终端背景本身（透明 `none` 保持透明以透出玻璃材质），**不借用 panel** —— panel 是侧栏等面板的底色，借用它会让 April 这类「panel 灰绿 + 终端纯白」的主题在右侧内容区套上一层 panel 色，与终端画布视觉割裂。
 
-`TerminalSession.apply` 在每次偏好更新时同步 SwiftTerm 的四种角色字体、默认前景/背景、选区前景/背景、光标前景/文字、光标不透明度和 ANSI 16 色。主题字体栈会依次跳过未安装字体，遇到首个可用字体或 generic `monospace` 才结束解析。透明终端背景通过 `renderedTerminalBackground` 使用 Otty `surface` 预合成，保留 Glass 的视觉色调且不会退化为黑色。SwiftTerm 以这 16 色派生完整 256 色调色板。下划线渲染、字体平滑、连字、行高和 SGR 闪烁同样立即作用于已有会话；行高扩大的是终端网格和行间留白，竖线光标仍按未放大的字体自然高度从基线侧对齐，避免伸入上一行。Metal 路径在平滑策略变化时同时清空 glyph atlas 与行缓存，避免继续显示旧策略生成的字形。
+`TerminalSession.apply` 在每次偏好更新时同步 SwiftTerm 的四种角色字体、默认前景/背景、选区前景/背景、光标前景/文字、光标不透明度和 ANSI 16 色。主题字体栈会依次跳过未安装字体，遇到首个可用字体或 generic `monospace` 才结束解析。透明浅色终端通过 `terminalCanvasBackgroundColor` 预合成到 Otty Glass 的中性材质亮度，避免 SwiftTerm 丢弃 alpha 后出现黑底；`renderedTerminalBackground` 则给 PiP、候选面板等没有材质宿主的浮层提供主题 `surface`。SwiftTerm 以这 16 色派生完整 256 色调色板。下划线渲染、字体平滑、连字、行高和 SGR 闪烁同样立即作用于已有会话；行高扩大的是终端网格和行间留白，竖线光标仍按未放大的字体自然高度从基线侧对齐，避免伸入上一行。Metal 路径在平滑策略变化时同时清空 glyph atlas 与行缓存，避免继续显示旧策略生成的字形。
+
+浅色内置主题未显式声明选区背景时，Aster 使用终端前景的 30% 透明度（8-bit alpha 为 77）；显式的选区前景/背景始终优先。这样既保持 Otty 缺省语义，也避免浅色主题选中文字时被不透明前景色遮住。本阶段不改变深色内置主题的既有回退。
 
 `AsterTerminalView` 保存程序最近一次 DECSCUSR 请求：`default-off/default-on` 以用户设定作为初始状态，之后接受程序控制；`always-off/always-on` 在 SwiftTerm 回调完成后重新固定用户形状，避免其后写入覆盖配置。窗口失焦时实际光标使用同形状的非闪烁变体。空心方块在 AppKit caret、共享栅格和 Metal 绘制路径都有独立轮廓；AppKit caret 与 Metal renderer 都会为同一行的短距离移动做 100 ms 插值，并在“减少动态效果”开启时自动停用。
 
@@ -87,6 +98,9 @@ flowchart LR
 - 符号链接、FIFO、设备文件、超限文件与不支持后缀均在读取内容前拒绝。
 - 字体角色解析、主题候选跳过、用户回退顺序、光标颜色/文字色/不透明度，以及 Default/Always 的 DECSCUSR 优先级。
 - Otty `tab-bar.tab` 继承、缺失 mode 的亮度推断，以及非有限/超范围布局数值的安全规范化。
+- 9 套浅色主题逐套建立真实 AppKit 工作区，核对详情页中的 Terminal、Window、Container、Panel、Sidebar、Titlebar、Tabbar、Tab、Accents、光标、选区和 ANSI 16 色是否到达对应渲染对象。
+- 给无宽度的容器或活动标签边框设置颜色时自动启用 1pt，确保可编辑 token 不会“保存成功但不可见”。
 - 自定义主题复制、唯一命名、编辑与重名拒绝。
 - 主题选择的自定义优先与同模式回退。
+- 菜单选择器覆盖 9 套浅色主题，验证方向键预览不落盘、取消恢复和确认后新实例可读取。
 - 单标签自动隐藏与多标签恢复标签栏。

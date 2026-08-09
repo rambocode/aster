@@ -204,6 +204,74 @@ func settingsUsesFixedIndependentWindow() throws {
   #expect(!visibleLabels.contains("返回工作区"))
 }
 
+@Test("设置窗口打开时切换主题会实时刷新主工作区")
+@MainActor
+func themeSelectionRefreshesWorkspaceWhileSettingsStayOpen() async throws {
+  let defaults = isolatedDefaults()
+  let model = try makeNonTerminalTestModel(defaults: defaults, directories: ["/tmp/live-theme"])
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.appearance = .light
+  let workspace = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(
+    content: workspace,
+    size: NSSize(width: 1_180, height: 760)
+  )
+  window.contentView?.layoutSubtreeIfNeeded()
+  workspace.setSettingsPresentationActive(true)
+
+  let pink = try #require(TerminalThemeCatalog.theme(named: "Pink"))
+  preferences.selectTheme(pink)
+  // AppPreferences 在 will-change 阶段广播，工作区要等当前调用栈结束后读取新主题。
+  try await Task.sleep(for: .milliseconds(30))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let root = try #require(workspace.view as? ThemeVisualEffectView)
+  #expect(root.appliedThemeTint == pink.resolvedColor(forSlot: "interface.window"))
+  let sidebar = try #require(
+    workspace.view.descendants.first {
+      $0.identifier?.rawValue == "workspace-sidebar"
+    } as? ThemeVisualEffectView
+  )
+  #expect(sidebar.appliedThemeTint == pink.resolvedColor(forSlot: "sidebar.background"))
+}
+
+@Test("菜单主题选择器实时预览且仅在确认后持久化")
+@MainActor
+func themeSwitcherPreviewsAndCommitsAsOneTransaction() throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.appearance = .light
+  let ayu = try #require(preferences.themes(for: .light).first { $0.name == "Ayu Light" })
+  let pink = try #require(preferences.themes(for: .light).first { $0.name == "Pink" })
+  preferences.selectTheme(ayu)
+
+  preferences.previewTheme(pink)
+  #expect(preferences.activeTheme.name == "Pink")
+  #expect(preferences.configuration.appearance.themeName == "Ayu Light")
+  #expect(AppPreferences(defaults: defaults).activeTheme.name == "Ayu Light")
+  preferences.cancelThemePreview()
+  #expect(preferences.activeTheme.name == "Ayu Light")
+
+  let cancelled = ThemeSwitcherViewController(preferences: preferences)
+  cancelled.loadViewIfNeeded()
+  #expect(cancelled.visibleThemeNames.count == 9)
+  #expect(cancelled.selectedThemeName == "Ayu Light")
+  cancelled.moveSelection(1)
+  let previewedName = try #require(cancelled.selectedThemeName)
+  #expect(previewedName != "Ayu Light")
+  #expect(preferences.activeTheme.name == previewedName)
+  cancelled.cancelPresentation()
+  #expect(preferences.activeTheme.name == "Ayu Light")
+
+  let committed = ThemeSwitcherViewController(preferences: preferences)
+  committed.loadViewIfNeeded()
+  committed.moveSelection(1)
+  let committedName = try #require(committed.selectedThemeName)
+  committed.commitSelection()
+  #expect(preferences.configuration.appearance.themeName == committedName)
+  #expect(AppPreferences(defaults: defaults).activeTheme.name == committedName)
+}
+
 @Test("设置页保持原始 700×460pt 默认尺寸")
 @MainActor
 func settingsKeepsOriginalDefaultSize() {
@@ -372,7 +440,7 @@ func collapsedTabBarOffersHoverRecovery() throws {
   #expect(strip?.hitTest(.zero) == nil)
 }
 
-@Test("工作区标题栏与终端同色并在悬停时显示路径胶囊")
+@Test("工作区中央标题栏延续 Otty Window chrome 并在悬停时显示路径胶囊")
 @MainActor
 func workspaceTitlebarMatchesOttyChrome() throws {
   let defaults = isolatedDefaults()
@@ -396,12 +464,24 @@ func workspaceTitlebarMatchesOttyChrome() throws {
   )
   #expect(titlebar != nil)
   #expect(abs((titlebar?.frame.height ?? 0) - 28) < 0.5)
-  #expect(titlebar is NSVisualEffectView == false)
+  let themedTitlebar = try #require(titlebar as? ThemeVisualEffectView)
+  let windowColor = try #require(
+    preferences.activeTheme.colorSlots.first { $0.id == "interface.window" }
+  ).resolved
+  let titlebarForeground = try #require(
+    preferences.activeTheme.colorSlots.first { $0.id == "titlebar.foreground" }
+  ).resolved
+  #expect(themedTitlebar.appliedThemeTint == windowColor)
+  #expect(themedTitlebar.appliedThemeMaterial == preferences.activeTheme.palette.material)
+  #expect(HexColor(nsColor: titleButton.contentTintColor ?? .clear) == titlebarForeground)
+  let explicitTitlebarBackground = preferences.activeTheme.style.titlebarBackground
+    .map { NSColor($0).cgColor }
   #expect(
-    titlebar?.layer?.backgroundColor
-      == NSColor(preferences.activeTheme.palette.renderedTerminalBackground).cgColor
+    titleButton.layer?.backgroundColor
+      == (explicitTitlebarBackground ?? NSColor.clear.cgColor)
   )
-  #expect(titleButton.layer?.backgroundColor == NSColor.clear.cgColor)
+  #expect(titleButton.title.contains("AsterTerminal"))
+  #expect(titleButton.title.hasSuffix("⋯"))
 
   let hover = try #require(
     NSEvent.mouseEvent(
@@ -423,6 +503,7 @@ func workspaceTitlebarMatchesOttyChrome() throws {
   #expect(titleButton.title.contains("AsterTerminal"))
   #expect(titleButton.title.hasSuffix("⋯"))
   #expect(titleButton.layer?.backgroundColor != NSColor.clear.cgColor)
+  #expect(HexColor(nsColor: titleButton.contentTintColor ?? .clear) == titlebarForeground)
 }
 
 @Test("点击标题路径胶囊弹出可操作的工作区菜单")
@@ -1064,6 +1145,230 @@ func themeMaterialUsesNativeVisualEffectView() throws {
   #expect(view.state == .active)
 }
 
+@Suite("浅色 Otty 主题呈现矩阵", .serialized)
+@MainActor
+struct LightThemeRenderParityTests {
+  @Test("九套浅色主题的设置颜色逐项到达最终工作区对象")
+  func everyLightThemeReachesRenderedWorkspaceObjects() throws {
+    _ = NSApplication.shared
+    let themes = TerminalThemeCatalog.builtIns.filter { $0.mode == .light }
+    #expect(themes.count == 9)
+
+    for theme in themes {
+      try verifyVerticalWorkspace(theme)
+      try verifyHorizontalWorkspace(theme)
+    }
+  }
+
+  /// 竖直布局覆盖截图里的 Window、Container、Sidebar、Titlebar、Tab，以及终端、
+  /// ANSI、光标和选区。右侧详情面板与左侧标签栏必须消费同一组 Sidebar token。
+  private func verifyVerticalWorkspace(_ theme: TerminalTheme) throws {
+    let defaults = isolatedDefaults()
+    let preferences = AppPreferences(defaults: defaults)
+    preferences.appearance = .light
+    preferences.selectTheme(theme)
+    preferences.tabBarLayout = .vertical
+    let activeTheme = preferences.activeTheme
+    let model = try makeNonTerminalTestModel(
+      defaults: defaults,
+      directories: ["/tmp/theme-matrix-first", "/tmp/theme-matrix-selected"]
+    )
+    let controller = WorkspaceViewController(model: model, preferences: preferences)
+    let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+    window.contentView?.layoutSubtreeIfNeeded()
+
+    let root = try #require(controller.view as? ThemeVisualEffectView)
+    let windowColor = try slot("interface.window", in: activeTheme)
+    #expect(root.appliedThemeTint == windowColor, "\(theme.name) Window")
+
+    let sidebar = try themedView("workspace-sidebar", in: controller)
+    // 详情控制器在生产中由可动画的 Panel host 延迟接入 split；单独加载其稳定根视图，
+    // 可以直接验证主题而不把显隐转场时序引入颜色测试。
+    let detailsController = DetailsPanelViewController(model: model, preferences: preferences)
+    detailsController.loadViewIfNeeded()
+    let details = try #require(detailsController.view as? ThemeVisualEffectView)
+    let sidebarColor = try slot("sidebar.background", in: activeTheme)
+    #expect(sidebar.appliedThemeTint == sidebarColor, "\(theme.name) Sidebar")
+    #expect(details.appliedThemeTint == sidebarColor, "\(theme.name) Details Sidebar")
+    #expect(sidebar.appliedThemeMaterial == activeTheme.style.sidebarMaterial ?? activeTheme.palette.material)
+    #expect(details.appliedThemeMaterial == activeTheme.style.sidebarMaterial ?? activeTheme.palette.material)
+    let sidebarForeground = try slot("sidebar.foreground", in: activeTheme)
+    let sidebarTitle = try #require(
+      identifiedView("workspace-sidebar-foreground", in: controller) as? NSTextField
+    )
+    #expect(HexColor(nsColor: sidebarTitle.textColor ?? .clear) == sidebarForeground)
+    let split = try #require(
+      controller.view.descendants.compactMap { $0 as? WorkspacePanelSplitView }.first
+    )
+    let sidebarBorder = try slot("sidebar.border", in: activeTheme)
+    #expect(
+      HexColor(nsColor: split.themeDividerColor) == sidebarBorder,
+      "\(theme.name) Sidebar border"
+    )
+
+    let titlebar = try themedView("workspace-titlebar", in: controller)
+    // 左侧标签布局的中央标题条属于 Window chrome；titlebar token 只提供标题文字等
+    // 标题栏角色，不应额外盖住 Window 的材质或底色。
+    #expect(titlebar.appliedThemeTint == windowColor, "\(theme.name) Titlebar Window chrome")
+    #expect(titlebar.appliedThemeMaterial == activeTheme.palette.material)
+    let titleButton = try #require(
+      identifiedView("workspace-title-button", in: controller) as? WorkspaceTitleButton
+    )
+    let titlebarForeground = try slot("titlebar.foreground", in: activeTheme)
+    #expect(
+      HexColor(nsColor: titleButton.contentTintColor ?? .clear) == titlebarForeground,
+      "\(theme.name) Titlebar foreground"
+    )
+
+    let container = try identifiedView("workspace-container", in: controller)
+    let containerColor = try slot("container.background", in: activeTheme)
+    let containerBorder = try slot("container.border", in: activeTheme)
+    #expect(layerColor(of: container) == containerColor, "\(theme.name) Container")
+    #expect(layerBorderColor(of: container) == containerBorder, "\(theme.name) Container border")
+
+    let tabs = controller.view.descendants.compactMap { $0 as? TabRowButton }
+    #expect(tabs.count == 2)
+    let selectedID = try #require(model.selectedTabID)
+    let selectedTab = try #require(tabs.first { tab in
+      tab.descendants.contains {
+        $0.identifier?.rawValue == "workspace-tab-background-\(selectedID.uuidString)"
+      }
+    })
+    let unselectedTab = try #require(tabs.first { $0 !== selectedTab })
+    let tabBackground = try tabDecoration(in: selectedTab)
+    let tabActiveBackground = try slot("tab.activeBackground", in: activeTheme)
+    let tabActiveForeground = try slot("tab.activeForeground", in: activeTheme)
+    let tabTint = try #require(selectedTab.contentTintColor)
+    #expect(layerColor(of: tabBackground) == tabActiveBackground, "\(theme.name) Tab active")
+    #expect(HexColor(nsColor: tabTint) == tabActiveForeground, "\(theme.name) Tab foreground")
+    let tabForeground = try slot("tab.foreground", in: activeTheme)
+    #expect(
+      HexColor(nsColor: unselectedTab.contentTintColor ?? .clear) == tabForeground,
+      "\(theme.name) Tab resting foreground"
+    )
+    let tabActiveBorder = try slot("tab.activeBorderColor", in: activeTheme)
+    #expect(
+      layerBorderColor(of: tabBackground) == tabActiveBorder,
+      "\(theme.name) Tab active border"
+    )
+    let expectedBorderWidth = CGFloat(activeTheme.style.tab.activeBorderWidth)
+    #expect(
+      tabBackground.layer?.borderWidth == expectedBorderWidth, "\(theme.name) Tab border width")
+    unselectedTab.mouseEntered(with: makeClickEvent(in: window))
+    let tabHoverBackground = try slot("tab.hoverBackground", in: activeTheme)
+    let hoveredDecoration = try tabDecoration(in: unselectedTab)
+    #expect(
+      layerColor(of: hoveredDecoration) == tabHoverBackground,
+      "\(theme.name) Tab hover"
+    )
+    unselectedTab.mouseExited(with: makeClickEvent(in: window))
+
+    try verifyRuntimeRoles(activeTheme)
+
+    // TerminalSession.apply 读取原始 alpha 的 canvas；脱离材质的浮层读取预合成
+    // background。两条路径都纳入矩阵，避免 Glass 终端被错误画成不透明 surface。
+    #expect(HexColor(nsColor: preferences.terminalForegroundColor) == activeTheme.palette.foreground)
+    #expect(HexColor(nsColor: preferences.terminalBackgroundColor) == activeTheme.palette.renderedTerminalBackground)
+    let expectedCanvas = activeTheme.palette.windowBackground.alpha == 0
+      ? try #require(HexColor("#B3B3B3")) : activeTheme.palette.renderedTerminalBackground
+    #expect(HexColor(nsColor: preferences.terminalCanvasBackgroundColor) == expectedCanvas)
+    #expect(HexColor(nsColor: preferences.cursorColor) == activeTheme.palette.cursor)
+    let cursorForeground = try slot("cursor.foreground", in: activeTheme)
+    let selectionBackground = try slot("selection.background", in: activeTheme)
+    let selectionForeground = try slot("selection.foreground", in: activeTheme)
+    #expect(HexColor(nsColor: preferences.cursorTextColor) == cursorForeground)
+    #expect(HexColor(nsColor: preferences.selectionColor) == selectionBackground)
+    #expect(HexColor(nsColor: preferences.selectionForegroundColor) == selectionForeground)
+    #expect(preferences.ansiColors == activeTheme.palette.ansiColors)
+  }
+
+  /// 横向布局单独锁定 Tabbar 与 `[tab-bar.tab]` 的覆盖/继承结果。
+  private func verifyHorizontalWorkspace(_ theme: TerminalTheme) throws {
+    let defaults = isolatedDefaults()
+    let preferences = AppPreferences(defaults: defaults)
+    preferences.appearance = .light
+    preferences.selectTheme(theme)
+    preferences.tabBarLayout = .top
+    let activeTheme = preferences.activeTheme
+    let model = try makeNonTerminalTestModel(defaults: defaults, directories: ["/tmp/theme-matrix"])
+    let controller = WorkspaceViewController(model: model, preferences: preferences)
+    let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+    window.contentView?.layoutSubtreeIfNeeded()
+
+    let tabbar = try themedView("workspace-tabbar", in: controller)
+    let tabbarColor = try slot("tabbar.background", in: activeTheme)
+    #expect(tabbar.appliedThemeTint == tabbarColor, "\(theme.name) Tabbar")
+    let border = try identifiedView("workspace-tabbar-border", in: controller)
+    let tabbarBorder = try slot("tabbar.border", in: activeTheme)
+    #expect(layerColor(of: border) == tabbarBorder, "\(theme.name) Tabbar border")
+
+    let tab = try #require(controller.view.descendants.compactMap { $0 as? TabRowButton }.first)
+    let style = activeTheme.style.horizontalTab ?? activeTheme.style.tab
+    let fallbackActiveBackground = try slot("tab.activeBackground", in: activeTheme)
+    let fallbackActiveForeground = try slot("tab.activeForeground", in: activeTheme)
+    let activeBackground = style.activeBackground ?? fallbackActiveBackground
+    let activeForeground = style.activeForeground ?? fallbackActiveForeground
+    let tabTint = try #require(tab.contentTintColor)
+    #expect(layerColor(of: tab) == activeBackground, "\(theme.name) horizontal Tab active")
+    #expect(HexColor(nsColor: tabTint) == activeForeground, "\(theme.name) horizontal Tab foreground")
+  }
+
+  private func slot(_ id: String, in theme: TerminalTheme) throws -> HexColor {
+    try #require(theme.resolvedColor(forSlot: id), "主题 \(theme.name) 缺少 \(id)")
+  }
+
+  /// Panel 与 Accents 通过动态角色色进入查找栏、浮层、详情内容和通用控件；直接核对
+  /// ThemeRuntime 可以避开某个业务页是否恰好有数据，同时仍锁住最终 AppKit 颜色入口。
+  private func verifyRuntimeRoles(_ theme: TerminalTheme) throws {
+    let appearance = try #require(NSAppearance(named: .aqua))
+    let mappings: [(ThemeRuntime.Role, String)] = [
+      (.panel, "panel.background"),
+      (.surface, "panel.surface"),
+      (.border, "panel.border"),
+      (.accent, "interface.accent"),
+      (.foreground, "interface.foreground"),
+      (.secondary, "interface.secondaryForeground"),
+      (.tertiary, "interface.tertiaryForeground"),
+    ]
+    for (role, slotID) in mappings {
+      let rendered = HexColor(nsColor: ThemeRuntime.shared.color(for: role, appearance: appearance))
+      let expected = try slot(slotID, in: theme)
+      #expect(rendered == expected, "\(theme.name) \(slotID)")
+    }
+  }
+
+  private func tabDecoration(in tab: TabRowButton) throws -> NSView {
+    try #require(tab.descendants.first {
+      $0.identifier?.rawValue.hasPrefix("workspace-tab-background-") == true
+    })
+  }
+
+  private func identifiedView(
+    _ id: String,
+    in controller: WorkspaceViewController
+  ) throws -> NSView {
+    try #require(
+      controller.view.descendants.first { $0.identifier?.rawValue == id },
+      "工作区缺少主题验收对象 \(id)"
+    )
+  }
+
+  private func themedView(
+    _ id: String,
+    in controller: WorkspaceViewController
+  ) throws -> ThemeVisualEffectView {
+    try #require(try identifiedView(id, in: controller) as? ThemeVisualEffectView)
+  }
+
+  private func layerColor(of view: NSView) -> HexColor? {
+    view.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)).map(HexColor.init(nsColor:))
+  }
+
+  private func layerBorderColor(of view: NSView) -> HexColor? {
+    view.layer?.borderColor.flatMap(NSColor.init(cgColor:)).map(HexColor.init(nsColor:))
+  }
+}
+
 private extension NSView {
   var descendants: [NSView] {
     subviews + subviews.flatMap(\.descendants)
@@ -1156,6 +1461,7 @@ private func makeClickEvent(in window: NSWindow) -> NSEvent {
   )!
 }
 
+@MainActor
 private func makeTestWindow(content: NSViewController, size: NSSize) -> NSWindow {
   let window = NSWindow(
     contentRect: NSRect(origin: .zero, size: size),

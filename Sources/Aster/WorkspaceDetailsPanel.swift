@@ -158,9 +158,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     let theme = preferences.activeTheme
     renderedTheme = theme
     let background = ThemeVisualEffectView()
+    background.identifier = NSUserInterfaceItemIdentifier("workspace-details-panel")
     background.apply(
-      material: theme.palette.material,
-      tint: theme.palette.panelBackground
+      material: theme.style.sidebarMaterial ?? theme.palette.material,
+      tint: theme.resolvedColor(forSlot: "sidebar.background")
+        ?? theme.style.sidebarBackground ?? theme.palette.panelBackground
     )
     let column = NSStackView()
     column.orientation = .vertical
@@ -198,7 +200,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     guard renderedTheme != theme else { return }
     renderedTheme = theme
     if let background = view as? ThemeVisualEffectView {
-      background.apply(material: theme.palette.material, tint: theme.palette.panelBackground)
+      background.apply(
+        material: theme.style.sidebarMaterial ?? theme.palette.material,
+        tint: theme.resolvedColor(forSlot: "sidebar.background")
+          ?? theme.style.sidebarBackground ?? theme.palette.panelBackground
+      )
     }
     paneRefreshOverlay.synchronizeAppearance()
     // 刷新屏障是控制器级稳定实例，主题切换只重建页内容，不能把屏障一起移除。

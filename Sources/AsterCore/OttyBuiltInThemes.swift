@@ -4,7 +4,7 @@ import Foundation
 ///
 /// 终端前景、背景、ANSI 16 色及显式光标/选区颜色逐项来自 Otty 随应用发布的
 /// `.ottytheme`；界面令牌也优先采用主题中独立声明的值。未声明的光标与选区颜色
-/// 遵循 Otty 的级联规则：前景用于覆盖色，背景用于覆盖后的文字色。
+/// 遵循 Otty 的级联规则；本阶段先把浅色选区回退对齐为终端前景的 30% 透明度。
 enum OttyBuiltInThemes {
   static let all: [TerminalTheme] = [
     make(
@@ -18,13 +18,15 @@ enum OttyBuiltInThemes {
       id: "ayu-light", name: "Ayu Light", mode: .light, foreground: "#5C6166", background: "#FCFCFC",
       ansi: "#010101 #E7666A #80AB24 #EBA54D #4196DF #9870C3 #51B891 #C1C1C1 #343434 #EE9295 #9FD32F #F0BC7B #6DAEE6 #B294D2 #75C7A8 #DBDBDB",
       interfaceForeground: "#1A1A1A", secondary: "#8E8E93", tertiary: "#BBBBBB",
-      accent: "#4196DF", surface: "#FFFFFF", border: "#E0E0E0", style: ayuLightStyle),
+      accent: "#4196DF", surface: "#FFFFFF", border: "#E0E0E0",
+      interfaceWindow: "#FCFCFC", style: ayuLightStyle),
     make(
       id: "floating-card", name: "Floating Card", mode: .light, foreground: "#24292E", background: "#FFFFFF",
       ansi: "#24292E #D73A49 #28A745 #DBAB09 #0366D6 #5A32A3 #0598BC #d4d6d7 #959DA5 #CB2431 #22863A #B08800 #005CC5 #5A32A3 #3192AA #D1D5DA",
       cursor: "#18181B", selection: "#E4E4E7", interfaceForeground: "#18181B",
       secondary: "#52525B", tertiary: "#A1A1AA", accent: "#000000", panel: "#FFFFFF",
-      surface: "#FAFAFA", container: "#FFFFFF", border: "#E5E5E5", material: .glass,
+      surface: "#FAFAFA", container: "#FFFFFF", border: "#E5E5E5",
+      interfaceWindow: "none", material: .glass,
       style: floatingCardStyle),
     make(
       id: "glass-light", name: "Glass Light", mode: .light, foreground: "#303030", background: "none",
@@ -38,26 +40,31 @@ enum OttyBuiltInThemes {
       ansi: "#262522 #A33A35 #5C7A3E #967927 #2F5F8A #904180 #3E7A78 #BFBAAE #7A766B #C25852 #7A9A52 #d4a945 #4470a0 #be79bb #739797 #dfdbd1",
       interfaceForeground: "#262522", secondary: "#7A766B", tertiary: "#B8B3A6",
       accent: "#2F5F8A", panel: "#f3f2ee", surface: "#F4F1EA", border: "#DBD6C8",
-      style: newsprintStyle),
+      interfaceWindow: "#F4F4F1", style: newsprintStyle),
     make(
-      id: "one-light", name: "One Light", mode: .light, foreground: "#2A2B33", background: "#F8F8F8",
-      ansi: "#000000 #DE3D35 #3E953A #D2B67B #2F5AF3 #A00095 #3E953A #BBBBBB #000000 #DE3D35 #3E953A #D2B67B #2F5AF3 #A00095 #3E953A #FFFFFF"),
+      id: "one-light", name: "One Light", mode: .light, foreground: "#2A2B33", background: "#FFFFFF",
+      ansi: "#000000 #DE3D35 #3E953A #D2B67B #2F5AF3 #A00095 #3E953A #BBBBBB #000000 #DE3D35 #3E953A #D2B67B #2F5AF3 #A00095 #3E953A #FFFFFF",
+      panel: "#F7F7F7", surface: "#F8F8F8", border: "#E5E5E5",
+      interfaceWindow: "#FFFFFF", style: oneLightStyle),
     make(
       id: "paper", name: "Paper", mode: .light, foreground: "#1A1A1A", background: "#FCFBF9",
       ansi: "#1A1A1A #A33A3A #2B5A38 #A85A20 #4A7A8A #4A3A6A #3A7A6A #C1BEB5 #8C8A80 #C36A6A #6B9A78 #C88A50 #7A9AAA #8A7A9A #6ABAAA #EBEBE6",
       interfaceForeground: "#1A1A1A", secondary: "#8C8A80", tertiary: "#C1BEB5",
       accent: "#2B5A38", panel: "#F5F4F0", surface: "#FCFBF9", border: "#E0DFD5",
-      style: paperStyle),
+      interfaceWindow: "#FCFBF9", style: paperStyle),
     make(
       id: "pink", name: "Pink", mode: .light, foreground: "#2A2422", background: "#F5F0F0",
       ansi: "#2A2422 #B85951 #6B8442 #B8862E #4D72A0 #B16078 #4F8587 #9A938E #6B6360 #D87169 #8AA254 #D5A445 #6B8FBE #CC8595 #6FA4A6 #1A1412",
       cursor: "#CC8595", cursorText: "#F5F0F0", selectionForeground: "#2A2422",
       selection: "#EDC4BE", interfaceForeground: "#2A2422", secondary: "#7A6E6A",
       tertiary: "#B8ADA8", accent: "#CC8595", panel: "#F0EAEA", surface: "#FBF7F6",
-      border: "#E5DCDA", style: pinkStyle),
+      border: "#E5DCDA", interfaceWindow: "#F5F0F0", style: pinkStyle),
     make(
       id: "solarized-light", name: "Solarized Light", mode: .light, foreground: "#586E75", background: "#FDF6E3",
-      ansi: "#073642 #DC322F #859900 #B58900 #268BD2 #D33682 #2AA198 #EEE8D5 #002B36 #CB4B16 #586E75 #657B83 #839496 #6C71C4 #93A1A1 #FDF6E3"),
+      ansi: "#073642 #DC322F #859900 #B58900 #268BD2 #D33682 #2AA198 #EEE8D5 #002B36 #CB4B16 #586E75 #657B83 #839496 #6C71C4 #93A1A1 #FDF6E3",
+      interfaceForeground: "#586E75", secondary: "#839496", tertiary: "#93A1A1",
+      accent: "#268BD2", panel: "#F3EEDC", surface: "#EEE8D5", border: "#E2DCC7",
+      interfaceWindow: "#FDF6E3", style: solarizedLightStyle),
 
     make(
       id: "april-dark", name: "April Dark", mode: .dark, foreground: "#FFFFFF", background: "#141B18",
@@ -274,9 +281,37 @@ enum OttyBuiltInThemes {
       activeForeground: color("#FFFFFF"),
       activeFontWeight: 500
     ),
-    horizontalTab: TerminalTabStyle(radius: 14, height: 32),
+    horizontalTab: TerminalTabStyle(
+      radius: 14,
+      height: 32,
+      foreground: color("#7A766B"),
+      hoverBackground: color("#C4BFB16F"),
+      activeBackground: color("#6D7478"),
+      activeForeground: color("#FFFFFF"),
+      activeFontWeight: 500,
+      activeShadow: shadow(y: 1, blur: 4, color: "#0000000D")
+    ),
     horizontalTabBarHeight: 44,
     container: TerminalContainerStyle()
+  )
+
+  /// One Light 未声明 Sidebar，仍沿用 Otty 默认的轻微灰阶层次。当前 Otty 主题把
+  /// 终端与 Window chrome 都覆盖为纯白，左右边栏保留 #F7F7F7 才能维持层级。
+  private static let oneLightStyle = TerminalThemeStyle(
+    radius: 4,
+    sidebarBackground: color("#F7F7F7"),
+    sidebarBorderColor: color("#E5E5E5"),
+    sidebarBorderWidth: 1,
+    titlebarBackground: color("#FFFFFF"),
+    tab: TerminalTabStyle(
+      radius: 4,
+      foreground: color("#6B6F76"),
+      hoverBackground: color("#0000000A"),
+      activeBackground: color("#F8F8F8"),
+      activeForeground: color("#2A2B33"),
+      activeFontWeight: 500
+    ),
+    container: TerminalContainerStyle(background: color("#FFFFFF"))
   )
 
   private static let nightStyle = TerminalThemeStyle(
@@ -334,7 +369,18 @@ enum OttyBuiltInThemes {
       activeFontWeight: 400,
       activeShadow: shadow(y: 1, blur: 2, color: "#00000005")
     ),
-    horizontalTab: TerminalTabStyle(radius: 14, height: 32),
+    horizontalTab: TerminalTabStyle(
+      radius: 14,
+      height: 32,
+      foreground: color("#8C8A80"),
+      hoverBackground: color("#EBEAE5"),
+      activeBackground: color("#FFFFFF"),
+      activeForeground: color("#1A1A1A"),
+      activeBorderColor: color("#E0DFD5"),
+      activeBorderWidth: 1,
+      activeFontWeight: 400,
+      activeShadow: shadow(y: 1, blur: 4, color: "#0000000F")
+    ),
     horizontalTabBarHeight: 44,
     container: TerminalContainerStyle(radius: 0)
   )
@@ -355,6 +401,24 @@ enum OttyBuiltInThemes {
       activeFontWeight: 600
     ),
     container: TerminalContainerStyle()
+  )
+
+  /// Solarized Light 文件只声明终端色表，Sidebar/Tab 使用 Otty 的默认浅色级联。
+  /// 默认层次不是终端背景的简单复用：侧栏更深、活动标签再深一档。
+  private static let solarizedLightStyle = TerminalThemeStyle(
+    radius: 4,
+    sidebarBackground: color("#F3EEDC"),
+    sidebarBorderColor: color("#E2DCC7"),
+    sidebarBorderWidth: 1,
+    tab: TerminalTabStyle(
+      radius: 4,
+      foreground: color("#839496"),
+      hoverBackground: color("#EEE8D580"),
+      activeBackground: color("#EEE8D5"),
+      activeForeground: color("#586E75"),
+      activeFontWeight: 500
+    ),
+    container: TerminalContainerStyle(background: color("#FDF6E3"))
   )
 
   private static func shadow(
@@ -421,7 +485,16 @@ enum OttyBuiltInThemes {
         secondaryForeground: resolvedSecondary,
         accent: color(accent ?? ansiColors[4].stringValue),
         cursor: color(cursor ?? foreground),
-        selection: color(selection ?? foreground),
+        // Otty 没有显式选区色时使用终端前景的 30% 透明度；不能退化成不透明前景，
+        // 否则 April、Ayu Light、Paper 等主题一选中文字就会盖住整块终端内容。
+        selection: selection.map(color)
+          ?? (mode == .light
+            ? HexColor(
+              red: terminalForeground.red,
+              green: terminalForeground.green,
+              blue: terminalForeground.blue,
+              alpha: 77
+            ) : terminalForeground),
         ansiColors: ansiColors,
         interfaceWindowBackground: resolvedInterfaceWindow,
         interfaceForeground: resolvedInterfaceForeground,

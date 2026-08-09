@@ -19,6 +19,9 @@ struct WorkspacePanel {
 final class WorkspacePanelSplitView: NSSplitView, NSSplitViewDelegate {
   private var panels: [MountedWorkspacePanel]
   private let layoutStore: WorkspacePanelLayoutStore
+  /// 左右边栏分隔线直接使用主题详情里的 Sidebar border token。hover 仍切换为 accent，
+  /// 但静止态不再对该颜色二次降透明度，否则色板与最终窗口无法逐项对应。
+  private(set) var themeDividerColor: NSColor
   private var subscriptions: Set<AnyCancellable> = []
   private var isApplyingPanelFrames = false
   private var isUserResizing = false
@@ -39,9 +42,14 @@ final class WorkspacePanelSplitView: NSSplitView, NSSplitViewDelegate {
   /// NSSplitView 的常规宽度求解，否则一次普通 layout 会把动画中的 frame 拉回首选值。
   private var transitioningPanelRoles: Set<WorkspacePanelRole> = []
 
-  init(panels: [WorkspacePanel], layoutStore: WorkspacePanelLayoutStore) {
+  init(
+    panels: [WorkspacePanel],
+    layoutStore: WorkspacePanelLayoutStore,
+    dividerColor: NSColor = AsterTheme.divider
+  ) {
     self.panels = Self.sortedPanels(panels).map(MountedWorkspacePanel.init)
     self.layoutStore = layoutStore
+    themeDividerColor = dividerColor
     super.init(frame: .zero)
     isVertical = true
     dividerStyle = .thin
@@ -222,7 +230,7 @@ final class WorkspacePanelSplitView: NSSplitView, NSSplitViewDelegate {
   override func drawDivider(in rect: NSRect) {
     let index = dividerIndex(containing: NSPoint(x: rect.midX, y: rect.midY))
     let highlighted = index == hoveredDividerIndex && (window?.isKeyWindow ?? false)
-    (highlighted ? AsterTheme.accent : AsterTheme.divider).setFill()
+    (highlighted ? AsterTheme.accent : themeDividerColor).setFill()
     rect.fill()
   }
 

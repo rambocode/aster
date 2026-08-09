@@ -401,7 +401,10 @@ final class TerminalAutocompleteController {
       caretFrame: terminalView.caretFrame,
       font: terminalView.font,
       foreground: terminalView.nativeForegroundColor,
-      background: terminalView.nativeBackgroundColor
+      // 自定义主题未来仍可能提供透明原生画布；候选浮层没有窗口材质，遇到透明色时
+      // 必须回退到主题 surface，避免候选文字直接压在终端内容上。
+      background: terminalView.nativeBackgroundColor.alphaComponent > 0.01
+        ? terminalView.nativeBackgroundColor : AsterTheme.panel
     )
   }
 }

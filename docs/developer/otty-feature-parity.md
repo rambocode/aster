@@ -17,7 +17,7 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 
 ### User Interface
 
-- **Window / Tab / Split**：OSC 0/1/2 标题与覆盖、窗口尺寸模式/置顶/PiP、标签布局/分组/排序/分隔线/自动隐藏/徽标、新标签位置、分屏创建/移动/交换/等分/聚焦、关闭确认与最近关闭、Recipe 捕获。
+- **Window / Tab / Split**：OSC 0/1/2 标题与覆盖、窗口尺寸模式/置顶/PiP、标签布局/分组/排序/分隔线/自动隐藏/徽标、新标签位置、分屏创建/移动/交换/等分/聚焦、关闭确认与最近关闭、Recipe 捕获；主题详情中的 Window/Container/Sidebar/Titlebar/Tabbar/Tab 等颜色必须到达对应 AppKit 对象。
 - **Details / Outline**：详情跟随聚焦 Pane；Info 显示目录、进程、监听端口和打开动作；Outline 索引命令/Agent Prompt/文件结构；Git 显示仓库与变更；Files 显示以 CWD 为根的树。
 - **Files / Links / Drag**：识别绝对、tilde、相对、行列路径、URL 与 OSC 8；安全打开、预览、复制、Finder、`cd`；支持文件/目录/URL/文本、标签和 Pane 的拖放落点语义。
 - **Find / Open Quickly / Command Palette**：Pane 内实时查找、大小写/正则/范围与全局结果；Open Quickly 的 All/Opened/Recent/Folders/SSH/Agents/Current/Recipes 过滤器；命令面板覆盖全部带 Pane/Window/App scope 的动作。
@@ -47,7 +47,7 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 
 ### User Interface（9）
 
-- 完成：[Window, Tab and Split](https://docs.otty.sh/user-interface/window-tab-split) — 多窗口与恢复、Pin、当前/跟随 PiP、OSC 独立标题、三种标签布局、分组/排序/分隔线、跨窗口标签拖动、递归分屏、缩放/移动/交换/等分/聚焦及关闭恢复均已接入。
+- 完成：[Window, Tab and Split](https://docs.otty.sh/user-interface/window-tab-split) — 多窗口与恢复、Pin、当前/跟随 PiP、OSC 独立标题、三种标签布局、分组/排序/分隔线、跨窗口标签拖动、递归分屏、缩放/移动/交换/等分/聚焦及关闭恢复均已接入；“显示 → 主题”支持搜索、方向键/悬停实时预览、确认保存与取消恢复；9 套浅色主题已由对象级测试和逐主题截图验证 Window、Container、左右 Sidebar、Titlebar、Tabbar、Tab 与终端颜色按 Otty token 呈现，左侧标签布局的中央标题条延续 Window，目录胶囊使用 Titlebar。
 - 部分：[Details Panel](https://docs.otty.sh/user-interface/details-panel) — Info、Outline、Git、Files 跟随活动 Pane；Info 区分成功空结果、不可用和失败，进程树包含 shell 根并仅检查本地 listener；Outline 支持运行中/已完成 OSC 133 命令、精确绑定 Agent prompt 和带真实位置的文档结构。检查有界且不在主线程执行外部命令；真实窗口交互仍按设计 QA 手工复验，因此不宣称整页完成。
 - 不适用：[Status Bar](https://docs.otty.sh/user-interface/status-bar) — 上游页面明确标记为 Planned，没有已描述的可实现功能；Aster 不再渲染自定义底部状态栏。
 - 完成：[Files and Links](https://docs.otty.sh/user-interface/files-and-links) — 路径/行列/URL/OSC 8 解析、安全打开、预览、编辑、复制、Finder、默认应用、终端目录动作和 Send to Chat 使用同一文件安全边界。

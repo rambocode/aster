@@ -98,6 +98,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   private var mainWindowController: NSWindowController?
   /// 设置使用唯一独立窗口；Panel 宽度编辑仍绑定最近成为 key 的工作区窗口。
   private var settingsWindowController: AsterSettingsWindowController?
+  /// Otty 风格的菜单主题选择器。由 AppDelegate 强持有，避免工作区实时刷新时被释放；
+  /// 它关闭后立即清空，下一次打开重新读取当前明暗模式和主题列表。
+  private var themeSwitcherPanelController: ThemeSwitcherPanelController?
   private let panelSettingsBinding = WorkspacePanelSettingsBinding()
   private var panelLayoutStores: [ObjectIdentifier: WorkspacePanelLayoutStore] = [:]
   /// 记录工作区窗口的 key 顺序。当前工作区关闭后，绑定回退到最近使用的仍存活窗口，
@@ -175,6 +178,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
   func applicationWillTerminate(_ notification: Notification) {
     isTerminating = true
+    themeSwitcherPanelController?.dismiss(commit: false)
+    themeSwitcherPanelController = nil
     persistAdditionalWorkspaceSuites()
     cliRequestTimer?.invalidate()
     cliRequestTimer = nil
@@ -397,6 +402,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   }
 
   @objc func showSettings(_ sender: Any?) {
+    themeSwitcherPanelController?.dismiss(commit: false)
+    themeSwitcherPanelController = nil
     // 设置窗口独立展示，但主工作区也必须可见；无 key window 时先走正式恢复路径。
     if NSApp.keyWindow == nil { showMainWindow() }
     setWorkspaceSettingsPresentationActive(true)
@@ -660,6 +667,33 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   @objc private func find(_ sender: Any?) { activeWorkspaceModel.toggleFind() }
   @objc private func globalFind(_ sender: Any?) { activeWorkspaceModel.toggleGlobalFind() }
   @objc private func commandPalette(_ sender: Any?) { activeWorkspaceModel.togglePalette() }
+  @objc private func showThemeSwitcher(_ sender: Any?) {
+    if let themeSwitcherPanelController {
+      themeSwitcherPanelController.dismiss(commit: false)
+      self.themeSwitcherPanelController = nil
+      return
+    }
+    guard let workspace = activeWorkspaceViewController,
+      let anchorWindow = workspace.view.window
+    else { return }
+    activeWorkspaceModel.dismissWorkspaceOverlays()
+    workspace.setThemeSwitcherPresentationActive(true)
+    let controller = ThemeSwitcherPanelController(preferences: preferences) {
+      [weak self, weak workspace] in
+      workspace?.setThemeSwitcherPresentationActive(false)
+      self?.themeSwitcherPanelController = nil
+    }
+    themeSwitcherPanelController = controller
+    // 菜单 action 发生时系统仍在收起 menu tracking window；同步 makeKey 会在菜单关闭
+    // 的同一轮被主窗口抢回焦点，Panel 随即误判成“点到外部”而取消。下一轮再展示，
+    // 键盘焦点和窗口生命周期才与用户看到的面板一致。
+    DispatchQueue.main.async { [weak self, weak controller, weak anchorWindow] in
+      guard let self, let controller, let anchorWindow,
+        self.themeSwitcherPanelController === controller
+      else { return }
+      controller.present(relativeTo: anchorWindow)
+    }
+  }
   @objc private func openQuickly(_ sender: Any?) { activeWorkspaceModel.toggleOpenQuickly(filter: .all) }
   @objc private func openQuicklyCurrent(_ sender: Any?) { activeWorkspaceModel.toggleOpenQuickly(filter: .current) }
   @objc private func openRecipe(_ sender: Any?) { activeWorkspaceModel.openRecipe() }
@@ -951,6 +985,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(focusPaneMenuItem())
     submenu.addItem(menuItem("关闭当前面板", #selector(closePane(_:)), "w", modifiers: [.command, .option]))
     submenu.addItem(.separator())
+    submenu.addItem(menuItem("主题", #selector(showThemeSwitcher(_:)), "", modifiers: []))
     submenu.addItem(
       menuItem("命令面板", #selector(commandPalette(_:)), "p", modifiers: [.command, .shift]))
     submenu.addItem(

@@ -23,6 +23,10 @@ final class WorkspaceViewController: NSViewController {
   private var settingsPresentationActive = false
   private var needsRefreshAfterSettingsDismiss = false
   private var terminalPreferenceApplyScheduled = false
+  /// 设置窗口打开时仍要判断主题是否已离开当前渲染快照。普通配置继续延迟整树刷新，
+  /// 但主题或明暗外观变化必须实时重建主界面，不能只更新终端后等设置窗口关闭。
+  private var renderedTheme: TerminalTheme?
+  private var renderedAppearance: AppPreferences.Appearance?
   /// 当前渲染出来的面板容器。焦点切换只更新这里的指示器与 first responder，
   /// 不重建视图树。
   private var paneHosts: [UUID: ActivePaneHostView] = [:]
@@ -38,6 +42,9 @@ final class WorkspaceViewController: NSViewController {
   // 来注销监视器，否则控制器释放后事件监视器仍然存活。
   private nonisolated(unsafe) var paneClickMonitor: Any?
   private var inactiveOverlay: InactiveWindowOverlayView?
+  /// 主题选择器是独立 key Panel；展示期间后方工作区仍是实时预览画布，不能套用普通
+  /// 非活动窗口的褪色遮罩，也不能暂停终端光标状态。
+  private var themeSwitcherPresentationActive = false
   /// 垂直侧栏顶部「+ 新建 / 折叠」悬停动作区；refresh 整树重建后重新赋值。
   private weak var sidebarHoverActions: NSView?
   /// 两个动作按钮各自跟随不同的感应区：「+」跟随左栏，「折叠」跟随红绿灯行。
@@ -111,6 +118,7 @@ final class WorkspaceViewController: NSViewController {
 
   override func loadView() {
     view = ThemeVisualEffectView(frame: NSRect(x: 0, y: 0, width: 1180, height: 760))
+    view.identifier = NSUserInterfaceItemIdentifier("workspace-window")
   }
 
   override func viewDidLoad() {
@@ -308,7 +316,7 @@ final class WorkspaceViewController: NSViewController {
   /// 因此工作区刷新（会清空并重建子视图）之后必须重新安放。
   func updateWindowActivationOverlay() {
     // 还没上屏的视图按「活动」处理，避免测试与首帧出现无谓的灰罩。
-    let isActive = view.window?.isKeyWindow ?? true
+    let isActive = (view.window?.isKeyWindow ?? true) || themeSwitcherPresentationActive
     // 悬停按钮只在键盘焦点窗口露出，窗口失焦/回焦都要按当前指针位置重算一次。
     updateSidebarHoverVisibility(animated: false)
     updateInspectorToggleVisibility(animated: false)
@@ -609,8 +617,9 @@ final class WorkspaceViewController: NSViewController {
     }
   }
 
-  /// 配置在 `@Published` 的 will-change 阶段发出通知，因此先让出当前调用栈，再把新值
-  /// 应用到现存终端。独立设置窗口展示期间不重建工作区；关闭设置时统一补一次布局。
+  /// 配置在 `@Published` 的 will-change 阶段发出通知，因此先让出当前调用栈，再读取
+  /// 新值。设置展示期间，普通配置只更新终端并把结构刷新合并到关闭时；主题与明暗外观
+  /// 是用户正在预览的结果，必须立即刷新工作区全部 AppKit 对象。
   private func schedulePreferenceRefresh() {
     guard settingsPresentationActive else {
       scheduleRefresh()
@@ -627,6 +636,11 @@ final class WorkspaceViewController: NSViewController {
           tab.runtime(for: pane.id)?.terminalSession?.apply(preferences: self.preferences)
         }
       }
+      if self.renderedTheme != self.preferences.activeTheme
+        || self.renderedAppearance != self.preferences.appearance
+      {
+        self.refresh()
+      }
     }
   }
 
@@ -642,6 +656,14 @@ final class WorkspaceViewController: NSViewController {
     } else if let tab = model.selectedTab {
       focusActivePane(in: tab)
     }
+  }
+
+  /// 由 AppDelegate 在菜单主题 Panel 展示/收起时调用。只改变窗口活动呈现，不耦合
+  /// Panel 的视图或选择状态，主题切换产生的整树刷新仍可安全执行。
+  func setThemeSwitcherPresentationActive(_ active: Bool) {
+    guard themeSwitcherPresentationActive != active else { return }
+    themeSwitcherPresentationActive = active
+    updateWindowActivationOverlay()
   }
 
   private func refresh() {
@@ -665,10 +687,13 @@ final class WorkspaceViewController: NSViewController {
     updateWindowTitle(model.selectedTab?.windowTitle ?? "Aster")
 
     let theme = preferences.activeTheme
+    renderedTheme = theme
+    renderedAppearance = preferences.appearance
     if let background = view as? ThemeVisualEffectView {
       background.apply(
         material: theme.palette.material,
-        tint: theme.palette.interfaceWindowBackground ?? theme.palette.panelBackground
+        tint: theme.resolvedColor(forSlot: "interface.window")
+          ?? theme.palette.interfaceWindowBackground ?? theme.palette.panelBackground
       )
     }
 
@@ -940,7 +965,15 @@ final class WorkspaceViewController: NSViewController {
       stack.spacing = 0
       stack.distribution = .fill
       let bar = makeHorizontalTabBar(isBottom: preferences.tabBarLayout == .bottom)
-      let divider = makeDivider(color: AsterTheme.divider, vertical: false)
+      let theme = preferences.activeTheme
+      let divider = makeDivider(
+        color: NSColor(
+          theme.resolvedColor(forSlot: "tabbar.border")
+            ?? theme.palette.interfaceBorder ?? theme.palette.panelBackground
+        ),
+        vertical: false
+      )
+      divider.identifier = NSUserInterfaceItemIdentifier("workspace-tabbar-border")
       let workspace = makeContentArea()
       workspace.setContentHuggingPriority(.defaultLow, for: .vertical)
       workspace.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
@@ -969,7 +1002,15 @@ final class WorkspaceViewController: NSViewController {
       if resumesCachedController { details.setPresentationActive(true) }
       panels.append(WorkspacePanel(role: .inspector, contentView: details.view))
     }
-    let split = WorkspacePanelSplitView(panels: panels, layoutStore: panelLayoutStore)
+    let theme = preferences.activeTheme
+    let split = WorkspacePanelSplitView(
+      panels: panels,
+      layoutStore: panelLayoutStore,
+      dividerColor: NSColor(
+        theme.resolvedColor(forSlot: "sidebar.border")
+          ?? theme.palette.interfaceBorder ?? theme.palette.panelBackground
+      )
+    )
     workspacePanelSplitView = split
     return split
   }
@@ -998,9 +1039,11 @@ final class WorkspaceViewController: NSViewController {
   private func makeVerticalTabBar() -> NSView {
     let theme = preferences.activeTheme
     let background = ThemeVisualEffectView()
+    background.identifier = NSUserInterfaceItemIdentifier("workspace-sidebar")
     background.apply(
       material: theme.style.sidebarMaterial ?? theme.palette.material,
-      tint: theme.style.sidebarBackground ?? theme.palette.panelBackground
+      tint: theme.resolvedColor(forSlot: "sidebar.background")
+        ?? theme.style.sidebarBackground ?? theme.palette.panelBackground
     )
 
     let column = NSStackView()
@@ -1014,7 +1057,16 @@ final class WorkspaceViewController: NSViewController {
     let header = NSView()
     header.translatesAutoresizingMaskIntoConstraints = false
     header.heightAnchor.constraint(equalToConstant: 68).isActive = true
-    let title = makeLabel("TABS", size: 10, weight: .semibold, color: AsterTheme.tertiaryInk)
+    let title = makeLabel(
+      "TABS",
+      size: 10,
+      weight: .semibold,
+      color: NSColor(
+        theme.resolvedColor(forSlot: "sidebar.foreground")
+          ?? theme.palette.interfaceForeground ?? theme.palette.foreground
+      )
+    )
+    title.identifier = NSUserInterfaceItemIdentifier("workspace-sidebar-foreground")
     title.translatesAutoresizingMaskIntoConstraints = false
     let menu = SidebarOptionsButton { [weak self] in
       self?.makeSidebarOptionsMenu() ?? NSMenu()
@@ -1260,10 +1312,12 @@ final class WorkspaceViewController: NSViewController {
   private func makeHorizontalTabBar(isBottom: Bool) -> NSView {
     let theme = preferences.activeTheme
     let background = ThemeVisualEffectView()
+    background.identifier = NSUserInterfaceItemIdentifier("workspace-tabbar")
     background.apply(
       material: theme.style.horizontalTabBarMaterial ?? theme.palette.material,
-      tint: theme.style.horizontalTabBarBackground ?? theme.style.sidebarBackground
-        ?? theme.palette.panelBackground
+      tint: theme.resolvedColor(forSlot: "tabbar.background")
+        ?? theme.style.horizontalTabBarBackground ?? theme.style.sidebarBackground
+          ?? theme.palette.panelBackground
     )
     let height = theme.style.horizontalTabBarHeight ?? 40
     background.translatesAutoresizingMaskIntoConstraints = false
@@ -1364,14 +1418,19 @@ final class WorkspaceViewController: NSViewController {
       ? style.margin : (style.horizontalLayoutMargin ?? style.margin)
     let wrapper = NSView()
     let container = NSView()
+    container.identifier = NSUserInterfaceItemIdentifier("workspace-container")
     container.wantsLayer = true
     container.layer?.backgroundColor = NSColor(
-      style.background ?? preferences.activeTheme.palette.containerBackground
+      preferences.activeTheme.resolvedColor(forSlot: "container.background")
+        ?? style.background ?? preferences.activeTheme.palette.containerBackground
     ).cgColor
     container.layer?.cornerRadius = style.radius
     container.layer?.cornerCurve = .continuous
     container.layer?.borderWidth = style.borderWidth
-    container.layer?.borderColor = style.borderColor.map(NSColor.init)?.cgColor
+    container.layer?.borderColor = NSColor(
+      preferences.activeTheme.resolvedColor(forSlot: "container.border")
+        ?? style.borderColor ?? preferences.activeTheme.palette.containerBackground
+    ).cgColor
     if let shadow = style.shadow {
       container.shadow = NSShadow()
       container.shadow?.shadowColor = NSColor(shadow.color)
@@ -1423,24 +1482,34 @@ final class WorkspaceViewController: NSViewController {
 
   private func makeWorkspaceHeader(_ tab: TerminalTabItem) -> NSView {
     let theme = preferences.activeTheme
-    let background = NSView()
-    background.wantsLayer = true
-    // 标题区与终端画布是同一块视觉平面。不能使用 NSVisualEffectView：即使额外覆盖
-    // 同一个 tint，vibrancy/material 仍会根据窗口内容产生可见色差。
-    background.layer?.backgroundColor = NSColor(theme.palette.renderedTerminalBackground).cgColor
+    let background = ThemeVisualEffectView()
+    // Otty 的左侧标签布局让中央标题条延续 Window chrome；左右两段则由各自 Sidebar
+    // 延伸到红绿灯区域。这里不能使用 `titlebar.background` 另铺一层，否则 April / Ayu
+    // 会在终端上方出现灰带，Floating Card / Glass Light 则会把玻璃切成不透明白条。
+    // `titlebar.foreground` 仍只负责中央标题文字，和背景的布局级继承互不混淆。
+    background.apply(
+      material: theme.palette.material,
+      tint: theme.resolvedColor(forSlot: "interface.window")
+        ?? theme.palette.interfaceWindowBackground ?? theme.palette.windowBackground
+    )
     background.translatesAutoresizingMaskIntoConstraints = false
     background.identifier = NSUserInterfaceItemIdentifier("workspace-titlebar")
     background.heightAnchor.constraint(equalToConstant: 28).isActive = true
     inspectorTitleBarHoverRegion = background
     background.addTrackingArea(makeHoverTrackingArea())
 
-    // 普通状态显示 OSC 2/0 程序标题；悬停切成缩写后的工作目录胶囊。点击入口承载
-    // 命名、目录、Git、分屏与查找等动作，不再给标题栏增加独立颜色或常驻图标。
+    // Otty 常驻显示缩写后的工作目录胶囊。点击入口承载命名、目录、Git、分屏与查找
+    // 等动作；程序的 OSC 2/0 标题继续同步到原生窗口标题，不占用这条定位入口。
     let title = WorkspaceTitleButton(
       programTitle: tab.windowTitle,
       workingDirectory: tab.workingDirectory,
-      foregroundColor: theme.style.titlebarForeground.map(NSColor.init)
-        ?? AsterTheme.secondaryInk
+      foregroundColor: NSColor(
+        theme.resolvedColor(forSlot: "titlebar.foreground")
+          ?? theme.style.titlebarForeground ?? theme.palette.secondaryForeground
+      ),
+      // 只传显式值。`resolvedColor` 会把缺省 titlebar 背景派生成终端色，若在这里使用，
+      // Floating Card / Glass Light 会凭空多出一个不透明胶囊。
+      backgroundColor: theme.style.titlebarBackground.map(NSColor.init)
     ) { [weak self, weak tab] button in
       guard let self, let tab else { return }
       self.showWorkspaceTitlePopover(anchor: button, tab: tab)
@@ -1479,9 +1548,10 @@ final class WorkspaceViewController: NSViewController {
       button.identifier = NSUserInterfaceItemIdentifier("workspace-inspector-toggle")
       inspectorToggleButton = button
     }
-    button.restingTint =
-      theme.style.titlebarForeground.map(NSColor.init)
-      ?? AsterTheme.secondaryInk
+    button.restingTint = NSColor(
+      theme.resolvedColor(forSlot: "titlebar.foreground")
+        ?? theme.style.titlebarForeground ?? theme.palette.secondaryForeground
+    )
     view.addSubview(button)
     button.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([

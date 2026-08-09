@@ -29,7 +29,7 @@ private let otty131ThemeSignatures: [OttyThemeSignature] = [
   .init(name: "Night", mode: .dark, sha256: "e0a68e17d954dd446f95564445b37e2fde1383068576c60ecd335e7ad53a9e78"),
   .init(name: "Nord", mode: .dark, sha256: "1c163bb2ccd26f0736b39620ca511b98a64d252a51483cdf2883077b7c193ccb"),
   .init(name: "One Dark", mode: .dark, sha256: "c9b6995a7aefde4e4a0434148979b59fc9c66c8865fcd3cea663723e3f3849e1"),
-  .init(name: "One Light", mode: .light, sha256: "1a2ab206eae15f95d9c1241fbff0879e78cf8a2a17082fff8d31ae7f7020faf1"),
+  .init(name: "One Light", mode: .light, sha256: "24829a1329c1ec2dc9096d7702536e37a11c5fa519f2c9d60be8f96995c619a9"),
   .init(name: "Owl", mode: .dark, sha256: "4f47c005fd7a9e874bbbbf09226c7c0cf96409799b8b0a5d808ef59f3798fe83"),
   .init(name: "Paper", mode: .light, sha256: "399cec604fea84584b0ba38e6b9befe9e4423705ca8df0e49cb486b26b536771"),
   .init(name: "Pink", mode: .light, sha256: "03e5631a0d56c17f2927a67cd50711824e20fc3ece603ea9cfa3e4f8b8d734d6"),
@@ -86,6 +86,18 @@ func explicitOttyCursorAndSelectionColorsArePreserved() throws {
   #expect(glass.palette.renderedTerminalBackground == HexColor("#F7FBFD"))
 }
 
+@Test("浅色主题未显式声明选区时使用终端前景的百分之三十透明度")
+func lightThemeDefaultSelectionUsesTranslucentForeground() throws {
+  let names = ["April", "Ayu Light", "Newsprint", "One Light", "Paper", "Solarized Light"]
+  for name in names {
+    let theme = try #require(TerminalThemeCatalog.theme(named: name))
+    #expect(theme.palette.selection.red == theme.palette.foreground.red, "\(name) 选区红色通道错误")
+    #expect(theme.palette.selection.green == theme.palette.foreground.green, "\(name) 选区绿色通道错误")
+    #expect(theme.palette.selection.blue == theme.palette.foreground.blue, "\(name) 选区蓝色通道错误")
+    #expect(theme.palette.selection.alpha == 77, "\(name) 选区透明度错误")
+  }
+}
+
 @Test("Otty 显式界面样式令牌会逐项保留")
 func explicitOttyInterfaceStyleTokensArePreserved() throws {
   let floating = try #require(TerminalThemeCatalog.theme(named: "Floating Card"))
@@ -116,6 +128,24 @@ func explicitOttyInterfaceStyleTokensArePreserved() throws {
   #expect(april.style.tab.height == 32)
   #expect(april.style.tab.activeBackground == HexColor("#14934B2F"))
   #expect(april.style.tab.activeFontWeight == 500)
+}
+
+@Test("浅色主题的横向标签逐字段继承 Otty 基础标签样式")
+func lightThemeHorizontalTabsInheritBaseTabStyle() throws {
+  for name in ["Newsprint", "Paper"] {
+    let theme = try #require(TerminalThemeCatalog.theme(named: name))
+    let horizontal = try #require(theme.style.horizontalTab)
+
+    // Otty 的 `[tab-bar.tab]` 只覆盖圆角和高度；颜色、字重、边框等未声明字段
+    // 必须继续继承 `[tab]`，否则把标签栏切到顶部或底部就会丢失该主题的视觉。
+    #expect(horizontal.foreground == theme.style.tab.foreground, "\(name) 横向标签文字色未继承")
+    #expect(horizontal.hoverBackground == theme.style.tab.hoverBackground, "\(name) 横向悬停色未继承")
+    #expect(horizontal.activeBackground == theme.style.tab.activeBackground, "\(name) 横向选中色未继承")
+    #expect(horizontal.activeForeground == theme.style.tab.activeForeground, "\(name) 横向选中文字未继承")
+    #expect(horizontal.activeBorderColor == theme.style.tab.activeBorderColor, "\(name) 横向边框未继承")
+    #expect(horizontal.activeBorderWidth == theme.style.tab.activeBorderWidth, "\(name) 横向边框宽度未继承")
+    #expect(horizontal.activeFontWeight == theme.style.tab.activeFontWeight, "\(name) 横向字重未继承")
+  }
 }
 
 @Test("内置主题目录覆盖参考应用的浅色与深色主题")
