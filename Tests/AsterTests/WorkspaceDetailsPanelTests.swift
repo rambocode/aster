@@ -1521,6 +1521,181 @@ func activePaneSwitchKeepsLoadedDetailsPageRoots() async throws {
   #expect(currentTable === originalTable)
 }
 
+@Test("活动 Pane 切换时 Files 保留旧帧并原子替换新目录")
+@MainActor
+func activePaneSwitchKeepsFilesVisibleUntilReplacementIsReady() async throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 3
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  defer { tab.stop(immediately: true) }
+
+  let oldNodes = [
+    WorkspaceFileNode(path: "/tmp/old.txt", name: "old.txt", depth: 0, isDirectory: false)
+  ]
+  let newNodes = [
+    WorkspaceFileNode(path: "/tmp/new-a.txt", name: "new-a.txt", depth: 0, isDirectory: false),
+    WorkspaceFileNode(path: "/tmp/new-b.txt", name: "new-b.txt", depth: 0, isDirectory: false),
+  ]
+  var filesCalls = 0
+  let client = WorkspaceInspectionClient(
+    information: { _ in WorkspaceInformationSnapshot(processes: [], listeningPorts: []) },
+    git: { _ in GitStatusSummary() },
+    files: { _, _ in
+      filesCalls += 1
+      return filesCalls == 1 ? oldNodes : newNodes
+    }
+  )
+  let controller = DetailsPanelViewController(
+    model: model, preferences: preferences, inspectionClient: client)
+  controller.loadViewIfNeeded()
+  controller.view.frame = NSRect(x: 0, y: 0, width: 278, height: 600)
+  controller.view.layoutSubtreeIfNeeded()
+  await Task.yield()
+  await Task.yield()
+
+  let table = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-files-table" })
+  #expect(table.numberOfRows == 1)
+
+  tab.split(direction: .right)
+
+  // 新目录枚举尚未获得执行机会时，旧行应继续绘制；透明刷新屏障负责拦截旧动作。
+  #expect(table.numberOfRows == 1)
+  let overlay = try #require(
+    controller.view.allDescendants.first {
+      $0.identifier?.rawValue == "details-pane-refresh-overlay"
+    })
+  #expect(overlay.isHidden == false)
+  #expect(overlay.bounds.width > 0)
+  let overlayCenter = NSPoint(x: overlay.bounds.midX, y: overlay.bounds.midY)
+  #expect(overlay.hitTest(overlayCenter) === overlay)
+
+  await Task.yield()
+  await Task.yield()
+  #expect(filesCalls == 2)
+  #expect(table.numberOfRows == 2)
+  #expect(overlay.isHidden)
+}
+
+@Test("活动 Pane 切换时 Git 保留旧帧并原子替换新状态")
+@MainActor
+func activePaneSwitchKeepsGitVisibleUntilReplacementIsReady() async throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 2
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  defer { tab.stop(immediately: true) }
+
+  let oldStatus = GitStatusSummary(
+    branch: "master", objectID: "old",
+    changes: [GitChange(path: "old.txt", status: ".M")])
+  let newStatus = GitStatusSummary(
+    branch: "feature", objectID: "new",
+    changes: [
+      GitChange(path: "new-a.txt", status: ".M"),
+      GitChange(path: "new-b.txt", status: ".M"),
+    ])
+  var gitCalls = 0
+  let client = WorkspaceInspectionClient(
+    information: { _ in WorkspaceInformationSnapshot(processes: [], listeningPorts: []) },
+    git: { _ in
+      gitCalls += 1
+      return gitCalls == 1 ? oldStatus : newStatus
+    },
+    files: { _, _ in [] }
+  )
+  let controller = DetailsPanelViewController(
+    model: model, preferences: preferences, inspectionClient: client)
+  controller.loadViewIfNeeded()
+  await Task.yield()
+  await Task.yield()
+
+  let table = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-git-table" })
+  #expect(table.numberOfRows == 2)
+
+  tab.split(direction: .right)
+
+  #expect(table.numberOfRows == 2)
+  let overlay = try #require(
+    controller.view.allDescendants.first {
+      $0.identifier?.rawValue == "details-pane-refresh-overlay"
+    })
+  #expect(overlay.isHidden == false)
+
+  await Task.yield()
+  await Task.yield()
+  #expect(gitCalls == 2)
+  #expect(table.numberOfRows == 3)
+  #expect(overlay.isHidden)
+}
+
+@Test("活动 Pane 切换时 Outline 保留旧帧并原子替换新结构")
+@MainActor
+func activePaneSwitchKeepsOutlineVisibleUntilReplacementIsReady() async throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 1
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  defer { tab.stop(immediately: true) }
+
+  let firstURL = FileManager.default.temporaryDirectory
+    .appendingPathComponent("aster-outline-first-\(UUID().uuidString).md")
+  let secondURL = FileManager.default.temporaryDirectory
+    .appendingPathComponent("aster-outline-second-\(UUID().uuidString).md")
+  try Data("# First\n".utf8).write(to: firstURL)
+  try Data("# Second\n## Child\n".utf8).write(to: secondURL)
+  defer {
+    try? FileManager.default.removeItem(at: firstURL)
+    try? FileManager.default.removeItem(at: secondURL)
+  }
+
+  tab.split(direction: .right, kind: .editor, resourcePath: firstURL.path)
+  let firstEditorID = tab.activePaneID
+  tab.split(direction: .right, kind: .editor, resourcePath: secondURL.path)
+  let secondEditorID = tab.activePaneID
+  tab.setActivePane(firstEditorID)
+
+  let controller = DetailsPanelViewController(model: model, preferences: preferences)
+  controller.loadViewIfNeeded()
+  let table = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-outline-table" })
+  for _ in 0..<40 {
+    if table.numberOfRows == 1 { break }
+    await Task.yield()
+  }
+  #expect(table.numberOfRows == 1)
+
+  tab.setActivePane(secondEditorID)
+
+  #expect(table.numberOfRows == 1)
+  let overlay = try #require(
+    controller.view.allDescendants.first {
+      $0.identifier?.rawValue == "details-pane-refresh-overlay"
+    })
+  #expect(overlay.isHidden == false)
+
+  for _ in 0..<40 {
+    if table.numberOfRows == 2 { break }
+    await Task.yield()
+  }
+  #expect(table.numberOfRows == 2)
+  #expect(overlay.isHidden)
+}
+
 @Test("Outline 实时跟随编辑内容并把条目点击路由到对应行")
 @MainActor
 func outlineTracksDocumentEditsAndRevealsSelectedLine() async throws {
@@ -1607,13 +1782,31 @@ func outlineTracksCompletedTerminalCommands() async throws {
   }
   #expect(titles.contains { $0.contains("echo outline") })
 
-  // 切换到异步解析的编辑器 Pane 时，旧终端条目和动作必须同步撤下；根表格继续复用。
+  // 切换到异步解析的编辑器 Pane 时，旧终端条目作为不可交互视觉帧保留；透明屏障
+  // 同步拦截旧动作，解析完成后再一次性替换为新 Pane 的 Outline。
   let document = FileManager.default.temporaryDirectory
     .appendingPathComponent("aster-outline-switch-\(UUID().uuidString).md")
   try Data("# Editor\n".utf8).write(to: document)
   defer { try? FileManager.default.removeItem(at: document) }
   tab.split(direction: .right, kind: .editor, resourcePath: document.path)
-  #expect(outlineTable.numberOfRows == 0)
+  #expect(outlineTable.numberOfRows == 1)
+  let overlay = try #require(
+    controller.view.allDescendants.first {
+      $0.identifier?.rawValue == "details-pane-refresh-overlay"
+    })
+  #expect(overlay.isHidden == false)
+
+  for _ in 0..<40 {
+    if overlay.isHidden { break }
+    await Task.yield()
+  }
+  let updatedTitles = (0..<outlineTable.numberOfRows).flatMap { row in
+    outlineTable.view(atColumn: 0, row: row, makeIfNecessary: true)?
+      .allDescendants.compactMap { ($0 as? NSButton)?.title } ?? []
+  }
+  #expect(overlay.isHidden)
+  #expect(updatedTitles.contains { $0.contains("Editor") })
+  #expect(updatedTitles.contains { $0.contains("echo outline") } == false)
 }
 
 @Test("终端目录变化只刷新 Files 数据且不重建工作区或夺走输入焦点")
