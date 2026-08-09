@@ -25,6 +25,9 @@ record the new version and revision here.
 - `Apple/AppleTerminalView.swift` and `Apple/Metal/MetalTerminalRenderer.swift` apply the fractional
   viewport translation to Core Graphics and Metal rendering; the iOS view provides the shared API
   with a zero translation.
+- `Apple/Metal/MetalTerminalRenderer.swift` resolves the SwiftPM shader bundle from packaged app
+  resources and the structured `--test-bundle-path` supplied by SwiftPM's test launcher, without
+  touching the generated accessor that can terminate after its build-machine path becomes stale.
 - `Terminal.swift` and `Buffer.swift` expose stable absolute buffer coordinates and an opt-in
   embedder identity used for conservative DA1/DA2 and XTVERSION replies. `Terminal.swift` also
   exposes the active-buffer cursor position used by Vi Mode and distinguishes protocol replies

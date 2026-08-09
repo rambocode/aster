@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import Metal
 import Testing
 
 @testable import Aster
@@ -10,7 +12,8 @@ func terminalOutputMessageBusPreservesOrderAndDefersCompletion() async throws {
   let bus = TerminalOutputMessageBus(
     batchByteLimit: 3,
     pendingByteLimit: 12,
-    interBatchDelay: .milliseconds(1)
+    bulkByteThreshold: 3,
+    bulkCoalescingDelay: .milliseconds(1)
   ) { probe.appendBatch($0) }
 
   let bytes = Array("terminal-event-bus".utf8)
@@ -37,7 +40,8 @@ func terminalOutputMessageBusYieldsBetweenBatches() async throws {
   let bus = TerminalOutputMessageBus(
     batchByteLimit: 2,
     pendingByteLimit: 12,
-    interBatchDelay: .milliseconds(1)
+    bulkByteThreshold: 2,
+    bulkCoalescingDelay: .milliseconds(1)
   ) { _ in
     guard probe.recordBatchAndReturnCount() == 1 else { return }
     // 这模拟用户已经点到详情页签：事件必须在后续输出批次前得到主线程机会。
@@ -65,7 +69,8 @@ func terminalOutputMessageBusRunsInterfaceTaskBeforeDelivery() async throws {
   let bus = TerminalOutputMessageBus(
     batchByteLimit: 8,
     pendingByteLimit: 32,
-    interBatchDelay: .nanoseconds(0)
+    bulkByteThreshold: 8,
+    bulkCoalescingDelay: .nanoseconds(0)
   ) { probe.appendBatchRecordingInterfaceOrder($0) }
   let bytes = Array("panel-click".utf8)
   let producer = Task.detached(priority: .userInitiated) {
@@ -83,13 +88,13 @@ func terminalOutputMessageBusRunsInterfaceTaskBeforeDelivery() async throws {
   #expect(probe.firstBatchSawCompletedInterfaceTask)
 }
 
-@Test("单次 PTY 读取只形成一次可见终端更新")
+@Test("单次 PTY 读取按 64 KiB 解析预算分批且保持字节顺序")
 @MainActor
-func terminalOutputMessageBusKeepsOnePtyReadInOneVisualBatch() async throws {
+func terminalOutputMessageBusBoundsOnePtyReadAcrossParserBatches() async throws {
   let probe = TerminalOutputMessageBusProbe()
   let bus = TerminalOutputMessageBus { probe.appendBatch($0) }
-  // SwiftTerm LocalProcess 的单次读取上限是 128 KiB。把它拆成许多 8 KiB feed 会让
-  // ANSI 进度绘制的中间状态逐帧暴露，终端 Pane 就会高频闪烁。
+  // SwiftTerm LocalProcess 的单次读取上限是 128 KiB。总线按 Ghostty 同级的 64 KiB
+  // parse budget 拆成两批；SwiftTerm 的 pending display 会把同一帧 feed 合成一次绘制。
   let bytes = Array(repeating: UInt8(ascii: "x"), count: 128 * 1_024)
   let production = Task.detached(priority: .userInitiated) {
     bus.enqueue(bytes[...])
@@ -99,8 +104,51 @@ func terminalOutputMessageBusKeepsOnePtyReadInOneVisualBatch() async throws {
   try await waitForTerminalOutputBus { probe.isFinished }
   _ = await production.value
 
-  #expect(probe.batches.count == 1)
-  #expect(probe.batches.first?.count == bytes.count)
+  #expect(probe.batches.count == 2)
+  #expect(probe.batches.allSatisfy { $0.count == 64 * 1_024 })
+  #expect(probe.batches.flatMap { $0 } == bytes)
+}
+
+@Test("大量 PTY partial chunk 使用游标排空且不改变顺序")
+@MainActor
+func terminalOutputMessageBusDrainsManyPartialChunksInLinearOrder() async throws {
+  let probe = TerminalOutputMessageBusProbe()
+  let bus = TerminalOutputMessageBus(
+    batchByteLimit: 1_024,
+    pendingByteLimit: 128 * 1_024,
+    bulkByteThreshold: 1_024,
+    bulkCoalescingDelay: .nanoseconds(0)
+  ) { probe.appendBatch($0) }
+  let chunks = (0..<2_048).map { index in
+    Array(repeating: UInt8(index % 251), count: 32)
+  }
+  let expected = chunks.flatMap { $0 }
+  let producer = Task.detached(priority: .userInitiated) {
+    for chunk in chunks { bus.enqueue(chunk[...]) }
+    bus.finish { probe.markFinished() }
+  }
+
+  try await waitForTerminalOutputBus { probe.isFinished }
+  _ = await producer.value
+
+  #expect(probe.batches.flatMap { $0 } == expected)
+  #expect(probe.batches.allSatisfy { $0.count <= 1_024 })
+}
+
+@Test("终端进入窗口后优先启用 dirty-row Metal renderer")
+@MainActor
+func terminalViewActivatesMetalRendererWhenAttachedToWindow() {
+  guard MTLCreateSystemDefaultDevice() != nil else { return }
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 640, height: 400),
+    styleMask: [.titled],
+    backing: .buffered,
+    defer: false
+  )
+  let view = AsterTerminalView(frame: window.contentView?.bounds ?? .zero)
+  window.contentView?.addSubview(view)
+
+  #expect(view.isUsingMetalRenderer)
 }
 
 @MainActor

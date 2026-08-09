@@ -88,6 +88,9 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// 在视图构造的主线程创建。之后后台 PTY 回调只读取该不可变引用并入队，不会触碰
   /// `AsterTerminalView` 的其它状态。
   private var outputMessageBus: TerminalOutputMessageBus!
+  /// Metal renderer 只能在视图进入窗口后创建 CAMetalLayer。尝试状态属于 View 生命周期，
+  /// 不进入配置或 Session 快照；失败时继续使用 Core Graphics，终端仍保持可用。
+  private var didAttemptMetalRendererActivation = false
   /// 观察 SwiftTerm 网格尺寸真正变化的测试 seam。生产环境保持 nil；测试用它区分
   /// 一次合法终态 reflow 与 Panel 过渡导致的重复 resize，不保存终端内容或尺寸历史。
   var onGridSizeChange: ((Int, Int) -> Void)?
@@ -197,6 +200,29 @@ final class AsterTerminalView: LocalProcessTerminalView {
     }
   }
 
+  /// Aster 的终端渲染策略集中在唯一 SwiftTerm adapter 内。工作区只负责安放长期存活的
+  /// View，不需要知道 GPU 初始化、dirty-row 缓存或降级语义。SwiftTerm 的 Metal 路径
+  /// 使用持久逐行 vertex buffer，只重建 generation 改变的可见行；这与 Ghostty 的
+  /// dirty-row renderer 思路一致，能显著减少持续输出时的 Core Graphics CPU 绘制。
+  private func activatePreferredRendererIfNeeded() {
+    guard window != nil, !didAttemptMetalRendererActivation else { return }
+    didAttemptMetalRendererActivation = true
+    do {
+      metalBufferingMode = .perRowPersistent
+      try setUseMetal(true)
+    } catch {
+      // GPU 不可用或 shader bundle 损坏时保持 SwiftTerm 的 Core Graphics 路径。日志只
+      // 记录稳定事件码和错误类型，不包含终端内容、路径或环境信息。
+      DiagnosticsCenter.shared.record(
+        "terminal.renderer_fallback",
+        level: .warning,
+        category: .terminal,
+        attributes: ["backend": "core_graphics"],
+        error: error
+      )
+    }
+  }
+
   /// 将主题的视觉令牌直接写到当前终端视图。这个边界刻意放在 View 上：工作区整树
   /// 重排时，旧 Pane 可能仍在一次 AppKit 事务内可见，但对应 Session 已经不在当前
   /// layout 的遍历结果里；控制器仍可对屏幕上的真实对象补发同一套颜色，避免左右
@@ -266,6 +292,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     setWindowActive(window?.isKeyWindow ?? true)
+    activatePreferredRendererIfNeeded()
   }
 
   override func layout() {

@@ -7,22 +7,29 @@ import Foundation
 /// 序列仍严格保持原顺序；当等待队列达到上限时，生产者暂停，最终让内核 PTY 形成背压，
 /// 而不是以丢失输出或无限内存换取表面流畅。
 final class TerminalOutputMessageBus: @unchecked Sendable {
-  /// 与 SwiftTerm 的 PTY 单次读取上限一致。保留读取边界能避免把同一批 ANSI 更新拆成
-  /// 多个可见中间帧；交付只发生在主 RunLoop 的空闲阶段，不再靠切碎字节换取响应性。
-  static let defaultBatchByteLimit = 128 * 1_024
+  /// Ghostty 的 macOS PTY pipeline 以 64 KiB 作为 gather/parse 交接上限：足以摊薄
+  /// syscall 与 parser 固定成本，又能限制一次主线程 VT 解析占用。SwiftTerm 会把同一
+  /// display frame 内的多次 feed 合并成一次 redraw，所以这里无需用 128 KiB 单次解析
+  /// 来避免中间帧。
+  static let defaultBatchByteLimit = 64 * 1_024
   /// 总线自身的硬上限必须小于无限制缓存；达到上限后读取线程等待主线程排空一部分。
   static let defaultPendingByteLimit = 4 * 1_024 * 1_024
+  /// macOS PTY 在饱和写入时通常按约 1 KiB 交付。低于该值视为交互输出，立即交给下一
+  /// 个 RunLoop idle；达到该值才使用很短的合并窗口吸收连续 bulk 片段。
+  static let defaultBulkByteThreshold = 1_024
 
   private let condition = NSCondition()
   private let batchByteLimit: Int
   private let pendingByteLimit: Int
   private let resumeByteLimit: Int
-  private let interBatchDelay: DispatchTimeInterval
+  private let bulkByteThreshold: Int
+  private let bulkCoalescingDelay: DispatchTimeInterval
   private let consume: ([UInt8]) -> Void
   private let mainRunLoop: CFRunLoop
   private var deliveryObserver: CFRunLoopObserver?
 
   private var chunks: [[UInt8]] = []
+  private var firstChunkIndex = 0
   private var firstChunkOffset = 0
   private var pendingByteCount = 0
   private var deliveryScheduled = false
@@ -34,17 +41,20 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
   init(
     batchByteLimit: Int = TerminalOutputMessageBus.defaultBatchByteLimit,
     pendingByteLimit: Int = TerminalOutputMessageBus.defaultPendingByteLimit,
-    interBatchDelay: DispatchTimeInterval = .milliseconds(8),
+    bulkByteThreshold: Int = TerminalOutputMessageBus.defaultBulkByteThreshold,
+    bulkCoalescingDelay: DispatchTimeInterval = .milliseconds(3),
     consume: @escaping ([UInt8]) -> Void
   ) {
     precondition(Thread.isMainThread, "TerminalOutputMessageBus 必须在主线程构造")
     precondition(batchByteLimit > 0)
     precondition(pendingByteLimit >= batchByteLimit)
+    precondition(bulkByteThreshold > 0 && bulkByteThreshold <= batchByteLimit)
     self.batchByteLimit = batchByteLimit
     self.pendingByteLimit = pendingByteLimit
     // 只在积压明显降低后才唤醒读取方，防止高频跨线程 wake-up 造成新的调度风暴。
     resumeByteLimit = pendingByteLimit / 2
-    self.interBatchDelay = interBatchDelay
+    self.bulkByteThreshold = bulkByteThreshold
+    self.bulkCoalescingDelay = bulkCoalescingDelay
     self.consume = consume
     mainRunLoop = CFRunLoopGetMain()
 
@@ -91,9 +101,11 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
       chunks.append(chunk)
       pendingByteCount += chunk.count
       startIndex = endIndex
-      // 首批同样等待一个很短的合并窗口：DispatchIO 可能把一次读取分成多个 partial
-      // 回调，这些字节应在同一显示帧交给 SwiftTerm，而不是逐片触发重绘。
-      scheduleDeliveryLocked(after: .now() + interBatchDelay)
+      // 交互式短输出不增加固定延迟；饱和流才用 3 ms 合并窗口吸收 DispatchIO 的相邻
+      // partial 回调。这个窗口仍远低于一帧，并与 Ghostty 的 gather budget 一致。
+      let delay: DispatchTimeInterval = pendingByteCount < bulkByteThreshold
+        ? .nanoseconds(0) : bulkCoalescingDelay
+      scheduleDeliveryLocked(after: .now() + delay)
     }
     condition.unlock()
   }
@@ -157,7 +169,9 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
       condition.broadcast()
     }
     if pendingByteCount > 0 {
-      scheduleDeliveryLocked(after: .now() + interBatchDelay)
+      // 已经形成 backlog 后不再人为等待合并；RunLoop idle seam 本身会保证每轮最多
+      // 一个批次，让 AppKit 事件穿插，同时避免旧实现每 64 KiB 固定停顿 8 ms。
+      scheduleDeliveryLocked(after: .now())
     } else if finishRequested {
       completions = completionHandlers
       completionHandlers.removeAll()
@@ -173,8 +187,8 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
     var result: [UInt8] = []
     result.reserveCapacity(batchByteLimit)
 
-    while remaining > 0, !chunks.isEmpty {
-      let chunk = chunks[0]
+    while remaining > 0, firstChunkIndex < chunks.count {
+      let chunk = chunks[firstChunkIndex]
       let available = chunk.count - firstChunkOffset
       let count = min(available, remaining)
       result.append(contentsOf: chunk[firstChunkOffset..<(firstChunkOffset + count)])
@@ -183,9 +197,20 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
       remaining -= count
 
       if firstChunkOffset == chunk.count {
-        chunks.removeFirst()
+        firstChunkIndex += 1
         firstChunkOffset = 0
       }
+    }
+
+    // `Array.removeFirst()` 每消费一个 PTY partial chunk 都会搬移剩余元素，持续输出时
+    // 会退化成 O(n²)。这里使用读游标，并仅在完全排空或已跨过半数且数量足够大时
+    // 批量压缩一次；字节所有权和背压计数不变。
+    if firstChunkIndex == chunks.count {
+      chunks.removeAll(keepingCapacity: true)
+      firstChunkIndex = 0
+    } else if firstChunkIndex >= 64, firstChunkIndex * 2 >= chunks.count {
+      chunks.removeFirst(firstChunkIndex)
+      firstChunkIndex = 0
     }
     return result
   }

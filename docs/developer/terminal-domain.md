@@ -96,18 +96,22 @@ flowchart LR
 
 每个 `AsterTerminalView` 还持有独立的 `TerminalOutputMessageBus`。`LocalProcess` 把 PTY
 读取回调投递到该 Pane 的串行输出队列；该队列只复制并发布原始字节，不直接触碰 AppKit、
-`TerminalSession` 或任一工作区页面。消息总线先用 8 ms 合并窗口吸收 DispatchIO 的相邻
-partial 回调，再按 SwiftTerm 单次 PTY 读取上限 128 KiB 依序交给主线程解析；这既避免把
-同一批 ANSI 更新拆成多个可见中间帧，也把绘制频率限制在显示刷新量级。字节只在主
-RunLoop 默认模式的 `beforeWaiting` 阶段消费，并且每轮最多一个批次；AppKit 输入源和
-已经排队的主线程界面任务因此先完成，按钮跟踪等嵌套交互模式则完全不消费终端字节。
-Inspector 继续使用原生事件链，不订阅、不窥视，也不等待终端消息总线。
+`TerminalSession` 或任一工作区页面。调度参考 Ghostty revision
+[`f64f4aca`](https://github.com/ghostty-org/ghostty/blob/f64f4aca2c29b554d111b36c3d946a9bddd159ff/src/termio/Exec.zig)
+的 macOS gather/parse 策略：低于 1 KiB 的交互输出不增加固定等待；达到 1 KiB 的饱和流
+最多合并 3 ms，并以 64 KiB 作为单次主线程 VT 解析上限。已经形成 backlog 后不再逐批
+固定 sleep，而是在后续 RunLoop idle 继续排空。字节只在默认模式的 `beforeWaiting`
+阶段消费，并且每轮最多一个批次；AppKit 输入源和已经排队的主线程界面任务因此先完成，
+按钮跟踪等嵌套交互模式则完全不消费终端字节。Inspector 继续使用原生事件链，不订阅、
+不窥视，也不等待终端消息总线。
 
 ```mermaid
 flowchart LR
   P[PTY read queue] --> Q[Pane output queue]
   Q --> B[TerminalOutputMessageBus]
-  B -->|up to 128 KiB ordered batch| M[Main-thread terminal grid]
+  B -->|interactive now / bulk 3 ms| G[up to 64 KiB ordered batch]
+  G --> M[Main-thread terminal grid]
+  M --> R[one pending display per frame]
   M --> E[title shell agent UI events]
 ```
 
@@ -115,7 +119,23 @@ flowchart LR
 生产端，绝不丢弃终端字节。进程结束也经同一总线排队，保证最后一段输出先显示、再更新
 Session 的退出状态。测试直接在主线程调用 `dataReceived` 时保留同步 seam，真实 PTY 不走
 该路径。这个模块是 PTY 到 UI 的唯一并发 seam；各页面只继续消费现有的主线程领域事件，
-不订阅或共享后台 PTY 队列。
+不订阅或共享后台 PTY 队列。队列以读游标消费 partial chunks，只在完全排空或跨过半数后
+批量压缩数组，避免持续小片段输出因反复 `removeFirst()` 退化为 O(n²)。
+
+#### dirty-row Metal 渲染
+
+`AsterTerminalView` 第一次进入 `NSWindow` 时自动启用 SwiftTerm 的 Metal renderer，并固定
+使用 `perRowPersistent` 缓冲策略。Renderer 以 `BufferLine` identity 与 generation 作为
+行缓存真值：普通输入只重建变化的可见行，未变化行复用持久 GPU vertex buffer；同一帧的
+多次 feed 仍只形成一次 pending redraw。这个策略对应 Ghostty 的 dirty-row/state snapshot
+方向，但保留 Aster 现有 SwiftTerm 网格、选择、IME、图片与 AppKit 生命周期，不把工作区
+业务写入 vendored renderer。
+
+Metal device、pipeline 或 shader bundle 初始化失败时，View 保持 Core Graphics renderer，
+记录不含终端内容的 `terminal.renderer_fallback` 诊断事件，Shell 和全部交互继续可用。
+SwiftPM 测试只信任 runner 提供的结构化 `--test-bundle-path`；release app 从可重定位的
+`Contents/Resources/AsterTerminal_SwiftTerm.bundle` 读取。两条路径都不调用可能引用构建机
+绝对路径并以 `fatalError` 失败的生成式 `Bundle.module` accessor。
 
 `AsterCore` 中原有的 `PTYShellProcess`、`ANSICleaner` 和 `TerminalTranscript` 仍作为底层行为测试与备用基础设施保留，但主 UI 不再以滚动纯文本模拟终端。
 
@@ -241,13 +261,14 @@ SwiftTerm 视图只在 `process.running` 为真时按当前 `shellPid` 终止进
 - 通知 OSC 畸形、超过 8 KiB、base64 非法或分片未结束：静默丢弃，不请求系统权限；OSC 99 查询只返回固定能力响应。
 - OSC 133 完成标记缺少退出码：停止进度但不猜测成功、不发完成通知。
 - SwiftPM 测试宿主没有应用 Bundle：通知中心保持不可用，设置页仍可构建；打包 app 才延迟解析系统通知中心。
+- Metal device、shader 或 pipeline 不可用：记录稳定 fallback 事件并继续使用 Core Graphics，终端内容和 PTY 生命周期不受影响。
 
 ## 测试与发布
 
-测试覆盖纯 AppKit 迁移、配置编码、24 套主题真值、颜色解析、递归分屏、方向聚焦与分隔条调整、分屏面板在两个方向/两种标签栏布局下的真实 frame、⌘W 的面板优先语义、比例更新、移除节点、文档 dirty/原子保存、Recipe 往返、FIFO 和累计资源预算、恶意结构上限、会话快照、UTF-8 分块、ANSI 边界、线性/矩形选区、鼠标报告绕过、像素滚动与首尾边界、粘贴风险、括号序列、OSC 52 权限/限长、OSC 9;4/9/99/777、通知策略、标题权限、Shell 受管文件、真实 zsh/Bash FTCS、命令时间线、提示符删除、TERM 回退、DA/XTVERSION/DSR、Base64 文件边界和真实 PTY 生命周期。发布前必须运行：
+测试覆盖纯 AppKit 迁移、配置编码、24 套主题真值、颜色解析、递归分屏、方向聚焦与分隔条调整、分屏面板在两个方向/两种标签栏布局下的真实 frame、⌘W 的面板优先语义、比例更新、移除节点、文档 dirty/原子保存、Recipe 往返、FIFO 和累计资源预算、恶意结构上限、会话快照、UTF-8 分块、ANSI 边界、线性/矩形选区、鼠标报告绕过、像素滚动与首尾边界、PTY 输出顺序/背压/64 KiB 解析预算、Metal 自动激活与 shader bundle、粘贴风险、括号序列、OSC 52 权限/限长、OSC 9;4/9/99/777、通知策略、标题权限、Shell 受管文件、真实 zsh/Bash FTCS、命令时间线、提示符删除、TERM 回退、DA/XTVERSION/DSR、Base64 文件边界和真实 PTY 生命周期。发布前必须运行：
 
 ```bash
-swift test
+swift test --no-parallel
 swift build -c release
 ./scripts/build-app.sh
 codesign --verify --deep --strict dist/Aster.app

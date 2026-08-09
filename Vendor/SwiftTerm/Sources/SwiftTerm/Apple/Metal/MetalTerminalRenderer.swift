@@ -3000,13 +3000,37 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         // missing bundle falls through to the next candidate instead of
         // aborting the process.
         let bundleName = "AsterTerminal_SwiftTerm.bundle"
-        if let url = Bundle.main.resourceURL?.appendingPathComponent(bundleName),
-           let resourceBundle = Bundle(url: url) {
-            bundles.append(resourceBundle)
+        // Packaged apps place the SwiftPM resource bundle under
+        // `Contents/Resources`; `swift test` places it beside the `.xctest`
+        // bundle. Probe both layouts without touching `Bundle.module`, whose
+        // generated accessor can still fatalError in a relocated app.
+        var candidateURLs = [
+            Bundle.main.resourceURL?.appendingPathComponent(bundleName),
+            Bundle.main.bundleURL.appendingPathComponent(bundleName),
+            Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent(bundleName),
+        ].compactMap { $0 }
+        // SwiftPM's test runner leaves Bundle.main pointing at
+        // `swiftpm-testing-helper`, but supplies the real `.xctest`
+        // executable after this explicit flag. Only trust that structured
+        // launcher argument; arbitrary test/user arguments must not become
+        // shader search roots.
+        if let flagIndex = CommandLine.arguments.firstIndex(of: "--test-bundle-path"),
+           CommandLine.arguments.indices.contains(flagIndex + 1) {
+            var testBundleURL = URL(fileURLWithPath: CommandLine.arguments[flagIndex + 1])
+            while testBundleURL.pathExtension != "xctest",
+                  testBundleURL.pathComponents.count > 1 {
+                testBundleURL.deleteLastPathComponent()
+            }
+            if testBundleURL.pathExtension == "xctest" {
+                candidateURLs.append(
+                    testBundleURL.deletingLastPathComponent().appendingPathComponent(bundleName)
+                )
+            }
         }
-        if let url = Bundle.main.bundleURL.appendingPathComponent(bundleName) as URL?,
-           let resourceBundle = Bundle(url: url) {
-            bundles.append(resourceBundle)
+        for url in candidateURLs {
+            if let resourceBundle = Bundle(url: url) {
+                bundles.append(resourceBundle)
+            }
         }
         #endif
         bundles.append(Bundle(for: MetalTerminalRenderer.self))
