@@ -45,6 +45,9 @@ enum AdditionalWorkspaceWindowRegistry {
 enum AsterApplication {
   @MainActor
   static func main() {
+    // 在创建窗口前开始记录，启动阶段的资源和集成失败才能进入同一诊断会话。
+    DiagnosticsCenter.shared.start()
+    DiagnosticsCenter.shared.cleanStaleFeedbackArchives()
     let application = NSApplication.shared
     let delegate = AsterAppDelegate()
     application.delegate = delegate
@@ -101,6 +104,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 而不是依赖 Dictionary 的不稳定遍历顺序。
   private var activeWorkspaceWindowOrder: [ObjectIdentifier] = []
   private var pictureInPictureController: PanePictureInPictureController?
+  /// sheet 必须被应用生命周期强持有，避免系统动画期间控制器提前释放。
+  private var feedbackSheetController: FeedbackSheetController?
   /// CLI 使用受保护文件传输而非常驻 socket。主线程定时器只消费已经落盘的小型
   /// 请求头；实际 `run/exec` 完成由 Shell Integration 回调异步写回，不阻塞界面。
   private var cliRequestTimer: Timer?
@@ -119,7 +124,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         try BundledFontRegistry.registerBundledFonts(resourcesDirectory: resources)
       } catch {
         // 字体失败只退化为 CoreText 系统 fallback，不阻止用户进入终端。
-        fputs("Aster bundled font unavailable: \(error.localizedDescription)\n", stderr)
+        DiagnosticsCenter.shared.record(
+          "startup.font_registration_failed", level: .warning, category: .integration, error: error)
       }
     }
     TerminalNotificationService.shared.refreshAuthorizationStatus()
@@ -134,11 +140,13 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         try installer.reconcile(enabled: preferences.configuration.shell.shellIntegration)
       } catch {
         preferences.configuration.shell.shellIntegration = false
-        fputs("Aster shell integration disabled: \(error.localizedDescription)\n", stderr)
+        DiagnosticsCenter.shared.record(
+          "startup.shell_integration_disabled", level: .warning, category: .integration, error: error)
       }
     }
     configureWorkspaceModel(model)
     model.beginApplicationSession(launchBehavior: preferences.configuration.launchBehavior)
+    DiagnosticsCenter.shared.record("application.launched", level: .notice, category: .lifecycle)
     synchronizeWorkspaceConfiguration()
     NSApp.mainMenu = makeMainMenu()
     // Finder「服务 → 在 Aster 中打开」的接收端；服务菜单项由 Info.plist NSServices 声明。
@@ -172,6 +180,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     cliRequestTimer = nil
     dockActivityCoordinator.stop()
     SecureInputCoordinator.shared.setApplicationActive(false)
+    DiagnosticsCenter.shared.finish(reason: "application_will_terminate")
   }
 
   /// Finder 服务入口：把选中的目录/文件交给统一的 URL 打开逻辑（目录开新标签）。
@@ -240,7 +249,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         guard let next = try service.takeNextRequest() else { return }
         request = next
       } catch {
-        fputs("Aster CLI request failed: \(error.localizedDescription)\n", stderr)
+        DiagnosticsCenter.shared.record(
+          "cli.request_consume_failed", level: .error, category: .integration, error: error)
         return
       }
       activeWorkspaceModel.executeWorkflowCLI(
@@ -256,7 +266,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             response: WorkflowCLITransportResponseEncoder.encode(result)
           )
         } catch {
-          fputs("Aster CLI response failed: \(error.localizedDescription)\n", stderr)
+          DiagnosticsCenter.shared.record(
+            "cli.response_write_failed", level: .error, category: .integration, error: error)
         }
       }
     }
@@ -411,6 +422,15 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     controller.showWindow(sender)
     window.makeKeyAndOrderFront(sender)
     DispatchQueue.main.async { [weak content] in content?.focusInitialControl() }
+  }
+
+  /// 帮助菜单中的用户主动反馈入口。无可见工作区时先恢复主窗口，保证 sheet 有稳定宿主。
+  @objc private func showFeedback(_ sender: Any?) {
+    showMainWindow()
+    guard let parent = NSApp.keyWindow ?? mainWindowController?.window else { return }
+    let controller = FeedbackSheetController()
+    feedbackSheetController = controller
+    controller.present(on: parent) { [weak self] in self?.feedbackSheetController = nil }
   }
 
   /// 深链入口复用唯一设置窗口，并直接切到目标分类。
@@ -707,6 +727,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     menu.addItem(shellModeMenuItem())
     menu.addItem(workspaceMenuItem())
     menu.addItem(windowMenuItem())
+    menu.addItem(helpMenuItem())
     return menu
   }
 
@@ -721,6 +742,15 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(.separator())
     submenu.addItem(withTitle: "隐藏 Aster", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
     submenu.addItem(withTitle: "退出 Aster", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+    item.submenu = submenu
+    return item
+  }
+
+  private func helpMenuItem() -> NSMenuItem {
+    let item = NSMenuItem()
+    let submenu = NSMenu(title: "帮助")
+    submenu.addItem(menuItem("反馈问题…", #selector(showFeedback(_:)), "", modifiers: []))
+    NSApp.helpMenu = submenu
     item.submenu = submenu
     return item
   }

@@ -164,6 +164,8 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
         documentText = buffer.text
       } catch {
         documentError = error.localizedDescription
+        DiagnosticsCenter.shared.record(
+          "document.initial_load_failed", level: .error, category: .storage, error: error)
       }
     }
   }
@@ -186,6 +188,8 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
       documentError = nil
     } catch {
       documentError = error.localizedDescription
+      DiagnosticsCenter.shared.record(
+        "document.save_failed", level: .error, category: .storage, error: error)
     }
   }
 
@@ -212,6 +216,8 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
       documentError = nil
     } catch {
       documentError = error.localizedDescription
+      DiagnosticsCenter.shared.record(
+        "document.reload_failed", level: .error, category: .storage, error: error)
     }
   }
 
@@ -1051,6 +1057,18 @@ final class AppModel: ObservableObject {
     case .openNewWindow, .startFreshAfterCrashLoop:
       shouldRestoreInitialWorkspace = false
     }
+    // 复用既有恢复真值记录异常退出与 crash-loop 决策；不新增并行状态文件，避免多窗口
+    // 或强制退出时两套标记彼此矛盾。
+    DiagnosticsCenter.shared.record(
+      "workspace.session_recovery_planned",
+      level: reason == .crash || reason == .forceQuit ? .warning : .info,
+      category: .workspace,
+      attributes: [
+        "reason": reason.rawValue,
+        "decision": String(describing: decision),
+        "crash_count": "\(crashCount)",
+      ]
+    )
   }
 
   func ensureInitialTab() {
@@ -1531,6 +1549,8 @@ final class AppModel: ObservableObject {
       return true
     } catch {
       notice = "加入队列失败：\(error.localizedDescription)"
+      DiagnosticsCenter.shared.record(
+        "agent.prompt_queue_enqueue_failed", level: .warning, category: .workspace, error: error)
       return false
     }
   }
@@ -3120,6 +3140,8 @@ final class AppModel: ObservableObject {
     defaults.set(false, forKey: applicationSessionRunningKey)
     defaults.set(0, forKey: applicationSessionCrashCountKey)
     defaults.set(WorkflowSessionEndReason.cleanQuit.rawValue, forKey: applicationSessionEndReasonKey)
+    DiagnosticsCenter.shared.record(
+      "workspace.session_marked_clean", level: .notice, category: .workspace)
     // `terminateNow` 返回后 AppKit 不保证延迟任务继续运行，因此退出路径直接终止
     // 各 Shell 进程组；普通 Pane/标签关闭仍保留温和退出与 750ms 升级窗口。
     for tab in tabs { tab.stop(immediately: true) }

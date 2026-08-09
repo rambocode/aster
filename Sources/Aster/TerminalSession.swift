@@ -2016,8 +2016,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
     terminalView = view
     isRunning = view.process?.running == true
-    if !isRunning, startupError == nil {
-      startupError = "无法创建本地终端进程。"
+    if !isRunning {
+      if startupError == nil { startupError = "无法创建本地终端进程。" }
+      // PTY 启动失败只记录稳定状态，不记录 Shell 路径、工作目录或环境变量。
+      DiagnosticsCenter.shared.record(
+        "terminal.process_start_failed", level: .error, category: .terminal)
     }
     if isRunning { startForegroundPolling() }
     return view
