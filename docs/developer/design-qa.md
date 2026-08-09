@@ -108,9 +108,9 @@
 - [ ] 装好 hook 的 Claude Code / Codex 中，Agent 执行期间入队只堆列表，本轮结束后自动逐条发出；权限确认界面不会被队列自动回车。
 - [ ] 默认基础字体下 Powerline 与补充平面 Nerd 图标可见；切换用户字体后正文和符号 fallback 均保持对齐。
 - [ ] 外观页在 920pt 最小宽度下保持四列主题卡片，浅色 9 套、深色 15 套完整可达；选择态、悬停态和长主题名不挤压相邻卡片。
-- [ ] “显示 → 主题”打开独立主题 Panel；搜索、悬停和方向键实时更新后方工作区且不出现失焦灰层，点击/回车保存，`Esc`/外部点击恢复。逐套截图核对左右 Sidebar 背景与文字、中央终端背景与前景，以及顶部三段的连续性；中央标题条延续 Window chrome、左右顶部延续 Sidebar，目录胶囊使用 Titlebar 颜色。确认 April/Pink/Paper/Solarized 的实色没有被系统 material 洗白。
+- [ ] “显示 → 主题”打开独立主题 Panel；搜索、悬停和方向键实时更新后方工作区且不出现失焦灰层，点击/回车保存，`Esc`/外部点击恢复。逐套截图核对左右 Sidebar 背景与文字、中央终端背景与前景，以及顶部三段的连续性；中央标题是透明内容层并与 Pane 共用 workspace surface，左右顶部延续 Sidebar，目录胶囊使用显式 Titlebar 颜色。确认 April/Pink/Paper/Solarized 的实色没有被系统 material 洗白，Glass 不把截图灰度硬编码成背景。
 - [ ] `.ottytheme` 导入面板可直接选择 `~/.config/otty/themes` 中的文件；非法调色板、符号链接和超限文件报错后不改变当前主题。
-- [ ] 依次选择 9 套浅色主题，详情中的 Terminal、Window、Container、Panel、Sidebar、Titlebar、Tabbar、Tab、Accents、光标、选区与 ANSI 16 色均和工作区最终呈现一致；左右两栏同用 Sidebar，中央标题条使用 Window，常驻目录胶囊使用显式 Titlebar 背景与文字。
+- [ ] 依次选择 9 套浅色主题，详情中的 Terminal、Window、Container、Panel、Sidebar、Titlebar、Tabbar、Tab、Accents、光标、选区与 ANSI 16 色均和工作区最终呈现一致；左右两栏同用 Sidebar，中央标题与 Pane 共用连续 surface，常驻目录胶囊只使用显式 Titlebar 背景与文字。
 - [ ] 文本开关、四类字体来源、回退顺序和行高会立即更新已有 Pane；缺少粗体/斜体字面时安全回退且 Nerd Symbols 仍可见。
 - [ ] 宽松行高扩大网格留白但不拉伸竖线光标；竖线高度不超过字号，重复重绘会清除旧 backing pixels，光标顶部不进入上一行且输入无残影。
 - [ ] 光标预览与终端中的颜色、文字色、不透明度、四种形状、四种闪烁优先级一致；Default 接受 DECSCUSR，Always 固定用户形状，失焦停止闪烁。
@@ -118,8 +118,9 @@
 
 ## 记录
 
-- 2026-08-09：浅色主题呈现改为与设置详情共用同一条 token 级联，标题栏、左右 Sidebar、容器与标签栏边框均消费对应 Otty 颜色；Newsprint/Paper 的横向标签补齐 `[tab]` 逐字段继承，未显式选区色回退为终端前景 30% 透明度。对象级自动测试已逐套构造 9 套浅色主题的真实 AppKit 工作区，核对截图所列全部颜色组及终端/ANSI；真实窗口截图仍需手动复验。
-- 2026-08-09：补齐顶部标题区的 Otty 分层：左右顶部延续 Sidebar，中央条延续 Window chrome，常驻目录胶囊消费显式 Titlebar 背景与文字；One Light 的终端、Window、Container 和标题胶囊同步更新为当前 Otty 的纯白覆盖。对象级测试锁定九套浅色主题的标题区背景、材质和文字，真实窗口通过“显示 → 主题”继续逐套截图复验。
+- 2026-08-09：完成 9 套浅色主题的 Otty/Aster 真实窗口双列截图复验。终端双 Pane 抽样均同时命中主题背景；左右 Sidebar/Inspector 共用 Sidebar token；April、Ayu Light、Floating Card、Newsprint、One Light、Paper、Pink、Solarized Light 的实色与 Otty 一致，Glass Light 保留透明 RGBA，由当时桌面与原生材质决定截图灰度。截图保存在本轮 `theme-parity` 验收工件中。
+- 2026-08-09：修正透明与标题 surface 语义：不再把截图采样灰或固定黑色透明度写成 Glass 背景，终端 backing layer 与 Otty RGBA 同步；非活动 Pane 不再叠加整块变暗遮罩；中央 28pt 标题改成 workspace surface 上的透明内容层，消除与 Pane 的重复材质接缝。偏好刷新同时覆盖全部存活 Session 与当前可见终端，避免分屏一侧停留旧主题。
+- 2026-08-09：主题详情改单色会写入 `~/.config/otty/themes/<theme-id>.ottytheme` 的 managed `# otty-added:` 段；恢复原色会从文件删除该段。对象测试使用注入的临时 Otty 目录，避免触碰用户主题。
 - 2026-08-09：设置窗口展示期间的偏好刷新继续合并普通结构变更，但主题选择、颜色覆盖和明暗外观会在 `@Published` 新值落定后的下一轮主队列立即刷新所有工作区；自动测试锁定设置保持打开时从 Ayu Light 切到 Pink 后 Window 与 Sidebar 同步换色，真实多窗口仍需手动复验。
 
 - 2026-08-08：设置恢复为唯一独立 `700 × 460 pt` 固定窗口，主工作区保持原尺寸、原内容并完整可见；设置窗口禁用黄灯/绿灯，不增加返回按钮。配置只就地应用终端并在关闭设置时合并一次工作区刷新，普通开关不再因自身配置广播重建整页。右侧内容字号统一降为标题 12pt、控件 11pt、说明和值 10pt。自动测试覆盖独立窗口身份、固定尺寸、窗口按钮状态、开关身份和左右排版层级，真实窗口仍需手动复验。

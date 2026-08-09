@@ -350,15 +350,13 @@ final class ActivePaneHostView: NSView {
   private let onExternalDrop: (NSPasteboard, ExternalPaneDropZone) -> Bool
   private var dragHandle: PaneDragHandleView?
   private var handleTrackingArea: NSTrackingArea?
-  private var inactiveOverlay: NSView?
   private var externalDropZone: ExternalPaneDropZone?
   private weak var contentView: NSView?
   private var contentBottomConstraint: NSLayoutConstraint?
   private var bottomAccessory: NSView?
-  /// 焦点状态可原地切换：切换聚焦面板只改这层遮罩的可见性，不重建视图树。
-  var isActivePane: Bool {
-    didSet { inactiveOverlay?.isHidden = isActivePane }
-  }
+  /// 焦点状态仍由容器保存，供关闭、移动和 first responder 路由使用；视觉反馈交给
+  /// 终端光标与实际输入焦点，不再用整块遮罩篡改主题定义的 Pane 背景色。
+  var isActivePane: Bool
 
   init(
     paneID: UUID,
@@ -487,20 +485,6 @@ final class ActivePaneHostView: NSView {
 
   override func mouseEntered(with event: NSEvent) { dragHandle?.isRevealed = true }
   override func mouseExited(with event: NSEvent) { dragHandle?.isRevealed = false }
-
-  /// 给非聚焦的 Pane 铺一层褪色遮罩。取代过去那条强调色顶边——遮罩把「哪个 Pane
-  /// 在接收输入」表达为整块对比，而不是一条比终端内容还抢眼的装饰线。
-  /// 遮罩必须叠在内容之上、且点击穿透：点非活动 Pane 的第一下要能同时激活它并落到终端。
-  func installInactiveOverlay() {
-    guard inactiveOverlay == nil else { return }
-    let overlay = ClickThroughStripView()
-    overlay.wantsLayer = true
-    overlay.layer?.backgroundColor = AsterTheme.paper.withAlphaComponent(0.30).cgColor
-    overlay.isHidden = isActivePane
-    addSubview(overlay)
-    overlay.pinEdges(to: self)
-    inactiveOverlay = overlay
-  }
 
   /// 安装顶边拖动把手；只有存在多个 Pane 时才有意义（单 Pane 无处可拖）。
   func installDragHandle(onDragStart: @escaping (UUID, NSEvent) -> Void) {

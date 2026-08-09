@@ -72,9 +72,9 @@ private func makeLaidOutWorkspace(
 }
 
 @MainActor
-private func paneHostViews(in view: NSView) -> [NSView] {
-  var found: [NSView] = []
-  if String(describing: type(of: view)).contains("ActivePaneHostView") { found.append(view) }
+private func paneHostViews(in view: NSView) -> [ActivePaneHostView] {
+  var found: [ActivePaneHostView] = []
+  if let host = view as? ActivePaneHostView { found.append(host) }
   for sub in view.subviews { found += paneHostViews(in: sub) }
   return found
 }
@@ -152,31 +152,28 @@ func paneDropReordersWithoutRecreatingRuntimes() throws {
   #expect(tab.runtime(for: left) === leftRuntime)
 }
 
-/// 回归：聚焦的 Pane 曾经在顶部画一条 2pt 强调色线，在聚焦窗口里比终端内容还抢眼。
-/// 现在改为给**非聚焦** Pane 铺整块褪色遮罩。
-@Test("非聚焦 Pane 铺褪色遮罩，聚焦 Pane 没有任何装饰线")
+/// 回归：非聚焦 Pane 曾覆盖 30% 的 window 色，普通主题被压灰，透明主题还会因为
+/// `withAlphaComponent` 把透明黑变成黑色。焦点状态不能改变主题画布的最终颜色。
+@Test("分屏焦点状态不再用整块遮罩改写主题背景")
 @MainActor
-func inactivePanesAreDimmedInsteadOfHighlighted() throws {
+func paneFocusDoesNotDimThemeBackground() throws {
   let controller = try makeLaidOutSplitWorkspace(axis: .horizontal, tabBarLayout: .vertical)
 
   let hosts = paneHostViews(in: controller.view)
   #expect(hosts.count == 2)
   for host in hosts {
-    // 内容视图 + 褪色遮罩 + 拖动把手，没有细装饰线。
-    #expect(host.subviews.count == 3)
+    // 内容视图 + 拖动把手；没有覆盖终端画布的额外 surface。
+    #expect(host.subviews.count == 2)
     let hasThinDecoration = host.subviews.contains { $0.frame.height <= 4 }
     #expect(!hasThinDecoration)
+    #expect(
+      host.subviews.contains {
+        String(describing: type(of: $0)).contains("ClickThroughStripView")
+      } == false)
   }
 
-  // 恢复出来的工作区默认聚焦第一个 Pane：只有它不带遮罩。
-  let overlays = hosts.compactMap { host in
-    host.subviews.first { String(describing: type(of: $0)).contains("ClickThroughStripView") }
-  }
-  #expect(overlays.count == 2)
-  #expect(overlays.filter { !$0.isHidden }.count == 1)
-  // 遮罩点击穿透：点非活动 Pane 的第一下要能直接落到终端上。
-  let dimmed = try #require(overlays.first { !$0.isHidden })
-  #expect(dimmed.hitTest(NSPoint(x: dimmed.bounds.midX, y: dimmed.bounds.midY)) == nil)
+  // 路由状态仍精确区分一个活动 Pane，只是不再通过改底色表达。
+  #expect(hosts.filter(\.isActivePane).count == 1)
 }
 
 @Test("窗口失去键盘焦点时终端光标停止闪烁并保持形状")

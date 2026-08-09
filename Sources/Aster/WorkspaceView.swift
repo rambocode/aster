@@ -27,7 +27,7 @@ final class WorkspaceViewController: NSViewController {
   /// 但主题或明暗外观变化必须实时重建主界面，不能只更新终端后等设置窗口关闭。
   private var renderedTheme: TerminalTheme?
   private var renderedAppearance: AppPreferences.Appearance?
-  /// 当前渲染出来的面板容器。焦点切换只更新这里的指示器与 first responder，
+  /// 当前渲染出来的面板容器。焦点切换只更新这里的状态与 first responder，
   /// 不重建视图树。
   private var paneHosts: [UUID: ActivePaneHostView] = [:]
   private var editorTextViews: [UUID: NSTextView] = [:]
@@ -621,26 +621,42 @@ final class WorkspaceViewController: NSViewController {
   /// 新值。设置展示期间，普通配置只更新终端并把结构刷新合并到关闭时；主题与明暗外观
   /// 是用户正在预览的结果，必须立即刷新工作区全部 AppKit 对象。
   private func schedulePreferenceRefresh() {
-    guard settingsPresentationActive else {
-      scheduleRefresh()
-      return
-    }
-    needsRefreshAfterSettingsDismiss = true
-    guard !terminalPreferenceApplyScheduled else { return }
-    terminalPreferenceApplyScheduled = true
-    DispatchQueue.main.async { [weak self] in
-      guard let self else { return }
-      self.terminalPreferenceApplyScheduled = false
-      for tab in self.model.tabs {
-        for pane in tab.layout.allPanes {
-          tab.runtime(for: pane.id)?.terminalSession?.apply(preferences: self.preferences)
+    if settingsPresentationActive { needsRefreshAfterSettingsDismiss = true }
+    if !terminalPreferenceApplyScheduled {
+      terminalPreferenceApplyScheduled = true
+      DispatchQueue.main.async { [weak self] in
+        guard let self else { return }
+        self.terminalPreferenceApplyScheduled = false
+        // `runtimes` 可能在 AppKit 整树替换的一次事务内暂时多于 layout 叶节点。只遍历
+        // layout 会漏掉仍显示在旧 Pane host 中的终端，造成分屏两侧停留在不同主题。
+        // 先更新所有存活 Session，再以实际视图树为准补发纯视觉令牌，主题预览才能
+        // 对用户屏幕上的每个 Pane 同时生效。
+        for tab in self.model.tabs {
+          for runtime in tab.runtimes.values {
+            runtime.terminalSession?.apply(preferences: self.preferences)
+          }
+        }
+        self.applyThemeToVisibleTerminals(in: self.view)
+        if self.settingsPresentationActive,
+          self.renderedTheme != self.preferences.activeTheme
+            || self.renderedAppearance != self.preferences.appearance
+        {
+          self.refresh()
         }
       }
-      if self.renderedTheme != self.preferences.activeTheme
-        || self.renderedAppearance != self.preferences.appearance
-      {
-        self.refresh()
-      }
+    }
+    if !settingsPresentationActive { scheduleRefresh() }
+  }
+
+  /// AppKit 允许被替换的旧子树存活到当前布局事务结束；递归扫描是为了更新这些真正
+  /// 还在窗口里的终端，不把主题正确性依赖在模型与视图恰好处于同一个过渡瞬间。
+  private func applyThemeToVisibleTerminals(in root: NSView) {
+    if let terminal = root as? AsterTerminalView {
+      terminal.applyThemePalette(preferences)
+      return
+    }
+    for subview in root.subviews {
+      applyThemeToVisibleTerminals(in: subview)
     }
   }
 
@@ -912,7 +928,8 @@ final class WorkspaceViewController: NSViewController {
     return nil
   }
 
-  /// 切换聚焦面板时只翻转各 Pane 的褪色遮罩，不重建视图树。
+  /// 切换聚焦 Pane 时只更新路由状态，不重建视图树。视觉反馈由终端光标和实际
+  /// first responder 提供；不能再叠加褪色层改变主题的终端背景。
   private func updatePaneActivationOverlays(in tab: TerminalTabItem) {
     for (paneID, host) in paneHosts {
       host.isActivePane = paneID == tab.activePaneID
@@ -1482,16 +1499,12 @@ final class WorkspaceViewController: NSViewController {
 
   private func makeWorkspaceHeader(_ tab: TerminalTabItem) -> NSView {
     let theme = preferences.activeTheme
-    let background = ThemeVisualEffectView()
-    // Otty 的左侧标签布局让中央标题条延续 Window chrome；左右两段则由各自 Sidebar
-    // 延伸到红绿灯区域。这里不能使用 `titlebar.background` 另铺一层，否则 April / Ayu
-    // 会在终端上方出现灰带，Floating Card / Glass Light 则会把玻璃切成不透明白条。
-    // `titlebar.foreground` 仍只负责中央标题文字，和背景的布局级继承互不混淆。
-    background.apply(
-      material: theme.palette.material,
-      tint: theme.resolvedColor(forSlot: "interface.window")
-        ?? theme.palette.interfaceWindowBackground ?? theme.palette.windowBackground
-    )
+    let background = NSView()
+    // 中央标题是 workspace 背景面上的内容，不是另一块 chrome。Window 已在控制器根
+    // 视图统一承载实色或 material；标题若再建 NSVisualEffectView，会让透明主题重复
+    // 合成一次玻璃并在 28pt 边界形成横向接缝。普通透明层同时保留标题的布局和命中区。
+    background.wantsLayer = true
+    background.layer?.backgroundColor = NSColor.clear.cgColor
     background.translatesAutoresizingMaskIntoConstraints = false
     background.identifier = NSUserInterfaceItemIdentifier("workspace-titlebar")
     background.heightAnchor.constraint(equalToConstant: 28).isActive = true
@@ -1727,10 +1740,9 @@ final class WorkspaceViewController: NSViewController {
       content = controller.view
     }
     host.installContent(content)
-    // 单 Pane 既无处可拖，也不需要区分聚焦状态；两种装饰都只在分屏时安装。
-    // 遮罩先于把手安装，把手才会浮在遮罩之上。
+    // 单 Pane 无处可拖；只有分屏时安装顶部拖动把手。Pane 背景始终由主题负责，
+    // 不再为非活动 Pane 叠加改变颜色的遮罩。
     if tab.layout.allPanes.count > 1 {
-      host.installInactiveOverlay()
       host.installDragHandle { [weak self] paneID, event in
         self?.beginPaneDrag(paneID: paneID, event: event)
       }

@@ -89,12 +89,16 @@ final class AppPreferences: ObservableObject {
   }
 
   private let defaults: UserDefaults
+  /// Otty 原始主题目录的可注入入口。生产环境固定使用 `~/.config/otty/themes`；测试传入
+  /// 临时目录，避免颜色覆盖测试碰触用户正在使用的主题文件。
+  private let ottyThemesDirectoryURL: URL?
   /// 菜单主题选择器的临时预览值。预览必须作用到完整工作区，但在用户点击或按回车
   /// 确认前不能写入配置；这样按 `Esc` 或点到面板外时可以无损回到原选择。
   private var previewedTheme: TerminalTheme?
 
-  init(defaults: UserDefaults = .standard) {
+  init(defaults: UserDefaults = .standard, ottyThemesDirectoryURL: URL? = nil) {
     self.defaults = defaults
+    self.ottyThemesDirectoryURL = ottyThemesDirectoryURL
     appearance = Appearance(rawValue: defaults.string(forKey: Keys.appearance) ?? "") ?? .system
     if let data = defaults.data(forKey: Keys.configuration),
       let decoded = try? JSONDecoder().decode(AsterConfiguration.self, from: data)
@@ -212,17 +216,11 @@ final class AppPreferences: ObservableObject {
     NSColor(activeTheme.palette.renderedTerminalBackground)
   }
 
-  /// SwiftTerm 的终端 `Color` 会丢弃 alpha，直接传透明色会变成黑底。浅色 Glass
-  /// 画布因此预合成到 Otty 实际窗口材质的 70% 中性亮度；窗口和 Sidebar 仍使用
-  /// 原生 `NSVisualEffectView`，两边在截图里保持连续而不会把终端洗成 surface 白色。
+  /// 终端画布必须保留 Otty 的真实 RGBA 值。SwiftTerm 的 ANSI 内核颜色不保存 alpha，
+  /// 但 AppKit 绘制默认背景时使用 `nativeBackgroundColor`，可以安全保留 `none` 的透明
+  /// 语义；这里若预合成截图采样色，桌面内容或窗口材质一变就会产生错误的灰色接缝。
   var terminalCanvasBackgroundColor: NSColor {
-    let theme = activeTheme
-    if theme.mode == .light, theme.palette.windowBackground.alpha == 0,
-      theme.palette.material != nil
-    {
-      return NSColor(srgbRed: 0.70, green: 0.70, blue: 0.70, alpha: 1)
-    }
-    return NSColor(theme.palette.renderedTerminalBackground)
+    NSColor(activeTheme.palette.windowBackground)
   }
 
   var cursorColor: NSColor {
@@ -397,26 +395,65 @@ final class AppPreferences: ObservableObject {
   /// 把某套主题的用户覆盖写成 Otty 追加段落，落到主题文件夹里的同名 `.ottytheme`。
   ///
   /// 追加而不是重写：文件里原主题的内容一字不动，用户覆盖以 `# otty-added:` 注释
-  /// 标出，删掉注释下面那行就撤销了这一条。文件不存在时先写出主题本体再追加。
+  /// 标出；清空覆盖时删除整段。找不到源文件会明确失败，避免创建只有覆盖键、无法被
+  /// Otty 独立解析的残缺主题。
   @discardableResult
   func writeThemeOverridesToLibraryFolder(themeID: String) throws -> URL? {
     let overrides = themeOverrides.overrides(for: themeID)
     let section = TerminalTheme.ottyOverrideSection(overrides)
-    guard !section.isEmpty,
-      let theme = (TerminalThemeCatalog.builtIns + themeLibrary.customThemes)
+    guard let theme = (TerminalThemeCatalog.builtIns + themeLibrary.customThemes)
         .first(where: { $0.id == themeID })
     else { return nil }
-    let directory = try themesDirectory()
-    let safeName = theme.name.replacingOccurrences(
-      of: "[^A-Za-z0-9._-]+", with: "-", options: .regularExpression)
-    let url = directory.appendingPathComponent(safeName).appendingPathExtension("ottytheme")
-    let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+    let directory = try ottyThemesDirectory()
+    let url = try ottyThemeFileURL(for: theme, in: directory)
+    let existing = try String(contentsOf: url, encoding: .utf8)
     // 每次写出都先剥掉上一轮追加的段落，否则同一个键会在文件里越堆越多。
     let base = ThemeOverrideFileWriter.strippingPreviousOverrides(from: existing)
-    let body = base.isEmpty ? "" : base.trimmingCharacters(in: .newlines) + "\n\n"
-    let content = body + ThemeOverrideFileWriter.marker + "\n" + section + "\n"
+    let normalizedBase = base.trimmingCharacters(in: .newlines)
+    // 清空覆盖时也必须重写文件，移除上一轮 managed 段；提前返回会让设置页显示已
+    // 恢复，而 Otty 下次启动仍继续读到旧的个性化颜色。
+    let content = if section.isEmpty {
+      normalizedBase.isEmpty ? "" : normalizedBase + "\n"
+    } else {
+      (normalizedBase.isEmpty ? "" : normalizedBase + "\n\n")
+        + ThemeOverrideFileWriter.marker + "\n" + section + "\n"
+    }
     try content.write(to: url, atomically: true, encoding: .utf8)
     return url
+  }
+
+  /// Otty 与 Aster 的自定义主题仓库职责不同：前者是双方共享的 `.ottytheme` 真值，
+  /// 后者保存 Aster 私有 `.astertheme`。颜色个性化只写前者，不能落进 App Support。
+  func ottyThemesDirectory() throws -> URL {
+    let directory = ottyThemesDirectoryURL
+      ?? FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/otty/themes", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+  }
+
+  /// 内置主题 ID 与 Otty 文件 stem 一致（如 `ayu-light`）。自定义/导入主题先尝试
+  /// 自身 ID，再按 `[meta].name` 扫描目录，避免把显示名大小写硬编码成错误的新文件。
+  private func ottyThemeFileURL(for theme: TerminalTheme, in directory: URL) throws -> URL {
+    let direct = directory.appendingPathComponent(theme.id).appendingPathExtension("ottytheme")
+    if FileManager.default.fileExists(atPath: direct.path) { return direct }
+
+    let candidates = try FileManager.default.contentsOfDirectory(
+      at: directory,
+      includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+      options: [.skipsHiddenFiles]
+    ).filter { $0.pathExtension.lowercased() == "ottytheme" }
+    if let matched = candidates.first(where: { url in
+      guard let candidate = try? TerminalThemeStore.load(from: url) else { return false }
+      return candidate.name == theme.name
+    }) {
+      return matched
+    }
+
+    throw CocoaError(
+      .fileNoSuchFile,
+      userInfo: [NSFilePathErrorKey: direct.path]
+    )
   }
 
   func themesDirectory() throws -> URL {

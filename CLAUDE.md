@@ -59,7 +59,7 @@ open dist/Aster.app
 
 ### 主题系统
 
-24 套内置主题是 Otty 1.3.1 `.ottytheme` 的只读真值表。`TerminalThemeTests` 把每套主题的终端前景/背景 + ANSI 16 色压成 SHA-256 签名比对，**改动 `OttyBuiltInThemes` 的任何颜色都会让测试失败**（这是有意的：能发现漏主题、改名、错色、ANSI 顺序颠倒）。内置主题不可原位修改，编辑前先创建副本。Otty 的 `background = "none"` 保留为透明 RGBA，但因为 SwiftTerm 内部颜色无 alpha，实际栅格用主题 `surface` 预合成。
+24 套内置主题是 Otty 1.3.1 `.ottytheme` 的只读真值表。`TerminalThemeTests` 把每套主题的终端前景/背景 + ANSI 16 色压成 SHA-256 签名比对，**改动 `OttyBuiltInThemes` 的任何颜色都会让测试失败**（这是有意的：能发现漏主题、改名、错色、ANSI 顺序颠倒）。内置主题不可原位修改；详情页的单色修改写入覆盖层及 `~/.config/otty/themes/<theme-id>.ottytheme` 的 managed 段，整套编辑才先创建副本。Otty 的 `background = "none"` 保留为透明 RGBA，终端原生背景与 backing layer 同步保留 alpha，由 workspace 的 `NSVisualEffectView` 承载材质；只有脱离该材质宿主的浮层才使用主题 `surface`。
 
 
 ### 交互设计

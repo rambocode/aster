@@ -197,6 +197,33 @@ final class AsterTerminalView: LocalProcessTerminalView {
     }
   }
 
+  /// 将主题的视觉令牌直接写到当前终端视图。这个边界刻意放在 View 上：工作区整树
+  /// 重排时，旧 Pane 可能仍在一次 AppKit 事务内可见，但对应 Session 已经不在当前
+  /// layout 的遍历结果里；控制器仍可对屏幕上的真实对象补发同一套颜色，避免左右
+  /// Pane 在主题实时预览期间短暂或永久停留在不同主题。
+  func applyThemePalette(_ preferences: AppPreferences) {
+    nativeForegroundColor = preferences.terminalForegroundColor
+    nativeBackgroundColor = preferences.terminalCanvasBackgroundColor
+    // SwiftTerm 只在初次尺寸初始化时把 native 背景同步到 NSView backing layer。
+    // 主题实时切换若只改 `nativeBackgroundColor`，透明主题会露出该 layer 留下的旧黑底，
+    // 直到 Pane 再次获得焦点触发重绘。这里同步 layer，确保所有可见 Pane 立即呈现
+    // 完全相同的 RGBA 背景。
+    layer?.backgroundColor = preferences.terminalCanvasBackgroundColor.cgColor
+    caretColor = preferences.cursorColor
+    caretTextColor = preferences.cursorTextColor
+    selectedTextForegroundColor = preferences.selectionForegroundColor
+    selectedTextBackgroundColor = preferences.selectionColor
+    installColors(
+      preferences.ansiColors.map {
+        SwiftTerm.Color(
+          red: UInt16($0.red) * 257,
+          green: UInt16($0.green) * 257,
+          blue: UInt16($0.blue) * 257
+        )
+      })
+    needsDisplay = true
+  }
+
   private struct HintTarget {
     let link: Terminal.VisibleLink
     let label: String
@@ -2490,12 +2517,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       preferences.configuration.appearance.resolvedBlinkRenderingPolicy == .animated
     view.getTerminal().options.widenedEastAsianAmbiguousBlocks = swiftTermAmbiguousWidthBlocks(
       preferences.configuration.appearance.resolvedWidenedEastAsianAmbiguousBlocks)
-    view.nativeForegroundColor = preferences.terminalForegroundColor
-    view.nativeBackgroundColor = preferences.terminalCanvasBackgroundColor
-    view.caretColor = preferences.cursorColor
-    view.caretTextColor = preferences.cursorTextColor
-    view.selectedTextForegroundColor = preferences.selectionForegroundColor
-    view.selectedTextBackgroundColor = preferences.selectionColor
+    view.applyThemePalette(preferences)
     view.optionAsMetaKey = preferences.optionAsMeta
     view.allowMouseReporting = preferences.allowMouseReporting
     view.linkReporting =
@@ -2521,14 +2543,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     } else {
       SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
     }
-    view.installColors(
-      preferences.ansiColors.map {
-        SwiftTerm.Color(
-          red: UInt16($0.red) * 257,
-          green: UInt16($0.green) * 257,
-          blue: UInt16($0.blue) * 257
-        )
-      })
     let blinkMode = preferences.configuration.appearance.resolvedCursorBlinkMode
     let cursorStyle = swiftTermCursorStyle(
       preferences.configuration.appearance.cursorStyle.rawValue,

@@ -440,7 +440,7 @@ func collapsedTabBarOffersHoverRecovery() throws {
   #expect(strip?.hitTest(.zero) == nil)
 }
 
-@Test("工作区中央标题栏延续 Otty Window chrome 并在悬停时显示路径胶囊")
+@Test("工作区中央标题与 Pane 共用同一背景面并在悬停时显示路径胶囊")
 @MainActor
 func workspaceTitlebarMatchesOttyChrome() throws {
   let defaults = isolatedDefaults()
@@ -449,6 +449,10 @@ func workspaceTitlebarMatchesOttyChrome() throws {
     directories: ["/Users/mike/source/project/AsterTerminal"]
   )
   let preferences = AppPreferences(defaults: defaults)
+  preferences.appearance = .light
+  let glass = try #require(
+    preferences.themes(for: .light).first { $0.name == "Glass Light" })
+  preferences.selectTheme(glass)
   let controller = WorkspaceViewController(model: model, preferences: preferences)
   let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
 
@@ -464,15 +468,17 @@ func workspaceTitlebarMatchesOttyChrome() throws {
   )
   #expect(titlebar != nil)
   #expect(abs((titlebar?.frame.height ?? 0) - 28) < 0.5)
-  let themedTitlebar = try #require(titlebar as? ThemeVisualEffectView)
-  let windowColor = try #require(
-    preferences.activeTheme.colorSlots.first { $0.id == "interface.window" }
-  ).resolved
   let titlebarForeground = try #require(
     preferences.activeTheme.colorSlots.first { $0.id == "titlebar.foreground" }
   ).resolved
-  #expect(themedTitlebar.appliedThemeTint == windowColor)
-  #expect(themedTitlebar.appliedThemeMaterial == preferences.activeTheme.palette.material)
+  // 标题只是中央 workspace 背景面上的内容，不能再建立一层独立 material；否则透明
+  // 主题会在 28pt 高度处重复合成玻璃，和下面的 Pane 形成明显横向分割。
+  #expect(titlebar is ThemeVisualEffectView == false)
+  #expect(titlebar?.layer?.backgroundColor == NSColor.clear.cgColor)
+  // `none` 是真实透明语义，不允许再用截图采样出的灰色替代。
+  #expect(
+    HexColor(nsColor: preferences.terminalCanvasBackgroundColor)
+      == preferences.activeTheme.palette.windowBackground)
   #expect(HexColor(nsColor: titleButton.contentTintColor ?? .clear) == titlebarForeground)
   let explicitTitlebarBackground = preferences.activeTheme.style.titlebarBackground
     .map { NSColor($0).cgColor }
@@ -504,6 +510,42 @@ func workspaceTitlebarMatchesOttyChrome() throws {
   #expect(titleButton.title.hasSuffix("⋯"))
   #expect(titleButton.layer?.backgroundColor != NSColor.clear.cgColor)
   #expect(HexColor(nsColor: titleButton.contentTintColor ?? .clear) == titlebarForeground)
+}
+
+@Test("主题详情改色写回对应 Otty 配置，清空覆盖会移除个性化段")
+@MainActor
+func themeColorOverridesPersistToOttyThemeFile() throws {
+  let directory = FileManager.default.temporaryDirectory
+    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+
+  let sourceURL = directory.appendingPathComponent("ayu-light.ottytheme")
+  let original = "[meta]\nname = \"Ayu Light\"\n\n[terminal]\nbackground = \"#FCFCFC\"\n"
+  try original.write(to: sourceURL, atomically: true, encoding: .utf8)
+
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults, ottyThemesDirectoryURL: directory)
+  let theme = try #require(TerminalThemeCatalog.theme(named: "Ayu Light"))
+  preferences.setThemeColor(
+    try #require(HexColor("#123456")), slotID: "sidebar.background", themeID: theme.id)
+
+  let writtenURL = try #require(
+    try preferences.writeThemeOverridesToLibraryFolder(themeID: theme.id))
+  #expect(writtenURL == sourceURL)
+  let personalized = try String(contentsOf: sourceURL, encoding: .utf8)
+  #expect(personalized.hasPrefix(original.trimmingCharacters(in: .newlines)))
+  #expect(personalized.contains(ThemeOverrideFileWriter.marker))
+  #expect(personalized.contains("# otty-added: sidebar.background"))
+  #expect(personalized.contains("background = \"#123456\""))
+
+  preferences.clearThemeOverrides(themeID: theme.id)
+  let resetURL = try #require(
+    try preferences.writeThemeOverridesToLibraryFolder(themeID: theme.id))
+  #expect(resetURL == sourceURL)
+  #expect(
+    try String(contentsOf: sourceURL, encoding: .utf8)
+      == original.trimmingCharacters(in: .newlines) + "\n")
 }
 
 @Test("点击标题路径胶囊弹出可操作的工作区菜单")
@@ -1145,6 +1187,67 @@ func themeMaterialUsesNativeVisualEffectView() throws {
   #expect(view.state == .active)
 }
 
+@Test("透明主题实时覆盖终端自身的旧 backing layer 背景")
+@MainActor
+func transparentThemeRefreshesTerminalBackingLayer() throws {
+  _ = NSApplication.shared
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.appearance = .light
+  let glass = try #require(
+    preferences.themes(for: .light).first { $0.name == "Glass Light" })
+  preferences.selectTheme(glass)
+
+  let session = TerminalSession(workingDirectory: "/tmp")
+  let view = session.makeTerminalView(preferences: preferences)
+  view.wantsLayer = true
+  // SwiftTerm 的尺寸初始化会把当时的 native 背景写进 backing layer；模拟一个在主题
+  // 切换前已经形成的黑底，确保 apply 不只更新绘制色，也会清掉旧 layer。
+  view.layer?.backgroundColor = NSColor.black.cgColor
+
+  session.apply(preferences: preferences)
+
+  let backing = try #require(view.layer?.backgroundColor)
+  let backingColor = try #require(NSColor(cgColor: backing))
+  #expect(HexColor(nsColor: backingColor) == preferences.activeTheme.palette.windowBackground)
+  #expect(
+    HexColor(nsColor: view.nativeBackgroundColor)
+      == preferences.activeTheme.palette.windowBackground)
+}
+
+@Test("菜单主题切换会同步刷新每个已运行终端 Pane")
+@MainActor
+func themePreviewRefreshesEveryRunningTerminalPane() async throws {
+  _ = NSApplication.shared
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.appearance = .light
+  let solarized = try #require(
+    preferences.themes(for: .light).first { $0.name == "Solarized Light" })
+  let april = try #require(
+    preferences.themes(for: .light).first { $0.name == "April" })
+  preferences.selectTheme(solarized)
+
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  model.splitSelectedTab(.right)
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  preferences.previewTheme(april)
+  try await Task.sleep(for: .milliseconds(50))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let terminals = controller.view.descendants.compactMap { $0 as? AsterTerminalView }
+  #expect(terminals.count == 2)
+  for terminal in terminals {
+    #expect(HexColor(nsColor: terminal.nativeBackgroundColor) == april.palette.windowBackground)
+    let backing = try #require(terminal.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)))
+    #expect(HexColor(nsColor: backing) == april.palette.windowBackground)
+  }
+}
+
 @Suite("浅色 Otty 主题呈现矩阵", .serialized)
 @MainActor
 struct LightThemeRenderParityTests {
@@ -1206,11 +1309,10 @@ struct LightThemeRenderParityTests {
       "\(theme.name) Sidebar border"
     )
 
-    let titlebar = try themedView("workspace-titlebar", in: controller)
-    // 左侧标签布局的中央标题条属于 Window chrome；titlebar token 只提供标题文字等
-    // 标题栏角色，不应额外盖住 Window 的材质或底色。
-    #expect(titlebar.appliedThemeTint == windowColor, "\(theme.name) Titlebar Window chrome")
-    #expect(titlebar.appliedThemeMaterial == activeTheme.palette.material)
+    let titlebar = try identifiedView("workspace-titlebar", in: controller)
+    // 中央标题只浮在统一 workspace surface 上，不再重复创建一层 Window material。
+    #expect(titlebar is ThemeVisualEffectView == false, "\(theme.name) Titlebar shared surface")
+    #expect(titlebar.layer?.backgroundColor == NSColor.clear.cgColor)
     let titleButton = try #require(
       identifiedView("workspace-title-button", in: controller) as? WorkspaceTitleButton
     )
@@ -1266,12 +1368,12 @@ struct LightThemeRenderParityTests {
     try verifyRuntimeRoles(activeTheme)
 
     // TerminalSession.apply 读取原始 alpha 的 canvas；脱离材质的浮层读取预合成
-    // background。两条路径都纳入矩阵，避免 Glass 终端被错误画成不透明 surface。
+    // background。两条路径都纳入矩阵，避免 Glass 终端被错误画成截图采样灰色。
     #expect(HexColor(nsColor: preferences.terminalForegroundColor) == activeTheme.palette.foreground)
     #expect(HexColor(nsColor: preferences.terminalBackgroundColor) == activeTheme.palette.renderedTerminalBackground)
-    let expectedCanvas = activeTheme.palette.windowBackground.alpha == 0
-      ? try #require(HexColor("#B3B3B3")) : activeTheme.palette.renderedTerminalBackground
-    #expect(HexColor(nsColor: preferences.terminalCanvasBackgroundColor) == expectedCanvas)
+    #expect(
+      HexColor(nsColor: preferences.terminalCanvasBackgroundColor)
+        == activeTheme.palette.windowBackground)
     #expect(HexColor(nsColor: preferences.cursorColor) == activeTheme.palette.cursor)
     let cursorForeground = try slot("cursor.foreground", in: activeTheme)
     let selectionBackground = try slot("selection.background", in: activeTheme)

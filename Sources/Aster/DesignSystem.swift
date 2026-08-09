@@ -222,14 +222,9 @@ final class ThemeVisualEffectView: NSVisualEffectView {
     case .vibrancyRegular: sourceAlpha * 0.34
     case .some(.none), nil: CGFloat(tint.alpha) / 255
     }
-    if themeMaterial == .glass, sourceAlpha == 0 {
-      // Otty 的透明 Glass surface 在当前浅色窗口截图中形成约 17% 的中性遮光层；
-      // AppKit `.hudWindow` 自身明显更亮。只对明确 alpha=0 的 Glass token补这层，
-      // 不污染 Floating Card 根窗口等带实色 tint 的材质。
-      overlay.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.17).cgColor
-    } else {
-      overlay.layer?.backgroundColor = NSColor(tint).withAlphaComponent(alpha).cgColor
-    }
+    // alpha=0 表示只显示系统 material。不能根据某张截图额外叠一层固定灰黑色：磨砂
+    // 的最终像素取决于桌面、窗口层级和系统外观，截图采样值不是主题配置的真实颜色。
+    overlay.layer?.backgroundColor = NSColor(tint).withAlphaComponent(alpha).cgColor
   }
 }
 
