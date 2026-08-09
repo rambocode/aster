@@ -523,9 +523,16 @@ final class ActivePaneHostView: NSView {
 @MainActor
 final class DocumentTextDelegate: NSObject, NSTextViewDelegate {
   weak var runtime: WorkspacePaneRuntime?
-  init(runtime: WorkspacePaneRuntime) { self.runtime = runtime }
+  private let onChange: (() -> Void)?
+
+  init(runtime: WorkspacePaneRuntime, onChange: (() -> Void)? = nil) {
+    self.runtime = runtime
+    self.onChange = onChange
+  }
+
   func textDidChange(_ notification: Notification) {
     guard let text = notification.object as? NSTextView else { return }
     runtime?.updateDocument(text.string)
+    onChange?()
   }
 }

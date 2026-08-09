@@ -43,6 +43,14 @@ enum WorkspaceResourcePlacement: Equatable {
   case split(SplitDirection)
 }
 
+/// UI 文件树按能力自动选择可编辑源码或只读预览；CLI 仍显式映射 view/edit，保持
+/// 对外命令语义稳定，不让一次内部默认值调整改变脚本行为。
+enum WorkspaceResourceOpenMode: Equatable {
+  case automatic
+  case view
+  case edit
+}
+
 /// 在 Recipe 边界递归转换 Pane 描述中的目录和资源路径，保持 UUID、嵌套方向与比例。
 /// 领域模型只处理模板语法，不触碰文件系统，也不把运行态对象写入 Recipe。
 enum WorkflowRecipeWorkspaceMapper {
@@ -1095,7 +1103,7 @@ final class AppModel: ObservableObject {
   @discardableResult
   func openResource(
     _ url: URL,
-    mode: WorkflowCLIFileMode = .view,
+    mode: WorkspaceResourceOpenMode = .view,
     placement: WorkspaceResourcePlacement = .split(.right)
   ) -> Bool {
     guard url.isFileURL,
@@ -1107,8 +1115,30 @@ final class AppModel: ObservableObject {
       notice = "The selected item is not a safe local file or folder."
       return false
     }
-    let kind: PaneKind = values.isDirectory == true
-      ? .fileBrowser : (mode == .edit ? .editor : .preview)
+    let kind: PaneKind
+    if values.isDirectory == true {
+      kind = .fileBrowser
+    } else {
+      switch mode {
+      case .view:
+        kind = .preview
+      case .edit:
+        kind = .editor
+      case .automatic:
+        let handle = try? FileHandle(forReadingFrom: url)
+        let prefix = handle?.readData(ofLength: 64 * 1_024) ?? Data()
+        if let handle { try? handle.close() }
+        let trustedProvider = agentHistories.first(where: {
+          $0.metadata.transcriptFileURL.standardizedFileURL == url.standardizedFileURL
+        })?.metadata.configuration.provider
+        let presentation = FileDocumentClassifier.classify(
+          fileName: url.lastPathComponent,
+          prefix: prefix,
+          trustedAgentProvider: trustedProvider
+        )
+        kind = presentation.supportsEditing ? .editor : .preview
+      }
+    }
     let workingDirectory = values.isDirectory == true
       ? url.path : url.deletingLastPathComponent().path
     let descriptor = PaneDescriptor(
@@ -1143,7 +1173,6 @@ final class AppModel: ObservableObject {
     persistWorkspace()
     return true
   }
-
   /// 文件系统重命名完成后更新窗口内所有引用旧路径的 Pane，再一次性持久化布局。
   func relocateOpenResources(from oldURL: URL, to newURL: URL) {
     for tab in tabs { tab.relocateOpenResources(from: oldURL, to: newURL) }
@@ -2714,7 +2743,8 @@ final class AppModel: ObservableObject {
       case .newTab: .newTab
       case .newWindow: .newWindow
       }
-      guard openResource(url, mode: request.mode, placement: placement) else {
+      let mode: WorkspaceResourceOpenMode = request.mode == .edit ? .edit : .view
+      guard openResource(url, mode: mode, placement: placement) else {
         return .failure("目标不是可安全打开的本地文件或目录。\n", exitCode: 66)
       }
       return .success()
