@@ -98,9 +98,10 @@ flowchart LR
 读取回调投递到该 Pane 的串行输出队列；该队列只复制并发布原始字节，不直接触碰 AppKit、
 `TerminalSession` 或任一工作区页面。消息总线先用 8 ms 合并窗口吸收 DispatchIO 的相邻
 partial 回调，再按 SwiftTerm 单次 PTY 读取上限 128 KiB 依序交给主线程解析；这既避免把
-同一批 ANSI 更新拆成多个可见中间帧，也把绘制频率限制在显示刷新量级。每次交付前还会
-窥视 NSApplication 已排队的点击、键盘与滚轮事件，存在直接用户交互时延后一帧，让
-Inspector 页签及其它窗口动作优先完成。
+同一批 ANSI 更新拆成多个可见中间帧，也把绘制频率限制在显示刷新量级。字节只在主
+RunLoop 默认模式的 `beforeWaiting` 阶段消费，并且每轮最多一个批次；AppKit 输入源和
+已经排队的主线程界面任务因此先完成，按钮跟踪等嵌套交互模式则完全不消费终端字节。
+Inspector 继续使用原生事件链，不订阅、不窥视，也不等待终端消息总线。
 
 ```mermaid
 flowchart LR

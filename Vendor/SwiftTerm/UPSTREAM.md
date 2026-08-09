@@ -40,8 +40,9 @@ record the new version and revision here.
   inspects scrollback, then restore the normal follow-only-at-bottom policy.
 - `Mac/MacLocalTerminalView.swift` accepts an optional serial PTY callback queue. Aster uses this
   seam to publish raw output through its per-Pane bounded message bus before delivering coalesced,
-  read-sized batches to the main-thread terminal grid with AppKit input priority; `nil` preserves
-  upstream main-queue behavior for all other embedders.
+  read-sized batches to the main-thread terminal grid during the default RunLoop's idle phase;
+  Inspector and other AppKit event paths stay independent, including nested tracking loops. `nil`
+  preserves upstream main-queue behavior for all other embedders.
 - `SelectionService.swift` and `Apple/AppleTerminalView.swift` expose programmatic rectangular
   selections; `Terminal.swift` provides a bounded, deduplicated visible-link enumeration seam for
   Aster's keyboard Hint Mode and a scroll-invariant line range for Vi Mode snapshots. The outer

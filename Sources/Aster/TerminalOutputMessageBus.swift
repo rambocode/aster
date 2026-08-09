@@ -8,7 +8,7 @@ import Foundation
 /// 而不是以丢失输出或无限内存换取表面流畅。
 final class TerminalOutputMessageBus: @unchecked Sendable {
   /// 与 SwiftTerm 的 PTY 单次读取上限一致。保留读取边界能避免把同一批 ANSI 更新拆成
-  /// 多个可见中间帧；事件优先级由交付前的显式检查保证，不再靠切碎字节换取响应性。
+  /// 多个可见中间帧；交付只发生在主 RunLoop 的空闲阶段，不再靠切碎字节换取响应性。
   static let defaultBatchByteLimit = 128 * 1_024
   /// 总线自身的硬上限必须小于无限制缓存；达到上限后读取线程等待主线程排空一部分。
   static let defaultPendingByteLimit = 4 * 1_024 * 1_024
@@ -18,13 +18,16 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
   private let pendingByteLimit: Int
   private let resumeByteLimit: Int
   private let interBatchDelay: DispatchTimeInterval
-  private let shouldDeferDelivery: () -> Bool
   private let consume: ([UInt8]) -> Void
+  private let mainRunLoop: CFRunLoop
+  private var deliveryObserver: CFRunLoopObserver?
 
   private var chunks: [[UInt8]] = []
   private var firstChunkOffset = 0
   private var pendingByteCount = 0
   private var deliveryScheduled = false
+  private var deliveryReady = false
+  private var deferUntilNextIdleCycle = false
   private var finishRequested = false
   private var completionHandlers: [() -> Void] = []
 
@@ -32,9 +35,9 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
     batchByteLimit: Int = TerminalOutputMessageBus.defaultBatchByteLimit,
     pendingByteLimit: Int = TerminalOutputMessageBus.defaultPendingByteLimit,
     interBatchDelay: DispatchTimeInterval = .milliseconds(8),
-    shouldDeferDelivery: @escaping () -> Bool = { false },
     consume: @escaping ([UInt8]) -> Void
   ) {
+    precondition(Thread.isMainThread, "TerminalOutputMessageBus 必须在主线程构造")
     precondition(batchByteLimit > 0)
     precondition(pendingByteLimit >= batchByteLimit)
     self.batchByteLimit = batchByteLimit
@@ -42,8 +45,28 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
     // 只在积压明显降低后才唤醒读取方，防止高频跨线程 wake-up 造成新的调度风暴。
     resumeByteLimit = pendingByteLimit / 2
     self.interBatchDelay = interBatchDelay
-    self.shouldDeferDelivery = shouldDeferDelivery
     self.consume = consume
+    mainRunLoop = CFRunLoopGetMain()
+
+    // 默认模式的 beforeWaiting 位于 AppKit 输入源、主队列任务和计时器之后。终端每轮
+    // 最多消费一个有界批次；eventTracking 等嵌套交互循环不会解析终端输出，因此
+    // Panel 仍走原生事件链，不订阅也不等待终端消息。
+    let observer = CFRunLoopObserverCreateWithHandler(
+      kCFAllocatorDefault,
+      CFRunLoopActivity.beforeWaiting.rawValue,
+      true,
+      0
+    ) { [weak self] _, _ in
+      self?.deliverNextBatchIfReady()
+    }
+    deliveryObserver = observer
+    CFRunLoopAddObserver(mainRunLoop, observer, .defaultMode)
+  }
+
+  deinit {
+    if let deliveryObserver {
+      CFRunLoopRemoveObserver(mainRunLoop, deliveryObserver, .defaultMode)
+    }
   }
 
   /// 从 PTY 专用串行队列发布原始字节。此调用可能在队列已满时等待，但不会阻塞主线程。
@@ -93,31 +116,41 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
     guard !deliveryScheduled else { return }
     deliveryScheduled = true
     DispatchQueue.main.asyncAfter(deadline: deadline) { [weak self] in
-      self?.deliverNextBatch()
+      self?.markDeliveryReady()
     }
   }
 
-  /// 只在主线程运行。每次完成一个小批次后延后下一次提交；这个显式让步比连续
-  /// `DispatchQueue.main.async` 更可靠，能让 AppKit 从事件端口取出已经到达的点击。
-  private func deliverNextBatch() {
+  /// 主队列计时器只标记“可消费”，不解析字节。再等待一个完整 idle cycle，保证同一轮
+  /// 已排队的 Panel/AppKit 任务全部先完成，然后由 beforeWaiting observer 交付输出。
+  private func markDeliveryReady() {
+    precondition(Thread.isMainThread)
+    condition.lock()
+    deliveryReady = true
+    deferUntilNextIdleCycle = true
+    condition.unlock()
+    CFRunLoopWakeUp(mainRunLoop)
+  }
+
+  /// 只由主 RunLoop 的 beforeWaiting observer 调用。每轮最多提交一个批次；若仍有积压，
+  /// 下一批重新经过合并窗口和 idle cycle，不会形成持续占用主队列的终端消息链。
+  private func deliverNextBatchIfReady() {
     precondition(Thread.isMainThread)
 
-    // GCD main queue 与 AppKit 事件端口之间没有“定时器一定让点击先执行”的保证。
-    // 检测到已经排队的直接用户输入时，本轮只重新排期，不解析终端字节；返回事件循环
-    // 后 NSApplication 就能先完成按钮、键盘或滚轮分发。
-    if shouldDeferDelivery() {
-      condition.lock()
-      deliveryScheduled = false
-      if pendingByteCount > 0 || !completionHandlers.isEmpty {
-        scheduleDeliveryLocked(after: .now() + interBatchDelay)
-      }
+    condition.lock()
+    guard deliveryReady else {
       condition.unlock()
+      return
+    }
+    if deferUntilNextIdleCycle {
+      deferUntilNextIdleCycle = false
+      condition.unlock()
+      CFRunLoopWakeUp(mainRunLoop)
       return
     }
 
     let batch: [UInt8]
     var completions: [() -> Void] = []
-    condition.lock()
+    deliveryReady = false
     deliveryScheduled = false
     batch = takeBatchLocked()
     if pendingByteCount <= resumeByteLimit {

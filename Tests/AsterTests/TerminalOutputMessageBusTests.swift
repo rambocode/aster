@@ -58,29 +58,29 @@ func terminalOutputMessageBusYieldsBetweenBatches() async throws {
   #expect(probe.interfaceEventBatchCount == 1)
 }
 
-@Test("待处理界面事件会优先于终端输出交付")
+@Test("终端输出先到达时主线程界面任务仍优先执行")
 @MainActor
-func terminalOutputMessageBusDefersForPendingInterfaceEvent() async throws {
+func terminalOutputMessageBusRunsInterfaceTaskBeforeDelivery() async throws {
   let probe = TerminalOutputMessageBusProbe()
-  let interaction = TerminalOutputInteractionProbe(isPending: true)
   let bus = TerminalOutputMessageBus(
     batchByteLimit: 8,
     pendingByteLimit: 32,
-    interBatchDelay: .milliseconds(1),
-    shouldDeferDelivery: { interaction.isPending }
-  ) { probe.appendBatch($0) }
+    interBatchDelay: .nanoseconds(0)
+  ) { probe.appendBatchRecordingInterfaceOrder($0) }
   let bytes = Array("panel-click".utf8)
   let producer = Task.detached(priority: .userInitiated) {
     bus.enqueue(bytes[...])
+    // 模拟终端消息已经排期后到达的 Panel 主线程任务。输出消费必须等本轮 RunLoop
+    // 的界面任务处理完，而不是靠终端总线理解或窥视 Panel 事件。
+    DispatchQueue.main.async { probe.markInterfaceTaskCompleted() }
+    bus.finish { probe.markFinished() }
   }
 
-  // 连续等待多个交付周期，确认有点击/键盘事件排队时不会抢先解析终端输出。
-  try await Task.sleep(for: .milliseconds(8))
-  #expect(probe.batches.isEmpty)
-
-  interaction.isPending = false
-  try await waitForTerminalOutputBus { probe.batches.flatMap { $0 } == bytes }
+  try await waitForTerminalOutputBus { probe.isFinished }
   _ = await producer.value
+
+  #expect(probe.batches.flatMap { $0 } == bytes)
+  #expect(probe.firstBatchSawCompletedInterfaceTask)
 }
 
 @Test("单次 PTY 读取只形成一次可见终端更新")
@@ -128,6 +128,8 @@ private final class TerminalOutputMessageBusProbe: @unchecked Sendable {
   private var storedBatches: [[UInt8]] = []
   private var storedFinished = false
   private var storedInterfaceEventBatchCount: Int?
+  private var storedInterfaceTaskCompleted = false
+  private var storedFirstBatchSawCompletedInterfaceTask: Bool?
 
   var batches: [[UInt8]] {
     lock.withLock { storedBatches }
@@ -145,12 +147,29 @@ private final class TerminalOutputMessageBusProbe: @unchecked Sendable {
     lock.withLock { storedInterfaceEventBatchCount }
   }
 
+  var firstBatchSawCompletedInterfaceTask: Bool {
+    lock.withLock { storedFirstBatchSawCompletedInterfaceTask == true }
+  }
+
   func appendBatch(_ bytes: [UInt8]) {
     lock.withLock { storedBatches.append(bytes) }
   }
 
   func markFinished() {
     lock.withLock { storedFinished = true }
+  }
+
+  func markInterfaceTaskCompleted() {
+    lock.withLock { storedInterfaceTaskCompleted = true }
+  }
+
+  func appendBatchRecordingInterfaceOrder(_ bytes: [UInt8]) {
+    lock.withLock {
+      if storedFirstBatchSawCompletedInterfaceTask == nil {
+        storedFirstBatchSawCompletedInterfaceTask = storedInterfaceTaskCompleted
+      }
+      storedBatches.append(bytes)
+    }
   }
 
   func recordBatchAndReturnCount() -> Int {
@@ -162,20 +181,5 @@ private final class TerminalOutputMessageBusProbe: @unchecked Sendable {
 
   func recordInterfaceEvent(after batchCount: Int) {
     lock.withLock { storedInterfaceEventBatchCount = batchCount }
-  }
-}
-
-/// 模拟 NSApplication 事件队列是否已有直接用户交互，状态由锁保护以匹配总线边界。
-private final class TerminalOutputInteractionProbe: @unchecked Sendable {
-  private let lock = NSLock()
-  private var storedIsPending: Bool
-
-  init(isPending: Bool) {
-    storedIsPending = isPending
-  }
-
-  var isPending: Bool {
-    get { lock.withLock { storedIsPending } }
-    set { lock.withLock { storedIsPending = newValue } }
   }
 }
