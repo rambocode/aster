@@ -266,6 +266,14 @@ public enum AgentTranscriptParser {
       )
     }
 
+    // 部分受支持的历史文件把 user 内容直接放在顶层 `message` 字符串。把它收敛到
+    // 与嵌套 message 相同的标准 entry，Outline 与 History 就不会维护两套 JSONL 契约。
+    if let role = role(from: root["role"] ?? root["type"]),
+      let message = root["message"] as? String
+    {
+      return [entry(index: sourceRecordIndex, kind: .message(role: role), timestamp: timestamp, text: message)]
+    }
+
     if let role = role(from: root["role"] ?? root["type"]), root["content"] != nil {
       return contentEntries(
         root["content"],

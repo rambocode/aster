@@ -60,25 +60,6 @@ final class OpenQuicklyPanelView: NSView {
   }
 }
 
-/// Borderless NSSearchField 的图标/文本布局。起点基于 bounds 而不是 bezel，
-/// 因此关闭系统边框后仍保持 8pt 图标左边距和 8pt 图文间距。
-@MainActor
-final class OpenQuicklySearchFieldCell: NSSearchFieldCell {
-  override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
-    let size: CGFloat = 16
-    return NSRect(x: rect.minX + 4, y: rect.midY - size / 2, width: size, height: size)
-  }
-
-  override func searchTextRect(forBounds rect: NSRect) -> NSRect {
-    var textRect = super.searchTextRect(forBounds: rect)
-    let leading = rect.minX + 28
-    let consumed = max(0, leading - textRect.minX)
-    textRect.origin.x = leading
-    textRect.size.width = max(0, textRect.width - consumed)
-    return textRect
-  }
-}
-
 /// Open Quickly 浮层:标签条过滤 + 双行结果列表(图标/相对时间/类型徽章)+ 底部
 /// 快捷键栏。数据与匹配在 AsterCore 的 OpenQuicklyIndex,这里只负责展示与动作接线。
 @MainActor
@@ -146,9 +127,6 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     host.layer?.masksToBounds = false
     host.identifier = NSUserInterfaceItemIdentifier("open-quickly-overlay")
 
-    // 系统 borderless NSSearchField 不会自动为搜索图标重新计算文本起点，
-    // 使用显式 cell 留出 24pt，避免 placeholder 与图标重叠。
-    search.cell = OpenQuicklySearchFieldCell(textCell: "")
     search.placeholderString = "搜索命令、URL、文件…"
     search.identifier = NSUserInterfaceItemIdentifier("open-quickly-search")
     // 保留 NSSearchField 的搜索图标、IME 和文本编辑能力，只去掉会形成蓝色
@@ -157,6 +135,10 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     search.drawsBackground = false
     search.focusRingType = .none
     search.cell?.focusRingType = .none
+    // Borderless `NSSearchFieldCell` 的默认 icon/text rect 在不同 macOS 外观下并不一致。
+    // 不覆写 cell 的局部坐标；改为移除内部 icon、将输入控件整体放在显式图标右侧，确保
+    // placeholder、正在编辑文本和 IME 候选都共享同一个真实可输入区域。
+    (search.cell as? NSSearchFieldCell)?.searchButtonCell = nil
     search.font = NSFont.systemFont(ofSize: 15)
     search.translatesAutoresizingMaskIntoConstraints = false
     search.heightAnchor.constraint(equalToConstant: 36).isActive = true
@@ -168,7 +150,31 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     search.onCancel = { [weak model] in model?.isOpenQuicklyPresented = false }
     search.onQuickSelect = { [weak self] digit in self?.quickSelect(digit) }
     search.onShowActions = { [weak self] in self?.showActionsMenu() }
-    host.searchInputView = search
+    let searchRow = NSView()
+    searchRow.identifier = NSUserInterfaceItemIdentifier("open-quickly-search-row")
+    let searchIcon = NSImageView()
+    searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "搜索")
+    // 图标本身可能包含不同主题/系统版本的透明留白；显式按 16pt 槽位居中和等比缩放，
+    // 避免默认 image alignment 让视觉中心偏向 placeholder 的基线。
+    searchIcon.imageAlignment = .alignCenter
+    searchIcon.imageScaling = .scaleProportionallyDown
+    searchIcon.contentTintColor = AsterTheme.secondaryInk
+    searchIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+    searchIcon.identifier = NSUserInterfaceItemIdentifier("open-quickly-search-icon")
+    searchIcon.translatesAutoresizingMaskIntoConstraints = false
+    searchRow.addSubview(searchIcon)
+    searchRow.addSubview(search)
+    NSLayoutConstraint.activate([
+      searchIcon.leadingAnchor.constraint(equalTo: searchRow.leadingAnchor, constant: 8),
+      searchIcon.centerYAnchor.constraint(equalTo: searchRow.centerYAnchor),
+      searchIcon.widthAnchor.constraint(equalToConstant: 16),
+      searchIcon.heightAnchor.constraint(equalToConstant: 16),
+      search.leadingAnchor.constraint(equalTo: searchRow.leadingAnchor, constant: 32),
+      search.trailingAnchor.constraint(equalTo: searchRow.trailingAnchor),
+      search.topAnchor.constraint(equalTo: searchRow.topAnchor),
+      search.bottomAnchor.constraint(equalTo: searchRow.bottomAnchor),
+    ])
+    host.searchInputView = searchRow
 
     let column = NSStackView()
     column.orientation = .vertical
@@ -179,7 +185,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     let resultsScroll = makeResultsScroll()
     let separator = makeSeparator()
     let footer = makeFooter()
-    let fullWidthViews = [search, filterStrip, resultsScroll, separator, footer]
+    let fullWidthViews = [searchRow, filterStrip, resultsScroll, separator, footer]
     for arrangedView in fullWidthViews {
       column.addArrangedSubview(arrangedView)
       arrangedView.translatesAutoresizingMaskIntoConstraints = false

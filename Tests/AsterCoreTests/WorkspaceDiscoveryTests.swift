@@ -162,15 +162,73 @@ func workspaceProcessParserFindsDescendantsInArbitraryOrder() {
   #expect(processes.map(\.command) == ["/usr/bin/make test", "/usr/bin/python3 child.py"])
 }
 
+@Test("Info 的进程树保留 Shell 根节点并按父子关系稳定排列")
+func workspaceProcessParserBuildsRootedTreeForInfo() {
+  let output = """
+      92  91 /usr/bin/python3 child.py
+      50   1 /bin/zsh
+      91  50 /usr/bin/make test
+      93   1 /usr/bin/make unrelated
+    """
+
+  let processes = WorkspaceProcessParser.processTree(
+    from: output,
+    rootProcessIdentifier: 50
+  )
+
+  #expect(processes.map(\.processIdentifier) == [50, 91, 92])
+  #expect(processes.map(\.parentProcessIdentifier) == [1, 50, 91])
+}
+
 @Test("监听端口解析器关联 PID 并拒绝超限输入")
 func listeningPortParserReadsMachineFields() {
-  let ports = ListeningPortParser.parse("p91\nn127.0.0.1:8080\np92\nn*:3000\n")
+  let ports = ListeningPortParser.parse("p91\ncnode\nn127.0.0.1:8080\np92\ncpython3\nn*:3000\n")
+
+  #expect(ports == [
+    ListeningPort(processIdentifier: 91, endpoint: "127.0.0.1:8080", processName: "node"),
+    ListeningPort(processIdentifier: 92, endpoint: "*:3000", processName: "python3"),
+  ])
+  #expect(ListeningPortParser.parse(String(repeating: "x", count: 2_100_000)).isEmpty)
+}
+
+@Test("监听端口按 PID 与端点去重并保持首次出现顺序")
+func listeningPortParserDeduplicatesRepeatedRecords() {
+  let ports = ListeningPortParser.parse(
+    "p91\nn127.0.0.1:8080\nn127.0.0.1:8080\np92\nn*:3000\np91\nn127.0.0.1:8080\n"
+  )
 
   #expect(ports == [
     ListeningPort(processIdentifier: 91, endpoint: "127.0.0.1:8080"),
     ListeningPort(processIdentifier: 92, endpoint: "*:3000"),
   ])
-  #expect(ListeningPortParser.parse(String(repeating: "x", count: 2_100_000)).isEmpty)
+}
+
+@Test("文档 Outline 保留 JSON 原始键顺序和真实源码行")
+func workspaceOutlineUsesRealJSONSourceLines() {
+  let json = """
+    {
+      "zeta": true,
+      "alpha": { "nested": 1 }
+    }
+    """
+
+  let items = WorkspaceOutlineParser.parse(json, kind: .json)
+
+  #expect(items.map(\.title) == ["zeta", "alpha"])
+  #expect(items.map(\.line) == [2, 3])
+}
+
+@Test("文档 Outline 复用 Agent transcript 的嵌套用户提示词契约")
+func workspaceOutlineParsesNestedAgentTranscriptPrompts() {
+  let transcript = """
+    {"type":"response_item","payload":{"message":{"role":"user","content":[{"type":"text","text":"修复连接超时"}]}}}
+    {"role":"assistant","content":"skip"}
+    """
+
+  let items = WorkspaceOutlineParser.parse(transcript, kind: .jsonLinesTranscript)
+
+  #expect(items.map(\.title) == ["修复连接超时"])
+  #expect(items.map(\.line) == [1])
 }
 
 @Test("文件树有界递归且不会跟随符号链接")

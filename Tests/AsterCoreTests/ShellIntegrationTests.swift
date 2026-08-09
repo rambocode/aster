@@ -42,6 +42,22 @@ func shellCommandTimelineBuildsBoundedCommandMarks() {
   #expect(timeline.currentInputStart == nil)
 }
 
+@Test("命令开始后时间线公开运行中的 Outline 锚点")
+func shellCommandTimelineExposesRunningCommand() {
+  var timeline = ShellCommandTimeline()
+  timeline.receive(.promptStart, at: TerminalGridPoint(column: 0, row: 10))
+  timeline.receive(.inputStart, at: TerminalGridPoint(column: 2, row: 10))
+  timeline.receive(.commandStart, at: TerminalGridPoint(column: 0, row: 11))
+
+  #expect(timeline.isCommandRunning)
+  #expect(timeline.runningCommand?.promptStart == TerminalGridPoint(column: 0, row: 10))
+  #expect(timeline.runningCommand?.inputStart == TerminalGridPoint(column: 2, row: 10))
+  #expect(timeline.runningCommand?.outputStart == TerminalGridPoint(column: 0, row: 11))
+
+  timeline.receive(.commandFinished(exitStatus: 0), at: TerminalGridPoint(column: 0, row: 12))
+  #expect(timeline.runningCommand == nil)
+}
+
 @Test("缺失或乱序标记不会伪造命令记录")
 func shellCommandTimelineRejectsIncompleteSequences() {
   var timeline = ShellCommandTimeline()

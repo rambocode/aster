@@ -1121,6 +1121,55 @@ func detailsPanelStartsOnlySelectedInspection() async {
   #expect(filesCalls == 0)
 }
 
+@Test("Info 检查失败显示可重试状态，并在重试成功后显示真实空端口")
+@MainActor
+func informationFailureRendersRetryAndRecovers() async throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 0
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  var calls = 0
+  let client = WorkspaceInspectionClient(
+    information: { _ in
+      calls += 1
+      if calls == 1 {
+        return WorkspaceInformationSnapshot(
+          processes: [],
+          listeningPorts: [],
+          state: .failed("无法读取监听端口。")
+        )
+      }
+      return WorkspaceInformationSnapshot(processes: [], listeningPorts: [])
+    },
+    git: { _ in GitStatusSummary() },
+    files: { _, _ in [] }
+  )
+  let controller = DetailsPanelViewController(
+    model: model,
+    preferences: preferences,
+    inspectionClient: client
+  )
+  controller.loadViewIfNeeded()
+  for _ in 0..<8 { await Task.yield() }
+
+  let failedLabels = controller.view.allDescendants.compactMap { $0 as? NSTextField }
+    .map(\.stringValue)
+  #expect(failedLabels.contains("无法读取监听端口。"))
+  let retry = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSButton }.first { $0.title == "Retry" })
+  retry.performClick(nil)
+  for _ in 0..<8 { await Task.yield() }
+
+  #expect(calls == 2)
+  let recoveredLabels = controller.view.allDescendants.compactMap { $0 as? NSTextField }
+    .map(\.stringValue)
+  #expect(recoveredLabels.contains("No listening ports"))
+  #expect(recoveredLabels.contains("无法读取监听端口。") == false)
+}
+
 @Test("Git 页收起超过缓存期限后重开会重新检查")
 @MainActor
 func reopeningGitAfterCacheExpiryRefreshesStatus() async {
@@ -1301,12 +1350,24 @@ func openQuicklyAlignsContentAndReusesRows() throws {
   #expect(search.isBezeled == false)
   #expect(search.focusRingType == .none)
   #expect(abs(search.bounds.height - 36) < 1)
-  let searchCell = try #require(search.cell as? NSSearchFieldCell)
-  let searchIconRect = searchCell.searchButtonRect(forBounds: search.bounds)
-  let searchTextRect = searchCell.searchTextRect(forBounds: search.bounds)
-  #expect(searchIconRect.maxX + 6 <= searchTextRect.minX)
-  #expect(abs(searchIconRect.midY - searchTextRect.midY) < 1)
-  #expect(search.frame.width >= overlay.bounds.width - 32)
+  let searchRow = try #require(controller.view.allDescendants.first {
+    $0.identifier?.rawValue == "open-quickly-search-row"
+  })
+  let searchIcon = try #require(controller.view.allDescendants.first {
+    $0.identifier?.rawValue == "open-quickly-search-icon"
+  })
+  let iconFrame = searchIcon.convert(searchIcon.bounds, to: searchRow)
+  let fieldAlignmentRect = search.alignmentRect(forFrame: search.frame)
+  // 使用独立 icon 与真实输入控件，确保默认 placeholder、输入文字和 IME 都从 icon 右侧
+  // 开始，而不是依赖 borderless NSSearchFieldCell 的不稳定内部 rect。
+  #expect((search.cell as? NSSearchFieldCell)?.searchButtonCell == nil)
+  #expect(abs(iconFrame.minX - 8) < 0.5)
+  #expect(abs(fieldAlignmentRect.minX - 32) < 0.5)
+  #expect(iconFrame.maxX + 7 <= fieldAlignmentRect.minX)
+  #expect(abs(iconFrame.midY - fieldAlignmentRect.midY) < 1)
+  #expect((searchIcon as? NSImageView)?.imageAlignment == .alignCenter)
+  #expect((searchIcon as? NSImageView)?.imageScaling == .scaleProportionallyDown)
+  #expect(abs(searchRow.frame.width - resultsStack.bounds.width) < 1)
   #expect(abs(firstRow.frame.width - resultsStack.bounds.width) < 1)
   let badgeFrameInRow = firstBadge.convert(firstBadge.bounds, to: firstRow)
   #expect(firstRow.bounds.maxX - badgeFrameInRow.maxX <= 12)

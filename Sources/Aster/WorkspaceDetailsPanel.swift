@@ -58,6 +58,9 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   private var informationPaneID: UUID?
   private var requestedInformationPaneID: UUID?
   private var informationTask: Task<Void, Never>?
+  /// Info 仅在自身可见时轮询。单次延迟任务而不是常驻 Timer 让切 Pane、收起面板和
+  /// 控制器释放都能走同一套 cancellation，不会留下无主的 RunLoop source。
+  private var informationRefreshTask: Task<Void, Never>?
   private weak var informationStack: NSStackView?
   private var gitStatus: GitStatusSummary?
   private var gitDirectory: String?
@@ -141,6 +144,9 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       .sink { [weak self] _ in
         guard let self else { return }
         self.updateInformationContent()
+        // 会话文件异步读完后，当前 Pane 的 prompt 索引也必须重建；否则 Info 已显示
+        // session、Outline 却持续停留在空列表，直到下一次终端输出才会刷新。
+        self.invalidateOutline(debounced: false)
       }
       .store(in: &cancellables)
     observeActivePane()
@@ -177,6 +183,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
 
   deinit {
     informationTask?.cancel()
+    informationRefreshTask?.cancel()
     gitTask?.cancel()
     filesTask?.cancel()
     outlineTask?.cancel()
@@ -291,6 +298,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     switch section {
     case .info:
       informationTask?.cancel()
+      informationRefreshTask?.cancel()
     case .git:
       gitTask?.cancel()
       // 切走 Git 页或收起面板时，diff 浮层不能继续悬在窗口上。
@@ -310,6 +318,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         guard let self else { return }
         self.beginPaneRefresh()
         self.informationTask?.cancel()
+        self.informationRefreshTask?.cancel()
         self.gitTask?.cancel()
         self.informationPaneID = nil
         self.requestedInformationPaneID = nil
@@ -364,6 +373,20 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       session.outlineChanged
         .sink { [weak self] in self?.invalidateOutline(debounced: false) }
         .store(in: &outlineCancellables)
+      // lifecycle hook 新关联 session 时没有 OSC 133 事件，不能只等命令时间线变化。
+      // 同步刷新 Info 与 Outline，仍由当前 Pane 身份和可见页条件限制实际 I/O。
+      session.$activeAgentProvider
+        .sink { [weak self] _ in
+          self?.updateInformationContent()
+          self?.invalidateOutline(debounced: false)
+        }
+        .store(in: &outlineCancellables)
+      session.$activeAgentSessionID
+        .sink { [weak self] _ in
+          self?.updateInformationContent()
+          self?.invalidateOutline(debounced: false)
+        }
+        .store(in: &outlineCancellables)
     } else {
       runtime.$documentText
         .removeDuplicates()
@@ -402,6 +425,25 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       self.informationPaneID = paneID
       self.updateInformationContent()
       self.completePaneRefresh(for: .info)
+      self.scheduleInformationRefresh()
+    }
+  }
+
+  /// 成功、空结果和可重试失败都在三秒后重新检查；只有 Info 当前可见且 Inspector 展开时
+  /// 才保留这个任务。这样无需重建控制器也不会在隐藏页消耗 `ps`/`lsof` 资源。
+  private func scheduleInformationRefresh() {
+    informationRefreshTask?.cancel()
+    guard isPresentationActive, selection == .info else { return }
+    informationRefreshTask = Task { @MainActor [weak self] in
+      do {
+        try await Task.sleep(for: .seconds(3))
+      } catch {
+        return
+      }
+      guard let self, !Task.isCancelled, self.isPresentationActive, self.selection == .info else {
+        return
+      }
+      self.refreshInformation()
     }
   }
 
@@ -466,7 +508,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     guard isPresentationActive, let directory = model.selectedTab?.workingDirectory else { return }
     switch selection {
     case .info:
-      if informationPaneID != model.selectedTab?.activePaneID { refreshInformation() }
+      if informationPaneID != model.selectedTab?.activePaneID {
+        refreshInformation()
+      } else {
+        scheduleInformationRefresh()
+      }
     case .git:
       // 目录没变也可能过期：分支切换、外部 commit 都不会通知面板，重开时必须按时间重取。
       if gitDirectory != directory || isGitSnapshotExpired { refreshGit() }
@@ -539,22 +585,36 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       info.addArrangedSubview(makeLinkRow(symbol: "folder", title: "Reveal in Finder") {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: directory)])
       })
-      for editor in WorkspaceEditorLocator.detect() {
+      for editor in editorLocator() {
         info.addArrangedSubview(
           makeLinkRow(symbol: "arrow.up.right.square", title: "Open in \(editor.name)") {
-            WorkspaceEditorLocator.open(directory: URL(fileURLWithPath: directory), in: editor)
+            self.editorOpener([URL(fileURLWithPath: directory)], editor)
           })
       }
     }
 
-    if let claudeSection = makeClaudeCodeSection(tab: tab) {
-      info.addArrangedSubview(claudeSection)
+    if let agentSection = makeAgentSection(tab: tab) {
+      info.addArrangedSubview(agentSection)
     }
 
     info.addArrangedSubview(makeGroupHeader("Process"))
     if let information {
+      switch information.state {
+      case .ready:
+        break
+      case .unavailable(let message), .failed(let message):
+        info.addArrangedSubview(makeLabel(message, size: 11, color: AsterTheme.secondaryInk))
+        info.addArrangedSubview(makeGroupHeader("Ports"))
+        info.addArrangedSubview(makeLabel(message, size: 11, color: AsterTheme.secondaryInk))
+        if case .failed = information.state {
+          info.addArrangedSubview(makeLinkRow(symbol: "arrow.clockwise", title: "Retry") { [weak self] in
+            self?.refreshInformation()
+          })
+        }
+        return
+      }
       if information.processes.isEmpty {
-        info.addArrangedSubview(makeLabel("没有活动子进程", size: 11, color: AsterTheme.secondaryInk))
+        info.addArrangedSubview(makeLabel("No running processes", size: 11, color: AsterTheme.secondaryInk))
       } else {
         for process in information.processes.prefix(50) {
           addFullWidthRow(makeProcessRow(process), to: info)
@@ -566,7 +626,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       } else {
         for port in information.listeningPorts.prefix(50) {
           info.addArrangedSubview(
-            makeLabel("\(port.processIdentifier)  \(port.endpoint)", size: 10.5, monospaced: true))
+            makeLabel(
+              "\(port.processName ?? "process") (\(port.processIdentifier))  \(port.protocolName)  \(port.endpoint)",
+              size: 10.5,
+              monospaced: true
+            ))
         }
       }
     } else {
@@ -574,32 +638,43 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     }
   }
 
-  /// 仅当活动 Pane 的进程树里检测到 claude 时显示；会话记录按当前目录匹配最新一条。
-  private func makeClaudeCodeSection(tab: TerminalTabItem?) -> NSView? {
-    let claudeRunning = information?.processes.contains {
-      $0.command.split(separator: "/").last == "claude"
-    } ?? false
-    guard claudeRunning else { return nil }
+  /// Agent 只在 lifecycle hook 给出 provider 与 session ID 后关联；不再按目录或最近历史猜测，
+  /// 这样当前 Pane 永远不会显示其它 Pane 的会话操作。
+  private func makeAgentSection(tab: TerminalTabItem?) -> NSView? {
+    guard let terminal = tab?.activeSession, let provider = terminal.activeAgentProvider else { return nil }
     // 首次需要时触发一次磁盘扫描；结果经 agentHistoriesChanged 局部更新 Info 内容。
     if model.agentHistories.isEmpty, !didRequestAgentHistory {
       didRequestAgentHistory = true
       model.reloadAgentHistory()
     }
-    let session = latestClaudeSession(for: tab?.workingDirectory)
     let section = NSStackView()
     section.orientation = .vertical
     section.alignment = .leading
     section.spacing = 8
-    section.addArrangedSubview(makeGroupHeader("Claude Code"))
-    if let session {
-      section.addArrangedSubview(makeLinkRow(symbol: "doc.on.doc", title: "Copy Session ID") {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(session.id, forType: .string)
-      })
+    section.addArrangedSubview(makeGroupHeader(provider.commandName))
+    guard let sessionID = terminal.activeAgentSessionID else {
       section.addArrangedSubview(
-        makeLinkRow(symbol: "arrow.triangle.branch", title: "Branch in…") { [weak self] in
+        makeLabel("等待 Agent Integration 关联此 Pane 的会话。", size: 11, color: AsterTheme.secondaryInk))
+      return section
+    }
+    guard let session = model.agentHistories.map(\.metadata).first(where: {
+      $0.id == sessionID && $0.configuration.provider == provider
+    }) else {
+      section.addArrangedSubview(
+        makeLabel("正在读取此会话历史…", size: 11, color: AsterTheme.secondaryInk))
+      return section
+    }
+    section.addArrangedSubview(makeLinkRow(symbol: "doc.on.doc", title: "Copy Session ID") {
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(session.id, forType: .string)
+    })
+    if provider.capabilities.contains(.forkSession) {
+      section.addArrangedSubview(
+        makeLinkRow(symbol: "arrow.triangle.branch", title: "Branch in New Tab") { [weak self] in
           self?.model.continueAgentSession(session, kind: .fork)
         })
+    } else {
+      section.addArrangedSubview(makeLabel("此 Agent 不支持 Branch。", size: 11, color: AsterTheme.secondaryInk))
     }
     section.addArrangedSubview(
       makeLinkRow(symbol: "clock.arrow.circlepath", title: "View Session History") { [weak self] in
@@ -608,14 +683,6 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         self.model.reloadAgentHistory()
       })
     return section
-  }
-
-  private func latestClaudeSession(for directory: String?) -> AgentSessionMetadata? {
-    guard let directory else { return nil }
-    return model.agentHistories
-      .map(\.metadata)
-      .filter { $0.configuration.provider == .claudeCode && $0.projectDirectory == directory }
-      .max(by: { $0.updatedAt < $1.updatedAt })
   }
 
   /// 进程行：状态圆点 + 命令名 + 右侧「PID · 运行时长」。圆点用主题 accent 而不是
@@ -709,7 +776,9 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     let metadata: String
     let indentation: Int
     let toolTip: String?
+    let isJumpAvailable: Bool
     let action: () -> Void
+    let copyText: String
   }
 
   /// 编辑器可能在每个按键后发布完整文本。120ms trailing debounce 合并输入突发，解析
@@ -726,21 +795,27 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     }
     if let session = runtime.terminalSession {
       let entries = session.commandOutlineEntries()
-      let rows = entries.map { entry in
-        let status = entry.exitStatus.map { $0 == 0 ? "✓" : "× \($0)" } ?? "·"
+      var rows = entries.map { entry in
+        let status = entry.isRunning ? "·" : entry.exitStatus.map { $0 == 0 ? "✓" : "× \($0)" } ?? "·"
         return OutlineRow(
           title: "\(status)  \(entry.title)",
           metadata: entry.finishedAt.map { RelativeTime.string(since: $0) } ?? "",
           indentation: 0,
-          toolTip: nil,
-          action: { [weak session] in _ = session?.revealAbsoluteRow(entry.absoluteRow) }
+          toolTip: entry.isJumpAvailable ? nil : "源位置已从滚动缓冲区移除，仍可复制。",
+          isJumpAvailable: entry.isJumpAvailable,
+          action: { [weak session] in _ = session?.revealAbsoluteRow(entry.absoluteRow) },
+          copyText: entry.title
         )
       }
+      rows += agentPromptOutlineRows(for: session)
+      let emptyMessage = session.shellIntegrationDetected
+        ? "运行命令后会在这里显示 Shell Integration 锚点。"
+        : "需要 Shell Integration 才能显示命令。请在设置 → Shell 中启用它。"
       applyOutlineRows(
         rows,
         path: tab.workingDirectory,
         latest: entries.compactMap(\.finishedAt).max(),
-        emptyMessage: "运行命令后会在这里显示 Shell Integration 锚点。"
+        emptyMessage: emptyMessage
       )
       return
     }
@@ -779,11 +854,40 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
           metadata: "",
           indentation: max(0, entry.level - 1),
           toolTip: "第 \(entry.line) 行",
-          action: { [weak tab] in tab?.revealDocumentLine(entry.line, paneID: paneID) }
+          isJumpAvailable: true,
+          action: { [weak tab] in tab?.revealDocumentLine(entry.line, paneID: paneID) },
+          copyText: entry.title
         )
       }
       self.applyOutlineRows(rows, path: resourcePath, latest: nil, emptyMessage: "此文件没有可索引的结构。")
       self.outlineTask = nil
+    }
+  }
+
+  /// Prompt 只从当前 TerminalSession 已上报的精确 session ID 获取。与目录、进程名或最近
+  /// 历史的松散匹配会把另一 Pane 的用户输入泄露到当前 Outline，因此一律不采用。
+  private func agentPromptOutlineRows(for terminal: TerminalSession) -> [OutlineRow] {
+    guard let provider = terminal.activeAgentProvider,
+      let sessionID = terminal.activeAgentSessionID,
+      let history = model.agentHistories.first(where: {
+        $0.metadata.id == sessionID && $0.metadata.configuration.provider == provider
+      })
+    else { return [] }
+    return history.transcript.entries.compactMap { entry in
+      guard case .message(role: .user) = entry.kind else { return nil }
+      let text = String(entry.text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
+      guard !text.isEmpty else { return nil }
+      return OutlineRow(
+        title: "›  \(text)",
+        metadata: entry.timestamp.map { RelativeTime.string(since: $0) } ?? provider.commandName,
+        indentation: 0,
+        toolTip: "Agent prompt",
+        isJumpAvailable: true,
+        action: { [weak self] in
+          self?.model.isAgentHistoryPresented = true
+        },
+        copyText: text
+      )
     }
   }
 
@@ -1384,7 +1488,12 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         metadata: outlineRow.metadata,
         indentation: outlineRow.indentation,
         toolTip: outlineRow.toolTip,
-        action: outlineRow.action
+        isJumpAvailable: outlineRow.isJumpAvailable,
+        action: outlineRow.action,
+        copyText: outlineRow.copyText,
+        copyFeedback: { [weak self] success in
+          self?.model.notice = success ? "已复制 Outline 文本。" : "无法复制 Outline 文本。"
+        }
       )
       return cell
     }
@@ -2659,6 +2768,8 @@ private final class DetailsOutlineRowView: HoverHighlightRowView {
   private let metadataLabel = NSTextField(labelWithString: "")
   private var indentationConstraint: NSLayoutConstraint!
   private var actionHandler: (() -> Void)?
+  private var copyText = ""
+  private var copyFeedback: ((Bool) -> Void)?
 
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
@@ -2696,16 +2807,38 @@ private final class DetailsOutlineRowView: HoverHighlightRowView {
     metadata: String,
     indentation: Int,
     toolTip: String?,
-    action: @escaping () -> Void
+    isJumpAvailable: Bool,
+    action: @escaping () -> Void,
+    copyText: String,
+    copyFeedback: @escaping (Bool) -> Void
   ) {
     titleButton.title = title
     titleButton.toolTip = toolTip
+    titleButton.isEnabled = isJumpAvailable
     metadataLabel.stringValue = metadata
     indentationConstraint.constant = 14 + CGFloat(max(0, indentation)) * 12
     actionHandler = action
+    self.copyText = copyText
+    self.copyFeedback = copyFeedback
+    let contextMenu = NSMenu()
+    let jump = NSMenuItem(title: "Jump", action: #selector(activate), keyEquivalent: "")
+    jump.target = self
+    jump.isEnabled = isJumpAvailable
+    contextMenu.addItem(jump)
+    let copy = NSMenuItem(title: "Copy Text Content", action: #selector(copyTextContent), keyEquivalent: "")
+    copy.target = self
+    copy.isEnabled = !copyText.isEmpty
+    contextMenu.addItem(copy)
+    menu = contextMenu
   }
 
   @objc private func activate() { actionHandler?() }
+
+  @objc private func copyTextContent() {
+    guard !copyText.isEmpty else { return }
+    NSPasteboard.general.clearContents()
+    copyFeedback?(NSPasteboard.general.setString(copyText, forType: .string))
+  }
 }
 
 /// Files 页的可复用表格行。每个 cell 只在首次进入视口时建立约束，后续滚动、搜索和
