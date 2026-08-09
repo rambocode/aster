@@ -1931,6 +1931,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var awaitingInputTask: Task<Void, Never>?
   private var completedFlashTask: Task<Void, Never>?
   private var progressExpiryTask: Task<Void, Never>?
+  /// 通知交付属于应用基础设施边界；默认使用真实系统服务，测试可注入记录器验证
+  /// lifecycle 到通知请求的转换，而不申请权限或写入用户通知中心。
+  private let notificationPoster: any TerminalNotificationPosting
 
   private var terminalView: AsterTerminalView?
   private var targetOpenCoordinator: TerminalTargetOpenCoordinator?
@@ -1996,9 +1999,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     }
   }
 
-  init(workingDirectory: String) {
+  init(
+    workingDirectory: String,
+    notificationPoster: any TerminalNotificationPosting = TerminalNotificationService.shared
+  ) {
     self.workingDirectory = workingDirectory
     currentWorkingDirectory = workingDirectory
+    self.notificationPoster = notificationPoster
     super.init()
   }
 
@@ -2756,7 +2763,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       body: notification.body,
       urgency: notification.urgency
     )
-    TerminalNotificationService.shared.post(
+    notificationPoster.post(
       scopedNotification,
       category: category,
       configuration: shell,

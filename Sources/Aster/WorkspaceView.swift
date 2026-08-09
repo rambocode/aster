@@ -16,6 +16,11 @@ final class WorkspaceViewController: NSViewController {
   let panelLayoutStore: WorkspacePanelLayoutStore
   private var modelSubscriptions: Set<AnyCancellable> = []
   private var tabSubscriptions: Set<AnyCancellable> = []
+  /// 当前视图树内同一标签可能同时出现在一种标签布局中。数组保留扩展余地，并让活动
+  /// 状态只原地更新行尾附件，不因 Agent hook 重建终端工作区。
+  private var tabRowsByID: [UUID: [TabRowButton]] = [:]
+  private var pendingTabActivityIDs: Set<UUID> = []
+  private var tabActivityRefreshScheduled = false
   private var retainedObjects: [AnyObject] = []
   private var refreshScheduled = false
   /// 设置窗口独立于工作区，但配置仍是全局的。展示期间延后结构刷新，避免设置窗口的
@@ -125,6 +130,9 @@ final class WorkspaceViewController: NSViewController {
     super.viewDidLoad()
     model.objectWillChange
       .sink { [weak self] _ in self?.scheduleRefresh() }
+      .store(in: &modelSubscriptions)
+    model.tabActivityChanged
+      .sink { [weak self] tabID in self?.scheduleTabActivityRefresh(tabID) }
       .store(in: &modelSubscriptions)
     model.openQuicklyPresentationChanged
       .sink { [weak self] presented in self?.setOpenQuicklyPresented(presented) }
@@ -696,6 +704,7 @@ final class WorkspaceViewController: NSViewController {
     retainedObjects.removeAll()
     paneHosts.removeAll()
     editorTextViews.removeAll()
+    tabRowsByID.removeAll(keepingCapacity: true)
     // 设置控制器跨展示复用，保留分类、搜索和滚动位置；只重建工作区临时子控制器。
     children.forEach { $0.removeFromParent() }
     view.removeAllSubviews()
@@ -860,6 +869,25 @@ final class WorkspaceViewController: NSViewController {
           self?.revealEditorLine(request.line, paneID: request.paneID)
         }
         .store(in: &tabSubscriptions)
+    }
+  }
+
+  /// Agent lifecycle、完成未读和显式 badge 只改变标签附件。状态事件可能与一次已排队的
+  /// 全局刷新相邻；字典始终只保存当前视图树中的按钮，因此不会更新已移除的旧行。
+  private func scheduleTabActivityRefresh(_ tabID: UUID) {
+    pendingTabActivityIDs.insert(tabID)
+    guard !tabActivityRefreshScheduled else { return }
+    tabActivityRefreshScheduled = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.tabActivityRefreshScheduled = false
+      let tabIDs = self.pendingTabActivityIDs
+      self.pendingTabActivityIDs.removeAll(keepingCapacity: true)
+      for tabID in tabIDs {
+        for row in self.tabRowsByID[tabID] ?? [] where row.window != nil {
+          row.refreshActivityBadge()
+        }
+      }
     }
   }
 
@@ -1165,6 +1193,7 @@ final class WorkspaceViewController: NSViewController {
           }
         )
         button.menu = makeTabContextMenu(tab)
+        tabRowsByID[tab.id, default: []].append(button)
         rows.addArrangedSubview(button)
         button.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
         if model.dividerAfterTabIDs.contains(tab.id) {
@@ -1371,6 +1400,7 @@ final class WorkspaceViewController: NSViewController {
         }
       )
       button.menu = makeTabContextMenu(tab)
+      tabRowsByID[tab.id, default: []].append(button)
       row.addArrangedSubview(button)
     }
     row.addArrangedSubview(ActionButton(symbol: "plus") { [weak self] in self?.model.newTab() })

@@ -34,8 +34,19 @@ SwiftTerm 的 `registerOscObserver` 是非消费 seam：Aster 可观察 OSC 9/99
 
 等待输入只在任务运行时检测输出末行的 password、`[y/n]`、yes/no 与 Press Enter 提示，并要求 1.5 秒静默；任何键盘输入立即清除。Dock 聚合不持久化，点击应用图标选择一个失败标签并确认当前错误，新错误仍会再次标红。
 
+`TerminalTabItem.onActivityBadgeChanged` 把 Session 的普通进度、Agent lifecycle 和完成未读
+归并到 `AppModel.tabActivityChanged`。`WorkspaceViewController` 只原地替换对应 `TabRowButton`
+的行尾附件，`DockActivityCoordinator` 只重新计算全窗口聚合；两者都不借这类高频状态重建
+Pane 树。由于 `@Published` 在 `willSet` 发出事件，徽章聚合延后一轮主队列读取新值，避免
+图标总停留在上一状态。状态附件带稳定 identifier 与辅助功能标签，覆盖运行、等待输入、
+刚完成、未读完成、错误和空闲。
+
+`TerminalNotificationPosting` 是 Session 到通知基础设施的最小接口。生产实现仍由
+`TerminalNotificationService` 执行权限与前后台策略；测试记录器只验收 lifecycle 产生的
+通知请求，不申请系统权限，也不写入用户通知中心。
+
 ## 失败语义与测试
 
 畸形、超限、非法 base64 和未结束 OSC 99 不通知；系统权限拒绝时不伪报投递成功。无退出码的 OSC 133 D 不猜测成功。SwiftPM 测试宿主没有应用 Bundle，因此通知中心只在真实 app bundle 中延迟创建。
 
-功能测试覆盖协议全状态、分片/替换/查询、前后台策略、旧配置默认值、标题权限、BEL、CLI `watch` 退出码、直接徽章、parser 前限长和 Dock 聚合。发布验证使用 `swift test --no-parallel`。
+功能测试覆盖协议全状态、分片/替换/查询、前后台策略、旧配置默认值、标题权限、BEL、CLI `watch` 退出码、直接徽章、parser 前限长、左侧 Tab 行尾 lifecycle 变化、等待/完成通知去重，以及 Dock `idle/working/error` 聚合。发布验证使用 `swift test --no-parallel`。

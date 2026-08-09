@@ -313,6 +313,9 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// 避免单次 `cd` 同时触发无关界面刷新。
   var onWorkingDirectoryChanged: ((String) -> Void)?
   var onCommandFinished: ((UUID) -> Void)?
+  /// 标签活动徽章的局部状态出口。Agent lifecycle 与完成未读在一次会话中频繁切换，
+  /// 侧栏和 Dock 需要立即更新，但不能借 `objectWillChange` 重建整个 Pane 树。
+  var onActivityBadgeChanged: (() -> Void)?
   /// Agent 生命周期状态变化的定向出口。它只服务 Prompt Queue 的自动派发，不能并入
   /// `objectWillChange`：Agent 状态在每次输入后立即变化，整树重建会打断 Agent TUI。
   var onAgentTaskStateChanged: ((UUID, AgentTaskState) -> Void)?
@@ -814,12 +817,9 @@ final class TerminalTabItem: ObservableObject, Identifiable {
         fallback: Self.displayName(forDirectory: descriptor.workingDirectory)
       )
     }
-    // 侧栏和状态栏观察的是 Tab，而终端运行状态属于子 Session。只定向转发 UI 真正
-    // 消费的字段（运行态、spinner、退出码、启动错误）；不要转发 objectWillChange
-    // 全量事件——OSC 标题在命令运行期间高频变化，全量转发会让侧栏整树重建、
-    // spinner 每帧重启（可见闪烁）。Agent task state 与未读完成状态同样不能走这里：
-    // 它们在输入后立即变化，若重建会让 Files 回退到 Pane 初始目录并打断 Agent TUI。
-    // 目录变化由下方专用 sink 经 layout/title 触发刷新。
+    // 终端运行态属于子 Session。只有会改变 Pane/详情内容的进程、退出和 provider 字段
+    // 转发 objectWillChange；纯徽章字段走下方局部事件，避免状态切换重建终端工作区。
+    // OSC 标题与目录继续使用各自专用通道，不进入这两组 publisher。
     if let session = runtime.terminalSession {
       session.onTitleUpdate = { [weak self] code, text in
         self?.applyProgramTitle(paneID: descriptor.id, code: code, text: text)
@@ -830,14 +830,27 @@ final class TerminalTabItem: ObservableObject, Identifiable {
         session.$hasRunningCommand.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$exitCode.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$startupError.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        session.$activeAgentProvider.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+      )
+      .sink { [weak self] _ in self?.objectWillChange.send() }
+      .store(in: &cancellables)
+
+      // 普通进度、显式徽章、Agent lifecycle 与完成未读只改变 Tab 行尾和 Dock。
+      // `@Published` 在 willSet 发出值，延后一轮读取聚合徽章，避免显示上一状态。
+      Publishers.MergeMany(
+        session.$hasRunningCommand.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$lastCommandExitStatus.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$progressState.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$awaitingInput.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$showsCompletedFlash.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$explicitBadge.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
-        session.$activeAgentProvider.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+        session.$activeAgentProvider.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        session.$agentTaskState.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        session.$agentTaskCompletionUnread.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
       )
-      .sink { [weak self] _ in self?.objectWillChange.send() }
+      .sink { [weak self] _ in
+        DispatchQueue.main.async { [weak self] in self?.onActivityBadgeChanged?() }
+      }
       .store(in: &cancellables)
 
       // `@Published` 在 `willSet` 阶段发布，此刻回读 `session.agentTaskState` 仍是旧值，
@@ -919,6 +932,9 @@ final class AppModel: ObservableObject {
 
   @Published private(set) var tabs: [TerminalTabItem] = []
   @Published var selectedTabID: UUID?
+  /// 活动徽章的窗口级局部事件。视图只更新对应 Tab 的附件，Dock 只重新聚合状态；
+  /// 该事件不承担布局、持久化或终端内容刷新。
+  let tabActivityChanged = PassthroughSubject<UUID, Never>()
   @Published var isPalettePresented = false
   /// Open Quickly 是工作区上的临时浮层，显隐不应触发 `ObservableObject` 的整窗口
   /// 重绘。独立事件让 AppKit 控制器只挂载或移除浮层，并保留终端与侧栏实例。
@@ -3121,6 +3137,10 @@ final class AppModel: ObservableObject {
 
   private func configurePersistence(for tab: TerminalTabItem) {
     tab.onWorkspaceChanged = { [weak self] in self?.persistWorkspace() }
+    tab.onActivityBadgeChanged = { [weak self, weak tab] in
+      guard let tab else { return }
+      self?.tabActivityChanged.send(tab.id)
+    }
     tab.onWorkingDirectoryChanged = { [weak self] directory in
       self?.recordVisitedFolderIfEnabled(directory)
     }

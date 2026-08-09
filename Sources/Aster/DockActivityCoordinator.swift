@@ -11,11 +11,15 @@ final class DockActivityCoordinator {
   private var modelCancellables: [ObjectIdentifier: AnyCancellable] = [:]
   private var preferencesCancellable: AnyCancellable?
   private var isStarted = false
+  private var refreshScheduled = false
   private var acknowledgedErrorTabIDs: Set<UUID> = []
   private var animationTimer: Timer?
   private var agentSleepActivity: NSObjectProtocol?
   private var animationPhase = 0
   private let imageView = NSImageView()
+  /// 最近一次已应用的聚合状态。它同时作为幂等诊断真值和自动化验收 seam；不包含
+  /// 标签、命令或终端内容，也不参与持久化。
+  private(set) var currentState = DockActivityState.idle
 
   init(model: AppModel, preferences: AppPreferences) {
     self.preferences = preferences
@@ -27,7 +31,7 @@ final class DockActivityCoordinator {
     isStarted = true
     for model in models.values { subscribe(to: model) }
     preferencesCancellable = preferences.objectWillChange
-      .sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
+      .sink { [weak self] _ in self?.scheduleRefresh() }
     refresh()
   }
 
@@ -51,6 +55,7 @@ final class DockActivityCoordinator {
     animationTimer?.invalidate()
     animationTimer = nil
     isStarted = false
+    refreshScheduled = false
     modelCancellables.values.forEach { $0.cancel() }
     modelCancellables.removeAll()
     preferencesCancellable?.cancel()
@@ -77,8 +82,26 @@ final class DockActivityCoordinator {
 
   private func subscribe(to model: AppModel) {
     let identifier = ObjectIdentifier(model)
-    modelCancellables[identifier] = model.objectWillChange
-      .sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
+    // 布局变化仍来自 ObservableObject；Agent lifecycle/完成未读则走局部活动事件，
+    // 否则 Dock 会停在首次 processing 状态，或为更新图标迫使工作区整树重建。
+    modelCancellables[identifier] = Publishers.Merge(
+      model.objectWillChange.map { _ in () },
+      model.tabActivityChanged.map { _ in () }
+    )
+      .sink { [weak self] _ in self?.scheduleRefresh() }
+  }
+
+  /// 同一 lifecycle 指令可能同步改变 provider、task state 与未读状态；合并到下一轮
+  /// 主队列只应用一次 Dock 状态，避免重复重建图标或重启动画 timer。
+  private func scheduleRefresh() {
+    guard isStarted, !refreshScheduled else { return }
+    refreshScheduled = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.refreshScheduled = false
+      guard self.isStarted else { return }
+      self.refresh()
+    }
   }
 
   private func refresh() {
@@ -115,6 +138,7 @@ final class DockActivityCoordinator {
   }
 
   private func apply(_ state: DockActivityState) {
+    currentState = state
     animationTimer?.invalidate()
     animationTimer = nil
     switch state {

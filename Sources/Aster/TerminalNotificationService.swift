@@ -8,10 +8,22 @@ extension Notification.Name {
     "Aster.TerminalNotificationAuthorizationDidChange")
 }
 
+/// Session 到 macOS 通知交付层的最小接口。生产实现负责权限、前台策略和 Dock attention；
+/// 测试实现可只记录已获准进入交付边界的领域通知，不触碰用户通知中心。
+@MainActor
+protocol TerminalNotificationPosting: AnyObject {
+  func post(
+    _ notification: TerminalNotification,
+    category: TerminalNotificationCategory,
+    configuration: ShellConfiguration,
+    sourceTabIsFocused: Bool
+  )
+}
+
 /// macOS 通知中心与 Dock attention 的唯一交付边界。协议解析和策略判断均在
 /// `AsterCore` 完成，本类型不接触原始 PTY 字节，也不会把控制字符写入系统 UI。
 @MainActor
-final class TerminalNotificationService {
+final class TerminalNotificationService: TerminalNotificationPosting {
   static let shared = TerminalNotificationService()
 
   private let injectedCenter: UNUserNotificationCenter?

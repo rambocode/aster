@@ -387,6 +387,111 @@ func verticalSidebarHoverCloseClosesTargetTabWithoutSelectingIt() throws {
   #expect(model.selectedTabID == selectedTabID)
 }
 
+@Test("左侧标签行尾覆盖运行、等待、刚完成、未读、错误与空闲状态")
+@MainActor
+func verticalSidebarActivityAccessoryTracksAllStates() async throws {
+  let defaults = isolatedDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.agents.badgeProcessing = true
+  preferences.configuration.agents.badgeAwaitingInput = true
+  preferences.configuration.agents.badgeTaskComplete = true
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  let session = try #require(tab.activeSession)
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+  let terminalView = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  defer { session.stop(immediately: true) }
+
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .codex, signal: .processing)
+  )
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(try visibleTabAccessory(for: tab, in: controller) is NSProgressIndicator)
+  let lifecycleRow = try tabRow(for: tab, in: controller)
+
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .codex, signal: .awaitingInput)
+  )
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(
+    (try visibleTabAccessory(for: tab, in: controller) as? NSTextField)?.stringValue == "✋"
+  )
+  #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
+
+  terminalView.onTerminalUserInput?()
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(try visibleTabAccessory(for: tab, in: controller) is NSProgressIndicator)
+  #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
+
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .codex, signal: .idle)
+  )
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(
+    (try visibleTabAccessory(for: tab, in: controller) as? NSTextField)?.stringValue == "●"
+  )
+  #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
+
+  terminalView.onTerminalUserInput?()
+  try await Task.sleep(for: .milliseconds(50))
+  let readAccessory = try #require(visibleTabAccessory(for: tab, in: controller) as? NSTextField)
+  #expect(readAccessory.stringValue != "●")
+  #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
+
+  terminalView.onTerminalBadgeDirective?(.set(.completed))
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(
+    (try visibleTabAccessory(for: tab, in: controller) as? NSTextField)?.stringValue == "✓"
+  )
+  #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
+
+  terminalView.onTerminalBadgeDirective?(.set(.error))
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(
+    (try visibleTabAccessory(for: tab, in: controller) as? NSTextField)?.stringValue == "!"
+  )
+  #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
+
+  terminalView.onTerminalBadgeDirective?(.clear)
+  try await Task.sleep(for: .milliseconds(50))
+  let idleAccessory = try #require(visibleTabAccessory(for: tab, in: controller) as? NSTextField)
+  #expect(!["✋", "●", "✓", "!"].contains(idleAccessory.stringValue))
+  #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
+}
+
+/// 状态附件与悬停关闭按钮共享固定槽位；只读取当前可见附件，避免测试依赖具体视图层级
+/// 之外的布局实现，同时仍覆盖用户看到的行尾状态变化。
+@MainActor
+private func visibleTabAccessory(
+  for tab: TerminalTabItem,
+  in controller: WorkspaceViewController
+) throws -> NSView {
+  let close = try #require(
+    controller.view.descendants.compactMap { $0 as? NSButton }.first {
+      $0.identifier?.rawValue == "sidebar-tab-close-\(tab.id.uuidString)"
+    }
+  )
+  let slot = try #require(close.superview)
+  return try #require(slot.subviews.first { $0 !== close && !$0.isHidden })
+}
+
+@MainActor
+private func tabRow(
+  for tab: TerminalTabItem,
+  in controller: WorkspaceViewController
+) throws -> TabRowButton {
+  try #require(
+    controller.view.descendants.compactMap { $0 as? TabRowButton }.first {
+      $0.identifier?.rawValue == "workspace-tab-row-\(tab.id.uuidString)"
+    }
+  )
+}
+
 @Test("终端工作区不再渲染底部状态栏")
 @MainActor
 func terminalWorkspaceOmitsBottomStatusBar() throws {

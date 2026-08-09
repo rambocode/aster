@@ -48,6 +48,11 @@ final class TabRowButton: NSButton {
   private static let sidebarRowRadius: CGFloat = 8
   private let tab: TerminalTabItem
   private let selected: Bool
+  private let horizontal: Bool
+  private let showsExitStatus: Bool
+  private let showsFinished: Bool
+  private let showsFailure: Bool
+  private let showsAwaitingInput: Bool
   private let style: TerminalTabStyle
   private let resolvedForeground: NSColor
   private let resolvedActiveForeground: NSColor
@@ -58,6 +63,7 @@ final class TabRowButton: NSButton {
   private let onDragEnd: (NSPoint) -> Void
   private var tracking: NSTrackingArea?
   private weak var verticalAccessory: NSView?
+  private weak var verticalAccessorySlot: NSView?
   private weak var closeButton: NSButton?
   /// 侧栏行的内缩圆角底。整行仍然是全宽命中区，只有这层底色两侧留边并带圆角，
   /// 因此指针落在行的任何位置都能点中，视觉上却是一枚独立的圆角卡片。
@@ -85,6 +91,11 @@ final class TabRowButton: NSButton {
   ) {
     self.tab = tab
     self.selected = selected
+    self.horizontal = horizontal
+    self.showsExitStatus = showsExitStatus
+    self.showsFinished = showsFinished
+    self.showsFailure = showsFailure
+    self.showsAwaitingInput = showsAwaitingInput
     let resolvedStyle = horizontal ? (theme.style.horizontalTab ?? theme.style.tab) : theme.style.tab
     style = resolvedStyle
     resolvedForeground = NSColor(
@@ -118,27 +129,13 @@ final class TabRowButton: NSButton {
     layer?.cornerCurve = .continuous
     target = self
     self.action = #selector(invoke)
+    identifier = NSUserInterfaceItemIdentifier("workspace-tab-row-\(tab.id.uuidString)")
     translatesAutoresizingMaskIntoConstraints = false
     heightAnchor.constraint(equalToConstant: style.height ?? (horizontal ? 31 : 47)).isActive = true
     if horizontal { widthAnchor.constraint(greaterThanOrEqualToConstant: 92).isActive = true }
     if horizontal {
-      switch tab.activityBadge {
-      case .running:
-        image = NSImage(
-          systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "正在运行")
-      case .awaitingInput where showsAwaitingInput:
-        image = NSImage(systemSymbolName: "hand.raised.fill", accessibilityDescription: "等待输入")
-      case .error where showsFailure && showsExitStatus:
-        image = NSImage(
-          systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "执行失败")
-      case .finished where showsFinished && showsExitStatus:
-        image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "已完成")
-      case .completed where showsFinished && showsExitStatus:
-        image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "刚刚完成")
-      default:
-        image = nil
-      }
       imagePosition = .imageTrailing
+      refreshActivityBadge()
     }
     if !horizontal {
       // 内缩圆角底必须先入栈，才能垫在标题与右侧附件下面。
@@ -170,52 +167,12 @@ final class TabRowButton: NSButton {
       addSubview(primary)
       primary.translatesAutoresizingMaskIntoConstraints = false
 
-      // 右侧 accessory：有前台命令在运行时显示 spinner（业务状态来源为
-      // TerminalSession 的前台进程组检测），否则选中行显示 shell 名。
-      let accessory: NSView
-      switch tab.activityBadge {
-      case .running:
-        let spinner = NSProgressIndicator()
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isIndeterminate = true
-        spinner.isDisplayedWhenStopped = false
-        spinner.startAnimation(nil)
-        accessory = spinner
-      case .awaitingInput where showsAwaitingInput:
-        accessory = makeLabel(
-          "✋", size: 11, weight: .semibold, color: AsterTheme.warning
-        )
-      case .error where showsFailure && showsExitStatus:
-        accessory = makeLabel(
-          tab.lastCommandExitStatus.map(String.init) ?? "!",
-          size: 10,
-          weight: .semibold,
-          color: AsterTheme.warning,
-          monospaced: true
-        )
-      case .finished where showsFinished && showsExitStatus:
-        accessory = makeLabel("●", size: 9, weight: .semibold, color: AsterTheme.accent)
-      case .completed where showsFinished && showsExitStatus:
-        accessory = makeLabel("✓", size: 11, weight: .semibold, color: AsterTheme.accent)
-      default:
-        accessory = makeLabel(
-          selected
-            ? URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
-              .lastPathComponent
-            : "",
-          size: 10,
-          color: AsterTheme.tertiaryInk,
-          monospaced: true
-        )
-      }
       // 状态附件与关闭按钮共用固定 28pt 槽位，悬停切换时标题不会
       // 水平抖动。关闭动作直接针对该 tab，不先选中后台标签。
       let accessorySlot = NSView()
       accessorySlot.translatesAutoresizingMaskIntoConstraints = false
       addSubview(accessorySlot)
-      accessory.translatesAutoresizingMaskIntoConstraints = false
-      accessorySlot.addSubview(accessory)
+      verticalAccessorySlot = accessorySlot
       let close = ActionButton(symbol: "xmark", bezelStyle: .inline) {
         onClose?()
       }
@@ -226,7 +183,6 @@ final class TabRowButton: NSButton {
       close.setAccessibilityLabel("关闭标签页 \(tab.title)")
       close.translatesAutoresizingMaskIntoConstraints = false
       accessorySlot.addSubview(close)
-      verticalAccessory = accessory
       closeButton = close
       NSLayoutConstraint.activate([
         // 文案与右侧槽位都按圆角底的内缘对齐，卡片左右各留出 10pt 内边距。
@@ -239,13 +195,12 @@ final class TabRowButton: NSButton {
         accessorySlot.centerYAnchor.constraint(equalTo: centerYAnchor),
         accessorySlot.widthAnchor.constraint(equalToConstant: 28),
         accessorySlot.heightAnchor.constraint(equalToConstant: 28),
-        accessory.centerXAnchor.constraint(equalTo: accessorySlot.centerXAnchor),
-        accessory.centerYAnchor.constraint(equalTo: accessorySlot.centerYAnchor),
         close.centerXAnchor.constraint(equalTo: accessorySlot.centerXAnchor),
         close.centerYAnchor.constraint(equalTo: accessorySlot.centerYAnchor),
         close.widthAnchor.constraint(equalToConstant: 24),
         close.heightAnchor.constraint(equalToConstant: 24),
       ])
+      refreshActivityBadge()
       updateAccessoryVisibility()
     }
     updateStyle()
@@ -296,6 +251,97 @@ final class TabRowButton: NSButton {
 
   override func mouseEntered(with event: NSEvent) { hovered = true }
   override func mouseExited(with event: NSEvent) { hovered = false }
+
+  /// 只替换标签的状态附件，不重建 Sidebar、Pane 或长期存活的终端视图。Agent hook
+  /// 在 processing/awaiting/idle 之间切换时调用本方法，状态图标因此能即时变化，同时
+  /// 不打断 TUI 输入、选择或 Files 当前目录。
+  func refreshActivityBadge() {
+    if horizontal {
+      image = horizontalActivityImage()
+      return
+    }
+    guard let slot = verticalAccessorySlot else { return }
+    verticalAccessory?.removeFromSuperview()
+    let accessory = makeVerticalActivityAccessory()
+    accessory.translatesAutoresizingMaskIntoConstraints = false
+    slot.addSubview(accessory)
+    NSLayoutConstraint.activate([
+      accessory.centerXAnchor.constraint(equalTo: slot.centerXAnchor),
+      accessory.centerYAnchor.constraint(equalTo: slot.centerYAnchor),
+    ])
+    verticalAccessory = accessory
+    updateAccessoryVisibility()
+  }
+
+  private func horizontalActivityImage() -> NSImage? {
+    switch tab.activityBadge {
+    case .running:
+      return NSImage(
+        systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "正在运行")
+    case .awaitingInput where showsAwaitingInput:
+      return NSImage(systemSymbolName: "hand.raised.fill", accessibilityDescription: "等待输入")
+    case .error where showsFailure && showsExitStatus:
+      return NSImage(
+        systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "执行失败")
+    case .finished where showsFinished && showsExitStatus:
+      return NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "已完成")
+    case .completed where showsFinished && showsExitStatus:
+      return NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "刚刚完成")
+    default:
+      return nil
+    }
+  }
+
+  private func makeVerticalActivityAccessory() -> NSView {
+    let accessory: NSView
+    let stateName: String
+    let accessibilityLabel: String
+    switch tab.activityBadge {
+    case .running:
+      let spinner = NSProgressIndicator()
+      spinner.style = .spinning
+      spinner.controlSize = .small
+      spinner.isIndeterminate = true
+      spinner.isDisplayedWhenStopped = false
+      spinner.startAnimation(nil)
+      accessory = spinner
+      stateName = "running"
+      accessibilityLabel = "正在运行"
+    case .awaitingInput where showsAwaitingInput:
+      accessory = makeLabel("✋", size: 11, weight: .semibold, color: AsterTheme.warning)
+      stateName = "awaiting-input"
+      accessibilityLabel = "等待输入"
+    case .error where showsFailure && showsExitStatus:
+      accessory = makeLabel(
+        tab.lastCommandExitStatus.map(String.init) ?? "!",
+        size: 10, weight: .semibold, color: AsterTheme.warning, monospaced: true
+      )
+      stateName = "error"
+      accessibilityLabel = "执行失败"
+    case .finished where showsFinished && showsExitStatus:
+      accessory = makeLabel("●", size: 9, weight: .semibold, color: AsterTheme.accent)
+      stateName = "finished"
+      accessibilityLabel = "已完成"
+    case .completed where showsFinished && showsExitStatus:
+      accessory = makeLabel("✓", size: 11, weight: .semibold, color: AsterTheme.accent)
+      stateName = "completed"
+      accessibilityLabel = "刚刚完成"
+    default:
+      accessory = makeLabel(
+        selected
+          ? URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
+            .lastPathComponent
+          : "",
+        size: 10, color: AsterTheme.tertiaryInk, monospaced: true
+      )
+      stateName = "idle"
+      accessibilityLabel = "空闲"
+    }
+    accessory.identifier = NSUserInterfaceItemIdentifier(
+      "sidebar-tab-status-\(tab.id.uuidString)-\(stateName)")
+    accessory.setAccessibilityLabel(accessibilityLabel)
+    return accessory
+  }
 
   private func updateAccessoryVisibility() {
     verticalAccessory?.isHidden = hovered
