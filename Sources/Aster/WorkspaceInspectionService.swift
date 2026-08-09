@@ -2,9 +2,28 @@ import AsterCore
 import Darwin
 import Foundation
 
+enum WorkspaceInformationState: Equatable, Sendable {
+  case ready
+  case unavailable(String)
+  case failed(String)
+}
+
+/// Info 的成功空结果、Pane 不适用和基础设施失败必须分开表达。否则用户会把检查失败
+/// 误读为“没有进程/端口”，也无法决定是否值得重试。
 struct WorkspaceInformationSnapshot: Sendable {
   let processes: [WorkspaceProcess]
   let listeningPorts: [ListeningPort]
+  let state: WorkspaceInformationState
+
+  init(
+    processes: [WorkspaceProcess],
+    listeningPorts: [ListeningPort],
+    state: WorkspaceInformationState = .ready
+  ) {
+    self.processes = processes
+    self.listeningPorts = listeningPorts
+    self.state = state
+  }
 }
 
 /// 详情控制器依赖的内部异步接口。生产环境连接固定路径的只读检查服务；测试可分别
@@ -41,6 +60,17 @@ struct WorkspaceInspectionClient {
 /// 详情面板的只读基础设施边界。所有可执行文件均为固定绝对路径，参数逐项传递；输出、
 /// 运行时间和文件树规模都有上限，不经过登录 Shell，也不会执行仓库中的脚本或 hook。
 enum WorkspaceInspectionService {
+  /// 外部只读命令的结果必须保留失败分类。Info 不能把 `lsof` 超时或无权限错误压缩成
+  /// 空端口列表；其他调用方仍可通过下方 `run` 只读取其有界输出。
+  private struct CommandRunResult: Sendable {
+    let output: String
+    let failure: Failure?
+  }
+
+  private enum Failure: Sendable {
+    case unavailable, launch, cancelled, timedOut, exceededLimit, unexpectedExit
+  }
+
   /// 测试取消/超时语义的内部 seam。生产调用仍只使用下方固定的 `ps`、`lsof` 和
   /// `git` 绝对路径；该入口不属于模块公开 API。
   static func runForTesting(
@@ -62,37 +92,58 @@ enum WorkspaceInspectionService {
   static func inspectInformation(
     shellProcessIdentifier: Int32?
   ) async -> WorkspaceInformationSnapshot {
-    await detachedValue {
-      let processOutput = run(
+    guard let shellProcessIdentifier, shellProcessIdentifier > 0 else {
+      return WorkspaceInformationSnapshot(
+        processes: [],
+        listeningPorts: [],
+        state: .unavailable("此 Pane 没有终端进程。")
+      )
+    }
+    return await detachedValue {
+      let processRun = runResult(
         executable: "/bin/ps",
         arguments: ["-axo", "pid=,ppid=,etime=,comm="],
         timeout: 2,
         maximumBytes: 4 * 1_024 * 1_024
       )
-      let processes = shellProcessIdentifier.map {
-        WorkspaceProcessParser.descendants(from: processOutput, rootProcessIdentifier: $0)
-      } ?? []
-      guard !currentTaskIsCancelled() else {
-        return WorkspaceInformationSnapshot(processes: [], listeningPorts: [])
+      guard processRun.failure == nil else {
+        return WorkspaceInformationSnapshot(
+          processes: [], listeningPorts: [], state: .failed("无法读取当前终端进程。"))
       }
-      let inspectedPIDs = ([shellProcessIdentifier].compactMap { $0 } + processes.map(\.processIdentifier))
-      let portOutput: String
-      if inspectedPIDs.isEmpty {
-        portOutput = ""
-      } else {
-        portOutput = run(
-          executable: "/usr/sbin/lsof",
-          arguments: [
-            "-nP", "-a", "-p", inspectedPIDs.map(String.init).joined(separator: ","),
-            "-iTCP", "-sTCP:LISTEN", "-Fpn",
-          ],
-          timeout: 2,
-          maximumBytes: 2 * 1_024 * 1_024
+      let processes = WorkspaceProcessParser.processTree(
+        from: processRun.output, rootProcessIdentifier: shellProcessIdentifier)
+      guard !currentTaskIsCancelled() else {
+        return WorkspaceInformationSnapshot(
+          processes: [], listeningPorts: [], state: .unavailable("检查已取消。"))
+      }
+      guard !processes.isEmpty else {
+        return WorkspaceInformationSnapshot(
+          processes: [],
+          listeningPorts: [],
+          state: .failed("无法读取当前终端进程。")
+        )
+      }
+      let inspectedPIDs = processes.map(\.processIdentifier)
+      let portRun = runResult(
+        executable: "/usr/sbin/lsof",
+        arguments: [
+          "-nP", "-a", "-p", inspectedPIDs.map(String.init).joined(separator: ","),
+          "-iTCP", "-sTCP:LISTEN", "-Fpcn",
+        ],
+        timeout: 2,
+        maximumBytes: 2 * 1_024 * 1_024,
+        acceptedTerminationStatuses: [0, 1]
+      )
+      guard portRun.failure == nil else {
+        return WorkspaceInformationSnapshot(
+          processes: processes,
+          listeningPorts: [],
+          state: .failed("无法读取监听端口。")
         )
       }
       return WorkspaceInformationSnapshot(
         processes: processes,
-        listeningPorts: ListeningPortParser.parse(portOutput)
+        listeningPorts: ListeningPortParser.parse(portRun.output)
       )
     }
   }
@@ -192,14 +243,32 @@ enum WorkspaceInspectionService {
     timeout: TimeInterval,
     maximumBytes: Int
   ) -> String {
+    runResult(
+      executable: executable,
+      arguments: arguments,
+      timeout: timeout,
+      maximumBytes: maximumBytes
+    ).output
+  }
+
+  private static func runResult(
+    executable: String,
+    arguments: [String],
+    timeout: TimeInterval,
+    maximumBytes: Int,
+    acceptedTerminationStatuses: Set<Int32> = [0]
+  ) -> CommandRunResult {
     final class OutputBox: @unchecked Sendable {
       let lock = NSLock()
       var data = Data()
       var exceededLimit = false
     }
 
-    guard !currentTaskIsCancelled(), FileManager.default.isExecutableFile(atPath: executable), maximumBytes > 0 else {
-      return ""
+    guard !currentTaskIsCancelled() else {
+      return .init(output: "", failure: .cancelled)
+    }
+    guard FileManager.default.isExecutableFile(atPath: executable), maximumBytes > 0 else {
+      return .init(output: "", failure: .unavailable)
     }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
@@ -227,20 +296,28 @@ enum WorkspaceInspectionService {
       try process.run()
     } catch {
       pipe.fileHandleForReading.readabilityHandler = nil
-      return ""
+      return .init(output: "", failure: .launch)
     }
     // `DispatchSemaphore.wait` 本身不响应 Swift Task cancellation。用短周期轮询同时观察
     // deadline 与取消标记；取消和超时共享同一终止流程，避免快速 cd/收起面板后仍留下
     // 最长数秒的 ps/lsof/git 子进程。
     let deadline = Date().addingTimeInterval(max(0.1, timeout))
-    var shouldTerminate = false
+    var failure: Failure?
     while finished.wait(timeout: .now() + 0.025) == .timedOut {
-      if currentTaskIsCancelled() || Date() >= deadline {
-        shouldTerminate = true
+      if currentTaskIsCancelled() {
+        failure = .cancelled
+        break
+      }
+      if Date() >= deadline {
+        failure = .timedOut
         break
       }
     }
-    if shouldTerminate {
+    output.lock.lock()
+    let exceededLimit = output.exceededLimit
+    output.lock.unlock()
+    if failure != nil || exceededLimit {
+      if exceededLimit { failure = .exceededLimit }
       process.terminate()
       if finished.wait(timeout: .now() + 0.25) == .timedOut, process.processIdentifier > 0 {
         _ = Darwin.kill(process.processIdentifier, SIGKILL)
@@ -255,6 +332,10 @@ enum WorkspaceInspectionService {
     }
     let data = output.data
     output.lock.unlock()
-    return String(data: data, encoding: .utf8) ?? ""
+    let text = String(data: data, encoding: .utf8) ?? ""
+    if failure == nil, !acceptedTerminationStatuses.contains(process.terminationStatus) {
+      failure = .unexpectedExit
+    }
+    return .init(output: text, failure: failure)
   }
 }

@@ -7,6 +7,8 @@
 - **Sidebar Panel（左侧 Panel）**：承载垂直标签栏及其工作区操作；顶部或底部标签布局下可不出现。
 - **Content Panel（中央 Panel）**：弹性主区域，承载标签栏、递归 Pane 树、Composer 和工作区浮层，始终存在。
 - **Inspector Panel（右侧 Panel）**：承载 Info、Outline、Git、Files 等详情能力，可显式展开或收起。
+- **Info Section（信息页）**：Inspector Panel 中绑定当前聚焦 Pane 的环境摘要；包含工作目录、可用的 Agent 会话动作、Pane 进程及其监听端口。
+- **Outline Section（大纲页）**：Inspector Panel 中绑定当前聚焦 Pane 的可导航索引；按 Pane 内容展示终端命令、Agent 提示词或文档结构，并允许跳回来源位置或复制条目文本。
 - **Pane（内容面板）**：Content Panel 内递归分屏树的叶节点，可以是终端、文件浏览器、编辑器或预览。Pane 有稳定 UUID，并拥有独立运行态。
 - **Divider（分隔条）**：相邻区域之间的拖动边界。Panel Divider 保存 point 宽度；Pane Divider 保存递归树中的比例。
 

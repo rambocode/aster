@@ -57,13 +57,15 @@ private final class TerminalRetirementCoordinator {
   }
 }
 
-/// 终端 Outline 的只读投影。命令正文只从当前内存中的网格读取，不持久化；当对应
-/// scrollback 已被裁剪时不生成条目，避免跳转到错误位置。
+/// 终端 Outline 的只读投影。滚动锚点不再存在时仍保留运行态中已经读取的命令正文，
+/// 但明确禁用 Jump，避免把旧的绝对行号误解释为当前缓冲区的位置。
 struct TerminalCommandOutlineEntry: Equatable {
   let title: String
   let absoluteRow: Int
   let exitStatus: Int?
   let finishedAt: Date?
+  let isRunning: Bool
+  let isJumpAvailable: Bool
 }
 
 /// 全局搜索使用的终端文本快照。`firstAbsoluteRow` 保留 SwiftTerm 的单调行号，搜索
@@ -146,6 +148,9 @@ final class AsterTerminalView: LocalProcessTerminalView {
   var titleShellControlled = true
   var terminalBellHandler: () -> Void = { NSSound.beep() }
   private(set) var shellCommandTimeline = ShellCommandTimeline()
+  /// OSC 133 mark 不携带命令正文；首次可见时从网格取得后仅随有界时间线保存在内存，
+  /// 让被 scrollback 裁剪的命令仍可复制，绝不写入磁盘或学习历史。
+  private var commandOutlineTitles: [Int: String] = [:]
   private var shellNavigationAbsoluteRow: Int?
   private var shellIntegrationHandlerInstalled = false
   private var activityHandlersInstalled = false
@@ -683,33 +688,74 @@ final class AsterTerminalView: LocalProcessTerminalView {
   }
 
   /// 从 OSC 133 锚点和网格文本生成命令列表。只取输入起点所在行；复杂多行命令仍可
-  /// 通过行锚点跳转，但标题保持有界，且不会把输出区误当成命令正文。
+  /// 通过行锚点跳转，但标题保持有界，且不会把输出区误当成命令正文。裁剪后保留已缓存
+  /// 标题供复制，并以 `isJumpAvailable` 让调用方显示准确原因。
   func commandOutlineEntries(maximumItems: Int = 1_000) -> [TerminalCommandOutlineEntry] {
     let terminal = getTerminal()
     let range = terminal.scrollInvariantLineRange
     let limit = max(0, min(maximumItems, 5_000))
-    return shellCommandTimeline.marks.suffix(limit).compactMap { mark in
-      guard range.contains(mark.inputStart.row),
-        let line = terminal.getScrollInvariantLine(row: mark.inputStart.row)
-      else { return nil }
-      let upperColumn = min(terminal.cols, max(mark.inputStart.column, 0))
-      let text = line.translateToString(trimRight: true)
-      // OSC 133 的列是网格列；常见命令提示符为 ASCII，按 Character 裁切即可得到
-      // 准确标题。宽字符提示符存在歧义时保留整行，比丢失命令正文更可诊断。
+    var trackedRows = Set(shellCommandTimeline.marks.map { $0.inputStart.row })
+    if let running = shellCommandTimeline.runningCommand { trackedRows.insert(running.inputStart.row) }
+    commandOutlineTitles = commandOutlineTitles.filter { trackedRows.contains($0.key) }
+    func entry(
+      promptStart: TerminalGridPoint,
+      inputStart: TerminalGridPoint,
+      exitStatus: Int?,
+      finishedAt: Date?,
+      isRunning: Bool
+    ) -> TerminalCommandOutlineEntry? {
       let title: String
-      if text.unicodeScalars.allSatisfy({ $0.isASCII }), upperColumn <= text.count {
-        title = String(text.dropFirst(upperColumn))
+      let isJumpAvailable: Bool
+      if range.contains(inputStart.row), let line = terminal.getScrollInvariantLine(row: inputStart.row) {
+        let upperColumn = min(terminal.cols, max(inputStart.column, 0))
+        let text = line.translateToString(trimRight: true)
+        // OSC 133 的列是网格列；常见命令提示符为 ASCII，按 Character 裁切即可得到
+        // 准确标题。宽字符提示符存在歧义时保留整行，比丢失命令正文更可诊断。
+        if text.unicodeScalars.allSatisfy({ $0.isASCII }), upperColumn <= text.count {
+          title = String(text.dropFirst(upperColumn))
+        } else {
+          title = text
+        }
+        isJumpAvailable = true
+      } else if let cached = commandOutlineTitles[inputStart.row] {
+        title = cached
+        isJumpAvailable = false
       } else {
-        title = text
+        return nil
       }
       let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
+      let bounded = normalized.isEmpty ? "命令" : String(normalized.prefix(240))
+      commandOutlineTitles[inputStart.row] = bounded
       return TerminalCommandOutlineEntry(
-        title: normalized.isEmpty ? "命令" : String(normalized.prefix(240)),
-        absoluteRow: mark.promptStart.row,
-        exitStatus: mark.exitStatus,
-        finishedAt: mark.finishedAt
+        title: bounded,
+        absoluteRow: promptStart.row,
+        exitStatus: exitStatus,
+        finishedAt: finishedAt,
+        isRunning: isRunning,
+        isJumpAvailable: isJumpAvailable
       )
     }
+    var result = shellCommandTimeline.marks.suffix(limit).compactMap { mark in
+      entry(
+        promptStart: mark.promptStart,
+        inputStart: mark.inputStart,
+        exitStatus: mark.exitStatus,
+        finishedAt: mark.finishedAt,
+        isRunning: false
+      )
+    }
+    if let running = shellCommandTimeline.runningCommand,
+      let runningEntry = entry(
+        promptStart: running.promptStart,
+        inputStart: running.inputStart,
+        exitStatus: nil,
+        finishedAt: nil,
+        isRunning: true
+      )
+    {
+      result.append(runningEntry)
+    }
+    return Array(result.suffix(limit))
   }
 
   /// 将 scroll-invariant 行号转换回当前 Buffer 坐标并滚动。已被裁剪的锚点返回 false，

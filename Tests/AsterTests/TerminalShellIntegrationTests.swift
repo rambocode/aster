@@ -51,6 +51,24 @@ func terminalViewExportsBoundedSearchAndOutlineSnapshots() {
   #expect(!view.revealAbsoluteRow(-1))
 }
 
+@Test("终端 Outline 在命令完成前保留可导航的运行中条目")
+@MainActor
+func terminalViewExportsRunningCommandOutlineEntry() {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  view.resize(cols: 40, rows: 4)
+  view.installShellIntegrationHandler()
+  let output =
+    "\u{1B}]133;A\u{7}$ \u{1B}]133;B\u{7}sleep 30\r\n"
+    + "\u{1B}]133;C\u{7}"
+  view.dataReceived(slice: Array(output.utf8)[...])
+
+  let entry = try! #require(view.commandOutlineEntries().first)
+  #expect(entry.title == "sleep 30")
+  #expect(entry.isRunning)
+  #expect(entry.exitStatus == nil)
+  #expect(view.revealAbsoluteRow(entry.absoluteRow))
+}
+
 @Test("非法 OSC 133 payload 不改变命令时间线")
 @MainActor
 func terminalViewRejectsMalformedShellMarkers() {

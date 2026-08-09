@@ -68,6 +68,14 @@ public struct ShellCommandMark: Equatable, Sendable {
   public let finishedAt: Date?
 }
 
+/// 正在运行的命令尚未拥有输出终点和退出状态，但 Outline 仍需要其可靠的提示符与输入锚点。
+/// 它只存在于当前 Pane 的运行态，命令完成后会被完整 `ShellCommandMark` 取代。
+public struct ShellRunningCommand: Equatable, Sendable {
+  public let promptStart: TerminalGridPoint
+  public let inputStart: TerminalGridPoint
+  public let outputStart: TerminalGridPoint
+}
+
 /// 将有序 OSC 133 事件折叠成有界命令时间线，供 Outline、命令跳转、退出状态和
 /// Autocomplete 成功判定复用。乱序或缺失标记会被丢弃，绝不跨提示符拼接伪记录。
 public struct ShellCommandTimeline: Equatable, Sendable {
@@ -90,6 +98,16 @@ public struct ShellCommandTimeline: Equatable, Sendable {
   /// 沿用更早命令的徽标，否则会把未知结果误报成已知成功或失败。
   public var latestExitStatus: Int? {
     marks.last?.exitStatus
+  }
+
+  /// 当前命令只在完整收到 A/B/C 后公开。缺失或乱序 OSC 标记不会产生可导航的伪记录。
+  public var runningCommand: ShellRunningCommand? {
+    guard isCommandRunning, let promptStart, let inputStart, let outputStart else { return nil }
+    return ShellRunningCommand(
+      promptStart: promptStart,
+      inputStart: inputStart,
+      outputStart: outputStart
+    )
   }
 
   public init(capacity: Int = 1_000) {

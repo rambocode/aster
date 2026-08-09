@@ -188,21 +188,9 @@ public enum WorkspaceOutlineParser {
         return title.isEmpty ? nil : .init(title: title, line: index + 1, level: marker.count)
       }
     case .html:
-      items = indexedLines.compactMap { index, line in
-        guard let match = line.range(
-          of: #"<h([1-6])(?:\s[^>]*)?>(.*?)</h\1>"#,
-          options: [.regularExpression, .caseInsensitive])
-        else { return nil }
-        let fragment = String(line[match])
-        let level = Int(fragment.dropFirst(2).first.map(String.init) ?? "1") ?? 1
-        let title = fragment.replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
-          .trimmingCharacters(in: .whitespacesAndNewlines)
-        return title.isEmpty ? nil : .init(title: title, line: index + 1, level: level)
-      }
+      items = htmlHeadings(in: text)
     case .json:
-      items = topLevelJSONKeys(text).enumerated().map {
-        .init(title: $0.element, line: $0.offset + 1)
-      }
+      items = topLevelJSONKeysWithLocations(text)
     case .yaml, .toml:
       items = indexedLines.compactMap { index, line in
         guard !line.isEmpty, line.first?.isWhitespace != true, !line.hasPrefix("#") else { return nil }
@@ -221,16 +209,16 @@ public enum WorkspaceOutlineParser {
         return .init(title: String(path), line: index + 1)
       }
     case .jsonLinesTranscript:
-      items = indexedLines.compactMap { index, line in
+      items = Array(indexedLines.flatMap { (index, line) -> [WorkspaceOutlineItem] in
         guard let data = line.data(using: .utf8),
-          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return nil }
-        let role = (object["role"] as? String) ?? (object["type"] as? String)
-        guard role == "user" else { return nil }
-        let title = (object["message"] as? String) ?? (object["content"] as? String)
-        let bounded = title?.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240) ?? ""
-        return bounded.isEmpty ? nil : .init(title: String(bounded), line: index + 1)
-      }
+          let report = try? AgentTranscriptParser.parse(data, provider: .codex)
+        else { return [] }
+        return report.entries.compactMap { entry in
+          guard case .message(role: .user) = entry.kind else { return nil }
+          let title = String(entry.text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
+          return title.isEmpty ? nil : WorkspaceOutlineItem(title: title, line: index + 1)
+        }
+      })
     }
     guard !currentTaskIsCancelled() else { return [] }
     return Array(items.prefix(maximumItems))
@@ -240,11 +228,101 @@ public enum WorkspaceOutlineParser {
     withUnsafeCurrentTask { $0?.isCancelled == true }
   }
 
-  private static func topLevelJSONKeys(_ text: String) -> [String] {
+  /// JSONSerialization 用于确认文档整体有效；轻量词法扫描只负责保留顶层键在原文中的顺序
+  /// 和行号，绝不把字典排序后的索引伪装成源码位置。
+  private static func topLevelJSONKeysWithLocations(_ text: String) -> [WorkspaceOutlineItem] {
     guard let data = text.data(using: .utf8),
-      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+      (try? JSONSerialization.jsonObject(with: data)) is [String: Any]
     else { return [] }
-    return object.keys.sorted()
+
+    let bytes = Array(text.utf8)
+    var index = 0
+    var line = 1
+    var depth = 0
+    var expectsTopLevelKey = false
+    var result: [WorkspaceOutlineItem] = []
+
+    while index < bytes.count {
+      // 文档 Outline 在 detached task 内解析；新修订或关闭面板后必须让大 JSON 扫描
+      // 尽快让出 CPU，而不是等到整个 1 MiB 文本走完才由调用方丢弃结果。
+      if index.isMultiple(of: 256), currentTaskIsCancelled() { return [] }
+      let byte = bytes[index]
+      if byte == 0x0A { line += 1; index += 1; continue }
+      switch byte {
+      case 0x7B: // {
+        depth += 1
+        if depth == 1 { expectsTopLevelKey = true }
+        index += 1
+      case 0x7D: // }
+        if depth == 1 { expectsTopLevelKey = false }
+        depth = max(0, depth - 1)
+        index += 1
+      case 0x2C where depth == 1: // ,
+        expectsTopLevelKey = true
+        index += 1
+      case 0x22 where depth == 1 && expectsTopLevelKey: // "
+        guard let string = decodeJSONString(bytes: bytes, startingAt: index) else { return [] }
+        var cursor = string.nextIndex
+        while cursor < bytes.count, bytes[cursor] == 0x20 || bytes[cursor] == 0x09 || bytes[cursor] == 0x0A || bytes[cursor] == 0x0D {
+          cursor += 1
+        }
+        guard cursor < bytes.count, bytes[cursor] == 0x3A else { return [] } // :
+        result.append(.init(title: string.value, line: line))
+        expectsTopLevelKey = false
+        index = string.nextIndex
+      case 0x22:
+        guard let string = decodeJSONString(bytes: bytes, startingAt: index) else { return [] }
+        for position in index..<string.nextIndex where bytes[position] == 0x0A { line += 1 }
+        index = string.nextIndex
+      default:
+        index += 1
+      }
+    }
+    return result
+  }
+
+  private static func decodeJSONString(bytes: [UInt8], startingAt start: Int) -> (value: String, nextIndex: Int)? {
+    var index = start + 1
+    var escaped = false
+    while index < bytes.count {
+      let byte = bytes[index]
+      if escaped {
+        escaped = false
+      } else if byte == 0x5C { // \
+        escaped = true
+      } else if byte == 0x22 { // "
+        let fragment = Data(bytes[start...index])
+        guard let value = try? JSONSerialization.jsonObject(with: fragment, options: [.fragmentsAllowed]) as? String else {
+          return nil
+        }
+        return (value, index + 1)
+      }
+      index += 1
+    }
+    return nil
+  }
+
+  private static func htmlHeadings(in text: String) -> [WorkspaceOutlineItem] {
+    guard let expression = try? NSRegularExpression(
+      pattern: #"<h([1-6])(?:\s[^>]*)?>(.*?)</h\1>"#,
+      options: [.caseInsensitive, .dotMatchesLineSeparators]
+    ) else { return [] }
+    let range = NSRange(text.startIndex..., in: text)
+    return expression.matches(in: text, range: range).compactMap { match in
+      guard let levelRange = Range(match.range(at: 1), in: text),
+        let titleRange = Range(match.range(at: 2), in: text)
+      else { return nil }
+      let title = String(text[titleRange])
+        .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !title.isEmpty else { return nil }
+      let prefix = String(text[..<Range(match.range, in: text)!.lowerBound])
+      return .init(
+        title: title,
+        line: prefix.reduce(into: 1) { count, character in if character == "\n" { count += 1 } },
+        level: Int(text[levelRange]) ?? 1
+      )
+    }
   }
 }
 
@@ -531,14 +609,61 @@ public struct WorkspaceProcess: Equatable, Sendable {
 /// 解析 macOS `ps -axo pid=,ppid=,etime=,comm=` 的固定列输出，并只保留目标 Shell 的
 /// 后代进程。遍历关系而不是按命令文本猜测，避免同名进程被错误归入当前 Pane。
 public enum WorkspaceProcessParser {
+  /// 返回包含 Shell 根节点的完整局部进程树。Info 使用它避免 idle Shell 被误显示成
+  /// “没有活动子进程”；旧调用方仍可通过 `descendants` 取得兼容的子节点投影。
+  public static func processTree(
+    from text: String,
+    rootProcessIdentifier: Int32,
+    maximumResults: Int = 200
+  ) -> [WorkspaceProcess] {
+    let all = parsedProcesses(from: text)
+    guard let root = all.first(where: { $0.processIdentifier == rootProcessIdentifier }) else { return [] }
+    let limit = max(0, min(maximumResults, 1_000))
+    guard limit > 0 else { return [] }
+    var included: Set<Int32> = [rootProcessIdentifier]
+    var result: [WorkspaceProcess] = [root]
+    var pending = all.filter { $0.processIdentifier != rootProcessIdentifier }
+    while !pending.isEmpty, result.count < limit {
+      var progressed = false
+      pending.removeAll { process in
+        guard included.contains(process.parentProcessIdentifier) else { return false }
+        included.insert(process.processIdentifier)
+        result.append(process)
+        progressed = true
+        return true
+      }
+      if !progressed { break }
+    }
+    return result
+  }
+
   public static func descendants(
     from text: String,
     rootProcessIdentifier: Int32,
     maximumResults: Int = 200
   ) -> [WorkspaceProcess] {
-    guard rootProcessIdentifier > 0, text.utf8.count <= 4 * 1_024 * 1_024 else { return [] }
+    guard rootProcessIdentifier > 0 else { return [] }
     let limit = max(0, min(maximumResults, 1_000))
-    let processes = text.split(separator: "\n").prefix(50_000).compactMap { line -> WorkspaceProcess? in
+    var included: Set<Int32> = [rootProcessIdentifier]
+    var result: [WorkspaceProcess] = []
+    var pending = parsedProcesses(from: text)
+    while !pending.isEmpty, result.count < limit {
+      var progressed = false
+      pending.removeAll { process in
+        guard included.contains(process.parentProcessIdentifier) else { return false }
+        included.insert(process.processIdentifier)
+        result.append(process)
+        progressed = true
+        return true
+      }
+      if !progressed { break }
+    }
+    return result
+  }
+
+  private static func parsedProcesses(from text: String) -> [WorkspaceProcess] {
+    guard text.utf8.count <= 4 * 1_024 * 1_024 else { return [] }
+    return text.split(separator: "\n").prefix(50_000).compactMap { line -> WorkspaceProcess? in
       let fields = line.split(maxSplits: 3, whereSeparator: { $0.isWhitespace })
       guard fields.count >= 3, let pid = Int32(fields[0]), let parent = Int32(fields[1]),
         pid > 0, parent >= 0
@@ -560,23 +685,7 @@ public enum WorkspaceProcessParser {
         processIdentifier: pid, parentProcessIdentifier: parent, command: command,
         elapsedTime: elapsed)
     }
-    var included: Set<Int32> = [rootProcessIdentifier]
-    var result: [WorkspaceProcess] = []
-    // `ps` 通常按 PID 排序，但父子不保证相邻。多轮收敛能处理任意顺序，进程上限使
-    // 最坏复杂度保持有界；根 Shell 自身不显示，只显示它启动的任务。
-    var pending = processes
-    while !pending.isEmpty, result.count < limit {
-      var progressed = false
-      pending.removeAll { process in
-        guard included.contains(process.parentProcessIdentifier) else { return false }
-        included.insert(process.processIdentifier)
-        result.append(process)
-        progressed = true
-        return true
-      }
-      if !progressed { break }
-    }
-    return Array(result.prefix(limit))
+    .sorted { $0.processIdentifier < $1.processIdentifier }
   }
 
   /// `ps etime` 列形如 [[dd-]hh:]mm:ss：只由数字、冒号、短横线组成且含冒号。
@@ -588,32 +697,52 @@ public enum WorkspaceProcessParser {
 public struct ListeningPort: Equatable, Sendable {
   public let processIdentifier: Int32
   public let endpoint: String
+  public let processName: String?
+  public let protocolName: String
 
-  public init(processIdentifier: Int32, endpoint: String) {
+  public init(
+    processIdentifier: Int32,
+    endpoint: String,
+    processName: String? = nil,
+    protocolName: String = "TCP"
+  ) {
     self.processIdentifier = processIdentifier
     self.endpoint = endpoint
+    self.processName = processName
+    self.protocolName = protocolName
   }
 }
 
-/// 解析 `lsof -Fpn` 的机器可读记录。只接受 PID 与网络端点字段，文件名、用户环境
-/// 或完整命令行不会进入详情面板，减少无关信息和潜在敏感数据暴露。
+/// 解析 `lsof -Fpcn` 的机器可读记录。只接受 PID、短进程名与网络端点字段，文件名、
+/// 用户环境或完整命令行不会进入详情面板，减少无关信息和潜在敏感数据暴露。
 public enum ListeningPortParser {
   public static func parse(_ text: String, maximumResults: Int = 200) -> [ListeningPort] {
     guard text.utf8.count <= 2 * 1_024 * 1_024 else { return [] }
     let limit = max(0, min(maximumResults, 1_000))
     var processIdentifier: Int32?
+    var processName: String?
     var result: [ListeningPort] = []
+    var seen: Set<String> = []
     for line in text.split(separator: "\n").prefix(50_000) {
       guard let field = line.first else { continue }
       let value = String(line.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
       switch field {
       case "p":
         processIdentifier = Int32(value)
+        processName = nil
+      case "c":
+        processName = value.isEmpty || value.utf8.count > 1_024 ? nil : value
       case "n":
         guard let processIdentifier, processIdentifier > 0, !value.isEmpty,
           value.utf8.count <= 1_024
         else { continue }
-        result.append(.init(processIdentifier: processIdentifier, endpoint: value))
+        let identity = "\(processIdentifier)\u{0}\(value)"
+        guard seen.insert(identity).inserted else { continue }
+        result.append(.init(
+          processIdentifier: processIdentifier,
+          endpoint: value,
+          processName: processName
+        ))
         if result.count == limit { return result }
       default:
         continue

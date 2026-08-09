@@ -48,14 +48,14 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 ### User Interface（9）
 
 - 完成：[Window, Tab and Split](https://docs.otty.sh/user-interface/window-tab-split) — 多窗口与恢复、Pin、当前/跟随 PiP、OSC 独立标题、三种标签布局、分组/排序/分隔线、跨窗口标签拖动、递归分屏、缩放/移动/交换/等分/聚焦及关闭恢复均已接入。
-- 完成：[Details Panel](https://docs.otty.sh/user-interface/details-panel) — Info、Outline、Git、Files 跟随活动 Pane；进程、端口、仓库和文件读取均有界且不在主线程执行外部命令。
+- 部分：[Details Panel](https://docs.otty.sh/user-interface/details-panel) — Info、Outline、Git、Files 跟随活动 Pane；Info 区分成功空结果、不可用和失败，进程树包含 shell 根并仅检查本地 listener；Outline 支持运行中/已完成 OSC 133 命令、精确绑定 Agent prompt 和带真实位置的文档结构。检查有界且不在主线程执行外部命令；真实窗口交互仍按设计 QA 手工复验，因此不宣称整页完成。
 - 不适用：[Status Bar](https://docs.otty.sh/user-interface/status-bar) — 上游页面明确标记为 Planned，没有已描述的可实现功能；Aster 不再渲染自定义底部状态栏。
 - 完成：[Files and Links](https://docs.otty.sh/user-interface/files-and-links) — 路径/行列/URL/OSC 8 解析、安全打开、预览、编辑、复制、Finder、默认应用、终端目录动作和 Send to Chat 使用同一文件安全边界。
 - 完成：[Drag and Drop](https://docs.otty.sh/user-interface/drag-and-drop) — 文件、目录、URL、文本、标签和 Pane 均有明确落点；标签跨窗口保留运行对象，Pane 内部重排不重启 PTY。
 - 完成：[Find](https://docs.otty.sh/user-interface/find) — Pane 查找支持大小写/正则/上下跳转，全局查找覆盖终端、编辑器与预览并可定位回源。
 - 完成：[Open Quickly](https://docs.otty.sh/user-interface/open-quickly) — All/Opened/Recent/Folders/SSH/Agents/Current/Recipes 八类过滤与有界 fuzzy 排序已实现。
 - 完成：[Command Palette](https://docs.otty.sh/user-interface/command-palette) — Pane/Window/App scope 覆盖窗口、文件、分屏、模式、工作流和 Agent 动作。
-- 完成：[Outline / Jump To](https://docs.otty.sh/user-interface/outline) — Markdown、HTML、JSON、YAML、TOML、Diff 与 JSONL transcript 使用纯解析器生成有界大纲。
+- 部分：[Outline / Jump To](https://docs.otty.sh/user-interface/outline) — Markdown、HTML、JSON、YAML、TOML、Diff 与 canonical JSONL transcript 使用纯解析器生成有界大纲；JSON 保留源顺序和真实行号，终端运行中命令也进入索引。真实窗口的 Jump/Copy 与辅助功能验收仍待完成。
 
 ### Workflows（6）
 
