@@ -275,8 +275,8 @@ final class WorkspaceViewController: NSViewController {
       overlay.view.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -28),
       overlay.view.heightAnchor.constraint(lessThanOrEqualToConstant: 520),
     ])
-    // 必须在视图已连到 window 之后再建立搜索焦点；提前调用时
-    // `makeFirstResponder` 只会留在 NSWindow，用户第一次点击无法直接输入。
+    // 必须在视图已连到 window 之后再进入展示边界，确保自动聚焦能建立 field editor，
+    // 且内部点击命中测试使用当前窗口的最终视图层级。
     overlay.didPresent()
   }
 

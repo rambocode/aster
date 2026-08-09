@@ -27,6 +27,16 @@ private final class DetailsCancellationProbe: @unchecked Sendable {
   }
 }
 
+@MainActor
+private final class FirstResponderRecordingWindow: NSWindow {
+  private(set) var requestedResponders: [NSResponder] = []
+
+  override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+    if let responder { requestedResponders.append(responder) }
+    return super.makeFirstResponder(responder)
+  }
+}
+
 @Test("编辑器探测只返回已安装的应用并保持固定顺序")
 @MainActor
 func editorLocatorReturnsOnlyInstalledEditorsInFixedOrder() {
@@ -1442,8 +1452,7 @@ func openQuicklyAlignsContentAndReusesRows() throws {
   #expect(abs(overlay.bounds.width - originalOverlayWidth) < 1)
   #expect(reusedFirstRow === firstRow)
 
-  // 浮层内部鼠标事件不得被“外部点击关闭”误判；搜索框点击后
-  // 仍保持展示并成为窗口文本编辑器的客户端。
+  // 浮层内部鼠标事件不得被“外部点击关闭”误判；搜索框点击后保持展示。
   let insideClick = try #require(NSEvent.mouseEvent(
     with: .leftMouseDown,
     location: search.convert(
@@ -1460,7 +1469,6 @@ func openQuicklyAlignsContentAndReusesRows() throws {
   RunLoop.main.run(until: Date().addingTimeInterval(0.01))
   #expect(model.isOpenQuicklyPresented)
   #expect(controller.view.allDescendants.contains { $0 === overlay })
-  #expect(window.initialFirstResponder === search)
 
   let outsideClick = try #require(NSEvent.mouseEvent(
     with: .leftMouseDown,
@@ -1476,6 +1484,61 @@ func openQuicklyAlignsContentAndReusesRows() throws {
   NSApp.sendEvent(outsideClick)
   #expect(model.isOpenQuicklyPresented == false)
   #expect(!controller.view.allDescendants.contains { $0 === overlay })
+}
+
+@Test("Open Quickly 默认聚焦搜索框且内部点击不会关闭")
+@MainActor
+func openQuicklySearchFocusAndInsideClickStayPresented() throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = FirstResponderRecordingWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+    styleMask: [.titled, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+
+  model.toggleOpenQuickly()
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let search = try #require(controller.view.allDescendants.compactMap { $0 as? NSSearchField }
+    .first { $0.identifier?.rawValue == "open-quickly-search" })
+  let overlayController = try #require(
+    controller.children.compactMap { $0 as? OpenQuicklyOverlayViewController }.first)
+  #expect(search.isEditable)
+  #expect(search.isSelectable)
+  #expect(search.isEnabled)
+  #expect(window.initialFirstResponder === search)
+  #expect(window.requestedResponders.contains { $0 === search })
+  RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+  let fieldEditor = try #require(search.currentEditor())
+  #expect(window.firstResponder === fieldEditor)
+
+  let click = try #require(NSEvent.mouseEvent(
+    with: .leftMouseDown,
+    location: search.convert(
+      NSPoint(x: search.bounds.midX, y: search.bounds.midY), to: nil),
+    modifierFlags: [],
+    timestamp: 0,
+    windowNumber: window.windowNumber,
+    context: nil,
+    eventNumber: 1,
+    clickCount: 1,
+    pressure: 1
+  ))
+  let hitView = window.contentView?.hitTest(click.locationInWindow)
+  #expect(hitView === fieldEditor || hitView?.isDescendant(of: fieldEditor) == true)
+  #expect(overlayController.containsWindowPoint(click.locationInWindow))
+  #expect(overlayController.containsWindowPoint(NSPoint(x: 4, y: 4)) == false)
+  NSApp.sendEvent(click)
+  #expect(model.isOpenQuicklyPresented)
+  #expect(controller.view.allDescendants.contains { $0.identifier?.rawValue == "open-quickly-overlay" })
 }
 
 @Test("详情面板切走再切回会复用已构建页而不是重建大文件树")

@@ -197,7 +197,6 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     view = host
     rebuildTargets()
     reload()
-    DispatchQueue.main.async { [weak search] in search?.window?.makeFirstResponder(search) }
   }
 
   /// 展示边界安装本地事件监视。使用 local monitor 而不是仅覆写搜索框
@@ -205,10 +204,19 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   func didPresent() {
     setCommandHintsVisible(NSEvent.modifierFlags.contains(.command))
     if let window = view.window {
-      // `initialFirstResponder` 保证浮层恰在窗口激活过程中打开时，成为 key
-      // 后仍落到搜索框；已经是 key window 时则由 `makeFirstResponder` 立即生效。
+      // 浮层打开后立即进入搜索；`initialFirstResponder` 同时覆盖窗口恰在激活过程中的
+      // 展示路径。首次同步请求发生在挂载边界，field editor 可能还没准备好；下一轮
+      // 主循环必须重试一次，真实 key window 才会稳定把输入交给搜索框。
       window.initialFirstResponder = search
       window.makeFirstResponder(search)
+      DispatchQueue.main.async { [weak self, weak window] in
+        guard let self, let window,
+          self.model.isOpenQuicklyPresented,
+          self.view.window === window
+        else { return }
+        window.makeFirstResponder(self.search)
+        self.search.selectText(nil)
+      }
     }
     guard overlayEventMonitor == nil else { return }
     overlayEventMonitor = NSEvent.addLocalMonitorForEvents(
@@ -234,11 +242,8 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   private func handleOverlayEvent(_ event: NSEvent) -> NSEvent? {
     if [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type) {
       guard let window = view.window, event.window === window else { return event }
-      // 直接把浮层 bounds 投影到 window 坐标后判定，与 `event.locationInWindow`
-      // 使用同一坐标系。反向转换事件点在 full-size content view 与标题栏共存时
-      // 可能把搜索框内点击误判成外部点击。
-      let overlayRectInWindow = view.convert(view.bounds, to: nil)
-      if !overlayRectInWindow.contains(event.locationInWindow) {
+      let isInside = containsWindowPoint(event.locationInWindow)
+      if !isInside {
         model.isOpenQuicklyPresented = false
       }
       return event
@@ -264,6 +269,20 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     guard let filter = shortcuts[character] else { return event }
     selectFilter(filter)
     return nil
+  }
+
+  /// 以 window 的真实命中视图作为内外点击真值。直接比较 window 坐标矩形在
+  /// full-size content window 中可能受标题栏坐标转换影响，把可见搜索框误判为外部。
+  /// NSSearchField 编辑期间使用 window 共享的 field editor，它不在浮层子树中，
+  /// 因此需要把当前 editor 也视为搜索框内部命中。
+  func containsWindowPoint(_ point: NSPoint) -> Bool {
+    guard let window = view.window,
+      let hitView = window.contentView?.hitTest(point)
+    else { return false }
+    if let editor = search.currentEditor(),
+      hitView === editor || hitView.isDescendant(of: editor)
+    { return true }
+    return hitView === view || hitView.isDescendant(of: view)
   }
 
   /// 重开缓存浮层时恢复初始过滤器和空查询。目标只在展示边界更新；过滤器切换和逐字
