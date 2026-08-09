@@ -192,8 +192,41 @@ final class AsterTerminalView: LocalProcessTerminalView {
 
   /// 把 UI 消费闭包集中在构造期创建，避免首次 PTY 输出在后台触发 lazy 属性初始化。
   private func makeOutputMessageBus() -> TerminalOutputMessageBus {
-    TerminalOutputMessageBus { [weak self] bytes in
+    TerminalOutputMessageBus(
+      shouldDeferDelivery: Self.hasPendingUserInteractionEvent
+    ) { [weak self] bytes in
       self?.consumeTerminalOutput(bytes[...])
+    }
+  }
+
+  /// 只窥视已进入 NSApplication 队列的直接交互事件，不取走事件。终端输出总线看到这些
+  /// 事件后会延后一帧交付，让 AppKit 先执行 Inspector 页签、键盘及滚轮动作。
+  private static let userInteractionEventMask: NSEvent.EventTypeMask = [
+    .leftMouseDown,
+    .leftMouseUp,
+    .leftMouseDragged,
+    .rightMouseDown,
+    .rightMouseUp,
+    .rightMouseDragged,
+    .otherMouseDown,
+    .otherMouseUp,
+    .otherMouseDragged,
+    .keyDown,
+    .keyUp,
+    .flagsChanged,
+    .scrollWheel,
+  ]
+
+  private static func hasPendingUserInteractionEvent() -> Bool {
+    // mouseDown 进入 NSButton 的嵌套跟踪循环后，mouseUp 会在 eventTracking mode 等待；
+    // 两种 mode 都窥视才能保证一次完整点击不会被中途的终端解析打断。
+    return [RunLoop.Mode.default, .eventTracking].contains { mode in
+      NSApp.nextEvent(
+        matching: userInteractionEventMask,
+        until: .distantPast,
+        inMode: mode,
+        dequeue: false
+      ) != nil
     }
   }
 

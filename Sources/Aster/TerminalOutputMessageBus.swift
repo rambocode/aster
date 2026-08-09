@@ -7,9 +7,9 @@ import Foundation
 /// 序列仍严格保持原顺序；当等待队列达到上限时，生产者暂停，最终让内核 PTY 形成背压，
 /// 而不是以丢失输出或无限内存换取表面流畅。
 final class TerminalOutputMessageBus: @unchecked Sendable {
-  /// 单次 UI 提交最多解释的字节数。该值远小于 PTY 的单次 128 KiB 读取，避免一次
-  /// SwiftTerm 解析占满 AppKit 事件循环；仍足以保持普通 Agent 流式输出的吞吐。
-  static let defaultBatchByteLimit = 8 * 1_024
+  /// 与 SwiftTerm 的 PTY 单次读取上限一致。保留读取边界能避免把同一批 ANSI 更新拆成
+  /// 多个可见中间帧；事件优先级由交付前的显式检查保证，不再靠切碎字节换取响应性。
+  static let defaultBatchByteLimit = 128 * 1_024
   /// 总线自身的硬上限必须小于无限制缓存；达到上限后读取线程等待主线程排空一部分。
   static let defaultPendingByteLimit = 4 * 1_024 * 1_024
 
@@ -18,6 +18,7 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
   private let pendingByteLimit: Int
   private let resumeByteLimit: Int
   private let interBatchDelay: DispatchTimeInterval
+  private let shouldDeferDelivery: () -> Bool
   private let consume: ([UInt8]) -> Void
 
   private var chunks: [[UInt8]] = []
@@ -30,7 +31,8 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
   init(
     batchByteLimit: Int = TerminalOutputMessageBus.defaultBatchByteLimit,
     pendingByteLimit: Int = TerminalOutputMessageBus.defaultPendingByteLimit,
-    interBatchDelay: DispatchTimeInterval = .milliseconds(1),
+    interBatchDelay: DispatchTimeInterval = .milliseconds(8),
+    shouldDeferDelivery: @escaping () -> Bool = { false },
     consume: @escaping ([UInt8]) -> Void
   ) {
     precondition(batchByteLimit > 0)
@@ -40,6 +42,7 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
     // 只在积压明显降低后才唤醒读取方，防止高频跨线程 wake-up 造成新的调度风暴。
     resumeByteLimit = pendingByteLimit / 2
     self.interBatchDelay = interBatchDelay
+    self.shouldDeferDelivery = shouldDeferDelivery
     self.consume = consume
   }
 
@@ -65,7 +68,9 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
       chunks.append(chunk)
       pendingByteCount += chunk.count
       startIndex = endIndex
-      scheduleDeliveryLocked(after: .now())
+      // 首批同样等待一个很短的合并窗口：DispatchIO 可能把一次读取分成多个 partial
+      // 回调，这些字节应在同一显示帧交给 SwiftTerm，而不是逐片触发重绘。
+      scheduleDeliveryLocked(after: .now() + interBatchDelay)
     }
     condition.unlock()
   }
@@ -96,6 +101,19 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
   /// `DispatchQueue.main.async` 更可靠，能让 AppKit 从事件端口取出已经到达的点击。
   private func deliverNextBatch() {
     precondition(Thread.isMainThread)
+
+    // GCD main queue 与 AppKit 事件端口之间没有“定时器一定让点击先执行”的保证。
+    // 检测到已经排队的直接用户输入时，本轮只重新排期，不解析终端字节；返回事件循环
+    // 后 NSApplication 就能先完成按钮、键盘或滚轮分发。
+    if shouldDeferDelivery() {
+      condition.lock()
+      deliveryScheduled = false
+      if pendingByteCount > 0 || !completionHandlers.isEmpty {
+        scheduleDeliveryLocked(after: .now() + interBatchDelay)
+      }
+      condition.unlock()
+      return
+    }
 
     let batch: [UInt8]
     var completions: [() -> Void] = []

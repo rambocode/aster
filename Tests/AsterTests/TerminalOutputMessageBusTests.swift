@@ -58,6 +58,51 @@ func terminalOutputMessageBusYieldsBetweenBatches() async throws {
   #expect(probe.interfaceEventBatchCount == 1)
 }
 
+@Test("待处理界面事件会优先于终端输出交付")
+@MainActor
+func terminalOutputMessageBusDefersForPendingInterfaceEvent() async throws {
+  let probe = TerminalOutputMessageBusProbe()
+  let interaction = TerminalOutputInteractionProbe(isPending: true)
+  let bus = TerminalOutputMessageBus(
+    batchByteLimit: 8,
+    pendingByteLimit: 32,
+    interBatchDelay: .milliseconds(1),
+    shouldDeferDelivery: { interaction.isPending }
+  ) { probe.appendBatch($0) }
+  let bytes = Array("panel-click".utf8)
+  let producer = Task.detached(priority: .userInitiated) {
+    bus.enqueue(bytes[...])
+  }
+
+  // 连续等待多个交付周期，确认有点击/键盘事件排队时不会抢先解析终端输出。
+  try await Task.sleep(for: .milliseconds(8))
+  #expect(probe.batches.isEmpty)
+
+  interaction.isPending = false
+  try await waitForTerminalOutputBus { probe.batches.flatMap { $0 } == bytes }
+  _ = await producer.value
+}
+
+@Test("单次 PTY 读取只形成一次可见终端更新")
+@MainActor
+func terminalOutputMessageBusKeepsOnePtyReadInOneVisualBatch() async throws {
+  let probe = TerminalOutputMessageBusProbe()
+  let bus = TerminalOutputMessageBus { probe.appendBatch($0) }
+  // SwiftTerm LocalProcess 的单次读取上限是 128 KiB。把它拆成许多 8 KiB feed 会让
+  // ANSI 进度绘制的中间状态逐帧暴露，终端 Pane 就会高频闪烁。
+  let bytes = Array(repeating: UInt8(ascii: "x"), count: 128 * 1_024)
+  let production = Task.detached(priority: .userInitiated) {
+    bus.enqueue(bytes[...])
+    bus.finish { probe.markFinished() }
+  }
+
+  try await waitForTerminalOutputBus { probe.isFinished }
+  _ = await production.value
+
+  #expect(probe.batches.count == 1)
+  #expect(probe.batches.first?.count == bytes.count)
+}
+
 @MainActor
 private func waitForTerminalOutputBus(
   timeout: Duration = .seconds(1),
@@ -117,5 +162,20 @@ private final class TerminalOutputMessageBusProbe: @unchecked Sendable {
 
   func recordInterfaceEvent(after batchCount: Int) {
     lock.withLock { storedInterfaceEventBatchCount = batchCount }
+  }
+}
+
+/// 模拟 NSApplication 事件队列是否已有直接用户交互，状态由锁保护以匹配总线边界。
+private final class TerminalOutputInteractionProbe: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storedIsPending: Bool
+
+  init(isPending: Bool) {
+    storedIsPending = isPending
+  }
+
+  var isPending: Bool {
+    get { lock.withLock { storedIsPending } }
+    set { lock.withLock { storedIsPending = newValue } }
   }
 }

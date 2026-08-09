@@ -96,15 +96,17 @@ flowchart LR
 
 每个 `AsterTerminalView` 还持有独立的 `TerminalOutputMessageBus`。`LocalProcess` 把 PTY
 读取回调投递到该 Pane 的串行输出队列；该队列只复制并发布原始字节，不直接触碰 AppKit、
-`TerminalSession` 或任一工作区页面。消息总线在主线程按 8 KiB 有界批次依序交给
-SwiftTerm 解析，并在批次之间延后下一次提交，让鼠标、键盘、Inspector 页签与其它窗口事件
-优先得到 RunLoop 调度机会。
+`TerminalSession` 或任一工作区页面。消息总线先用 8 ms 合并窗口吸收 DispatchIO 的相邻
+partial 回调，再按 SwiftTerm 单次 PTY 读取上限 128 KiB 依序交给主线程解析；这既避免把
+同一批 ANSI 更新拆成多个可见中间帧，也把绘制频率限制在显示刷新量级。每次交付前还会
+窥视 NSApplication 已排队的点击、键盘与滚轮事件，存在直接用户交互时延后一帧，让
+Inspector 页签及其它窗口动作优先完成。
 
 ```mermaid
 flowchart LR
   P[PTY read queue] --> Q[Pane output queue]
   Q --> B[TerminalOutputMessageBus]
-  B -->|8 KiB ordered batch| M[Main-thread terminal grid]
+  B -->|up to 128 KiB ordered batch| M[Main-thread terminal grid]
   M --> E[title shell agent UI events]
 ```
 
