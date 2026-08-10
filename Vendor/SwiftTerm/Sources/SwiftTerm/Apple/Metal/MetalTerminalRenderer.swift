@@ -235,12 +235,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var cursorMovementAnimation: CursorMovementAnimation?
 #endif
 #if DEBUG
-    private var debugFrameCount = 0
-    private var debugLastLogTime = CFAbsoluteTimeGetCurrent()
-    private var debugRowsRebuilt = 0
-    private var debugRowsCached = 0
-#endif
-#if DEBUG
     private var imageTextureFailures: Set<ObjectIdentifier> = []
     private var kittyTextureFailures: Set<UInt32> = []
 #endif
@@ -402,18 +396,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 #if canImport(os)
         if MetalTerminalRenderer.profileEnabled {
             os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.BuildDrawData", signpostID: buildID)
-        }
-#endif
-#if DEBUG
-        debugFrameCount += 1
-        let now = CFAbsoluteTimeGetCurrent()
-        let elapsed = now - debugLastLogTime
-        if elapsed >= 1.0 {
-            let totalRows = debugRowsRebuilt + debugRowsCached
-            let fps = Double(debugFrameCount) / elapsed
-            print(String(format: "Metal FPS: %.1f (rows rebuilt: %d/%d)", fps, debugRowsRebuilt, totalRows))
-            debugFrameCount = 0
-            debugLastLogTime = now
         }
 #endif
         let bgColor = colorToSIMD(terminalView.nativeBackgroundColor)
@@ -632,10 +614,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
     private func buildDrawDataPass(scale: CGFloat) -> DrawData {
         guard let terminalView = terminalView else {
-#if DEBUG
-            debugRowsRebuilt = 0
-            debugRowsCached = 0
-#endif
             return DrawData(rows: [],
                             frame: nil,
                             cursorColorVertices: [],
@@ -653,10 +631,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
         let rowInfo = visibleRowRange(buffer: buffer, cellHeight: cellHeight, terminalView: terminalView)
         guard let (firstRow, lastRow, visibleDisp) = rowInfo else {
-#if DEBUG
-            debugRowsRebuilt = 0
-            debugRowsCached = 0
-#endif
             return DrawData(rows: [],
                             frame: nil,
                             cursorColorVertices: [],
@@ -728,8 +702,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             }
         }
 
-        var rebuiltRows = 0
-        var cachedRows = 0
         for row in visibleRange {
             let line = buffer.lines[row]
             let lineGeneration = line.generation
@@ -758,7 +730,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 entry = RowCacheEntry(lineRef: line, generation: lineGeneration, data: rowData, buffers: buffers)
                 rowCache[row] = entry
                 rowBuffers = buffers
-                rebuiltRows += 1
             } else if let cached = entry {
                 rowData = cached.data ?? buildRowDrawData(row: row,
                                                           buffer: buffer,
@@ -785,7 +756,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 } else {
                     rowBuffers = nil
                 }
-                cachedRows += 1
             } else {
                 rowData = buildRowDrawData(row: row,
                                            buffer: buffer,
@@ -800,7 +770,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 entry = RowCacheEntry(lineRef: line, generation: lineGeneration, data: rowData, buffers: buffers)
                 rowCache[row] = entry
                 rowBuffers = buffers
-                rebuiltRows += 1
             }
             if let rowBuffers {
                 rows.append(rowBuffers)
@@ -819,11 +788,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 }
             }
         }
-#if DEBUG
-        debugRowsRebuilt = rebuiltRows
-        debugRowsCached = cachedRows
-#endif
-
         let cursorData = buildCursorDrawData(scale: scale,
                                              cellWidth: cellWidth,
                                              cellHeight: cellHeight,

@@ -75,13 +75,19 @@ enum SystemTerminfoChecker {
     process.environment = environment
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice
+    // 本探测发生在 makeTerminalView 中途。`waitUntilExit` 会在调用线程泵 default
+    // 模式 runloop、排空主队列——排队的工作区刷新会被拉进终端创建的半途同步执行,
+    // 让同一 Session 重入并启动两个 PTY。因此把等待放到后台队列,调用线程只在
+    // 信号量上阻塞,不给任何 runloop 回调执行机会。
+    let finished = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in finished.signal() }
     do {
       try process.run()
-      process.waitUntilExit()
-      return process.terminationReason == .exit && process.terminationStatus == 0
     } catch {
       return false
     }
+    finished.wait()
+    return process.terminationReason == .exit && process.terminationStatus == 0
   }
 }
 

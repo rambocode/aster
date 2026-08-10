@@ -412,10 +412,21 @@ final class WorkspaceViewController: NSViewController {
     var candidate: NSView? = hit
     while let current = candidate {
       if let host = current as? ActivePaneHostView {
-        tab.setActivePane(host.paneID)
+        routePaneClick(host.paneID, in: tab)
         return
       }
       candidate = current.superview
+    }
+  }
+
+  /// 点击落点到面板激活的统一入口。点到的已经是活动 Pane 时 `activePaneID` 不变、
+  /// 不发局部事件，但键盘焦点可能早已丢到浮层或容器上（终端视图自身不在 mouseDown
+  /// 抢 first responder），必须在这里显式交接一次，点击才有自愈能力。
+  func routePaneClick(_ paneID: UUID, in tab: TerminalTabItem) {
+    if paneID == tab.activePaneID {
+      focusActivePane(in: tab)
+    } else {
+      tab.setActivePane(paneID)
     }
   }
 
@@ -894,6 +905,16 @@ final class WorkspaceViewController: NSViewController {
           self.updateWindowTitle(title)
         }
         .store(in: &tabSubscriptions)
+      // 程序标题（OSC 0/1/2）走行内局部刷新：Agent CLI 每秒多次改标题，整树重建
+      // 会打断其他 Pane 的输入、IME 组合、滚动，并让 Panels 点击卡顿。
+      tab.titleChanged
+        .sink { [weak self, weak tab] _ in
+          guard let self, let tab else { return }
+          for row in self.tabRowsByID[tab.id] ?? [] where row.window != nil {
+            row.refreshTitle()
+          }
+        }
+        .store(in: &tabSubscriptions)
       tab.workingDirectoryChanged
         .sink { [weak self, weak tab] change in
           guard let self, let tab, tab.id == self.model.selectedTabID,
@@ -994,8 +1015,9 @@ final class WorkspaceViewController: NSViewController {
     return nil
   }
 
-  /// 切换聚焦 Pane 时只更新路由状态，不重建视图树。视觉反馈由终端光标和实际
-  /// first responder 提供；不能再叠加褪色层改变主题的终端背景。
+  /// 切换聚焦 Pane 时只更新路由状态，不重建视图树。视觉反馈是未聚焦 Pane 的内容
+  /// alpha 褪色（host 内部实现）加终端光标与实际 first responder；不使用颜色遮罩，
+  /// 透明主题的 window 色经 `withAlphaComponent` 会变成近黑色块。
   private func updatePaneActivationOverlays(in tab: TerminalTabItem) {
     for (paneID, host) in paneHosts {
       let isActive = paneID == tab.activePaneID
@@ -1005,15 +1027,38 @@ final class WorkspaceViewController: NSViewController {
   }
 
   /// 把键盘焦点交给当前面板：终端面板交给 SwiftTerm 视图，其余面板交给容器本身。
+  /// 交接失败时记录结构化原因——「Pane 永远无法输入」类问题只能靠这里的现场定位。
   private func focusActivePane(in tab: TerminalTabItem) {
     if let session = tab.activeRuntime?.terminalSession {
       // PiP 拥有长期终端容器时，主工作区只显示占位；这里也不能跨窗口把
       // first responder 强行交给 PiP 中的终端。
-      guard !PanePictureInPictureOwnership.isOwnedByPictureInPicture(session) else { return }
-      session.focus()
+      guard !PanePictureInPictureOwnership.isOwnedByPictureInPicture(session) else {
+        DiagnosticsCenter.shared.record(
+          "workspace.focus_pane_skipped", level: .info, category: .workspace,
+          attributes: ["reason": "pip_owned"])
+        return
+      }
+      if !session.focus() {
+        let responder = view.window?.firstResponder.map { String(describing: type(of: $0)) }
+        DiagnosticsCenter.shared.record(
+          "workspace.focus_pane_failed", level: .error, category: .workspace,
+          attributes: [
+            "reason": session.focusFailureReason ?? "unknown",
+            "first_responder": responder ?? "nil",
+            "pane": tab.activePaneID.uuidString,
+            "session": session.id.uuidString,
+            "lifecycle": String(describing: session.lifecycleState),
+            "running": session.isRunning ? "1" : "0",
+          ])
+      }
       return
     }
-    guard let host = paneHosts[tab.activePaneID], let window = host.window else { return }
+    guard let host = paneHosts[tab.activePaneID], let window = host.window else {
+      DiagnosticsCenter.shared.record(
+        "workspace.focus_pane_failed", level: .error, category: .workspace,
+        attributes: ["reason": "no_session_no_host"])
+      return
+    }
     window.makeFirstResponder(host)
   }
 
@@ -1826,7 +1871,7 @@ final class WorkspaceViewController: NSViewController {
     }
     host.installContent(content)
     // 单 Pane 无处可拖；只有分屏时安装顶部拖动把手。Pane 背景始终由主题负责，
-    // 不再为非活动 Pane 叠加改变颜色的遮罩。
+    // 非聚焦 Pane 的变灰由 host 内容 alpha 表达，不叠加改变颜色的遮罩。
     if tab.layout.allPanes.count > 1 {
       host.installDragHandle { [weak self] paneID, event in
         self?.beginPaneDrag(paneID: paneID, event: event)

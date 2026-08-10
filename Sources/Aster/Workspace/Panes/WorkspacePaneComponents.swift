@@ -354,9 +354,20 @@ final class ActivePaneHostView: NSView {
   private weak var contentView: NSView?
   private var contentBottomConstraint: NSLayoutConstraint?
   private var bottomAccessory: NSView?
-  /// 焦点状态仍由容器保存，供关闭、移动和 first responder 路由使用；视觉反馈交给
-  /// 终端光标与实际输入焦点，不再用整块遮罩篡改主题定义的 Pane 背景色。
-  var isActivePane: Bool
+  /// 非聚焦 Pane 的内容整体透明度。用 alpha 而不是颜色遮罩：透明主题的 window 色
+  /// 自带 alpha，`withAlphaComponent` 会把它画成近黑色块；alpha 褪色让内容朝下层
+  /// 主题材质本身淡出，任何主题下语义一致，也不需要点击穿透的遮罩视图。
+  private static let inactiveContentAlpha: CGFloat = 0.55
+  /// 焦点状态由容器保存，供关闭、移动和 first responder 路由使用；切换只翻转内容
+  /// 透明度（未聚焦 Pane 变灰），不重建视图树。
+  var isActivePane: Bool {
+    didSet { applyActivationAppearance() }
+  }
+
+  /// 把当前焦点状态落到内容视图透明度上；拖动把手与底部附件不参与褪色。
+  private func applyActivationAppearance() {
+    contentView?.alphaValue = isActivePane ? 1 : Self.inactiveContentAlpha
+  }
 
   init(
     paneID: UUID,
@@ -389,6 +400,8 @@ final class ActivePaneHostView: NSView {
     ])
     contentView = view
     contentBottomConstraint = bottom
+    // 恢复/重建工作区时 host 以初始焦点状态创建，didSet 不会触发，这里补一次。
+    applyActivationAppearance()
   }
 
   /// 安装或移除底部附件（当前只有 Prompt Queue）。附件必须占据布局空间：覆盖在

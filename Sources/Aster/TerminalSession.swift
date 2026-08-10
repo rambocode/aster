@@ -494,8 +494,10 @@ final class AsterTerminalView: LocalProcessTerminalView {
       if case .vi = paneModeState.navigationMode {
         reconcileViModeAfterOutput()
       }
-      if paneModeState.navigationMode == .normal {
-        // 普通模式的新输出回到底部。Vi/Mark 则固定用户正在检查的 viewport。
+      if paneModeState.navigationMode == .normal, !canScroll || scrollPosition >= 1 {
+        // 视口已在底部才跟随新输出（同时清理越界像素偏移）；用户上滚检查历史时，
+        // 持续输出不得把 viewport 拉回底部，用户输入仍经 SwiftTerm send 路径复位。
+        // Vi/Mark 模式则始终固定用户正在检查的 viewport。
         scrollToBottom()
       }
       let terminal = getTerminal()
@@ -780,6 +782,9 @@ final class AsterTerminalView: LocalProcessTerminalView {
     viScrollInvariantLowerBound = nil
     viUsesAlternateBuffer = nil
     setViewportFrozen(false)
+    // 退出检查模式即回到实时输出（tmux copy-mode 语义）。普通输出不再无条件吸底，
+    // 因此这里必须显式复位，否则冻结期间累积的输出会让视口停在历史位置。
+    scrollToBottom()
     if clearSelection { selectNone() }
     updatePaneModeHUD()
   }
@@ -2236,17 +2241,52 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     super.init()
   }
 
+  /// makeTerminalView 的调用计数；随诊断上报,用于区分缓存命中与全新 PTY 创建路径。
+  private var terminalViewRequestCount = 0
+  /// 创建过程是否在途；重入时用于捕获调用栈定位触发方。
+  private var terminalViewCreationInFlight = false
+
   /// 返回长期存活的终端视图；首次调用时才创建 PTY，确保 AppKit 窗口已完成初始化。
   func makeTerminalView(preferences: AppPreferences) -> LocalProcessTerminalView {
     self.preferences = preferences
+    terminalViewRequestCount += 1
     if let terminalView {
       apply(preferences: preferences, to: terminalView)
       return terminalView
     }
+    if terminalViewCreationInFlight {
+      // 重入 = 同一 Session 将启动两个 PTY。仅记录符号栈(不含用户数据)供定位。
+      var frames: [String: String] = ["request": "\(terminalViewRequestCount)"]
+      for (index, frame) in Thread.callStackSymbols.dropFirst().prefix(16).enumerated() {
+        let symbol = frame.split(separator: " ", omittingEmptySubsequences: true)
+          .dropFirst(3).first.map(String.init) ?? "?"
+        frames[String(format: "s%02d", index)] = String(symbol.prefix(250))
+      }
+      diagnostics.record(
+        "terminal.view_creation_reentered",
+        level: .fault,
+        category: .terminal,
+        attributes: processDiagnosticAttributes(extra: frames)
+      )
+    }
+    terminalViewCreationInFlight = true
+    defer { terminalViewCreationInFlight = false }
+    diagnostics.record(
+      "terminal.view_creation_requested",
+      level: .debug,
+      category: .terminal,
+      attributes: processDiagnosticAttributes(extra: [
+        "request": "\(terminalViewRequestCount)"
+      ])
+    )
 
     prepareForProcessLaunch()
     processGeneration += 1
     let view = AsterTerminalView(frame: .zero)
+    // 立即登记:创建过程一旦被重入(历史上 terminfo 探测泵 runloop 曾让排队的
+    // 工作区刷新插进这里),重入方走上面的缓存分支拿到同一实例,而不是为同一
+    // Session 再启动一个 PTY。startShell 稍后再次赋值属于幂等操作。
+    terminalView = view
     view.processDelegate = self
     view.onObservedTitleUpdate = { [weak self] code, title in
       Task { @MainActor [weak self] in self?.handleTitleOSC(code: code, text: title) }
@@ -2661,10 +2701,28 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalView.send(data: controlC[...])
   }
 
-  func focus() {
-    guard let terminalView, let window = terminalView.window else { return }
-    window.makeFirstResponder(terminalView)
+  /// 最近一次 `focus()` 失败的原因，供工作区层诊断记录；成功时为 nil。
+  private(set) var focusFailureReason: String?
+
+  /// 把键盘焦点交给本会话的终端视图；返回是否成功，失败原因写入
+  /// `focusFailureReason`（视图未创建 / 未上屏 / 系统拒绝交接）。
+  @discardableResult
+  func focus() -> Bool {
+    guard let terminalView else {
+      focusFailureReason = "no_view"
+      return false
+    }
+    guard let window = terminalView.window else {
+      focusFailureReason = "view_detached"
+      return false
+    }
+    guard window.makeFirstResponder(terminalView) else {
+      focusFailureReason = "responder_refused"
+      return false
+    }
+    focusFailureReason = nil
     refreshAutomaticSecureInput()
+    return true
   }
 
   /// 在完整滚动缓冲区内查找并选中下一处匹配文本。

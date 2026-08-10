@@ -99,11 +99,25 @@ final class DiagnosticsCenter: @unchecked Sendable {
   private static let maximumAttributeLength = 256
   private static let maximumEventLength = 96
 
+  /// 测试运行器与应用共用本地日志目录会让现场排障数据被测试噪声淹没；测试环境
+  /// 仍写 Unified Logging,但不落 JSONL 文件。
+  private static var isRunningUnderTests: Bool {
+    let environment = ProcessInfo.processInfo.environment
+    return environment["XCTestConfigurationFilePath"] != nil
+      || environment["XCTestBundlePath"] != nil
+      || environment["SWT_BACKCHANNEL"] != nil
+      || NSClassFromString("XCTestCase") != nil
+  }
+
+  private let persistsToDisk: Bool
+
   init(
     rootDirectory: URL? = nil,
     fileManager: FileManager = .default
   ) {
     self.fileManager = fileManager
+    // 显式注入目录的(测试自查用)仍允许落盘；默认目录在测试环境下只走系统日志。
+    persistsToDisk = rootDirectory != nil || !Self.isRunningUnderTests
     self.rootDirectory = rootDirectory ?? Self.defaultRootDirectory(fileManager: fileManager)
     encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
@@ -127,7 +141,10 @@ final class DiagnosticsCenter: @unchecked Sendable {
     function: StaticString = #function
   ) {
     let safeEvent = Self.normalizedEvent(event)
-    let safeAttributes = Self.sanitizedAttributes(attributes)
+    // 进程名让多实例(新旧构建并存、辅助进程)场景可以按来源过滤记录。
+    var taggedAttributes = attributes
+    taggedAttributes["process"] = ProcessInfo.processInfo.processName
+    let safeAttributes = Self.sanitizedAttributes(taggedAttributes)
     let errorSummary = error.map(Self.summarize)
     let source = Self.sourceLocation(file: file, line: line, function: function)
     let logger = Logger(subsystem: "io.local.aster-terminal", category: category.rawValue)
@@ -288,6 +305,7 @@ final class DiagnosticsCenter: @unchecked Sendable {
   }
 
   private func append(_ record: Record) {
+    guard persistsToDisk else { return }
     guard let data = try? encoder.encode(record) else { return }
     let line = data + Data([0x0A])
     guard line.count <= 8 * 1_024 else { return }

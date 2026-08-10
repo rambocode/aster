@@ -54,7 +54,7 @@ private func preciseScrollEvent(
   return try #require(NSEvent(cgEvent: event))
 }
 
-@Test("分页、首尾跳转与新输出回到底部")
+@Test("分页、首尾跳转与底部跟随语义")
 @MainActor
 func terminalScrollCommandsAndOutputSnap() {
   let view = populatedScrollView()
@@ -72,8 +72,14 @@ func terminalScrollCommandsAndOutputSnap() {
   view.scrollToBottom()
   #expect(buffer.yDisp == initialBottom)
 
+  // 用户上滚后新输出保持视口；回到底部后输出继续跟随最新内容并清理像素偏移。
   view.pageUp()
+  let held = buffer.yDisp
   view.dataReceived(slice: Array("new-output".utf8)[...])
+  #expect(buffer.yDisp == held)
+
+  view.scrollToBottom()
+  view.dataReceived(slice: Array("follow-output\r\n".utf8)[...])
   #expect(buffer.yDisp == max(0, buffer.lines.count - buffer.rows))
   #expect(view.viewportContentTranslationY == 0)
 }

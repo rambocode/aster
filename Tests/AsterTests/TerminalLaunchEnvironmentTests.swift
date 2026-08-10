@@ -1,4 +1,5 @@
 import AsterCore
+import Foundation
 import Testing
 
 @testable import Aster
@@ -58,4 +59,25 @@ func terminalLaunchEnvironmentFallsBackWithoutShellInjection() {
   #expect(result.environment["ASTER_INTEGRATION"] == nil)
   #expect(result.environment["ASTER_SHELL_INTEGRATION_DIR"] == nil)
   #expect(result.programIdentity.deviceAttributesVersion == 20_000)
+}
+
+/// waitUntilExit 会泵默认模式 runloop 并排空主队列;terminfo 探测发生在
+/// makeTerminalView 中途,一旦排队的 scheduleRefresh 被拉进来同步执行,工作区
+/// 会在终端创建半途重入,同一 Session 启动两个 PTY。探测必须阻塞而不泵。
+@Test("terminfo 探测不得在主线程泵 runloop")
+@MainActor
+func terminfoProbeDoesNotPumpMainQueue() {
+  // default 模式的 Timer 是「runloop 被泵过」的直接证据:waitUntilExit 会在等待
+  // 子进程时跑 default 模式 runloop,让本不该此刻执行的回调(如排队的工作区刷新)
+  // 插进终端创建的半途。
+  final class Flag: @unchecked Sendable { var fired = false }
+  let flag = Flag()
+  let timer = Timer(timeInterval: 0.001, repeats: false) { _ in flag.fired = true }
+  RunLoop.main.add(timer, forMode: .default)
+  defer { timer.invalidate() }
+  _ = SystemTerminfoChecker.entryExists(
+    "xterm-256color",
+    environment: ["TERM": "xterm-256color"]
+  )
+  #expect(!flag.fired, "探测期间不得执行 runloop 回调")
 }

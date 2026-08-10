@@ -206,11 +206,11 @@ Display 菜单的 `⌘=`、`⌘-` 与 `⌘0` 直接调整全局 `appearance.font
 
 SwiftTerm 1.15 的公开接口不能表达键盘扩展选区、矩形范围或行内像素位移。Aster 因而固定并 vendored 官方 revision；`SelectionService` 保存 keyboard anchor/focus，并让方向动作可以越过锚点收缩后反向扩展。普通拖动、双击单词和三击整行沿用上游语义；`Option` 拖动切换矩形模式，复制时在每个物理行截取相同列区间，短行的内部 NUL 空单元格转换为可见空格。鼠标手势在 mouseDown 时锁定由原生选择、链接还是终端报告拥有，修饰键中途变化不会产生孤立 press/release；Command-click 链接始终由本地完整处理。任何发送到 PTY 的输入都按配置清除选区，显式复制清理与选中即复制互不干扰。
 
-normal buffer 的虚拟滚动位置由整行 `Buffer.yDisp` 和 `viewportContentTranslationY` 组成。精确触控板手势直接累计像素，结束或取消时四舍五入到最近行；关闭平滑滚动时，残余像素累积到完整字符行才移动。滚过末尾可把最后内容行或光标行放到顶部，也可把最后内容行放到中部；滚过开头可独立把第一内容行放到底部/中部或跟随末尾策略。所有范围按实际内容、光标和视口行数计算，新输出及用户输入会复位到底部，alternate screen 会清除像素偏移并忽略越界设置。
+normal buffer 的虚拟滚动位置由整行 `Buffer.yDisp` 和 `viewportContentTranslationY` 组成。精确触控板手势直接累计像素，结束或取消时四舍五入到最近行；关闭平滑滚动时，残余像素累积到完整字符行才移动。滚过末尾可把最后内容行或光标行放到顶部，也可把最后内容行放到中部；滚过开头可独立把第一内容行放到底部/中部或跟随末尾策略。所有范围按实际内容、光标和视口行数计算；用户输入会复位到底部，新输出仅在视口已位于底部时跟随最新内容——用户上滚查看历史期间，持续输出（如 TUI 流式刷新）不得把视口拉回底部。alternate screen 会清除像素偏移并忽略越界设置。
 
 ### Vi、Hint 与 Read-only Pane 模式
 
-`TerminalPaneModeState` 将互斥的 normal / Vi / Hint 导航状态与正交 Read-only 锁分开；临时进入 Hint 后恢复原导航模式，退出 Vi 也不会解除只读。`TerminalViEngine` 只依赖 `TerminalNavigationSnapshot`，以活动 Buffer 坐标实现计数移动、字符/行/矩形选区、搜索请求和 Hint 跳转。SwiftTerm 仅额外公开活动 Buffer 光标、scroll-invariant 行范围、程序化矩形选区和有界可见链接列表；Aster 不访问其内部行数组。选区更新期间抑制“选中即复制”，只有 `y` 或 `Enter` 执行显式复制。
+`TerminalPaneModeState` 将互斥的 normal / Vi / Hint 导航状态与正交 Read-only 锁分开；临时进入 Hint 后恢复原导航模式，退出 Vi 也不会解除只读。Vi/Mark 期间视口冻结，新输出不会抢走正在检查的位置；退出 Vi/Mark 即回到实时底部（tmux copy-mode 语义）——普通输出不再无条件吸底，因此该复位由 `leaveViMode` 显式执行。`TerminalViEngine` 只依赖 `TerminalNavigationSnapshot`，以活动 Buffer 坐标实现计数移动、字符/行/矩形选区、搜索请求和 Hint 跳转。SwiftTerm 仅额外公开活动 Buffer 光标、scroll-invariant 行范围、程序化矩形选区和有界可见链接列表；Aster 不访问其内部行数组。选区更新期间抑制“选中即复制”，只有 `y` 或 `Enter` 执行显式复制。
 
 Hint 标签最多 676 个，26 个以内使用单字符，更多时全部使用双字符以消除前缀歧义。目标按可见行列稳定去重，OSC 8 来源保持显式身份；普通键走 `TerminalTargetOpenCoordinator`，Shift 最终键只用 `TargetResolver` 生成规范化复制值。任何输出都会使当前标签快照失效并退出 Hint。
 

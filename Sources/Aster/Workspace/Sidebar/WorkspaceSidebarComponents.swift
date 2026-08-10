@@ -65,6 +65,10 @@ final class TabRowButton: NSButton {
   private weak var verticalAccessory: NSView?
   private weak var verticalAccessorySlot: NSView?
   private weak var closeButton: NSButton?
+  /// 纵向行的标题标签；标题经 `titleChanged` 局部刷新，不重建整行。
+  private weak var titleLabel: NSTextField?
+  /// 最近一次渲染的徽章状态键；状态未变时跳过附件重建，避免 spinner 动画被反复重启。
+  private var renderedBadgeKey: String?
   /// 侧栏行的内缩圆角底。整行仍然是全宽命中区，只有这层底色两侧留边并带圆角，
   /// 因此指针落在行的任何位置都能点中，视觉上却是一枚独立的圆角卡片。
   private weak var rowBackground: NSView?
@@ -166,6 +170,7 @@ final class TabRowButton: NSButton {
       )
       addSubview(primary)
       primary.translatesAutoresizingMaskIntoConstraints = false
+      titleLabel = primary
 
       // 状态附件与关闭按钮共用固定 28pt 槽位，悬停切换时标题不会
       // 水平抖动。关闭动作直接针对该 tab，不先选中后台标签。
@@ -252,15 +257,34 @@ final class TabRowButton: NSButton {
   override func mouseEntered(with event: NSEvent) { hovered = true }
   override func mouseExited(with event: NSEvent) { hovered = false }
 
+  /// 程序标题（OSC 0/1/2）变化时就地更新行文案；不重建行、不触碰附件与终端视图。
+  func refreshTitle() {
+    if horizontal {
+      title = tab.title
+    } else {
+      titleLabel?.stringValue = tab.title
+    }
+    closeButton?.setAccessibilityLabel("关闭标签页 \(tab.title)")
+  }
+
   /// 只替换标签的状态附件，不重建 Sidebar、Pane 或长期存活的终端视图。Agent hook
   /// 在 processing/awaiting/idle 之间切换时调用本方法，状态图标因此能即时变化，同时
-  /// 不打断 TUI 输入、选择或 Files 当前目录。
+  /// 不打断 TUI 输入、选择或 Files 当前目录。状态键相同则完全跳过重建：running
+  /// spinner 若被销毁重建会不断重启动画，视觉上表现为“转得飞快”。
   func refreshActivityBadge() {
+    let key = activityBadgeKey()
     if horizontal {
+      guard key != renderedBadgeKey else { return }
+      renderedBadgeKey = key
       image = horizontalActivityImage()
       return
     }
     guard let slot = verticalAccessorySlot else { return }
+    if key == renderedBadgeKey, verticalAccessory != nil {
+      updateAccessoryVisibility()
+      return
+    }
+    renderedBadgeKey = key
     verticalAccessory?.removeFromSuperview()
     let accessory = makeVerticalActivityAccessory()
     accessory.translatesAutoresizingMaskIntoConstraints = false
@@ -271,6 +295,26 @@ final class TabRowButton: NSButton {
     ])
     verticalAccessory = accessory
     updateAccessoryVisibility()
+  }
+
+  /// 徽章渲染结果的等价键。与 `makeVerticalActivityAccessory` /
+  /// `horizontalActivityImage` 的分支一一对应；spinner 不显示百分比，因此
+  /// `.running` 的 percent 变化不进入键值，避免进度刷新重启动画。
+  private func activityBadgeKey() -> String {
+    switch tab.activityBadge {
+    case .running:
+      return "running"
+    case .awaitingInput where showsAwaitingInput:
+      return "awaiting-input"
+    case .error where showsFailure && showsExitStatus:
+      return "error-\(tab.lastCommandExitStatus.map(String.init) ?? "!")"
+    case .finished where showsFinished && showsExitStatus:
+      return "finished"
+    case .completed where showsFinished && showsExitStatus:
+      return "completed"
+    default:
+      return "idle"
+    }
   }
 
   private func horizontalActivityImage() -> NSImage? {

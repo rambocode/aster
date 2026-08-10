@@ -43,7 +43,8 @@ open dist/Aster.app
 3. Window 第一层用 `WorkspacePanelSplitView` 组合 Sidebar / Content / Inspector，边缘宽度按窗口保存 point 值；递归 Pane 树只存在于 Content 内，由 `PersistedSplitView` 渲染并保存 `0.05...0.95` 比例。Panel 与 Pane 不得混名或共用状态。
 4. 主题色只能经由 `ThemeRuntime` 的动态 `NSColor` 和 `ThemeVisualEffectView` 进入视图，**不要在视图里散落固定色值**。
 5. Pane 容器在**宽和高两个方向**都需要必需尺寸约束。`NSStackView` 的固有尺寸推断会把 SwiftTerm 网格压成 0：`NSSplitView` 给每个子面板加了 `PreferredSize/FallbackSize`（`== 0 @250`）回退约束，缺高度约束时上下分屏会把整个内容区塌成一条分隔条。约束链是「内容区绑定外层 stack 宽高 → wrapper 钉 stack 底边 → 状态栏钉 inner 底边 → Pane 区填充剩余」。设置页滚动文档用 `FlippedDocumentView`（左上原点）从 `NSClipView` 顶部锚定，内部放标准 `NSStackView`——不要直接翻转 StackView，AppKit 会同时反转 arrangedSubviews 的垂直排布。
-6. 切换聚焦 Pane 只做局部更新（焦点指示线 + first responder），**不触发整树重建**；Outline/Shell Integration 时间线变化也走专用事件局部刷新。
+6. 切换聚焦 Pane 只做局部更新（内容 alpha 褪色翻转 + first responder），**不触发整树重建**；Outline/Shell Integration 时间线变化也走专用事件局部刷新。高频会话字段（OSC 标题、`hasRunningCommand`、Agent provider）只走徽章/标题局部通道，禁止进入 `objectWillChange` → `refresh()` 链。
+7. **主线程禁止泵 runloop 的等待**（`Process.waitUntilExit`、`runModal` 等会排空主队列，把排队任务拉进当前调用半途造成重入——曾致同一 Session 启动两个 PTY）；子进程等待用 `terminationHandler` + 信号量。昂贵的一次性创建入口（如 `makeTerminalView`）先登记资源再接线，保证重入命中缓存分支。完整清单与现场诊断方法论见 **`docs/developer/engineering-pitfalls.md`**，改动创建/刷新/焦点路径前先读。
 
 ### Vendored SwiftTerm
 
@@ -89,4 +90,4 @@ open dist/Aster.app
 
 ## 文档同步要求
 
-用户可见的交互变化必须同步更新 `docs/developer/` 下对应领域文档与 `docs/user/help.md`。开发文档采用固定结构（业务背景 / 领域概念 / 核心规则 / 业务流程 mermaid / 关键实现 / 失败语义 / 测试与验收），按域拆分：`terminal-domain.md`（工作区与终端主线）、`appkit-interface.md`、`theme-system.md`、`files-and-links-domain.md`、`workflows-and-agents.md`、`terminal-activity-and-notifications.md`、`terminal-text-and-images.md`、`otty-feature-parity.md`。设计验收结论写入 **`docs/developer/design-qa.md`**（仓库根目录还有一份停留在 0.4.0 的旧 `design-qa.md`，不是真值，别往那里写）。提交信息使用 Conventional Commit 风格（`feat(workspace): ...`）；`AGENTS.md` 记录了同一套约定的英文摘要，改动规则时两边保持一致。
+用户可见的交互变化必须同步更新 `docs/developer/` 下对应领域文档与 `docs/user/help.md`。开发文档采用固定结构（业务背景 / 领域概念 / 核心规则 / 业务流程 mermaid / 关键实现 / 失败语义 / 测试与验收），按域拆分：`terminal-domain.md`（工作区与终端主线）、`appkit-interface.md`、`theme-system.md`、`files-and-links-domain.md`、`workflows-and-agents.md`、`terminal-activity-and-notifications.md`、`terminal-text-and-images.md`、`otty-feature-parity.md`；跨域工程纪律与「harness 绿、真机红」的现场诊断方法论集中在 `engineering-pitfalls.md`（含 runloop 泵重入、防重入创建、交互自愈、诊断通道隔离等事故沉淀）。设计验收结论写入 **`docs/developer/design-qa.md`**（仓库根目录还有一份停留在 0.4.0 的旧 `design-qa.md`，不是真值，别往那里写）。提交信息使用 Conventional Commit 风格（`feat(workspace): ...`）；`AGENTS.md` 记录了同一套约定的英文摘要，改动规则时两边保持一致。

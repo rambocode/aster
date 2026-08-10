@@ -118,6 +118,7 @@
 
 ## 记录
 
+- 2026-08-10：按设计要求恢复「同一标签内未聚焦 Pane 变灰」。实现从颜色遮罩改为内容整体 alpha 褪色（`ActivePaneHostView.inactiveContentAlpha = 0.55`）：未聚焦 Pane 朝下层主题材质淡出，透明主题不会再出现 `withAlphaComponent` 产生的近黑色块（即 2026-08-09 移除遮罩要解决的问题），也无需点击穿透遮罩视图。焦点切换仍走 `activePaneChanged` 局部通道翻转透明度，不重建视图树。自动测试锁定双 Pane 的 alpha 分布、切换翻转与 host 实例保持；真实窗口需在不透明与 Glass 主题下各复验一次变灰观感。
 - 2026-08-09：完成 9 套浅色主题的 Otty/Aster 真实窗口双列截图复验。终端双 Pane 抽样均同时命中主题背景；左右 Sidebar/Inspector 共用 Sidebar token；April、Ayu Light、Floating Card、Newsprint、One Light、Paper、Pink、Solarized Light 的实色与 Otty 一致，Glass Light 保留透明 RGBA，由当时桌面与原生材质决定截图灰度。截图保存在本轮 `theme-parity` 验收工件中。
 - 2026-08-09：修正透明与标题 surface 语义：不再把截图采样灰或固定黑色透明度写成 Glass 背景，终端 backing layer 与 Otty RGBA 同步；非活动 Pane 不再叠加整块变暗遮罩；中央 28pt 标题改成 workspace surface 上的透明内容层，消除与 Pane 的重复材质接缝。偏好刷新同时覆盖全部存活 Session 与当前可见终端，避免分屏一侧停留旧主题。
 - 2026-08-09：主题详情改单色会写入 `~/.config/otty/themes/<theme-id>.ottytheme` 的 managed `# otty-added:` 段；恢复原色会从文件删除该段。对象测试使用注入的临时 Otty 目录，避免触碰用户主题。

@@ -152,28 +152,65 @@ func paneDropReordersWithoutRecreatingRuntimes() throws {
   #expect(tab.runtime(for: left) === leftRuntime)
 }
 
-/// 回归：非聚焦 Pane 曾覆盖 30% 的 window 色，普通主题被压灰，透明主题还会因为
-/// `withAlphaComponent` 把透明黑变成黑色。焦点状态不能改变主题画布的最终颜色。
-@Test("分屏焦点状态不再用整块遮罩改写主题背景")
+/// 设计要求：同一标签的多个 Pane 中，未聚焦者内容整体朝主题材质褪色（变灰）。
+/// 用内容 alpha 而不是颜色遮罩：透明主题的 window 色自带 alpha，
+/// `withAlphaComponent` 会把它画成近黑色块；alpha 褪色在任何主题下语义一致，
+/// 也不需要额外的点击穿透遮罩视图。
+@Test("非聚焦 Pane 内容褪色，焦点切换只做局部翻转")
 @MainActor
-func paneFocusDoesNotDimThemeBackground() throws {
-  let controller = try makeLaidOutSplitWorkspace(axis: .horizontal, tabBarLayout: .vertical)
+func inactivePaneContentIsDimmed() throws {
+  let (model, tab) = try makeSplitWorkspace()
+  model.splitSelectedTab(.right)
+  let suite = "AsterSplitDimTests.\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suite))
+  defaults.removePersistentDomain(forName: suite)
+  let controller = WorkspaceViewController(
+    model: model, preferences: AppPreferences(defaults: defaults))
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 800),
+    styleMask: [.titled, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  window.contentView?.layoutSubtreeIfNeeded()
+  defer {
+    for runtime in tab.runtimes.values { runtime.terminalSession?.stop(immediately: true) }
+    window.orderOut(nil)
+  }
 
   let hosts = paneHostViews(in: controller.view)
   #expect(hosts.count == 2)
+  // 仍不引入遮罩子视图：内容视图 + 拖动把手。
   for host in hosts {
-    // 内容视图 + 拖动把手；没有覆盖终端画布的额外 surface。
     #expect(host.subviews.count == 2)
-    let hasThinDecoration = host.subviews.contains { $0.frame.height <= 4 }
-    #expect(!hasThinDecoration)
     #expect(
       host.subviews.contains {
         String(describing: type(of: $0)).contains("ClickThroughStripView")
       } == false)
   }
-
-  // 路由状态仍精确区分一个活动 Pane，只是不再通过改底色表达。
   #expect(hosts.filter(\.isActivePane).count == 1)
+
+  func contentAlpha(of host: ActivePaneHostView) -> CGFloat? {
+    host.subviews.first { !String(describing: type(of: $0)).contains("DragHandle") }?.alphaValue
+  }
+
+  let activeCandidate = hosts.first { $0.isActivePane }
+  let inactiveCandidate = hosts.first { !$0.isActivePane }
+  let active = try #require(activeCandidate)
+  let inactive = try #require(inactiveCandidate)
+  let inactiveAlpha = try #require(contentAlpha(of: inactive))
+  #expect(contentAlpha(of: active) == 1)
+  #expect(inactiveAlpha < 1)
+
+  // 切换焦点：褪色状态局部翻转，host 实例保持不变（不触发整树重建）。
+  tab.setActivePane(inactive.paneID)
+  let dimmedAlpha = try #require(contentAlpha(of: active))
+  #expect(contentAlpha(of: inactive) == 1)
+  #expect(dimmedAlpha < 1)
+  let hostsAfter = paneHostViews(in: controller.view)
+  #expect(hostsAfter.count == 2)
+  #expect(hostsAfter.allSatisfy { after in hosts.contains { $0 === after } })
 }
 
 @Test("窗口失去键盘焦点时终端光标停止闪烁并保持形状")

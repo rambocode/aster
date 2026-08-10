@@ -278,13 +278,19 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   let id: UUID
   let createdAt: Date
   private(set) var updatedAt: Date
-  @Published var title: String {
+  /// 标签显示名。刻意不是 `@Published`：Agent CLI（Claude Code / codex）经 OSC 0/2
+  /// 每秒多次改标题，若走 `objectWillChange` 会让整个工作区视图树按标题频率重建，
+  /// 打断其他 Pane 的输入、IME 组合与滚动。视图层订阅 `titleChanged` 做行内局部更新。
+  var title: String {
     didSet {
       guard title != oldValue else { return }
       markUpdated()
+      titleChanged.send(title)
       onWorkspaceChanged?()
     }
   }
+  /// 标题的局部更新通道；只刷新侧栏/标签行文案，不重建视图树。
+  let titleChanged = PassthroughSubject<String, Never>()
   private var titleState: TerminalTitleState
   @Published var layout: PaneLayout {
     didSet {
@@ -817,8 +823,11 @@ final class TerminalTabItem: ObservableObject, Identifiable {
         fallback: Self.displayName(forDirectory: descriptor.workingDirectory)
       )
     }
-    // 终端运行态属于子 Session。只有会改变 Pane/详情内容的进程、退出和 provider 字段
-    // 转发 objectWillChange；纯徽章字段走下方局部事件，避免状态切换重建终端工作区。
+    // 终端运行态属于子 Session。只有真正改变 Pane 结构呈现的进程生命周期字段
+    // （启动/退出/启动失败——它们切换「运行中终端 ↔ 已退出占位」的视图形态）才转发
+    // objectWillChange。hasRunningCommand 与 activeAgentProvider 每条命令都翻转，
+    // 且重建树中无人消费（spinner 走徽章通道、Composer 标题按需读取），若进入本组
+    // 会让同一标签的其余 Pane 随任一 Pane 的命令开始/结束被重新安放。
     // OSC 标题与目录继续使用各自专用通道，不进入这两组 publisher。
     if let session = runtime.terminalSession {
       session.onTitleUpdate = { [weak self] code, text in
@@ -828,10 +837,8 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       Publishers.MergeMany(
         session.$lifecycleState.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$isRunning.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
-        session.$hasRunningCommand.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$exitCode.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
-        session.$startupError.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
-        session.$activeAgentProvider.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+        session.$startupError.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
       )
       .sink { [weak self] _ in self?.objectWillChange.send() }
       .store(in: &cancellables)
@@ -997,6 +1004,8 @@ final class AppModel: ObservableObject {
   var onRequestPictureInPicture: ((Bool) -> Void)?
   private let defaults: UserDefaults
   private let snapshotKey = "aster.workspace.snapshot.v1"
+  /// 合并窗口内是否已有待执行的快照写入；见 `schedulePersistWorkspace()`。
+  private var workspacePersistScheduled = false
   private let recentlyClosedKey = "aster.workspace.recently-closed.v1"
   private let frequentFoldersKey = "aster.frequent-folders.v1"
   private let workflowRecipeTrustKey = "aster.workflow-recipe-trust.v1"
@@ -3133,6 +3142,18 @@ final class AppModel: ObservableObject {
     if dismissesPalette { isPalettePresented = false }
   }
 
+  /// 高频来源（标题 / 布局 didSet）的快照持久化合并入口：500ms 窗口内的多次变更只
+  /// 落盘一次。结构性操作与退出流程仍直接调用 `persistWorkspace()` 立即写入。
+  func schedulePersistWorkspace() {
+    guard !workspacePersistScheduled else { return }
+    workspacePersistScheduled = true
+    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500)) { [weak self] in
+      guard let self else { return }
+      self.workspacePersistScheduled = false
+      self.persistWorkspace()
+    }
+  }
+
   func persistWorkspace() {
     guard let selectedTabID, !tabs.isEmpty else { return }
     let snapshot = WorkspaceSnapshot(
@@ -3145,7 +3166,7 @@ final class AppModel: ObservableObject {
   }
 
   private func configurePersistence(for tab: TerminalTabItem) {
-    tab.onWorkspaceChanged = { [weak self] in self?.persistWorkspace() }
+    tab.onWorkspaceChanged = { [weak self] in self?.schedulePersistWorkspace() }
     tab.onActivityBadgeChanged = { [weak self, weak tab] in
       guard let tab else { return }
       self?.tabActivityChanged.send(tab.id)
