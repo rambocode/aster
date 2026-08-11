@@ -39,7 +39,7 @@ func puaGlyphResolvesUnderSystemMonospacedFont() throws {
     .appendingPathComponent("Resources/fonts/AsterNerdSymbols-Regular.ttf")
   try BundledFontRegistry.registerNerdSymbols(at: fontURL)
 
-  // 用户未安装 JetBrains Mono 时的真实默认链:系统等宽字体 + Nerd cascade。
+  // 用户可显式选择任意系统等宽字体，Nerd cascade 仍必须负责 PUA 图标。
   let base = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
   let combined = BundledFontRegistry.addingNerdSymbolsFallback(to: base)
 

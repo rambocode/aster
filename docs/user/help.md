@@ -179,7 +179,7 @@ Fig 命令清单不会后台更新。需要刷新时，在同一设置区域点�
 - “设置 → 外观 → 文本”可选择关闭、标准或 discretionary 连字，并设置粗体、斜体与 blink 的渲染策略。blink 默认稳定显示；选择动画后才会闪烁。
 - 双向文本默认开启。希伯来文、阿拉伯文和混合方向行按阅读顺序显示，但复制、查找和粘贴仍使用程序写入的逻辑顺序；左右键与鼠标命中跟随视觉位置。遇到自行排版 RTL 的全屏 TUI，可在设置中关闭。程序进入 ECMA-48 mode 8 时 Aster 会自动暂停隐式重排。
 - 终端程序可以显示 iTerm2、Kitty 和 Sixel 图片。Aster 会限制输入、分片、解压、像素尺寸与缓存；损坏、取消或超限图片会被丢弃，不影响之后的正常终端输出。
-- 应用包内置 Aster Nerd Symbols fallback；即使基础字体没有 Powerline 或 Nerd Font 图标，终端仍能解析 BMP 与补充平面符号。基础正文继续使用你在“设置 → 外观”选择的字体。
+- 应用包原样内置 Otty 1.3.1 使用的 JetBrains Mono、Office Code Pro 和 Symbols Nerd Font Mono，同时保留 Aster Nerd Symbols fallback；无需另行安装这些字体。即使选择的基础字体没有 Powerline 或 Nerd Font 图标，终端仍能解析 BMP 与补充平面符号。
 
 ### 任务进度、徽章与通知
 
@@ -331,7 +331,7 @@ Glass Light 与 Glass Dark 会保留主题的真实透明值，由 macOS 原生�
 - “主题”写入当前主题：主字体写入 `font-mono` 候选栈首位（其余候选保留），逐样式字体写入主题的 `font-mono-bold` / `font-mono-italic` / `font-mono-bold-italic`。内置主题会先自动创建可编辑副本。“字体候选栈”一行仍可直接编辑完整候选列表。
 - “回退”只在主字体缺少字符时补字；Aster Nerd Symbols 始终优先保证 Powerline 和 Nerd 图标可见。
 
-如果只设置普通字体并开启“自动匹配粗细与样式”，Aster 会从同一字体家族寻找粗体、斜体和粗斜体。找不到时会安全回退到普通字体。配置中的字体未安装时，输入框原样保留该名字、不静默改写；“计算值”页展示实际解析采用的字体。注意 Nerd Fonts 补丁版的族名与原版不同（例如 `JetBrainsMono Nerd Font` 而非 `JetBrains Mono`），请以下拉列表中的实际名称为准。
+如果只设置普通字体并开启“自动匹配粗细与样式”，Aster 会从同一字体家族寻找粗体、斜体和粗斜体。找不到时会安全回退到普通字体。默认的 JetBrains Mono 2.304 随应用分发并在启动时注册，不要求系统预先安装。用户配置的其他字体未安装时，输入框原样保留该名字、不静默改写；终端最终改用 macOS 自带的 Menlo Regular，“计算值”页展示这一实际结果。注意 Nerd Fonts 补丁版的族名与原版不同（例如 `JetBrainsMono Nerd Font` 而非 `JetBrains Mono`），请以下拉列表中的实际名称为准。
 
 ### 光标
 

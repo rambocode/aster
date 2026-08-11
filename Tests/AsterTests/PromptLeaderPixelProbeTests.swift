@@ -4,8 +4,8 @@ import Testing
 @testable import Aster
 @testable import SwiftTerm
 
-// 提示符引导字符像素探针:按默认 pane 的真实字体链(JetBrains Mono 未安装 →
-// 系统等宽字体 + Nerd cascade)渲染 "❯",断言其单元格内确实画出了墨水。
+// 提示符引导字符像素探针:按用户选择系统等宽字体时的 fallback 链渲染 "❯",
+// 断言 Nerd cascade 下该字符仍在自己的单元格内画出墨水。
 
 /// 用给定字体渲染一行文本,返回非背景像素的 x 范围与总数(设备像素坐标)。
 @MainActor

@@ -30,7 +30,7 @@ Aster 0.4.0 将内置主题升级为 Otty 1.3.1 的完整主题集，并由纯 A
 7. 主题变更必须同步更新 AppKit 工作区、设置窗口、终端前景/背景、ANSI 256 色派生、选区前景/背景和光标前景/文字。
 8. 标签栏自动隐藏只在开启该选项且工作区只有一个标签页时生效。
 9. Otty 的 `background = "none"` 必须保留为透明 RGBA；终端 `nativeBackgroundColor` 与 backing layer 同步使用该 RGBA，让 workspace 的原生材质直接透出。不得把截图采样灰、固定黑色透明度或主题 `surface` 当作 Glass 的真实终端背景。脱离工作区材质宿主的 PiP、候选面板等浮层仍使用主题 `surface`。旧版 `Catppuccin` 选择迁移为 `Catppuccin Mocha`。
-10. 字体按“全局角色字体 → 主题 `token.font-mono` → JetBrains Mono”解析；粗体、斜体、粗斜体按“全局显式设置 → 主题 `token.font-mono-bold` / `-italic` / `-bold-italic` → 从常规字体自动匹配”独立解析。以 `.` 开头的隐藏系统字体名不是稳定 API，读取配置时一律视为未设置（历史版本曾把计算结果固化进配置导致字体设置不可用），设置页也绝不将其写入配置。Nerd Symbols 与用户回退字体只参与缺字级联，不替换正文主字体。
+10. 字体按“全局角色字体 → 主题 `token.font-mono` → 内置 JetBrains Mono → Menlo Regular”解析；粗体、斜体、粗斜体按“全局显式设置 → 主题 `token.font-mono-bold` / `-italic` / `-bold-italic` → 从常规字体自动匹配”独立解析。Aster 将 Otty 1.3.1 的 JetBrains Mono、Office Code Pro 和 Symbols Nerd Font Mono 字体文件原样随包分发，并在启动时以 CoreText `.process` 作用域逐一注册；默认字体不依赖用户是否全局安装，JetBrains Mono 的粗细与斜体样式由字体自身轴解析。Aster 重命名的 Nerd Symbols 仍是图标级联真值，Otty 原名 Symbols 字体仅作为可选择的内置字体，不改变 fallback 顺序。资源损坏或用户指定字体未安装时使用 macOS 自带的 Menlo Regular，而不落到 Metal 下笔画偏重的隐藏系统等宽 UI 字体；Menlo 不可用的极端环境才使用系统等宽字体。以 `.` 开头的隐藏系统字体名不是稳定 API，读取配置时一律视为未设置（历史版本曾把计算结果固化进配置导致字体设置不可用），设置页也绝不将其写入配置。Nerd Symbols 与用户回退字体只参与缺字级联，不替换正文主字体。
 11. 光标形状始终以用户配置为真值；“默认”闪烁模式只允许终端程序通过 DECSCUSR 临时调整 blink 位，“始终”模式连 blink 位也固定。颜色覆盖、不透明度、平滑动画、Agent 处理期间及失焦停止闪烁均在两种模式下生效。
 12. 设置详情与最终 AppKit 对象必须共用 `TerminalTheme.resolvedColor(forSlot:)` 的级联结果。窗口、容器、左右 Sidebar、标题栏、标签栏、标签、光标、选区和 ANSI 颜色不得在视图层另设近似回退。
 13. 对原本没有宽度的 `container.border` 或 `tab.activeBorderColor` 写入颜色时，同时启用 1pt 边框，保证设置项在最终画面中可见。

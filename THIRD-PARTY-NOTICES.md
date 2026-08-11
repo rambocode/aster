@@ -35,6 +35,28 @@ Aster derives its bundled command-name index from the 715 direct command specifi
 
 Copyright (c) 2014 Ryan L McIntyre; font metadata also credits Ryan McIntyre (2016).
 
-Aster bundles the Symbols Nerd Font Mono 3.4.0 symbols-only font as a terminal fallback. The derivative is renamed `Aster Nerd Symbols` / `AsterNerdSymbols` to avoid colliding with a user-installed copy; glyph outlines and code points are unchanged. Nerd Fonts' license audit identifies the Symbols Only font as MIT licensed: <https://github.com/ryanoasis/nerd-fonts/blob/v3.4.0/license-audit.md>.
+Aster bundles the Symbols Nerd Font Mono file distributed with Otty 1.3.1, plus the Symbols Nerd Font Mono 3.4.0 symbols-only font used as Aster's terminal fallback. The fallback derivative is renamed `Aster Nerd Symbols` / `AsterNerdSymbols` to avoid colliding with a user-installed copy; glyph outlines and code points are unchanged. Nerd Fonts' license audit identifies the Symbols Only font as MIT licensed: <https://github.com/ryanoasis/nerd-fonts/blob/v3.4.0/license-audit.md>.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files, to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies, provided that the copyright and permission notice are included in all copies or substantial portions. The software is provided “as is”, without warranty of any kind; the authors are not liable for claims, damages, or other liability arising from its use.
+
+## JetBrains Mono
+
+Copyright 2020 The JetBrains Mono Project Authors.
+
+Aster bundles the Regular and Italic variable fonts from JetBrains Mono 2.304 as its default
+terminal typeface. JetBrains Mono is distributed under the SIL Open Font License 1.1. The full
+license is included at `Resources/fonts/JetBrainsMono-OFL.txt`.
+
+Source: https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304
+
+The bundled TTF files are copied byte-for-byte from Otty 1.3.1's application resources.
+
+## Office Code Pro
+
+Copyright 2015 Adobe & Nathan Rutzky.
+
+Aster bundles the Regular, Bold, Italic, and Bold Italic Office Code Pro 1.004 files distributed
+with Otty 1.3.1. Office Code Pro is distributed under the SIL Open Font License 1.1. The full
+license is included at `Resources/fonts/OfficeCodePro-OFL.txt`.
+
+Source: https://github.com/nathco/Office-Code-Pro

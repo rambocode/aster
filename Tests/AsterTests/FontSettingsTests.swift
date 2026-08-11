@@ -32,6 +32,21 @@ func hiddenSystemFontNamesAreSanitized() throws {
   #expect(polluted.boldItalic.fontName == clean.boldItalic.fontName)
 }
 
+@Test("用户指定字体不可用时最终回退 Menlo Regular 而不是偏重的隐藏系统字体")
+@MainActor
+func unavailablePrimaryFontFallsBackToMenloRegular() throws {
+  let preferences = try isolatedPreferences()
+  preferences.configuration.appearance.fontFamily = "Aster Missing Font \(UUID().uuidString)"
+
+  let variants = preferences.terminalFontVariants
+  let manager = NSFontManager.shared
+
+  #expect(variants.normal.fontName == "Menlo-Regular")
+  #expect(!manager.traits(of: variants.normal).contains(.boldFontMask))
+  #expect(variants.bold.fontName == "Menlo-Bold")
+  #expect(manager.traits(of: variants.bold).contains(.boldFontMask))
+}
+
 @Test("主题逐样式字体进入解析链,全局显式设置仍然优先")
 @MainActor
 func themeStyleFontsParticipateInResolution() throws {

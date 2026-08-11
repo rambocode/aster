@@ -187,10 +187,17 @@ final class AppPreferences: ObservableObject {
     let appearance = configuration.appearance
     let globalFamily = sanitizedFontName(appearance.fontFamily) ?? ""
     let systemMonospaced = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+    // Aster 启动时会按进程注册内置 JetBrains Mono，因此默认配置在所有支持的 macOS
+    // 环境中都有相同字面。这里只处理资源损坏或用户指定字体缺失：不能静默落到隐藏
+    // 的系统等宽 UI 字体，因为它在 Metal 路径下视觉偏重；先用具备完整样式的 Menlo，
+    // 极端情况下 Menlo 也不可用才使用系统等宽字体。
+    let unavailableFontFallback =
+      NSFont(name: "Menlo-Regular", size: fontSize) ?? systemMonospaced
     let themeStyle = activeTheme.style
     let normal: NSFont
     if !globalFamily.isEmpty {
-      normal = BundledFontRegistry.font(named: globalFamily, size: fontSize) ?? systemMonospaced
+      normal =
+        BundledFontRegistry.font(named: globalFamily, size: fontSize) ?? unavailableFontFallback
     } else if let candidates = themeStyle.fontFamilies, !candidates.isEmpty {
       // Otty 的 font-mono 是按顺序解析的字体栈；首项未安装不能直接退到系统字体，
       // 否则后面的 SF Mono / Menlo 永远没有机会生效。generic `monospace` 是栈终点。
@@ -201,10 +208,10 @@ final class AppPreferences: ObservableObject {
         return BundledFontRegistry.font(named: name, size: self.fontSize)
       }.first
         ?? BundledFontRegistry.font(named: "JetBrains Mono", size: fontSize)
-        ?? systemMonospaced
+        ?? unavailableFontFallback
     } else {
       normal = BundledFontRegistry.font(named: "JetBrains Mono", size: fontSize)
-        ?? systemMonospaced
+        ?? unavailableFontFallback
     }
     let manager = NSFontManager.shared
     // 逐样式解析链与主链一致:全局显式设置 → 主题逐样式 → 从常规字体自动匹配。
