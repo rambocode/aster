@@ -241,6 +241,63 @@ func commandClickLinkBypassesMouseReporting() throws {
   #expect(opened.first?.1 == .osc8)
 }
 
+@Test("相对本地文件链接预览显示可实际打开的完整路径")
+@MainActor
+func relativeFileLinkPreviewUsesResolvedAbsolutePath() throws {
+  let suite = "RelativeFileLinkPreview.\(UUID().uuidString)"
+  let defaults = UserDefaults(suiteName: suite)!
+  defaults.removePersistentDomain(forName: suite)
+  let preferences = AppPreferences(defaults: defaults)
+  let directory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("aster-link-preview-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let session = TerminalSession(workingDirectory: directory.path)
+  let view = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+  view.resize(cols: 40, rows: 2)
+  view.dataReceived(slice: Array("README.md".utf8)[...])
+
+  view.reportLink(at: Position(col: 0, row: 0))
+
+  #expect(
+    view.urlPreview?.stringValue
+      == directory.appendingPathComponent("README.md").path
+  )
+}
+
+@Test("终端链接使用连续实线下划线")
+@MainActor
+func terminalLinksUseSolidUnderline() throws {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let attributes = try #require(view.getAttributes(.empty, withUrl: true))
+
+  #expect(
+    attributes[SwiftTermUnderlineStyleKey] as? Int
+      == Int(UnderlineStyle.single.rawValue)
+  )
+}
+
+@Test("可点击链接使用手形指针且非链接保持文本指针")
+@MainActor
+func clickableTerminalLinkUsesPointingHandCursor() {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  view.resize(cols: 40, rows: 2)
+  view.linkReporting = .implicit
+  view.linkHighlightMode = .hoverWithModifier
+  view.dataReceived(
+    slice: Array("\u{1B}]8;;https://example.com\u{1B}\\link\u{1B}]8;;\u{1B}\\ plain".utf8)[...])
+  let linkPosition = Position(col: 0, row: 0)
+  view.updateHoverLink(at: linkPosition, commandOverride: true)
+
+  #expect(view.shouldUseLinkPointer(at: linkPosition, hasCommandModifier: true))
+  #expect(!view.shouldUseLinkPointer(at: linkPosition, hasCommandModifier: false))
+  #expect(!view.shouldUseLinkPointer(at: Position(col: 8, row: 0), hasCommandModifier: true))
+
+  view.linkReporting = .none
+  #expect(!view.shouldUseLinkPointer(at: linkPosition, hasCommandModifier: true))
+}
+
 @Test("Aster responder 动作按设置驱动线性与矩形扩选")
 @MainActor
 func asterSelectionRespondersHonorConfiguration() {

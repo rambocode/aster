@@ -21,7 +21,9 @@ record the new version and revision here.
   overscroll limits, and gesture-locked mouse-reporting/link bypass rules. Its pointer-move and
   wheel entry points are open so Aster's Read-only mode can suppress reports while preserving
   local selection and scrollback; size changes are open so navigation modes can invalidate
-  reflowed coordinates.
+  reflowed coordinates. The same host seam accepts a configurable bypass modifier set, tracks the
+  physical left/right Option keys for per-side Meta behavior, gates VT100 application-keypad SS3
+  encoding, exposes pointer hit positions, and independently enables the URL preview.
 - `Apple/AppleTerminalView.swift` and `Apple/Metal/MetalTerminalRenderer.swift` apply the fractional
   viewport translation to Core Graphics and Metal rendering; the iOS view provides the shared API
   with a zero translation.
@@ -56,6 +58,13 @@ record the new version and revision here.
   Aster's keyboard Hint Mode and a scroll-invariant line range for Vi Mode snapshots. The outer
   `shouldSendUserData(_:)` is an overridable preflight hook so Read-only can reject input before
   selection/viewport side effects.
+- `Mac/MacTerminalView.swift` exposes a display-only link preview formatter so Aster can expand
+  relative paths with its trusted Session CWD while preserving the original click payload.
+  `Apple/AppleTerminalView.swift` renders implicit and OSC 8 link affordances with a continuous
+  single underline instead of the low-visibility dashed pattern; AppKit and Metal consume the
+  same shared attribute marker. The macOS view also derives its pointing-hand cursor from the
+  same link visibility and mouse-reporting gates used by click activation, and keeps
+  `cursorUpdate(with:)` open so Aster can include its extended scheme detector.
 - `Apple/AppleTerminalView.swift` resolves Private Use Area characters (powerline separators,
   nerd symbols) against the base font's explicit cascade list when building line segments
   (`Utilities.swift` adds `UnicodeUtil.isPrivateUse`). Hidden system UI fonts such as

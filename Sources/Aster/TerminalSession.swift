@@ -125,6 +125,9 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// 所有链接打开请求必须先进入 Aster 的解析与授权层，禁止调用 SwiftTerm 默认的
   /// `NSWorkspace.open` 路径绕过 scheme、可执行文件和特殊文件检查。
   var onRequestOpenTarget: ((String, DetectedTargetSource) -> Void)?
+  /// Focus-follows-mouse 只请求本 Pane 成为 first responder；工作区现有 responder 观察器
+  /// 继续负责更新活动 Pane，避免终端视图越过 WorkspaceModel 直接改选择状态。
+  var onRequestFocus: (() -> Void)?
   /// Hint Mode 的复制动作需要规范化 URL 或相对路径，但不能触发文件打开和权限确认。
   var onResolveHintCopyTarget: ((String, DetectedTargetSource) -> String?)?
   /// Read-only 拒绝用户输入时只发出一次即时反馈；测试可替换该回调避免系统声音。
@@ -148,6 +151,13 @@ final class AsterTerminalView: LocalProcessTerminalView {
   var copyOnSelect = false
   var trimTrailingSpacesOnCopy = false
   var clearSelectionOnCopy = false
+  var selectionBackspaceDeletes = true
+  var rightClickAction = TerminalRightClickAction.contextMenu
+  var mouseHideWhileTyping = false
+  var focusFollowsMouse = false
+  var linkClickOverMouseMode = true
+  var cursorClickToMove = true
+  private var pendingCursorMovePosition: Position?
   /// Otty 默认由 Shift+Arrow 驱动原生选区；关闭时菜单快捷键失效，事件回到 TUI。
   var shiftArrowSelectionEnabled = true
   var pasteProtectionEnabled = true
@@ -421,12 +431,34 @@ final class AsterTerminalView: LocalProcessTerminalView {
       super.keyDown(with: event)
       return
     }
+    if mouseHideWhileTyping { NSCursor.setHiddenUntilMouseMoves(true) }
     if handleBidirectionalArrow(event) { return }
     if onAutocompleteKeyDown?(event) == true { return }
     // macOS keyCode 51 is the backward Delete/Backspace key. Only consume it when OSC 133
     // proves the selection belongs to the current editable prompt; otherwise preserve TUI input.
-    if event.keyCode == 51, deletePromptSelectionIfSafe() { return }
+    if selectionBackspaceDeletes, event.keyCode == 51, deletePromptSelectionIfSafe() { return }
     super.keyDown(with: event)
+  }
+
+  override func mouseEntered(with event: NSEvent) {
+    super.mouseEntered(with: event)
+    if focusFollowsMouse { onRequestFocus?() }
+  }
+
+  override func rightMouseDown(with event: NSEvent) {
+    // Otty 保留 Control + 右键作为逃生入口；即使用户把普通右键设为复制或忽略，
+    // 仍能访问完整终端菜单。
+    if event.modifierFlags.contains(.control) || rightClickAction == .contextMenu {
+      super.rightMouseDown(with: event)
+      return
+    }
+    switch rightClickAction {
+    case .contextMenu: super.rightMouseDown(with: event)
+    case .copy: copy(self)
+    case .paste: paste(self)
+    case .copyOrPaste: selectionActive ? copy(self) : paste(self)
+    case .ignore: break
+    }
   }
 
   /// Shell 行编辑器只理解逻辑 Left/Right。隐式 BiDi 开启时，根据当前逻辑光标在
@@ -1114,6 +1146,11 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// `scheme://`，在 mouseDown 阶段先截住，避免 TUI 收到一半鼠标序列；mouseUp 再由
   /// Aster 的行内检测器补发。OSC 8 的显示标签通常不是 URL，仍完整交给 SwiftTerm。
   override func mouseDown(with event: NSEvent) {
+    pendingCursorMovePosition = cursorClickToMove
+      && event.type == .leftMouseDown
+      && !isMouseButtonReportingActive
+      && event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
+      ? calculateMouseHit(with: event).grid : nil
     let previousMouseReporting = allowMouseReporting
     if paneModeState.inputDecision != .forwardToProcess { allowMouseReporting = false }
     defer { allowMouseReporting = previousMouseReporting }
@@ -1121,11 +1158,17 @@ final class AsterTerminalView: LocalProcessTerminalView {
       super.mouseDown(with: event.removingCommandModifier() ?? event)
       return
     }
-    if event.modifierFlags.contains(.command), customSchemeURL(at: event) != nil { return }
+    if event.modifierFlags.contains(.command), customSchemeURL(at: event) != nil,
+      linkClickOverMouseMode || !isMouseButtonReportingActive
+    { return }
     super.mouseDown(with: event)
   }
 
   override func mouseUp(with event: NSEvent) {
+    defer {
+      if let position = pendingCursorMovePosition { movePromptCursor(to: position) }
+      pendingCursorMovePosition = nil
+    }
     if case .none = linkReporting {
       super.mouseUp(with: event.removingCommandModifier() ?? event)
       return
@@ -1136,16 +1179,61 @@ final class AsterTerminalView: LocalProcessTerminalView {
     super.mouseUp(with: event)
     guard !didForwardLinkInCurrentMouseUp,
       event.modifierFlags.contains(.command),
+      linkClickOverMouseMode || !isMouseButtonReportingActive,
       let link = customSchemeURL(at: event)
     else { return }
     onRequestOpenTarget?(link, .plainText)
   }
 
+  /// 单击只在 OSC 133 证明当前行是可编辑提示符时转换为左右方向键。选区、宽字符、
+  /// alternate screen 和运行中命令均拒绝处理，避免向 TUI 或不可靠 Shell 状态注入按键。
+  private func movePromptCursor(to position: Position) {
+    guard cursorClickToMove, !selectionActive, permitsUserInputAction() else { return }
+    let terminal = getTerminal()
+    guard !terminal.isCurrentBufferAlternate,
+      !shellCommandTimeline.isCommandRunning,
+      let inputStart = shellCommandTimeline.currentInputStart,
+      let line = terminal.getLine(row: position.row)
+    else { return }
+    let absoluteRow = terminal.buffer.totalLinesTrimmed + position.row
+    let cursor = terminal.cursorAbsolutePosition
+    guard absoluteRow == inputStart.row, absoluteRow == cursor.row else { return }
+    let text = line.translateToString(trimRight: true, skipNullCellsFollowingWide: true)
+    guard text.unicodeScalars.allSatisfy(\.isASCII) else { return }
+    let lastColumn = max(inputStart.column, text.utf8.count)
+    let targetColumn = min(max(position.col, inputStart.column), lastColumn)
+    let delta = targetColumn - cursor.col
+    guard delta != 0 else { return }
+    let suffix = delta < 0 ? "D" : "C"
+    send(data: Array("\u{1B}[\(abs(delta))\(suffix)".utf8)[...])
+  }
+
   override func mouseMoved(with event: NSEvent) {
     // SwiftTerm 的 mouseMoved 路径不读取 allowMouseReporting。模式锁定时直接忽略 hover
     // 报告，避免 Read-only、Vi 或 Hint 在用户移动指针时向 TUI 写入 CSI 序列。
-    guard paneModeState.inputDecision == .forwardToProcess else { return }
+    guard paneModeState.inputDecision == .forwardToProcess else {
+      NSCursor.iBeam.set()
+      return
+    }
     super.mouseMoved(with: event)
+    // SwiftTerm 覆盖标准 URL、文件路径和 OSC 8；Aster 的扩展检测器还支持任意合法
+    // `scheme://`。只有该目标会实际由本地点击处理时才覆盖为手形，避免 TUI 接管鼠标
+    // 或用户关闭链接检测后仍给出可点击的错误暗示。
+    if linkUsesAsterPointingHand(for: event) { NSCursor.pointingHand.set() }
+  }
+
+  override func cursorUpdate(with event: NSEvent) {
+    super.cursorUpdate(with: event)
+    if linkUsesAsterPointingHand(for: event) { NSCursor.pointingHand.set() }
+  }
+
+  private func linkUsesAsterPointingHand(for event: NSEvent) -> Bool {
+    guard event.modifierFlags.contains(.command),
+      linkClickOverMouseMode || !isMouseButtonReportingActive,
+      customSchemeURL(at: event) != nil
+    else { return false }
+    if case .none = linkReporting { return false }
+    return true
   }
 
   override func scrollWheel(with event: NSEvent) {
@@ -2168,6 +2256,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   var onTitleUpdate: ((Int, String) -> Void)?
   /// Vi `/` 或 `?` 请求显示现有查找栏；工作区拥有展示状态，Session 只保存方向。
   var onRequestFind: (() -> Void)?
+  var onRequestPaneFocus: (() -> Void)?
+  /// 终端链接选择“在 Aster 中打开”时，由所属 WorkspaceTab 注入 Pane 创建动作。
+  /// 返回 false 表示当前目标不属于 Aster 内部 Pane 能力，协调器会安全回退系统应用。
+  var onRequestOpenInAster: ((URL, Bool) -> Bool)?
   var onCommandFinished: (() -> Void)?
   var onPasteIntoComposer: ((String) -> Void)? {
     didSet { terminalView?.onPasteIntoComposer = onPasteIntoComposer }
@@ -2298,8 +2390,21 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.onObservedTitleUpdate = { [weak self] code, title in
       Task { @MainActor [weak self] in self?.handleTitleOSC(code: code, text: title) }
     }
-    let targetOpenCoordinator = TerminalTargetOpenCoordinator(preferences: preferences)
+    let targetOpenCoordinator = TerminalTargetOpenCoordinator(
+      preferences: preferences,
+      openInAster: { [weak self] url, isDirectory in
+        self?.onRequestOpenInAster?(url, isDirectory) ?? false
+      }
+    )
     self.targetOpenCoordinator = targetOpenCoordinator
+    view.linkPreviewFormatter = { [weak self] rawValue in
+      guard let self else { return rawValue }
+      return targetOpenCoordinator.previewText(
+        rawValue,
+        currentDirectory: self.currentWorkingDirectoryIsLocal
+          ? self.currentWorkingDirectory : ""
+      )
+    }
     view.onRequestOpenTarget = { [weak self] rawValue, source in
       Task { @MainActor [weak self] in
         guard let self else { return }
@@ -2310,6 +2415,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
             ? self.currentWorkingDirectory : ""
         )
       }
+    }
+    view.onRequestFocus = { [weak self, weak view] in
+      self?.onRequestPaneFocus?()
+      guard let view, view.window?.firstResponder !== view else { return }
+      view.window?.makeFirstResponder(view)
     }
     view.onResolveHintCopyTarget = { [weak self] rawValue, source in
       self?.resolvedHintCopyTarget(rawValue, source: source)
@@ -3036,12 +3146,37 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.getTerminal().options.widenedEastAsianAmbiguousBlocks = swiftTermAmbiguousWidthBlocks(
       preferences.configuration.appearance.resolvedWidenedEastAsianAmbiguousBlocks)
     view.applyThemePalette(preferences)
-    view.optionAsMetaKey = preferences.optionAsMeta
+    let controls = preferences.configuration.controls
+    let optionMode = controls.resolvedOptionAsMetaMode
+    view.optionAsMetaKey = optionMode != .off
+    view.optionAsMetaKeyCodes = switch optionMode {
+    case .off: []
+    case .both: [58, 61]
+    case .left: [58]
+    case .right: [61]
+    }
+    view.vtKeypadApplicationModeAllowed = controls.resolvedVTKeypadAppAllowed
     view.allowMouseReporting = preferences.allowMouseReporting
+    view.mouseReportingBypassModifiers = switch controls.resolvedBypassMouseReporting {
+    case .none: []
+    case .shift: [.shift]
+    case .control: [.control]
+    case .option: [.option]
+    case .controlShift: [.control, .shift]
+    case .command: [.command]
+    }
+    view.rightClickAction = controls.resolvedRightClickAction
+    view.mouseHideWhileTyping = controls.resolvedMouseHideWhileTyping
+    view.focusFollowsMouse = controls.focusFollowsMouse
+    view.linkClickOverMouseMode = controls.resolvedLinkClickOverMouseMode
+    view.linkActivationOverMouseReporting = controls.resolvedLinkClickOverMouseMode
+    view.cursorClickToMove = controls.resolvedCursorClickToMove
+    view.selectionBackspaceDeletes = controls.resolvedSelectionBackspaceDeletes
     view.linkReporting =
       preferences.configuration.controls.resolvedLinkDetectionEnabled
       ? .implicit : .none
     view.linkSchemePolicy = preferences.configuration.controls.resolvedLinkSchemePolicy
+    view.linkPreviewEnabled = controls.showLinkPreviews
     view.copyOnSelect = preferences.configuration.controls.copyOnSelect
     view.trimTrailingSpacesOnCopy = preferences.configuration.controls.trimTrailingSpaces
     view.shiftArrowSelectionEnabled =

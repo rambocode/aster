@@ -369,7 +369,7 @@ public enum WorkflowRecipeTOML {
             field: "pane.resource_path",
             allowEmpty: false
           )
-          try WorkflowPortablePath.validateTemplate(resourcePath)
+          try validateResource(resourcePath, kind: pane.kind)
         }
         if index == 0, pane.split != nil || pane.size != nil {
           throw WorkflowRecipeTOMLError.invalidStructure
@@ -474,7 +474,7 @@ public enum WorkflowRecipeTOML {
           field: "layout.pane.resource_path",
           allowEmpty: false
         )
-        try WorkflowPortablePath.validateTemplate(resourcePath)
+        try validateResource(resourcePath, kind: pane.kind)
       }
       panes.append(pane)
     case .split(_, let first, let second, let ratio):
@@ -514,6 +514,19 @@ public enum WorkflowRecipeTOML {
     guard !containsRejectedControl else {
       throw WorkflowRecipeTOMLError.invalidValue(field, line: 0)
     }
+  }
+
+  /// 本地 Pane 使用可移植文件路径；Web Pane 则只允许带 host 的 HTTP(S) URL。
+  /// 两类资源在同一字段往返，但不能互相借用协议能力。
+  private static func validateResource(_ value: String, kind: PaneKind) throws {
+    guard kind == .web else {
+      try WorkflowPortablePath.validateTemplate(value)
+      return
+    }
+    guard let url = URL(string: value),
+      ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+      url.host != nil
+    else { throw WorkflowPortablePathError.invalidPath }
   }
 
   private static func encodeString(_ value: String) -> String {

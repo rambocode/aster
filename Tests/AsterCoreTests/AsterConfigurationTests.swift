@@ -32,6 +32,14 @@ func defaultConfigurationMatchesReferenceWorkspace() {
   #expect(configuration.appearance.terminalIdentity == "auto")
   #expect(configuration.controls.allowMouseReporting)
   #expect(!configuration.controls.optionAsMeta)
+  #expect(configuration.controls.resolvedOptionAsMetaMode == .off)
+  #expect(configuration.controls.resolvedVTKeypadAppAllowed)
+  #expect(configuration.controls.resolvedRightClickAction == .contextMenu)
+  #expect(configuration.controls.resolvedBypassMouseReporting == .shift)
+  #expect(configuration.controls.resolvedLinkOpenWith == .browser)
+  #expect(configuration.controls.resolvedFileOpenWith == .aster)
+  #expect(configuration.controls.resolvedFolderOpenWith == .aster)
+  #expect(configuration.controls.resolvedSelectionBackspaceDeletes)
   #expect(!configuration.controls.trimTrailingSpaces)
   #expect(configuration.controls.resolvedShiftArrowSelection)
   #expect(configuration.controls.resolvedClearSelectionOnTyping)
@@ -261,6 +269,8 @@ func legacyControlConfigurationDefaultsLinkSafety() throws {
   object.removeValue(forKey: "detectAllLinkSchemes")
   object.removeValue(forKey: "customLinkSchemes")
   object.removeValue(forKey: "allowedNonStandardLinkSchemes")
+  object.removeValue(forKey: "allowedExternalLinkHosts")
+  object.removeValue(forKey: "allowedExecutableFileSignatures")
   let legacyData = try JSONSerialization.data(withJSONObject: object)
 
   let decoded = try JSONDecoder().decode(ControlConfiguration.self, from: legacyData)
@@ -268,6 +278,8 @@ func legacyControlConfigurationDefaultsLinkSafety() throws {
   #expect(decoded.resolvedLinkDetectionEnabled)
   #expect(decoded.resolvedLinkSchemePolicy == .all)
   #expect(decoded.resolvedAllowedNonStandardLinkSchemes.isEmpty)
+  #expect(decoded.resolvedAllowedExternalLinkHosts.isEmpty)
+  #expect(decoded.resolvedAllowedExecutableFileSignatures.isEmpty)
 }
 
 @Test("旧控制配置缺少剪贴板字段时使用安全且兼容的默认值")
@@ -290,6 +302,35 @@ func legacyControlConfigurationDefaultsClipboardSafety() throws {
   #expect(decoded.resolvedPasteBracketedSafe)
   #expect(decoded.resolvedClipboardWriteAccess == .allow)
   #expect(decoded.resolvedClipboardReadAccess == .ask)
+}
+
+@Test("旧控制配置缺少交互字段时采用 Otty 控制页默认值")
+func legacyControlConfigurationDefaultsInteractiveControls() throws {
+  let data = try JSONEncoder().encode(ControlConfiguration())
+  var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+  for key in [
+    "optionAsMetaMode", "vtKeypadAppAllowed", "rightClickAction", "mouseHideWhileTyping",
+    "bypassMouseReporting", "linkClickOverMouseMode", "cursorClickToMove",
+    "secureInputIndication", "selectionBackspaceDeletes", "linkOpenWith", "fileOpenWith",
+    "folderOpenWith", "openWithApplications",
+  ] {
+    object.removeValue(forKey: key)
+  }
+  let decoded = try JSONDecoder().decode(
+    ControlConfiguration.self,
+    from: JSONSerialization.data(withJSONObject: object)
+  )
+
+  #expect(decoded.resolvedOptionAsMetaMode == .off)
+  #expect(decoded.resolvedVTKeypadAppAllowed)
+  #expect(decoded.resolvedRightClickAction == .contextMenu)
+  #expect(!decoded.resolvedMouseHideWhileTyping)
+  #expect(decoded.resolvedBypassMouseReporting == .shift)
+  #expect(decoded.resolvedLinkClickOverMouseMode)
+  #expect(decoded.resolvedCursorClickToMove)
+  #expect(decoded.resolvedSecureInputIndication)
+  #expect(decoded.resolvedSelectionBackspaceDeletes)
+  #expect(decoded.resolvedOpenWithApplications.isEmpty)
 }
 
 @Test("旧控制配置缺少滚动边界字段时保持传统边界")
@@ -347,11 +388,15 @@ func configurationNormalizesLinkSafetyExceptions() {
   var configuration = AsterConfiguration.default
   configuration.controls.customLinkSchemes = ["VSCODE", "vscode", "bad scheme", "x"]
   configuration.controls.allowedNonStandardLinkSchemes = ["CODEX", "codex", "bad:"]
+  configuration.controls.allowedExternalLinkHosts = [" Example.COM ", "bad/path"]
+  configuration.controls.allowedExecutableFileSignatures = ["signature-v1", "bad\nvalue"]
 
   let normalized = configuration.normalized()
 
   #expect(normalized.controls.resolvedCustomLinkSchemes == ["vscode", "x"])
   #expect(normalized.controls.resolvedAllowedNonStandardLinkSchemes == ["codex"])
+  #expect(normalized.controls.resolvedAllowedExternalLinkHosts == ["example.com"])
+  #expect(normalized.controls.resolvedAllowedExecutableFileSignatures == ["signature-v1"])
 }
 
 @Test("标签栏自动隐藏只在单标签工作区生效")

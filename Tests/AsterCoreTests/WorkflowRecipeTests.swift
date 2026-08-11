@@ -118,6 +118,49 @@ func workflowRecipeTOMLRoundTripsNestedMixedPaneLayout() throws {
   #expect(restored.tabs[0].layout == layout)
 }
 
+@Test("Recipe Web Pane 只允许 HTTP(S) URL 并可无损往返")
+func workflowRecipeWebPaneRejectsLocalSchemes() throws {
+  let web = PaneDescriptor(
+    kind: .web,
+    workingDirectory: "{{current_folder}}",
+    resourcePath: "https://example.com/docs?q=aster"
+  )
+  let recipe = WorkflowRecipe(
+    name: "Web docs",
+    scope: .tab,
+    content: .layoutOnly,
+    tabs: [
+      WorkflowRecipeTab(
+        title: "Docs",
+        panes: [
+          WorkflowRecipePane(
+            workingDirectory: web.workingDirectory,
+            kind: web.kind,
+            resourcePath: web.resourcePath
+          )
+        ],
+        layout: .leaf(web)
+      )
+    ]
+  )
+
+  let restored = try WorkflowRecipeTOML.decode(
+    WorkflowRecipeTOML.encode(recipe), source: .recipeFile)
+  #expect(restored.recipe.tabs[0].layout == .leaf(web))
+
+  var unsafe = recipe
+  unsafe.tabs[0].panes[0].resourcePath = "file:///tmp/secret"
+  unsafe.tabs[0].layout = .leaf(PaneDescriptor(
+    id: web.id,
+    kind: .web,
+    workingDirectory: web.workingDirectory,
+    resourcePath: "file:///tmp/secret"
+  ))
+  #expect(throws: WorkflowPortablePathError.invalidPath) {
+    try WorkflowRecipeTOML.encode(unsafe)
+  }
+}
+
 @Test("布局扩展拒绝过深树、重复 Pane 标识和描述不一致")
 func workflowRecipeRejectsInvalidExtendedLayouts() throws {
   let duplicateID = UUID(uuidString: "00000000-0000-0000-0000-000000000010")!

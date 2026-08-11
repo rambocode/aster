@@ -22,12 +22,13 @@ public enum SidebarTabOrder: String, CaseIterable, Codable, Equatable, Sendable 
   case manual
 }
 
-/// 面板内容类型。终端、编辑器和文件浏览器共享同一分屏树，因此可以任意组合。
+/// 面板内容类型。终端、文件工具与网页共享同一分屏树，因此可以任意组合。
 public enum PaneKind: String, Codable, Equatable, Sendable {
   case terminal
   case editor
   case fileBrowser
   case preview
+  case web
 }
 
 public enum SplitAxis: String, Codable, Equatable, Sendable {
@@ -44,8 +45,8 @@ public enum SplitDirection: String, CaseIterable, Codable, Equatable, Sendable {
   public var isHorizontal: Bool { self == .left || self == .right }
 }
 
-/// 可持久化的单个工作区面板。`resourcePath` 仅供编辑器、预览和文件面板使用；
-/// 终端面板以 `workingDirectory` 为启动目录。
+/// 可持久化的单个工作区面板。文件类 Pane 的 `resourcePath` 保存本地路径，Web Pane
+/// 保存规范化的 HTTP(S) URL；终端面板以 `workingDirectory` 为启动目录。
 public struct PaneDescriptor: Identifiable, Codable, Equatable, Sendable {
   public let id: UUID
   public var kind: PaneKind

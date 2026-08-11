@@ -994,9 +994,29 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// need a way of toggling this behavior.
     public var allowMouseReporting: Bool = true
 
+    /// True only while the foreground terminal mode would consume button presses.
+    public var isMouseButtonReportingActive: Bool {
+        allowMouseReporting && terminal.mouseMode.sendButtonPress()
+    }
+
+    /// Allows Command-click links to own the gesture while a TUI has mouse reporting enabled.
+    public var linkActivationOverMouseReporting = true
+
     /// Controls how link tracking resolves hovered links:
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
-    public var linkReporting: LinkReporting = .implicit
+    public var linkReporting: LinkReporting = .implicit {
+        didSet {
+            if case .none = linkReporting {
+                removePreviewUrl()
+                NSCursor.iBeam.set()
+            }
+        }
+    }
+
+    /// Controls the bottom-left URL preview independently from link detection and activation.
+    public var linkPreviewEnabled = true {
+        didSet { if !linkPreviewEnabled { removePreviewUrl() } }
+    }
 
     /// Controls link highlighting and link activation behavior.
     public var linkHighlightMode: LinkHighlightMode = .hoverWithModifier {
@@ -1062,9 +1082,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: terminal.displayBuffer.yDisp)
     }
     
-    public override func cursorUpdate(with event: NSEvent)
+    open override func cursorUpdate(with event: NSEvent)
     {
-        NSCursor.iBeam.set ()
+        let hit = calculateMouseHit(with: event).grid
+        let hasCommandModifier = commandActive || event.modifierFlags.contains(.command)
+        updateHoverLink(at: hit, commandOverride: hasCommandModifier)
+        updateLinkPointerCursor(at: hit, hasCommandModifier: hasCommandModifier)
     }
     
     func makeFirstResponder ()
@@ -1287,6 +1310,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     // when the Command key is pressed.
     
     public override func flagsChanged(with event: NSEvent) {
+        if event.keyCode == 58 || event.keyCode == 61 {
+            if event.modifierFlags.contains(.option), !activeOptionKeyCodes.contains(event.keyCode) {
+                activeOptionKeyCodes.insert(event.keyCode)
+            } else {
+                activeOptionKeyCodes.remove(event.keyCode)
+            }
+        }
         if event.modifierFlags.contains(.command){
             commandActive = true
             startTracking()
@@ -1297,6 +1327,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 }
                 reportLink(at: hit)
                 updateHoverLink(at: hit)
+                updateLinkPointerCursor(at: hit, hasCommandModifier: true)
             } else if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
             }
@@ -1306,6 +1337,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             }
         } else {
             turnOffUrlPreview ()
+            NSCursor.iBeam.set()
         }
         if terminal.keyboardEnhancementFlags.contains(.reportAllKeys),
            !kittyIsComposing,
@@ -1338,6 +1370,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
             queuePendingDisplay()
         }
+        NSCursor.arrow.set()
         super.mouseExited(with: event)
     }
     
@@ -1349,6 +1382,53 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// If this is set to `false`, then the key is passed to the OS, which produces the
     /// OS specific feature.
     public var optionAsMetaKey: Bool = true
+
+    /// nil preserves the historical all-or-none `optionAsMetaKey` behavior. A non-nil set
+    /// restricts Meta handling to the physical left (58) and/or right (61) Option key.
+    public var optionAsMetaKeyCodes: Set<UInt16>?
+    private var activeOptionKeyCodes: Set<UInt16> = []
+
+    /// Local selection bypass for terminal mouse-reporting mode. An empty set disables the
+    /// bypass; compound choices require every configured modifier to be held.
+    public var mouseReportingBypassModifiers: NSEvent.ModifierFlags = [.shift]
+
+    /// When disabled, DECKPAM is still parsed but macOS keypad keys keep sending their numeric
+    /// characters instead of the VT100 SS3 application sequences.
+    public var vtKeypadApplicationModeAllowed = true
+
+    private func optionActsAsMeta(for event: NSEvent) -> Bool {
+        guard event.modifierFlags.contains(.option) else { return false }
+        guard let optionAsMetaKeyCodes else { return optionAsMetaKey }
+        return !activeOptionKeyCodes.isDisjoint(with: optionAsMetaKeyCodes)
+    }
+
+    private func vtKeypadApplicationSequence(for event: NSEvent) -> [UInt8]? {
+        guard vtKeypadApplicationModeAllowed, terminal.applicationKeypad,
+              event.modifierFlags.contains(.numericPad) else { return nil }
+        let suffix: UInt8? = switch event.keyCode {
+        case 65: 0x6e // decimal: SS3 n
+        case 67: 0x6a // multiply: SS3 j
+        case 69: 0x6b // plus: SS3 k
+        case 71: 0x75 // clear/5: SS3 u
+        case 75: 0x6f // divide: SS3 o
+        case 76: 0x4d // enter: SS3 M
+        case 78: 0x6d // minus: SS3 m
+        case 81: 0x58 // equal: SS3 X
+        case 82: 0x70 // 0: SS3 p
+        case 83: 0x71 // 1: SS3 q
+        case 84: 0x72 // 2: SS3 r
+        case 85: 0x73 // 3: SS3 s
+        case 86: 0x74 // 4: SS3 t
+        case 87: 0x75 // 5: SS3 u
+        case 88: 0x76 // 6: SS3 v
+        case 89: 0x77 // 7: SS3 w
+        case 91: 0x78 // 8: SS3 x
+        case 92: 0x79 // 9: SS3 y
+        default: nil
+        }
+        guard let suffix else { return nil }
+        return [0x1b, 0x4f, suffix]
+    }
 
     private struct PendingKittyKeyEvent {
         let event: NSEvent
@@ -1372,6 +1452,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     //
     open override func keyDown(with event: NSEvent) {
         let eventFlags = event.modifierFlags
+        let optionIsMeta = optionActsAsMeta(for: event)
+
+        if let sequence = vtKeypadApplicationSequence(for: event) {
+            send(data: sequence[...])
+            return
+        }
 
         if !terminal.keyboardEnhancementFlags.isEmpty {
             pendingKittyKeyEvent = nil
@@ -1386,7 +1472,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             let textEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents && wantsAllKeys) ? .repeatPress : .press
             if let functionKey = kittyFunctionalKey(from: event) {
                 let kittyEvent = KittyKeyEvent(key: .functional(functionKey),
-                                               modifiers: kittyModifiers(from: event, includeOption: optionAsMetaKey),
+                                               modifiers: kittyModifiers(from: event, includeOption: optionIsMeta),
                                                eventType: repeatEventType,
                                                text: kittyTextForFunctionalKey(functionKey, event: event),
                                                shiftedKey: nil,
@@ -1397,7 +1483,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 }
             }
 
-            if eventFlags.contains(.control) || (optionAsMetaKey && eventFlags.contains(.option)) {
+            if eventFlags.contains(.control) || optionIsMeta {
                 if let kittyEvent = kittyTextEvent(from: event, eventType: repeatEventType),
                    sendKittyEvent(kittyEvent) {
                     return
@@ -1414,7 +1500,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             if event.charactersIgnoringModifiers == "o" {
                 optionAsMetaKey.toggle()
             }
-        } else if optionAsMetaKey && eventFlags.contains (.option) {
+        } else if optionIsMeta {
             if let rawCharacter = event.charactersIgnoringModifiers {
                 if let fs = rawCharacter.unicodeScalars.first {
                     switch Int (fs.value) {
@@ -1506,7 +1592,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public override func keyUp(with event: NSEvent) {
         let flags = terminal.keyboardEnhancementFlags
         if flags.contains(.reportEvents) {
-            let hasAltOrCtrl = event.modifierFlags.contains(.control) || (optionAsMetaKey && event.modifierFlags.contains(.option))
+            let hasAltOrCtrl = event.modifierFlags.contains(.control) || optionActsAsMeta(for: event)
             let shouldHandle = flags.contains(.reportAllKeys) || hasAltOrCtrl || kittyFunctionalKey(from: event) != nil
             if shouldHandle, let kittyEvent = kittyKeyEvent(from: event, eventType: .release, text: nil) {
                 if !flags.contains(.reportAllKeys),
@@ -1525,7 +1611,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if !terminal.keyboardEnhancementFlags.isEmpty {
             let mods: KittyKeyboardModifiers
             if let pending = pendingKittyKeyEvent {
-                mods = kittyModifiers(from: pending.event, includeOption: optionAsMetaKey)
+                mods = kittyModifiers(from: pending.event, includeOption: optionActsAsMeta(for: pending.event))
             } else {
                 mods = []
             }
@@ -1672,7 +1758,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 // text directly instead, matching how kitty/Ghostty handle
                 // AltGr layers.
                 if let pendingEvent,
-                   !optionAsMetaKey,
+                   !optionActsAsMeta(for: pendingEvent.event),
                    pendingEvent.event.modifierFlags.contains(.option),
                    !pendingEvent.event.modifierFlags.contains(.control),
                    !pendingEvent.event.modifierFlags.contains(.command),
@@ -2092,7 +2178,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let shiftedScalar = event.modifierFlags.contains(.shift) ? event.characters?.unicodeScalars.first : nil
         let baseLayout = kittyBaseLayoutKey(from: event)
         let baseLayoutKey = baseLayout == baseScalar ? nil : baseLayout
-        let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+        let modifiers = kittyModifiers(from: event, includeOption: optionActsAsMeta(for: event))
         return KittyKeyEvent(key: .unicode(baseScalar.value),
                              modifiers: modifiers,
                              eventType: eventType,
@@ -2104,7 +2190,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     private func kittyKeyEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
         if let functionKey = kittyFunctionalKey(from: event) {
-            let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+            let modifiers = kittyModifiers(from: event, includeOption: optionActsAsMeta(for: event))
             return KittyKeyEvent(key: .functional(functionKey),
                                  modifiers: modifiers,
                                  eventType: eventType,
@@ -2482,7 +2568,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return terminal.encodeButton(button: event.buttonNumber, release: isReleaseEvent, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
     }
     
-    func calculateMouseHit (with event: NSEvent) -> (grid: Position, pixels: Position)
+    public func calculateMouseHit (with event: NSEvent) -> (grid: Position, pixels: Position)
     {
         let point = convert(event.locationInWindow, from: nil)
         return calculateMouseHit(at: point)
@@ -2567,9 +2653,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     private func nativeSelectionBypassesMouseReporting(for event: NSEvent) -> Bool {
-        let modifiers = event.modifierFlags
-        return modifiers.contains(.option)
-            || (modifiers.contains(.shift) && !terminal.mouseShiftCapture)
+        let configured = mouseReportingBypassModifiers
+        guard !configured.isEmpty else { return false }
+        return event.modifierFlags.contains(configured)
     }
 
     /// Button press/release reports are a protocol pair. The owner is chosen on mouseDown and
@@ -2590,10 +2676,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // Link activation is a local click contract even when the foreground TUI has enabled
         // mouse reporting. Own the complete gesture locally so it cannot leak a press/release
         // pair before `mouseUp` opens the standard or OSC 8 link.
-        let activatesLink = linkForClick(
+        let linkHit = linkForClick(
             at: hit,
             hasCommandModifier: event.modifierFlags.contains(.command)
         ) != nil
+        let activatesLink = linkHit
+            && (linkActivationOverMouseReporting || !isMouseButtonReportingActive)
         if allowMouseReporting && !activatesLink
             && !nativeSelectionBypassesMouseReporting(for: event)
             && terminal.mouseMode.sendButtonPress()
@@ -2721,29 +2809,40 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     var urlPreview: NSTextField?
+    /// Optional host formatter for the text shown in the link preview badge. SwiftTerm still
+    /// performs hit testing with the original link; embedders can expand relative file paths for
+    /// display without changing the value later delivered to `requestOpenLink`.
+    public var linkPreviewFormatter: ((String) -> String)?
     private var lastReportedLink: String?
     func previewUrl (payload: String)
     {
+        guard linkPreviewEnabled else { return }
         if let (url, _) = urlAndParamsFrom(payload: payload) {
-            if let up = urlPreview {
-                up.stringValue = url
-                up.sizeToFit()
+            showUrlPreview(url)
+        }
+    }
+
+    private func showUrlPreview(_ url: String) {
+        guard linkPreviewEnabled else { return }
+        let displayValue = linkPreviewFormatter?(url) ?? url
+        if let up = urlPreview {
+            up.stringValue = displayValue
+            up.sizeToFit()
+        } else {
+            let nup: NSTextField
+            if #available(macOS 10.12, *) {
+                nup = NSTextField (string: displayValue)
             } else {
-                let nup: NSTextField
-                if #available(macOS 10.12, *) {
-                    nup = NSTextField (string: url)
-                } else {
-                    nup = NSTextField ()
-                }
-                nup.isBezeled = false
-                nup.font = tryUrlFont ()
-                nup.backgroundColor = nativeForegroundColor
-                nup.textColor = nativeBackgroundColor
-                nup.sizeToFit()
-                nup.frame = CGRect (x: 0, y: 0, width: nup.frame.width, height: nup.frame.height)
-                addSubview(nup)
-                urlPreview = nup
+                nup = NSTextField ()
             }
+            nup.isBezeled = false
+            nup.font = tryUrlFont ()
+            nup.backgroundColor = nativeForegroundColor
+            nup.textColor = nativeBackgroundColor
+            nup.sizeToFit()
+            nup.frame = CGRect (x: 0, y: 0, width: nup.frame.width, height: nup.frame.height)
+            addSubview(nup)
+            urlPreview = nup
         }
     }
     
@@ -2765,6 +2864,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let link = terminal.link(at: .buffer(position), mode: mode)
         if link != lastReportedLink {
             lastReportedLink = link
+            if let link { showUrlPreview(link) } else { removePreviewUrl() }
         }
     }
 
@@ -2800,6 +2900,30 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
+    /// Returns whether the target under the pointer is currently actionable. Cursor feedback
+    /// intentionally uses the same visibility and mouse-reporting gates as click activation, so
+    /// a hand is never shown for a target that the foreground TUI or disabled link setting owns.
+    func shouldUseLinkPointer(at position: Position, hasCommandModifier: Bool) -> Bool
+    {
+        if case .none = linkReporting { return false }
+        guard linkActivationOverMouseReporting || !isMouseButtonReportingActive else {
+            return false
+        }
+        return linkForClick(
+            at: position,
+            hasCommandModifier: hasCommandModifier
+        ) != nil
+    }
+
+    private func updateLinkPointerCursor(at position: Position, hasCommandModifier: Bool)
+    {
+        let cursor = shouldUseLinkPointer(
+            at: position,
+            hasCommandModifier: hasCommandModifier
+        ) ? NSCursor.pointingHand : NSCursor.iBeam
+        cursor.set()
+    }
+
     func currentMouseHit() -> Position?
     {
         guard let window else {
@@ -2825,6 +2949,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             reportLink(at: hit.grid)
         }
         updateHoverLink(at: hit.grid)
+        updateLinkPointerCursor(
+            at: hit.grid,
+            hasCommandModifier: commandActive || event.modifierFlags.contains(.command)
+        )
         
         if terminal.mouseMode.sendMotionEvent() {
             let flags = encodeMouseEvent(with: event, overwriteRelease: true)

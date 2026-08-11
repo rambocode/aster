@@ -135,6 +135,29 @@ func autocompleteLearningRanksSessionAndFolderCommands() {
   #expect(matches.last?.command == "git status")
 }
 
+@Test("补全学习历史与固定命令可以独立清除")
+func autocompleteLearningClearsCategoriesIndependently() {
+  let now = Date(timeIntervalSinceReferenceDate: 2_000)
+  var learning = AutocompleteLearningDatabase(capacity: 20)
+  _ = learning.complete(
+    command: "git status", directory: "/project", exitStatus: 0,
+    ignorePatterns: [], knownOptions: [], sessionIdentifier: "session-a", at: now)
+  _ = learning.pin(command: "npm run deploy", directory: "/project", at: now)
+
+  learning.clearHistory()
+  #expect(learning.entries.map(\.command) == ["npm run deploy"])
+  #expect(learning.entries[0].useCount == 0)
+  #expect(learning.entries[0].pinCount == 1)
+
+  _ = learning.complete(
+    command: "npm run deploy", directory: "/project", exitStatus: 0,
+    ignorePatterns: [], knownOptions: [], sessionIdentifier: "session-b", at: now)
+  learning.clearPinnedCommands()
+  #expect(learning.entries.map(\.command) == ["npm run deploy"])
+  #expect(learning.entries[0].useCount == 1)
+  #expect(learning.entries[0].pinCount == 0)
+}
+
 @Test("README 只提取 Shell fenced code block 中的命令")
 func readmeCommandScannerExtractsShellFences() {
   let markdown = """

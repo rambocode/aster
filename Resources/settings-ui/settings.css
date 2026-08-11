@@ -339,6 +339,21 @@ input.control[type="text"]:focus, input.control[type="number"]:focus { border-co
 .font-scope-hint { margin: 0; padding: 11px 14px 5px; color: var(--text-tertiary); font-size: 10px; }
 .font-actions { padding: 10px 14px 13px; border-top: 1px solid var(--border-subtle); }
 
+.settings-dialog-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 28px; background: rgb(0 0 0 / 34%); }
+.settings-dialog { width: min(560px, 100%); max-height: 80vh; padding: 20px; border: 1px solid var(--border-subtle); border-radius: var(--radius-card); background: var(--bg-card); box-shadow: 0 20px 55px rgb(0 0 0 / 24%); }
+.settings-dialog h2 { margin: 0 0 6px; font-size: 15px; }
+.settings-dialog p { margin: 0 0 16px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.settings-dialog-list { box-sizing: border-box; width: 100%; min-height: 180px; padding: 10px; resize: vertical; text-align: left; font-family: "SF Mono", Menlo, monospace; }
+.settings-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.settings-dialog-actions.split { justify-content: space-between; }
+.settings-dialog-apps { min-height: 80px; overflow: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); }
+.settings-dialog-apps > .setting-detail { display: block; padding: 26px 14px; text-align: center; }
+.settings-dialog-app { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
+.settings-dialog-app:last-child { border-bottom: 0; }
+.settings-dialog-app span { display: grid; min-width: 0; gap: 2px; }
+.settings-dialog-app strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.settings-dialog-app small { overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+
 .cursor-card { padding-top: 55px; position: relative; }
 .cursor-preview { position: absolute; top: 10px; right: 14px; left: 14px; height: 36px; padding: 9px 11px; }
 .cursor-preview b { display: inline-block; padding: 0 1px; color: var(--cursor-text); background: color-mix(in srgb, var(--cursor-color) calc(var(--cursor-opacity) * 100%), transparent); font-weight: 400; }

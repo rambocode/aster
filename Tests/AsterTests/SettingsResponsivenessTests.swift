@@ -145,6 +145,12 @@ func settingsWebAssetsAreBundledAndSelfContained() throws {
   for section in ["general", "shell", "controls", "editor", "agents", "appearance", "recipes", "shortcuts", "advanced"] {
     #expect(script.contains("id: \"\(section)\""))
   }
+  let controlGroupTitles = ["自动补全", "选择", "滚动", "打开方式", "链接协议", "键盘", "鼠标", "安全输入", "剪贴板"]
+  var previousGroupOffset = script.startIndex
+  for title in controlGroupTitles {
+    let offset = try #require(script.range(of: "{ title: \"\(title)\"", range: previousGroupOffset..<script.endIndex))
+    previousGroupOffset = offset.upperBound
+  }
   #expect(style.contains("grid-template-columns: 200px minmax(0, 1fr)"))
   #expect(script.contains("window.webkit?.messageHandlers?.asterSettings"))
 }
@@ -186,12 +192,20 @@ func settingsBridgeWritesTypedAndCompatibilityValues() throws {
 
   try controller.applySettingForTesting(key: "editor.tabSize", value: 7)
   try controller.applySettingForTesting(key: "controls.clipboardReadAccess", value: "deny")
+  try controller.applySettingForTesting(key: "controls.optionAsMetaMode", value: "left")
+  try controller.applySettingForTesting(key: "controls.rightClickAction", value: "copy-or-paste")
+  try controller.applySettingForTesting(key: "controls.bypassMouseReporting", value: "ctrl+shift")
+  try controller.applySettingForTesting(key: "controls.selectionBackspaceDeletes", value: false)
   try controller.applySettingForTesting(key: "advanced.scrollbackLines", value: 240_000)
   try controller.applySettingForTesting(key: "appearance.windowsTextRendering", value: "clearType")
   try controller.applySettingForTesting(key: "appearance.fontFamilyFallbackBold", value: "Menlo, Monaco")
 
   #expect(preferences.configuration.editor.tabSize == 7)
   #expect(preferences.configuration.controls.resolvedClipboardReadAccess == .deny)
+  #expect(preferences.configuration.controls.resolvedOptionAsMetaMode == .left)
+  #expect(preferences.configuration.controls.resolvedRightClickAction == .copyOrPaste)
+  #expect(preferences.configuration.controls.resolvedBypassMouseReporting == .controlShift)
+  #expect(!preferences.configuration.controls.resolvedSelectionBackspaceDeletes)
   #expect(preferences.configuration.appearance.resolvedFontFamilyFallbackBold == ["Menlo", "Monaco"])
   let reloaded = AppPreferences(defaults: defaults)
   #expect(reloaded.settingsCompatibility["advanced.scrollbackLines"]?.jsonValue as? Double == 240_000)

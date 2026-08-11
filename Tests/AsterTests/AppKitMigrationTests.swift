@@ -6,6 +6,12 @@ import WebKit
 
 @testable import Aster
 
+@MainActor
+private final class MutableTestValue<Value> {
+  var value: Value
+  init(_ value: Value) { self.value = value }
+}
+
 @Test("终端视图区分 OSC 8 显式链接与普通文字链接")
 @MainActor
 func terminalViewReportsDetectedLinkSource() {
@@ -50,6 +56,65 @@ func targetOpenCoordinatorRemembersExplicitSchemePermission() {
   #expect(confirmations == [.nonStandardScheme("codex")])
   #expect(opened == [URL(string: "codex://session/123")!])
   #expect(preferences.configuration.controls.resolvedAllowedNonStandardLinkSchemes == ["codex"])
+}
+
+@Test("链接选择 Aster 时进入受限 Web Pane 而不调用系统浏览器")
+@MainActor
+func targetOpenCoordinatorRoutesWebLinksInternally() {
+  let preferences = AppPreferences(defaults: isolatedDefaults())
+  preferences.configuration.controls.linkOpenWith = .aster
+  var internalURLs: [URL] = []
+  var systemOpenCount = 0
+  let coordinator = TerminalTargetOpenCoordinator(
+    preferences: preferences,
+    openURL: { _ in systemOpenCount += 1; return true },
+    openInAster: { url, isDirectory in
+      #expect(!isDirectory)
+      internalURLs.append(url)
+      return true
+    },
+    confirm: { reason in
+      #expect(reason == .externalLink("example.com"))
+      return .always
+    },
+    reportError: { message in Issue.record("不应报告错误：\(message)") }
+  )
+
+  #expect(coordinator.open("https://example.com/docs", source: .plainText, currentDirectory: "/tmp"))
+  #expect(internalURLs == [URL(string: "https://example.com/docs")!])
+  #expect(systemOpenCount == 0)
+  #expect(preferences.configuration.controls.resolvedAllowedExternalLinkHosts == ["example.com"])
+  #expect(WebPaneURLPolicy.allowedURL(from: "https://example.com/docs") != nil)
+  #expect(WebPaneURLPolicy.allowedURL(from: "file:///tmp/secret") == nil)
+  #expect(WebPaneURLPolicy.allowedURL(from: "javascript:alert(1)") == nil)
+}
+
+@Test("可执行文件授权绑定文件身份且替换后重新确认")
+@MainActor
+func targetOpenCoordinatorInvalidatesChangedExecutablePermission() {
+  let preferences = AppPreferences(defaults: isolatedDefaults())
+  preferences.configuration.controls.fileOpenWith = .defaultApplication
+  let signature = MutableTestValue("signature-v1")
+  var confirmationCount = 0
+  let coordinator = TerminalTargetOpenCoordinator(
+    preferences: preferences,
+    inspectFile: { _ in .regular(executable: true) },
+    openURL: { _ in true },
+    executableSignature: { _ in signature.value },
+    confirm: { reason in
+      #expect(reason == .executableFile("/tmp/tool"))
+      confirmationCount += 1
+      return .always
+    },
+    reportError: { message in Issue.record("不应报告错误：\(message)") }
+  )
+
+  #expect(coordinator.open("/tmp/tool", source: .plainText, currentDirectory: "/tmp"))
+  #expect(coordinator.open("/tmp/tool", source: .plainText, currentDirectory: "/tmp"))
+  #expect(confirmationCount == 1)
+  signature.value = "signature-v2"
+  #expect(coordinator.open("/tmp/tool", source: .plainText, currentDirectory: "/tmp"))
+  #expect(confirmationCount == 2)
 }
 
 @Test("目标打开协调器拒绝未检测 scheme 和特殊文件且不调用系统打开")
@@ -118,6 +183,8 @@ func configurationImportStripsSecurityPermissions() {
   imported.controls.detectAllLinkSchemes = false
   imported.controls.customLinkSchemes = ["codex"]
   imported.controls.allowedNonStandardLinkSchemes = ["codex"]
+  imported.controls.allowedExternalLinkHosts = ["example.com"]
+  imported.controls.allowedExecutableFileSignatures = ["signature-v1"]
   imported.controls.clipboardReadAccess = .allow
   imported.controls.clipboardWriteAccess = .deny
 
@@ -125,6 +192,8 @@ func configurationImportStripsSecurityPermissions() {
 
   #expect(preferences.configuration.controls.resolvedLinkSchemePolicy == .custom(["codex"]))
   #expect(preferences.configuration.controls.resolvedAllowedNonStandardLinkSchemes.isEmpty)
+  #expect(preferences.configuration.controls.resolvedAllowedExternalLinkHosts.isEmpty)
+  #expect(preferences.configuration.controls.resolvedAllowedExecutableFileSignatures.isEmpty)
   #expect(preferences.configuration.controls.resolvedClipboardReadAccess == .ask)
   #expect(preferences.configuration.controls.resolvedClipboardWriteAccess == .deny)
 }

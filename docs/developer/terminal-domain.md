@@ -42,7 +42,7 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 13. OSC 必须在进入组件 parser 前流式限长；OSC 52 读取默认每次询问，拒绝时不得触碰系统剪贴板。
 14. 原生文本编辑只接管普通 Shell 屏幕；全屏 TUI 和增强键盘协议必须保留程序协商的按键编码。
 15. 自动安全输入只保护当前聚焦 Pane 中 `ECHO` 关闭且 `ICANON` 保持开启的密码式输入；raw-mode TUI 必须排除。多 Pane 共享引用计数，应用失活时暂停系统保护。
-16. 鼠标报告开启时，`Option` 必须强制进入原生选择，不向前台 TUI 泄漏部分鼠标序列；`Shift` 是否绕过报告遵循终端协商的捕获模式，`Option` 拖动产生矩形选区。
+16. 鼠标报告开启时，本地选择只由“绕过鼠标上报”配置的完整修饰键组合接管；手势在 mouseDown 锁定 owner，不能向前台 TUI 泄漏半组 press/release。
 17. 平滑滚动只改变 normal buffer 的视口；alternate screen 不允许首尾越界，手势结束必须回到完整字符行。
 18. Shell Integration 资源必须来自签名 Bundle；受管 rc 区块必须幂等、可卸载并保留区块外内容、权限与符号链接。所有目标先预检，后续写入失败时回滚已改目标。
 19. OSC 133 只接受 A/B/C/D 与非负退出码，不接收或持久化命令正文；命令位置使用包含已裁剪行数的绝对坐标。时间线变化通过专用 `outlineChanged` 事件局部刷新 Outline，不提升为通用工作区重建。
@@ -192,7 +192,7 @@ Edit 菜单和终端右键菜单提供粘贴选区、普通文件 Base64、POSIX
 
 ### 原生文本编辑与安全键盘输入
 
-`TerminalInputEncoder` 将 AppKit 的行首/行尾、词移动、行/词删除和撤销动作编码为可移植的 readline/Emacs 字节。Edit 菜单的快捷键通过 responder chain 进入 `AsterTerminalView`；仅在普通屏幕且没有 Kitty 增强键盘协商时启用，alternate screen 与现代协议继续由 SwiftTerm 编码。不同 Shell 没有通用 Redo 字节，因此在 Shell Integration 提供明确绑定前不伪装支持。`Option as Meta` 的新安装默认值为关闭，保留系统输入法产生重音和特殊字符的能力；用户显式开启后仍由 SwiftTerm 发送 Esc 前缀。
+`TerminalInputEncoder` 将 AppKit 的行首/行尾、词移动、行/词删除和撤销动作编码为可移植的 readline/Emacs 字节。Edit 菜单的快捷键通过 responder chain 进入 `AsterTerminalView`；仅在普通屏幕且没有 Kitty 增强键盘协商时启用，alternate screen 与现代协议继续由 SwiftTerm 编码。不同 Shell 没有通用 Redo 字节，因此在 Shell Integration 提供明确绑定前不伪装支持。`Option as Meta` 的新安装默认值为关闭，保留系统输入法产生重音和特殊字符的能力；可分别指定左右 Option，SwiftTerm 通过物理键码状态决定是否发送 Esc 前缀。DECKPAM 进入的 VT100 application keypad 只在用户允许时把数字键盘编码为 SS3。
 
 Edit 菜单的“插入”提供文件/目录路径和交互式截屏，均把每个绝对路径编码为独立 POSIX Shell 参数后，通过 `typePromptText` 预填到当前前台程序的输入框，不发送 Return；Codex/Claude 等协商 bracketed paste 的 TUI 会收到完整粘贴块。“Insert from iPhone”使用 `NSMenuItem.importFromDeviceIdentifier` 接入 AppKit Continuity Camera，并以 AppKit 固定的 `readSelectionFromPasteboard:` responder selector 接收结果；Swift 方法名不能依赖自动推导，否则菜单和拍摄可完成但 pasteboard 不会送达。终端只在可写时成为图片 requestor，捕获结果限制为 PNG、TIFF、JPEG、HEIC 或 PDF 且最大 32 MiB，保存到 `0700` 临时目录与 `0600` 普通文件后再通过同一输入框入口插入路径。截屏通过固定 `/usr/sbin/screencapture -i -o -t png` 参数数组运行，结束后复验普通文件、大小与权限；取消不报错，失败显示明确反馈。
 
@@ -240,7 +240,7 @@ flowchart LR
 
 `AutocompleteEngine` 是不依赖 AppKit 的候选合并与排序边界，输入为当前命令行、Fig/本地规格、目录级学习、固定命令、README 和 Shell alias，输出为候选、ghost 后缀及替换起点。`PromptInputTracker` 只重建能够由用户输入字节确定的编辑状态；遇到 Up/Down 等依赖 Shell 内部历史的操作即标记不可靠，直到下一次 OSC 133 A/B。`TerminalAutocompleteController` 每次新输入会立即清除上一轮 ghost，只在 SwiftTerm 当前可见行已包含完整 tracker 输入且新候选完成重算后显示；PTY 的 OSC、CSI 等非回显输出不能提前解锁，避免候选锚定旧光标或覆盖随后回显。`ShellCommandOutputCapture` 按 C/D 标记截取最多 128 KiB 的瞬时输出，只供失败纠错，不持久化。
 
-`AutocompleteService` 组合签名 Bundle 的 715 命令索引、用户手动 Fig tree 更新、本地 help 规格、README 普通文件读取、文件系统候选和脱敏学习库。状态文件先做 2 MiB 上限和结构校验，再以 0600 权限原子写入；符号链接和特殊文件不会被读取或覆盖。更新只从固定 GitHub API 端点发起，绝不后台联网。没有详细结构的命令只执行 PATH 中普通可执行文件的固定 `--help`、`-h` 或 `help` 参数，使用 `sandbox-exec` 拒绝网络与文件写入，并施加 2.5 秒超时、128 KiB 输出上限和最小环境 allowlist；远程会话完全跳过本机目录读取与 help 探测。
+`AutocompleteService` 组合签名 Bundle 的 715 命令索引、用户手动 Fig tree 更新、本地 help 规格、README 普通文件读取、文件系统候选和脱敏学习库。状态文件先做 2 MiB 上限和结构校验，再以 0600 权限原子写入；符号链接和特殊文件不会被读取或覆盖。更新只从固定 GitHub API 端点发起，绝不后台联网。控制页展示当前规格数与 revision；清理动作可分别移除普通历史、固定命令和工作区目录频率数据，且不删除内置、更新或本地 help 规格。没有详细结构的命令只执行 PATH 中普通可执行文件的固定 `--help`、`-h` 或 `help` 参数，使用 `sandbox-exec` 拒绝网络与文件写入，并施加 2.5 秒超时、128 KiB 输出上限和最小环境 allowlist；远程会话完全跳过本机目录读取与 help 探测。
 
 ```mermaid
 flowchart LR

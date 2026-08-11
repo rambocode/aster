@@ -176,9 +176,66 @@ final class AppPreferences: ObservableObject {
       SidebarTabGrouping(rawValue: defaults.string(forKey: Keys.sidebarTabGrouping) ?? "") ?? .none
     sidebarTabOrder =
       SidebarTabOrder(rawValue: defaults.string(forKey: Keys.sidebarTabOrder) ?? "") ?? .createdTime
+    migrateControlCompatibilityValues()
     migrateLegacySidebarWidth()
     migrateMissingThemeSelections()
     synchronizeThemeRuntime()
+  }
+
+  /// 早期控制页把可运行字段临时放在 compatibility 字典中。升级后一次性迁入领域配置
+  /// 并删除旧副本，避免同一设置存在两个真值；无法识别的值保持默认且不扩大权限。
+  private func migrateControlCompatibilityValues() {
+    var controls = configuration.controls
+    var migratedKeys: Set<String> = []
+    func string(_ key: String) -> String? {
+      guard case .string(let value) = settingsCompatibility[key] else { return nil }
+      migratedKeys.insert(key)
+      return value
+    }
+    func bool(_ key: String) -> Bool? {
+      guard case .bool(let value) = settingsCompatibility[key] else { return nil }
+      migratedKeys.insert(key)
+      return value
+    }
+
+    if let raw = string("controls.optionAsMetaMode") {
+      let mapped = ["off": "false", "both": "true"][raw] ?? raw
+      controls.optionAsMetaMode = OptionAsMetaMode(rawValue: mapped)
+    }
+    if let value = bool("controls.vtKeypadAppAllowed") { controls.vtKeypadAppAllowed = value }
+    if let raw = string("controls.rightClickAction") {
+      let mapped = ["contextMenu": "context-menu", "copyOrPaste": "copy-or-paste"][raw] ?? raw
+      controls.rightClickAction = TerminalRightClickAction(rawValue: mapped)
+    }
+    if let value = bool("controls.mouseHideWhileTyping") { controls.mouseHideWhileTyping = value }
+    if let raw = string("controls.bypassMouseReporting") {
+      let mapped = [
+        "control": "ctrl", "option": "alt", "controlShift": "ctrl+shift", "command": "super",
+      ][raw] ?? raw
+      controls.bypassMouseReporting = MouseReportingBypass(rawValue: mapped)
+    }
+    if let value = bool("controls.linkClickOverMouseMode") { controls.linkClickOverMouseMode = value }
+    if let value = bool("controls.cursorClickToMove") { controls.cursorClickToMove = value }
+    if let raw = string("controls.linkOpenWith") {
+      controls.linkOpenWith = LinkOpenDestination(rawValue: ["system": "browser", "aster": "otty"][raw] ?? raw)
+    }
+    if let raw = string("controls.fileOpenWith") {
+      controls.fileOpenWith = FileOpenDestination(rawValue: ["system": "default-app", "aster": "otty"][raw] ?? raw)
+    }
+    if let raw = string("controls.folderOpenWith") {
+      controls.folderOpenWith = FolderOpenDestination(rawValue: ["finder": "default-app", "aster": "otty"][raw] ?? raw)
+    }
+    if let value = bool("controls.secureInputIndication") { controls.secureInputIndication = value }
+    if let value = bool("controls.selectionBackspaceDeletes") { controls.selectionBackspaceDeletes = value }
+    if let raw = string("controls.openWithApps") {
+      controls.openWithApplications = raw.split(separator: ",").map { bundleIdentifier in
+        let identifier = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        return OpenWithApplication(name: identifier, bundleIdentifier: identifier)
+      }
+    }
+    guard !migratedKeys.isEmpty else { return }
+    configuration.controls = controls
+    settingsCompatibility = settingsCompatibility.filter { !migratedKeys.contains($0.key) }
   }
 
   var preferredAppearance: NSAppearance? {
@@ -216,7 +273,7 @@ final class AppPreferences: ObservableObject {
     set { configuration.tabBarLayout = newValue }
   }
 
-  var optionAsMeta: Bool { configuration.controls.optionAsMeta }
+  var optionAsMeta: Bool { configuration.controls.resolvedOptionAsMetaMode != .off }
   var allowMouseReporting: Bool { configuration.controls.allowMouseReporting }
   var terminalIdentity: String { configuration.appearance.terminalIdentity }
 
@@ -583,6 +640,8 @@ final class AppPreferences: ObservableObject {
     // 本机安全授权不能随 JSON 导入；否则第三方配置可预置 scheme 例外，或把 OSC 52
     // 读取改成无提示允许。显式 Deny 属于更严格策略，可以安全保留。
     imported.controls.allowedNonStandardLinkSchemes = []
+    imported.controls.allowedExternalLinkHosts = []
+    imported.controls.allowedExecutableFileSignatures = []
     if imported.controls.resolvedClipboardReadAccess == .allow {
       imported.controls.clipboardReadAccess = .ask
     }

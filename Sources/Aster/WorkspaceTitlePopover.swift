@@ -532,7 +532,15 @@ final class WorkspaceTitlePopoverViewController: NSViewController {
         WorkspaceEditorLocator.open(directory: url, in: editor)
       })
     }
-    if editors.isEmpty {
+    let editorBundleIdentifiers = Set(editors.map(\.bundleIdentifier))
+    for application in preferences.configuration.controls.resolvedOpenWithApplications
+      where !editorBundleIdentifiers.contains(application.bundleIdentifier)
+    {
+      menu.addItem(ActionMenuItem(title: application.name) {
+        Self.open(url, withBundleIdentifier: application.bundleIdentifier)
+      })
+    }
+    if editors.isEmpty && preferences.configuration.controls.resolvedOpenWithApplications.isEmpty {
       let unavailable = NSMenuItem(title: "未检测到受支持的编辑器", action: nil, keyEquivalent: "")
       unavailable.isEnabled = false
       menu.addItem(unavailable)
@@ -542,6 +550,14 @@ final class WorkspaceTitlePopoverViewController: NSViewController {
 
   private func showGitMenu(from sender: NSView) {
     let menu = NSMenu()
+    if let directory = tab?.workingDirectory,
+      let client = resolvedGitClient()
+    {
+      menu.addItem(ActionMenuItem(title: "在 \(client.name) 中打开") {
+        Self.open(URL(fileURLWithPath: directory), withBundleIdentifier: client.bundleIdentifier)
+      })
+      menu.addItem(.separator())
+    }
     for (title, command) in [
       ("Commit…", GitCommand.commit), ("Push", .push), ("Pull", .pull), ("Fetch", .fetch),
     ] {
@@ -559,6 +575,37 @@ final class WorkspaceTitlePopoverViewController: NSViewController {
       }
     })
     popUp(menu, from: sender)
+  }
+
+  private func resolvedGitClient() -> OpenWithApplication? {
+    let builtIn = [
+      OpenWithApplication(name: "GitHub Desktop", bundleIdentifier: "com.github.GitHubClient"),
+      OpenWithApplication(name: "Fork", bundleIdentifier: "com.DanPristupov.Fork"),
+      OpenWithApplication(name: "Tower", bundleIdentifier: "com.fournova.Tower3"),
+      OpenWithApplication(name: "Sourcetree", bundleIdentifier: "com.torusknot.SourceTreeNotMAS"),
+      OpenWithApplication(name: "GitKraken", bundleIdentifier: "com.axosoft.gitkraken"),
+      OpenWithApplication(name: "Sublime Merge", bundleIdentifier: "com.sublimehq.Sublime-Merge"),
+    ]
+    let candidates = builtIn + preferences.configuration.controls.resolvedOpenWithApplications
+    if let selected = preferences.configuration.controls.defaultGitClient {
+      return candidates.first(where: {
+        $0.bundleIdentifier == selected
+          && NSWorkspace.shared.urlForApplication(withBundleIdentifier: selected) != nil
+      })
+    }
+    return candidates.first(where: {
+      NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleIdentifier) != nil
+    })
+  }
+
+  private static func open(_ url: URL, withBundleIdentifier bundleIdentifier: String) {
+    guard let applicationURL = NSWorkspace.shared.urlForApplication(
+      withBundleIdentifier: bundleIdentifier) else { return }
+    NSWorkspace.shared.open(
+      [url],
+      withApplicationAt: applicationURL,
+      configuration: NSWorkspace.OpenConfiguration()
+    )
   }
 
   private func injectGitCommand(_ command: GitCommand) {

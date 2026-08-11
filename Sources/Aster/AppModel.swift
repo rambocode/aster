@@ -3,6 +3,10 @@ import AsterCore
 import Combine
 import Foundation
 
+extension Notification.Name {
+  static let asterClearFrequentFolders = Notification.Name("io.aster.clear-frequent-folders")
+}
+
 /// 外部 Recipe 的确认界面必须展示完整命令集合。格式化独立于 AppKit，便于用代码
 /// 测试证明超过 20 条时不会隐藏后续命令。
 enum WorkflowRecipeCommandReview {
@@ -77,7 +81,8 @@ enum WorkflowRecipeWorkspaceMapper {
       var portable = descriptor
       portable.workingDirectory = makePortable(descriptor.workingDirectory, home: home)
       if let resourcePath = descriptor.resourcePath {
-        portable.resourcePath = makePortable(resourcePath, home: home)
+        portable.resourcePath = descriptor.kind == .web
+          ? resourcePath : makePortable(resourcePath, home: home)
       }
       return portable
     }
@@ -92,7 +97,9 @@ enum WorkflowRecipeWorkspaceMapper {
       resolved.workingDirectory = try WorkflowPortablePath.resolve(
         descriptor.workingDirectory, context: context)
       if let resourcePath = descriptor.resourcePath {
-        resolved.resourcePath = try WorkflowPortablePath.resolve(resourcePath, context: context)
+        resolved.resourcePath = descriptor.kind == .web
+          ? try validatedWebURLString(resourcePath)
+          : try WorkflowPortablePath.resolve(resourcePath, context: context)
       }
       return resolved
     }
@@ -105,8 +112,10 @@ enum WorkflowRecipeWorkspaceMapper {
     PaneDescriptor(
       kind: pane.kind,
       workingDirectory: try WorkflowPortablePath.resolve(pane.workingDirectory, context: context),
-      resourcePath: try pane.resourcePath.map {
-        try WorkflowPortablePath.resolve($0, context: context)
+      resourcePath: try pane.resourcePath.map { resourcePath in
+        pane.kind == .web
+          ? try validatedWebURLString(resourcePath)
+          : try WorkflowPortablePath.resolve(resourcePath, context: context)
       }
     )
   }
@@ -129,6 +138,18 @@ enum WorkflowRecipeWorkspaceMapper {
       replacing: home,
       with: .homeFolder
     )) ?? path
+  }
+
+  /// Recipe 中的网页资源不参与本地路径变量替换，只接受规范 HTTP(S) URL，避免恢复
+  /// 外部 Recipe 时把 `file:`、`javascript:` 等能力带入 Web Pane。
+  private static func validatedWebURLString(_ value: String) throws -> String {
+    guard value.utf8.count <= WorkflowRecipeTOML.maximumPathBytes,
+      let url = URL(string: value),
+      ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+      url.host != nil,
+      !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+    else { throw WorkflowPortablePathError.invalidPath }
+    return url.absoluteString
   }
 
   private static func map(
@@ -421,6 +442,21 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     if path == NSHomeDirectory() { return "~" }
     let name = URL(fileURLWithPath: path).lastPathComponent
     return name.isEmpty ? "~" : name
+  }
+
+  /// 非终端 Pane 使用资源自身作为恢复后的标题回退；网页优先显示 host，避免会话恢复
+  /// 后暂时退回其创建来源目录名。
+  private static func displayName(for descriptor: PaneDescriptor) -> String {
+    if descriptor.kind == .web, let value = descriptor.resourcePath,
+      let url = URL(string: value)
+    {
+      return url.host ?? value
+    }
+    if let path = descriptor.resourcePath, descriptor.kind != .terminal {
+      let name = URL(fileURLWithPath: path).lastPathComponent
+      if !name.isEmpty { return name }
+    }
+    return displayName(forDirectory: descriptor.workingDirectory)
   }
 
   init(
@@ -736,6 +772,28 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     split(direction: .right, kind: .preview, resourcePath: url.path)
   }
 
+  /// 在当前标签右侧打开远程网页。只接受 HTTP(S)，其它 scheme 仍由目标安全策略和
+  /// LaunchServices 处理，不能借 Web Pane 获得本地文件或自定义协议访问能力。
+  @discardableResult
+  func openWebURL(_ url: URL) -> Bool {
+    guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
+      return false
+    }
+    let previousPaneID = activePaneID
+    split(
+      direction: .right,
+      kind: .web,
+      resourcePath: url.absoluteString,
+      workingDirectory: activeRuntime?.descriptor.workingDirectory
+    )
+    guard activePaneID != previousPaneID,
+      activeRuntime?.descriptor.kind == .web,
+      activeRuntime?.descriptor.resourcePath == url.absoluteString
+    else { return false }
+    updateTitleFallback(url.host ?? url.absoluteString, paneID: activePaneID)
+    return true
+  }
+
   /// 在指定方向拆出编辑器 Pane；Files「在 Aster 中打开」四向分屏入口。
   func openFile(_ url: URL, splitDirection: SplitDirection) {
     split(direction: splitDirection, kind: .editor, resourcePath: url.path)
@@ -838,7 +896,7 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       paneTitleStates[descriptor.id] = TerminalTitleState(
         tabOverride: titleState.tabOverride,
         windowOverride: titleState.windowOverride,
-        fallback: Self.displayName(forDirectory: descriptor.workingDirectory)
+        fallback: Self.displayName(for: descriptor)
       )
     }
     // 终端运行态属于子 Session。只有真正改变 Pane 结构呈现的进程生命周期字段
@@ -848,6 +906,18 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     // 会让同一标签的其余 Pane 随任一 Pane 的命令开始/结束被重新安放。
     // OSC 标题与目录继续使用各自专用通道，不进入这两组 publisher。
     if let session = runtime.terminalSession {
+      session.onRequestPaneFocus = { [weak self] in self?.setActivePane(descriptor.id) }
+      session.onRequestOpenInAster = { [weak self] url, isDirectory in
+        guard let self else { return false }
+        if !url.isFileURL { return self.openWebURL(url) }
+        if isDirectory {
+          self.split(direction: .right, kind: .fileBrowser, resourcePath: url.path,
+            workingDirectory: url.path)
+        } else {
+          self.openFile(url)
+        }
+        return true
+      }
       session.onTitleUpdate = { [weak self] code, text in
         self?.applyProgramTitle(paneID: descriptor.id, code: code, text: text)
       }
@@ -910,8 +980,8 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   }
 
   private func fallbackTitle(for paneID: UUID) -> String {
-    guard let directory = runtimes[paneID]?.descriptor.workingDirectory else { return "Shell" }
-    return Self.displayName(forDirectory: directory)
+    guard let descriptor = runtimes[paneID]?.descriptor else { return "Shell" }
+    return Self.displayName(for: descriptor)
   }
 
   private func applyActiveTitleState(_ state: TerminalTitleState) {
@@ -1052,6 +1122,7 @@ final class AppModel: ObservableObject {
   /// 每个 Pane 同时最多一个需要等待 OSC 133 完成事件的 CLI 请求。请求不进入工作区
   /// 快照；应用退出时 shell wrapper 仍可结束，但调用方会按本机传输超时失败。
   private var pendingWorkflowCLICommands: [UUID: PendingWorkflowCLICommand] = [:]
+  private var appSubscriptions: Set<AnyCancellable> = []
 
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
@@ -1083,6 +1154,13 @@ final class AppModel: ObservableObject {
     } else {
       closedWorkspaceItems = []
     }
+    NotificationCenter.default.publisher(for: .asterClearFrequentFolders)
+      .sink { [weak self] _ in
+        guard let self else { return }
+        self.frequentFolders = FrequentFolders()
+        self.persistFrequentFolders()
+      }
+      .store(in: &appSubscriptions)
   }
 
   /// 在创建工作区控制器前调用。未清掉 running 标记表示上次异常退出；异常退出与
@@ -1158,9 +1236,14 @@ final class AppModel: ObservableObject {
   /// 给窗口路由层预置一个文件 Pane。Descriptor 由调用者创建，因此 CLI 的
   /// `--new-window` 不会先在旧窗口落一个标签，也不会丢失目标 Pane 身份。
   func openResourceInNewTab(_ descriptor: PaneDescriptor) {
-    let resourceURL = descriptor.resourcePath.map(URL.init(fileURLWithPath:))
+    let resourceName: String? = descriptor.resourcePath.flatMap { resourcePath in
+      if descriptor.kind == .web {
+        return URL(string: resourcePath)?.host ?? resourcePath
+      }
+      return URL(fileURLWithPath: resourcePath).lastPathComponent
+    }
     let tab = TerminalTabItem(
-      title: resourceURL?.lastPathComponent ?? descriptor.kind.rawValue,
+      title: resourceName ?? descriptor.kind.rawValue,
       workingDirectory: descriptor.workingDirectory,
       layout: .leaf(descriptor)
     )
@@ -2175,7 +2258,7 @@ final class AppModel: ObservableObject {
             separator: "\n", omittingEmptySubsequences: false
           ).map(String.init)
           firstAbsoluteRow = 0
-        case .preview, .fileBrowser:
+        case .preview, .fileBrowser, .web:
           return nil
         }
         return WorkspaceSearchDocument(

@@ -4,6 +4,14 @@
 
 功能实现以代码测试、静态检查和构建为本轮自动验收范围。按项目要求，不运行鼠标、键盘或真实窗口自动化；以下视觉与交互检查由用户在打包应用中完成，结果回填到本文。
 
+## Controls 检查清单
+
+- [ ] 控制页依次显示 Autocomplete、Selection、Scroll、Open With、Link Protocols、Keyboard、Mouse、Secure Input、Clipboard 九组，字段顺序、文案、枚举和值依赖关系与 Otty 一致。
+- [ ] 左/右/全部 Option-as-Meta、VT100 application keypad、右键动作、鼠标报告绕过键、鼠标隐藏、focus follows mouse 和安全输入指示会立即作用于已有 Pane。
+- [ ] “Open With”自定义应用可通过系统应用选择器添加和移除；文件夹与 Git 仓库按设置的 Aster、系统应用或 Git 客户端打开。
+- [ ] 自定义链接协议仅接受合法 scheme；预览开关、鼠标模式下链接点击和外部打开安全确认符合设置，重置后再次询问。
+- [ ] 补全清理弹窗可分别清除历史、固定命令和常用目录；取消不改变数据库或目录频率状态。
+
 ## Selection / Scroll 检查清单
 
 - [ ] 拖动、双击和三击分别选择字符范围、单词和整行。
@@ -119,6 +127,8 @@
 
 ## 记录
 
+- 2026-08-11：终端本地文件链接预览改为复用实际打开链的 `TargetResolver` 与当前可信本地 CWD，相对路径显示绝对路径及行列定位；远端 OSC 7 仍不参与本地解析。链接装饰由虚线改为 AppKit/Metal 共用的连续实线，可点击时使用手形指针，离开目标或禁用链接后恢复普通指针。自动回归先稳定复现原始 `README.md`、`dashed(5)` 和缺失的手形判定，修复后分别验证完整路径、`single(1)` 及点击状态边界。
+- 2026-08-11：控制页按 Otty 参考重构为九组，原兼容占位字段迁移为强类型配置，并接通键盘、鼠标、链接、安全输入、补全清理与打开方式运行时；链接选择 Aster 时由只接受 HTTP(S) 的 Web Pane 承载。自动测试覆盖九组顺序、配置兼容解码、左右 Option-as-Meta、VT100 application keypad、Web Pane 路由及 Recipe URL 安全边界；`swift test --no-parallel`、JavaScript 语法和 diff whitespace 检查通过。遵循验收边界，本轮未启动真实窗口，视觉密度、系统应用选择器及实体鼠标/键盘组合仍需手动复验。
 - 2026-08-10：按设计要求恢复「同一标签内未聚焦 Pane 变灰」。实现从颜色遮罩改为内容整体 alpha 褪色（`ActivePaneHostView.inactiveContentAlpha = 0.55`）：未聚焦 Pane 朝下层主题材质淡出，透明主题不会再出现 `withAlphaComponent` 产生的近黑色块（即 2026-08-09 移除遮罩要解决的问题），也无需点击穿透遮罩视图。焦点切换仍走 `activePaneChanged` 局部通道翻转透明度，不重建视图树。自动测试锁定双 Pane 的 alpha 分布、切换翻转与 host 实例保持；真实窗口需在不透明与 Glass 主题下各复验一次变灰观感。
 - 2026-08-09：完成 9 套浅色主题的 Otty/Aster 真实窗口双列截图复验。终端双 Pane 抽样均同时命中主题背景；左右 Sidebar/Inspector 共用 Sidebar token；April、Ayu Light、Floating Card、Newsprint、One Light、Paper、Pink、Solarized Light 的实色与 Otty 一致，Glass Light 保留透明 RGBA，由当时桌面与原生材质决定截图灰度。截图保存在本轮 `theme-parity` 验收工件中。
 - 2026-08-09：修正透明与标题 surface 语义：不再把截图采样灰或固定黑色透明度写成 Glass 背景，终端 backing layer 与 Otty RGBA 同步；非活动 Pane 不再叠加整块变暗遮罩；中央 28pt 标题改成 workspace surface 上的透明内容层，消除与 Pane 的重复材质接缝。偏好刷新同时覆盖全部存活 Session 与当前可见终端，避免分屏一侧停留旧主题。

@@ -2,8 +2,8 @@ import AppKit
 import AsterCore
 import Foundation
 
-/// 安全提示的用户选择。`.always` 只适用于非标准 scheme；可执行文件和应用 bundle
-/// 每次打开都重新确认，防止同一路径内容被替换后复用旧授权。
+/// 安全提示的用户选择。外部 host、非标准 scheme 和带文件身份签名的可执行目标均可
+/// 选择 `.always`；签名变化后可执行目标会重新确认。
 enum TargetOpenConfirmation: Equatable {
   case once
   case always
@@ -16,6 +16,8 @@ enum TargetOpenConfirmation: Equatable {
 final class TerminalTargetOpenCoordinator {
   typealias FileInspector = @MainActor (String) -> TargetFileKind
   typealias URLOpener = @MainActor (URL) -> Bool
+  typealias AsterOpener = @MainActor (URL, Bool) -> Bool
+  typealias ExecutableSignatureProvider = @MainActor (String) -> String?
   typealias ConfirmationHandler = @MainActor (TargetSecurityReason) -> TargetOpenConfirmation
   typealias ErrorReporter = @MainActor (String) -> Void
 
@@ -23,6 +25,8 @@ final class TerminalTargetOpenCoordinator {
   private let resolver: TargetResolver
   private let inspectFile: FileInspector
   private let openURL: URLOpener
+  private let openInAster: AsterOpener
+  private let executableSignature: ExecutableSignatureProvider
   private let confirm: ConfirmationHandler
   private let reportError: ErrorReporter
 
@@ -31,6 +35,8 @@ final class TerminalTargetOpenCoordinator {
     resolver: TargetResolver = TargetResolver(),
     inspectFile: @escaping FileInspector = TargetFileInspector.kind,
     openURL: @escaping URLOpener = { NSWorkspace.shared.open($0) },
+    openInAster: @escaping AsterOpener = { _, _ in false },
+    executableSignature: @escaping ExecutableSignatureProvider = TerminalTargetOpenCoordinator.executableSignature,
     confirm: @escaping ConfirmationHandler = TerminalTargetOpenCoordinator.presentConfirmation,
     reportError: @escaping ErrorReporter = TerminalTargetOpenCoordinator.presentError
   ) {
@@ -38,6 +44,8 @@ final class TerminalTargetOpenCoordinator {
     self.resolver = resolver
     self.inspectFile = inspectFile
     self.openURL = openURL
+    self.openInAster = openInAster
+    self.executableSignature = executableSignature
     self.confirm = confirm
     self.reportError = reportError
   }
@@ -73,9 +81,17 @@ final class TerminalTargetOpenCoordinator {
     } else {
       fileKind = nil
     }
+    let signature: String? = if case .file(let file) = target,
+      fileKind == .regular(executable: true) || fileKind == .applicationBundle
+    {
+      executableSignature(file.path)
+    } else {
+      nil
+    }
     let decision = preferences.configuration.controls.resolvedTargetSecurityPolicy.decision(
       for: target,
-      fileKind: fileKind
+      fileKind: fileKind,
+      executableSignature: signature
     )
 
     var permissionToRemember: TargetSecurityReason?
@@ -87,7 +103,7 @@ final class TerminalTargetOpenCoordinator {
       case .once:
         break
       case .always:
-        if case .nonStandardScheme = reason { permissionToRemember = reason }
+        permissionToRemember = reason
       case .cancel:
         return false
       }
@@ -103,22 +119,71 @@ final class TerminalTargetOpenCoordinator {
     case .url(let target):
       url = target.url
     }
-    guard openURL(url) else {
+    let controls = preferences.configuration.controls
+    let opened: Bool
+    switch target {
+    case .file:
+      let isDirectory = fileKind == .directory
+      let opensInternally = isDirectory
+        ? controls.resolvedFolderOpenWith == .aster
+        : controls.resolvedFileOpenWith == .aster
+      opened = opensInternally && openInAster(url, isDirectory) ? true : openURL(url)
+    case .url:
+      // 内部打开器只接受 HTTP(S) Web Pane；mailto 或自定义协议返回 false 后仍交给
+      // LaunchServices，且前面已经完成对应的 scheme 安全决策。
+      opened = controls.resolvedLinkOpenWith == .aster && openInAster(url, false)
+        ? true : openURL(url)
+    }
+    guard opened else {
       reportError("系统无法打开该目标。请检查文件是否存在，或是否安装了对应应用。")
       return false
     }
-    if let permissionToRemember { remember(permissionToRemember) }
+    if let permissionToRemember {
+      remember(permissionToRemember, executableSignature: signature)
+    }
     return true
   }
 
-  private func remember(_ reason: TargetSecurityReason) {
+  /// 生成与实际打开解析一致的预览文字。相对、`~/`、`file:` 和行列后缀会显示为
+  /// 可核对的绝对本地路径；解析失败时保留原文，避免远端 OSC 7 被误装成本机路径。
+  /// 该方法只做纯解析，不检查文件、不请求授权，也不会执行打开动作。
+  func previewText(_ rawValue: String, currentDirectory: String) -> String {
+    guard let target = try? resolver.resolve(
+      rawValue,
+      currentDirectory: currentDirectory,
+      // 目标已经由终端点击命中；预览不应再次按普通文字 scheme 白名单隐藏它。
+      source: .osc8,
+      schemePolicy: preferences.configuration.controls.resolvedLinkSchemePolicy
+    ) else { return rawValue }
+    switch target {
+    case .url(let target):
+      return target.url.absoluteString
+    case .file(let file):
+      var value = file.path
+      if let line = file.line {
+        value += ":\(line)"
+        if let column = file.column { value += ":\(column)" }
+      }
+      return value
+    }
+  }
+
+  private func remember(_ reason: TargetSecurityReason, executableSignature: String?) {
     switch reason {
+    case .externalLink(let host):
+      guard !host.isEmpty else { return }
+      var hosts = preferences.configuration.controls.resolvedAllowedExternalLinkHosts
+      hosts.insert(host.lowercased())
+      preferences.configuration.controls.allowedExternalLinkHosts = hosts
     case .nonStandardScheme(let scheme):
       var schemes = preferences.configuration.controls.resolvedAllowedNonStandardLinkSchemes
       schemes.insert(scheme.lowercased())
       preferences.configuration.controls.allowedNonStandardLinkSchemes = schemes
     case .executableFile:
-      break
+      guard let executableSignature else { return }
+      var signatures = preferences.configuration.controls.resolvedAllowedExecutableFileSignatures
+      signatures.insert(executableSignature)
+      preferences.configuration.controls.allowedExecutableFileSignatures = signatures
     case .unsupportedFileType:
       // 拒绝类型不会提供“始终允许”按钮；保留穷尽分支以防未来新增调用路径。
       break
@@ -129,7 +194,7 @@ final class TerminalTargetOpenCoordinator {
     switch reason {
     case .unsupportedFileType:
       return "为避免阻塞或访问系统设备，不能打开管道、socket 或设备文件。"
-    case .nonStandardScheme, .executableFile:
+    case .externalLink, .nonStandardScheme, .executableFile:
       return "该目标未通过安全检查。"
     }
   }
@@ -138,6 +203,9 @@ final class TerminalTargetOpenCoordinator {
     let alert = NSAlert()
     alert.alertStyle = .warning
     switch reason {
+    case .externalLink(let host):
+      alert.messageText = "允许打开 \(host)？"
+      alert.informativeText = "外部链接可能离开当前工作区。仅在信任该网站时打开。"
     case .nonStandardScheme(let scheme):
       alert.messageText = "允许打开 \(scheme):// 链接？"
       alert.informativeText = "非标准链接会交给本机已注册的应用处理。仅在信任来源时打开。"
@@ -148,17 +216,33 @@ final class TerminalTargetOpenCoordinator {
       return .cancel
     }
     alert.addButton(withTitle: "打开一次")
-    if case .nonStandardScheme = reason {
-      alert.addButton(withTitle: "始终允许此 Scheme")
-      alert.addButton(withTitle: "取消")
-      switch alert.runModal() {
-      case .alertFirstButtonReturn: return .once
-      case .alertSecondButtonReturn: return .always
-      default: return .cancel
-      }
+    let alwaysTitle: String = switch reason {
+    case .externalLink: "始终允许此网站"
+    case .nonStandardScheme: "始终允许此 Scheme"
+    case .executableFile: "始终允许此文件"
+    case .unsupportedFileType: "始终允许"
     }
+    alert.addButton(withTitle: alwaysTitle)
     alert.addButton(withTitle: "取消")
-    return alert.runModal() == .alertFirstButtonReturn ? .once : .cancel
+    switch alert.runModal() {
+    case .alertFirstButtonReturn: return .once
+    case .alertSecondButtonReturn: return .always
+    default: return .cancel
+    }
+  }
+
+  /// 授权令牌绑定标准化路径、设备、inode、大小和纳秒级修改时间。路径被替换或内容
+  /// 更新后任一身份字段变化都会重新提示；无法读取元数据时不提供可持久化授权。
+  private static func executableSignature(at path: String) -> String? {
+    let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+    guard let attributes = try? FileManager.default.attributesOfItem(atPath: normalizedPath),
+      let device = (attributes[.systemNumber] as? NSNumber)?.uint64Value,
+      let inode = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value,
+      let size = (attributes[.size] as? NSNumber)?.uint64Value,
+      let modified = attributes[.modificationDate] as? Date
+    else { return nil }
+    let modifiedNanoseconds = Int64(modified.timeIntervalSince1970 * 1_000_000_000)
+    return "\(normalizedPath)|\(device)|\(inode)|\(size)|\(modifiedNanoseconds)"
   }
 
   private static func presentError(_ message: String) {

@@ -980,10 +980,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.controls.customLinkSchemes = Set(schemes.prefix(64))
         },
         actionRow(
-          "安全警告例外", "清除已记住的非标准 Scheme 授权",
+          "安全警告例外", "清除已记住的网站、非标准 Scheme 和可执行文件授权",
           title: "重置警告"
         ) { [weak self] in
           self?.preferences.configuration.controls.allowedNonStandardLinkSchemes = []
+          self?.preferences.configuration.controls.allowedExternalLinkHosts = []
+          self?.preferences.configuration.controls.allowedExecutableFileSignatures = []
         },
       ]),
       sectionTitle("滚动"),
@@ -1053,9 +1055,34 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       refresh()
       return
     }
+    let history = NSButton(checkboxWithTitle: "命令历史", target: nil, action: nil)
+    let pinned = NSButton(checkboxWithTitle: "固定命令", target: nil, action: nil)
+    let folders = NSButton(checkboxWithTitle: "目录频率数据", target: nil, action: nil)
+    history.state = .on
+    pinned.state = .on
+    folders.state = .on
+    let stack = NSStackView(views: [history, pinned, folders])
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 7
+    stack.frame.size = NSSize(width: 260, height: 72)
+    let alert = NSAlert()
+    alert.messageText = "清除补全数据"
+    alert.informativeText = "内置规格和手动更新的命令数据库不会被删除。"
+    alert.accessoryView = stack
+    alert.addButton(withTitle: "清除")
+    alert.addButton(withTitle: "取消")
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+    var selection: AutocompleteService.LearningClearSelection = []
+    if history.state == .on { selection.insert(.history) }
+    if pinned.state == .on { selection.insert(.pinnedCommands) }
+    guard !selection.isEmpty || folders.state == .on else { return }
     do {
-      try service.clearLearning()
-      message = "已清除本机 Autocomplete 学习数据。"
+      try service.clearLearning(selection)
+      if folders.state == .on {
+        NotificationCenter.default.post(name: .asterClearFrequentFolders, object: nil)
+      }
+      message = "已清除选中的本机补全数据。"
     } catch {
       message = "清除失败：\(error.localizedDescription)"
     }
@@ -2569,20 +2596,7 @@ private enum SettingsWebBridge {
     "shell.zoxideEnabled": .bool(false),
     "shell.terminalResumeProtocol": .bool(false),
     "shell.restoreProcessAllowlist": .string(""),
-    "controls.optionAsMetaMode": .string("off"),
-    "controls.vtKeypadAppAllowed": .bool(true),
-    "controls.rightClickAction": .string("contextMenu"),
-    "controls.mouseHideWhileTyping": .bool(false),
     "controls.shiftMouseSelection": .bool(true),
-    "controls.bypassMouseReporting": .string("shift"),
-    "controls.linkClickOverMouseMode": .bool(true),
-    "controls.cursorClickToMove": .bool(false),
-    "controls.linkOpenWith": .string("system"),
-    "controls.fileOpenWith": .string("aster"),
-    "controls.folderOpenWith": .string("aster"),
-    "controls.openWithApps": .string(""),
-    "controls.secureInputIndication": .bool(true),
-    "controls.selectionBackspaceDeletes": .bool(false),
     "appearance.adjustCellHeight": .number(0),
     "appearance.fontBlending": .string("srgbOver"),
     "appearance.fontThicken": .number(0),
@@ -2730,10 +2744,9 @@ extension SettingsViewController: WKNavigationDelegate {
     var values = SettingsWebBridge.compatibilityDefaults.mapValues(\.jsonValue)
     for (key, value) in preferences.settingsCompatibility { values[key] = value.jsonValue }
     let configuration = preferences.configuration
-    if preferences.settingsCompatibility["controls.optionAsMetaMode"] == nil {
-      values["controls.optionAsMetaMode"] = configuration.controls.optionAsMeta ? "both" : "off"
-    }
-
+    let autocompleteDatabaseStatus = AutocompleteService.shared.map { service in
+      "\(service.specDatabase.commands.count) 个规格 · \(service.specDatabase.sourceRevision.prefix(12))"
+    } ?? "不可用"
     let valueGroups: [[String: Any]] = [[
       "general.language": configuration.general.language,
       "launchBehavior": configuration.launchBehavior.rawValue,
@@ -2767,21 +2780,38 @@ extension SettingsViewController: WKNavigationDelegate {
       "shell.badgeCommandFailure": configuration.shell.resolvedBadgeCommandFailure,
       "shell.badgeAwaitingInput": configuration.shell.badgeAwaitingInput,
     ], [
+      "controls.optionAsMetaMode": configuration.controls.resolvedOptionAsMetaMode.rawValue,
+      "controls.vtKeypadAppAllowed": configuration.controls.resolvedVTKeypadAppAllowed,
       "controls.allowMouseReporting": configuration.controls.allowMouseReporting,
       "controls.focusFollowsMouse": configuration.controls.focusFollowsMouse,
+      "controls.rightClickAction": configuration.controls.resolvedRightClickAction.rawValue,
+      "controls.mouseHideWhileTyping": configuration.controls.resolvedMouseHideWhileTyping,
+      "controls.bypassMouseReporting": configuration.controls.resolvedBypassMouseReporting.rawValue,
+      "controls.linkClickOverMouseMode": configuration.controls.resolvedLinkClickOverMouseMode,
+      "controls.cursorClickToMove": configuration.controls.resolvedCursorClickToMove,
       "controls.shiftArrowSelection": configuration.controls.resolvedShiftArrowSelection,
       "controls.linkDetectionEnabled": configuration.controls.resolvedLinkDetectionEnabled,
       "controls.detectAllLinkSchemes": configuration.controls.detectAllLinkSchemes ?? true,
+      "controls.linkSchemes": (configuration.controls.detectAllLinkSchemes ?? true) ? "all" : "custom",
       "controls.customLinkSchemes": configuration.controls.resolvedCustomLinkSchemes.sorted().joined(separator: ", "),
       "controls.allowedNonStandardLinkSchemes": configuration.controls.resolvedAllowedNonStandardLinkSchemes.sorted().joined(separator: ", "),
       "controls.showLinkPreviews": configuration.controls.showLinkPreviews,
+      "controls.linkOpenWith": configuration.controls.resolvedLinkOpenWith.rawValue,
+      "controls.fileOpenWith": configuration.controls.resolvedFileOpenWith.rawValue,
+      "controls.folderOpenWith": configuration.controls.resolvedFolderOpenWith.rawValue,
+      "controls.defaultGitClient": configuration.controls.defaultGitClient ?? "auto",
+      "controls.openWithApps": configuration.controls.resolvedOpenWithApplications.map {
+        ["name": $0.name, "bundleId": $0.bundleIdentifier]
+      },
       "controls.secureInputAutomatically": configuration.controls.secureInputAutomatically,
+      "controls.secureInputIndication": configuration.controls.resolvedSecureInputIndication,
       "controls.copyOnSelect": configuration.controls.copyOnSelect,
       "controls.trimTrailingSpaces": configuration.controls.trimTrailingSpaces,
       "controls.pasteProtection": configuration.controls.pasteProtection,
       "controls.pasteBracketedSafe": configuration.controls.resolvedPasteBracketedSafe,
       "controls.clearSelectionOnTyping": configuration.controls.resolvedClearSelectionOnTyping,
       "controls.clearSelectionOnCopy": configuration.controls.resolvedClearSelectionOnCopy,
+      "controls.selectionBackspaceDeletes": configuration.controls.resolvedSelectionBackspaceDeletes,
       "controls.clipboardWriteAccess": configuration.controls.resolvedClipboardWriteAccess.rawValue,
       "controls.clipboardReadAccess": configuration.controls.resolvedClipboardReadAccess.rawValue,
       "controls.smoothScrolling": configuration.controls.smoothScrolling,
@@ -2791,6 +2821,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "controls.autocompleteCandidatePanel": webCandidatePanel(configuration.controls.resolvedAutocompleteCandidatePanel),
       "controls.autocompleteInlineSuggestion": configuration.controls.resolvedAutocompleteInlineSuggestion,
       "controls.autocompleteOnDeviceLearning": configuration.controls.resolvedAutocompleteOnDeviceLearning,
+      "controls.autocompleteDatabaseStatus": autocompleteDatabaseStatus,
       "controls.autocompleteHistoryIgnore": configuration.controls.resolvedAutocompleteHistoryIgnore.joined(separator: ", "),
       "controls.autocompleteDescriptionLanguage": configuration.controls.resolvedAutocompleteDescriptionLanguage.rawValue,
       "controls.ipcAllowSendKeys": configuration.controls.resolvedIPCAllowSendKeys,
@@ -3086,14 +3117,25 @@ extension SettingsViewController: WKNavigationDelegate {
     case "shell.badgeAwaitingInput": preferences.configuration.shell.badgeAwaitingInput = try bool()
     case "controls.allowMouseReporting": preferences.configuration.controls.allowMouseReporting = try bool()
     case "controls.optionAsMetaMode":
-      let mode = try string()
-      guard ["off", "both", "left", "right"].contains(mode) else { throw SettingsWebBridgeError.invalidValue }
-      preferences.configuration.controls.optionAsMeta = mode != "off"
-      preferences.setCompatibilityValue(.string(mode), forKey: key)
+      let mode = try enumValue(string(), as: OptionAsMetaMode.self)
+      preferences.configuration.controls.optionAsMetaMode = mode
+      preferences.configuration.controls.optionAsMeta = mode != .off
+    case "controls.vtKeypadAppAllowed": preferences.configuration.controls.vtKeypadAppAllowed = try bool()
     case "controls.focusFollowsMouse": preferences.configuration.controls.focusFollowsMouse = try bool()
+    case "controls.rightClickAction": preferences.configuration.controls.rightClickAction = try enumValue(string(), as: TerminalRightClickAction.self)
+    case "controls.mouseHideWhileTyping": preferences.configuration.controls.mouseHideWhileTyping = try bool()
+    case "controls.bypassMouseReporting": preferences.configuration.controls.bypassMouseReporting = try enumValue(string(), as: MouseReportingBypass.self)
+    case "controls.linkClickOverMouseMode": preferences.configuration.controls.linkClickOverMouseMode = try bool()
+    case "controls.cursorClickToMove": preferences.configuration.controls.cursorClickToMove = try bool()
     case "controls.shiftArrowSelection": preferences.configuration.controls.shiftArrowSelection = try bool()
     case "controls.linkDetectionEnabled": preferences.configuration.controls.linkDetectionEnabled = try bool()
     case "controls.detectAllLinkSchemes": preferences.configuration.controls.detectAllLinkSchemes = try bool()
+    case "controls.linkSchemes":
+      switch try string() {
+      case "all": preferences.configuration.controls.detectAllLinkSchemes = true
+      case "custom": preferences.configuration.controls.detectAllLinkSchemes = false
+      default: throw SettingsWebBridgeError.invalidValue
+      }
     case "controls.customLinkSchemes":
       let schemes = try string().split(separator: ",").map {
         $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -3105,13 +3147,44 @@ extension SettingsViewController: WKNavigationDelegate {
       }.filter(LinkSchemePolicy.isSyntacticallyValid)
       preferences.configuration.controls.allowedNonStandardLinkSchemes = Set(schemes.prefix(64))
     case "controls.showLinkPreviews": preferences.configuration.controls.showLinkPreviews = try bool()
+    case "controls.linkOpenWith": preferences.configuration.controls.linkOpenWith = try enumValue(string(), as: LinkOpenDestination.self)
+    case "controls.fileOpenWith": preferences.configuration.controls.fileOpenWith = try enumValue(string(), as: FileOpenDestination.self)
+    case "controls.folderOpenWith": preferences.configuration.controls.folderOpenWith = try enumValue(string(), as: FolderOpenDestination.self)
+    case "controls.defaultGitClient":
+      let value = try string()
+      guard value == "auto" || (value.utf8.count <= 255 && !value.unicodeScalars.contains(where: {
+        CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains($0)
+      }))
+      else { throw SettingsWebBridgeError.invalidValue }
+      preferences.configuration.controls.defaultGitClient = value == "auto" ? nil : value
+      preferences.inspectorGitEditorBundleIdentifier = value == "auto" ? nil : value
+    case "controls.openWithApps":
+      guard let rawApplications = value as? [[String: Any]], rawApplications.count <= 32 else {
+        throw SettingsWebBridgeError.invalidValue
+      }
+      var seen: Set<String> = []
+      preferences.configuration.controls.openWithApplications = try rawApplications.map { raw in
+        guard let name = raw["name"] as? String,
+          let bundleIdentifier = raw["bundleId"] as? String,
+          !name.isEmpty, name.utf8.count <= 128,
+          !bundleIdentifier.isEmpty, bundleIdentifier.utf8.count <= 255,
+          !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+          !bundleIdentifier.unicodeScalars.contains(where: {
+            CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains($0)
+          }),
+          seen.insert(bundleIdentifier).inserted
+        else { throw SettingsWebBridgeError.invalidValue }
+        return OpenWithApplication(name: name, bundleIdentifier: bundleIdentifier)
+      }
     case "controls.secureInputAutomatically": preferences.configuration.controls.secureInputAutomatically = try bool()
+    case "controls.secureInputIndication": preferences.configuration.controls.secureInputIndication = try bool()
     case "controls.copyOnSelect": preferences.configuration.controls.copyOnSelect = try bool()
     case "controls.trimTrailingSpaces": preferences.configuration.controls.trimTrailingSpaces = try bool()
     case "controls.pasteProtection": preferences.configuration.controls.pasteProtection = try bool()
     case "controls.pasteBracketedSafe": preferences.configuration.controls.pasteBracketedSafe = try bool()
     case "controls.clearSelectionOnTyping": preferences.configuration.controls.clearSelectionOnTyping = try bool()
     case "controls.clearSelectionOnCopy": preferences.configuration.controls.clearSelectionOnCopy = try bool()
+    case "controls.selectionBackspaceDeletes": preferences.configuration.controls.selectionBackspaceDeletes = try bool()
     case "controls.clipboardWriteAccess": preferences.configuration.controls.clipboardWriteAccess = try enumValue(string(), as: ClipboardAccess.self)
     case "controls.clipboardReadAccess": preferences.configuration.controls.clipboardReadAccess = try enumValue(string(), as: ClipboardAccess.self)
     case "controls.smoothScrolling": preferences.configuration.controls.smoothScrolling = try bool()
@@ -3465,14 +3538,11 @@ extension SettingsViewController: WKNavigationDelegate {
         detail: "以逗号分隔允许注入受管集成的 Shell：zsh、bash、fish。"
       )
     case "manageFolders": manageTrackedFolders()
-    case "configureOpenWithApps":
-      editCompatibilityText(
-        key: "controls.openWithApps",
-        title: "自定义打开方式",
-        detail: "输入应用 bundle ID，以逗号分隔。"
-      )
+    case "configureOpenWithApps": configureOpenWithApplication()
     case "resetLinkApprovals":
       preferences.configuration.controls.allowedNonStandardLinkSchemes = []
+      preferences.configuration.controls.allowedExternalLinkHosts = []
+      preferences.configuration.controls.allowedExecutableFileSignatures = []
       message = "已清除链接安全授权。"
       refresh()
     case "updateAutocomplete": updateAutocompleteSpecs()
@@ -3592,11 +3662,40 @@ extension SettingsViewController: WKNavigationDelegate {
       refresh()
     case "resetWarnings":
       preferences.configuration.controls.allowedNonStandardLinkSchemes = []
+      preferences.configuration.controls.allowedExternalLinkHosts = []
+      preferences.configuration.controls.allowedExecutableFileSignatures = []
       message = "已重置所有警告和本机授权。"
       refresh()
     default:
       sendWebToast("“\(action)”尚无可用的 macOS 操作", level: "error")
     }
+  }
+
+  /// 通过系统应用选择器取得真实 bundle ID。配置不保存路径，后续每次打开都由
+  /// LaunchServices 解析当前位置，因此应用移动或升级不会让绝对路径失效。
+  private func configureOpenWithApplication() {
+    let panel = NSOpenPanel()
+    panel.title = "添加打开方式"
+    panel.prompt = "添加"
+    panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    panel.allowedContentTypes = [.application]
+    guard panel.runModal() == .OK, let url = panel.url,
+      let bundle = Bundle(url: url), let bundleIdentifier = bundle.bundleIdentifier
+    else { return }
+    let name = FileManager.default.displayName(atPath: url.path)
+      .replacingOccurrences(of: ".app", with: "")
+    var applications = preferences.configuration.controls.resolvedOpenWithApplications
+    if let index = applications.firstIndex(where: { $0.bundleIdentifier == bundleIdentifier }) {
+      applications[index].name = name
+    } else {
+      applications.append(OpenWithApplication(name: name, bundleIdentifier: bundleIdentifier))
+    }
+    preferences.configuration.controls.openWithApplications = applications
+    message = "已添加打开方式“\(name)”。"
+    refresh()
   }
 
   @discardableResult
@@ -3794,8 +3893,13 @@ extension SettingsViewController: WKNavigationDelegate {
   }
 
   private func settingsExportEnvelope() -> SettingsExportEnvelope {
-    SettingsExportEnvelope(
-      configuration: preferences.configuration,
+    // 导出文件可被分享或版本控制，不能携带仅对本机目标成立的“始终允许”授权。
+    var exportedConfiguration = preferences.configuration
+    exportedConfiguration.controls.allowedNonStandardLinkSchemes = []
+    exportedConfiguration.controls.allowedExternalLinkHosts = []
+    exportedConfiguration.controls.allowedExecutableFileSignatures = []
+    return SettingsExportEnvelope(
+      configuration: exportedConfiguration,
       compatibility: preferences.settingsCompatibility
     )
   }

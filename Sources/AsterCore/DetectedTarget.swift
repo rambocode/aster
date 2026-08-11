@@ -333,6 +333,7 @@ public enum TargetFileInspector {
 }
 
 public enum TargetSecurityReason: Equatable, Sendable {
+  case externalLink(String)
   case nonStandardScheme(String)
   case executableFile(String)
   case unsupportedFileType(TargetFileKind)
@@ -344,32 +345,47 @@ public enum TargetSecurityDecision: Equatable, Sendable {
   case deny(TargetSecurityReason)
 }
 
-/// 纯值安全策略。标准 URL 和普通文件直接放行；首次非标准 scheme 与可执行文件要求
-/// 用户确认；设备、管道和 socket 无条件拒绝。
+/// 纯值安全策略。普通文件直接放行；首次外部 host、非标准 scheme 与可执行文件要求
+/// 用户确认；设备、管道和 socket 无条件拒绝。可执行授权绑定调用方提供的文件签名，
+/// 文件被替换后不会沿用旧的“始终允许”。
 public struct TargetSecurityPolicy: Equatable, Sendable {
   public let allowedNonStandardSchemes: Set<String>
+  public let allowedExternalHosts: Set<String>
+  public let allowedExecutableSignatures: Set<String>
 
-  public init(allowedNonStandardSchemes: Set<String> = []) {
+  public init(
+    allowedNonStandardSchemes: Set<String> = [],
+    allowedExternalHosts: Set<String> = [],
+    allowedExecutableSignatures: Set<String> = []
+  ) {
     self.allowedNonStandardSchemes = Set(allowedNonStandardSchemes.map { $0.lowercased() })
+    self.allowedExternalHosts = Set(allowedExternalHosts.map { $0.lowercased() })
+    self.allowedExecutableSignatures = allowedExecutableSignatures
   }
 
   /// 返回打开决策。文件类型未知或不存在时允许调用方继续，让实际打开动作提供明确的
   /// “文件不存在/无权限”错误；只有已确认的特殊文件类型在策略层拒绝。
   public func decision(
     for target: DetectedTarget,
-    fileKind: TargetFileKind? = nil
+    fileKind: TargetFileKind? = nil,
+    executableSignature: String? = nil
   ) -> TargetSecurityDecision {
     switch target {
     case .url(let target):
-      if LinkSchemePolicy.standardSchemes.contains(target.scheme)
-        || allowedNonStandardSchemes.contains(target.scheme)
-      {
-        return .allow
+      if ["http", "https"].contains(target.scheme) {
+        let host = target.url.host?.lowercased() ?? ""
+        return allowedExternalHosts.contains(host)
+          ? .allow : .confirm(.externalLink(host))
       }
+      if LinkSchemePolicy.standardSchemes.contains(target.scheme) { return .allow }
+      if allowedNonStandardSchemes.contains(target.scheme) { return .allow }
       return .confirm(.nonStandardScheme(target.scheme))
     case .file(let target):
       switch fileKind {
       case .regular(executable: true), .applicationBundle:
+        if let executableSignature, allowedExecutableSignatures.contains(executableSignature) {
+          return .allow
+        }
         return .confirm(.executableFile(target.path))
       case .namedPipe:
         return .deny(.unsupportedFileType(.namedPipe))

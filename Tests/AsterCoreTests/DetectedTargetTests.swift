@@ -119,7 +119,7 @@ func targetResolverRejectsUnsafeInputs() {
   }
 }
 
-@Test("标准 URL 与普通文件可直接打开，非标准 scheme 和可执行文件需要确认")
+@Test("外部 URL、非标准 scheme 和可执行文件首次打开需要确认")
 func targetSecurityPolicyRequiresDocumentedConfirmations() {
   let policy = TargetSecurityPolicy()
   let web = DetectedTarget.url(
@@ -129,7 +129,7 @@ func targetSecurityPolicyRequiresDocumentedConfirmations() {
   let file = DetectedTarget.file(.init(path: "/tmp/readme.txt"))
   let executable = DetectedTarget.file(.init(path: "/tmp/tool"))
 
-  #expect(policy.decision(for: web) == .allow)
+  #expect(policy.decision(for: web) == .confirm(.externalLink("example.com")))
   #expect(policy.decision(for: custom) == .confirm(.nonStandardScheme("codex")))
   #expect(policy.decision(for: file, fileKind: .regular(executable: false)) == .allow)
   #expect(
@@ -140,14 +140,25 @@ func targetSecurityPolicyRequiresDocumentedConfirmations() {
       == .confirm(.executableFile("/tmp/Evil.app")))
 }
 
-@Test("记住的 scheme 可直接打开，设备、管道和 socket 始终拒绝")
+@Test("记住的网站、scheme 与文件签名可直接打开，特殊文件始终拒绝")
 func targetSecurityPolicyHonorsRememberedSchemesAndRejectsSpecialFiles() {
-  let policy = TargetSecurityPolicy(allowedNonStandardSchemes: ["CODEX"])
+  let policy = TargetSecurityPolicy(
+    allowedNonStandardSchemes: ["CODEX"],
+    allowedExternalHosts: ["EXAMPLE.COM"],
+    allowedExecutableSignatures: ["signature-v1"]
+  )
+  let web = DetectedTarget.url(
+    .init(url: URL(string: "https://example.com")!, scheme: "https"))
   let custom = DetectedTarget.url(
     .init(url: URL(string: "codex://session/123")!, scheme: "codex"))
   let file = DetectedTarget.file(.init(path: "/tmp/special"))
 
+  #expect(policy.decision(for: web) == .allow)
   #expect(policy.decision(for: custom) == .allow)
+  #expect(
+    policy.decision(
+      for: file, fileKind: .regular(executable: true), executableSignature: "signature-v1")
+      == .allow)
   #expect(
     policy.decision(for: file, fileKind: .namedPipe)
       == .deny(.unsupportedFileType(.namedPipe)))

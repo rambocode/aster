@@ -211,6 +211,69 @@ public enum AutocompleteDescriptionLanguage: String, CaseIterable, Codable, Equa
   }
 }
 
+/// macOS Option 键的 Meta/Alt 发送范围。raw value 与 Otty 配置保持一致，便于导入。
+public enum OptionAsMetaMode: String, CaseIterable, Codable, Equatable, Sendable {
+  case off = "false"
+  case both = "true"
+  case left
+  case right
+
+  public func applies(toKeyCode keyCode: UInt16) -> Bool {
+    switch self {
+    case .off: false
+    case .both: true
+    case .left: keyCode == 58
+    case .right: keyCode == 61
+    }
+  }
+}
+
+/// 终端右键的本地动作；Control + 右键始终保留系统上下文菜单。
+public enum TerminalRightClickAction: String, CaseIterable, Codable, Equatable, Sendable {
+  case contextMenu = "context-menu"
+  case copy
+  case paste
+  case copyOrPaste = "copy-or-paste"
+  case ignore
+}
+
+/// 前台 TUI 启用鼠标上报时，按住哪组修饰键把手势留给本地终端。
+public enum MouseReportingBypass: String, CaseIterable, Codable, Equatable, Sendable {
+  case none
+  case shift
+  case control = "ctrl"
+  case option = "alt"
+  case controlShift = "ctrl+shift"
+  case command = "super"
+}
+
+public enum LinkOpenDestination: String, CaseIterable, Codable, Equatable, Sendable {
+  case browser
+  case aster = "otty"
+}
+
+public enum FileOpenDestination: String, CaseIterable, Codable, Equatable, Sendable {
+  case defaultApplication = "default-app"
+  case aster = "otty"
+}
+
+public enum FolderOpenDestination: String, CaseIterable, Codable, Equatable, Sendable {
+  case finder = "default-app"
+  case aster = "otty"
+}
+
+/// “打开方式”只持久化显示名和 bundle ID，不保存应用路径；实际打开时由 LaunchServices
+/// 重新解析，避免应用升级或移动后留下失效绝对路径。
+public struct OpenWithApplication: Codable, Equatable, Hashable, Sendable {
+  public var name: String
+  public var bundleIdentifier: String
+
+  public init(name: String, bundleIdentifier: String) {
+    self.name = name
+    self.bundleIdentifier = bundleIdentifier
+  }
+}
+
 public struct GeneralConfiguration: Codable, Equatable, Sendable {
   public var language = "system"
   public var quitAfterLastWindowClosed = false
@@ -271,8 +334,16 @@ public struct ShellConfiguration: Codable, Equatable, Sendable {
 
 public struct ControlConfiguration: Codable, Equatable, Sendable {
   public var optionAsMeta = false
+  /// 新字段缺失时回退旧布尔值，确保 0.4.x 配置继续保持原有行为。
+  public var optionAsMetaMode: OptionAsMetaMode?
+  public var vtKeypadAppAllowed: Bool? = true
   public var allowMouseReporting = true
   public var focusFollowsMouse = false
+  public var rightClickAction: TerminalRightClickAction? = .contextMenu
+  public var mouseHideWhileTyping: Bool? = false
+  public var bypassMouseReporting: MouseReportingBypass? = .shift
+  public var linkClickOverMouseMode: Bool? = true
+  public var cursorClickToMove: Bool? = true
   public var copyOnSelect = false
   public var trimTrailingSpaces = false
   public var pasteProtection = true
@@ -282,6 +353,13 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
   public var scrollPastFirstLine: TerminalScrollPastFirstLine? = .disabled
   public var showLinkPreviews = true
   public var secureInputAutomatically = true
+  public var secureInputIndication: Bool? = true
+  public var selectionBackspaceDeletes: Bool? = true
+  public var linkOpenWith: LinkOpenDestination? = .browser
+  public var fileOpenWith: FileOpenDestination? = .aster
+  public var folderOpenWith: FolderOpenDestination? = .aster
+  public var defaultGitClient: String?
+  public var openWithApplications: [OpenWithApplication]? = []
   /// 可选字段兼容旧配置；缺失时采用 Otty 的选择、复制与剪贴板安全默认值。
   public var shiftArrowSelection: Bool? = true
   public var clearSelectionOnTyping: Bool? = true
@@ -293,7 +371,10 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
   public var linkDetectionEnabled: Bool? = true
   public var detectAllLinkSchemes: Bool? = true
   public var customLinkSchemes: Set<String>? = []
+  /// 三类“始终允许”仅属于本机授权；导入外部配置时统一剥离。
   public var allowedNonStandardLinkSchemes: Set<String>? = []
+  public var allowedExternalLinkHosts: Set<String>? = []
+  public var allowedExecutableFileSignatures: Set<String>? = []
   /// 可选字段兼容早期配置；缺失时采用 Otty 的补全默认行为。
   public var autocompleteShortcut: AutocompleteShortcut? = .tab
   public var autocompleteCandidatePanel: AutocompleteCandidatePanel? = .escape
@@ -306,6 +387,40 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
   public var ipcAllowSensitiveSessions: Bool? = false
 
   public init() {}
+
+  public var resolvedOptionAsMetaMode: OptionAsMetaMode {
+    optionAsMetaMode ?? (optionAsMeta ? .both : .off)
+  }
+
+  public var resolvedVTKeypadAppAllowed: Bool { vtKeypadAppAllowed ?? true }
+
+  public var resolvedRightClickAction: TerminalRightClickAction {
+    rightClickAction ?? .contextMenu
+  }
+
+  public var resolvedMouseHideWhileTyping: Bool { mouseHideWhileTyping ?? false }
+
+  public var resolvedBypassMouseReporting: MouseReportingBypass {
+    bypassMouseReporting ?? .shift
+  }
+
+  public var resolvedLinkClickOverMouseMode: Bool { linkClickOverMouseMode ?? true }
+
+  public var resolvedCursorClickToMove: Bool { cursorClickToMove ?? true }
+
+  public var resolvedSecureInputIndication: Bool { secureInputIndication ?? true }
+
+  public var resolvedSelectionBackspaceDeletes: Bool { selectionBackspaceDeletes ?? true }
+
+  public var resolvedLinkOpenWith: LinkOpenDestination { linkOpenWith ?? .browser }
+
+  public var resolvedFileOpenWith: FileOpenDestination { fileOpenWith ?? .aster }
+
+  public var resolvedFolderOpenWith: FolderOpenDestination { folderOpenWith ?? .aster }
+
+  public var resolvedOpenWithApplications: [OpenWithApplication] {
+    openWithApplications ?? []
+  }
 
   public var resolvedLinkDetectionEnabled: Bool { linkDetectionEnabled ?? true }
 
@@ -341,6 +456,14 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
     allowedNonStandardLinkSchemes ?? []
   }
 
+  public var resolvedAllowedExternalLinkHosts: Set<String> {
+    allowedExternalLinkHosts ?? []
+  }
+
+  public var resolvedAllowedExecutableFileSignatures: Set<String> {
+    allowedExecutableFileSignatures ?? []
+  }
+
   public var resolvedAutocompleteShortcut: AutocompleteShortcut {
     autocompleteShortcut ?? .tab
   }
@@ -371,7 +494,9 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
 
   public var resolvedTargetSecurityPolicy: TargetSecurityPolicy {
     TargetSecurityPolicy(
-      allowedNonStandardSchemes: resolvedAllowedNonStandardLinkSchemes
+      allowedNonStandardSchemes: resolvedAllowedNonStandardLinkSchemes,
+      allowedExternalHosts: resolvedAllowedExternalLinkHosts,
+      allowedExecutableSignatures: resolvedAllowedExecutableFileSignatures
     )
   }
 }
@@ -583,6 +708,53 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
       result.controls.resolvedCustomLinkSchemes)
     result.controls.allowedNonStandardLinkSchemes = Self.normalizedSchemes(
       result.controls.resolvedAllowedNonStandardLinkSchemes)
+    result.controls.allowedExternalLinkHosts = Set(
+      result.controls.resolvedAllowedExternalLinkHosts.lazy
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        .filter {
+          !$0.isEmpty && $0.utf8.count <= 253 && !$0.contains("/")
+            && !$0.unicodeScalars.contains(where: {
+              CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains($0)
+            })
+        }
+        .prefix(512)
+    )
+    result.controls.allowedExecutableFileSignatures = Set(
+      result.controls.resolvedAllowedExecutableFileSignatures.lazy
+        .filter { !$0.isEmpty && $0.utf8.count <= 1_024 && !$0.unicodeScalars.contains(where: {
+          CharacterSet.controlCharacters.contains($0)
+        }) }
+        .prefix(512)
+    )
+    var seenOpenWithBundleIdentifiers: Set<String> = []
+    result.controls.openWithApplications = Array(
+      result.controls.resolvedOpenWithApplications.lazy.compactMap { application in
+        let name = application.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bundleIdentifier = application.bundleIdentifier
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.utf8.count <= 128,
+          !bundleIdentifier.isEmpty, bundleIdentifier.utf8.count <= 255,
+          !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+          !bundleIdentifier.unicodeScalars.contains(where: {
+            CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains($0)
+          }),
+          seenOpenWithBundleIdentifiers.insert(bundleIdentifier).inserted
+        else { return nil }
+        return OpenWithApplication(name: name, bundleIdentifier: bundleIdentifier)
+      }.prefix(32)
+    )
+    if let defaultGitClient = result.controls.defaultGitClient?.trimmingCharacters(
+      in: .whitespacesAndNewlines),
+      !defaultGitClient.isEmpty,
+      defaultGitClient.utf8.count <= 255,
+      !defaultGitClient.unicodeScalars.contains(where: {
+        CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains($0)
+      })
+    {
+      result.controls.defaultGitClient = defaultGitClient
+    } else {
+      result.controls.defaultGitClient = nil
+    }
     result.controls.autocompleteHistoryIgnore = Array(
       result.controls.resolvedAutocompleteHistoryIgnore.lazy
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

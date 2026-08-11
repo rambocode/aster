@@ -19,6 +19,57 @@ func terminalIOTriggersSecureInputSampling() {
   #expect(samples == 2)
 }
 
+@Test("VT100 application keypad 仅在允许时发送 SS3 序列")
+@MainActor
+func vt100ApplicationKeypadRespectsControlSetting() throws {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  view.dataReceived(slice: Array("\u{1B}=".utf8)[...]) // DECKPAM
+  view.vtKeypadApplicationModeAllowed = true
+  var encoded: [UInt8] = []
+  view.onEncodedInput = { encoded.append(contentsOf: $0) }
+  let keypadOne = try #require(NSEvent.keyEvent(
+    with: .keyDown,
+    location: .zero,
+    modifierFlags: [.numericPad],
+    timestamp: 0,
+    windowNumber: 0,
+    context: nil,
+    characters: "1",
+    charactersIgnoringModifiers: "1",
+    isARepeat: false,
+    keyCode: 83
+  ))
+
+  view.keyDown(with: keypadOne)
+
+  #expect(encoded == [0x1B, 0x4F, 0x71])
+}
+
+@Test("左右 Option 的 Meta 范围按物理键状态生效")
+@MainActor
+func physicalOptionMetaScopeUsesConfiguredSide() throws {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  view.optionAsMetaKey = true
+  view.optionAsMetaKeyCodes = [58]
+  var encoded: [UInt8] = []
+  view.onEncodedInput = { encoded.append(contentsOf: $0) }
+  let leftOptionDown = try #require(NSEvent.keyEvent(
+    with: .flagsChanged, location: .zero, modifierFlags: [.option], timestamp: 0,
+    windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+    isARepeat: false, keyCode: 58
+  ))
+  let optionX = try #require(NSEvent.keyEvent(
+    with: .keyDown, location: .zero, modifierFlags: [.option], timestamp: 0,
+    windowNumber: 0, context: nil, characters: "≈", charactersIgnoringModifiers: "x",
+    isARepeat: false, keyCode: 7
+  ))
+
+  view.flagsChanged(with: leftOptionDown)
+  view.keyDown(with: optionX)
+
+  #expect(encoded == [0x1B, 0x78])
+}
+
 @Test("原生编辑菜单动作只在普通终端屏幕启用")
 @MainActor
 func naturalEditingMenuValidationPreservesAlternateScreen() {

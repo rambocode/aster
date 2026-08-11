@@ -18,18 +18,18 @@
     launch: [["newWindow", "新窗口"], ["restoreLastSession", "恢复上次会话"]],
     confirm: [["always", "总是提示"], ["runningProcess", "有进程运行时"], ["multipleTabs", "有多个标签页时"], ["never", "从不提示"]],
     workingDirectory: [["home", "主目录"], ["currentSession", "与当前标签页相同"], ["custom", "自定义…"]],
-    optionMeta: [["off", "关闭（输入重音）"], ["both", "左右 Option"], ["left", "仅左 Option"], ["right", "仅右 Option"]],
-    rightClick: [["contextMenu", "上下文菜单"], ["copy", "复制"], ["paste", "粘贴"], ["copyOrPaste", "已选则复制，否则粘贴"], ["ignore", "忽略"]],
-    bypassMouse: [["none", "无"], ["shift", "Shift"], ["control", "Control"], ["option", "Option"], ["controlShift", "Control + Shift"], ["command", "Command"]],
-    openLink: [["system", "系统浏览器"], ["aster", "在 Aster 中打开"]],
-    openFile: [["system", "系统默认应用"], ["aster", "在 Aster 中打开"]],
-    openFolder: [["finder", "访达"], ["aster", "在 Aster 中打开"]],
+    optionMeta: [["false", "关闭（输入重音）"], ["true", "左右 Option"], ["left", "仅左 Option"], ["right", "仅右 Option"]],
+    rightClick: [["context-menu", "上下文菜单"], ["copy", "复制"], ["paste", "粘贴"], ["copy-or-paste", "已选则复制，否则粘贴"], ["ignore", "忽略"]],
+    bypassMouse: [["none", "无"], ["shift", "Shift"], ["ctrl", "Control"], ["alt", "Option"], ["ctrl+shift", "Control + Shift"], ["super", "Command"]],
+    openLink: [["browser", "系统浏览器"], ["otty", "在 Aster 中打开"]],
+    openFile: [["default-app", "系统默认应用"], ["otty", "在 Aster 中打开"]],
+    openFolder: [["default-app", "访达"], ["otty", "在 Aster 中打开"]],
     foreground: [["off", "关闭"], ["banner", "显示横幅"], ["always", "始终通知"]],
     replay: [["automatic", "自动"], ["confirmOnce", "确认一次"], ["manual", "逐条"], ["skip", "跳过"]],
     scrollLast: [["disabled", "关闭"], ["lastContentAtTop", "最后有内容行置顶"], ["lastLineInMiddle", "内容行停在中间"], ["cursorLineAtTop", "光标行置顶"]],
     scrollFirst: [["disabled", "关闭"], ["sameAsLast", "与末尾设置一致"], ["firstLineWithContent", "历史首行置底"], ["firstLineInMiddle", "首行停在中间"]],
-    autocompleteShortcut: [["tab", "Tab"], ["rightArrow", "右方向键"], ["controlSpace", "Control + Space"], ["disabled", "关闭"]],
-    candidatePanel: [["automatic", "自动"], ["escape", "Esc 打开"], ["disabled", "关闭"]],
+    autocompleteShortcut: [["tab", "Tab"], ["tab+right-arrow", "Tab + 右方向键"], ["ctrl+space", "Control + Space"], ["disable", "关闭"]],
+    candidatePanel: [["disable", "关闭"], ["auto", "自动"], ["escape", "Esc 打开"], ["option-escape", "Option + Esc 打开"]],
     descriptionLanguage: [["system", "跟随系统"], ["chinese", "中文"], ["english", "English"]],
     cursorStyle: [["block", "块状"], ["bar", "竖线"], ["underline", "下划线"], ["blockHollow", "空心块状"]],
     cursorBlink: [["defaultOff", "默认关闭"], ["defaultOn", "默认开启"], ["alwaysOff", "始终关闭"], ["alwaysOn", "始终开启"]],
@@ -133,69 +133,62 @@
       ]
     },
     {
-      id: "controls", title: "控制", description: "键盘、鼠标、链接、选择、剪贴板和滚动。", groups: [
-        { title: "键盘", rows: [
-          row("controls.optionAsMetaMode", "将 Option 键用作 Meta 键", "控制左右 Option 是否发送 Esc 前缀", "select", { options: options.optionMeta }),
-          row("controls.vtKeypadAppAllowed", "允许 VT100 应用程序数字键盘模式", "响应 DECKPAM，让小键盘发送 SS3 序列"),
-          row("controls.shiftArrowSelection", "Shift + 方向键选择", "选择文本而不是发送转义序列"),
-        ]},
-        { title: "鼠标", rows: [
-          row("controls.allowMouseReporting", "允许应用捕获鼠标", "供 vim、tmux、htop 等 TUI 使用"),
-          row("controls.focusFollowsMouse", "鼠标悬停切换焦点", "悬停的分屏自动获得焦点"),
-          row("controls.rightClickAction", "右键动作", "Control + 右键始终打开菜单", "select", { options: options.rightClick }),
-          row("controls.mouseHideWhileTyping", "输入时隐藏鼠标", "键盘输入期间隐藏指针"),
-          row("controls.shiftMouseSelection", "允许 Shift + 鼠标选择", "应用捕获鼠标时仍可强制选择文本"),
-          row("controls.bypassMouseReporting", "绕过鼠标上报", "按住修饰键选择文本或打开链接", "select", { options: options.bypassMouse }),
-          row("controls.linkClickOverMouseMode", "鼠标模式下 Control + 点击打开链接", "不把本次点击发送给全屏应用"),
-          row("controls.cursorClickToMove", "点击移动 Shell 光标", "在可靠提示符行通过方向键移动输入光标"),
-        ]},
-        { title: "打开方式", rows: [
-          row("controls.linkOpenWith", "默认链接打开方式", "URL 在哪里打开", "select", { options: options.openLink }),
-          row("controls.fileOpenWith", "默认文件打开方式", "文件在哪里打开", "select", { options: options.openFile }),
-          row("controls.folderOpenWith", "默认文件夹打开方式", "文件夹在哪里打开", "select", { options: options.openFolder }),
-          action("configureOpenWithApps", "自定义打开方式", "向文件和文件夹菜单添加第三方应用", "配置…"),
-          action("resetLinkApprovals", "重置安全提示", "清除所有“始终允许”的本机授权", "重置", { danger: true }),
-        ]},
-        { title: "链接协议", rows: [
-          row("controls.linkDetectionEnabled", "识别可点击链接", "检测终端输出中的 URL、文件路径和支持的自定义协议"),
-          row("controls.detectAllLinkSchemes", "自动识别全部合法协议", "关闭后仅识别标准协议和自定义列表"),
-          row("controls.customLinkSchemes", "自定义链接协议", "逗号分隔，例如 codex、ssh、vscode", "text"),
-          row("controls.allowedNonStandardLinkSchemes", "已授权的非标准协议", "逗号分隔；仅保留用户明确允许直接打开的协议", "text"),
-          row("controls.showLinkPreviews", "显示链接预览", "Command 悬停时显示完整路径或 URL"),
-        ]},
-        { title: "安全输入", rows: [
-          row("controls.secureInputAutomatically", "自动启用安全键盘输入", "检测到关闭回显的密码提示时启用"),
-          row("controls.secureInputIndication", "显示安全输入指示", "标题栏显示安全输入胶囊"),
-        ]},
-        { title: "选择与剪贴板", rows: [
-          row("controls.copyOnSelect", "选中即复制", "完成文本选择后自动复制"),
-          row("controls.trimTrailingSpaces", "复制时去除行尾空格", "只移除每个物理行末尾空白"),
-          row("controls.pasteProtection", "粘贴前确认不安全内容", "多行、控制字符和提权命令需要确认"),
-          row("controls.pasteBracketedSafe", "Bracketed Paste 视为安全", "应用明确支持括号粘贴时跳过确认"),
-          row("controls.clearSelectionOnTyping", "输入时清除选区", "键盘输入后取消当前选择"),
-          row("controls.clearSelectionOnCopy", "复制后清除选区", "显式复制完成后取消选择"),
-          row("controls.selectionBackspaceDeletes", "退格删除选区", "可靠提示符行中一次删除整个选择"),
-          row("controls.clipboardWriteAccess", "终端写入剪贴板", "OSC 52 写请求的权限", "select", { options: [["allow", "允许"], ["ask", "询问"], ["deny", "拒绝"]] }),
-          row("controls.clipboardReadAccess", "终端读取剪贴板", "OSC 52 读请求的权限", "select", { options: [["allow", "允许"], ["ask", "询问"], ["deny", "拒绝"]] }),
-        ]},
-        { title: "滚动", rows: [
-          row("controls.smoothScrolling", "平滑滚动", "触控板按像素滚动，结束时对齐字符行"),
-          row("controls.scrollPastLastLine", "滚动超出末尾", "控制末行或光标行在视口中的锚点", "select", { options: options.scrollLast }),
-          row("controls.scrollPastFirstLine", "滚动超出首行", "控制历史首行在视口中的锚点", "select", { options: options.scrollFirst }),
-        ]},
+      id: "controls", title: "控制", description: "键盘、鼠标、链接、选择、剪贴板和滚动。", special: "controls", groups: [
         { title: "自动补全", rows: [
           row("controls.autocompleteShortcut", "接受候选", "接受 inline suggestion 的快捷键", "select", { options: options.autocompleteShortcut }),
           row("controls.autocompleteCandidatePanel", "候选面板", "自动显示或使用快捷键打开", "select", { options: options.candidatePanel }),
           row("controls.autocompleteInlineSuggestion", "Inline suggestion", "在终端光标后显示候选后缀"),
           row("controls.autocompleteOnDeviceLearning", "本机学习", "只保存脱敏后的本机历史"),
-          row("controls.autocompleteHistoryIgnore", "历史忽略模式", "逗号分隔的 glob", "text"),
-          row("controls.autocompleteDescriptionLanguage", "描述语言", "候选说明的语言", "select", { options: options.descriptionLanguage }),
-          action("updateAutocomplete", "命令规格", "从 Fig 官方 tree 手动更新", "立即更新"),
-          action("clearAutocomplete", "本机学习数据", "清除历史、固定命令和 frecency", "清除", { danger: true }),
+          row("controls.autocompleteDatabaseStatus", "补全数据库状态", "已安装的命令规格数量与当前版本", "readonly"),
+          action("updateAutocomplete", "补全数据库", "检查当前规格状态并从官方源更新", "立即更新"),
+          action("clearAutocomplete", "清除补全数据", "选择清除历史、固定命令或目录频率数据", "清除…", { danger: true }),
         ]},
-        { title: "CLI 与 IPC", rows: [
-          row("controls.ipcAllowSendKeys", "允许发送输入", "允许已鉴权的本机 CLI 向 Pane 写入"),
-          row("controls.ipcAllowSensitiveSessions", "允许敏感会话", "额外允许写入 ssh 或 sudo Pane"),
+        { title: "选择", rows: [
+          row("controls.shiftArrowSelection", "Shift + 方向键选择", "选择文本而不是发送转义序列"),
+          row("controls.clearSelectionOnTyping", "输入时清除选区", "键盘输入后取消当前选择"),
+          row("controls.clearSelectionOnCopy", "复制后清除选区", "显式复制完成后取消选择", "toggle", { disabledWhen: "controls.copyOnSelect", disabledDetail: "启用“选中即复制”时，选区会保留，因此此项不可用" }),
+          row("controls.selectionBackspaceDeletes", "退格删除选区", "仅在可靠的当前 Shell 提示符行中一次删除整个选择"),
+        ]},
+        { title: "滚动", rows: [
+          row("controls.scrollPastLastLine", "滚动超出末尾", "控制末行或光标行在视口中的锚点", "select", { options: options.scrollLast }),
+          row("controls.scrollPastFirstLine", "滚动超出首行", "控制历史首行在视口中的锚点", "select", { options: options.scrollFirst }),
+          row("controls.smoothScrolling", "平滑滚动", "触控板按像素滚动，结束时对齐字符行"),
+        ]},
+        { title: "打开方式", rows: [
+          row("controls.linkOpenWith", "默认链接打开方式", "URL 在哪里打开", "select", { options: options.openLink }),
+          row("controls.fileOpenWith", "默认文件打开方式", "文件在哪里打开", "select", { options: options.openFile }),
+          row("controls.folderOpenWith", "默认文件夹打开方式", "文件夹在哪里打开", "select", { options: options.openFolder }),
+          row("controls.defaultGitClient", "默认 Git 客户端", "Git 仓库优先使用的桌面客户端；自动会跟随可用应用", "select", { options: [["auto", "自动"], ["com.github.GitHubClient", "GitHub Desktop"], ["com.DanPristupov.Fork", "Fork"], ["com.fournova.Tower3", "Tower"], ["com.torusknot.SourceTreeNotMAS", "Sourcetree"], ["com.axosoft.gitkraken", "GitKraken"], ["com.sublimehq.Sublime-Merge", "Sublime Merge"]] }),
+          action("configureOpenWithApps", "自定义打开方式", "向文件和文件夹菜单添加第三方应用", "配置…"),
+        ]},
+        { title: "链接协议", rows: [
+          row("controls.linkSchemes", "自动识别链接协议", "识别所有合法协议，或只识别标准协议和自定义列表", "select", { options: [["all", "全部"], ["custom", "自定义"]] }),
+          action("configureLinkSchemes", "自定义链接协议", "管理允许识别的协议，例如 codex、ssh、vscode", "配置…", { visibleWhen: ["controls.linkSchemes", "custom"] }),
+          row("controls.showLinkPreviews", "显示链接预览", "按住 Command 悬停时在底部显示完整路径或 URL"),
+          action("resetLinkApprovals", "重置安全提示", "清除打开外部链接、自定义协议和可执行文件的“始终允许”授权", "重置", { danger: true, confirmDuration: 1600, confirmedLabel: "已重置" }),
+        ]},
+        { title: "键盘", rows: [
+          row("controls.optionAsMetaMode", "将 Option 键用作 Meta 键", "控制左右 Option 是否发送 Esc 前缀", "select", { options: options.optionMeta }),
+          row("controls.vtKeypadAppAllowed", "允许 VT100 应用程序数字键盘模式", "响应 DECKPAM，让小键盘发送 SS3 序列"),
+        ]},
+        { title: "鼠标", rows: [
+          row("controls.focusFollowsMouse", "鼠标悬停切换焦点", "悬停的分屏自动获得焦点"),
+          row("controls.rightClickAction", "右键动作", "Control + 右键始终打开菜单", "select", { options: options.rightClick }),
+          row("controls.mouseHideWhileTyping", "输入时隐藏鼠标", "键盘输入期间隐藏指针，移动鼠标后恢复"),
+          row("controls.linkClickOverMouseMode", "鼠标模式下 Command + 点击打开链接", "不把这次链接点击发送给全屏应用"),
+          row("controls.bypassMouseReporting", "绕过鼠标上报", "按住修饰键时把手势交给本地选择", "select", { options: options.bypassMouse }),
+          row("controls.cursorClickToMove", "点击移动 Shell 光标", "在可靠提示符行通过方向键移动输入光标"),
+          row("controls.allowMouseReporting", "允许应用捕获鼠标", "供 vim、tmux、htop 等 TUI 使用"),
+        ]},
+        { title: "安全输入", rows: [
+          row("controls.secureInputAutomatically", "自动启用安全键盘输入", "检测到关闭回显的密码提示时启用"),
+          row("controls.secureInputIndication", "显示安全输入指示", "标题栏显示安全输入胶囊"),
+        ]},
+        { title: "剪贴板", rows: [
+          row("controls.copyOnSelect", "选中即复制", "完成文本选择后自动复制"),
+          row("controls.trimTrailingSpaces", "复制时去除行尾空格", "只移除每个物理行末尾空白"),
+          row("controls.pasteProtection", "粘贴前确认不安全内容", "多行、控制字符和提权命令需要确认"),
+          row("controls.pasteBracketedSafe", "Bracketed Paste 视为安全", "应用明确支持括号粘贴时跳过确认"),
         ]},
       ]
     },
@@ -317,6 +310,15 @@
         row("advanced.titleShellControlled", "标题 — Shell Controlled", "允许 OSC 修改标签和窗口标题"),
         row("advanced.titleReport", "标题报告", "允许 XTWINOPS 读取当前标题"),
       ]},
+      { title: "控制扩展", rows: [
+        row("controls.linkDetectionEnabled", "识别可点击目标", "关闭终端中的 URL、文件路径和自定义协议识别"),
+        row("controls.autocompleteHistoryIgnore", "Autocomplete 历史忽略模式", "逗号分隔的 glob；命中的命令不进入本机学习", "text"),
+        row("controls.autocompleteDescriptionLanguage", "Autocomplete 描述语言", "候选说明的首选语言", "select", { options: options.descriptionLanguage }),
+        row("controls.clipboardWriteAccess", "终端写入剪贴板", "OSC 52 写请求的权限", "select", { options: [["allow", "允许"], ["ask", "询问"], ["deny", "拒绝"]] }),
+        row("controls.clipboardReadAccess", "终端读取剪贴板", "OSC 52 读请求的权限", "select", { options: [["allow", "允许"], ["ask", "询问"], ["deny", "拒绝"]] }),
+        row("controls.ipcAllowSendKeys", "IPC 允许发送输入", "允许已鉴权的本机 CLI 向 Pane 写入"),
+        row("controls.ipcAllowSensitiveSessions", "IPC 允许敏感会话", "额外允许写入 ssh 或 sudo Pane"),
+      ]},
       { title: "East Asian Ambiguous 宽度", rows: [
         row("advanced.widened.enclosed-alphanumerics", "Enclosed Alphanumerics", "①、Ⓐ、ⓐ 等字符按双宽显示"),
         row("advanced.widened.number-forms", "Number Forms", "分数与罗马数字等字符按双宽显示"),
@@ -425,13 +427,35 @@
     return !item.capability || snapshot?.capabilities?.[item.capability] !== false;
   }
 
+  function isDisabled(item) {
+    return !isSupported(item) || Boolean(item.disabledWhen && settingValue(item.disabledWhen));
+  }
+
+  function isVisible(item) {
+    return !item.visibleWhen || settingValue(item.visibleWhen[0]) === item.visibleWhen[1];
+  }
+
   function commitValue(item, value) {
     send("set", { changes: [{ key: item.key, value }] });
   }
 
+  function controlOptions(item) {
+    const base = [...(item.options ?? [])];
+    if (item.key !== "controls.defaultGitClient") return base;
+    const seen = new Set(base.map(([value]) => value));
+    for (const application of settingValue("controls.openWithApps") ?? []) {
+      if (!application?.bundleId || seen.has(application.bundleId)) continue;
+      seen.add(application.bundleId);
+      base.push([application.bundleId, application.name || application.bundleId]);
+    }
+    const selected = String(settingValue(item.key) ?? "auto");
+    if (!seen.has(selected)) base.push([selected, selected]);
+    return base;
+  }
+
   function makeControl(item) {
     const value = Object.prototype.hasOwnProperty.call(item, "value") ? item.value : settingValue(item.key);
-    const supported = isSupported(item);
+    const supported = !isDisabled(item);
     const commit = nextValue => item.onCommit ? item.onCommit(nextValue) : commitValue(item, nextValue);
     if (item.type === "readonly") {
       const output = document.createElement("span");
@@ -457,7 +481,7 @@
       const select = document.createElement("select");
       select.className = "control";
       select.disabled = !supported;
-      for (const [optionValue, label] of item.options ?? []) {
+      for (const [optionValue, label] of controlOptions(item)) {
         const option = document.createElement("option");
         option.value = optionValue;
         option.textContent = label;
@@ -540,10 +564,31 @@
           button.blur();
         });
       } else {
-        button.addEventListener("click", () => send("action", {
-          action: item.action,
-          payload: item.payload ?? {},
-        }));
+        button.addEventListener("click", () => {
+          if (item.action === "configureLinkSchemes") {
+            openStringListDialog({
+              title: "自定义链接协议",
+              description: "输入要识别的协议名称；不需要添加 ://。",
+              key: "controls.customLinkSchemes",
+              placeholder: "codex",
+            });
+            return;
+          }
+          if (item.action === "configureOpenWithApps") {
+            openApplicationsDialog();
+            return;
+          }
+          send("action", { action: item.action, payload: item.payload ?? {} });
+          if (item.confirmDuration) {
+            const original = button.textContent;
+            button.textContent = item.confirmedLabel ?? "完成";
+            button.disabled = true;
+            window.setTimeout(() => {
+              button.textContent = original;
+              button.disabled = false;
+            }, item.confirmDuration);
+          }
+        });
       }
       return button;
     }
@@ -558,7 +603,7 @@
 
   function makeRow(item) {
     const host = document.createElement("div");
-    host.className = `setting-row${isSupported(item) ? "" : " is-disabled"}`;
+    host.className = `setting-row${isDisabled(item) ? " is-disabled" : ""}`;
     host.dataset.settingKey = item.key ?? item.action;
     const copy = document.createElement("div");
     copy.className = "setting-copy";
@@ -573,7 +618,9 @@
     }
     const detail = document.createElement("span");
     detail.className = "setting-detail";
-    detail.textContent = isSupported(item) ? item.detail : `${item.detail}（当前平台不可用）`;
+    detail.textContent = !isSupported(item)
+      ? `${item.detail}（当前平台不可用）`
+      : (isDisabled(item) ? (item.disabledDetail ?? item.detail) : item.detail);
     copy.append(label, detail);
     const control = document.createElement("div");
     control.className = "setting-control";
@@ -597,9 +644,114 @@
     }
     const card = document.createElement("div");
     card.className = "card";
-    card.append(...group.rows.map(makeRow));
+    card.append(...group.rows.filter(isVisible).map(makeRow));
     host.appendChild(card);
     return host;
+  }
+
+  /// Otty 的协议列表使用页内模态框编辑。每行只接受单一 scheme，保存前仍由原生桥
+  /// 再次执行语法、数量和长度校验，网页不是安全边界。
+  function openStringListDialog({ title, description, key, placeholder }) {
+    const overlay = document.createElement("div");
+    overlay.className = "settings-dialog-overlay";
+    const dialog = document.createElement("div");
+    dialog.className = "settings-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    const heading = document.createElement("h2");
+    heading.textContent = title;
+    const detail = document.createElement("p");
+    detail.textContent = description;
+    const field = document.createElement("textarea");
+    field.className = "control settings-dialog-list";
+    field.placeholder = placeholder;
+    field.value = String(settingValue(key) ?? "").split(",").map(value => value.trim()).filter(Boolean).join("\n");
+    const actions = document.createElement("div");
+    actions.className = "settings-dialog-actions";
+    const cancel = document.createElement("button");
+    cancel.className = "action-button";
+    cancel.textContent = "取消";
+    const done = document.createElement("button");
+    done.className = "action-button primary";
+    done.textContent = "完成";
+    const close = () => overlay.remove();
+    cancel.addEventListener("click", close);
+    done.addEventListener("click", () => {
+      const values = field.value.split(/[\n,]/).map(value => value.trim().replace(/:\/\/$/, "")).filter(Boolean);
+      commitValue({ key }, values.join(", "));
+      close();
+    });
+    overlay.addEventListener("click", event => { if (event.target === overlay) close(); });
+    overlay.addEventListener("keydown", event => { if (event.key === "Escape") close(); });
+    actions.append(cancel, done);
+    dialog.append(heading, detail, field, actions);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    field.focus();
+  }
+
+  function openApplicationsDialog() {
+    const overlay = document.createElement("div");
+    overlay.className = "settings-dialog-overlay";
+    const dialog = document.createElement("div");
+    dialog.className = "settings-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    const heading = document.createElement("h2");
+    heading.textContent = "自定义打开方式";
+    const detail = document.createElement("p");
+    detail.textContent = "这些应用会加入文件和文件夹的打开方式菜单。";
+    const list = document.createElement("div");
+    list.className = "settings-dialog-apps";
+    const applications = [...(settingValue("controls.openWithApps") ?? [])];
+    const close = () => overlay.remove();
+    const renderApplications = () => {
+      list.replaceChildren();
+      if (!applications.length) {
+        const empty = document.createElement("span");
+        empty.className = "setting-detail";
+        empty.textContent = "尚未添加应用";
+        list.appendChild(empty);
+        return;
+      }
+      applications.forEach((application, index) => {
+        const item = document.createElement("div");
+        item.className = "settings-dialog-app";
+        const copy = document.createElement("span");
+        copy.innerHTML = "<strong></strong><small></small>";
+        copy.firstElementChild.textContent = application.name;
+        copy.lastElementChild.textContent = application.bundleId;
+        const remove = document.createElement("button");
+        remove.className = "action-button danger";
+        remove.textContent = "移除";
+        remove.addEventListener("click", () => {
+          applications.splice(index, 1);
+          commitValue({ key: "controls.openWithApps" }, applications);
+          renderApplications();
+        });
+        item.append(copy, remove);
+        list.appendChild(item);
+      });
+    };
+    renderApplications();
+    const actions = document.createElement("div");
+    actions.className = "settings-dialog-actions split";
+    const add = document.createElement("button");
+    add.className = "action-button";
+    add.textContent = "+ 添加应用";
+    add.addEventListener("click", () => {
+      send("action", { action: "configureOpenWithApps", payload: {} });
+      close();
+    });
+    const done = document.createElement("button");
+    done.className = "action-button primary";
+    done.textContent = "完成";
+    done.addEventListener("click", close);
+    overlay.addEventListener("click", event => { if (event.target === overlay) close(); });
+    actions.append(add, done);
+    dialog.append(heading, detail, list, actions);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
   }
 
   function makeAppearanceGroup(titleText, body, className = "") {

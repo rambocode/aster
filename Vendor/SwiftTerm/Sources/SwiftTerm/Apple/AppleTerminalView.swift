@@ -782,7 +782,7 @@ extension TerminalView {
         if withUrl, !hidden {
             nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
             nsattr [.underlineColor] = fgColor
-            nsattr [SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
+            nsattr [SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.single.rawValue)
             
             // Add to cache
             urlAttributes [attribute] = nsattr

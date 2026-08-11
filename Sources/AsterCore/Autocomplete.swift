@@ -459,6 +459,28 @@ public struct AutocompleteLearningDatabase: Codable, Equatable, Sendable {
     return true
   }
 
+  /// 清除普通学习历史但保留固定命令。固定项的使用次数归零，避免旧 frecency 继续
+  /// 影响排序；仅有历史、没有 pin 的条目直接移除。
+  public mutating func clearHistory() {
+    entries = entries.compactMap { entry in
+      guard entry.pinCount > 0 else { return nil }
+      var pinned = entry
+      pinned.useCount = 0
+      pinned.lastSessionIdentifier = nil
+      return pinned
+    }
+  }
+
+  /// 清除固定状态但保留真实使用历史。只通过 pin 创建、从未执行的条目同步移除。
+  public mutating func clearPinnedCommands() {
+    entries = entries.compactMap { entry in
+      guard entry.useCount > 0 else { return nil }
+      var learned = entry
+      learned.pinCount = 0
+      return learned
+    }
+  }
+
   public func suggestions(
     prefix: String,
     directory: String,

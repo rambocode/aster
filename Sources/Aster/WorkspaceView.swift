@@ -693,6 +693,8 @@ final class WorkspaceViewController: NSViewController {
             runtime.terminalSession?.apply(preferences: self.preferences)
           }
         }
+        self.updateSecureInputIndicator(
+          active: self.secureInputCoordinator.isSystemProtectionActive)
         self.applyThemeToVisibleTerminals(in: self.view)
         if self.settingsPresentationActive,
           self.renderedTheme != self.preferences.activeTheme
@@ -1654,6 +1656,7 @@ final class WorkspaceViewController: NSViewController {
     let secureInput = SecureInputIndicatorView()
     secureInput.identifier = NSUserInterfaceItemIdentifier("workspace-secure-input-indicator")
     secureInput.isHidden = !secureInputCoordinator.isSystemProtectionActive
+      || !preferences.configuration.controls.resolvedSecureInputIndication
     secureInputIndicator = secureInput
     background.addSubview(secureInput)
     secureInput.translatesAutoresizingMaskIntoConstraints = false
@@ -1675,6 +1678,7 @@ final class WorkspaceViewController: NSViewController {
   /// 显隐，不根据菜单勾选或某个 Pane 的推测重复判断。
   private func updateSecureInputIndicator(active: Bool) {
     secureInputIndicator?.isHidden = !active
+      || !preferences.configuration.controls.resolvedSecureInputIndication
   }
 
   /// 安装工作区唯一的 Inspector 切换按钮。它直接属于根视图，不参与
@@ -1872,6 +1876,11 @@ final class WorkspaceViewController: NSViewController {
       addChild(controller)
       retainedObjects.append(controller)
       content = controller.view
+    case .web:
+      let controller = WebPaneViewController(runtime: runtime)
+      addChild(controller)
+      retainedObjects.append(controller)
+      content = controller.view
     }
     host.installContent(content)
     // 单 Pane 无处可拖；只有分屏时安装顶部拖动把手。Pane 背景始终由主题负责，
@@ -1937,7 +1946,7 @@ final class WorkspaceViewController: NSViewController {
           opened = true
         }
       } else if ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-        opened = NSWorkspace.shared.open(url) || opened
+        opened = tab.openWebURL(url) || opened
       }
     }
     if opened { model.persistWorkspace() }

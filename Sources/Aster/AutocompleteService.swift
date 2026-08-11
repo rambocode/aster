@@ -405,6 +405,11 @@ enum AutocompleteHelpProbe {
 /// README 和脱敏学习库。除 `updateNow()` 外不发起网络请求，也不会自动扫描项目脚本。
 @MainActor
 final class AutocompleteService {
+  struct LearningClearSelection: OptionSet {
+    let rawValue: Int
+    static let history = Self(rawValue: 1 << 0)
+    static let pinnedCommands = Self(rawValue: 1 << 1)
+  }
   static let maximumReadmeBytes = 2 * 1_024 * 1_024
   static let figTreeURL = URL(
     string: "https://api.github.com/repos/withfig/autocomplete/git/trees/master?recursive=1")!
@@ -605,8 +610,18 @@ final class AutocompleteService {
   }
 
   func clearLearning() throws {
+    try clearLearning([.history, .pinnedCommands])
+  }
+
+  func clearLearning(_ selection: LearningClearSelection) throws {
+    guard !selection.isEmpty else { return }
     let previous = learningDatabase
-    learningDatabase = AutocompleteLearningDatabase(capacity: previous.capacity)
+    if selection.contains([.history, .pinnedCommands]) {
+      learningDatabase = AutocompleteLearningDatabase(capacity: previous.capacity)
+    } else {
+      if selection.contains(.history) { learningDatabase.clearHistory() }
+      if selection.contains(.pinnedCommands) { learningDatabase.clearPinnedCommands() }
+    }
     do {
       try persistLearning()
     } catch {
