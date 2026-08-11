@@ -4,6 +4,7 @@ import Combine
 import Darwin
 import Foundation
 import SwiftTerm
+@preconcurrency import GhosttyKit
 
 /// 集中托管已经从工作区移除、但底层进程尚未完成 `waitpid` 的终端视图。
 ///
@@ -2137,6 +2138,17 @@ extension SwiftTerm.CursorStyle {
   }
 }
 
+/// Ghostty Shell Integration 标记的幂等键。
+///
+/// Otty 等宿主可能在子 Shell 中继承并再次注入同一条 OSC 133。只有 payload 与
+/// Ghostty 稳定缓冲坐标同时相同才视为重复，避免吞掉同一屏幕行上的不同事件。
+private struct GhosttyShellMarkerSignature: Equatable {
+  let payload: String
+  let column: UInt32
+  let pageSerial: UInt64
+  let pageRow: UInt32
+}
+
 /// 一个由 libghostty 完整 PTY/VT/Metal 内核承载的本地登录 Shell。
 ///
 /// Session 强持有 `GhosttySurfaceView`，因此在标签切换或 AppKit 重排视图时，
@@ -2226,6 +2238,16 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var terminalView: AsterTerminalView?
   /// 产品主引擎。与上面的 SwiftTerm 回归实例互斥；生产入口不会创建旧实例。
   private var ghosttyView: GhosttySurfaceView?
+  /// Ghostty 的 page anchor 由扩展 ABI 保持稳定；领域 timeline 中的 row 是当前 Session
+  /// 分配的不透明 token，只用于排序和查表，不能直接当 retained-screen row 使用。
+  private var ghosttyShellCommandTimeline = ShellCommandTimeline()
+  private var ghosttyBufferAnchors: [Int: ghostty_aster_buffer_point_s] = [:]
+  private var ghosttyNextAnchorToken = 1
+  private var ghosttyCommandOutlineTitles: [Int: String] = [:]
+  private var ghosttyKittyNotificationAssembler = KittyNotificationAssembler()
+  /// 嵌套终端可能让父、子 shell integration 同时写出同一标记。仅对完全相同的
+  /// payload 与稳定 cell 锚点做幂等化，避免重复完成通知；任意位置变化仍保留。
+  private var lastGhosttyShellMarker: GhosttyShellMarkerSignature?
   /// 首次 surface 创建后的前台进程组即登录 Shell；后续不同值表示前台命令。
   private var ghosttyShellProcessIdentifier: Int32?
   private var targetOpenCoordinator: TerminalTargetOpenCoordinator?
@@ -2659,12 +2681,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       }
     )
 
-    view.onTitleChange = { [weak self] title in
-      guard let self,
-        self.preferences?.configuration.shell.resolvedTitleShellControlled == true
-      else { return }
-      self.handleTitleOSC(code: 2, text: title)
-    }
+    // 标题也从任意 OSC observer 进入，保留 0/1/2 的原始 code；Ghostty 的 set_title
+    // action 会把 0/2 合并成窗口标题，不能作为 Aster 标签/图标标题的精确来源。
+    view.onTitleChange = nil
     view.onWorkingDirectoryChange = { [weak self] reported in
       guard let self else { return }
       let normalized = Self.normalizeReportedWorkingDirectory(reported)
@@ -2679,14 +2698,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       guard let self, let view, view === self.ghosttyView else { return }
       self.handleGhosttyProcessExit(code: code)
     }
-    view.onCommandFinished = { [weak self] status in
-      guard let self else { return }
-      self.shellIntegrationDetected = true
-      self.hasRunningCommand = false
-      self.lastCommandExitStatus = status
-      self.handleShellIntegrationEvent(.commandFinished(exitStatus: status))
-      self.outlineChanged.send()
-    }
+    // 命令生命周期统一从非消费 OSC 133 observer 进入；不再同时消费 Ghostty 的
+    // command_finished action，避免一个 D marker 触发两次学习、通知和 Outline 更新。
+    view.onCommandFinished = nil
     view.onProgress = { [weak self] progress in
       guard let self else { return }
       switch progress {
@@ -2728,7 +2742,41 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     }
     view.onReadOnlyChange = { [weak self] enabled in self?.readOnly = enabled }
     view.onUserInput = { [weak self] in self?.handleTerminalUserInput() }
+    view.onPTYRead = { [weak self, weak view] bytes in
+      guard let self, let view else { return }
+      self.autocompleteController?.receiveOutput(bytes)
+      if let line = view.readText(includeScrollback: false, maximumLines: 1) {
+        self.receiveActivityOutput(line)
+      }
+    }
+    view.onPTYWrite = { [weak self] bytes in
+      self?.autocompleteController?.receiveInput(bytes)
+    }
+    view.onOSC = { [weak self, weak view] code, payload, point in
+      guard let self, let view else { return }
+      self.handleGhosttyOSC(code: code, payload: payload, point: point, view: view)
+    }
     view.onRequestFocus = { [weak self] in self?.onRequestPaneFocus?() }
+    view.onRequestOpenTarget = { [weak self] rawValue, source in
+      guard let self else { return }
+      self.targetOpenCoordinator?.open(
+        rawValue,
+        source: source,
+        currentDirectory: self.currentWorkingDirectoryIsLocal
+          ? self.currentWorkingDirectory : ""
+      )
+    }
+    view.onResolveHintCopyTarget = { [weak self] rawValue, source in
+      self?.resolvedHintCopyTarget(rawValue, source: source)
+    }
+    view.onRequestViSearch = { [weak self] direction in
+      self?.pendingViSearchDirection = direction
+      self?.onRequestFind?()
+    }
+    view.onRepeatViSearch = { [weak self] reverse in self?.repeatLastFind(reverse: reverse) }
+    view.onPaneModeActivated = { [weak self] in
+      self?.autocompleteController?.dismissForPaneMode()
+    }
     view.focusFollowsMouse = preferences.configuration.controls.focusFollowsMouse
     view.pasteProtectionEnabled = preferences.configuration.controls.pasteProtection
     view.pasteBracketedSafe = preferences.configuration.controls.resolvedPasteBracketedSafe
@@ -2739,6 +2787,30 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       case .read: clipboardCoordinator.allows(.read)
       case .write: clipboardCoordinator.allows(.write)
       }
+    }
+    if let service = AutocompleteService.shared {
+      let autocomplete = TerminalAutocompleteController(
+        service: service,
+        sessionIdentifier: id.uuidString,
+        controls: { [weak preferences] in
+          preferences?.configuration.controls ?? ControlConfiguration()
+        },
+        currentDirectory: { [weak self] in
+          guard let self, self.currentWorkingDirectoryIsLocal else { return "" }
+          return self.currentWorkingDirectory
+        }
+      )
+      autocomplete.attach(to: view)
+      autocomplete.onCommandSubmitted = { [weak self] command in
+        guard let self else { return }
+        self.submittedCommand = command
+        self.submittedCommandOrigin = self.pendingCommandOrigin ?? .shellIntegration
+        self.pendingCommandOrigin = nil
+      }
+      view.onAutocompleteKeyDown = { [weak autocomplete] event in
+        autocomplete?.handleKeyDown(event) ?? false
+      }
+      autocompleteController = autocomplete
     }
     view.onSurfaceCreated = { [weak self, weak view] created in
       guard let self, let view, view === self.ghosttyView else { return }
@@ -2772,6 +2844,91 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.setReadOnly(readOnly)
     view.createSurface()
     return view
+  }
+
+  private func handleGhosttyOSC(
+    code: Int,
+    payload: [UInt8],
+    point: ghostty_aster_buffer_point_s,
+    view: GhosttySurfaceView
+  ) {
+    switch code {
+    case 0...2:
+      guard preferences?.configuration.shell.resolvedTitleShellControlled == true else { return }
+      handleTitleOSC(code: code, text: String(decoding: payload, as: UTF8.self))
+    case 9:
+      guard payload.count <= TerminalNotificationParser.maximumChunkBytes else { return }
+      let value = String(decoding: payload, as: UTF8.self)
+      // Ghostty 已处理标准 state 0...4；Aster/Otty 的 state 5 扩展只从 observer 补入。
+      if let progress = TerminalProgressParser.parseOSC9(value), case .finished = progress {
+        handleTerminalProgress(progress)
+      }
+    case 99:
+      guard payload.count <= TerminalNotificationParser.maximumChunkBytes else { return }
+      switch ghosttyKittyNotificationAssembler.consume(String(decoding: payload, as: UTF8.self)) {
+      case .notification(let notification): post(notification, category: .application)
+      case .response(let response): _ = view.sendProtocolBytes(Array(response.utf8))
+      case nil: break
+      }
+    case 133:
+      guard payload.count <= 32,
+        let value = String(bytes: payload, encoding: .ascii),
+        let event = ShellIntegrationEvent(payload: value)
+      else { return }
+      let signature = GhosttyShellMarkerSignature(
+        payload: value,
+        column: point.column,
+        pageSerial: point.page_serial,
+        pageRow: point.page_row
+      )
+      guard signature != lastGhosttyShellMarker else { return }
+      lastGhosttyShellMarker = signature
+      let token = recordGhosttyAnchor(point)
+      ghosttyShellCommandTimeline.receive(
+        event,
+        at: TerminalGridPoint(column: Int(point.column), row: token)
+      )
+      autocompleteController?.receive(event)
+      handleShellIntegrationEvent(event)
+      handleShellIntegrationTimeline(ghosttyShellCommandTimeline)
+    case 6_973:
+      guard payload.count <= 8_192,
+        let value = String(bytes: payload, encoding: .ascii),
+        let report = ShellAliasReport(payload: value)
+      else { return }
+      autocompleteController?.receiveAliases(report.names)
+    case 6_974:
+      guard payload.count <= AgentTerminalDirective.maximumPayloadBytes,
+        let value = String(bytes: payload, encoding: .ascii)
+      else { return }
+      if let directive = TerminalBadgeDirective(payload: value) {
+        switch directive {
+        case .set(let badge): explicitBadge = badge
+        case .clear: explicitBadge = nil
+        }
+      } else if let directive = AgentTerminalDirective(payload: value) {
+        handleAgentTerminalDirective(directive)
+      }
+    default:
+      break
+    }
+  }
+
+  /// 为每个 OSC 133 位置分配严格单调 token。实际定位始终通过 page anchor 解析，
+  /// token 仅满足现有 ShellCommandTimeline 的顺序比较与 Outline 公共接口。
+  private func recordGhosttyAnchor(_ point: ghostty_aster_buffer_point_s) -> Int {
+    let token = ghosttyNextAnchorToken
+    ghosttyNextAnchorToken &+= 1
+    ghosttyBufferAnchors[token] = point
+    if ghosttyBufferAnchors.count > 4_000 {
+      let retained = Set(ghosttyShellCommandTimeline.marks.flatMap {
+        [$0.promptStart.row, $0.inputStart.row, $0.outputStart.row, $0.outputEnd.row]
+      })
+      ghosttyBufferAnchors = ghosttyBufferAnchors.filter {
+        retained.contains($0.key) || $0.key >= token - 16
+      }
+    }
+    return token
   }
 
   private func handleGhosttyProcessExit(code: Int32?) {
@@ -3154,10 +3311,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     }
     let found: Bool
     if let ghosttyView {
-      // pinned libghostty 的公开 search action 不暴露 regex/case flag；不能把设置项
-      // 显示为已生效。普通文本搜索完整支持，非等价模式明确返回失败。
-      guard !caseSensitive, !regularExpression else { return false }
-      found = ghosttyView.find(term, previous: resolvedPrevious)
+      found = ghosttyView.find(
+        term,
+        previous: resolvedPrevious,
+        caseSensitive: caseSensitive,
+        regularExpression: regularExpression
+      )
     } else if let terminalView {
       let options = SearchOptions(caseSensitive: caseSensitive, regex: regularExpression)
       found = resolvedPrevious
@@ -3182,7 +3341,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   ) -> (index: Int, total: Int) {
     guard !term.isEmpty else { return (0, 0) }
     if let ghosttyView {
-      guard !caseSensitive, !regularExpression, ghosttyView.searchNeedle == term else {
+      guard ghosttyView.searchNeedle == term else {
         return (0, 0)
       }
       return (ghosttyView.searchSelected, ghosttyView.searchTotal)
@@ -3209,13 +3368,86 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   func commandOutlineEntries() -> [TerminalCommandOutlineEntry] {
-    terminalView?.commandOutlineEntries() ?? []
+    if let ghosttyView { return ghosttyCommandOutlineEntries(view: ghosttyView) }
+    return terminalView?.commandOutlineEntries() ?? []
   }
 
   @discardableResult
   func revealAbsoluteRow(_ row: Int) -> Bool {
-    if ghosttyView != nil { return false }
+    if let ghosttyView {
+      guard let anchor = ghosttyBufferAnchors[row] else {
+        return ghosttyView.revealScreenRow(row)
+      }
+      return ghosttyView.reveal(anchor)
+    }
     return terminalView?.revealAbsoluteRow(row) ?? false
+  }
+
+  private func ghosttyCommandOutlineEntries(
+    view: GhosttySurfaceView,
+    maximumItems: Int = 1_000
+  ) -> [TerminalCommandOutlineEntry] {
+    let limit = max(0, min(maximumItems, 5_000))
+    var tracked = Set(ghosttyShellCommandTimeline.marks.map { $0.inputStart.row })
+    if let running = ghosttyShellCommandTimeline.runningCommand {
+      tracked.insert(running.inputStart.row)
+    }
+    ghosttyCommandOutlineTitles = ghosttyCommandOutlineTitles.filter { tracked.contains($0.key) }
+
+    func entry(
+      promptStart: TerminalGridPoint,
+      inputStart: TerminalGridPoint,
+      exitStatus: Int?,
+      finishedAt: Date?,
+      isRunning: Bool
+    ) -> TerminalCommandOutlineEntry? {
+      let title: String
+      let jumpAvailable: Bool
+      if let inputAnchor = ghosttyBufferAnchors[inputStart.row],
+        let text = view.readLine(at: inputAnchor, startingAt: UInt32(inputStart.column))
+      {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        title = normalized.isEmpty ? "命令" : String(normalized.prefix(240))
+        ghosttyCommandOutlineTitles[inputStart.row] = title
+        jumpAvailable = ghosttyBufferAnchors[promptStart.row]
+          .flatMap { view.resolveBufferPoint($0) } != nil
+      } else if let cached = ghosttyCommandOutlineTitles[inputStart.row] {
+        title = cached
+        jumpAvailable = false
+      } else {
+        return nil
+      }
+      return TerminalCommandOutlineEntry(
+        title: title,
+        absoluteRow: promptStart.row,
+        exitStatus: exitStatus,
+        finishedAt: finishedAt,
+        isRunning: isRunning,
+        isJumpAvailable: jumpAvailable
+      )
+    }
+
+    var result = ghosttyShellCommandTimeline.marks.suffix(limit).compactMap { mark in
+      entry(
+        promptStart: mark.promptStart,
+        inputStart: mark.inputStart,
+        exitStatus: mark.exitStatus,
+        finishedAt: mark.finishedAt,
+        isRunning: false
+      )
+    }
+    if let running = ghosttyShellCommandTimeline.runningCommand,
+      let runningEntry = entry(
+        promptStart: running.promptStart,
+        inputStart: running.inputStart,
+        exitStatus: nil,
+        finishedAt: nil,
+        isRunning: true
+      )
+    {
+      result.append(runningEntry)
+    }
+    return result
   }
 
   private func repeatLastFind(reverse: Bool) {
@@ -3238,15 +3470,15 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   func toggleReadOnly() { setReadOnly(!readOnly) }
   func enterViMode() {
-    guard ghosttyView == nil else { return }
+    if let ghosttyView { ghosttyView.enterViMode(); return }
     terminalView?.enterViMode(nil)
   }
   func enterMarkMode() {
-    guard ghosttyView == nil else { return }
+    if let ghosttyView { ghosttyView.enterMarkMode(); return }
     terminalView?.enterMarkMode(nil)
   }
   func openHintMode() {
-    guard ghosttyView == nil else { return }
+    if let ghosttyView { ghosttyView.openHintMode(); return }
     terminalView?.openHintMode(nil)
   }
 
@@ -3410,6 +3642,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     lastScreenHash = 0
     lastActivityAt = .distantPast
     ghosttyShellProcessIdentifier = nil
+    ghosttyShellCommandTimeline = ShellCommandTimeline()
+    ghosttyBufferAnchors.removeAll(keepingCapacity: false)
+    ghosttyCommandOutlineTitles.removeAll(keepingCapacity: false)
+    ghosttyNextAnchorToken = 1
+    ghosttyKittyNotificationAssembler = KittyNotificationAssembler()
+    lastGhosttyShellMarker = nil
     processStartedAt = nil
     foregroundPollTask?.cancel()
     foregroundPollTask = nil

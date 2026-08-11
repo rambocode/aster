@@ -6,7 +6,9 @@ extension GhosttySurfaceView: NSMenuItemValidation {
   /// 以键盘文本事件写入前台程序；换行被转换为真实 Return，适用于命令与自动化输入。
   @discardableResult
   func typeText(_ text: String) -> Bool {
-    guard let surface, isProcessRunning, !readOnly, !text.isEmpty else { return false }
+    guard let surface, isProcessRunning, !readOnly, navigationMode == .normal, !text.isEmpty else {
+      return false
+    }
     onUserInput?()
     var start = text.startIndex
     var index = start
@@ -33,7 +35,9 @@ extension GhosttySurfaceView: NSMenuItemValidation {
   /// 内嵌 NUL 不能表达为终端键入，明确拒绝而不是截断并报告假成功。
   @discardableResult
   func sendBytes(_ bytes: [UInt8]) -> Bool {
-    guard let surface, isProcessRunning, !readOnly, !bytes.isEmpty, !bytes.contains(0) else {
+    guard let surface, isProcessRunning, !readOnly, navigationMode == .normal,
+      !bytes.isEmpty, !bytes.contains(0)
+    else {
       return false
     }
     onUserInput?()
@@ -49,8 +53,24 @@ extension GhosttySurfaceView: NSMenuItemValidation {
     }
   }
 
+  /// 终端协议响应不属于用户输入，不触发输入活动或 Autocomplete tracker。
+  @discardableResult
+  func sendProtocolBytes(_ bytes: [UInt8]) -> Bool {
+    guard let surface, isProcessRunning, !bytes.isEmpty, !bytes.contains(0) else { return false }
+    var storage = bytes + [0]
+    return storage.withUnsafeMutableBytes { rawBuffer in
+      guard let base = rawBuffer.baseAddress?.assumingMemoryBound(to: CChar.self) else {
+        return false
+      }
+      var key = ghostty_input_key_s()
+      key.action = GHOSTTY_ACTION_PRESS
+      key.text = UnsafePointer(base)
+      return ghostty_surface_key(surface, key)
+    }
+  }
+
   func sendInterrupt() {
-    guard let surface, isProcessRunning, !readOnly else { return }
+    guard let surface, isProcessRunning, !readOnly, navigationMode == .normal else { return }
     onUserInput?()
     var key = ghostty_input_key_s()
     key.action = GHOSTTY_ACTION_PRESS
@@ -65,7 +85,9 @@ extension GhosttySurfaceView: NSMenuItemValidation {
   /// 自动包裹。Aster 仍在发送前做保守风险确认，控制字符永远不会静默放行。
   @discardableResult
   func pasteText(_ text: String) -> Bool {
-    guard let surface, isProcessRunning, !readOnly, !text.isEmpty else { return false }
+    guard let surface, isProcessRunning, !readOnly, navigationMode == .normal, !text.isEmpty else {
+      return false
+    }
     let analysis = PasteRiskAnalyzer.analyze(text)
     if PasteProtectionPolicy.requiresConfirmation(
       for: analysis,
@@ -127,24 +149,100 @@ extension GhosttySurfaceView: NSMenuItemValidation {
     guard performBindingAction("toggle_readonly") else { return }
     // callback 会再次同步最终状态；先更新可阻止同一 runloop 中后续写入穿过门禁。
     handleReadOnly(enabled)
+    layoutGhosttyModeHUD()
   }
 
   @discardableResult
-  func find(_ term: String, previous: Bool) -> Bool {
-    guard !term.isEmpty else { return false }
-    if searchNeedle != term {
-      _ = performBindingAction("start_search")
-      guard performBindingAction("search:\(term)") else { return false }
-      searchNeedle = term
+  func find(
+    _ term: String,
+    previous: Bool,
+    caseSensitive: Bool = false,
+    regularExpression: Bool = false
+  ) -> Bool {
+    guard let surface, !term.isEmpty else { return false }
+    var flags: ghostty_aster_search_flags_t = 0
+    if caseSensitive { flags |= UInt32(GHOSTTY_ASTER_SEARCH_CASE_SENSITIVE) }
+    if regularExpression { flags |= UInt32(GHOSTTY_ASTER_SEARCH_REGULAR_EXPRESSION) }
+    if previous { flags |= UInt32(GHOSTTY_ASTER_SEARCH_BACKWARDS) }
+    var result = ghostty_aster_search_result_s()
+    let bytes = Array(term.utf8)
+    let searched = bytes.withUnsafeBufferPointer { buffer in
+      guard let base = buffer.baseAddress else { return false }
+      return ghostty_aster_surface_search(surface, base, buffer.count, flags, &result)
     }
-    return performBindingAction(
-      previous
-        ? "navigate_search:previous" : "navigate_search:next")
+    guard searched, result.pattern_valid else {
+      searchNeedle = ""
+      searchSelected = 0
+      searchTotal = 0
+      onSearchStateChange?()
+      return false
+    }
+    searchNeedle = term
+    searchSelected = Int(clamping: result.selected)
+    searchTotal = Int(clamping: result.total)
+    onSearchStateChange?()
+    return result.found
   }
 
   func clearSearch() {
-    _ = performBindingAction("end_search")
+    if let surface { ghostty_aster_surface_clear_selection(surface) }
     handleSearchEnd()
+  }
+
+  func bufferInfo() -> ghostty_aster_buffer_info_s? {
+    guard let surface else { return nil }
+    var result = ghostty_aster_buffer_info_s()
+    return ghostty_aster_surface_buffer_info(surface, &result) ? result : nil
+  }
+
+  func resolveBufferPoint(_ value: ghostty_aster_buffer_point_s)
+    -> ghostty_aster_buffer_point_s?
+  {
+    guard let surface else { return nil }
+    var point = value
+    return ghostty_aster_surface_resolve_point(surface, &point) ? point : nil
+  }
+
+  /// 从稳定 page anchor 读取其物理行。先解析当前 retained-screen row，再使用公开
+  /// read-text API，因而 scrollback 从头裁剪后不会把旧 Outline 锚点映射到另一条命令。
+  func readLine(
+    at anchor: ghostty_aster_buffer_point_s,
+    startingAt column: UInt32
+  ) -> String? {
+    guard let surface, let point = resolveBufferPoint(anchor) else { return nil }
+    let row = UInt32(clamping: point.screen_row)
+    var selection = ghostty_selection_s()
+    selection.top_left = ghostty_point_s(
+      tag: GHOSTTY_POINT_SCREEN,
+      coord: GHOSTTY_POINT_COORD_EXACT,
+      x: min(column, UInt32.max),
+      y: row
+    )
+    selection.bottom_right = ghostty_point_s(
+      tag: GHOSTTY_POINT_SCREEN,
+      coord: GHOSTTY_POINT_COORD_EXACT,
+      x: UInt32.max,
+      y: row
+    )
+    selection.rectangle = false
+    var text = ghostty_text_s()
+    guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
+    defer { ghostty_surface_free_text(surface, &text) }
+    guard let pointer = text.text else { return "" }
+    return String(
+      decoding: UnsafeRawBufferPointer(start: pointer, count: Int(text.text_len)), as: UTF8.self)
+  }
+
+  @discardableResult
+  func reveal(_ anchor: ghostty_aster_buffer_point_s) -> Bool {
+    guard let surface, let point = resolveBufferPoint(anchor) else { return false }
+    return ghostty_aster_surface_scroll_to_row(surface, point.screen_row)
+  }
+
+  @discardableResult
+  func revealScreenRow(_ row: Int) -> Bool {
+    guard let surface, row >= 0 else { return false }
+    return ghostty_aster_surface_scroll_to_row(surface, UInt64(row))
   }
 
   // MARK: - Standard responder-chain actions

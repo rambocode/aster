@@ -47,6 +47,11 @@ final class GhosttyApp {
         ghosttyLogger.error("ghostty_init failed")
         return false
       }
+      guard ghostty_aster_extension_abi_version() == GHOSTTY_ASTER_EXTENSION_ABI_VERSION else {
+        startupError = "libghostty 的 Aster 扩展 ABI 版本不匹配。"
+        ghosttyLogger.error("Aster Ghostty extension ABI mismatch")
+        return false
+      }
       didInitializeLibrary = true
     }
     guard let config = makeConfig(configurationText: configurationText) else { return false }

@@ -7,10 +7,18 @@ repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 framework_dir="$repo_root/Vendor/GhosttyKit.xcframework"
 resource_dir="$repo_root/Sources/Aster/Ghostty/Resources"
 stamp_file="$repo_root/Vendor/Ghostty/.ghostty-revision"
+patch_file="$repo_root/Vendor/Ghostty/patches/0001-aster-extension-abi.patch"
 ghostty_repo="https://github.com/ghostty-org/ghostty"
 ghostty_revision="4dcb09ada0c0909717d92547623b26eafa50ca8a"
 zig_binary="$(brew --prefix zig@0.15 2>/dev/null || true)/bin/zig"
 force_rebuild="${ASTER_GHOSTTY_FORCE_REBUILD:-0}"
+
+if [[ ! -f "$patch_file" ]]; then
+  echo "error: missing Aster Ghostty extension patch: $patch_file" >&2
+  exit 1
+fi
+patch_digest="$(/usr/bin/shasum -a 256 "$patch_file" | /usr/bin/awk '{print $1}')"
+artifact_key="$ghostty_revision:$patch_digest"
 
 if [[ "$force_rebuild" != "0" && "$force_rebuild" != "1" ]]; then
   echo "error: ASTER_GHOSTTY_FORCE_REBUILD must be 0 or 1" >&2
@@ -18,8 +26,8 @@ if [[ "$force_rebuild" != "0" && "$force_rebuild" != "1" ]]; then
 fi
 
 if [[ "$force_rebuild" != "1" && -d "$framework_dir" && -d "$resource_dir/terminfo" && -f "$stamp_file" ]] &&
-   [[ "$(<"$stamp_file")" == "$ghostty_revision" ]]; then
-  echo "Ghostty artifacts already match $ghostty_revision"
+   [[ "$(<"$stamp_file")" == "$artifact_key" ]]; then
+  echo "Ghostty artifacts already match $artifact_key"
   exit 0
 fi
 
@@ -45,6 +53,10 @@ git -C "$build_dir" remote add origin "$ghostty_repo"
 git -C "$build_dir" fetch -q --depth 1 origin "$ghostty_revision"
 git -C "$build_dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
 
+echo "Applying Aster extension ABI patch $patch_digest"
+git -C "$build_dir" apply --check "$patch_file"
+git -C "$build_dir" apply "$patch_file"
+
 echo "Building GhosttyKit.xcframework"
 (
   cd "$build_dir"
@@ -65,8 +77,10 @@ cp -R "$build_dir/zig-out/share/terminfo" "$staging_dir/Resources/terminfo"
 shopt -s nullglob
 headers=("$staging_dir"/GhosttyKit.xcframework/macos-*/Headers/ghostty.h)
 shopt -u nullglob
-if [[ "${#headers[@]}" -ne 1 ]] || ! /usr/bin/grep -q 'ghostty_surface_new' "${headers[0]}"; then
-  echo "error: generated GhosttyKit is missing the required surface API" >&2
+if [[ "${#headers[@]}" -ne 1 ]] ||
+   ! /usr/bin/grep -q 'GHOSTTY_ASTER_EXTENSION_ABI_VERSION 1u' "${headers[0]}" ||
+   ! /usr/bin/grep -q 'ghostty_aster_surface_search' "${headers[0]}"; then
+  echo "error: generated GhosttyKit is missing the required Aster ABI v1" >&2
   exit 1
 fi
 if [[ ! -d "$staging_dir/Resources/ghostty/shell-integration" ]] ||
@@ -80,6 +94,6 @@ mkdir -p "$resource_dir"
 cp -R "$staging_dir/GhosttyKit.xcframework" "$framework_dir"
 cp -R "$staging_dir/Resources/ghostty" "$resource_dir/ghostty"
 cp -R "$staging_dir/Resources/terminfo" "$resource_dir/terminfo"
-printf '%s\n' "$ghostty_revision" > "$stamp_file"
+printf '%s\n' "$artifact_key" > "$stamp_file"
 
 echo "Ghostty artifacts ready"

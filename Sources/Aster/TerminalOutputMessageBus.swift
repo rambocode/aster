@@ -37,6 +37,9 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
   private var deferUntilNextIdleCycle = false
   private var finishRequested = false
   private var completionHandlers: [() -> Void] = []
+  private var enqueuedByteCount: UInt64 = 0
+  private var deliveredByteCount: UInt64 = 0
+  private var barriers: [(afterByteCount: UInt64, completion: @MainActor () -> Void)] = []
 
   init(
     batchByteLimit: Int = TerminalOutputMessageBus.defaultBatchByteLimit,
@@ -100,6 +103,7 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
       let chunk = Array(bytes[startIndex..<endIndex])
       chunks.append(chunk)
       pendingByteCount += chunk.count
+      enqueuedByteCount &+= UInt64(chunk.count)
       startIndex = endIndex
       // 交互式短输出不增加固定延迟；饱和流才用 3 ms 合并窗口吸收 DispatchIO 的相邻
       // partial 回调。这个窗口仍远低于一帧，并与 Ghostty 的 gather budget 一致。
@@ -107,6 +111,15 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
         ? .nanoseconds(0) : bulkCoalescingDelay
       scheduleDeliveryLocked(after: .now() + delay)
     }
+    condition.unlock()
+  }
+
+  /// 在此前已入队的所有字节消费后，于主线程执行一次语义事件。Ghostty 用它保证同一
+  /// PTY 流中的 OSC 事件不会越过 Autocomplete 的原始输出，即使字节被拆成多个批次。
+  func enqueueBarrier(_ completion: @escaping @MainActor () -> Void) {
+    condition.lock()
+    barriers.append((enqueuedByteCount, completion))
+    scheduleDeliveryLocked(after: .now())
     condition.unlock()
   }
 
@@ -162,9 +175,15 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
 
     let batch: [UInt8]
     var completions: [() -> Void] = []
+    var barrierCompletions: [@MainActor () -> Void] = []
     deliveryReady = false
     deliveryScheduled = false
     batch = takeBatchLocked()
+    deliveredByteCount &+= UInt64(batch.count)
+    while let first = barriers.first, first.afterByteCount <= deliveredByteCount {
+      barrierCompletions.append(first.completion)
+      barriers.removeFirst()
+    }
     if pendingByteCount <= resumeByteLimit {
       condition.broadcast()
     }
@@ -173,12 +192,15 @@ final class TerminalOutputMessageBus: @unchecked Sendable {
       // 一个批次，让 AppKit 事件穿插，同时避免旧实现每 64 KiB 固定停顿 8 ms。
       scheduleDeliveryLocked(after: .now())
     } else if finishRequested {
-      completions = completionHandlers
+      completions.append(contentsOf: completionHandlers)
       completionHandlers.removeAll()
     }
     condition.unlock()
 
     if !batch.isEmpty { consume(batch) }
+    MainActor.assumeIsolated {
+      barrierCompletions.forEach { $0() }
+    }
     completions.forEach { $0() }
   }
 

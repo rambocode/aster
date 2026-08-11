@@ -1,4 +1,5 @@
 import AppKit
+import AsterCore
 @preconcurrency import GhosttyKit
 import QuartzCore
 
@@ -27,6 +28,16 @@ final class GhosttySurfaceView: NSView {
   var onSendSelectionToChat: (() -> Void)?
   var onAuthorizeClipboard: ((GhosttyClipboardOperation) -> Bool)?
   var onSurfaceCreated: ((Bool) -> Void)?
+  /// 原始 PTY observer 只暴露当前回调的字节副本；业务层不得把它视作可修改 parser。
+  var onPTYRead: ((ArraySlice<UInt8>) -> Void)?
+  var onPTYWrite: ((ArraySlice<UInt8>) -> Void)?
+  var onOSC: ((Int, [UInt8], ghostty_aster_buffer_point_s) -> Void)?
+  var onAutocompleteKeyDown: ((NSEvent) -> Bool)?
+  var onRequestViSearch: ((TerminalViSearchDirection) -> Void)?
+  var onRepeatViSearch: ((Bool) -> Void)?
+  var onPaneModeActivated: (() -> Void)?
+  var onRequestOpenTarget: ((String, DetectedTargetSource) -> Void)?
+  var onResolveHintCopyTarget: ((String, DetectedTargetSource) -> String?)?
 
   private let workingDirectory: String
   private let environment: [String: String]
@@ -41,9 +52,12 @@ final class GhosttySurfaceView: NSView {
   private var isPaneActive = true
   private var secureInputEnabled = false
   private var trackingAreaToken: NSTrackingArea?
+  /// Ghostty 已在自己的 IO 线程解析和绘制；Aster 的语义 observer 仍经有界总线进入
+  /// 主线程，避免大输出为 Autocomplete/活动检测制造无界 DispatchQueue backlog。
+  nonisolated(unsafe) private var outputMessageBus: TerminalOutputMessageBus!
   private(set) var readOnly = false
-  private(set) var searchTotal = 0
-  private(set) var searchSelected = 0
+  var searchTotal = 0
+  var searchSelected = 0
   var searchNeedle = ""
   var focusFollowsMouse = false
   var pasteProtectionEnabled = true
@@ -53,6 +67,15 @@ final class GhosttySurfaceView: NSView {
   var selectedTextRange = NSRange(location: NSNotFound, length: 0)
   var keyTextAccumulator: [String] = []
   var currentKeyEvent: NSEvent?
+  var ghosttyPaneModeState = TerminalPaneModeState()
+  var ghosttyViEngine: TerminalViEngine?
+  var ghosttyNavigationSnapshot: TerminalNavigationSnapshot?
+  var ghosttyModeFirstScreenRow = 0
+  var ghosttyModeColumns = 1
+  var ghosttyHintTargets: [GhosttyHintTarget] = []
+  var ghosttyHintMatcher = TerminalHintMatcher(labels: [])
+  var ghosttyShowsViKeyHints = true
+  lazy var ghosttyModeHUD = TerminalPaneModeHUD(frame: bounds)
 
   init(
     workingDirectory: String,
@@ -63,6 +86,9 @@ final class GhosttySurfaceView: NSView {
     self.environment = environment
     self.configurationText = configurationText
     super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
+    outputMessageBus = TerminalOutputMessageBus { [weak self] bytes in
+      self?.consumeObservedPTYRead(bytes)
+    }
     wantsLayer = true
     setAccessibilityElement(true)
     setAccessibilityRole(.textArea)
@@ -138,6 +164,24 @@ final class GhosttySurfaceView: NSView {
   func handleBell() { onBell?() }
   func handleNotification(title: String, body: String) { onNotification?(title, body) }
 
+  nonisolated func enqueuePTYRead(_ bytes: [UInt8]) {
+    outputMessageBus.enqueue(bytes[...])
+  }
+
+  nonisolated func enqueuePTYWrite(_ bytes: [UInt8]) {
+    DispatchQueue.main.async { [weak self] in self?.onPTYWrite?(bytes[...]) }
+  }
+
+  nonisolated func enqueueOSC(
+    code: UInt32,
+    payload: [UInt8],
+    point: ghostty_aster_buffer_point_s
+  ) {
+    outputMessageBus.enqueueBarrier { [weak self] in
+      self?.onOSC?(Int(code), payload, point)
+    }
+  }
+
   func handleReadOnly(_ enabled: Bool) {
     readOnly = enabled
     onReadOnlyChange?(enabled)
@@ -206,6 +250,16 @@ final class GhosttySurfaceView: NSView {
     // Aster 的 Pane 由宿主工作区管理，不使用 Ghostty 自己的 split/window 路由；默认
     // window context 与独立 embedded surface 的生命周期契约一致。
     config.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
+    config.aster_pty_read_cb = { userdata, bytes, count in
+      GhosttyApp.shared.callbacks.ptyRead(userdata: userdata, bytes: bytes, count: count)
+    }
+    config.aster_pty_write_cb = { userdata, bytes, count in
+      GhosttyApp.shared.callbacks.ptyWrite(userdata: userdata, bytes: bytes, count: count)
+    }
+    config.aster_osc_cb = { userdata, code, payload, count, point in
+      GhosttyApp.shared.callbacks.osc(
+        userdata: userdata, code: code, payload: payload, count: count, point: point)
+    }
 
     for pointer in configStrings { free(pointer) }
     configStrings = []
@@ -284,6 +338,15 @@ final class GhosttySurfaceView: NSView {
     onSendSelectionToChat = nil
     onAuthorizeClipboard = nil
     onSurfaceCreated = nil
+    onPTYRead = nil
+    onPTYWrite = nil
+    onOSC = nil
+    onAutocompleteKeyDown = nil
+    onRequestViSearch = nil
+    onRepeatViSearch = nil
+    onPaneModeActivated = nil
+    onRequestOpenTarget = nil
+    onResolveHintCopyTarget = nil
   }
 
   override func viewDidMoveToWindow() {
@@ -292,9 +355,16 @@ final class GhosttySurfaceView: NSView {
   }
 
   override func setFrameSize(_ newSize: NSSize) {
+    let changed = frame.size != newSize
     super.setFrameSize(newSize)
+    if changed { handleGhosttyGeometryChange() }
     if pendingSurfaceCreation { createSurface() }
     updateSurfaceGeometry()
+  }
+
+  override func layout() {
+    super.layout()
+    layoutGhosttyModeHUD()
   }
 
   override func viewDidChangeBackingProperties() {

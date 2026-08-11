@@ -159,6 +159,39 @@ final class GhosttyCallbacks: @unchecked Sendable {
     DispatchQueue.main.async { view.handleProcessExit(code: nil) }
   }
 
+  /// callback payload 属于 Ghostty IO 栈帧；返回前必须复制，之后才允许跨线程投递。
+  func ptyRead(
+    userdata: UnsafeMutableRawPointer?,
+    bytes: UnsafePointer<UInt8>?,
+    count: Int
+  ) {
+    guard let view = surfaceView(from: userdata), let bytes, count > 0 else { return }
+    view.enqueuePTYRead(Array(UnsafeBufferPointer(start: bytes, count: Int(count))))
+  }
+
+  func ptyWrite(
+    userdata: UnsafeMutableRawPointer?,
+    bytes: UnsafePointer<UInt8>?,
+    count: Int
+  ) {
+    guard let view = surfaceView(from: userdata), let bytes, count > 0 else { return }
+    view.enqueuePTYWrite(Array(UnsafeBufferPointer(start: bytes, count: Int(count))))
+  }
+
+  func osc(
+    userdata: UnsafeMutableRawPointer?,
+    code: UInt32,
+    payload: UnsafePointer<UInt8>?,
+    count: Int,
+    point: UnsafePointer<ghostty_aster_buffer_point_s>?
+  ) {
+    guard let view = surfaceView(from: userdata), let point else { return }
+    let copied = payload.map {
+      Array(UnsafeBufferPointer(start: $0, count: Int(count)))
+    } ?? []
+    view.enqueueOSC(code: code, payload: copied, point: point.pointee)
+  }
+
   private func surfaceView(from target: ghostty_target_s) -> GhosttySurfaceView? {
     guard
       target.tag == GHOSTTY_TARGET_SURFACE,

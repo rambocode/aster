@@ -6,6 +6,7 @@ import Testing
 @Test("OSC 133 只接受 A B C D 及合法退出码")
 func shellIntegrationEventParsesStrictFTCSMarkers() {
   #expect(ShellIntegrationEvent(payload: "A") == .promptStart)
+  #expect(ShellIntegrationEvent(payload: "A;cl=line") == .promptStart)
   #expect(ShellIntegrationEvent(payload: "B") == .inputStart)
   #expect(ShellIntegrationEvent(payload: "C") == .commandStart)
   #expect(ShellIntegrationEvent(payload: "D;0") == .commandFinished(exitStatus: 0))
@@ -13,6 +14,7 @@ func shellIntegrationEventParsesStrictFTCSMarkers() {
   #expect(ShellIntegrationEvent(payload: "D") == .commandFinished(exitStatus: nil))
   #expect(ShellIntegrationEvent(payload: "D;bad") == nil)
   #expect(ShellIntegrationEvent(payload: "C;secret command") == nil)
+  #expect(ShellIntegrationEvent(payload: "A;secret=value") == nil)
   #expect(ShellIntegrationEvent(payload: "Z") == nil)
 }
 

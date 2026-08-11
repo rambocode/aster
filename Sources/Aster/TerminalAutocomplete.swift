@@ -1,6 +1,72 @@
 import AppKit
 import AsterCore
 import Foundation
+@preconcurrency import GhosttyKit
+
+/// Autocomplete 只依赖“发送字节、核对可见 prompt、提供 caret 视觉令牌”这组窄接口，
+/// 不绑定 SwiftTerm 或 Ghostty 的网格实现。两个引擎都在各自 adapter 内完成坐标转换。
+@MainActor
+protocol TerminalAutocompleteHost: AnyObject {
+  var autocompleteContainerView: NSView { get }
+  var autocompleteCaretFrame: NSRect { get }
+  var autocompleteFont: NSFont { get }
+  var autocompleteForegroundColor: NSColor { get }
+  var autocompleteBackgroundColor: NSColor { get }
+  func sendAutocompleteBytes(_ bytes: ArraySlice<UInt8>) -> Bool
+  func visiblePromptEnds(with text: String) -> Bool
+}
+
+extension AsterTerminalView: TerminalAutocompleteHost {
+  var autocompleteContainerView: NSView { self }
+  var autocompleteCaretFrame: NSRect { caretFrame }
+  var autocompleteFont: NSFont { font }
+  var autocompleteForegroundColor: NSColor { nativeForegroundColor }
+  var autocompleteBackgroundColor: NSColor { nativeBackgroundColor }
+
+  func sendAutocompleteBytes(_ bytes: ArraySlice<UInt8>) -> Bool {
+    send(data: bytes)
+    return true
+  }
+
+  func visiblePromptEnds(with text: String) -> Bool {
+    let terminal = getTerminal()
+    guard let line = terminal.getLine(row: terminal.buffer.y) else { return false }
+    return line.translateToString(trimRight: true, skipNullCellsFollowingWide: true)
+      .hasSuffix(text)
+  }
+}
+
+extension GhosttySurfaceView: TerminalAutocompleteHost {
+  var autocompleteContainerView: NSView { self }
+  var autocompleteCaretFrame: NSRect {
+    guard let surface else { return .zero }
+    var x = 0.0
+    var y = 0.0
+    var width = 0.0
+    var height = 0.0
+    ghostty_surface_ime_point(surface, &x, &y, &width, &height)
+    let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    let logicalHeight = height / scale
+    return NSRect(
+      x: x / scale,
+      y: bounds.height - y / scale - logicalHeight,
+      width: max(width / scale, 1),
+      height: max(logicalHeight, 1)
+    )
+  }
+  var autocompleteFont: NSFont { .monospacedSystemFont(ofSize: 13, weight: .regular) }
+  var autocompleteForegroundColor: NSColor { .textColor }
+  var autocompleteBackgroundColor: NSColor { AsterTheme.panel }
+
+  func sendAutocompleteBytes(_ bytes: ArraySlice<UInt8>) -> Bool {
+    sendBytes(Array(bytes))
+  }
+
+  func visiblePromptEnds(with text: String) -> Bool {
+    readText(includeScrollback: false, maximumLines: 1)?
+      .trimmingCharacters(in: .newlines).hasSuffix(text) == true
+  }
+}
 
 /// 终端按键到 Autocomplete 意图的稳定映射。物理 keyCode 用于不受当前键盘布局影响的
 /// 导航键；Control-Space 等文字组合仍检查 modifier，避免吞掉普通空格。
@@ -41,7 +107,7 @@ enum TerminalAutocompleteKey: Equatable {
 /// 负责；这里仅把 OSC 133、键盘输入和 AppKit overlay 串起来。
 @MainActor
 final class TerminalAutocompleteController {
-  private weak var terminalView: AsterTerminalView?
+  private weak var terminalView: (any TerminalAutocompleteHost)?
   private let service: AutocompleteService
   private let sessionIdentifier: String
   private let controls: () -> ControlConfiguration
@@ -91,10 +157,11 @@ final class TerminalAutocompleteController {
     helpProbeTask?.cancel()
   }
 
-  func attach(to terminalView: AsterTerminalView) {
+  func attach(to terminalView: any TerminalAutocompleteHost) {
     self.terminalView = terminalView
-    terminalView.addSubview(overlay, positioned: .above, relativeTo: nil)
-    overlay.frame = terminalView.bounds
+    let container = terminalView.autocompleteContainerView
+    container.addSubview(overlay, positioned: .above, relativeTo: nil)
+    overlay.frame = container.bounds
     overlay.autoresizingMask = [.width, .height]
     render()
   }
@@ -335,8 +402,7 @@ final class TerminalAutocompleteController {
     }
     guard !suffix.isEmpty else { return false }
     dismiss()
-    terminalView.send(data: Array(suffix.utf8)[...])
-    return true
+    return terminalView.sendAutocompleteBytes(Array(suffix.utf8)[...])
   }
 
   private func finishCommand(exitStatus: Int?) {
@@ -383,10 +449,7 @@ final class TerminalAutocompleteController {
   /// 以它们为依据提前读取旧 `caretFrame`。
   private func currentPromptIsEchoed() -> Bool {
     guard !tracker.line.isEmpty, tracker.isCursorAtEnd, let terminalView else { return false }
-    let terminal = terminalView.getTerminal()
-    guard let line = terminal.getLine(row: terminal.buffer.y) else { return false }
-    let visibleLine = line.translateToString(trimRight: true, skipNullCellsFollowingWide: true)
-    return visibleLine.hasSuffix(tracker.line)
+    return terminalView.visiblePromptEnds(with: tracker.line)
   }
 
   private func render() {
@@ -398,13 +461,13 @@ final class TerminalAutocompleteController {
         && !awaitingInputEcho,
       showPanel: panelVisible,
       selectedIndex: selectedIndex,
-      caretFrame: terminalView.caretFrame,
-      font: terminalView.font,
-      foreground: terminalView.nativeForegroundColor,
+      caretFrame: terminalView.autocompleteCaretFrame,
+      font: terminalView.autocompleteFont,
+      foreground: terminalView.autocompleteForegroundColor,
       // 自定义主题未来仍可能提供透明原生画布；候选浮层没有窗口材质，遇到透明色时
       // 必须回退到主题 surface，避免候选文字直接压在终端内容上。
-      background: terminalView.nativeBackgroundColor.alphaComponent > 0.01
-        ? terminalView.nativeBackgroundColor : AsterTheme.panel
+      background: terminalView.autocompleteBackgroundColor.alphaComponent > 0.01
+        ? terminalView.autocompleteBackgroundColor : AsterTheme.panel
     )
   }
 }

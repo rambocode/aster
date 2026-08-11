@@ -27,7 +27,7 @@ Aster 只保留工作区、会话、安全授权和产品交互。
 7. OSC 52 始终经过 Aster 的 allow/ask/deny 协调器；拒绝时不得读取或写入系统剪贴板。
 8. 关闭和重启必须幂等；旧 surface 的迟到 callback 不得改变新进程代次。
 9. Surface 创建失败必须进入 `startFailed` 并显示稳定错误，不能静默回退到另一终端内核。
-10. 只有 libghostty 公开接口可稳定表达的能力才能对产品宣称支持。
+10. Aster 扩展必须通过显式 ABI version gate；升级 revision 时缺少任一符号都必须构建失败。
 
 ## 业务流程
 
@@ -84,25 +84,25 @@ API；普通粘贴经 `ghostty_surface_text`，由 Ghostty 根据前台程序状
 
 ### 回调与会话状态
 
-`GhosttyCallbacks` 先复制临时 payload，再把 render、标题、PWD、退出、命令完成、进度、
-搜索、只读、安全输入、通知和 URL 动作投递到 MainActor。Wakeup 合并为最多一个待执行
-tick，避免输出风暴形成无界主队列任务。`TerminalSession` 再把这些事件投影到标题、目录、
-生命周期、徽章和通知领域状态。
+`GhosttyCallbacks` 先复制临时 payload，再把 render、PWD、退出、进度、只读、安全输入、
+通知和 URL 动作投递到 MainActor。Aster 扩展另外提供原始 PTY read/write 与任意 OSC 的
+非消费 observer；OSC barrier 保证同一序列之前的原始输出先进入 Autocomplete，再处理
+OSC 133/6974。Wakeup 合并为最多一个待执行 tick，避免输出风暴形成无界主队列任务。
 
-### 当前能力边界
+### Aster extension ABI v1
 
-Ghostty 公开 C interface 不提供原始 PTY 输出观察器，也不暴露 Aster 旧适配器使用的绝对
-缓冲行、任意 OSC observer 或完整搜索 flags。因此当前产品明确暂停：
+固定补丁在 Ghostty internal C interface 之外提供：
 
-- Aster Vi / Mark / Hint Mode 与键盘扩展选区；
-- 区分大小写和正则终端查找；普通文本查找仍由 Ghostty 提供；
-- 依赖原始输入/输出字节的 Aster inline Autocomplete；
-- OSC 6974 Agent lifecycle、旧 OSC 133 命令正文/绝对行 Outline 的精确观察；
-- 依赖 SwiftTerm 私有状态的特殊 Paste As 动作。
+- 原始 PTY read/write callback，以及支持 BEL、ESC ST、C1 ST 和 64 KiB 上限的任意数字 OSC observer；
+- OSC 发生位置的稳定 page anchor、绝对 retained-screen 坐标和 scrollback 裁剪后的重新解析；
+- buffer geometry、固定宽度 cell row、selection get/set/clear 和绝对 row 滚动；
+- literal/regex、大小写、前后方向的完整搜索，以及精确总数、选中序号和 match range；
+- 无活动 display link 时保留 surface、仅关闭 vsync 的嵌入式降级。
 
-前台 PID、Ghostty command-finished action、标题、PWD、进度、通知、搜索计数、选择读取、
-完整文本读取、只读、复制、粘贴和 prompt 跳转继续可用。前台命令状态在缺少权威事件时按
-foreground PID 与 Shell PID 的差异保守推断。
+Swift adapter 基于这些接口恢复 inline Autocomplete、OSC 6974 Agent 状态、OSC 133 精确
+Outline、Vi/Mark 模式和可见 URL/路径 Hint。重复的 OSC 133 仅在 payload 与稳定 cell 锚点
+完全相同时幂等化。Ghostty 自身仍负责 OSC 8 点击；Aster Hint 暂不枚举 OSC 8 的隐藏 URI。
+依赖旧 SwiftTerm 私有输入状态的特殊 Paste As 动作仍保持禁用。
 
 ## 失败语义
 
@@ -111,12 +111,14 @@ foreground PID 与 Shell PID 的差异保守推断。
 - Shell 自然退出：保留最后一帧并进入 ended；用户只能显式重启新 surface。
 - Clipboard 请求拒绝：以空结果完成 request，不访问系统剪贴板。
 - raw byte 输入包含 NUL：明确返回失败，避免 C 字符串截断后报告假成功。
-- 正则或区分大小写查找：返回不可用，不降级成语义不同的普通查找。
+- 非法正则：返回 `pattern_valid=false`，不降级成普通文本查找。
+- stable anchor 所在 page 已被 scrollback 裁剪：解析失败，Outline 明确标为不可跳转。
 
 ## 测试与验收
 
 - `swift test --no-parallel`：完整领域、AppKit 与旧适配器回归。
 - `terminalHostUsesGhosttySurface`：产品 host 必须包含 Ghostty 视图、配置可初始化，且不含 `AsterTerminalView`。
+- `ghosttyExtensionCapabilitiesWorkOnRealSurface`：真实 surface 覆盖搜索 flags、selection、Hint、OSC 6974、Outline 与跳转。
 - `swift build -c release`：验证 binary target、Swift/C bridge 和 linker。
 - `./scripts/build-app.sh` 后运行 `codesign --verify --deep --strict dist/Aster.app`。
 - 检查 app 内 Aster resource bundle 包含 `ghostty/shell-integration` 与 `terminfo/78/xterm-ghostty`。

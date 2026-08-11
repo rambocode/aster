@@ -4,10 +4,10 @@
 
 Aster 是完全使用 AppKit 构建的原生 macOS 终端工作区。它支持完整彩色终端、`vim`/`top`/`fzf` 等全屏程序、多标签和任意方向分屏，还能把文件浏览器、编辑器与预览放进同一个工作区。
 
-当前产品终端由 Ghostty 内核提供。普通 Shell、全屏 TUI、选择、复制粘贴、滚动、普通文本
-查找、标题、目录、通知和只读模式可用。切换期间暂不提供 Aster Vi / Mark / Hint Mode、
-键盘扩展选区、区分大小写/正则终端查找、inline Autocomplete，以及依赖旧引擎原始
-字节观察的精确 Agent lifecycle 和命令 Outline；对应菜单会置灰，不会静默执行近似动作。
+当前产品终端由 Ghostty 内核提供。普通 Shell、全屏 TUI、选择、复制粘贴、滚动、完整
+查找、标题、目录、通知、只读、Vi / Mark / Hint Mode、inline Autocomplete、Agent 状态
+和命令 Outline 均可用。Ghostty 自身处理 OSC 8 显式链接；Hint Mode 当前枚举可见 URL
+与路径，不枚举显示文字背后的隐藏 OSC 8 URI。
 
 ## 诊断日志与反馈
 
@@ -128,7 +128,7 @@ Preview 支持 Markdown（含 GFM 表格、任务列表等）、reStructuredText
 ### 选择终端文本
 
 - 拖动选择字符，双击选择单词，三击选择整行；按住 `Shift` 点击可从现有锚点扩展。按住 `Option` 拖动会选择矩形列。
-- 键盘扩展选区暂不可用；鼠标选择与 `Option` 矩形选择由 Ghostty 处理。
+- Vi / Mark Mode 可用键盘移动和扩展选区；鼠标选择与 `Option` 矩形选择由 Ghostty 处理。
 - vim、tmux 等程序开启鼠标报告时，`Shift` 是否保留为本地选择由 Ghostty 与前台程序协商。
 - “设置 → 控制 → 选择”的选中即复制、输入时清除、复制后清除和行尾空格处理会实时应用；旧引擎专属的 Shift 方向键与退格删除开关暂不生效。
 
@@ -161,14 +161,13 @@ Core Graphics 网格路径。
 
 ### 只读模式
 
-- Aster Vi / Mark / Hint Mode 依赖旧引擎未公开的绝对缓冲坐标，切换到 Ghostty 后暂时停用。
+- Aster Vi / Mark / Hint Mode 使用 Ghostty retained buffer 的稳定坐标；输出或窗口 reflow 使旧锚点失效时会安全退出当前模式。
 - “Shell → 只读模式”或 `⌘K` 命令面板按 Pane 切换只读。锁定后键盘、IME、粘贴和 TUI 鼠标报告不会到达程序；输出、滚动、选择、复制和查找仍可用。编辑器 Pane 也会停止接受修改。关闭并恢复工作区后只读锁不会保留。
 
 ### Autocomplete 与 Inline Suggestion
 
-Ghostty 的公开嵌入接口不提供 Aster Autocomplete 所需的原始输入/输出观察器，因此当前
-产品终端不显示 inline suggestion 或候选面板。“设置 → 控制 → Autocomplete”与下述
-本机学习数据继续保留，后续恢复时无需重新配置。
+Autocomplete 使用 Ghostty 的原始 PTY observer，继续显示 inline suggestion 和候选面板；
+接受候选、隐私过滤、本机学习与目录上下文规则保持不变。
 
 候选来自内置命令/子命令/选项、当前目录文件和文件夹、Shell alias、本机历史、固定命令、README shell code block 和失败纠错。文件名会自动按 Shell 规则转义。Aster 不会自动扫描 `package.json`、Makefile 或 justfile；需要固定项目命令时，先在“设置 → 通用”安装 CLI，然后在目标目录运行：
 
@@ -211,7 +210,7 @@ aster tab badge --clear
 
 ## 查找与命令面板
 
-按 `⌘F` 在当前终端的完整滚动缓冲区中做普通文本查找，并用上下箭头跳转。Ghostty 嵌入接口当前不暴露区分大小写和正则 flags，这两个开关在终端 Pane 中不可用。“全局查找”仍会搜索所有终端、编辑器与预览 Pane；终端结果可切换到对应 Pane，但不能依赖旧引擎的绝对行号精确跳转。
+按 `⌘F` 在当前终端的完整滚动缓冲区中查找，并用上下箭头跳转；普通文本、区分大小写和正则选项都由 Ghostty 内核执行。“全局查找”继续搜索所有终端、编辑器与预览 Pane；命令 Outline 使用稳定缓冲锚点精确跳转，历史所在 page 已被 scrollback 裁剪时会显示为不可跳转。
 
 按 `⇧⌘O` 打开 Open Quickly，顶部标签条可在“全部 / 已打开 / 最近 / 文件夹 / SSH / Agents / 当前 / Recipes”中过滤（`⌘J` 直接打开“当前”页）；支持模糊搜索，结果行带类型图标、相对时间和类型徽章，多类型视图按分组显示小节标题。结果会直接跳到 Pane、打开常用目录、预填 SSH、恢复 Agent 历史或打开 Recipe。“当前”页还会显示各 Pane 正在运行的前台命令，并追加“提示词”分组列出最近会话的输入：有 Agent 正在运行时写回对应 Pane，没有运行 Codex、Claude Code 等 Agent CLI 时也可选择 Prompt，内容会直接预填到当前终端且不自动回车。列表内用 `↑`/`↓` 选择、`↩` 跳转、`⌘1`–`⌘9` 快速选中对应行，`⌘K` 或底部“操作”按钮弹出选中行的更多动作（关闭标签、Fork 会话、在 Finder 中显示、复制提示词等）。按住 `⌘` 会在顶部标签和前九条结果上显示快捷键：`⌘0/W/R/Z/S/G/J/E` 分别切换全部、已打开、最近、文件夹、SSH、智能体、当前和 Recipes，松开后提示自动隐藏。按 `Esc`、切换到其他应用，或在 Aster 窗口的浮层外部（包括标题栏）用任意鼠标键点击，都会立即关闭面板。按 `⇧⌘P` 打开的命令面板样式与 Open Quickly 同源，还覆盖新窗口、Pin、两种画中画、详情、Agent、分屏、文件、查找、模式与关闭动作，按 Pane / Window / Application 作用域分组显示小节标题；固定绑定快捷键的常用命令（新建标签页、拆分、缩放拆分等）在行尾显示按键提示。
 

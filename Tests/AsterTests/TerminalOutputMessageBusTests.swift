@@ -34,6 +34,29 @@ func terminalOutputMessageBusPreservesOrderAndDefersCompletion() async throws {
   #expect(probe.isFinished)
 }
 
+@Test("语义 barrier 只在此前原始 PTY 字节全部消费后交付")
+@MainActor
+func terminalOutputMessageBusPreservesSemanticBarrierOrder() async throws {
+  let probe = TerminalOutputMessageBusProbe()
+  let bus = TerminalOutputMessageBus(
+    batchByteLimit: 3,
+    pendingByteLimit: 12,
+    bulkByteThreshold: 3,
+    bulkCoalescingDelay: .nanoseconds(0)
+  ) { probe.appendBatch($0) }
+  let bytes = Array("osc-before-event".utf8)
+  let producer = Task.detached(priority: .userInitiated) {
+    bus.enqueue(bytes[...])
+    bus.enqueueBarrier { probe.markBarrier() }
+  }
+
+  try await waitForTerminalOutputBus { probe.barrierBatchCount != nil }
+  _ = await producer.value
+
+  #expect(probe.batches.flatMap { $0 } == bytes)
+  #expect(probe.barrierBatchCount == probe.batches.count)
+}
+
 @Test("终端输出消息总线在批次间让出主线程给界面事件")
 @MainActor
 func terminalOutputMessageBusYieldsBetweenBatches() async throws {
@@ -207,6 +230,7 @@ private final class TerminalOutputMessageBusProbe: @unchecked Sendable {
   private var storedInterfaceEventBatchCount: Int?
   private var storedInterfaceTaskCompleted = false
   private var storedFirstBatchSawCompletedInterfaceTask: Bool?
+  private var storedBarrierBatchCount: Int?
 
   var batches: [[UInt8]] {
     lock.withLock { storedBatches }
@@ -228,12 +252,21 @@ private final class TerminalOutputMessageBusProbe: @unchecked Sendable {
     lock.withLock { storedFirstBatchSawCompletedInterfaceTask == true }
   }
 
+
+  var barrierBatchCount: Int? {
+    lock.withLock { storedBarrierBatchCount }
+  }
+
   func appendBatch(_ bytes: [UInt8]) {
     lock.withLock { storedBatches.append(bytes) }
   }
 
   func markFinished() {
     lock.withLock { storedFinished = true }
+  }
+
+  func markBarrier() {
+    lock.withLock { storedBarrierBatchCount = storedBatches.count }
   }
 
   func markInterfaceTaskCompleted() {

@@ -1,5 +1,6 @@
 import AppKit
 import AsterCore
+@preconcurrency import GhosttyKit
 import SwiftTerm
 import Testing
 import WebKit
@@ -242,6 +243,98 @@ func terminalHostUsesGhosttySurface() throws {
   #expect(GhosttyApp.shared.startupError == nil)
   #expect(GhosttyApp.shared.configurationDiagnostics.isEmpty)
   #expect(!views.contains { $0 is AsterTerminalView })
+}
+
+@Test("Ghostty 扩展 ABI 恢复搜索、OSC、Outline 与本地导航模式")
+@MainActor
+func ghosttyExtensionCapabilitiesWorkOnRealSurface() async throws {
+  _ = NSApplication.shared
+  let preferences = AppPreferences(defaults: isolatedDefaults())
+  let session = TerminalSession(workingDirectory: "/tmp")
+  defer { session.stop(immediately: true) }
+  let host = session.makeTerminalHost(preferences: preferences)
+  let view = try #require(([host] + host.descendants).compactMap { $0 as? GhosttySurfaceView }.first)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 720, height: 420),
+    styleMask: [.titled],
+    backing: .buffered,
+    defer: false
+  )
+  host.frame = window.contentView?.bounds ?? .zero
+  host.autoresizingMask = [.width, .height]
+  window.contentView?.addSubview(host)
+  window.layoutIfNeeded()
+  window.makeKeyAndOrderFront(nil)
+  view.createSurface()
+
+  #expect(GhosttyApp.shared.startupError == nil)
+  #expect(view.window === window)
+  #expect(view.bounds.width > 0 && view.bounds.height > 0)
+  #expect(view.surface != nil)
+
+  for _ in 0..<100 where !view.isProcessRunning {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(view.isProcessRunning)
+  #expect(view.typeText(
+    "printf '__GHOSTTY_UPPER__ __ghostty_upper__ https://example.com\\n'\n"))
+  for _ in 0..<150
+  where view.readText(includeScrollback: true)?.contains("https://example.com") != true {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+
+  #expect(view.bufferInfo() != nil)
+  #expect(view.find("__ghostty_upper__", previous: false, caseSensitive: true))
+  let sensitiveTotal = view.searchTotal
+  view.clearSearch()
+  #expect(view.find("__ghostty_upper__", previous: false, caseSensitive: false))
+  #expect(view.searchTotal > sensitiveTotal)
+  view.clearSearch()
+  #expect(view.find("__GHOSTTY_[A-Z]+__", previous: false, caseSensitive: true,
+    regularExpression: true))
+  #expect(!view.find("[", previous: false, regularExpression: true))
+
+  view.enterMarkMode()
+  #expect(view.navigationMode == .vi(.mark))
+  let surface = try #require(view.surface)
+  var selection = ghostty_aster_buffer_range_s()
+  #expect(ghostty_aster_surface_get_selection(surface, &selection))
+  let escape = try #require(NSEvent.keyEvent(
+    with: .keyDown,
+    location: .zero,
+    modifierFlags: [],
+    timestamp: 0,
+    windowNumber: window.windowNumber,
+    context: nil,
+    characters: "\u{1B}",
+    charactersIgnoringModifiers: "\u{1B}",
+    isARepeat: false,
+    keyCode: 53
+  ))
+  view.keyDown(with: escape)
+  #expect(view.navigationMode == .normal)
+  view.openHintMode()
+  #expect(view.navigationMode == .hint)
+  #expect(view.hintTargetCount > 0)
+  view.keyDown(with: escape)
+
+  #expect(view.typeText("printf '\\033]6974;Badge=error\\007'\n"))
+  for _ in 0..<100 where session.explicitBadge != .error {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(session.explicitBadge == .error)
+
+  #expect(view.typeText("echo __GHOSTTY_OUTLINE__\n"))
+  for _ in 0..<150 where !session.commandOutlineEntries().contains(where: {
+    $0.title.contains("__GHOSTTY_OUTLINE__")
+  }) {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  let outline = try #require(session.commandOutlineEntries().last(where: {
+    $0.title.contains("__GHOSTTY_OUTLINE__")
+  }))
+  #expect(outline.isJumpAvailable)
+  #expect(session.revealAbsoluteRow(outline.absoluteRow))
 }
 
 @Test("设置页由单一 WebKit 宿主构成并保留九个分类")

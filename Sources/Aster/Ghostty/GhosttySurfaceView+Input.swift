@@ -5,6 +5,11 @@ extension GhosttySurfaceView {
   // MARK: - Keyboard
 
   override func keyDown(with event: NSEvent) {
+    if navigationMode != .normal {
+      handleGhosttyPaneModeKeyDown(event)
+      return
+    }
+    if onAutocompleteKeyDown?(event) == true { return }
     guard let surface, !readOnly else {
       if readOnly { NSSound.beep() } else { super.keyDown(with: event) }
       return
@@ -77,14 +82,14 @@ extension GhosttySurfaceView {
   override func doCommand(by selector: Selector) {}
 
   override func keyUp(with event: NSEvent) {
-    guard let surface else { return }
+    guard navigationMode == .normal, let surface else { return }
     var key = buildKeyEvent(from: event, action: GHOSTTY_ACTION_RELEASE)
     key.text = nil
     _ = ghostty_surface_key(surface, key)
   }
 
   override func flagsChanged(with event: NSEvent) {
-    guard let surface else { return }
+    guard navigationMode == .normal, let surface else { return }
     let action: ghostty_input_action_e =
       modifierWasPressed(event) ? GHOSTTY_ACTION_PRESS : GHOSTTY_ACTION_RELEASE
     var key = buildKeyEvent(from: event, action: action)
@@ -97,6 +102,7 @@ extension GhosttySurfaceView {
   override func mouseDown(with event: NSEvent) {
     guard let surface else { return }
     window?.makeFirstResponder(self)
+    guard navigationMode == .normal else { return }
     reportMousePosition(event)
     _ = ghostty_surface_mouse_button(
       surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, modifiers(event))
@@ -108,7 +114,7 @@ extension GhosttySurfaceView {
   }
 
   override func mouseUp(with event: NSEvent) {
-    guard let surface else { return }
+    guard navigationMode == .normal, let surface else { return }
     reportMousePosition(event)
     _ = ghostty_surface_mouse_button(
       surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, modifiers(event))
@@ -117,6 +123,7 @@ extension GhosttySurfaceView {
   override func rightMouseDown(with event: NSEvent) {
     guard let surface else { return }
     window?.makeFirstResponder(self)
+    guard navigationMode == .normal else { return }
     if event.modifierFlags.contains(.control) {
       if let menu = menu(for: event) { NSMenu.popUpContextMenu(menu, with: event, for: self) }
       return
@@ -131,13 +138,15 @@ extension GhosttySurfaceView {
   }
 
   override func rightMouseUp(with event: NSEvent) {
-    guard let surface, !event.modifierFlags.contains(.control) else { return }
+    guard navigationMode == .normal, let surface,
+      !event.modifierFlags.contains(.control) else { return }
     reportMousePosition(event)
     _ = ghostty_surface_mouse_button(
       surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_RIGHT, modifiers(event))
   }
 
   override func otherMouseDown(with event: NSEvent) {
+    guard navigationMode == .normal else { return }
     guard event.buttonNumber == 2, let surface else {
       super.otherMouseDown(with: event)
       return
@@ -148,6 +157,7 @@ extension GhosttySurfaceView {
   }
 
   override func otherMouseUp(with event: NSEvent) {
+    guard navigationMode == .normal else { return }
     guard event.buttonNumber == 2, let surface else {
       super.otherMouseUp(with: event)
       return
@@ -157,10 +167,18 @@ extension GhosttySurfaceView {
       surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_MIDDLE, modifiers(event))
   }
 
-  override func mouseMoved(with event: NSEvent) { reportMousePosition(event) }
-  override func mouseDragged(with event: NSEvent) { reportMousePosition(event) }
-  override func rightMouseDragged(with event: NSEvent) { reportMousePosition(event) }
-  override func otherMouseDragged(with event: NSEvent) { reportMousePosition(event) }
+  override func mouseMoved(with event: NSEvent) {
+    if navigationMode == .normal { reportMousePosition(event) }
+  }
+  override func mouseDragged(with event: NSEvent) {
+    if navigationMode == .normal { reportMousePosition(event) }
+  }
+  override func rightMouseDragged(with event: NSEvent) {
+    if navigationMode == .normal { reportMousePosition(event) }
+  }
+  override func otherMouseDragged(with event: NSEvent) {
+    if navigationMode == .normal { reportMousePosition(event) }
+  }
 
   override func mouseExited(with event: NSEvent) {
     guard let surface, NSEvent.pressedMouseButtons == 0 else { return }
@@ -169,6 +187,15 @@ extension GhosttySurfaceView {
 
   override func scrollWheel(with event: NSEvent) {
     guard let surface else { return }
+    if navigationMode != .normal {
+      handleGhosttyViewportChange()
+      if event.scrollingDeltaY > 0 {
+        _ = performBindingAction("scroll_page_up")
+      } else if event.scrollingDeltaY < 0 {
+        _ = performBindingAction("scroll_page_down")
+      }
+      return
+    }
     reportMousePosition(event)
     var scrollModifiers: ghostty_input_scroll_mods_t = 0
     if event.hasPreciseScrollingDeltas { scrollModifiers |= 1 }

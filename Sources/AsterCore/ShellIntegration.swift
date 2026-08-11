@@ -10,7 +10,10 @@ public enum ShellIntegrationEvent: Equatable, Sendable {
 
   public init?(payload: String) {
     switch payload {
-    case "A": self = .promptStart
+    // Ghostty 按 FinalTerm 扩展在 A 后附加 `cl=line`，它只描述提示符行语义，
+    // 不携带命令正文。仅接受这个已知属性，继续拒绝 C 后的任意文本，避免扩大
+    // 控制序列可伪造的业务输入面。
+    case "A", "A;cl=line": self = .promptStart
     case "B": self = .inputStart
     case "C": self = .commandStart
     case "D": self = .commandFinished(exitStatus: nil)
