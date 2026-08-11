@@ -1222,7 +1222,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       let status = try agentSetupService.status(for: provider)
       let detail: String
       let buttonTitle: String
-      if status.managedIntegrationInstalled {
+      if status.integrationInstalled {
         detail = "\(provider.commandName) · 已安装集成"
         buttonTitle = "卸载"
       } else if status.executableAvailable {
@@ -1256,12 +1256,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     return "\(status.provider.commandName) · 已检测到 CLI，集成尚未安装"
   }
 
-  /// 已安装状态执行精确卸载；未安装状态保持检测/安装语义。所有写入都由安全服务按
-  /// Aster 所有权标记处理，设置页不直接编辑 provider 配置。
+  /// 完整安装状态执行精确卸载；hook 已写入但 feature 未启用或需要迁移时继续执行
+  /// 修复安装。所有写入都由安全服务按 Aster 所有权标记处理，设置页不直接编辑配置。
   private func performAgentSetupAction(_ provider: AgentProvider, displayName: String) {
     do {
       let current = try agentSetupService.status(for: provider)
-      if current.managedIntegrationInstalled {
+      if current.integrationInstalled {
         _ = try agentSetupService.uninstall(provider)
         message = "\(displayName) 集成已卸载；请重启该 Agent。"
       } else if current.executableAvailable {

@@ -57,7 +57,7 @@ import Testing
   #expect(
     missing.steps == [
       .mergeManagedHooks(path: "~/.codex/hooks.json", format: .json),
-      .setBoolean(path: "~/.codex/config.toml", key: "hooks", value: true),
+      .enableFeature(path: "~/.codex/config.toml", key: "hooks"),
     ]
   )
   #expect(missing.requiresAgentRestart)
@@ -73,7 +73,7 @@ import Testing
   )
   #expect(
     onlyFeatureMissing.steps == [
-      .setBoolean(path: "~/.codex/config.toml", key: "hooks", value: true)
+      .enableFeature(path: "~/.codex/config.toml", key: "hooks")
     ]
   )
 

@@ -250,7 +250,7 @@ aster pane exec --format json -- git status --short
 Aster 支持 Claude Code、Codex、OpenCode、Cursor CLI、Kimi Code、Pi 和 omp。在“设置 → 智能体”可启用 provider、安装/卸载受管 lifecycle 集成，并为 wrapper、环境配置或自定义可执行文件设置结构化启动命令。安装和卸载只改动带 Aster 标识的 hook/plugin；用户自己的配置保持不变，变更后应重启对应 Agent。
 
 - lifecycle hook 把 `processing / idle / awaiting-input` 归一到所属 PTY，驱动标签徽章、完成/等待通知和“处理期间阻止睡眠”。不会读取或保存 prompt 正文。
-- 打开“Shell”菜单时，Aster 会根据当前聚焦 Pane 显示 `Codex`、`Claude` 等对应的 Agent 子菜单；切换分屏后菜单随焦点更新，不会操作同一标签里的其它 Agent。在“设置 → 智能体”安装对应 lifecycle 集成并重启 Agent 后，会话会自动关联，可拷贝会话 ID、查看历史，或 Fork 到上下左右分屏、新标签页、新窗口。Codex 首次加载新 hook 时还需运行 `/hooks` 审核并信任 Aster 条目；尚未收到可信会话 ID 时，复制与 Fork 会保持禁用。
+- 打开“Shell”菜单时，Aster 会根据当前聚焦 Pane 显示 `Codex`、`Claude` 等对应的 Agent 子菜单；切换分屏后菜单随焦点更新，不会操作同一标签里的其它 Agent。在“设置 → 智能体”安装对应 lifecycle 集成并重启 Agent 后，会话会自动关联，可拷贝会话 ID、查看历史，或 Fork 到上下左右分屏、新标签页、新窗口。Codex 首次加载新 hook 时还需运行 `/hooks` 审核并信任 Aster 条目；安装器会迁移旧版 Aster 遗留的非法顶层 `hooks` 布尔配置。尚未收到可信会话 ID 时，复制与 Fork 会保持禁用。
 - “Agent 历史”与 Open Quickly 可搜索已知 provider 的本机会话记录，并使用 provider 原生命令 Resume 或 Fork；不支持 Fork 的 provider 会明确拒绝。
 - Composer 支持多行草稿、普通文件附件、固定/浮动与取消；发送时使用 bracketed paste，仍服从只读和粘贴保护。Prompt Queue 只按 lifecycle hook 的 `idle` 自动派发，`processing` 与 `awaiting-input` 都只排队；未安装 hook 时不自动发送，每一项都由你点击左侧发送图标提交。
 - Send to Chat 可接收终端选区、当前可见 transcript 或文件上下文。上下文被包在 `untrusted-context` 中，移除终端控制字符、遮盖常见密钥并执行 128 KiB 总预算；Aster 不声称能识别所有业务敏感信息，发送前仍应复核。终端发送面板会以普通键入预填目标 Agent 输入框，最终提交始终由你决定。

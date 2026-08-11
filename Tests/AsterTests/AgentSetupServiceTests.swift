@@ -82,11 +82,10 @@ func agentSetupUninstallsManagedContentWithoutRemovingUserConfiguration() throws
   let userCommands = try #require(stop.first?["hooks"] as? [[String: Any]])
   #expect(userCommands.first?["command"] as? String == "user-stop")
 
-  let codexConfig = try String(
-    contentsOf: home.appendingPathComponent(".codex/config.toml"),
-    encoding: .utf8
-  )
-  #expect(codexConfig.contains("hooks = true"))
+  // Codex hooks 默认启用；安装和卸载都不应仅为默认值创建 config.toml。
+  #expect(!FileManager.default.fileExists(
+    atPath: home.appendingPathComponent(".codex/config.toml").path
+  ))
   for path in [
     ".config/opencode/plugins/\(AgentSetupService.managedArtifactFileName)",
     ".pi/agent/extensions/\(AgentSetupService.managedArtifactFileName)",
@@ -160,7 +159,7 @@ func codexAgentSetupPreservesOttyHooks() throws {
   try FileManager.default.createDirectory(at: codexDirectory, withIntermediateDirectories: true)
   try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
   try makeExecutable(named: AgentProvider.codex.commandName, in: bin)
-  try "hooks = true\n".write(
+  try "[features]\nhooks = true\n".write(
     to: codexDirectory.appendingPathComponent("config.toml"),
     atomically: true,
     encoding: .utf8
@@ -186,6 +185,36 @@ func codexAgentSetupPreservesOttyHooks() throws {
   #expect(sessionStart.contains { $0[AgentSetupService.managedJSONKey] as? Bool == true })
 }
 
+@Test("Codex 安装迁移旧版顶层 hooks 布尔值并保留 features 配置")
+func codexAgentSetupMigratesLegacyRootHooksBoolean() throws {
+  let root = try agentSetupTemporaryDirectory(named: "aster-agent-setup-codex-hooks-migration")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let home = root.appendingPathComponent("home", isDirectory: true)
+  let bin = root.appendingPathComponent("bin", isDirectory: true)
+  let codexDirectory = home.appendingPathComponent(".codex", isDirectory: true)
+  try FileManager.default.createDirectory(at: codexDirectory, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+  try makeExecutable(named: AgentProvider.codex.commandName, in: bin)
+  let config = codexDirectory.appendingPathComponent("config.toml")
+  try """
+    model = "gpt-user"
+    hooks = true
+
+    [features]
+    hooks = true
+    memories = true
+    """.write(to: config, atomically: true, encoding: .utf8)
+  let service = AgentSetupService(homeDirectory: home, executableSearchDirectories: [bin])
+
+  let installed = try service.install(.codex)
+
+  #expect(installed.integrationInstalled)
+  let updated = try String(contentsOf: config, encoding: .utf8)
+  #expect(!updated.hasPrefix("model = \"gpt-user\"\nhooks = true\n"))
+  #expect(updated.hasPrefix("model = \"gpt-user\"\n\n[features]\n"))
+  #expect(updated.contains("[features]\nhooks = true\nmemories = true"))
+}
+
 @Test("Codex 与 Kimi 的 TOML 增量保留用户字节并只更新计划键")
 func agentSetupPreservesTOMLOutsideManagedValues() throws {
   let root = try agentSetupTemporaryDirectory(named: "aster-agent-setup-toml")
@@ -203,7 +232,14 @@ func agentSetupPreservesTOMLOutsideManagedValues() throws {
   try FileManager.default.createDirectory(at: kimiDirectory, withIntermediateDirectories: true)
   let codexConfig = codexDirectory.appendingPathComponent("config.toml")
   let kimiConfig = kimiDirectory.appendingPathComponent("config.toml")
-  try "# user comment\nhooks = false\nmodel = \"gpt-user\"\n".write(
+  try """
+    # user comment
+    model = "gpt-user"
+
+    [features]
+    hooks = false # user disabled before explicit install
+    memories = true
+    """.write(
     to: codexConfig,
     atomically: true,
     encoding: .utf8
@@ -223,9 +259,10 @@ func agentSetupPreservesTOMLOutsideManagedValues() throws {
 
   let codexText = try String(contentsOf: codexConfig, encoding: .utf8)
   #expect(codexText.contains("# user comment"))
-  #expect(codexText.contains("hooks = true"))
+  #expect(codexText.contains("[features]\nhooks = true # user disabled before explicit install"))
   #expect(!codexText.contains("hooks = false"))
   #expect(codexText.contains("model = \"gpt-user\""))
+  #expect(codexText.contains("memories = true"))
   let kimiText = try String(contentsOf: kimiConfig, encoding: .utf8)
   #expect(kimiText.hasPrefix("# keep exactly\nmodel = \"kimi-user\"\n"))
   #expect(kimiText.contains(AgentSetupService.managedTOMLStartMarker))

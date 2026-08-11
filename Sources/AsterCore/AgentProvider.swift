@@ -148,7 +148,9 @@ public struct AgentSetupEvidence: Equatable, Sendable {
 /// `mergeManagedHooks` 限定为 Otty 自有键，把 managed artifact 写入独立文件。
 public enum AgentSetupStep: Equatable, Sendable {
   case mergeManagedHooks(path: String, format: AgentConfigurationFormat)
-  case setBoolean(path: String, key: String, value: Bool)
+  /// 启用 provider 的 `[features]` 开关；基础设施层同时负责清理 Aster 旧版本写入的
+  /// 同名顶层布尔值，避免该值与当前 provider 的结构化配置表发生类型冲突。
+  case enableFeature(path: String, key: String)
   case installManagedArtifact(directory: String, kind: AgentManagedArtifactKind)
 }
 
@@ -188,7 +190,7 @@ public enum AgentSetupPlanner {
       steps.append(provider.installationStep)
     }
     if provider == .codex, evidence.requiredFeatureEnabled != true {
-      steps.append(.setBoolean(path: "~/.codex/config.toml", key: "hooks", value: true))
+      steps.append(.enableFeature(path: "~/.codex/config.toml", key: "hooks"))
     }
 
     return AgentSetupPlan(

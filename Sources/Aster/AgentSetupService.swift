@@ -41,7 +41,7 @@ enum AgentSetupServiceError: Error, Equatable, LocalizedError {
 }
 
 /// 设置页消费的只读检测结果。`integrationInstalled` 表示 Planner 已不再要求任何
-/// 写入；Codex 的 hook 文件和 `hooks = true` 因而必须同时满足才算安装完成。
+/// 写入；Codex 的 hook 文件和 `[features].hooks` 因而必须同时满足才算安装完成。
 struct AgentSetupStatus: Equatable {
   let provider: AgentProvider
   let executableAvailable: Bool
@@ -167,8 +167,8 @@ struct AgentSetupService {
   }
 
   /// 只移除带 Aster 所有权标记的 hook、TOML 区块或独立 artifact。Codex 的
-  /// `hooks = true` 可能在安装前已由用户启用，服务没有可靠 provenance 可判断归属，
-  /// 因而卸载时保留该布尔值；这不会继续执行 Aster hook，也不会破坏用户其它 hooks。
+  /// `[features].hooks` 可能在安装前已由用户启用，服务没有可靠 provenance 可判断
+  /// 归属，因而卸载时保留该布尔值；这不会继续执行 Aster hook，也不会破坏其它 hooks。
   @discardableResult
   func uninstall(_ provider: AgentProvider) throws -> AgentSetupStatus {
     switch provider {
@@ -314,9 +314,13 @@ struct AgentSetupService {
   private func detectsRequiredFeature(for provider: AgentProvider) throws -> Bool? {
     guard provider == .codex else { return nil }
     let url = try expandedManagedPath("~/.codex/config.toml")
-    guard let existing = try readExistingRegularFile(at: url) else { return nil }
+    // 当前 Codex 默认启用 hooks；没有 config.toml 或没有显式 feature 键都等价于启用。
+    guard let existing = try readExistingRegularFile(at: url) else { return true }
     let text = try utf8String(existing.data, path: url.path)
-    return try rootBooleanValue(named: "hooks", in: text, path: url.path)
+    // Aster 0.4.1 曾把 feature 开关错误写到顶层。当前 Codex 把顶层 `hooks` 解释为
+    // HooksToml 结构体，因此任何遗留布尔值都必须进入迁移步骤，即使 features 已为 true。
+    if try rootBooleanValue(named: "hooks", in: text, path: url.path) != nil { return false }
+    return try featureBooleanValue(named: "hooks", in: text, path: url.path) ?? true
   }
 
   private func prepareEdit(
@@ -333,9 +337,9 @@ struct AgentSetupService {
         return try prepareTOMLManagedBlockEdit(at: target, provider: provider)
       }
 
-    case .setBoolean(let path, let key, let value):
+    case .enableFeature(let path, let key):
       let target = try expandedManagedPath(path)
-      return try prepareTOMLBooleanEdit(at: target, key: key, value: value)
+      return try prepareTOMLFeatureEdit(at: target, key: key)
 
     case .installManagedArtifact(let directory, _):
       let targetDirectory = try expandedManagedPath(directory)
@@ -423,16 +427,14 @@ struct AgentSetupService {
     )
   }
 
-  private func prepareTOMLBooleanEdit(
+  private func prepareTOMLFeatureEdit(
     at target: URL,
-    key: String,
-    value: Bool
+    key: String
   ) throws -> PreparedEdit {
     let original = try readExistingRegularFile(at: target)
     let current = try original.map { try utf8String($0.data, path: target.path) } ?? ""
-    let updated = try settingRootBoolean(
+    let updated = try enablingFeatureBoolean(
       named: key,
-      to: value,
       in: current,
       path: target.path
     )
@@ -708,40 +710,106 @@ struct AgentSetupService {
     return value
   }
 
-  private func settingRootBoolean(
+  /// 读取精确 `[features]` 表中的布尔值。只识别当前安装器管理的简单表形态；重复表、
+  /// 重复键或同名非布尔值均拒绝，避免在无法证明语义时改写用户配置。
+  private func featureBooleanValue(
     named key: String,
-    to value: Bool,
+    in text: String,
+    path: String
+  ) throws -> Bool? {
+    var value: Bool?
+    var insideFeatures = false
+    var sawFeatures = false
+    for line in text.components(separatedBy: "\n") {
+      if startsTOMLTable(in: line) {
+        let table = tableName(in: line)
+        insideFeatures = table == "features"
+        if insideFeatures {
+          guard !sawFeatures else { throw AgentSetupServiceError.invalidConfiguration(path) }
+          sawFeatures = true
+        }
+        continue
+      }
+      guard insideFeatures,
+        let assignment = try booleanAssignment(in: line, key: key, path: path)
+      else { continue }
+      guard value == nil else { throw AgentSetupServiceError.invalidConfiguration(path) }
+      value = assignment
+    }
+    return value
+  }
+
+  /// 删除旧 Aster 写入的顶层布尔值，并只在用户显式关闭 `[features].hooks` 时改为 true。
+  /// feature 键缺失时沿用 Codex 的默认启用语义，不为新配置制造多余内容。
+  private func enablingFeatureBoolean(
+    named key: String,
     in text: String,
     path: String
   ) throws -> String {
     var lines = text.isEmpty ? [] : text.components(separatedBy: "\n")
-    var matchIndex: Int?
-    var firstTableIndex: Int?
-    var isRoot = true
+    var rootMatchIndex: Int?
+    var featureMatchIndex: Int?
+    var insideFeatures = false
+    var sawFeatures = false
+    var beforeFirstTable = true
     for index in lines.indices {
-      let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
-      if trimmed.hasPrefix("[") {
-        isRoot = false
-        if firstTableIndex == nil { firstTableIndex = index }
+      if startsTOMLTable(in: lines[index]) {
+        let table = tableName(in: lines[index])
+        beforeFirstTable = false
+        insideFeatures = table == "features"
+        if insideFeatures {
+          guard !sawFeatures else { throw AgentSetupServiceError.invalidConfiguration(path) }
+          sawFeatures = true
+        }
+        continue
       }
-      guard isRoot,
+      if beforeFirstTable,
         try booleanAssignment(in: lines[index], key: key, path: path) != nil
-      else { continue }
-      guard matchIndex == nil else { throw AgentSetupServiceError.invalidConfiguration(path) }
-      matchIndex = index
+      {
+        guard rootMatchIndex == nil else {
+          throw AgentSetupServiceError.invalidConfiguration(path)
+        }
+        rootMatchIndex = index
+      }
+      if insideFeatures,
+        try booleanAssignment(in: lines[index], key: key, path: path) != nil
+      {
+        guard featureMatchIndex == nil else {
+          throw AgentSetupServiceError.invalidConfiguration(path)
+        }
+        featureMatchIndex = index
+      }
     }
 
-    let rendered = "\(key) = \(value ? "true" : "false")"
-    if let matchIndex {
-      let line = lines[matchIndex]
+    if let featureMatchIndex {
+      let line = lines[featureMatchIndex]
       let comment = line.firstIndex(of: "#").map { String(line[$0...]) }
       let indentation = String(line.prefix { $0 == " " || $0 == "\t" })
-      lines[matchIndex] = indentation + rendered + (comment.map { " " + $0 } ?? "")
-    } else {
-      let insertion = firstTableIndex ?? max(lines.count - (text.hasSuffix("\n") ? 1 : 0), 0)
-      lines.insert(rendered, at: insertion)
+      lines[featureMatchIndex] = indentation + "\(key) = true"
+        + (comment.map { " " + $0 } ?? "")
+    }
+    if let rootMatchIndex {
+      let line = lines[rootMatchIndex]
+      if let commentIndex = line.firstIndex(of: "#") {
+        let indentation = String(line.prefix { $0 == " " || $0 == "\t" })
+        lines[rootMatchIndex] = indentation + String(line[commentIndex...])
+      } else {
+        lines.remove(at: rootMatchIndex)
+      }
     }
     return lines.joined(separator: "\n")
+  }
+
+  private func startsTOMLTable(in line: String) -> Bool {
+    line.trimmingCharacters(in: .whitespaces).hasPrefix("[")
+  }
+
+  /// 返回简单 TOML 表名；array table 和损坏的 header 不会被误识别为 `[features]`。
+  private func tableName(in line: String) -> String? {
+    let code = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
+      .trimmingCharacters(in: .whitespaces)
+    guard code.hasPrefix("["), code.hasSuffix("]"), !code.hasPrefix("[[") else { return nil }
+    return code.dropFirst().dropLast().trimmingCharacters(in: .whitespaces)
   }
 
   /// 返回 nil 表示该行不是目标键；一旦左侧确为目标键，右侧只能是 TOML Bool，
