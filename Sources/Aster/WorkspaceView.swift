@@ -801,8 +801,8 @@ final class WorkspaceViewController: NSViewController {
       NSLayoutConstraint.activate([
         palette.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
         palette.view.topAnchor.constraint(equalTo: view.topAnchor, constant: 82),
-        palette.view.widthAnchor.constraint(equalToConstant: 520),
-        palette.view.heightAnchor.constraint(lessThanOrEqualToConstant: 430),
+        palette.view.widthAnchor.constraint(equalToConstant: 560),
+        palette.view.heightAnchor.constraint(lessThanOrEqualToConstant: 480),
       ])
     } else if model.isOpenQuicklyPresented {
       attachOpenQuicklyOverlay(refreshesTargets: true)
