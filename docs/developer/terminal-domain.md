@@ -188,7 +188,7 @@ OSC 7 目录变化还会在“自动记录访问目录”开启时写入 `aster.
 
 Edit 菜单和终端右键菜单提供粘贴选区、普通文件 Base64、POSIX Shell 单参数转义、强制括号粘贴，以及 Composer 交接入口。Base64 文件读取使用 `lstat` + `O_NOFOLLOW` + `fstat`，在打开前后比较设备号、inode、大小、mtime 与 ctime，限制为 8 MiB；目录、符号链接、FIFO、socket、设备和读取期间变化的文件都被拒绝。Composer 动作通过 `onPasteIntoComposer` 窄回调解耦；Composer 领域接入前右键项保持禁用。
 
-`TerminalOSCStreamLimiter` 在原始 PTY 字节进入 SwiftTerm 前跨分片跟踪 OSC：普通 OSC 上限 16 MiB，OSC 52 上限 8 MiB；超限时发送 CAN 取消组件内部缓存，并丢弃到真实终止符。自定义 OSC 52 handler 再执行第二层解析，Base64 解码后限制 6 MiB；读响应正文限制 1 MiB，并使用七位 OSC/ST。写权限默认 `Allow`，读权限默认 `Ask`；导入配置中的 `Allow Read` 会降级为 `Ask`，显式 `Deny` 保留。`Ask` 不持久化临时授权，提示期间拒绝重入，提示结束后 5 秒内静默拒绝后续请求，防止模态提示风暴。畸形、超限、拒绝和取消请求均无剪贴板副作用。
+`TerminalOSCStreamLimiter` 在原始 PTY 字节进入 SwiftTerm 前跨分片跟踪 OSC：普通 OSC 上限 16 MiB，OSC 52 上限 8 MiB；超限时发送 CAN 取消组件内部缓存，并丢弃到真实终止符。ground 态按 UTF-8 穿越多字节字符：延续字节(0x80–0xBF)不参与 C1 判定——❯/❮(U+276F/U+276E = `E2 9D xx`)等提示符字符的中间字节恰为 0x9D，误判为 C1 OSC 起始符会把提示符连同后续输出整段吞进一条永不终止的 OSC；只有非延续位置的裸 0x9D 才规范化为 `ESC ]`（回归测试 `oscStreamLimiterPassesThroughUTF8ContinuationBytes` 与像素探针 `promptLeaderRendersInkInFirstCell`）。自定义 OSC 52 handler 再执行第二层解析，Base64 解码后限制 6 MiB；读响应正文限制 1 MiB，并使用七位 OSC/ST。写权限默认 `Allow`，读权限默认 `Ask`；导入配置中的 `Allow Read` 会降级为 `Ask`，显式 `Deny` 保留。`Ask` 不持久化临时授权，提示期间拒绝重入，提示结束后 5 秒内静默拒绝后续请求，防止模态提示风暴。畸形、超限、拒绝和取消请求均无剪贴板副作用。
 
 ### 原生文本编辑与安全键盘输入
 

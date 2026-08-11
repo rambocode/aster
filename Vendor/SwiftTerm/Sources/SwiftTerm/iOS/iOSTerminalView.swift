@@ -264,6 +264,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
 
+    // Per-character font resolution for Private Use Area glyphs whose cascade lookup the
+    // system font skips (see resolvePrivateUseFallbackFont). Keyed by "char|basePSName".
+    // macOS-only behavior today; declared here so shared cache reset code compiles.
+    var privateUseFontCache: [String: TTFont] = [:]
+    var privateUseFontMisses: Set<String> = []
+
     // Timer to display the terminal buffer
     var link: CADisplayLink!
     // Cache for the colors in the 0..255 range

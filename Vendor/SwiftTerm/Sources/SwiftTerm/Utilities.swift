@@ -340,6 +340,19 @@ struct UnicodeUtil {
         return prefersTextPresentation(ch) ? String(ch) + "\u{FE0E}" : String(ch)
     }
 
+    /// Whether the scalar sits in a Unicode Private Use Area (BMP U+E000-U+F8FF or
+    /// planes 15-16). PUA code points get no system font fallback, so icon fonts
+    /// (powerline separators, nerd symbols) must be resolved explicitly.
+    static func isPrivateUse (_ scalar: Unicode.Scalar) -> Bool
+    {
+        switch scalar.value {
+        case 0xE000...0xF8FF, 0xF0000...0xFFFFD, 0x100000...0x10FFFD:
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func isEastAsianWide (_ value: UInt32) -> Bool
     {
         if UnicodeWidthData.eastAsianWide.isEmpty {

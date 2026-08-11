@@ -56,3 +56,11 @@ record the new version and revision here.
   Aster's keyboard Hint Mode and a scroll-invariant line range for Vi Mode snapshots. The outer
   `shouldSendUserData(_:)` is an overridable preflight hook so Read-only can reject input before
   selection/viewport side effects.
+- `Apple/AppleTerminalView.swift` resolves Private Use Area characters (powerline separators,
+  nerd symbols) against the base font's explicit cascade list when building line segments
+  (`Utilities.swift` adds `UnicodeUtil.isPrivateUse`). Hidden system UI fonts such as
+  `.AppleSystemUIFontMonospaced` skip the custom `kCTFontCascadeListAttribute` for PUA code
+  points and shape them to LastResort (a blank/placeholder box), so prompt icons vanish. The
+  host cannot fix this at font-construction time; the per-character override feeds both the
+  CoreGraphics and Metal renderers through the shared segment builder. Resolution results are
+  cached per character+font and cleared with the other attribute caches.

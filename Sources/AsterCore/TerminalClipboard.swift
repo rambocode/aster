@@ -194,6 +194,8 @@ public struct TerminalOSCStreamLimiter: Sendable {
   public let maximumClipboardSequenceBytes: Int
   public let maximumNotificationSequenceBytes: Int
   private var state: State = .ground
+  /// ground 态正在穿越的 UTF-8 多字节字符还剩多少个延续字节。
+  private var pendingUTF8Continuations: Int = 0
 
   public init(
     maximumSequenceBytes: Int = 16 * 1_024 * 1_024,
@@ -224,6 +226,21 @@ public struct TerminalOSCStreamLimiter: Sendable {
   }
 
   private mutating func consume(_ byte: UInt8, into output: inout [UInt8]) {
+    // ground 态的普通文本必须按 UTF-8 穿越：多字节字符的延续字节(0x80-0xBF)不是
+    // C1 控制符。❯/❮(U+276F/U+276E = E2 9D xx)等提示符字符的中间字节恰为 0x9D，
+    // 若被当作 C1 OSC 起始符改写，提示符连同其后全部输出都会被吞进一条永不终止的
+    // OSC。SwiftTerm 自身的 ground 快速路径也把这些字节当可打印内容，这里保持一致；
+    // OSC payload 内不做穿越，与 SwiftTerm oscString 状态的逐字节表驱动行为对齐。
+    if case .ground = state {
+      if pendingUTF8Continuations > 0, (0x80...0xBF).contains(byte) {
+        pendingUTF8Continuations -= 1
+        output.append(byte)
+        return
+      }
+      pendingUTF8Continuations = Self.utf8ContinuationCount(after: byte)
+    } else {
+      pendingUTF8Continuations = 0
+    }
     // SwiftTerm 把 C1 OSC(0x9D) 定义为“任意状态”转换。必须在状态分派前处理，
     // 否则 `ESC 0x9D` 或一条 OSC 内嵌 0x9D 都会让两层状态机分叉并绕过限长。
     if byte == 0x9D {
@@ -337,6 +354,16 @@ public struct TerminalOSCStreamLimiter: Sendable {
     }
     output.append(contentsOf: [0x1B, 0x5D])
     state = .code(digits: [], forwardedBytes: 2)
+  }
+
+  /// UTF-8 首字节应跟随的延续字节数；ASCII、延续字节与非法首字节返回 0。
+  private static func utf8ContinuationCount(after byte: UInt8) -> Int {
+    switch byte {
+    case 0xC2...0xDF: 1
+    case 0xE0...0xEF: 2
+    case 0xF0...0xF4: 3
+    default: 0
+    }
   }
 
   /// SwiftTerm 在 Escape 状态执行 C0 控制字符和 DEL 后仍停留在 Escape；因此

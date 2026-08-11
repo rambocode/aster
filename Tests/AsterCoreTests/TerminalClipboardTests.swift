@@ -242,6 +242,29 @@ func oscStreamLimiterNormalizesEightBitControls() {
   #expect(String(decoding: oversized, as: UTF8.self) == "\u{1B}]52;AAAAA\u{18}")
 }
 
+@Test("OSC 流限制器不把 UTF-8 延续字节 0x9D 误判为 C1 OSC")
+func oscStreamLimiterPassesThroughUTF8ContinuationBytes() {
+  // ❯(U+276F = E2 9D AF)等提示符字符的中间字节是 0x9D;若被当 C1 OSC 起始符,
+  // 提示符与其后全部输出都会被吞进一条永不终止的 OSC(starship 默认提示符即如此)。
+  var limiter = TerminalOSCStreamLimiter()
+  let prompt = Array("\u{276F} echo hi\r\n".utf8)
+  #expect(limiter.consume(prompt) == prompt)
+
+  let ornaments = Array("\u{276E}\u{2770}\u{275D}".utf8)
+  #expect(limiter.consume(ornaments) == ornaments)
+
+  // 多字节字符跨 PTY 分片时,延续字节可能出现在分片开头,穿越状态必须跨调用保持。
+  var chunked = TerminalOSCStreamLimiter()
+  let first = chunked.consume([0xE2])
+  let second = chunked.consume([0x9D, 0xAF] + Array("x".utf8))
+  #expect(first + second == Array("\u{276F}x".utf8))
+
+  // 非延续位置的裸 0x9D 仍是 C1 OSC,继续规范化为 ESC ]。
+  var c1 = TerminalOSCStreamLimiter()
+  let raw = c1.consume([0x9D] + Array("2;t".utf8) + [0x07])
+  #expect(raw == Array("\u{1B}]2;t\u{7}".utf8))
+}
+
 @Test("OSC 流限制器在任意状态识别八位 OSC 起始符")
 func oscStreamLimiterTracksEightBitOSCFromEveryRelevantState() {
   var limiter = TerminalOSCStreamLimiter(

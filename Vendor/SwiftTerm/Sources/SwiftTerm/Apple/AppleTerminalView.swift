@@ -240,6 +240,46 @@ extension TerminalView {
         self.urlAttributes = [:]
         self.colors = Array(repeating: nil, count: 256)
         self.trueColors = [:]
+        self.privateUseFontCache = [:]
+        self.privateUseFontMisses = []
+    }
+
+    /// Resolves a Private Use Area character against the base font's explicit cascade
+    /// list. Hidden system UI fonts (".AppleSystemUIFontMonospaced" and friends) skip
+    /// the custom kCTFontCascadeListAttribute for PUA code points and fall straight
+    /// through to LastResort, so cascade-based icon fonts (powerline separators, nerd
+    /// symbols) silently render as blanks. The host cannot work around this at font
+    /// construction time — the skip is inherent to the system font — so the view walks
+    /// the cascade manually and assigns the matching font per character.
+    /// Returns nil when the base font already covers the character or nothing matches.
+    func resolvePrivateUseFallbackFont (for character: String, base: TTFont) -> TTFont? {
+        #if os(macOS)
+        let utf16 = Array(character.utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: utf16.count)
+        if CTFontGetGlyphsForCharacters(base as CTFont, utf16, &glyphs, utf16.count) {
+            return nil
+        }
+        let key = character + "|" + (CTFontCopyPostScriptName(base as CTFont) as String)
+        if let cached = privateUseFontCache[key] {
+            return cached
+        }
+        if privateUseFontMisses.contains(key) {
+            return nil
+        }
+        let size = CTFontGetSize(base as CTFont)
+        let cascade = (CTFontCopyAttribute(base as CTFont, kCTFontCascadeListAttribute)
+            as? [CTFontDescriptor]) ?? []
+        for descriptor in cascade {
+            let candidate = CTFontCreateWithFontDescriptor(descriptor, size, nil)
+            if CTFontGetGlyphsForCharacters(candidate, utf16, &glyphs, utf16.count) {
+                let resolved = candidate as TTFont
+                privateUseFontCache[key] = resolved
+                return resolved
+            }
+        }
+        privateUseFontMisses.insert(key)
+        #endif
+        return nil
     }
 
     /// Starts one view-level blink clock for all SGR 5/6 cells. The safe default leaves these
@@ -974,6 +1014,22 @@ extension TerminalView {
                 builder?.append(text: " ", attributes: currentAttributes)
                 previousPlaceholder = placeholder
                 previousPlaceholderAttribute = attr
+            } else if let scalar = character.unicodeScalars.first,
+                      character.unicodeScalars.count == 1,
+                      UnicodeUtil.isPrivateUse(scalar),
+                      let baseFont = currentAttributes[.font] as? TTFont,
+                      let resolvedFont = resolvePrivateUseFallbackFont(for: String(character),
+                                                                       base: baseFont) {
+                // PUA glyphs (powerline separators, nerd symbols) get no cascade
+                // fallback under hidden system UI fonts and would shape to LastResort
+                // (a blank/placeholder box). Emit them as their own run with the
+                // cascade font resolved explicitly (see resolvePrivateUseFallbackFont).
+                flushPending()
+                var overriddenAttributes = currentAttributes
+                overriddenAttributes[.font] = resolvedFont
+                builder?.append(text: String(character), attributes: overriddenAttributes)
+                previousPlaceholder = nil
+                previousPlaceholderAttribute = nil
             } else {
                 // Common path: just accumulate into the batch
                 pendingText.append(character)

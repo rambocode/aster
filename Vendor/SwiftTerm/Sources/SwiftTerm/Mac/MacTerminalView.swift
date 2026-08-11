@@ -355,6 +355,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     // of attributes for an NSAttributedString
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
+
+    // Per-character font resolution for Private Use Area glyphs whose cascade lookup the
+    // system font skips (see resolvePrivateUseFallbackFont). Keyed by "char|basePSName".
+    var privateUseFontCache: [String: TTFont] = [:]
+    var privateUseFontMisses: Set<String> = []
     
     
     // Cache for the colors in the 0..255 range
