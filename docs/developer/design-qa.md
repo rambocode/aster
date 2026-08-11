@@ -27,6 +27,7 @@
 - [ ] iTerm2、Kitty 与 Sixel 示例图片尺寸正确；损坏或超限输入不残留旧图，也不阻塞后续文字。
 - [ ] 关闭 Shell Integration 会显示确认并移除受管区块；重新开启不会重复追加 marker。
 - [ ] `TERM=auto` 下 `echo "$TERM_PROGRAM $TERM"` 显示 `aster xterm-256color`；DA/XTVERSION 探测工具识别为 Aster。
+- [ ] 同一标签的不同 Pane 分别运行 Codex、Claude 或普通 Shell 时，每次展开“Shell”菜单只显示当前聚焦 Pane 对应的 Agent 子菜单；Fork 到四向分屏、新标签和新窗口后目录与会话连续。没有可信 session ID 时复制与 Fork 保持禁用。
 
 ## Autocomplete / Inline Suggest 检查清单
 

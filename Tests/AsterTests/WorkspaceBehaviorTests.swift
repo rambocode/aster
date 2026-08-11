@@ -57,6 +57,31 @@ func appModelAppliesContextAwareNewTabPosition() throws {
   #expect(model.tabs[1].workingDirectory == "/tmp/content")
 }
 
+@Test("Agent Fork 落点创建指定分屏或新标签并继承活动目录")
+@MainActor
+func agentContinuationPlacementCreatesRequestedWorkspaceTarget() {
+  let defaults = behaviorTestDefaults()
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer {
+    for tab in model.tabs { tab.stop(immediately: true) }
+  }
+  let context = FocusedAgentSessionContext(
+    provider: .codex,
+    sessionID: "session-placement",
+    workingDirectory: "/tmp/agent-project",
+    configuration: .init(provider: .codex)
+  )
+
+  model.continueAgentSession(context, kind: .fork, placement: .newTab)
+  #expect(model.tabs.count == 2)
+  #expect(model.selectedTab?.workingDirectory == "/tmp/agent-project")
+
+  model.continueAgentSession(context, kind: .fork, placement: .split(.left))
+  #expect(model.selectedTab?.layout.allPanes.count == 2)
+  #expect(model.selectedTab?.activeRuntime?.descriptor.workingDirectory == "/tmp/agent-project")
+}
+
 @Test("末尾插入不会删除已有手动分隔线")
 @MainActor
 func endNewTabPositionPreservesTrailingDivider() throws {

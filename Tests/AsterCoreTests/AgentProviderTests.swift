@@ -181,6 +181,23 @@ import Testing
   }
 }
 
+@Test func liveSessionContinuationDoesNotRequireSyntheticHistoryMetadata() throws {
+  let configuration = AgentSessionConfiguration(
+    provider: .claudeCode,
+    providerIdentifier: "anthropic",
+    model: "opus"
+  )
+
+  let plan = try AgentSessionCommandPlanner.plan(
+    .fork,
+    sessionID: "live-session-1",
+    configuration: configuration
+  )
+
+  #expect(plan.arguments == ["--resume", "live-session-1", "--fork-session"])
+  #expect(plan.preservedConfiguration == configuration)
+}
+
 extension AgentSessionMetadata {
   fileprivate static func stub(id: String, provider: AgentProvider) -> AgentSessionMetadata {
     AgentSessionMetadata(

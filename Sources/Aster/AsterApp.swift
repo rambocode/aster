@@ -2,6 +2,34 @@ import AppKit
 import AsterCore
 import Combine
 
+extension AgentProvider {
+  /// Shell 菜单使用用户可识别的产品名；CLI 可执行文件名继续由 `commandName` 提供，
+  /// 避免把展示文案反向用于命令拼装或 provider 检测。
+  fileprivate var shellMenuTitle: String {
+    switch self {
+    case .claudeCode: "Claude"
+    case .codex: "Codex"
+    case .openCode: "OpenCode"
+    case .cursorCLI: "Cursor"
+    case .kimiCode: "Kimi"
+    case .pi: "Pi"
+    case .omp: "omp"
+    }
+  }
+}
+
+/// 菜单项持有展开 Shell 菜单时捕获的 Pane 会话，而不是在点击时重新读取焦点。菜单
+/// 跟踪期间的窗口切换或程序化焦点变化因此不会让已经展示的 Codex 动作落到 Claude。
+private final class AgentMenuActionContext: NSObject {
+  let session: FocusedAgentSessionContext
+  let splitDirection: SplitDirection?
+
+  init(session: FocusedAgentSessionContext, splitDirection: SplitDirection? = nil) {
+    self.session = session
+    self.splitDirection = splitDirection
+  }
+}
+
 /// 应用退出分成“可取消确认”和“不可逆提交”两阶段。只有全部窗口都确认成功，才会
 /// 写入 clean-quit 标记并终止 PTY，避免后一个窗口取消时前一个窗口已经失去进程。
 @MainActor
@@ -159,14 +187,16 @@ final class AsterSettingsWindowController: NSWindowController {
 
 @MainActor
 final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+  private static let shellMenuIdentifier = NSUserInterfaceItemIdentifier("aster.shell-menu")
+
   private struct WorkspaceWindowRecord {
     let controller: NSWindowController
     let model: AppModel
     let defaultsSuiteName: String
   }
 
-  let model = AppModel()
-  let preferences = AppPreferences()
+  let model: AppModel
+  let preferences: AppPreferences
   private var mainWindowController: NSWindowController?
   /// 设置使用唯一独立窗口；Panel 宽度编辑仍绑定最近成为 key 的工作区窗口。
   private var settingsWindowController: AsterSettingsWindowController?
@@ -192,6 +222,20 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   private var cancellables: Set<AnyCancellable> = []
   private lazy var dockActivityCoordinator = DockActivityCoordinator(
     model: model, preferences: preferences)
+
+  override init() {
+    model = AppModel()
+    preferences = AppPreferences()
+    super.init()
+  }
+
+  /// 菜单与窗口路由测试使用隔离 defaults 注入真实模型，避免为了验证聚焦 Pane 而写入
+  /// 用户的标准工作区快照。生产入口继续走无参数初始化器。
+  init(model: AppModel, preferences: AppPreferences) {
+    self.model = model
+    self.preferences = preferences
+    super.init()
+  }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     if let resources = AsterResourceLocations.resourcesDirectory() {
@@ -557,7 +601,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   }
 
   private var activeWorkspaceViewController: WorkspaceViewController? {
-    guard let keyWindow = NSApp.keyWindow,
+    // `NSApp` 是隐式解包全局量；纯菜单单元测试尚未启动 application run loop 时它为
+    // nil。通过 shared 取得应用实例，生产运行时仍返回同一个 NSApplication。
+    guard let keyWindow = NSApplication.shared.keyWindow,
       let controller = keyWindow.contentViewController as? WorkspaceViewController
     else {
       return mainWindowController?.window?.contentViewController as? WorkspaceViewController
@@ -576,12 +622,17 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 所有新窗口入口（菜单、命令面板、CLI `--new-window`）共用该事务。先完整创建
   /// AppModel 和可选首个 Pane，再显示窗口，用户不会看到旧窗口短暂插入错误标签。
   @discardableResult
-  private func createWorkspaceWindow(initialPane: PaneDescriptor?, sender: Any?) -> Bool {
+  private func createWorkspaceWindow(
+    initialPane: PaneDescriptor?,
+    sender: Any?,
+    onCreated: ((AppModel) -> Void)? = nil
+  ) -> Bool {
     createWorkspaceWindow(
       suiteName: AdditionalWorkspaceWindowRegistry.prefix + UUID().uuidString,
       initialPane: initialPane,
       restoring: false,
-      sender: sender
+      sender: sender,
+      onCreated: onCreated
     )
   }
 
@@ -591,7 +642,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     initialPane: PaneDescriptor?,
     initialTab: TerminalTabItem? = nil,
     restoring: Bool,
-    sender: Any?
+    sender: Any?,
+    onCreated: ((AppModel) -> Void)? = nil
   ) -> Bool {
     guard AdditionalWorkspaceWindowRegistry.normalized([suiteName]) == [suiteName] else {
       return false
@@ -628,6 +680,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     synchronizeWorkspaceConfiguration()
     controller.showWindow(sender)
     window.makeKeyAndOrderFront(sender)
+    onCreated?(windowModel)
     return true
   }
 
@@ -793,6 +846,43 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   @objc private func toggleComposer(_ sender: Any?) { activeWorkspaceModel.toggleComposer() }
   @objc private func togglePromptQueue(_ sender: Any?) { activeWorkspaceModel.togglePromptQueue() }
   @objc private func showAgentHistory(_ sender: Any?) { activeWorkspaceModel.toggleAgentHistory() }
+  @objc private func copyActiveAgentSessionID(_ sender: Any?) {
+    guard let sessionID = agentMenuContext(from: sender)?.sessionID else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(sessionID, forType: .string)
+  }
+  @objc private func showActiveAgentSessionHistory(_ sender: Any?) {
+    activeWorkspaceModel.presentAgentHistory()
+  }
+  @objc private func forkActiveAgentToNewTab(_ sender: Any?) {
+    guard let context = agentMenuContext(from: sender) else { return }
+    activeWorkspaceModel.continueAgentSession(context, kind: .fork, placement: .newTab)
+  }
+  @objc private func forkActiveAgentToSplit(_ sender: Any?) {
+    guard let actionContext = (sender as? NSMenuItem)?.representedObject as? AgentMenuActionContext,
+      let direction = actionContext.splitDirection
+    else { return }
+    activeWorkspaceModel.continueAgentSession(
+      actionContext.session,
+      kind: .fork,
+      placement: .split(direction)
+    )
+  }
+  @objc private func forkActiveAgentToNewWindow(_ sender: Any?) {
+    guard let context = agentMenuContext(from: sender),
+      context.sessionID != nil
+    else { return }
+    let pane = PaneDescriptor(kind: .terminal, workingDirectory: context.workingDirectory)
+    _ = createWorkspaceWindow(initialPane: pane, sender: sender) { model in
+      model.continueAgentSession(context, kind: .fork, placement: .currentPane)
+    }
+  }
+
+  /// 所有会话相关菜单项都携带同一次 `menuNeedsUpdate` 产生的不可变上下文。缺少载荷
+  /// 说明调用并非来自受管菜单项，此时拒绝操作，避免隐式选中另一个 Pane。
+  private func agentMenuContext(from sender: Any?) -> FocusedAgentSessionContext? {
+    ((sender as? NSMenuItem)?.representedObject as? AgentMenuActionContext)?.session
+  }
   @objc private func sendToChat(_ sender: Any?) { activeWorkspaceModel.presentAgentChat() }
   @objc private func togglePinWindow(_ sender: Any?) {
     togglePinWindow(for: activeWorkspaceModel)
@@ -974,6 +1064,18 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   func shellModeMenuItem() -> NSMenuItem {
     let item = NSMenuItem()
     let submenu = NSMenu(title: "Shell")
+    submenu.identifier = Self.shellMenuIdentifier
+    submenu.delegate = self
+    populateShellMenu(submenu)
+    item.submenu = submenu
+    return item
+  }
+
+  /// Otty 由独立 `ShellAgentMenuDelegate` 在菜单展开前读取聚焦 Pane。Aster 复用相同
+  /// 时机重建菜单：这样分屏焦点或前台 Agent 刚变化时无需发布全局 UI 刷新，也不会
+  /// 把上一个 Pane 的 provider 缓存在菜单栏中。
+  private func populateShellMenu(_ submenu: NSMenu) {
+    submenu.removeAllItems()
     submenu.addItem(
       responderMenuItem(
         "Vi Mode", #selector(AsterTerminalView.enterViMode(_:)), " ",
@@ -988,6 +1090,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(
       menuItem("Composer", #selector(toggleComposer(_:)), "\r", modifiers: [.command, .shift]))
     submenu.addItem(menuItem("Agent 历史", #selector(showAgentHistory(_:)), "", modifiers: []))
+    if let context = activeWorkspaceModel.focusedAgentSessionContext {
+      submenu.addItem(activeAgentMenuItem(context))
+    }
     submenu.addItem(.separator())
     submenu.addItem(
       menuItem("只读模式", #selector(toggleActivePaneReadOnly(_:)), "", modifiers: []))
@@ -996,6 +1101,57 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       responderMenuItem(
         "显示/隐藏 Vi 按键提示", #selector(AsterTerminalView.toggleViKeyHints(_:)), "/",
         modifiers: [.command]))
+  }
+
+  /// Provider 子菜单完全由当前聚焦 Pane 的 lifecycle 上下文生成。未收到 session ID 时
+  /// 仍显示正确的 Agent 名称和历史入口，但明确禁用复制/Fork，避免静默操作其它历史。
+  private func activeAgentMenuItem(_ context: FocusedAgentSessionContext) -> NSMenuItem {
+    let item = NSMenuItem(title: context.provider.shellMenuTitle, action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: context.provider.shellMenuTitle)
+    // 这些条目的可用性来自同一份 pane 级快照；关闭自动校验，避免 AppKit 仅因 target
+    // 能响应 selector 就把“尚无 session ID”的 Copy/Fork 动作重新启用。
+    submenu.autoenablesItems = false
+
+    let copySessionID = menuItem(
+      "拷贝会话 ID", #selector(copyActiveAgentSessionID(_:)), "", modifiers: [])
+    copySessionID.representedObject = AgentMenuActionContext(session: context)
+    copySessionID.isEnabled = context.sessionID != nil
+    submenu.addItem(copySessionID)
+    submenu.addItem(
+      menuItem(
+        "查看会话历史", #selector(showActiveAgentSessionHistory(_:)), "", modifiers: []))
+
+    guard context.provider.capabilities.contains(.forkSession) else {
+      item.submenu = submenu
+      return item
+    }
+    submenu.addItem(.separator())
+    let directions: [(String, SplitDirection)] = [
+      ("Fork 到 向右拆分", .right),
+      ("Fork 到 向左拆分", .left),
+      ("Fork 到 向下拆分", .down),
+      ("Fork 到 向上拆分", .up),
+    ]
+    for (title, direction) in directions {
+      let fork = menuItem(title, #selector(forkActiveAgentToSplit(_:)), "", modifiers: [])
+      fork.representedObject = AgentMenuActionContext(
+        session: context,
+        splitDirection: direction
+      )
+      fork.isEnabled = context.sessionID != nil
+      submenu.addItem(fork)
+    }
+    submenu.addItem(.separator())
+    let newTab = menuItem(
+      "Fork 到 新建标签页", #selector(forkActiveAgentToNewTab(_:)), "", modifiers: [])
+    newTab.representedObject = AgentMenuActionContext(session: context)
+    newTab.isEnabled = context.sessionID != nil
+    submenu.addItem(newTab)
+    let newWindow = menuItem(
+      "Fork 到 新建窗口", #selector(forkActiveAgentToNewWindow(_:)), "", modifiers: [])
+    newWindow.representedObject = AgentMenuActionContext(session: context)
+    newWindow.isEnabled = context.sessionID != nil
+    submenu.addItem(newWindow)
     item.submenu = submenu
     return item
   }
@@ -1291,5 +1447,14 @@ extension AsterAppDelegate: NSMenuItemValidation {
     }
     guard Self.splitOnlySelectors.contains(action) else { return true }
     return activeWorkspaceModel.selectedTabHasSplits
+  }
+}
+
+/// Shell 菜单只在真正展开时刷新。NSMenu 的 delegate 是弱引用，但 AppDelegate 由
+/// NSApplication 强持有，因此菜单整个生命周期内都能稳定取得当前工作区窗口和 Pane。
+extension AsterAppDelegate: NSMenuDelegate {
+  func menuNeedsUpdate(_ menu: NSMenu) {
+    guard menu.identifier == Self.shellMenuIdentifier else { return }
+    populateShellMenu(menu)
   }
 }

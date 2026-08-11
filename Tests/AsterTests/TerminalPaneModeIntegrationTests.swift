@@ -263,3 +263,113 @@ func shellMenuPublishesPaneModeActions() throws {
   #expect(hints.keyEquivalent == "/")
   #expect(hints.keyEquivalentModifierMask == [.command])
 }
+
+@Test("Shell 菜单按聚焦 Pane 动态显示对应 Agent 会话动作")
+@MainActor
+func shellMenuFollowsFocusedPaneAgentSession() throws {
+  let suiteName = "ShellAgentMenuTests.\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suiteName))
+  defaults.removePersistentDomain(forName: suiteName)
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  let delegate = AsterAppDelegate(model: model, preferences: preferences)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  defer { tab.stop(immediately: true) }
+
+  let codexPaneID = tab.activePaneID
+  let codexSession = try #require(tab.activeSession)
+  let codexView = try #require(
+    codexSession.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  codexView.onAgentTerminalDirective?(
+    AgentTerminalDirective(
+      provider: .codex,
+      signal: .processing,
+      sessionID: "codex-session"
+    )
+  )
+
+  tab.split(direction: .right)
+  let claudePaneID = tab.activePaneID
+  let claudeSession = try #require(tab.activeSession)
+  let claudeView = try #require(
+    claudeSession.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  claudeView.onAgentTerminalDirective?(
+    AgentTerminalDirective(
+      provider: .claudeCode,
+      signal: .awaitingInput,
+      sessionID: "claude-session"
+    )
+  )
+
+  let menu = try #require(delegate.shellModeMenuItem().submenu)
+  delegate.menuNeedsUpdate(menu)
+  #expect(menu.item(withTitle: "Claude") != nil)
+  #expect(menu.item(withTitle: "Codex") == nil)
+  let claudeMenu = try #require(menu.item(withTitle: "Claude")?.submenu)
+  #expect(
+    claudeMenu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
+      "拷贝会话 ID", "查看会话历史",
+      "Fork 到 向右拆分", "Fork 到 向左拆分",
+      "Fork 到 向下拆分", "Fork 到 向上拆分",
+      "Fork 到 新建标签页", "Fork 到 新建窗口",
+    ]
+  )
+  #expect(claudeMenu.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.isEnabled })
+
+  tab.setActivePane(codexPaneID)
+  delegate.menuNeedsUpdate(menu)
+  let codexMenu = try #require(menu.item(withTitle: "Codex")?.submenu)
+  #expect(menu.item(withTitle: "Claude") == nil)
+
+  // 菜单展开后即使焦点被程序化切换，已显示条目也必须继续操作捕获的 Codex 会话。
+  tab.setActivePane(claudePaneID)
+  NSPasteboard.general.clearContents()
+  codexMenu.performActionForItem(
+    at: try #require(codexMenu.items.firstIndex { $0.title == "拷贝会话 ID" }))
+  #expect(NSPasteboard.general.string(forType: .string) == "codex-session")
+
+  tab.setActivePane(codexPaneID)
+  let paneCount = tab.layout.allPanes.count
+  codexMenu.performActionForItem(
+    at: try #require(codexMenu.items.firstIndex { $0.title == "Fork 到 向下拆分" }))
+  #expect(tab.layout.allPanes.count == paneCount + 1)
+  let plainPaneID = tab.activePaneID
+  #expect(plainPaneID != codexPaneID)
+  #expect(plainPaneID != claudePaneID)
+  delegate.menuNeedsUpdate(menu)
+  #expect(menu.item(withTitle: "Codex") == nil)
+  #expect(menu.item(withTitle: "Claude") == nil)
+}
+
+@Test("Agent 尚未报告会话 ID 时 Shell 菜单保留身份并禁用危险动作")
+@MainActor
+func shellAgentMenuDisablesSessionActionsUntilLifecycleLinksSession() throws {
+  let suiteName = "ShellAgentMenuPendingTests.\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suiteName))
+  defaults.removePersistentDomain(forName: suiteName)
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  let delegate = AsterAppDelegate(model: model, preferences: preferences)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  defer { tab.stop(immediately: true) }
+  let session = try #require(tab.activeSession)
+  let view = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  view.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .codex, signal: .processing)
+  )
+
+  let menu = try #require(delegate.shellModeMenuItem().submenu)
+  delegate.menuNeedsUpdate(menu)
+  let agentMenu = try #require(menu.item(withTitle: "Codex")?.submenu)
+  #expect(agentMenu.item(withTitle: "查看会话历史")?.isEnabled == true)
+  #expect(agentMenu.item(withTitle: "拷贝会话 ID")?.isEnabled == false)
+  #expect(agentMenu.item(withTitle: "Fork 到 新建窗口")?.isEnabled == false)
+}

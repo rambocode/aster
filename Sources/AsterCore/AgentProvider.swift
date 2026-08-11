@@ -309,23 +309,40 @@ public enum AgentSessionCommandPlanner {
     session: AgentSessionMetadata,
     launchPrefix: AgentLaunchPrefix? = nil
   ) throws -> AgentNativeCommandPlan {
-    let provider = session.configuration.provider
+    try plan(
+      continuation,
+      sessionID: session.id,
+      configuration: session.configuration,
+      launchPrefix: launchPrefix
+    )
+  }
+
+  /// 为已经绑定到当前终端 Pane 的实时会话规划原生 Resume/Fork 命令。实时 lifecycle
+  /// 只保证提供 provider 与 session ID，不要求先扫描 transcript 文件；因此菜单动作
+  /// 不能为了构造 `AgentSessionMetadata` 而伪造历史路径或时间戳。
+  public static func plan(
+    _ continuation: AgentContinuationKind,
+    sessionID: String,
+    configuration: AgentSessionConfiguration,
+    launchPrefix: AgentLaunchPrefix? = nil
+  ) throws -> AgentNativeCommandPlan {
+    let provider = configuration.provider
     if continuation == .fork, !provider.capabilities.contains(.forkSession) {
       throw AgentSessionPlanError.forkUnsupported(provider: provider)
     }
-    guard !session.id.isEmpty,
-      session.id.utf8.count <= AgentLaunchPrefix.maximumComponentBytes,
-      !session.id.contains("\0")
+    guard !sessionID.isEmpty,
+      sessionID.utf8.count <= AgentLaunchPrefix.maximumComponentBytes,
+      !sessionID.contains("\0")
     else { throw AgentSessionPlanError.invalidSessionIdentifier }
 
     let prefix = try launchPrefix ?? AgentLaunchPrefix(executable: provider.commandName)
-    let nativeArguments = provider.arguments(for: continuation, sessionID: session.id)
+    let nativeArguments = provider.arguments(for: continuation, sessionID: sessionID)
     return AgentNativeCommandPlan(
       executable: prefix.executable,
       arguments: prefix.arguments + nativeArguments,
       continuation: continuation,
-      sessionID: session.id,
-      preservedConfiguration: session.configuration
+      sessionID: sessionID,
+      preservedConfiguration: configuration
     )
   }
 }

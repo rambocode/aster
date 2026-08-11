@@ -34,6 +34,24 @@ struct AgentChatPresentation: Equatable {
   let transcriptHasError: Bool
 }
 
+/// Shell 菜单在打开瞬间读取的聚焦 Pane Agent 上下文。它只包含继续会话所需的稳定
+/// 值，不持有 TerminalSession 或 Pane 对象；菜单跟踪期间即使原 Pane 被关闭，也不会
+/// 向已经失效的运行对象发送命令。
+struct FocusedAgentSessionContext: Equatable {
+  let provider: AgentProvider
+  let sessionID: String?
+  let workingDirectory: String
+  let configuration: AgentSessionConfiguration
+}
+
+/// Agent Resume/Fork 的工作区落点。`currentPane` 只供刚创建的新窗口使用；普通菜单
+/// 动作不会覆盖当前正在运行 Agent 的 Pane。
+enum AgentContinuationPlacement: Equatable {
+  case currentPane
+  case newTab
+  case split(SplitDirection)
+}
+
 /// 文件和目录从 Files、CLI、拖放等入口进入工作区时共用的落点语义。
 /// `currentPane` 不写入持久化模型；真正落盘的仍是既有 Pane 树。
 enum WorkspaceResourcePlacement: Equatable {
@@ -1771,10 +1789,19 @@ final class AppModel: ObservableObject {
   }
 
   func toggleAgentHistory() {
-    let presents = !isAgentHistoryPresented
+    if isAgentHistoryPresented {
+      isAgentHistoryPresented = false
+    } else {
+      presentAgentHistory()
+    }
+  }
+
+  /// 明确展示历史而不是切换。菜单“查看会话历史”重复触发时必须保持面板打开；只有
+  /// 通用 Toggle 命令才把第二次调用解释为关闭。
+  func presentAgentHistory() {
     dismissWorkspaceOverlays()
-    isAgentHistoryPresented = presents
-    if presents { reloadAgentHistory() }
+    isAgentHistoryPresented = true
+    reloadAgentHistory()
   }
 
   /// 终端右键入口复用“发送到聊天”确认面板，并默认携带当前选区；发送前仍可改选
@@ -1823,15 +1850,80 @@ final class AppModel: ObservableObject {
     }
   }
 
+  /// 只从当前选中标签的聚焦 Pane 读取 Agent。不能回退到标签内其它 Pane、最近历史或
+  /// 全窗口活动状态，否则用户切换分屏后 Shell 菜单会继续操作错误的会话。
+  var focusedAgentSessionContext: FocusedAgentSessionContext? {
+    guard let terminal = selectedTab?.activeSession,
+      let provider = terminal.activeAgentProvider
+    else { return nil }
+    let sessionID = terminal.activeAgentSessionID
+    let configuration = sessionID.flatMap { identifier in
+      agentHistories.first {
+        $0.metadata.id == identifier && $0.metadata.configuration.provider == provider
+      }?.metadata.configuration
+    } ?? AgentSessionConfiguration(provider: provider)
+    return FocusedAgentSessionContext(
+      provider: provider,
+      sessionID: sessionID,
+      workingDirectory: terminal.resolvedCurrentWorkingDirectory(),
+      configuration: configuration
+    )
+  }
+
   func continueAgentSession(_ metadata: AgentSessionMetadata, kind: AgentContinuationKind) {
+    let context = FocusedAgentSessionContext(
+      provider: metadata.configuration.provider,
+      sessionID: metadata.id,
+      workingDirectory: metadata.projectDirectory,
+      configuration: metadata.configuration
+    )
+    continueAgentSession(context, kind: kind, placement: .newTab)
+  }
+
+  /// 在指定工作区落点启动实时会话的原生 Resume/Fork 命令。布局先同步完成，再延迟到
+  /// 新终端建立 PTY 后发送；若窗口或 Pane 在等待期间被关闭，弱引用会安全取消写入。
+  func continueAgentSession(
+    _ context: FocusedAgentSessionContext,
+    kind: AgentContinuationKind,
+    placement: AgentContinuationPlacement
+  ) {
     do {
-      let components = launchComponents(for: metadata.configuration.provider)
+      guard let sessionID = context.sessionID else {
+        notice = "当前 Agent 尚未报告会话 ID，无法 Fork。"
+        return
+      }
+      guard context.configuration.provider == context.provider else {
+        notice = "Agent 会话配置与当前 Provider 不一致，无法继续。"
+        return
+      }
+      let components = launchComponents(for: context.provider)
       let prefix = try AgentLaunchPrefix(
         executable: components[0], arguments: Array(components.dropFirst()))
       let plan = try AgentSessionCommandPlanner.plan(
-        kind, session: metadata, launchPrefix: prefix)
-      newTab(workingDirectory: metadata.projectDirectory, hasContent: true)
-      let session = selectedTab?.activeSession
+        kind,
+        sessionID: sessionID,
+        configuration: context.configuration,
+        launchPrefix: prefix
+      )
+      let session: TerminalSession?
+      switch placement {
+      case .currentPane:
+        session = selectedTab?.activeSession
+      case .newTab:
+        newTab(workingDirectory: context.workingDirectory, hasContent: true)
+        session = selectedTab?.activeSession
+      case .split(let direction):
+        selectedTab?.split(
+          direction: direction,
+          workingDirectory: context.workingDirectory
+        )
+        persistWorkspace()
+        session = selectedTab?.activeSession
+      }
+      guard let session else {
+        notice = "无法创建用于继续 Agent 会话的终端。"
+        return
+      }
       let command = AgentShellCommandEncoder.encode(plan)
       Task { @MainActor [weak session] in
         try? await Task.sleep(for: .milliseconds(800))
