@@ -185,9 +185,22 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                       fontPointSize: CGFloat,
                                       scale: CGFloat) -> CGFloat {
         // Match `CaretView.drawCursor`: line-height expands the terminal grid, while a bar
-        // cursor remains tied to the configured font size and sits at the cell bottom. Drawing
-        // the full cell here makes the Metal-only caret touch the text in the row above.
+        // cursor remains tied to the configured font size. Drawing the full cell here makes the
+        // Metal-only caret touch the text in the row above.
         min(cellHeight * scale, max(1, ceil(fontPointSize) * scale))
+    }
+
+    /// Returns the centered vertical inset used by the Metal bar cursor in backing pixels.
+    static func barCursorVerticalInsetPixels(cellHeight: CGFloat,
+                                             fontPointSize: CGFloat,
+                                             scale: CGFloat) -> CGFloat {
+        let cellHeightPixels = cellHeight * scale
+        let barHeightPixels = barCursorHeightPixels(
+            cellHeight: cellHeight,
+            fontPointSize: fontPointSize,
+            scale: scale
+        )
+        return max(0, round((cellHeightPixels - barHeightPixels) / 2))
     }
 
 #if canImport(os)
@@ -2281,10 +2294,15 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 fontPointSize: terminalView.fontSet.normal.pointSize,
                 scale: scale
             )
+            let barInset = Self.barCursorVerticalInsetPixels(
+                cellHeight: cellHeight,
+                fontPointSize: terminalView.fontSet.normal.pointSize,
+                scale: scale
+            )
             colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
-                                                          y0: CGFloat(y0),
+                                                          y0: CGFloat(y0 + barInset),
                                                           x1: CGFloat(x0 + barWidth),
-                                                          y1: CGFloat(y0 + barHeight),
+                                                          y1: CGFloat(y0 + barInset + barHeight),
                                                           color: cursorColor))
             return (colorVertices, [], [])
         case .blinkUnderline, .steadyUnderline:

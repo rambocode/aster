@@ -37,13 +37,16 @@ extension CaretView {
             // 行距只扩大终端网格，不应把竖线光标拉伸到相邻行。CTFont 的
             // ascent + descent + leading 常常显著大于 point size（Menlo 13pt 约为
             // 15pt），用整套 metrics 仍会让竖线几乎铺满 cell。竖线按用户设置的字号
-            // 绘制并贴齐 cell 底部，额外 line-height 留白只出现在文字上方。
+            // 绘制，并在完整 cell 内上下居中；这同时覆盖普通 Shell 与 Agent TUI 输入行。
             let font = terminal.fontSet.normal
+            let barHeight = min(bounds.height, max(1, ceil(CTFontGetSize(font))))
+            let backingScale = max(terminal.backingScaleFactor(), 1)
+            let centeredY = round((bounds.height - barHeight) * backingScale / 2) / backingScale
             region = CGRect(
                 x: 0,
-                y: 0,
+                y: centeredY,
                 width: 2,
-                height: min(bounds.height, max(1, ceil(CTFontGetSize(font)))))
+                height: barHeight)
         case .blinkBlock, .steadyBlock:
             region = bounds
         case .blinkHollowBlock, .steadyHollowBlock:

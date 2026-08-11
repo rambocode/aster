@@ -39,14 +39,22 @@ func lineHeightExpandsGridWithoutStretchingBarCursor() throws {
   context.fill(CGRect(x: 0, y: 0, width: width, height: height))
   caret.drawCursor(in: context, hasFocus: true)
 
-  let paintedRows = (0..<height).count { y in
+  let paintedRows = (0..<height).filter { y in
     (0..<min(width, 3)).contains { x in
       (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.5
     }
   }
 
   #expect(view.caretFrame.height > ceil(view.font.ascender - view.font.descender))
-  #expect(paintedRows <= Int(ceil(view.font.pointSize)) + 1)
+  #expect(paintedRows.count <= Int(ceil(view.font.pointSize)) + 1)
+  let firstPaintedRow = try #require(paintedRows.first)
+  let lastPaintedRow = try #require(paintedRows.last)
+  let lowerInset = firstPaintedRow
+  let upperInset = height - 1 - lastPaintedRow
+  #expect(
+    abs(lowerInset - upperInset) <= 1,
+    "竖线光标必须在 cell 内上下居中，实际留白为 \(lowerInset)/\(upperInset) px"
+  )
 }
 
 @Test("Metal 竖线光标与 AppKit 一样保留行间距")
@@ -61,8 +69,17 @@ func metalBarCursorDoesNotConsumeLineSpacing() {
     fontPointSize: view.font.pointSize,
     scale: scale
   )
+  let metalInset = MetalTerminalRenderer.barCursorVerticalInsetPixels(
+    cellHeight: view.caretFrame.height,
+    fontPointSize: view.font.pointSize,
+    scale: scale
+  )
 
-  // 竖线只覆盖字号高度；cell 因 line-height 增加的区域必须留空，避免光标顶到上一行。
+  // 竖线只覆盖字号高度；cell 因 line-height 增加的区域必须平均留在上下两侧。
   #expect(metalHeight <= ceil(view.font.pointSize * scale))
   #expect(metalHeight < view.caretFrame.height * scale)
+  #expect(metalInset > 0)
+  #expect(
+    abs(metalInset * 2 + metalHeight - view.caretFrame.height * scale) <= 1
+  )
 }

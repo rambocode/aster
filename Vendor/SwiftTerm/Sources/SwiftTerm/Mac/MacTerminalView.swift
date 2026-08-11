@@ -37,6 +37,84 @@ public enum ScrollPastFirstLineMode: Sendable {
     case firstLineInMiddle
 }
 
+/// Bottom-left link target badge. Its palette follows only the macOS light/dark appearance,
+/// never the terminal theme, so a link remains legible over arbitrary ANSI backgrounds.
+private final class TerminalLinkPreviewBadge: NSView {
+    static let horizontalInset: CGFloat = 16
+    static let height: CGFloat = 52
+    static let cornerRadius: CGFloat = 12
+    private static let horizontalTextPadding: CGFloat = 20
+    private let label = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = Self.cornerRadius
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
+
+        label.isBezeled = false
+        label.drawsBackground = false
+        label.isEditable = false
+        label.isSelectable = false
+        label.usesSingleLineMode = true
+        label.maximumNumberOfLines = 1
+        label.lineBreakMode = .byTruncatingMiddle
+        label.font = NSFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+        addSubview(label)
+        updateAppearanceColors()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(text: String, maximumWidth: CGFloat) {
+        label.stringValue = text
+        label.toolTip = text
+        let measuredWidth = ceil(
+            (text as NSString).size(withAttributes: [.font: label.font!]).width
+        )
+        let availableWidth = max(1, maximumWidth)
+        let idealWidth = max(80, measuredWidth + Self.horizontalTextPadding * 2)
+        frame.size = CGSize(width: min(availableWidth, idealWidth), height: Self.height)
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+    }
+
+    override func layout() {
+        super.layout()
+        let labelHeight = min(bounds.height, max(1, ceil(label.intrinsicContentSize.height)))
+        label.frame = CGRect(
+            x: Self.horizontalTextPadding,
+            y: floor((bounds.height - labelHeight) / 2),
+            width: max(0, bounds.width - Self.horizontalTextPadding * 2),
+            height: labelHeight
+        )
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateAppearanceColors()
+    }
+
+    /// This badge is visual feedback only; pointer events must continue to reach the terminal.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    private func updateAppearanceColors() {
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        if isDark {
+            layer?.backgroundColor = NSColor.white.withAlphaComponent(0.82).cgColor
+            label.textColor = NSColor.black.withAlphaComponent(0.90)
+        } else {
+            layer?.backgroundColor = NSColor.black.withAlphaComponent(0.78).cgColor
+            label.textColor = NSColor.white.withAlphaComponent(0.96)
+        }
+    }
+
+    var textField: NSTextField { label }
+}
+
 /**
  * TerminalView provides an AppKit front-end to the `Terminal` termininal emulator.
  * It is up to a subclass to either wire the terminal emulator to a remote terminal
@@ -241,6 +319,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
+    /// 标记当前待显示批次是否处理过窗口标题。OSC 标题本身不产生 dirty row；显示阶段
+    /// 用它区分真正的纯标题尾帧与普通光标移动，避免后者触发不必要的全画面重绘。
+    var terminalTitleChangedSinceLastDisplay = false
     /// Output received shortly after local input is likely echo or prompt redraw;
     /// render it without the 16.67ms frame-rate throttle so typing feels responsive.
     var lastUserInputUptimeNs: UInt64 = 0
@@ -305,6 +386,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// paused MTKView instead of relying on an AppKit parent-view invalidation side effect.
     var onMetalDisplayRequest: (() -> Void)?
 #endif
+#endif
+
+#if DEBUG
+    /// Test seam for proving that a protocol-only alternate-screen tail frame reaches the
+    /// Core Graphics corrective-redraw path. The callback carries no terminal content.
+    var onCoreGraphicsCorrectiveDisplayRequest: (() -> Void)?
 #endif
 
     var cellDimension: CellDimension!
@@ -1099,6 +1186,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         super.setFrameSize(newSize)
         updateScrollerFrame()
         updateProgressBarFrame()
+        layoutUrlPreviewBadge()
         guard cellDimension != nil else { return }
         _ = processSizeChange(newSize: frame.size)
 #if canImport(MetalKit)
@@ -2798,17 +2886,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         setNeedsDisplay(bounds)
     }
     
-    func tryUrlFont () -> NSFont
-    {
-        for x in ["Optima", "Helvetica", "Helvetica Neue"] {
-            if let font = NSFont (name: x, size: 12) {
-                return font
-            }
-        }
-        return NSFont.systemFont(ofSize: 12)
-    }
-    
-    var urlPreview: NSTextField?
+    private var urlPreviewBadge: TerminalLinkPreviewBadge?
+    var urlPreview: NSTextField? { urlPreviewBadge?.textField }
     /// Optional host formatter for the text shown in the link preview badge. SwiftTerm still
     /// performs hit testing with the original link; embedders can expand relative file paths for
     /// display without changing the value later delivered to `requestOpenLink`.
@@ -2825,32 +2904,37 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private func showUrlPreview(_ url: String) {
         guard linkPreviewEnabled else { return }
         let displayValue = linkPreviewFormatter?(url) ?? url
-        if let up = urlPreview {
-            up.stringValue = displayValue
-            up.sizeToFit()
+        let badge: TerminalLinkPreviewBadge
+        if let existing = urlPreviewBadge {
+            badge = existing
         } else {
-            let nup: NSTextField
-            if #available(macOS 10.12, *) {
-                nup = NSTextField (string: displayValue)
-            } else {
-                nup = NSTextField ()
-            }
-            nup.isBezeled = false
-            nup.font = tryUrlFont ()
-            nup.backgroundColor = nativeForegroundColor
-            nup.textColor = nativeBackgroundColor
-            nup.sizeToFit()
-            nup.frame = CGRect (x: 0, y: 0, width: nup.frame.width, height: nup.frame.height)
-            addSubview(nup)
-            urlPreview = nup
+            badge = TerminalLinkPreviewBadge(frame: .zero)
+            badge.autoresizingMask = [.maxXMargin, .maxYMargin]
+            addSubview(badge)
+            urlPreviewBadge = badge
         }
+        badge.update(
+            text: displayValue,
+            maximumWidth: max(1, bounds.width - TerminalLinkPreviewBadge.horizontalInset * 2)
+        )
+        badge.frame.origin = CGPoint(x: TerminalLinkPreviewBadge.horizontalInset, y: 0)
+    }
+
+    /// Preserve the bottom inset and width clamp when a split or side panel resizes the terminal.
+    private func layoutUrlPreviewBadge() {
+        guard let badge = urlPreviewBadge else { return }
+        badge.update(
+            text: badge.textField.stringValue,
+            maximumWidth: max(1, bounds.width - TerminalLinkPreviewBadge.horizontalInset * 2)
+        )
+        badge.frame.origin = CGPoint(x: TerminalLinkPreviewBadge.horizontalInset, y: 0)
     }
     
     func removePreviewUrl ()
     {
-        if let urlPreview = self.urlPreview {
-            urlPreview.removeFromSuperview()
-            self.urlPreview = nil
+        if let badge = urlPreviewBadge {
+            badge.removeFromSuperview()
+            urlPreviewBadge = nil
         }
     }
 
@@ -3334,6 +3418,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public func setTerminalTitle(source: Terminal, title: String) {
+        terminalTitleChangedSinceLastDisplay = true
         terminalDelegate?.setTerminalTitle(source: self, title: title)
     }
     

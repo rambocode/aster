@@ -173,6 +173,73 @@ func terminalViewTitleChangesRequirePrivilege() {
   #expect(updates[0].1 == "allowed")
 }
 
+@Test("Claude OSC 0 标题在任意 PTY 分片边界都不会进入终端正文")
+@MainActor
+func claudeTitleOSCDoesNotLeakIntoTerminalGridAcrossChunks() {
+  let title = Array("\u{1B}]0;\u{2820} Claude Code\u{7}".utf8)
+
+  for split in 0...title.count {
+    let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+    view.resize(cols: 80, rows: 24)
+    view.installTitleHandlers()
+    // Claude 的输入框使用 NBSP；先建立现场提示，再把动态标题按每个字节边界拆开。
+    view.dataReceived(slice: Array("\u{1B}[?1049h\u{1B}[22;1H\u{276F}\u{00A0}".utf8)[...])
+    view.dataReceived(slice: title[..<split])
+    view.dataReceived(slice: title[split...])
+
+    let visible = (0..<view.getTerminal().rows).compactMap { row in
+      view.getTerminal().getLine(row: row)?.translateToString(
+        trimRight: true,
+        skipNullCellsFollowingWide: true
+      )
+    }.joined(separator: "\n")
+    #expect(!visible.contains("Claude Code"), "OSC payload 在 split=\(split) 泄漏到正文")
+    #expect(!visible.contains("\u{2820}"), "OSC spinner 在 split=\(split) 泄漏到正文")
+  }
+}
+
+@Test("Claude alternate-screen 的纯标题尾帧会请求完整校正重绘")
+@MainActor
+func claudeTitleOnlyTailFrameRequestsCorrectiveRedraw() {
+  let frame = NSRect(x: 0, y: 0, width: 640, height: 320)
+  let window = NSWindow(
+    contentRect: frame,
+    styleMask: .borderless,
+    backing: .buffered,
+    defer: false
+  )
+  let view = AsterTerminalView(frame: frame)
+  window.contentView = view
+  defer { window.orderOut(nil) }
+  view.installTitleHandlers()
+  var correctiveDisplayRequests = 0
+  view.onCoreGraphicsCorrectiveDisplayRequest = { correctiveDisplayRequests += 1 }
+
+  view.dataReceived(
+    slice: Array("\u{1B}[?1049h\u{1B}[22;1H\u{276F}\u{00A0}".utf8)[...]
+  )
+  #expect(!view.isUsingMetalRenderer, "回归测试必须覆盖打包应用默认的 Core Graphics 路径")
+  #expect(view.getTerminal().isCurrentBufferAlternate)
+  view.updateDisplay(notifyAccessibility: false)
+  view.getTerminal().clearUpdateRange()
+
+  // Claude 完成阶段的最后一次 PTY 写入常常只更新 OSC 0 标题。它不会改变网格，
+  // 但 alternate-screen 的增量帧可能仍在 backing store 留下前一帧 spinner/title；
+  // 必须补一次全画面校正，而不是因为 dirty range 为空就直接返回。
+  view.dataReceived(slice: Array("\u{1B}]0;\u{2820} Claude Code\u{7}".utf8)[...])
+  #expect(view.getTerminal().getUpdateRange() == nil)
+  view.updateDisplay(notifyAccessibility: false)
+
+  #expect(correctiveDisplayRequests == 1, "纯 OSC 标题尾帧必须请求一次完整校正画面")
+
+  // 普通 cursor-only 协议同样没有 dirty row，但没有标题像素需要收尾；保持增量路径，
+  // 避免 Agent TUI 在频繁移动光标时退化为每次都全画面重绘。
+  view.dataReceived(slice: Array("\u{1B}[C".utf8)[...])
+  #expect(view.getTerminal().getUpdateRange() == nil)
+  view.updateDisplay(notifyAccessibility: false)
+  #expect(correctiveDisplayRequests == 1)
+}
+
 @Test("可见目标枚举同时返回隐式路径与 OSC 8 来源")
 @MainActor
 func terminalEnumeratesVisibleHintTargets() {

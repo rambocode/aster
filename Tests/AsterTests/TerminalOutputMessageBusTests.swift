@@ -136,10 +136,9 @@ func terminalOutputMessageBusDrainsManyPartialChunksInLinearOrder() async throws
   #expect(probe.batches.allSatisfy { $0.count <= 1_024 })
 }
 
-@Test("终端进入窗口后优先启用 dirty-row Metal renderer")
+@Test("终端进入窗口后默认使用单一 Core Graphics renderer")
 @MainActor
-func terminalViewActivatesMetalRendererWhenAttachedToWindow() {
-  guard MTLCreateSystemDefaultDevice() != nil else { return }
+func terminalViewKeepsCoreGraphicsRendererWhenAttachedToWindow() {
   let window = NSWindow(
     contentRect: NSRect(x: 0, y: 0, width: 640, height: 400),
     styleMask: [.titled],
@@ -149,7 +148,11 @@ func terminalViewActivatesMetalRendererWhenAttachedToWindow() {
   let view = AsterTerminalView(frame: window.contentView?.bounds ?? .zero)
   window.contentView?.addSubview(view)
 
-  #expect(view.isUsingMetalRenderer)
+  // Agent TUI 会高频交替执行同步擦除、光标移动与 spinner 更新。SwiftTerm 当前的
+  // Metal 行缓存和独立光标层会在该负载下混合不同时刻的帧，留下旧 spinner、重复
+  // status 行并让输入光标偏行。默认 renderer 必须保持单一 Core Graphics 画面，
+  // 直到 Metal backend 有覆盖真实 alternate-screen 重放的像素级回归测试。
+  #expect(!view.isUsingMetalRenderer)
 }
 
 @Test("修改字号会立即请求 Metal renderer 绘制新帧")
@@ -164,6 +167,7 @@ func terminalFontChangeRequestsMetalRedraw() throws {
   )
   let view = AsterTerminalView(frame: window.contentView?.bounds ?? .zero)
   window.contentView?.addSubview(view)
+  try view.setUseMetal(true)
   _ = try #require(view.metalView)
   var displayRequestCount = 0
   view.onMetalDisplayRequest = { displayRequestCount += 1 }

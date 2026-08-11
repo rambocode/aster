@@ -1992,12 +1992,36 @@ extension TerminalView {
             return
         }
         updateCursorPosition()
+        #if os(macOS)
+        // 标题回调与网格更新属于同一个显示批次。先取得并清除标记：有 dirty row 时常规
+        // 增量绘制已经足够；只有后面的 nil-range 分支才需要额外的全画面校正。
+        let terminalTitleChanged = terminalTitleChangedSinceLastDisplay
+        terminalTitleChangedSinceLastDisplay = false
+        #endif
         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             if notifyUpdateChanges {
                 let buffer = terminal.displayBuffer
                 let y = buffer.yDisp+buffer.y
                 terminalDelegate?.rangeChanged (source: self, startY: y, endY: y)
             }
+            #if os(macOS)
+            // alternate-screen TUI 可能以纯 OSC 标题作为一轮输出的最后一个 PTY 分片。
+            // 该分片不改变网格，因此没有 dirty row；但前一个增量帧的 spinner 或标题像素
+            // 仍可能留在 AppKit backing store。Core Graphics 在这里补一次全画面校正重绘，
+            // 使最终像素重新以当前终端网格为准。Metal 有独立的帧请求与行缓存，不能复用
+            // 这条 Core Graphics 路径。
+            #if canImport(MetalKit)
+            let usesCoreGraphics = metalView == nil
+            #else
+            let usesCoreGraphics = true
+            #endif
+            if terminalTitleChanged && usesCoreGraphics && terminal.isCurrentBufferAlternate {
+                #if DEBUG
+                onCoreGraphicsCorrectiveDisplayRequest?()
+                #endif
+                needsDisplay = true
+            }
+            #endif
             // Pure cursor moves (e.g. CSI C / CSI D from word-jumps) don't
             // mark any row dirty, so getUpdateRange() returns nil. With Metal
             // the cursor is drawn by the renderer reading buffer.x/y at draw

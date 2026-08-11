@@ -1,4 +1,5 @@
 import AppKit
+import Metal
 import Testing
 
 @testable import Aster
@@ -11,6 +12,7 @@ import Testing
 @Test("Metal 激活后经历完整生命周期 caretView 始终隐藏")
 @MainActor
 func metalKeepsCaretViewHiddenAcrossLifecycle() async throws {
+  guard MTLCreateSystemDefaultDevice() != nil else { return }
   let suite = "MetalCaretProbe.\(UUID().uuidString)"
   let defaults = try #require(UserDefaults(suiteName: suite))
   defaults.removePersistentDomain(forName: suite)
@@ -35,6 +37,10 @@ func metalKeepsCaretViewHiddenAcrossLifecycle() async throws {
 
   let session = try #require(tab.activeRuntime?.terminalSession)
   let terminal = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  // 生产默认使用 Core Graphics；此用例显式打开 vendored Metal backend，确保保留下来的
+  // 后端回归测试不会因默认策略变化而变成无断言的空测试。
+  try terminal.setUseMetal(true)
+  #expect(terminal.metalView != nil)
 
   func report(_ step: String) {
     if terminal.metalView != nil {

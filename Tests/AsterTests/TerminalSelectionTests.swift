@@ -266,6 +266,47 @@ func relativeFileLinkPreviewUsesResolvedAbsolutePath() throws {
   )
 }
 
+@Test("终端底部链接预览使用独立于主题的明暗反转浮层")
+@MainActor
+func linkPreviewUsesFixedAppearanceAwareBadge() throws {
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  view.appearance = NSAppearance(named: .aqua)
+  // 故意使用高饱和主题色，证明链接浮层没有继续复用终端前景/背景。
+  view.nativeForegroundColor = .systemPink
+  view.nativeBackgroundColor = .systemCyan
+  view.resize(cols: 80, rows: 24)
+  view.dataReceived(slice: Array("https://example.test/a/very/long/path".utf8)[...])
+  view.reportLink(at: Position(col: 0, row: 0))
+
+  let label = try #require(view.urlPreview)
+  let badge = try #require(label.superview)
+  try #require(badge !== view, "链接文字必须位于独立圆角背景容器内")
+  #expect(abs(badge.frame.minX - 16) < 0.5)
+  #expect(abs(badge.frame.minY) < 0.5)
+  #expect(abs(badge.frame.height - 52) < 0.5)
+  #expect(abs((badge.layer?.cornerRadius ?? 0) - 12) < 0.5)
+
+  func rgba(_ color: NSColor?) throws -> (CGFloat, CGFloat, CGFloat, CGFloat) {
+    let rgb = try #require(color?.usingColorSpace(.deviceRGB))
+    return (rgb.redComponent, rgb.greenComponent, rgb.blueComponent, rgb.alphaComponent)
+  }
+
+  let lightBackground = try rgba(badge.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)))
+  let lightText = try rgba(label.textColor)
+  #expect(max(lightBackground.0, lightBackground.1, lightBackground.2) < 0.05)
+  #expect(abs(lightBackground.3 - 0.78) < 0.02)
+  #expect(min(lightText.0, lightText.1, lightText.2) > 0.95)
+  #expect(abs(lightText.3 - 0.96) < 0.02)
+
+  badge.appearance = NSAppearance(named: .darkAqua)
+  let darkBackground = try rgba(badge.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)))
+  let darkText = try rgba(label.textColor)
+  #expect(min(darkBackground.0, darkBackground.1, darkBackground.2) > 0.95)
+  #expect(abs(darkBackground.3 - 0.82) < 0.02)
+  #expect(max(darkText.0, darkText.1, darkText.2) < 0.05)
+  #expect(abs(darkText.3 - 0.90) < 0.02)
+}
+
 @Test("终端链接使用连续实线下划线")
 @MainActor
 func terminalLinksUseSolidUnderline() throws {

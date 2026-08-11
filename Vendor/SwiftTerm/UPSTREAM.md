@@ -31,10 +31,15 @@ record the new version and revision here.
   resources and the structured `--test-bundle-path` supplied by SwiftPM's test launcher, without
   touching the generated accessor that can terminate after its build-machine path becomes stale.
   Its bar-cursor geometry also matches the AppKit caret: line spacing expands the grid while the
-  visible bar stays at font height, so enabling Metal cannot make it touch the preceding row.
+  visible bar stays at font height and is vertically centered in its cell, so enabling Metal
+  cannot make it touch the preceding row or sit low in a prompt.
 - `Apple/AppleTerminalView.swift` explicitly requests a frame from the paused Metal view after a
   font change. Invalidating only the parent AppKit view can otherwise update grid metrics without
   presenting glyphs at the new size until later terminal activity.
+- `Apple/AppleTerminalView.swift` requests a full Core Graphics corrective redraw when an
+  alternate-screen frame ends with protocol/title activity but no dirty grid row. This reconciles
+  AppKit's backing store with the final terminal grid so transient TUI spinner/title pixels cannot
+  remain beside the restored prompt.
 - `Terminal.swift` and `Buffer.swift` expose stable absolute buffer coordinates and an opt-in
   embedder identity used for conservative DA1/DA2 and XTVERSION replies. `Terminal.swift` also
   exposes the active-buffer cursor position used by Vi Mode and distinguishes protocol replies
@@ -59,7 +64,9 @@ record the new version and revision here.
   `shouldSendUserData(_:)` is an overridable preflight hook so Read-only can reject input before
   selection/viewport side effects.
 - `Mac/MacTerminalView.swift` exposes a display-only link preview formatter so Aster can expand
-  relative paths with its trusted Session CWD while preserving the original click payload.
+  relative paths with its trusted Session CWD while preserving the original click payload. The
+  preview uses an appearance-aware neutral badge whose light/dark palette does not inherit ANSI
+  or terminal-theme colors.
   `Apple/AppleTerminalView.swift` renders implicit and OSC 8 link affordances with a continuous
   single underline instead of the low-visibility dashed pattern; AppKit and Metal consume the
   same shared attribute marker. The macOS view also derives its pointing-hand cursor from the
