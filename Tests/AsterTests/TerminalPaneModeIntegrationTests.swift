@@ -249,10 +249,11 @@ private func mouseEvent(_ type: NSEvent.EventType, at point: NSPoint) throws -> 
 @MainActor
 func shellMenuPublishesPaneModeActions() throws {
   let menu = try #require(AsterAppDelegate().shellModeMenuItem().submenu)
+  // 「把终端选区发送到 Chat」在 50c6f90 移入终端右键菜单,不再出现在 Shell 菜单。
   #expect(
     menu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
       "Vi Mode", "Mark Mode", "打开链接（Hint Mode）",
-      "Composer", "Agent 历史", "把终端选区发送到 Chat",
+      "Composer", "Agent 历史",
       "只读模式", "显示/隐藏 Vi 按键提示",
     ])
   let vi = try #require(menu.item(withTitle: "Vi Mode"))

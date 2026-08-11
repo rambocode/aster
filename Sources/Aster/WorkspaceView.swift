@@ -848,9 +848,13 @@ final class WorkspaceViewController: NSViewController {
     let blocksTerminalFocus = model.isFindPresented || model.isPalettePresented
       || model.isOpenQuicklyPresented || model.isGlobalFindPresented
       || model.isAgentHistoryPresented
+    // 只有旧终端仍属于当前活动 Pane 时才同步回焦——拆分/切换后活动 Pane 已换人,
+    // 无条件恢复会让键盘输入劫持回旧 Pane,与视觉焦点分裂(输入进错 Pane 的根因)。
+    let activeSession = model.selectedTab?.activeRuntime?.terminalSession
     let restoredTerminalFocus: Bool
     if !blocksTerminalFocus, let terminal = previouslyFocusedTerminal,
-      terminal.window === view.window, let window = view.window
+      terminal.window === view.window, let window = view.window,
+      activeSession?.owns(terminal) == true
     {
       restoredTerminalFocus = window.makeFirstResponder(terminal)
     } else {
@@ -1875,6 +1879,13 @@ final class WorkspaceViewController: NSViewController {
     if tab.layout.allPanes.count > 1 {
       host.installDragHandle { [weak self] paneID, event in
         self?.beginPaneDrag(paneID: paneID, event: event)
+      }
+      // 关闭走「先激活再关闭」:closeActivePane 以活动 Pane 为对象,并顺带走
+      // 关闭确认/最近关闭记录等既有语义,不另开一条关闭路径。
+      host.installCloseButton { [weak self, weak tab] paneID in
+        guard let self, let tab else { return }
+        tab.setActivePane(paneID)
+        self.model.closeActivePane()
       }
     }
     return host

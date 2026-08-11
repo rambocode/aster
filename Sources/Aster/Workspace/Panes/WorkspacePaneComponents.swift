@@ -8,17 +8,20 @@ import Combine
 final class PersistedSplitView: NSSplitView, NSSplitViewDelegate {
   /// 命中区比可见线宽得多：1pt 的线几乎抓不住，Otty 同样用一条细线 + 宽感应带。
   private static let hitThickness: CGFloat = 6
-  private let ratio: Double
+  /// 当前生效的分割比例。初始为持久化值；用户拖动分隔条或双击等分时同步更新,
+  /// `layout()` 以它为真值把分隔条收敛到位(见 `layout()` 注释)。
+  private var currentRatio: Double
   private let onRatioChanged: (Double) -> Void
-  private var positioned = false
   private var isUserResizing = false
+  /// `setPosition` 会同步触发下一轮 `layout()`;没有门闩会在帧未就位时无限重入直至爆栈。
+  private var isRepositioning = false
   private var isHoveringDivider = false {
     didSet { if oldValue != isHoveringDivider { needsDisplay = true } }
   }
   private var dividerTrackingArea: NSTrackingArea?
 
   init(axis: SplitAxis, ratio: Double, onRatioChanged: @escaping (Double) -> Void) {
-    self.ratio = ratio
+    self.currentRatio = ratio
     self.onRatioChanged = onRatioChanged
     super.init(frame: .zero)
     isVertical = axis == .horizontal
@@ -40,7 +43,9 @@ final class PersistedSplitView: NSSplitView, NSSplitViewDelegate {
       isVertical
       ? NSRect(x: rect.midX - thickness / 2, y: rect.minY, width: thickness, height: rect.height)
       : NSRect(x: rect.minX, y: rect.midY - thickness / 2, width: rect.width, height: thickness)
-    (isHoveringDivider ? AsterTheme.accent : AsterTheme.divider).setFill()
+    // 悬停只加粗、加深灰度,不切换主题强调色:分隔线与把手同属工作区结构控件,
+    // 保持系统灰(与 PaneDragHandleView 的配色例外一致)。
+    (isHoveringDivider ? NSColor.secondaryLabelColor : AsterTheme.divider).setFill()
     line.fill()
   }
 
@@ -108,23 +113,35 @@ final class PersistedSplitView: NSSplitView, NSSplitViewDelegate {
     max(0, (isVertical ? bounds.width : bounds.height) - dividerThickness)
   }
 
+  /// 把分隔条收敛到 `currentRatio`,而不是「首轮拿到尺寸时一次性定位」。
+  /// 嵌套分屏时本视图的 `layout()` 会在外层 split 布局事务的中途运行,此时的
+  /// `setPosition` 不会落到最终布局上(第二个子视图被 NSSplitView 的
+  /// `FallbackSize == 0 @250` 回退约束压成 0,新 Pane 只剩一条分隔线);一次性
+  /// 标志会把这个错误永久化。收敛式写法让随后的任何一轮布局自动纠偏,
+  /// 目标一致时不再调用 `setPosition`,不会造成布局循环。
   override func layout() {
     super.layout()
-    guard !positioned, arrangedSubviews.count == 2 else { return }
+    guard !isRepositioning, !isUserResizing, arrangedSubviews.count == 2 else { return }
     // 首轮布局可能在拿到真实尺寸前发生；此时定位分隔条会把比例锁在无效值上。
     guard contentLength > 1 else { return }
-    positioned = true
-    setPosition(max(1, contentLength * ratio), ofDividerAt: 0)
+    let first = isVertical ? arrangedSubviews[0].frame.width : arrangedSubviews[0].frame.height
+    let target = max(1, contentLength * currentRatio)
+    guard abs(first - target) > 0.5 else { return }
+    isRepositioning = true
+    setPosition(target, ofDividerAt: 0)
+    isRepositioning = false
   }
 
   func splitViewDidResizeSubviews(_ notification: Notification) {
     // 命中区是由两个子视图的间隙算出来的，自身 frame 不变时 AppKit 不会重建它，
     // 拖完分隔条后感应区就会停在旧位置。
     updateTrackingAreas()
-    guard positioned, isUserResizing, arrangedSubviews.count == 2 else { return }
+    guard isUserResizing, arrangedSubviews.count == 2 else { return }
     let first = isVertical ? arrangedSubviews[0].frame.width : arrangedSubviews[0].frame.height
     guard contentLength > 0 else { return }
-    onRatioChanged(min(max(first / contentLength, 0.05), 0.95))
+    // 拖动即用户的新意图:同步更新收敛目标,layout() 才不会把分隔条弹回旧比例。
+    currentRatio = min(max(first / contentLength, 0.05), 0.95)
+    onRatioChanged(currentRatio)
   }
 
   override func mouseDown(with event: NSEvent) {
@@ -133,6 +150,7 @@ final class PersistedSplitView: NSSplitView, NSSplitViewDelegate {
       rect.contains(convert(event.locationInWindow, from: nil))
     {
       guard contentLength > 1 else { return }
+      currentRatio = 0.5
       setPosition(contentLength * 0.5, ofDividerAt: 0)
       onRatioChanged(0.5)
       return
@@ -234,6 +252,10 @@ final class PaneDropOverlayView: NSView {
 /// Pane 顶边的胶囊拖动把手。参考应用的说法是「move the pointer near the top and a small
 /// capsule appears」：靠近顶边淡入短胶囊，指针压在胶囊上时变长并换成抓手光标，
 /// 按住即可把整个 Pane 拖到别处。
+///
+/// 配色是「主题色只经由 ThemeRuntime 进入视图」规则的一处明确例外：把手是工作区
+/// 结构控件而不是终端内容，跟随主题会在绿色/彩色主题下变成一条抢眼的彩条,
+/// 因此固定用系统灰(仅随明暗外观变化)。
 @MainActor
 final class PaneDragHandleView: NSView {
   private static let collapsedWidth: CGFloat = 28
@@ -257,7 +279,7 @@ final class PaneDragHandleView: NSView {
     capsule.wantsLayer = true
     capsule.layer?.cornerRadius = 2
     capsule.layer?.cornerCurve = .continuous
-    capsule.layer?.backgroundColor = AsterTheme.tertiaryInk.cgColor
+    capsule.layer?.backgroundColor = NSColor.tertiaryLabelColor.cgColor
     capsule.translatesAutoresizingMaskIntoConstraints = false
     addSubview(capsule)
     let width = capsule.widthAnchor.constraint(equalToConstant: Self.collapsedWidth)
@@ -306,14 +328,84 @@ final class PaneDragHandleView: NSView {
 
   private func updateAppearance() {
     let expanded = isRevealed && isHovered
+    // 悬停加深灰度作为可抓取反馈,不换成主题强调色(见类注释的配色例外)。
     capsule.layer?.backgroundColor =
-      (expanded ? AsterTheme.accent : AsterTheme.tertiaryInk).cgColor
+      (expanded ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor).cgColor
     NSAnimationContext.runAnimationGroup { context in
       context.duration = 0.14
       context.allowsImplicitAnimation = true
       animator().alphaValue = isRevealed ? 1 : 0
       capsuleWidth?.animator().constant = expanded ? Self.expandedWidth : Self.collapsedWidth
       superview?.layoutSubtreeIfNeeded()
+    }
+  }
+}
+
+/// Pane 顶条最右侧的关闭按钮：与拖动把手一同淡入,点击关闭所属 Pane。
+/// 与把手同属工作区结构控件,配色固定用系统灰、不跟随终端主题;
+/// 完全透明时不参与命中测试,避免 Pane 右上角出现点不到终端的死区。
+@MainActor
+final class PaneCloseButton: NSButton {
+  private var trackingArea: NSTrackingArea?
+  private var isHovered = false {
+    didSet { if oldValue != isHovered { updateAppearance() } }
+  }
+  /// 指针是否靠近 Pane 顶边(由宿主的顶边感应带驱动),控制淡入与命中。
+  var isRevealed = false {
+    didSet { if oldValue != isRevealed { updateAppearance() } }
+  }
+
+  init(onClose: @escaping () -> Void) {
+    closeAction = onClose
+    super.init(frame: .zero)
+    isBordered = false
+    imagePosition = .imageOnly
+    image = NSImage(
+      systemSymbolName: "xmark", accessibilityDescription: "关闭 Pane"
+    )?.withSymbolConfiguration(.init(pointSize: 9, weight: .bold))
+    contentTintColor = .tertiaryLabelColor
+    target = self
+    action = #selector(performCloseAction)
+    alphaValue = 0
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  private let closeAction: () -> Void
+
+  /// 点击转发给宿主提供的关闭回调。
+  @objc private func performCloseAction() { closeAction() }
+
+  /// 隐藏时不参与命中测试,终端在这一角的点击与拖选不受影响。
+  override func hitTest(_ point: NSPoint) -> NSView? {
+    alphaValue > 0.01 ? super.hitTest(point) : nil
+  }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let trackingArea { removeTrackingArea(trackingArea) }
+    let area = NSTrackingArea(
+      rect: bounds,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .cursorUpdate],
+      owner: self
+    )
+    addTrackingArea(area)
+    trackingArea = area
+  }
+
+  override func mouseEntered(with event: NSEvent) { isHovered = true }
+  override func mouseExited(with event: NSEvent) { isHovered = false }
+  override func cursorUpdate(with event: NSEvent) {
+    if isRevealed { NSCursor.pointingHand.set() } else { super.cursorUpdate(with: event) }
+  }
+
+  /// 淡入淡出 + 悬停加深,与拖动把手的反馈语义一致。
+  private func updateAppearance() {
+    contentTintColor = isHovered ? .secondaryLabelColor : .tertiaryLabelColor
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = 0.14
+      context.allowsImplicitAnimation = true
+      animator().alphaValue = isRevealed ? 1 : 0
     }
   }
 }
@@ -345,13 +437,18 @@ final class ActivePaneHostView: NSView {
   /// 所属面板的 ID：窗口级点击监视器沿 superview 链命中本视图后据此激活对应面板。
   /// 顶边感应带与把手的高度：太矮抓不到，太高会让顶部一整条都在触发淡入。
   private static let handleRevealHeight: CGFloat = 14
+  /// 安装顶条控件(把手/关闭按钮)后内容让出的高度:顶条自身 14pt + 与内容的间距,
+  /// 避免胶囊和按钮压在终端首行文本上。
+  private static let chromeContentInset: CGFloat = 18
   let paneID: UUID
   private let activation: () -> Void
   private let onExternalDrop: (NSPasteboard, ExternalPaneDropZone) -> Bool
   private var dragHandle: PaneDragHandleView?
+  private var closeButton: PaneCloseButton?
   private var handleTrackingArea: NSTrackingArea?
   private var externalDropZone: ExternalPaneDropZone?
   private weak var contentView: NSView?
+  private var contentTopConstraint: NSLayoutConstraint?
   private var contentBottomConstraint: NSLayoutConstraint?
   private var bottomAccessory: NSView?
   /// 非聚焦 Pane 的内容整体透明度。用 alpha 而不是颜色遮罩：透明主题的 window 色
@@ -391,14 +488,16 @@ final class ActivePaneHostView: NSView {
   func installContent(_ view: NSView) {
     addSubview(view)
     view.translatesAutoresizingMaskIntoConstraints = false
+    let top = view.topAnchor.constraint(equalTo: topAnchor)
     let bottom = view.bottomAnchor.constraint(equalTo: bottomAnchor)
     NSLayoutConstraint.activate([
       view.leadingAnchor.constraint(equalTo: leadingAnchor),
       view.trailingAnchor.constraint(equalTo: trailingAnchor),
-      view.topAnchor.constraint(equalTo: topAnchor),
+      top,
       bottom,
     ])
     contentView = view
+    contentTopConstraint = top
     contentBottomConstraint = bottom
     // 恢复/重建工作区时 host 以初始焦点状态创建，didSet 不会触发，这里补一次。
     applyActivationAppearance()
@@ -483,7 +582,7 @@ final class ActivePaneHostView: NSView {
   override func updateTrackingAreas() {
     super.updateTrackingAreas()
     if let handleTrackingArea { removeTrackingArea(handleTrackingArea) }
-    guard dragHandle != nil else { return }
+    guard dragHandle != nil || closeButton != nil else { return }
     let strip = NSRect(
       x: 0, y: max(0, bounds.height - Self.handleRevealHeight),
       width: bounds.width, height: min(bounds.height, Self.handleRevealHeight))
@@ -496,8 +595,20 @@ final class ActivePaneHostView: NSView {
     handleTrackingArea = area
   }
 
-  override func mouseEntered(with event: NSEvent) { dragHandle?.isRevealed = true }
-  override func mouseExited(with event: NSEvent) { dragHandle?.isRevealed = false }
+  override func mouseEntered(with event: NSEvent) {
+    dragHandle?.isRevealed = true
+    closeButton?.isRevealed = true
+  }
+  override func mouseExited(with event: NSEvent) {
+    dragHandle?.isRevealed = false
+    closeButton?.isRevealed = false
+  }
+
+  /// 顶条控件安装后把内容整体下移,让胶囊/按钮与内容之间留出固定间距,
+  /// 不再压在终端首行文本上。重复调用幂等。
+  private func applyChromeContentInset() {
+    contentTopConstraint?.constant = Self.chromeContentInset
+  }
 
   /// 安装顶边拖动把手；只有存在多个 Pane 时才有意义（单 Pane 无处可拖）。
   func installDragHandle(onDragStart: @escaping (UUID, NSEvent) -> Void) {
@@ -513,6 +624,25 @@ final class ActivePaneHostView: NSView {
       handle.heightAnchor.constraint(equalToConstant: Self.handleRevealHeight),
     ])
     dragHandle = handle
+    applyChromeContentInset()
+  }
+
+  /// 安装顶条最右侧的关闭按钮;与把手一样只在多 Pane 时有意义(最后一个 Pane 无处可关)。
+  func installCloseButton(onClose: @escaping (UUID) -> Void) {
+    guard closeButton == nil else { return }
+    let paneID = paneID
+    let button = PaneCloseButton { onClose(paneID) }
+    button.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(button)
+    NSLayoutConstraint.activate([
+      button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+      button.centerYAnchor.constraint(
+        equalTo: topAnchor, constant: Self.handleRevealHeight / 2),
+      button.widthAnchor.constraint(equalToConstant: Self.handleRevealHeight),
+      button.heightAnchor.constraint(equalToConstant: Self.handleRevealHeight),
+    ])
+    closeButton = button
+    applyChromeContentInset()
   }
 
 }

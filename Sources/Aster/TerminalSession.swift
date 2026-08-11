@@ -2701,6 +2701,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalView.send(data: controlC[...])
   }
 
+  /// 判断给定终端视图是否由本会话持有；工作区 `refresh()` 恢复 first responder
+  /// 前用它校验归属，避免把键盘焦点还给已不是活动 Pane 的旧终端。
+  func owns(_ view: AsterTerminalView) -> Bool {
+    terminalView === view
+  }
+
   /// 最近一次 `focus()` 失败的原因，供工作区层诊断记录；成功时为 nil。
   private(set) var focusFailureReason: String?
 
