@@ -345,6 +345,64 @@ func shellMenuFollowsFocusedPaneAgentSession() throws {
   #expect(menu.item(withTitle: "Claude") == nil)
 }
 
+@Test("Agent Fork 菜单始终操作展开菜单时捕获的工作区")
+@MainActor
+func shellAgentForkRoutesToCapturedWorkspace() throws {
+  let sourceSuiteName = "ShellAgentMenuSourceTests.\(UUID().uuidString)"
+  let sourceDefaults = try #require(UserDefaults(suiteName: sourceSuiteName))
+  sourceDefaults.removePersistentDomain(forName: sourceSuiteName)
+  defer { sourceDefaults.removePersistentDomain(forName: sourceSuiteName) }
+  let sourceModel = AppModel(defaults: sourceDefaults)
+  sourceModel.ensureInitialTab()
+  let sourceTab = try #require(sourceModel.selectedTab)
+  defer { sourceModel.tabs.forEach { $0.stop(immediately: true) } }
+
+  let otherSuiteName = "ShellAgentMenuOtherTests.\(UUID().uuidString)"
+  let otherDefaults = try #require(UserDefaults(suiteName: otherSuiteName))
+  otherDefaults.removePersistentDomain(forName: otherSuiteName)
+  defer { otherDefaults.removePersistentDomain(forName: otherSuiteName) }
+  let otherPreferences = AppPreferences(defaults: otherDefaults)
+  let otherModel = AppModel(defaults: otherDefaults)
+  otherModel.ensureInitialTab()
+  let otherTab = try #require(otherModel.selectedTab)
+  defer { otherModel.tabs.forEach { $0.stop(immediately: true) } }
+  let delegate = AsterAppDelegate(model: otherModel, preferences: otherPreferences)
+
+  // AppKit 在菜单跟踪期间可能把 key window 切给设置页或另一个工作区。这里让 delegate
+  // 的当前模型保持为 B，但让菜单明确来自 A，验证动作不在点击瞬间重新解析全局状态。
+  let context = FocusedAgentSessionContext(
+    provider: .codex,
+    sessionID: "captured-codex-session",
+    workingDirectory: "/tmp/captured-agent-project",
+    configuration: .init(provider: .codex)
+  )
+  let codexItem = delegate.activeAgentMenuItem(context, workspaceModel: sourceModel)
+  let codexMenu = try #require(codexItem.submenu)
+
+  let sourcePaneCount = sourceTab.layout.allPanes.count
+  let otherPaneCount = otherTab.layout.allPanes.count
+  let forkIndex = try #require(
+    codexMenu.items.firstIndex { $0.title == "Fork 到 向下拆分" }
+  )
+  let forkItem = codexMenu.items[forkIndex]
+  let actionContext = try #require(forkItem.representedObject as? AgentMenuActionContext)
+  #expect(actionContext.workspaceModel === sourceModel)
+  #expect(forkItem.target === delegate)
+  let action = try #require(forkItem.action)
+  #expect(NSApplication.shared.sendAction(action, to: forkItem.target, from: forkItem))
+
+  #expect(sourceTab.layout.allPanes.count == sourcePaneCount + 1)
+  #expect(otherTab.layout.allPanes.count == otherPaneCount)
+
+  let sourceTabCount = sourceModel.tabs.count
+  let otherTabCount = otherModel.tabs.count
+  let newTabItem = try #require(codexMenu.item(withTitle: "Fork 到 新建标签页"))
+  let newTabAction = try #require(newTabItem.action)
+  #expect(NSApplication.shared.sendAction(newTabAction, to: newTabItem.target, from: newTabItem))
+  #expect(sourceModel.tabs.count == sourceTabCount + 1)
+  #expect(otherModel.tabs.count == otherTabCount)
+}
+
 @Test("Agent 尚未报告会话 ID 时 Shell 菜单保留身份并禁用危险动作")
 @MainActor
 func shellAgentMenuDisablesSessionActionsUntilLifecycleLinksSession() throws {
