@@ -2,7 +2,34 @@ import Testing
 
 @testable import AsterCore
 
-// 设置窗口高度记忆的钳制规则：恢复出来的窗口既不能比设计下限矮，也不能高过当前屏幕。
+// 设置窗口尺寸记忆的钳制规则：恢复出来的窗口不能小于设计下限，也不能超过当前屏幕。
+
+@Test("记忆宽度低于下限时回到最小宽度")
+func settingsWindowWidthClampsToMinimum() {
+  #expect(
+    SettingsWindowGeometry.clampWidth(320, availableWidth: 1_600)
+      == SettingsWindowGeometry.minimumWidth)
+}
+
+@Test("记忆宽度超过可视屏幕时被收回屏幕宽度")
+func settingsWindowWidthClampsToScreen() {
+  #expect(SettingsWindowGeometry.clampWidth(1_800, availableWidth: 1_200) == 1_200)
+}
+
+@Test("合法记忆宽度原样保留")
+func settingsWindowWidthKeepsValidValue() {
+  #expect(SettingsWindowGeometry.clampWidth(940, availableWidth: 1_600) == 940)
+}
+
+@Test("非法记忆宽度退回默认宽度")
+func settingsWindowWidthRejectsInvalidValue() {
+  #expect(
+    SettingsWindowGeometry.clampWidth(.nan, availableWidth: 1_600)
+      == SettingsWindowGeometry.width)
+  #expect(
+    SettingsWindowGeometry.clampWidth(0, availableWidth: 1_600)
+      == SettingsWindowGeometry.width)
+}
 
 @Test("记忆高度低于下限时回到最小高度")
 func settingsWindowHeightClampsToMinimum() {

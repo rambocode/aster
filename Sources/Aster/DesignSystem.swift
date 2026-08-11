@@ -68,6 +68,8 @@ enum SettingsTheme {
   /// 分组卡片 / 主题网格 / 主题详情的整块底色。
   static let card = dynamic(light: 0xFAFAFA, dark: 0x262628)
   static let sidebar = dynamic(light: 0xF5F5F7, dark: 0x202022)
+  /// 搜索框使用独立的中性灰底，在侧栏上形成清晰输入区域，同时保留原生搜索行为。
+  static let searchField = dynamic(light: 0xE9E9EC, dark: 0x2C2C2E)
   static let ink = dynamic(light: 0x1D1D1F, dark: 0xF2F2F7)
   static let secondaryInk = dynamic(light: 0x6E6E73, dark: 0xA1A1A6)
   static let tertiaryInk = dynamic(light: 0x8E8E93, dark: 0x8A8A8F)

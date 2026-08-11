@@ -5,10 +5,11 @@ import Testing
 @testable import AsterCore
 
 // 设置页的响应性回归锁：
-// 1. 窗口高度可拉伸并跨次记忆（宽度仍锁死）；
+// 1. 窗口宽高可拉伸并跨次记忆，侧栏固定、右侧内容填满剩余宽度；
 // 2. 切换分类只换内容区，侧栏按钮与搜索框都是同一批实例；
 // 3. 搜索只过滤侧栏导航，不重建内容区；
-// 4. 普通控件（开关、步进器）改配置后不重建内容区，点击反馈不被布局工作打断。
+// 4. 默认打开不聚焦搜索，搜索使用随明暗模式变化的中性灰底；
+// 5. 普通控件（开关、步进器）改配置后不重建内容区，点击反馈不被布局工作打断。
 
 extension NSView {
   /// 整棵子树（含自身之外的所有后代），用于在视图树里定位私有类型的控件。
@@ -56,9 +57,9 @@ private func contentDocument(in controller: SettingsViewController) throws -> NS
   return try #require(scroll.documentView)
 }
 
-@Test("设置窗口高度可拉伸并跨次打开被记住")
+@Test("设置窗口宽高可拉伸并跨次打开被记住")
 @MainActor
-func settingsWindowRemembersHeightAcrossOpens() throws {
+func settingsWindowRemembersSizeAcrossOpens() throws {
   let defaults = isolatedSettingsDefaults()
   let preferences = AppPreferences(defaults: defaults)
   let first = AsterSettingsWindowController(
@@ -67,13 +68,15 @@ func settingsWindowRemembersHeightAcrossOpens() throws {
     defaults: defaults
   )
   let firstWindow = try #require(first.window)
-  #expect(firstWindow.contentRect(forFrameRect: firstWindow.frame).height
-    == CGFloat(SettingsWindowGeometry.defaultHeight))
+  let defaultContentSize = firstWindow.contentRect(forFrameRect: firstWindow.frame).size
+  #expect(defaultContentSize.width == CGFloat(SettingsWindowGeometry.width))
+  #expect(defaultContentSize.height == CGFloat(SettingsWindowGeometry.defaultHeight))
 
-  // 用户拉高窗口后由 delegate 记一次。
-  firstWindow.setContentSize(NSSize(width: SettingsWindowGeometry.width, height: 720))
-  #expect(firstWindow.contentRect(forFrameRect: firstWindow.frame).height == 720)
-  first.persistContentHeight()
+  // 用户把窗口拉宽、拉高后由 delegate 记一次。
+  firstWindow.setContentSize(NSSize(width: 940, height: 720))
+  #expect(firstWindow.contentRect(forFrameRect: firstWindow.frame).size == NSSize(width: 940, height: 720))
+  first.persistContentSize()
+  #expect(defaults.object(forKey: SettingsWindowGeometry.widthDefaultsKey) as? Double == 940)
   #expect(defaults.object(forKey: SettingsWindowGeometry.heightDefaultsKey) as? Double == 720)
 
   let second = AsterSettingsWindowController(
@@ -82,11 +85,8 @@ func settingsWindowRemembersHeightAcrossOpens() throws {
     defaults: defaults
   )
   let secondWindow = try #require(second.window)
-  #expect(secondWindow.contentRect(forFrameRect: secondWindow.frame).height == 720)
-  // 宽度始终锁死，记忆只作用于高度。
-  #expect(secondWindow.contentRect(forFrameRect: secondWindow.frame).width
-    == CGFloat(SettingsWindowGeometry.width))
-  #expect(secondWindow.minSize.width == secondWindow.maxSize.width)
+  #expect(secondWindow.contentRect(forFrameRect: secondWindow.frame).size == NSSize(width: 940, height: 720))
+  #expect(secondWindow.minSize.width < secondWindow.maxSize.width)
 }
 
 @Test("屏幕放不下的记忆高度不会让窗口超出可视区域")
@@ -104,6 +104,93 @@ func settingsWindowClampsRememberedHeightToScreen() throws {
   // 无头会话拿不到屏幕时不做上界钳制，断言退化为「不会被莫名缩小」。
   let available = NSScreen.main?.visibleFrame.height ?? .greatestFiniteMagnitude
   #expect(window.contentRect(forFrameRect: window.frame).height <= available)
+}
+
+@Test("设置窗口横向拉伸时侧栏固定且右侧内容填满剩余宽度")
+@MainActor
+func settingsWindowWidthDrivesResponsiveContent() throws {
+  let defaults = isolatedSettingsDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let content = SettingsViewController(preferences: preferences)
+  let controller = AsterSettingsWindowController(
+    content: content,
+    appearance: nil,
+    defaults: defaults
+  )
+  let window = try #require(controller.window)
+  let sidebar = try #require(
+    content.view.settingsDescendants.first { $0.identifier == SettingsViewController.sidebarIdentifier })
+  let detail = try #require(
+    content.view.settingsDescendants.first { $0.identifier == SettingsViewController.contentIdentifier })
+
+  for width in [700.0, 940.0, 1_400.0] as [CGFloat] {
+    window.setContentSize(NSSize(width: width, height: 720))
+    window.contentView?.layoutSubtreeIfNeeded()
+    #expect(abs(sidebar.frame.width - 200) < 0.5)
+    #expect(abs(detail.frame.width - (width - 200)) < 0.5)
+  }
+}
+
+@Test("设置窗口每次打开都不默认聚焦搜索框")
+@MainActor
+func settingsWindowPresentationClearsSearchFocus() throws {
+  let defaults = isolatedSettingsDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let content = SettingsViewController(preferences: preferences)
+  let controller = AsterSettingsWindowController(
+    content: content,
+    appearance: nil,
+    defaults: defaults
+  )
+  let window = try #require(controller.window)
+  defer { window.orderOut(nil) }
+  let search = try #require(
+    content.view.settingsDescendants.first { $0.identifier == SettingsViewController.searchIdentifier }
+      as? NSSearchField)
+
+  controller.present(nil)
+  #expect(search.currentEditor() == nil)
+
+  search.stringValue = "外观"
+  content.controlTextDidChange(
+    Notification(name: NSControl.textDidChangeNotification, object: search))
+  #expect(window.makeFirstResponder(search))
+  #expect(search.currentEditor() != nil)
+  controller.present(nil)
+  #expect(search.currentEditor() == nil)
+  #expect(search.stringValue == "外观")
+}
+
+@Test("侧栏搜索框使用固定中性灰并随明暗外观切换")
+@MainActor
+func settingsSearchFieldUsesNeutralGrayBackground() throws {
+  let defaults = isolatedSettingsDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = SettingsViewController(preferences: preferences)
+  let window = settingsWindow(controller)
+  defer { window.orderOut(nil) }
+  let search = try #require(
+    controller.view.settingsDescendants.first { $0.identifier == SettingsViewController.searchIdentifier }
+      as? SettingsSearchField)
+
+  func resolvedLayerColor() throws -> NSColor {
+    let color = try #require(search.layer?.backgroundColor)
+    return try #require(NSColor(cgColor: color)?.usingColorSpace(.sRGB))
+  }
+
+  window.appearance = NSAppearance(named: .aqua)
+  search.refreshAppearance()
+  let light = try resolvedLayerColor()
+  #expect(abs(light.redComponent - 0xE9 as CGFloat / 255) < 0.01)
+  #expect(abs(light.greenComponent - 0xE9 as CGFloat / 255) < 0.01)
+  #expect(abs(light.blueComponent - 0xEC as CGFloat / 255) < 0.01)
+
+  window.appearance = NSAppearance(named: .darkAqua)
+  search.refreshAppearance()
+  let dark = try resolvedLayerColor()
+  #expect(abs(dark.redComponent - 0x2C as CGFloat / 255) < 0.01)
+  #expect(abs(dark.greenComponent - 0x2C as CGFloat / 255) < 0.01)
+  #expect(abs(dark.blueComponent - 0x2E as CGFloat / 255) < 0.01)
 }
 
 @Test("切换分类只重建内容区，侧栏按钮与搜索框保持同一批实例")

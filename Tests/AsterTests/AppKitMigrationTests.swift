@@ -167,9 +167,18 @@ func settingsUsesOnlyNativeAppKitControls() throws {
   #expect(controller.view.descendants.contains { $0 is NSScrollView } == true)
 }
 
-@Test("设置使用独立窗口（宽度固定、高度可拉伸）且不改动主工作区")
+@Test("Dock 右键菜单不添加应用自定义入口")
 @MainActor
-func settingsUsesFixedIndependentWindow() throws {
+func dockMenuDoesNotAddApplicationSpecificItems() {
+  let delegate = AsterAppDelegate()
+  let applicationDelegate: any NSApplicationDelegate = delegate
+
+  #expect(applicationDelegate.applicationDockMenu?(NSApplication.shared) == nil)
+}
+
+@Test("设置使用独立可缩放窗口且不改动主工作区")
+@MainActor
+func settingsUsesResizableIndependentWindow() throws {
   let defaults = isolatedDefaults()
   let model = AppModel(defaults: defaults)
   let preferences = AppPreferences(defaults: defaults)
@@ -191,13 +200,14 @@ func settingsUsesFixedIndependentWindow() throws {
   #expect(settingsWindow !== workspaceWindow)
   #expect(settingsWindow.contentViewController === settings)
   #expect(settingsWindow.contentView?.frame.size == SettingsViewController.defaultContentSize)
-  // 宽度上下界相同 = 横向锁死；高度只有下界，纵向自由拉伸。
+  // `700 × 460pt` 是内容尺寸下限，宽高上界都放开供用户拖动。
   #expect(settingsWindow.minSize.width == settingsWindow.frame.width)
-  #expect(settingsWindow.maxSize.width == settingsWindow.frame.width)
+  #expect(settingsWindow.maxSize.width > settingsWindow.frame.width * 2)
   #expect(settingsWindow.minSize.height == settingsWindow.frame.height)
   #expect(settingsWindow.maxSize.height > settingsWindow.frame.height * 2)
   #expect(settingsWindow.styleMask.contains(.resizable))
   #expect(settingsWindow.standardWindowButton(.miniaturizeButton)?.isEnabled == false)
+  #expect(settingsWindow.isExcludedFromWindowsMenu)
   #expect(workspaceWindow.frame == workspaceFrame)
   #expect(workspace.view.subviews.contains { $0 === workspaceRoot })
   #expect(!workspaceRoot.isHidden)
@@ -1102,7 +1112,7 @@ func settingsTopLevelBlocksKeepInsetsAtEverySize() throws {
   // 回归锁：以前只有 card / 分组标题有显式边距约束，其余顶层项（主题网格、主题详情、
   // 字体块、布局选择行）靠 NSStackView 的 .width 对齐。窗口放大后它们会缩成固有宽度
   // 并靠右，窄窗口下又会丢掉左边距——两种尺寸都要锁。
-  for width in [700.0, 1_400.0] as [CGFloat] {
+  for width in [700.0, 940.0, 1_400.0] as [CGFloat] {
     window.setContentSize(NSSize(width: width, height: 900))
     for section in SettingsViewController.Section.allCases {
       controller.showSection(section)

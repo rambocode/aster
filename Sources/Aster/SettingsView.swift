@@ -3,13 +3,48 @@ import AsterCore
 import Combine
 import UniformTypeIdentifiers
 
+/// 保留 `NSSearchField` 的放大镜、清除按钮、输入法和焦点环，只把底色换成设置页自己的
+/// 中性灰。底色落在 backing layer 上，因此明暗外观切换时必须重新解析动态颜色。
+@MainActor
+final class SettingsSearchField: NSSearchField {
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    configureAppearance()
+  }
+
+  required init?(coder: NSCoder) {
+    super.init(coder: coder)
+    configureAppearance()
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    refreshAppearance()
+  }
+
+  func refreshAppearance() {
+    effectiveAppearance.performAsCurrentDrawingAppearance { [weak self] in
+      self?.layer?.backgroundColor = SettingsTheme.searchField.cgColor
+    }
+  }
+
+  private func configureAppearance() {
+    wantsLayer = true
+    isBezeled = false
+    drawsBackground = false
+    focusRingType = .exterior
+    layer?.cornerRadius = 7
+    refreshAppearance()
+  }
+}
+
 /// 与 Otty 信息架构一致的九类纯 AppKit 设置页。控件直接写入 `AppPreferences`，
 /// 当前终端会话通过其 Combine 订阅即时获得字体、配色、Meta 键和鼠标设置变化。
 @MainActor
 final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
-  /// 设置页的宽度契约与初始高度：宽度锁死 `700pt`，禁止根据分类、内容量或布局调整；
-  /// 高度由用户拉伸并跨启动记忆（真值见 `SettingsWindowGeometry`），超出部分仍由各
-  /// 分类的滚动区域承载。独立设置窗口不得联动修改主工作区窗口 frame。
+  /// 设置页首次打开使用 `700 × 460pt`，宽度下限为 `700pt`；宽高由用户拉伸并跨启动
+  /// 记忆（真值见 `SettingsWindowGeometry`）。侧栏保持固定，右侧单列内容填满剩余宽度，
+  /// 超出高度的部分由分类滚动区域承载。独立设置窗口不得联动主工作区窗口 frame。
   static let defaultContentSize = NSSize(
     width: CGFloat(SettingsWindowGeometry.width),
     height: CGFloat(SettingsWindowGeometry.defaultHeight)
@@ -82,6 +117,9 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private var sidebarButtons: [(section: Section, button: SettingsSidebarButton)] = []
   /// 当前侧栏按钮对应的分类列表；只有搜索过滤结果变化时才真的重建按钮。
   private var renderedSidebarSections: [Section] = []
+  static let sidebarIdentifier = NSUserInterfaceItemIdentifier("settings-sidebar")
+  static let contentIdentifier = NSUserInterfaceItemIdentifier("settings-content")
+  static let searchIdentifier = NSUserInterfaceItemIdentifier("settings-search")
 
   enum FontScope: Int, CaseIterable {
     case computed
@@ -113,7 +151,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   required init?(coder: NSCoder) { nil }
 
   override func loadView() {
-    // 初始尺寸取默认值；窗口高度可由用户拉伸，内容超出高度时由各分类的滚动视图承载。
+    // 初始尺寸取默认值；窗口宽高可由用户拉伸，内容超出高度时由分类滚动视图承载。
     view = NSView(frame: NSRect(origin: .zero, size: Self.defaultContentSize))
   }
 
@@ -144,12 +182,6 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   func showSection(_ section: Section) {
     selection = section
     refresh()
-  }
-
-  /// 设置页完成挂载后把输入焦点交给搜索框；工作区终端仍保留在下层且不会重启。
-  func focusInitialControl() {
-    guard let field = sidebarSearchField else { return }
-    field.window?.makeFirstResponder(field)
   }
 
   private func scheduleRefresh() {
@@ -198,6 +230,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       guard let self else { return }
       self.view.layer?.backgroundColor = SettingsTheme.canvas.cgColor
       self.sidebarHost?.layer?.backgroundColor = SettingsTheme.sidebar.cgColor
+      (self.sidebarSearchField as? SettingsSearchField)?.refreshAppearance()
     }
     updateSidebar()
     guard let container = contentContainer else { return }
@@ -235,6 +268,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     // 内容宿主承担窗口横向剩余宽度；固有尺寸优先级必须压低，否则根 Stack 会按内容
     // 的最小宽度布局，在右侧留下空白（与内部滚动视图同样的约束理由）。
     let container = NSView()
+    container.identifier = Self.contentIdentifier
     container.setContentHuggingPriority(.defaultLow, for: .horizontal)
     container.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     root.addArrangedSubview(container)
@@ -247,6 +281,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   private func makeSidebar() -> NSView {
     let host = NSView()
+    host.identifier = Self.sidebarIdentifier
     host.wantsLayer = true
     host.layer?.backgroundColor = SettingsTheme.sidebar.cgColor
     sidebarHost = host
@@ -260,7 +295,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     // 让导航行的选中高亮整宽贴到窗口边缘（Otty 风格），搜索框单独留边。
     column.edgeInsets = NSEdgeInsets(top: SettingsMetrics.sidebarTopInset, left: 0, bottom: 12, right: 0)
 
-    let search = NSSearchField()
+    let search = SettingsSearchField()
+    search.identifier = Self.searchIdentifier
     search.placeholderString = "搜索"
     search.stringValue = searchText
     search.delegate = self
