@@ -1,17 +1,12 @@
 #!/usr/bin/env bash
-# 从锁定的 Ghostty revision 构建单 Pane PoC 所需的静态 XCFramework 与资源。
-# 二进制和生成资源都保持 gitignored；revision stamp 防止旧 ABI 被误当成当前工件。
+# 从锁定的 Ghostty revision 生成 Aster 主程序使用的静态 XCFramework 与运行时资源。
+# 所有产物先在临时目录完成并校验，再原子替换仓库内明确的 gitignored 路径。
 set -euo pipefail
 
-# 主程序已切换到 libghostty；先生成主构建工件。下方保留 PoC 的独立复制流程，
-# 方便研究文档中的历史验证命令继续工作。
-"$(cd "$(dirname "$0")" && pwd)/setup-ghostty.sh"
-
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-prototype_dir="$repo_root/Prototypes/GhosttyPane"
-framework_dir="$prototype_dir/GhosttyKit.xcframework"
-resource_dir="$prototype_dir/Sources/GhosttyPane/Resources"
-stamp_file="$prototype_dir/.ghostty-revision"
+framework_dir="$repo_root/Vendor/GhosttyKit.xcframework"
+resource_dir="$repo_root/Sources/Aster/Ghostty/Resources"
+stamp_file="$repo_root/Vendor/Ghostty/.ghostty-revision"
 ghostty_repo="https://github.com/ghostty-org/ghostty"
 ghostty_revision="4dcb09ada0c0909717d92547623b26eafa50ca8a"
 zig_binary="$(brew --prefix zig@0.15 2>/dev/null || true)/bin/zig"
@@ -24,7 +19,7 @@ fi
 
 if [[ "$force_rebuild" != "1" && -d "$framework_dir" && -d "$resource_dir/terminfo" && -f "$stamp_file" ]] &&
    [[ "$(<"$stamp_file")" == "$ghostty_revision" ]]; then
-  echo "Ghostty PoC artifacts already match $ghostty_revision"
+  echo "Ghostty artifacts already match $ghostty_revision"
   exit 0
 fi
 
@@ -33,10 +28,9 @@ if [[ ! -x "$zig_binary" ]]; then
   exit 1
 fi
 if [[ "$("$zig_binary" version)" != "0.15.2" ]]; then
-  echo "error: Ghostty PoC is pinned to Zig 0.15.2, found $("$zig_binary" version)" >&2
+  echo "error: Aster is pinned to Zig 0.15.2, found $("$zig_binary" version)" >&2
   exit 1
 fi
-
 if ! xcrun metal --version >/dev/null 2>&1; then
   echo "error: Xcode Metal Toolchain is required; install it with: xcodebuild -downloadComponent MetalToolchain" >&2
   exit 1
@@ -61,9 +55,8 @@ echo "Building GhosttyKit.xcframework"
     -Demit-macos-app=false
 )
 
-# 先完整生成在临时目录，再替换明确的 PoC 路径。构建失败不会破坏上一次可用工件。
 staging_dir="$build_dir/aster-stage"
-mkdir -p "$staging_dir/Resources/ghostty"
+mkdir -p "$staging_dir/Resources/ghostty" "$repo_root/Vendor/Ghostty"
 cp -R "$build_dir/macos/GhosttyKit.xcframework" "$staging_dir/GhosttyKit.xcframework"
 cp -R "$build_dir/zig-out/share/ghostty/shell-integration" "$staging_dir/Resources/ghostty/"
 cp -R "$build_dir/zig-out/share/ghostty/themes" "$staging_dir/Resources/ghostty/"
@@ -83,9 +76,10 @@ if [[ ! -d "$staging_dir/Resources/ghostty/shell-integration" ]] ||
 fi
 
 rm -rf "$framework_dir" "$resource_dir/ghostty" "$resource_dir/terminfo"
+mkdir -p "$resource_dir"
 cp -R "$staging_dir/GhosttyKit.xcframework" "$framework_dir"
 cp -R "$staging_dir/Resources/ghostty" "$resource_dir/ghostty"
 cp -R "$staging_dir/Resources/terminfo" "$resource_dir/terminfo"
 printf '%s\n' "$ghostty_revision" > "$stamp_file"
 
-echo "Ghostty PoC artifacts ready"
+echo "Ghostty artifacts ready"

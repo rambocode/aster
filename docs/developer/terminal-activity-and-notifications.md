@@ -4,6 +4,10 @@
 
 Aster 需要把程序上报、Shell Integration 和用户显式 CLI 指令归并成一致的 Pane 任务状态，同时阻止不可信终端输出绕过通知、标题和声音权限。运行态只存在于 `TerminalSession`，不会把 PID、命令输出或未完成通知分片写入工作区快照。
 
+当前产品 Ghostty surface 直接提供 progress、command-finished、BEL 和 desktop-notification
+action；旧 SwiftTerm 的任意 OSC observer、OSC 99 分片和 OSC 6974 lifecycle 路径仅保留为
+回归基线，不能在 Ghostty Pane 上宣称可用。
+
 ## 领域概念与规则
 
 - `TerminalProgressState`：解析 `OSC 9;4` 的清除、百分比、错误、不定进度及 `aster watch` 完成状态；暂停状态按 Otty 语义忽略。
@@ -15,11 +19,9 @@ Aster 需要把程序上报、Shell Integration 和用户显式 CLI 指令归并
 
 ```mermaid
 flowchart LR
-  A["PTY bytes"] --> B["OSC stream limiter"]
-  B --> C["SwiftTerm parser"]
-  C --> D["non-consuming observers"]
-  D --> E["progress and badge state"]
-  D --> F["bounded notification parsers"]
+  A["Ghostty PTY and parser"] --> B["runtime actions"]
+  B --> E["progress and badge state"]
+  B --> F["notification policy"]
   G["OSC 133 command lifecycle"] --> E
   H["user input command"] --> I["auto progress prefix matcher"]
   I --> E

@@ -223,6 +223,27 @@ func workspaceUsesOnlyNativeAppKitViews() throws {
   #expect(controller.view.descendants.contains { $0 is NSSplitView } == true)
 }
 
+@Test("产品终端宿主使用 Ghostty 视图且配置可初始化")
+@MainActor
+func terminalHostUsesGhosttySurface() throws {
+  _ = NSApplication.shared
+  let preferences = AppPreferences(defaults: isolatedDefaults())
+  let session = TerminalSession(workingDirectory: "/tmp")
+  defer { session.stop(immediately: true) }
+
+  let host = session.makeTerminalHost(preferences: preferences)
+  let views = [host] + host.descendants
+  _ = try #require(views.compactMap { $0 as? GhosttySurfaceView }.first)
+
+  #expect(
+    GhosttyApp.shared.prepare(
+      configurationText: GhosttyConfiguration.make(preferences: preferences)))
+  #expect(GhosttyApp.shared.isReady)
+  #expect(GhosttyApp.shared.startupError == nil)
+  #expect(GhosttyApp.shared.configurationDiagnostics.isEmpty)
+  #expect(!views.contains { $0 is AsterTerminalView })
+}
+
 @Test("设置页由单一 WebKit 宿主构成并保留九个分类")
 @MainActor
 func settingsUsesSingleWebKitHost() throws {

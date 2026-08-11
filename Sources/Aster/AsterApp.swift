@@ -1026,11 +1026,11 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       withTitle: "转义特殊字符后粘贴",
       action: #selector(AsterTerminalView.pasteEscapingSpecialCharacters(_:)), keyEquivalent: "")
     pasteAsMenu.addItem(
-      withTitle: "括号粘贴", action: #selector(AsterTerminalView.pasteBracketed(_:)),
+      withTitle: "括号粘贴", action: #selector(GhosttySurfaceView.pasteBracketed(_:)),
       keyEquivalent: "")
     pasteAsMenu.addItem(
       withTitle: "粘贴并在 Composer 中继续",
-      action: #selector(AsterTerminalView.pasteAndContinueInComposer(_:)), keyEquivalent: "")
+      action: #selector(GhosttySurfaceView.pasteAndContinueInComposer(_:)), keyEquivalent: "")
     pasteAsItem.submenu = pasteAsMenu
     submenu.addItem(pasteAsItem)
     submenu.addItem(.separator())
@@ -1334,29 +1334,29 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     let submenu = NSMenu(title: "终端滚动")
     submenu.addItem(
       responderMenuItem(
-        "向上翻页", #selector(AsterTerminalView.scrollTerminalPageUp(_:)),
+        "向上翻页", #selector(GhosttySurfaceView.scrollTerminalPageUp(_:)),
         Self.functionKey(NSPageUpFunctionKey), modifiers: [.shift]))
     submenu.addItem(
       responderMenuItem(
-        "向下翻页", #selector(AsterTerminalView.scrollTerminalPageDown(_:)),
+        "向下翻页", #selector(GhosttySurfaceView.scrollTerminalPageDown(_:)),
         Self.functionKey(NSPageDownFunctionKey), modifiers: [.shift]))
     submenu.addItem(.separator())
     submenu.addItem(
       responderMenuItem(
-        "滚动到顶部", #selector(AsterTerminalView.scrollTerminalToTop(_:)),
+        "滚动到顶部", #selector(GhosttySurfaceView.scrollTerminalToTop(_:)),
         Self.functionKey(NSHomeFunctionKey), modifiers: [.shift]))
     submenu.addItem(
       responderMenuItem(
-        "滚动到底部", #selector(AsterTerminalView.scrollTerminalToBottom(_:)),
+        "滚动到底部", #selector(GhosttySurfaceView.scrollTerminalToBottom(_:)),
         Self.functionKey(NSEndFunctionKey), modifiers: [.shift]))
     submenu.addItem(.separator())
     submenu.addItem(
       responderMenuItem(
-        "上一条命令", #selector(AsterTerminalView.scrollToPreviousCommand(_:)),
+        "上一条命令", #selector(GhosttySurfaceView.scrollToPreviousCommand(_:)),
         Self.functionKey(NSPageUpFunctionKey), modifiers: [.command]))
     submenu.addItem(
       responderMenuItem(
-        "下一条命令", #selector(AsterTerminalView.scrollToNextCommand(_:)),
+        "下一条命令", #selector(GhosttySurfaceView.scrollToNextCommand(_:)),
         Self.functionKey(NSPageDownFunctionKey), modifiers: [.command]))
     item.submenu = submenu
     return item

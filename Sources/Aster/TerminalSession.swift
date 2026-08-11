@@ -2137,11 +2137,12 @@ extension SwiftTerm.CursorStyle {
   }
 }
 
-/// 一个由 SwiftTerm 完整 VT/xterm 网格承载的本地登录 Shell。
+/// 一个由 libghostty 完整 PTY/VT/Metal 内核承载的本地登录 Shell。
 ///
-/// Session 强持有 `LocalProcessTerminalView`，因此在标签切换或 AppKit 重排视图时，
+/// Session 强持有 `GhosttySurfaceView`，因此在标签切换或 AppKit 重排视图时，
 /// PTY、滚动历史和全屏 TUI 状态不会丢失。AppKit 视图只通过这里暴露的窄接口被
-/// 工作区操作，避免其它页面直接依赖 SwiftTerm 的进程实现。
+/// 工作区操作。迁移期保留的 `makeTerminalView` 只供 SwiftTerm Adapter 独立回归测试，
+/// 产品视图树一律从 `makeTerminalHost` 创建 Ghostty surface。
 @MainActor
 final class TerminalSession: NSObject, ObservableObject, Identifiable {
   let id = UUID()
@@ -2223,6 +2224,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private let diagnostics: DiagnosticsCenter
 
   private var terminalView: AsterTerminalView?
+  /// 产品主引擎。与上面的 SwiftTerm 回归实例互斥；生产入口不会创建旧实例。
+  private var ghosttyView: GhosttySurfaceView?
+  /// 首次 surface 创建后的前台进程组即登录 Shell；后续不同值表示前台命令。
+  private var ghosttyShellProcessIdentifier: Int32?
   private var targetOpenCoordinator: TerminalTargetOpenCoordinator?
   private var autocompleteController: TerminalAutocompleteController?
   /// OSC 0/1/2 的独立通道回调。Tab 领域状态负责固定名称、前缀与持久化。
@@ -2235,10 +2240,16 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   var onRequestOpenInAster: ((URL, Bool) -> Bool)?
   var onCommandFinished: (() -> Void)?
   var onPasteIntoComposer: ((String) -> Void)? {
-    didSet { terminalView?.onPasteIntoComposer = onPasteIntoComposer }
+    didSet {
+      terminalView?.onPasteIntoComposer = onPasteIntoComposer
+      ghosttyView?.onPasteIntoComposer = onPasteIntoComposer
+    }
   }
   var onSendSelectionToChat: (() -> Void)? {
-    didSet { terminalView?.onSendSelectionToChat = onSendSelectionToChat }
+    didSet {
+      terminalView?.onSendSelectionToChat = onSendSelectionToChat
+      ghosttyView?.onSendSelectionToChat = onSendSelectionToChat
+    }
   }
   private var pendingViSearchDirection: TerminalViSearchDirection?
   private var lastFindTerm = ""
@@ -2255,7 +2266,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// SwiftTerm 的进程对象是运行状态的权威来源。`isRunning` 负责触发 AppKit 刷新，
   /// 但分屏恢复期间回调与视图挂载顺序可能让缓存短暂过期，状态栏必须读取真实值。
   var statusIsRunning: Bool {
-    terminalView?.process.running ?? isRunning
+    ghosttyView?.isProcessRunning ?? terminalView?.process.running ?? isRunning
   }
 
   var canRestart: Bool {
@@ -2267,6 +2278,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   /// 当前 Pane 的 Shell PID。仅用于只读进程/端口检查，不保存到工作区快照。
   var processIdentifier: Int32? {
+    if ghosttyView != nil {
+      // 前台 PID 会在子命令运行时变化；Info/端口检查需要稳定的登录 Shell 根节点。
+      return ghosttyShellProcessIdentifier ?? ghosttyView?.foregroundProcessIdentifier
+    }
     guard let process = terminalView?.process, process.running, process.shellPid > 0 else {
       return nil
     }
@@ -2569,6 +2584,219 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     return view
   }
 
+  /// 产品入口使用的 Ghostty surface。创建、环境、权限与生命周期 wiring 全部集中在
+  /// Session seam 内，工作区不会接触 libghostty C interface。
+  private func makeGhosttyTerminalView(preferences: AppPreferences) -> GhosttySurfaceView {
+    self.preferences = preferences
+    if let ghosttyView {
+      ghosttyView.updateConfiguration(GhosttyConfiguration.make(preferences: preferences))
+      return ghosttyView
+    }
+
+    prepareForProcessLaunch()
+    processGeneration += 1
+    let inheritedEnvironment = ProcessInfo.processInfo.environment
+    var shell = preferences.compatibilityString(
+      forKey: "general.shell",
+      default: inheritedEnvironment["SHELL"] ?? "/bin/zsh"
+    )
+    if !FileManager.default.isExecutableFile(atPath: shell) {
+      appendStartupWarning("配置的 Shell 不可执行，已回退到 /bin/zsh。")
+      shell = "/bin/zsh"
+    }
+    let resourcesDirectory = AsterResourceLocations.resourcesDirectory()?.path
+    let launchEnvironment = TerminalLaunchEnvironmentBuilder.make(
+      inherited: inheritedEnvironment,
+      configuredTerm: preferences.terminalIdentity,
+      shellPath: shell,
+      // Ghostty 自己注入与其 parser 匹配的 OSC 133 integration；重复注入 Aster
+      // SwiftTerm 脚本会重复发 marker，并且无法通过 libghostty 的 raw-byte seam 观察。
+      shellIntegrationEnabled: false,
+      paneIdentifier: id.uuidString,
+      version: AsterResourceLocations.productVersion(),
+      resourcesDirectory: resourcesDirectory,
+      terminfoEntryExists: SystemTerminfoChecker.entryExists
+    )
+    if let warning = launchEnvironment.resolution.warning { appendStartupWarning(warning) }
+    var environment = launchEnvironment.environment
+    environment["SHELL"] = shell
+
+    var launchDirectory = currentWorkingDirectoryIsLocal ? currentWorkingDirectory : workingDirectory
+    var isDirectory: ObjCBool = false
+    if !FileManager.default.fileExists(atPath: launchDirectory, isDirectory: &isDirectory)
+      || !isDirectory.boolValue
+    {
+      launchDirectory = FileManager.default.homeDirectoryForCurrentUser.path
+      appendStartupWarning("原工作目录不可用，已回退到主目录。")
+    }
+    currentWorkingDirectory = launchDirectory
+    currentWorkingDirectoryIsLocal = true
+
+    let view = GhosttySurfaceView(
+      workingDirectory: launchDirectory,
+      environment: environment,
+      configurationText: GhosttyConfiguration.make(preferences: preferences)
+    )
+    // 先登记再创建 surface；极短命命令的退出 callback 可能在 createSurface 返回前到达。
+    ghosttyView = view
+    processStartedAt = Date()
+    automaticSecureInputEnabled = preferences.configuration.controls.secureInputAutomatically
+
+    let targetOpenCoordinator = TerminalTargetOpenCoordinator(
+      preferences: preferences,
+      openInAster: { [weak self] url, isDirectory in
+        self?.onRequestOpenInAster?(url, isDirectory) ?? false
+      }
+    )
+    self.targetOpenCoordinator = targetOpenCoordinator
+    let clipboardCoordinator = OSC52ClipboardCoordinator(
+      access: { [weak preferences] operation in
+        guard let controls = preferences?.configuration.controls else { return .deny }
+        switch operation {
+        case .read: return controls.resolvedClipboardReadAccess
+        case .write: return controls.resolvedClipboardWriteAccess
+        }
+      }
+    )
+
+    view.onTitleChange = { [weak self] title in
+      guard let self,
+        self.preferences?.configuration.shell.resolvedTitleShellControlled == true
+      else { return }
+      self.handleTitleOSC(code: 2, text: title)
+    }
+    view.onWorkingDirectoryChange = { [weak self] reported in
+      guard let self else { return }
+      let normalized = Self.normalizeReportedWorkingDirectory(reported)
+      guard !normalized.isEmpty else {
+        self.currentWorkingDirectoryIsLocal = false
+        return
+      }
+      self.currentWorkingDirectoryIsLocal = true
+      if self.currentWorkingDirectory != normalized { self.currentWorkingDirectory = normalized }
+    }
+    view.onProcessExit = { [weak self, weak view] code in
+      guard let self, let view, view === self.ghosttyView else { return }
+      self.handleGhosttyProcessExit(code: code)
+    }
+    view.onCommandFinished = { [weak self] status in
+      guard let self else { return }
+      self.shellIntegrationDetected = true
+      self.hasRunningCommand = false
+      self.lastCommandExitStatus = status
+      self.handleShellIntegrationEvent(.commandFinished(exitStatus: status))
+      self.outlineChanged.send()
+    }
+    view.onProgress = { [weak self] progress in
+      guard let self else { return }
+      switch progress {
+      case .clear: self.handleTerminalProgress(.clear)
+      case .indeterminate: self.handleTerminalProgress(.indeterminate)
+      case .determinate(let percent):
+        self.handleTerminalProgress(.determinate(percent: min(max(percent, 0), 100)))
+      case .error(let percent):
+        self.handleTerminalProgress(.error(percent: percent.map { min(max($0, 0), 100) }))
+      case .paused:
+        break
+      }
+    }
+    view.onOpenURL = { [weak self] rawValue in
+      guard let self else { return }
+      self.targetOpenCoordinator?.open(
+        rawValue,
+        source: .osc8,
+        currentDirectory: self.currentWorkingDirectoryIsLocal
+          ? self.currentWorkingDirectory : ""
+      )
+    }
+    view.onSecureInputChange = { [weak self, weak view] requested in
+      guard let self else { return }
+      let focused = view?.window?.isKeyWindow == true && view?.window?.firstResponder === view
+      SecureInputCoordinator.shared.setAutomaticRequest(
+        for: self.id,
+        active: self.automaticSecureInputEnabled && requested && focused
+      )
+    }
+    view.onBell = { [weak preferences] in
+      if preferences?.configuration.shell.terminalBell == true { NSSound.beep() }
+    }
+    view.onNotification = { [weak self] title, body in
+      self?.post(
+        TerminalNotification(title: title.isEmpty ? "Aster" : title, body: body),
+        category: .application
+      )
+    }
+    view.onReadOnlyChange = { [weak self] enabled in self?.readOnly = enabled }
+    view.onUserInput = { [weak self] in self?.handleTerminalUserInput() }
+    view.onRequestFocus = { [weak self] in self?.onRequestPaneFocus?() }
+    view.focusFollowsMouse = preferences.configuration.controls.focusFollowsMouse
+    view.pasteProtectionEnabled = preferences.configuration.controls.pasteProtection
+    view.pasteBracketedSafe = preferences.configuration.controls.resolvedPasteBracketedSafe
+    view.onPasteIntoComposer = onPasteIntoComposer
+    view.onSendSelectionToChat = onSendSelectionToChat
+    view.onAuthorizeClipboard = { operation in
+      switch operation {
+      case .read: clipboardCoordinator.allows(.read)
+      case .write: clipboardCoordinator.allows(.write)
+      }
+    }
+    view.onSurfaceCreated = { [weak self, weak view] created in
+      guard let self, let view, view === self.ghosttyView else { return }
+      if created {
+        self.isRunning = view.isProcessRunning
+        self.lifecycleState = self.isRunning ? .running : .startFailed
+        self.ghosttyShellProcessIdentifier = view.foregroundProcessIdentifier
+        if self.isRunning {
+          self.diagnostics.record(
+            "terminal.process_started",
+            level: .info,
+            category: .terminal,
+            attributes: self.processDiagnosticAttributes(
+              launch: self.processGeneration == 1 ? "initial" : "restart")
+          )
+          self.startForegroundPolling()
+        }
+      } else {
+        self.isRunning = false
+        self.lifecycleState = .startFailed
+        self.startupError = GhosttyApp.shared.startupError ?? "无法创建 Ghostty terminal surface。"
+        self.diagnostics.record(
+          "terminal.process_start_failed",
+          level: .error,
+          category: .terminal,
+          attributes: self.processDiagnosticAttributes(
+            launch: self.processGeneration == 1 ? "initial" : "restart")
+        )
+      }
+    }
+    view.setReadOnly(readOnly)
+    view.createSurface()
+    return view
+  }
+
+  private func handleGhosttyProcessExit(code: Int32?) {
+    let termination = TerminalProcessTermination(rawWaitStatus: code.map { $0 << 8 })
+    lifecycleState = .ended(termination)
+    exitCode = code ?? termination.shellExitCode
+    isRunning = false
+    hasRunningCommand = false
+    awaitingInput = false
+    activeAgentProvider = nil
+    activeAgentSessionID = nil
+    agentTaskState = .idle
+    foregroundPollTask?.cancel()
+    foregroundPollTask = nil
+    awaitingInputTask?.cancel()
+    awaitingInputTask = nil
+    SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
+    diagnostics.record(
+      "terminal.process_terminated",
+      level: termination.isUnexpected ? .error : .notice,
+      category: .terminal,
+      attributes: terminationDiagnosticAttributes(termination, rawWaitStatus: code.map { $0 << 8 })
+    )
+  }
+
   /// 周期比较 PTY 前台进程组与 shell 自身 pgid：不一致即有命令在前台运行。
   /// 再叠加终端缓冲活跃度（光标/滚动位置变化 = 有输出）：前台命令长时间无输出
   /// （如等待交互输入的 TUI）时停止 spinner。轮询本身不发布任何事件，
@@ -2579,6 +2807,26 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(1))
         guard let self else { return }
+        if let ghosttyView = self.ghosttyView {
+          guard ghosttyView.isProcessRunning else {
+            if self.hasRunningCommand { self.hasRunningCommand = false }
+            SecureInputCoordinator.shared.releaseAutomaticRequest(for: self.id)
+            return
+          }
+          let foreground = ghosttyView.foregroundProcessIdentifier
+          if self.ghosttyShellProcessIdentifier == nil {
+            self.ghosttyShellProcessIdentifier = foreground
+          }
+          let running = foreground != nil && foreground != self.ghosttyShellProcessIdentifier
+          if running, !self.hasRunningCommand {
+            self.handleShellIntegrationEvent(.commandStart)
+          }
+          if self.hasRunningCommand != running {
+            self.hasRunningCommand = running
+            self.updateAgentTaskState()
+          }
+          continue
+        }
         guard let process = self.terminalView?.process, process.running, process.childfd >= 0 else {
           // shell 已退出：清状态并结束轮询，避免空转任务泄漏。
           if self.hasRunningCommand { self.hasRunningCommand = false }
@@ -2620,7 +2868,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 返回长期存活的 AppKit 容器。容器和终端的父子关系在 Session 生命周期内保持不变，
   /// 标签切换、主题刷新或递归分屏只会重新安放最外层容器。
   func makeTerminalHost(preferences: AppPreferences) -> NSView {
-    let terminal = makeTerminalView(preferences: preferences)
+    let terminal = makeGhosttyTerminalView(preferences: preferences)
     if let terminalHostView {
       terminalHostView.layer?.backgroundColor = preferences.terminalCanvasBackgroundColor.cgColor
       if terminal.superview !== terminalHostView {
@@ -2644,9 +2892,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     return host
   }
 
-  /// 丢弃已结束的 SwiftTerm View，使用同一 Session、Pane ID 和最近可靠本地目录创建
-  /// 全新 PTY。旧 LocalProcess 不原地复用，避免 DispatchIO、进程 monitor 或迟到回调
-  /// 穿过代次边界，把刚恢复的终端再次错误标成已结束。
+  /// 丢弃已结束的 Ghostty surface，使用同一 Session、Pane ID 和最近可靠本地目录创建
+  /// 全新 PTY。旧 surface 不原地复用，避免迟到 callback 穿过进程代次。
   @discardableResult
   func restart() -> Bool {
     guard canRestart, !statusIsRunning else { return false }
@@ -2668,15 +2915,22 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       attributes: processDiagnosticAttributes(extra: ["previous_reason": previousReason])
     )
 
-    let previousView = terminalView
-    previousView?.processDelegate = nil
-    previousView?.removeFromSuperview()
-    if let previousView { TerminalRetirementCoordinator.shared.complete(previousView) }
-    terminalView = nil
+    if let previousGhostty = ghosttyView {
+      previousGhostty.removeFromSuperview()
+      previousGhostty.destroySurface()
+      ghosttyView = nil
+      ghosttyShellProcessIdentifier = nil
+    }
+    if let previousView = terminalView {
+      previousView.processDelegate = nil
+      previousView.removeFromSuperview()
+      TerminalRetirementCoordinator.shared.complete(previousView)
+      terminalView = nil
+    }
     targetOpenCoordinator = nil
     autocompleteController = nil
 
-    let replacement = makeTerminalView(preferences: preferences)
+    let replacement = makeGhosttyTerminalView(preferences: preferences)
     if let terminalHostView {
       attachTerminal(replacement, to: terminalHostView)
     }
@@ -2696,12 +2950,27 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   func apply(preferences: AppPreferences) {
-    guard let terminalView else { return }
-    apply(preferences: preferences, to: terminalView)
+    self.preferences = preferences
+    if let ghosttyView {
+      let controls = preferences.configuration.controls
+      ghosttyView.focusFollowsMouse = controls.focusFollowsMouse
+      ghosttyView.pasteProtectionEnabled = controls.pasteProtection
+      ghosttyView.pasteBracketedSafe = controls.resolvedPasteBracketedSafe
+      ghosttyView.updateConfiguration(GhosttyConfiguration.make(preferences: preferences))
+      automaticSecureInputEnabled = controls.secureInputAutomatically
+    }
+    if let terminalView { apply(preferences: preferences, to: terminalView) }
   }
 
   /// 将命令直接写入活动 PTY，供 Recipe、命令面板和自动化入口使用。
   func send(_ command: String) {
+    if let ghosttyView {
+      submittedCommand = command
+      submittedCommandOrigin = pendingCommandOrigin ?? .shellIntegration
+      pendingCommandOrigin = nil
+      _ = ghosttyView.typeText(command + "\n")
+      return
+    }
     guard let terminalView, terminalView.process.running else { return }
     let bytes = Array((command + "\n").utf8)
     // Recipe 和命令面板也是用户输入入口；必须经过视图才能应用清选区、回到底部、
@@ -2711,7 +2980,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   @discardableResult
   func sendRecipeCommand(_ command: String) -> Bool {
-    guard terminalView?.process.running == true else { return false }
+    guard statusIsRunning else { return false }
     pendingCommandOrigin = .recipeReplay
     send(command)
     return true
@@ -2719,6 +2988,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   /// 把文本原样写入 PTY（不带回车）：用于把命令预填到提示符，执行与否由用户确认。
   func typeText(_ text: String) {
+    if let ghosttyView {
+      _ = ghosttyView.typeText(text)
+      return
+    }
     guard let terminalView, terminalView.process.running else { return }
     let bytes = Array(text.utf8)
     terminalView.send(data: bytes[...])
@@ -2728,6 +3001,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// Read-only、Vi/Hint 本地模式、选择清理与输入活跃度规则不会被自动化绕过。
   @discardableResult
   func sendAutomationBytes(_ bytes: [UInt8]) -> Bool {
+    if let ghosttyView {
+      guard !bytes.isEmpty, bytes.count <= WorkflowCLIInputDecoder.maximumBytes else { return false }
+      return ghosttyView.sendBytes(bytes)
+    }
     guard let terminalView, terminalView.process.running, !bytes.isEmpty,
       bytes.count <= WorkflowCLIInputDecoder.maximumBytes
     else { return false }
@@ -2736,32 +3013,36 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   var selectedTextForAgentContext: String? {
-    terminalView?.getSelection()
+    ghosttyView?.readSelection() ?? terminalView?.getSelection()
   }
 
   /// 外部拖入的文本与普通粘贴共享风险分析、确认、bracketed paste 和只读门禁。
   @discardableResult
   func pasteDroppedText(_ text: String) -> Bool {
-    terminalView?.pasteText(text) ?? false
+    ghosttyView?.pasteText(text) ?? terminalView?.pasteText(text) ?? false
   }
 
   /// 把提示词以 bracketed paste 写入终端输入行但不回车，供 Open Quickly「当前」页
   /// 复用历史 prompt；粘贴保护与只读门禁仍由终端视图统一执行。
   @discardableResult
   func pastePromptText(_ text: String) -> Bool {
-    terminalView?.pasteText(text, forceBracketed: true) ?? false
+    ghosttyView?.pasteText(text) ?? terminalView?.pasteText(text, forceBracketed: true) ?? false
   }
 
   /// 以普通键入方式预填 Agent 输入框，不带 Return。该入口只供 Prompt Queue 与
   /// “发送到聊天”使用，避免影响 Open Quickly 的既有安全粘贴。
   @discardableResult
   func typePromptText(_ text: String) -> Bool {
-    terminalView?.typePromptText(text) ?? false
+    ghosttyView?.pasteText(text) ?? terminalView?.typePromptText(text) ?? false
   }
 
   /// 当前阻止 Prompt 写入前台程序的原因，可写入时为 nil。失败提示必须能落到具体
   /// 动作上：只说“写入失败”，用户无从判断该解锁 Pane、退出 Vi 还是等终端就绪。
   var promptWriteBlocker: String? {
+    if let ghosttyView {
+      guard ghosttyView.isProcessRunning else { return "终端进程已退出" }
+      return ghosttyView.readOnly ? "Pane 处于只读模式" : nil
+    }
     guard let terminalView else { return "终端视图尚未就绪" }
     guard terminalView.process.running else { return "终端进程已退出" }
     if terminalView.isReadOnly { return "Pane 处于只读模式" }
@@ -2773,6 +3054,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// TUI 能把多行当作一个 prompt；粘贴保护和 Read-only 仍由终端视图统一执行。
   @discardableResult
   func submitComposerText(_ text: String) -> Bool {
+    if let ghosttyView {
+      guard ghosttyView.pasteText(text) else { return false }
+      return ghosttyView.typeText("\n")
+    }
     guard let terminalView, terminalView.process.running,
       terminalView.pasteText(text, forceBracketed: true)
     else { return false }
@@ -2785,10 +3070,18 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// Codex/Claude TUI 未协商该模式时会忽略强制序列，导致看似发送成功但输入框无变化。
   @discardableResult
   func submitPromptQueueText(_ text: String) -> Bool {
-    terminalView?.submitPromptQueueText(text) ?? false
+    if let ghosttyView {
+      guard ghosttyView.pasteText(text) else { return false }
+      return ghosttyView.typeText("\n")
+    }
+    return terminalView?.submitPromptQueueText(text) ?? false
   }
 
   func interrupt() {
+    if let ghosttyView {
+      ghosttyView.sendInterrupt()
+      return
+    }
     guard let terminalView, terminalView.process.running else { return }
     let controlC = [UInt8(3)]
     terminalView.send(data: controlC[...])
@@ -2800,6 +3093,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalView === view
   }
 
+  func owns(_ view: GhosttySurfaceView) -> Bool {
+    ghosttyView === view
+  }
+
   /// 最近一次 `focus()` 失败的原因，供工作区层诊断记录；成功时为 nil。
   private(set) var focusFailureReason: String?
 
@@ -2807,6 +3104,18 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// `focusFailureReason`（视图未创建 / 未上屏 / 系统拒绝交接）。
   @discardableResult
   func focus() -> Bool {
+    if let ghosttyView {
+      guard let window = ghosttyView.window else {
+        focusFailureReason = "view_detached"
+        return false
+      }
+      guard window.makeFirstResponder(ghosttyView) else {
+        focusFailureReason = "responder_refused"
+        return false
+      }
+      focusFailureReason = nil
+      return true
+    }
     guard let terminalView else {
       focusFailureReason = "no_view"
       return false
@@ -2832,7 +3141,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     caseSensitive: Bool = false,
     regularExpression: Bool = false
   ) -> Bool {
-    guard let terminalView, !term.isEmpty else { return false }
+    guard !term.isEmpty else { return false }
     let resolvedPrevious: Bool
     if previous {
       resolvedPrevious = true
@@ -2843,10 +3152,20 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     } else {
       resolvedPrevious = false
     }
-    let options = SearchOptions(caseSensitive: caseSensitive, regex: regularExpression)
-    let found = resolvedPrevious
-      ? terminalView.findPrevious(term, options: options)
-      : terminalView.findNext(term, options: options)
+    let found: Bool
+    if let ghosttyView {
+      // pinned libghostty 的公开 search action 不暴露 regex/case flag；不能把设置项
+      // 显示为已生效。普通文本搜索完整支持，非等价模式明确返回失败。
+      guard !caseSensitive, !regularExpression else { return false }
+      found = ghosttyView.find(term, previous: resolvedPrevious)
+    } else if let terminalView {
+      let options = SearchOptions(caseSensitive: caseSensitive, regex: regularExpression)
+      found = resolvedPrevious
+        ? terminalView.findPrevious(term, options: options)
+        : terminalView.findNext(term, options: options)
+    } else {
+      return false
+    }
     if found {
       lastFindTerm = term
       lastFindWasPrevious = resolvedPrevious
@@ -2861,7 +3180,14 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     caseSensitive: Bool = false,
     regularExpression: Bool = false
   ) -> (index: Int, total: Int) {
-    guard let terminalView, !term.isEmpty else { return (0, 0) }
+    guard !term.isEmpty else { return (0, 0) }
+    if let ghosttyView {
+      guard !caseSensitive, !regularExpression, ghosttyView.searchNeedle == term else {
+        return (0, 0)
+      }
+      return (ghosttyView.searchSelected, ghosttyView.searchTotal)
+    }
+    guard let terminalView else { return (0, 0) }
     return terminalView.searchMatchSummary(
       term,
       options: SearchOptions(caseSensitive: caseSensitive, regex: regularExpression)
@@ -2869,13 +3195,17 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   func clearFind() {
+    ghosttyView?.clearSearch()
     terminalView?.clearSearch()
     lastFindTerm = ""
     pendingViSearchDirection = nil
   }
 
   func textSnapshot() -> TerminalTextSnapshot {
-    terminalView?.boundedTextSnapshot() ?? .init(firstAbsoluteRow: 0, lines: [])
+    if let text = ghosttyView?.readText(includeScrollback: true, maximumLines: 10_000) {
+      return .init(firstAbsoluteRow: 0, lines: text.components(separatedBy: "\n"))
+    }
+    return terminalView?.boundedTextSnapshot() ?? .init(firstAbsoluteRow: 0, lines: [])
   }
 
   func commandOutlineEntries() -> [TerminalCommandOutlineEntry] {
@@ -2884,26 +3214,41 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   @discardableResult
   func revealAbsoluteRow(_ row: Int) -> Bool {
-    terminalView?.revealAbsoluteRow(row) ?? false
+    if ghosttyView != nil { return false }
+    return terminalView?.revealAbsoluteRow(row) ?? false
   }
 
   private func repeatLastFind(reverse: Bool) {
-    guard let terminalView, !lastFindTerm.isEmpty else { return }
+    guard !lastFindTerm.isEmpty else { return }
     let previous = reverse ? !lastFindWasPrevious : lastFindWasPrevious
-    _ = previous
-      ? terminalView.findPrevious(lastFindTerm)
-      : terminalView.findNext(lastFindTerm)
+    if let ghosttyView {
+      _ = ghosttyView.find(lastFindTerm, previous: previous)
+    } else if let terminalView {
+      _ = previous
+        ? terminalView.findPrevious(lastFindTerm)
+        : terminalView.findNext(lastFindTerm)
+    }
   }
 
   func setReadOnly(_ value: Bool) {
     readOnly = value
+    ghosttyView?.setReadOnly(value)
     terminalView?.setReadOnly(value)
   }
 
   func toggleReadOnly() { setReadOnly(!readOnly) }
-  func enterViMode() { terminalView?.enterViMode(nil) }
-  func enterMarkMode() { terminalView?.enterMarkMode(nil) }
-  func openHintMode() { terminalView?.openHintMode(nil) }
+  func enterViMode() {
+    guard ghosttyView == nil else { return }
+    terminalView?.enterViMode(nil)
+  }
+  func enterMarkMode() {
+    guard ghosttyView == nil else { return }
+    terminalView?.enterMarkMode(nil)
+  }
+  func openHintMode() {
+    guard ghosttyView == nil else { return }
+    terminalView?.openHintMode(nil)
+  }
 
   /// 立即读取由 OSC 7 报告的工作目录。没有集成标记时保留最近一次可靠值。
   func resolvedCurrentWorkingDirectory() -> String {
@@ -2957,6 +3302,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   /// 同步窗口活动状态：非活动窗口停止光标闪烁。
   func setWindowActive(_ active: Bool) {
+    ghosttyView?.setWindowActive(active)
     terminalView?.setWindowActive(active)
     if active {
       refreshAutomaticSecureInput()
@@ -2968,6 +3314,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 同步分屏领域焦点。SwiftTerm 的 responder 失焦样式固定为空心方块，Aster 改由
   /// activePaneID 控制同形状光标的闪烁状态，Pane 切换不会覆盖用户外观设置。
   func setPaneActive(_ active: Bool) {
+    ghosttyView?.setPaneActive(active)
     terminalView?.setPaneActive(active)
   }
 
@@ -2975,6 +3322,30 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 立即结束进程组，因为主事件循环不会继续存活到延迟升级任务执行。
   func stop(immediately: Bool = false) {
     lifecycleState = .stopping
+    if let ghostty = ghosttyView {
+      diagnostics.record(
+        "terminal.process_stop_requested",
+        level: .debug,
+        category: .terminal,
+        attributes: processDiagnosticAttributes(extra: [
+          "mode": immediately ? "immediate" : "graceful"
+        ])
+      )
+      ghosttyView = nil
+      ghosttyShellProcessIdentifier = nil
+      terminalHostView = nil
+      targetOpenCoordinator = nil
+      autocompleteController = nil
+      isRunning = false
+      foregroundPollTask?.cancel()
+      foregroundPollTask = nil
+      awaitingInputTask?.cancel()
+      completedFlashTask?.cancel()
+      progressExpiryTask?.cancel()
+      SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
+      ghostty.destroySurface()
+      return
+    }
     guard let view = terminalView else {
       isRunning = false
       return
@@ -3038,6 +3409,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     lastFindWasPrevious = false
     lastScreenHash = 0
     lastActivityAt = .distantPast
+    ghosttyShellProcessIdentifier = nil
     processStartedAt = nil
     foregroundPollTask?.cancel()
     foregroundPollTask = nil
@@ -3189,6 +3561,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   private func refreshAutomaticSecureInput() {
+    // Ghostty 会以 SECURE_INPUT action 明确上报应用模式；没有公开 PTY fd 可读取
+    // termios，因此不能套用 SwiftTerm 的 tcgetattr fallback。
+    if ghosttyView != nil { return }
     guard let process = terminalView?.process, process.running, process.childfd >= 0 else {
       SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
       return
@@ -3357,8 +3732,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     category: TerminalNotificationCategory
   ) {
     guard let shell = preferences?.configuration.shell else { return }
-    let focused = terminalView?.window?.isKeyWindow == true
-      && terminalView?.window?.firstResponder === terminalView
+    let focused = if let ghosttyView {
+      ghosttyView.window?.isKeyWindow == true
+        && ghosttyView.window?.firstResponder === ghosttyView
+    } else {
+      terminalView?.window?.isKeyWindow == true
+        && terminalView?.window?.firstResponder === terminalView
+    }
     let scopedNotification = TerminalNotification(
       identifier: notification.identifier.map { "\(id.uuidString).\($0)" },
       title: notification.title,

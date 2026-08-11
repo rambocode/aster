@@ -1,5 +1,9 @@
 # libghostty 单 Pane PoC
 
+> 状态：已完成。PoC 的 surface、快速退出和 64 MiB 持续输出验收通过后，产品主终端已
+> 提升为 Ghostty；当前架构与能力边界以 [Ghostty 终端引擎](ghostty-terminal-engine.md)
+> 为准。本文保留为独立验证程序和历史决策记录。
+
 ## 目的
 
 这个 vertical slice 回答一个边界明确的问题：不改 Aster 现有 `TerminalSession` 和

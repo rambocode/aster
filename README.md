@@ -22,14 +22,19 @@ Aster 是一个完全使用 AppKit 构建的原生 macOS 终端工作区，采�
 ## 构建
 
 ```bash
+brew install zig@0.15
+xcodebuild -downloadComponent MetalToolchain
+./scripts/setup-ghostty.sh
 swift test
 ./scripts/build-app.sh
 ./scripts/build-dmg.sh
 open dist/Aster.app
 ```
 
-需要 macOS 14 或更高版本及 Xcode Command Line Tools。SwiftTerm 以固定上游 revision
-随仓库提供，构建不需要另行下载该依赖；来源与本地补丁见 `Vendor/SwiftTerm/UPSTREAM.md`。
+需要 macOS 14 或更高版本、Swift 6.2、Zig 0.15.2 与 Xcode Metal Toolchain。
+`setup-ghostty.sh` 从固定 revision 生成本机 `GhosttyKit.xcframework` 和运行时资源；
+`build-app.sh` 会自动调用它。来源、ABI 风险与更新流程见 `Vendor/Ghostty/README.md`。
+SwiftTerm 仍以本地 target 保留，仅用于迁移期旧适配器回归测试，不进入产品终端视图树。
 默认构建使用本机 ad-hoc 签名，适合本机安装；正式分发时通过
 `ASTER_SIGN_IDENTITY="Developer ID Application: ..."` 提供 Developer ID，并在产物外部完成
 notarization/stapling。
@@ -51,6 +56,7 @@ notarization/stapling。
 ## 文档
 
 - [工作区领域与实现](docs/developer/terminal-domain.md)
+- [Ghostty 终端引擎](docs/developer/ghostty-terminal-engine.md)
 - [AppKit 界面架构](docs/developer/appkit-interface.md)
 - [文件、链接与 File Pane 领域](docs/developer/files-and-links-domain.md)
 - [外观主题领域与实现](docs/developer/theme-system.md)

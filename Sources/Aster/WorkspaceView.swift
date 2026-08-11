@@ -710,8 +710,8 @@ final class WorkspaceViewController: NSViewController {
   /// AppKit 允许被替换的旧子树存活到当前布局事务结束；递归扫描是为了更新这些真正
   /// 还在窗口里的终端，不把主题正确性依赖在模型与视图恰好处于同一个过渡瞬间。
   private func applyThemeToVisibleTerminals(in root: NSView) {
-    if let terminal = root as? AsterTerminalView {
-      terminal.applyThemePalette(preferences)
+    if let terminal = root as? GhosttySurfaceView {
+      terminal.updateConfiguration(GhosttyConfiguration.make(preferences: preferences))
       return
     }
     for subview in root.subviews {
@@ -744,7 +744,7 @@ final class WorkspaceViewController: NSViewController {
   private func refresh() {
     // 终端视图由 Session 长期持有，但从视图树移除时 AppKit 仍可能清掉 first
     // responder。记录正在输入的实例，重排完成后同步恢复，避免异步回焦前丢一个按键。
-    let previouslyFocusedTerminal = view.window?.firstResponder as? AsterTerminalView
+    let previouslyFocusedTerminal = view.window?.firstResponder as? GhosttySurfaceView
     if !model.isOpenQuicklyPresented { openQuicklyController?.invalidateTargets() }
     observeTabs()
     // `refresh()` 会替换整个布局；详情控制器本身仍按当前 Tab 缓存，重建后的 Panel
