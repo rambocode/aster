@@ -56,13 +56,25 @@ enum AsterApplication {
   }
 }
 
-/// 唯一设置窗口的固定外壳。尺寸与红绿灯能力集中在这里，避免入口或分类根据内容量
-/// 各自调整窗口；`700×460pt` 是兼容性约束，较长内容只能由设置页内部滚动承载。
+/// 唯一设置窗口的外壳。尺寸与红绿灯能力集中在这里，避免入口或分类根据内容量各自
+/// 调整窗口：宽度固定 `700pt`（九类导航与卡片排版按该宽度设计），高度可拉伸并跨启动
+/// 记忆，超出可视高度的内容仍由设置页内部滚动承载。
 @MainActor
 final class AsterSettingsWindowController: NSWindowController {
-  init(content: SettingsViewController, appearance: NSAppearance?) {
+  private let defaults: UserDefaults
+
+  init(
+    content: SettingsViewController,
+    appearance: NSAppearance?,
+    defaults: UserDefaults = .standard
+  ) {
+    self.defaults = defaults
+    let restoredHeight = Self.restoredContentHeight(from: defaults)
     let window = NSWindow(
-      contentRect: NSRect(origin: .zero, size: SettingsViewController.defaultContentSize),
+      contentRect: NSRect(
+        origin: .zero,
+        size: NSSize(width: SettingsViewController.defaultContentSize.width, height: restoredHeight)
+      ),
       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
@@ -71,11 +83,23 @@ final class AsterSettingsWindowController: NSWindowController {
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     window.contentViewController = content
-    let fixedFrameSize = window.frame.size
-    window.minSize = fixedFrameSize
-    window.maxSize = fixedFrameSize
+    // min/max 是 frame 尺寸（含标题栏），必须由内容尺寸换算，直接拿内容高度会把可用
+    // 高度少算一条标题栏，最小化拖拽时窗口会比设计下限更矮。
+    let minimumFrame = window.frameRect(
+      forContentRect: NSRect(
+        origin: .zero,
+        size: NSSize(
+          width: SettingsWindowGeometry.width, height: SettingsWindowGeometry.minimumHeight)
+      )
+    )
+    window.minSize = minimumFrame.size
+    // 宽度上下界相同即锁死横向；高度放开，纵向 zoom 与拖拽都只改高度。
+    window.maxSize = NSSize(width: minimumFrame.width, height: .greatestFiniteMagnitude)
+    // 必须在挂上 contentViewController 之后再套用记忆高度：赋值会把窗口收缩回控制器
+    // 视图自己的默认尺寸，写在前面的 contentRect 会被直接抹掉。
+    window.setContentSize(
+      NSSize(width: SettingsViewController.defaultContentSize.width, height: restoredHeight))
     window.standardWindowButton(.miniaturizeButton)?.isEnabled = false
-    window.standardWindowButton(.zoomButton)?.isEnabled = false
     window.isReleasedWhenClosed = false
     window.appearance = appearance
     window.center()
@@ -83,6 +107,28 @@ final class AsterSettingsWindowController: NSWindowController {
   }
 
   required init?(coder: NSCoder) { nil }
+
+  /// 记录当前内容高度。由窗口 delegate 在拖拽结束与关闭时调用——`windowDidResize`
+  /// 在实时拖拽中每帧触发，逐帧写 UserDefaults 只会给主线程添无谓负担。
+  func persistContentHeight() {
+    guard let window else { return }
+    let contentHeight = window.contentRect(forFrameRect: window.frame).height
+    defaults.set(Double(contentHeight), forKey: SettingsWindowGeometry.heightDefaultsKey)
+  }
+
+  /// 读取上次记住的内容高度，并按当前主屏可视高度钳制后返回。
+  private static func restoredContentHeight(from defaults: UserDefaults) -> CGFloat {
+    let stored = defaults.object(forKey: SettingsWindowGeometry.heightDefaultsKey) as? Double
+    // 拿不到屏幕信息（无头会话、屏幕正在切换）时不做上界钳制：宁可保留用户记住的高度，
+    // 也不要凭一个猜测值把窗口缩回最小尺寸。
+    let available = NSScreen.main.map { Double($0.visibleFrame.height) } ?? .greatestFiniteMagnitude
+    return CGFloat(
+      SettingsWindowGeometry.clampHeight(
+        stored ?? SettingsWindowGeometry.defaultHeight,
+        availableHeight: available
+      )
+    )
+  }
 }
 
 @MainActor
@@ -340,8 +386,14 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
   /// 仅在用户结束拖动后保存窗口尺寸，避免 live resize 期间反复刷新整个 AppKit 工作区。
   func windowDidEndLiveResize(_ notification: Notification) {
-    guard let window = notification.object as? NSWindow,
-          window === mainWindowController?.window else { return }
+    guard let window = notification.object as? NSWindow else { return }
+    // 设置窗口只记高度（宽度被 min/max 锁死），且不进 AsterConfiguration——它属于窗口
+    // 状态而非用户配置，导出配置时不应带走。
+    if window === settingsWindowController?.window {
+      settingsWindowController?.persistContentHeight()
+      return
+    }
+    guard window === mainWindowController?.window else { return }
     preferences.configuration.appearance.windowWidth = window.contentLayoutRect.width
     preferences.configuration.appearance.windowHeight = window.contentLayoutRect.height
   }
@@ -359,6 +411,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   func windowWillClose(_ notification: Notification) {
     guard let window = notification.object as? NSWindow else { return }
     if window === settingsWindowController?.window {
+      // 缩放按钮（纵向 zoom）不触发 live resize 回调，关闭时补记一次高度。
+      settingsWindowController?.persistContentHeight()
       setWorkspaceSettingsPresentationActive(false)
       return
     }

@@ -167,7 +167,7 @@ func settingsUsesOnlyNativeAppKitControls() throws {
   #expect(controller.view.descendants.contains { $0 is NSScrollView } == true)
 }
 
-@Test("设置使用固定独立窗口且不改动主工作区")
+@Test("设置使用独立窗口（宽度固定、高度可拉伸）且不改动主工作区")
 @MainActor
 func settingsUsesFixedIndependentWindow() throws {
   let defaults = isolatedDefaults()
@@ -183,17 +183,21 @@ func settingsUsesFixedIndependentWindow() throws {
   let settings = SettingsViewController(preferences: preferences)
   let settingsWindowController = AsterSettingsWindowController(
     content: settings,
-    appearance: preferences.preferredAppearance
+    appearance: preferences.preferredAppearance,
+    defaults: defaults
   )
   let settingsWindow = try #require(settingsWindowController.window)
 
   #expect(settingsWindow !== workspaceWindow)
   #expect(settingsWindow.contentViewController === settings)
   #expect(settingsWindow.contentView?.frame.size == SettingsViewController.defaultContentSize)
-  #expect(settingsWindow.minSize == settingsWindow.frame.size)
-  #expect(settingsWindow.maxSize == settingsWindow.frame.size)
+  // 宽度上下界相同 = 横向锁死；高度只有下界，纵向自由拉伸。
+  #expect(settingsWindow.minSize.width == settingsWindow.frame.width)
+  #expect(settingsWindow.maxSize.width == settingsWindow.frame.width)
+  #expect(settingsWindow.minSize.height == settingsWindow.frame.height)
+  #expect(settingsWindow.maxSize.height > settingsWindow.frame.height * 2)
+  #expect(settingsWindow.styleMask.contains(.resizable))
   #expect(settingsWindow.standardWindowButton(.miniaturizeButton)?.isEnabled == false)
-  #expect(settingsWindow.standardWindowButton(.zoomButton)?.isEnabled == false)
   #expect(workspaceWindow.frame == workspaceFrame)
   #expect(workspace.view.subviews.contains { $0 === workspaceRoot })
   #expect(!workspaceRoot.isHidden)

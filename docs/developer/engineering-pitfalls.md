@@ -31,6 +31,33 @@ OSC 标题(每秒多次)、命令开始/结束(`hasRunningCommand`)、Agent prov
 
 新输出只在视口已位于底部时跟随;用户上滚期间不得拉回。退出 Vi/Mark 显式回底(tmux copy-mode 语义)。回归:`TerminalOutputStormTests`、`TerminalScrollTests`。
 
+### 6. 系统 UI 字体对私用区(PUA)码位跳过自定义 cascade
+
+2026-08-11「光标偏离文本约一格 / 提示符箭头消失」一案:内置 `AsterNerdSymbols` 通过 `kCTFontCascadeListAttribute` 挂在基础等宽字体后面,但当基字体解析为**隐藏系统字体**(`.AppleSystemUIFontMonospaced`,即用户未装 JetBrains Mono 时的默认落点)时,macOS 对 PUA 码位(U+E000-U+F8FF 等)**跳过自定义 cascade 直落 LastResort**——Powerline 分隔符、Nerd 图标渲染成空白,却仍占据一格,后续文本整体右移,视觉上表现为「光标错位」。非 PUA 字符(如 ❯ U+276F)的 cascade 正常,极具迷惑性;Menlo 等公开字体做基字体时 PUA cascade 也正常,因此测试环境常常不红。
+
+- 字体构建层无解(`CTFontDescriptor` / `CTFontCreateCopyWithAttributes` 变体均被跳过),必须在**逐字符选字体**的 seam 修:`buildAttributedString` 对 PUA 字符手动沿 cascade 列表解析并显式指定字体(vendored 补丁,见 `UPSTREAM.md`),CG 与 Metal 两条渲染路径经同一分段构建器同时受益。
+- 症状与根因相距极远:用户报「光标没对齐」,根因是字形缺失。渲染类错位先问「是不是有看不见的字符占位」,再查光标数学。
+- 回归:`PrivateUseGlyphFallbackTests`(系统等宽字体 + Nerd cascade 下 E0B0 不得整形到 LastResort)。
+
+### 7. 用户操作的控件不能被自己的副作用重建
+
+设置页曾经每次配置变化都全量重建视图树:点一次开关要重造侧栏九个按钮、搜索框、字体枚举(上千个 `NSFont`)与 24 张主题卡,点击反馈被同一轮主线程布局工作压住,表现为「点哪儿都要顿一下」。规则:**正在被操作的控件必须活过它自己触发的更新**。
+
+- 视图树分层:常驻骨架(导航、搜索、容器)只建一次,只有真正换页时才替换内容区。
+- 本页发起的配置广播要能被识别并跳过刷新(`isApplyingLocalControlAction`),且**每一条**订阅都要遵守——漏掉一条(如 Panel 宽度绑定)就等于没做,滑杆照样在拖动中被销毁。
+- 就地能表达的状态就地更新:选中态翻转、滑杆/步进器的数值标签,都不值得一次重建。
+- 会改变同页其它行可见性/选中态的控件(下拉、主题卡、布局卡)才请求一次合并刷新。
+- 昂贵且几乎不变的系统查询(字体枚举)按进程缓存,用系统通知作废,而不是每次刷新重算。
+- 回归:`SettingsResponsivenessTests`。
+
+### 8. 动态 `NSColor` 的 `.cgColor` 按 `NSAppearance.current` 解析，不看视图自己的外观
+
+`layer.backgroundColor = SomeDynamicColor.cgColor` 会在赋值那一刻用**当前线程**的 `NSAppearance.current` 求值。设置 `view.appearance = darkAqua` 并不改变它——深色模式下照样拿到浅色值,而且颜色一旦落进 layer 就不再跟随外观变化。凡是往 layer 写动态色的地方都要 `effectiveAppearance.performAsCurrentDrawingAppearance { ... }`(或改在 `updateLayer()` 里写,AppKit 会先把 effectiveAppearance 设为 current),并在外观变化时重算。每次重建的视图容易掩盖这个问题;视图一旦常驻,浅色底就会留在深色页面上。回归:`SettingsResponsivenessTests`「明暗切换后常驻侧栏底色跟随外观」。
+
+### 9. `contentViewController` 赋值会抹掉先写好的窗口尺寸
+
+`NSWindow(contentRect:)` 里给的尺寸在 `window.contentViewController = vc` 之后会被收缩回控制器视图自己的默认尺寸。恢复记忆尺寸必须写在赋值**之后**(`setContentSize`),否则测试里表现为「值存对了、读对了,窗口却还是默认高度」。
+
 ## 诊断方法论(harness 绿、真机红时)
 
 1. 每个可复现症状先写「红回路」测试(断言打在用户的确切症状上),修复后转绿留作回归。
@@ -46,4 +73,4 @@ OSC 标题(每秒多次)、命令开始/结束(`hasRunningCommand`)、Agent prov
 
 ## 测试与验收
 
-`TerminalLaunchEnvironmentTests`(runloop 泵探针)、`TerminalOutputStormTests`(重建风暴与滚动语义)、`RestoredWorkspaceInputProbeTests`(恢复输入 + 点击自愈 + 退出恢复)、`InteractiveSplitGeometryProbeTests`(分屏几何与褪色)、`SplitPaneTests`(焦点褪色局部翻转)。已知:全量 `--no-parallel` 会在 AppKitMigrationTests 中途静默 exit(0)(仅执行约 259/561),验证需并行全量 + 对 PTY 敏感套件定向串行补跑,并核对总结行。
+`TerminalLaunchEnvironmentTests`(runloop 泵探针)、`TerminalOutputStormTests`(重建风暴与滚动语义)、`RestoredWorkspaceInputProbeTests`(恢复输入 + 点击自愈 + 退出恢复)、`InteractiveSplitGeometryProbeTests`(分屏几何与褪色)、`NestedSplitGeometryProbeTests`(嵌套分屏收敛定位)、`SplitPaneFocusProbeTests`(拆分后键盘焦点跟随)、`SplitPaneTests`(焦点褪色局部翻转)、`PrivateUseGlyphFallbackTests`(PUA 字形 cascade 解析)、`CursorAlignmentProbeTests`(光标网格对齐)、`MetalCaretInvariantProbeTests`(Metal 激活时 AppKit caret 隐藏)。已知:全量 `--no-parallel` 会在 AppKitMigrationTests 中途静默 exit(0)(仅执行约 259/561),验证需并行全量 + 对 PTY 敏感套件定向串行补跑,并核对总结行。

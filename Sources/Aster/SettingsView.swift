@@ -7,10 +7,13 @@ import UniformTypeIdentifiers
 /// 当前终端会话通过其 Combine 订阅即时获得字体、配色、Meta 键和鼠标设置变化。
 @MainActor
 final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
-  /// 与上次提交中的独立设置窗口保持一致。`700×460pt` 是设置页的固定兼容性约束，
-  /// 禁止根据分类、内容量或布局调整该尺寸；新增内容必须使用现有滚动区域承载。
-  /// 独立设置窗口始终遵守该约束，不得联动修改主工作区窗口 frame。
-  static let defaultContentSize = NSSize(width: 700, height: 460)
+  /// 设置页的宽度契约与初始高度：宽度锁死 `700pt`，禁止根据分类、内容量或布局调整；
+  /// 高度由用户拉伸并跨启动记忆（真值见 `SettingsWindowGeometry`），超出部分仍由各
+  /// 分类的滚动区域承载。独立设置窗口不得联动修改主工作区窗口 frame。
+  static let defaultContentSize = NSSize(
+    width: CGFloat(SettingsWindowGeometry.width),
+    height: CGFloat(SettingsWindowGeometry.defaultHeight)
+  )
 
   enum Section: String, CaseIterable {
     case general = "通用"
@@ -55,7 +58,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   /// 被丢弃——表现就是「调完颜色关掉，值没设置上」。
   private var isPickingThemeColor = false
   private var needsRefreshAfterColorPick = false
-  private var fontScope: FontScope = .computed
+  /// 测试需要驱动 scope 切换,保持 internal;界面仍只经分段控件修改。
+  var fontScope: FontScope = .computed
   private var message: String?
   private var cancellables: Set<AnyCancellable> = []
   private var refreshScheduled = false
@@ -69,8 +73,17 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private weak var contentScrollView: NSScrollView?
   private var scrollOffsets: [Section: CGPoint] = [:]
   private var renderedSection: Section?
+  /// 常驻骨架：侧栏（含搜索框与九个导航按钮）与内容宿主只创建一次，刷新只换内容区。
+  /// 曾经每次刷新都重建整棵树——切分类要重造九个按钮与搜索框，开一个开关要重造字体
+  /// 菜单和 24 张主题卡，点击反馈因此被主线程布局工作卡住。
+  private weak var contentContainer: NSView?
+  private weak var sidebarHost: NSView?
+  private weak var sidebarColumn: NSStackView?
+  private var sidebarButtons: [(section: Section, button: SettingsSidebarButton)] = []
+  /// 当前侧栏按钮对应的分类列表；只有搜索过滤结果变化时才真的重建按钮。
+  private var renderedSidebarSections: [Section] = []
 
-  private enum FontScope: Int, CaseIterable {
+  enum FontScope: Int, CaseIterable {
     case computed
     case global
     case theme
@@ -100,7 +113,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   required init?(coder: NSCoder) { nil }
 
   override func loadView() {
-    // 设置页保持既有 700×460pt 窗口尺寸；内容超出高度时由各分类的滚动视图承载。
+    // 初始尺寸取默认值；窗口高度可由用户拉伸，内容超出高度时由各分类的滚动视图承载。
     view = NSView(frame: NSRect(origin: .zero, size: Self.defaultContentSize))
   }
 
@@ -113,7 +126,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       }
       .store(in: &cancellables)
     panelLayoutBinding.objectWillChange
-      .sink { [weak self] _ in self?.scheduleRefresh() }
+      .sink { [weak self] _ in
+        // 与 preferences 同样的豁免：Panel 宽度滑杆是本页控件，拖动时重建内容区会把
+        // 正在被拖的滑杆销毁重建，手感直接断掉。
+        guard let self, !self.isApplyingLocalControlAction else { return }
+        self.scheduleRefresh()
+      }
       .store(in: &cancellables)
     NotificationCenter.default.publisher(for: .terminalNotificationAuthorizationDidChange)
       .sink { [weak self] _ in self?.scheduleRefresh() }
@@ -161,16 +179,47 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     action()
   }
 
-  /// 全量重建整个设置页视图树；重建前后按分类保存/恢复滚动位置，避免开关一次就跳回顶部。
+  /// 只重建内容区并就地更新侧栏选中态；重建前后按分类保存/恢复滚动位置，避免开关
+  /// 一次就跳回顶部。骨架常驻是响应速度的关键：侧栏按钮、搜索框以及它们的焦点状态
+  /// 都不会因为一次刷新被销毁。
   private func refresh() {
+    installSkeletonIfNeeded()
     // 记录的是「当前树实际渲染的分类」而不是 selection：侧栏切换时 selection 已指向
     // 新分类，用它做 key 会把旧页的偏移写错桶。
     if let scroll = contentScrollView, let rendered = renderedSection {
       scrollOffsets[rendered] = scroll.contentView.bounds.origin
     }
-    retainedObjects.removeAll()
-    view.removeAllSubviews()
     view.appearance = preferences.preferredAppearance
+    // 画布与侧栏底色是 layer 上的 `CGColor`：动态 `NSColor` 只在赋值那一刻解析，且
+    // 解析依据是 `NSAppearance.current` 而**不是**视图自己的 appearance——直接取
+    // `.cgColor` 会在深色模式下拿到浅色值。骨架常驻后必须在每次刷新（明暗切换也走到
+    // 这里）以本视图的实际外观重新取值。
+    view.effectiveAppearance.performAsCurrentDrawingAppearance { [weak self] in
+      guard let self else { return }
+      self.view.layer?.backgroundColor = SettingsTheme.canvas.cgColor
+      self.sidebarHost?.layer?.backgroundColor = SettingsTheme.sidebar.cgColor
+    }
+    updateSidebar()
+    guard let container = contentContainer else { return }
+    retainedObjects.removeAll()
+    container.removeAllSubviews()
+    let scroll = makeContentScroll()
+    container.addSubview(scroll)
+    scroll.pinEdges(to: container)
+    renderedSection = selection
+
+    // 必须先布局再恢复偏移：此时文档高度还是 0，直接 scroll(to:) 会被钳回顶部。
+    if let scroll = contentScrollView {
+      view.layoutSubtreeIfNeeded()
+      let offset = scrollOffsets[selection] ?? .zero
+      scroll.contentView.scroll(to: offset)
+      scroll.reflectScrolledClipView(scroll.contentView)
+    }
+  }
+
+  /// 建立「侧栏 + 内容宿主」骨架，只执行一次。
+  private func installSkeletonIfNeeded() {
+    guard contentContainer == nil else { return }
     view.wantsLayer = true
     view.layer?.backgroundColor = SettingsTheme.canvas.cgColor
 
@@ -183,18 +232,15 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     sidebar.translatesAutoresizingMaskIntoConstraints = false
     sidebar.widthAnchor.constraint(equalToConstant: 200).isActive = true
     root.addArrangedSubview(sidebar)
-    root.addArrangedSubview(makeContentScroll())
+    // 内容宿主承担窗口横向剩余宽度；固有尺寸优先级必须压低，否则根 Stack 会按内容
+    // 的最小宽度布局，在右侧留下空白（与内部滚动视图同样的约束理由）。
+    let container = NSView()
+    container.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    container.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    root.addArrangedSubview(container)
     view.addSubview(root)
     root.pinEdges(to: view)
-    renderedSection = selection
-
-    // 必须先布局再恢复偏移：此时文档高度还是 0，直接 scroll(to:) 会被钳回顶部。
-    if let scroll = contentScrollView {
-      view.layoutSubtreeIfNeeded()
-      let offset = scrollOffsets[selection] ?? .zero
-      scroll.contentView.scroll(to: offset)
-      scroll.reflectScrolledClipView(scroll.contentView)
-    }
+    contentContainer = container
   }
 
   // MARK: - Shell
@@ -203,6 +249,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let host = NSView()
     host.wantsLayer = true
     host.layer?.backgroundColor = SettingsTheme.sidebar.cgColor
+    sidebarHost = host
     let column = NSStackView()
     column.orientation = .vertical
     // 默认 alignment 会按按钮固有宽度居中；侧栏导航必须整行拉伸，才能维持
@@ -225,18 +272,6 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     search.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -24).isActive = true
     column.setCustomSpacing(14, after: search)
 
-    for section in filteredSections {
-      let button = SettingsSidebarButton(
-        section: section,
-        selected: section == selection,
-        action: { [weak self] in
-          self?.selection = section
-          self?.refresh()
-        }
-      )
-      column.addArrangedSubview(button)
-      button.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
-    }
     let spacer = NSView()
     column.addArrangedSubview(spacer)
     let version = makeLabel("Aster 0.4.1", size: 9, color: SettingsTheme.tertiaryInk, monospaced: true)
@@ -245,7 +280,53 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
     host.addSubview(column)
     column.pinEdges(to: host)
+    sidebarColumn = column
+    rebuildSidebarButtons()
     return host
+  }
+
+  /// 侧栏点击：只切内容区，选中态由按钮自己就地翻转。
+  private func selectSection(_ section: Section) {
+    guard section != selection else { return }
+    selection = section
+    refresh()
+  }
+
+  /// 刷新侧栏。过滤结果没变时只翻转选中态——重建九个按钮意味着重造九个 SF Symbol
+  /// 图像视图和标签，纯属浪费，还会让点击瞬间的高亮闪一下。
+  private func updateSidebar() {
+    guard renderedSidebarSections != filteredSections else {
+      for entry in sidebarButtons {
+        entry.button.setSelected(entry.section == selection)
+        // 高亮底色是 layer 上的 CGColor，明暗切换时按钮实例并不会重建；这里显式重算，
+        // 不依赖 `viewDidChangeEffectiveAppearance` 的回调时机。
+        entry.button.refreshAppearance()
+      }
+      return
+    }
+    rebuildSidebarButtons()
+  }
+
+  /// 按当前搜索过滤结果重建导航按钮，插在搜索框与底部占位之间。
+  private func rebuildSidebarButtons() {
+    guard let column = sidebarColumn else { return }
+    for entry in sidebarButtons {
+      column.removeArrangedSubview(entry.button)
+      entry.button.removeFromSuperview()
+    }
+    sidebarButtons.removeAll()
+    // 索引 0 是搜索框；按钮依次插在它后面，占位视图与版本号仍留在末尾。
+    for (offset, section) in filteredSections.enumerated() {
+      let button = SettingsSidebarButton(
+        section: section,
+        selected: section == selection,
+        action: { [weak self] in self?.selectSection(section) }
+      )
+      column.insertArrangedSubview(button, at: offset + 1)
+      button.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+      sidebarButtons.append((section, button))
+    }
+    renderedSidebarSections = filteredSections
   }
 
   private var filteredSections: [Section] {
@@ -255,15 +336,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     }
   }
 
+  /// 搜索只过滤侧栏导航，内容区保持不动。搜索框现在是常驻实例，逐字输入既不会重建
+  /// 内容区，也不再需要事后把 first responder 抢回来（那次抢回来会打断输入法候选）。
   func controlTextDidChange(_ obj: Notification) {
-    guard let field = obj.object as? NSSearchField else { return }
+    guard let field = obj.object as? NSSearchField, field === sidebarSearchField else { return }
     searchText = field.stringValue
-    refresh()
-    DispatchQueue.main.async { [weak self] in
-      guard let search = self?.sidebarSearchField else { return }
-      search.window?.makeFirstResponder(search)
-      search.currentEditor()?.selectedRange = NSRange(location: search.stringValue.utf16.count, length: 0)
-    }
+    updateSidebar()
   }
 
   private func makeContentScroll() -> NSView {
@@ -1501,6 +1579,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   /// 字体页按 Otty 的“计算值 / 全局 / 主题 / 回退”四个来源展示。计算值只读；其它
   /// scope 修改后都进入正式配置或自定义主题，不把临时文本框状态误当成渲染真值。
+  /// 字体一律经选择器从已安装列表挑选（含「取消设置」），不再手输字体名。
   private func makeFontSettings() -> NSView {
     let scope = ClosureSegmentedControl(
       labels: FontScope.allCases.map(\.label),
@@ -1522,61 +1601,115 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     switch fontScope {
     case .computed:
       let fonts = preferences.terminalFontVariants
-      let automatic = preferences.configuration.appearance.fontFamilyBold == nil
-        && preferences.configuration.appearance.fontFamilyItalic == nil
-        && preferences.configuration.appearance.fontFamilyBoldItalic == nil
       rows = [
-        infoRow("字体", "由全局 → 主题 → 回退解析得到", fonts.normal.fontName),
-        infoRow("字体（粗体）", "当前实际字形", fonts.bold.fontName),
-        infoRow("字体（斜体）", "当前实际字形", fonts.italic.fontName),
-        infoRow("字体（粗斜体）", "当前实际字形", fonts.boldItalic.fontName),
-        toggleRow(
-          "自动匹配粗细与样式",
-          "关闭后把当前匹配结果固定到全局设置",
-          value: automatic,
-          refreshAfterAction: true
-        ) {
-          [weak self] enabled in
-          guard let self else { return }
-          if enabled {
-            self.preferences.configuration.appearance.fontFamilyBold = nil
-            self.preferences.configuration.appearance.fontFamilyItalic = nil
-            self.preferences.configuration.appearance.fontFamilyBoldItalic = nil
-          } else {
-            let resolved = self.preferences.terminalFontVariants
-            self.preferences.configuration.appearance.fontFamilyBold = resolved.bold.fontName
-            self.preferences.configuration.appearance.fontFamilyItalic = resolved.italic.fontName
-            self.preferences.configuration.appearance.fontFamilyBoldItalic = resolved.boldItalic.fontName
-          }
-        },
+        cardCaptionRow("由 全局 → 主题 → 回退 解析得到"),
+        globalAutomaticStyleToggleRow(),
+        infoRow("字体", "", Self.friendlyFontName(fonts.normal)),
+        infoRow("字体（粗体）", "", Self.friendlyFontName(fonts.bold)),
+        infoRow("字体（斜体）", "", Self.friendlyFontName(fonts.italic)),
+        infoRow("字体（粗斜体）", "", Self.friendlyFontName(fonts.boldItalic)),
       ]
     case .global:
       let appearance = preferences.configuration.appearance
-      rows = [
-        textRow("字体", "留空则读取当前主题", value: appearance.fontFamily) { [weak self] value in
-          self?.preferences.configuration.appearance.fontFamily = value
-        },
-        textRow("字体（粗体）", "留空自动匹配", value: appearance.fontFamilyBold ?? "") { [weak self] value in
-          self?.preferences.configuration.appearance.fontFamilyBold = value.nilIfBlank
-        },
-        textRow("字体（斜体）", "留空自动匹配", value: appearance.fontFamilyItalic ?? "") { [weak self] value in
-          self?.preferences.configuration.appearance.fontFamilyItalic = value.nilIfBlank
-        },
-        textRow("字体（粗斜体）", "留空自动匹配", value: appearance.fontFamilyBoldItalic ?? "") { [weak self] value in
-          self?.preferences.configuration.appearance.fontFamilyBoldItalic = value.nilIfBlank
+      let automatic = appearance.fontFamilyBold == nil
+        && appearance.fontFamilyItalic == nil
+        && appearance.fontFamilyBoldItalic == nil
+      var globalRows: [NSView] = [
+        cardCaptionRow("覆盖主题，全局优先"),
+        globalAutomaticStyleToggleRow(),
+        fontPickerRow(
+          "字体", "取消设置则读取当前主题",
+          entries: Self.installedFontFamilies(),
+          selection: appearance.fontFamily.nilIfBlank
+        ) { [weak self] value in
+          self?.preferences.configuration.appearance.fontFamily = value ?? ""
         },
       ]
+      // 与 Otty 一致:自动匹配开启时不展示逐样式选择器,关闭后展开供显式指定。
+      if !automatic {
+        let styles = Self.installedFontStyles()
+        globalRows += [
+          fontPickerRow(
+            "字体（粗体）", "", entries: styles, selection: appearance.fontFamilyBold
+          ) { [weak self] value in
+            self?.preferences.configuration.appearance.fontFamilyBold = value
+          },
+          fontPickerRow(
+            "字体（斜体）", "", entries: styles, selection: appearance.fontFamilyItalic
+          ) { [weak self] value in
+            self?.preferences.configuration.appearance.fontFamilyItalic = value
+          },
+          fontPickerRow(
+            "字体（粗斜体）", "", entries: styles, selection: appearance.fontFamilyBoldItalic
+          ) { [weak self] value in
+            self?.preferences.configuration.appearance.fontFamilyBoldItalic = value
+          },
+        ]
+      }
+      rows = globalRows
     case .theme:
-      rows = [
+      let style = focusedTheme.style
+      let themeAutomatic = style.fontFamilyBold == nil
+        && style.fontFamilyItalic == nil
+        && style.fontFamilyBoldItalic == nil
+      var themeRows: [NSView] = [
+        cardCaptionRow("写入当前主题；修改内置主题时会自动创建可编辑副本"),
+        toggleRow(
+          "自动匹配粗细与样式",
+          "关闭后可为该主题单独指定粗体与斜体字形",
+          value: themeAutomatic,
+          refreshAfterAction: true
+        ) { [weak self] enabled in
+          guard let self, enabled != themeAutomatic else { return }
+          self.updateFocusedThemeStyle("已更新主题的字体样式") { theme in
+            theme.style.fontFamilyBold = nil
+            theme.style.fontFamilyItalic = nil
+            theme.style.fontFamilyBoldItalic = nil
+          }
+        },
+        fontPickerRow(
+          "字体", "写入主题字体栈首位，其余候选保留",
+          entries: Self.installedFontFamilies(),
+          selection: style.fontFamilies?.first
+        ) { [weak self] value in
+          self?.updateFocusedThemeStyle("已更新主题字体") { theme in
+            let tail = Array((theme.style.fontFamilies ?? []).dropFirst())
+            let updated = (value.map { [$0] } ?? []) + tail
+            theme.style.fontFamilies = updated.isEmpty ? nil : updated
+          }
+        },
+      ]
+      if !themeAutomatic {
+        let styles = Self.installedFontStyles()
+        themeRows += [
+          fontPickerRow("字体（粗体）", "", entries: styles, selection: style.fontFamilyBold) {
+            [weak self] value in
+            self?.updateFocusedThemeStyle("已更新主题粗体字体") { $0.style.fontFamilyBold = value }
+          },
+          fontPickerRow("字体（斜体）", "", entries: styles, selection: style.fontFamilyItalic) {
+            [weak self] value in
+            self?.updateFocusedThemeStyle("已更新主题斜体字体") { $0.style.fontFamilyItalic = value }
+          },
+          fontPickerRow(
+            "字体（粗斜体）", "", entries: styles, selection: style.fontFamilyBoldItalic
+          ) { [weak self] value in
+            self?.updateFocusedThemeStyle("已更新主题粗斜体字体") {
+              $0.style.fontFamilyBoldItalic = value
+            }
+          },
+        ]
+      }
+      themeRows += [
         textRow(
-          "主题字体",
-          "逗号分隔候选；修改内置主题时会自动创建可编辑副本",
-          value: focusedTheme.style.fontFamilies?.joined(separator: ", ") ?? ""
+          "字体候选栈",
+          "逗号分隔；首项未安装时依序尝试后续候选",
+          value: style.fontFamilies?.joined(separator: ", ") ?? ""
         ) { [weak self] value in
           self?.updateFocusedThemeFontFamilies(value)
         },
         infoRow("当前主题", "字体设置保存到该主题", focusedTheme.name),
       ]
+      rows = themeRows
     case .fallback:
       rows = [
         textRow(
@@ -1593,10 +1726,11 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       ]
     }
 
+    // 对齐 Otty:动作按钮位于卡片下方左侧。
     let actions = NSStackView(views: [
-      NSView(),
       contentActionButton(title: "安装字体") { NSFontManager.shared.orderFrontFontPanel(nil) },
       contentActionButton(title: "打开字体文件夹") { [weak self] in self?.openFontsFolder() },
+      NSView(),
     ])
     actions.orientation = .horizontal
     actions.spacing = 10
@@ -1608,16 +1742,146 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     return column
   }
 
-  private func updateFocusedThemeFontFamilies(_ value: String) {
-    let families = value.split(separator: ",").map {
-      $0.trimmingCharacters(in: .whitespacesAndNewlines)
-    }.filter { !$0.isEmpty }
+  /// 计算值 / 全局共用的「自动匹配粗细与样式」开关:状态取全局逐样式覆盖是否为空。
+  /// 关闭时把当前解析结果固化到全局,但**绝不写入隐藏系统字体名**(以 "." 开头的
+  /// 名字不是稳定 API,历史版本曾把它泄漏进配置导致字体设置不可用)。
+  private func globalAutomaticStyleToggleRow() -> NSView {
+    let appearance = preferences.configuration.appearance
+    let automatic = appearance.fontFamilyBold == nil
+      && appearance.fontFamilyItalic == nil
+      && appearance.fontFamilyBoldItalic == nil
+    return toggleRow(
+      "自动匹配粗细与样式",
+      "关闭后把当前匹配结果固定到全局设置",
+      value: automatic,
+      refreshAfterAction: true
+    ) { [weak self] enabled in
+      guard let self else { return }
+      if enabled {
+        self.preferences.configuration.appearance.fontFamilyBold = nil
+        self.preferences.configuration.appearance.fontFamilyItalic = nil
+        self.preferences.configuration.appearance.fontFamilyBoldItalic = nil
+      } else {
+        let resolved = self.preferences.terminalFontVariants
+        self.preferences.configuration.appearance.fontFamilyBold =
+          Self.publicFontName(resolved.bold)
+        self.preferences.configuration.appearance.fontFamilyItalic =
+          Self.publicFontName(resolved.italic)
+        self.preferences.configuration.appearance.fontFamilyBoldItalic =
+          Self.publicFontName(resolved.boldItalic)
+      }
+    }
+  }
+
+  /// 卡片首行的来源说明(对齐 Otty 每个 scope 的标题行)。
+  private func cardCaptionRow(_ text: String) -> NSView {
+    let host = NSView()
+    host.translatesAutoresizingMaskIntoConstraints = false
+    let label = makeLabel(
+      text, size: SettingsMetrics.rowDetailSize, color: SettingsTheme.secondaryInk)
+    label.translatesAutoresizingMaskIntoConstraints = false
+    host.addSubview(label)
+    NSLayoutConstraint.activate([
+      label.leadingAnchor.constraint(
+        equalTo: host.leadingAnchor, constant: SettingsMetrics.rowHorizontalInset),
+      label.trailingAnchor.constraint(
+        lessThanOrEqualTo: host.trailingAnchor, constant: -SettingsMetrics.rowHorizontalInset),
+      label.topAnchor.constraint(equalTo: host.topAnchor, constant: 14),
+      label.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+    ])
+    return host
+  }
+
+  /// 隐藏系统字体不进入用户可见配置;返回 nil 表示保持自动匹配。
+  private static func publicFontName(_ font: NSFont) -> String? {
+    font.fontName.hasPrefix(".") ? nil : font.fontName
+  }
+
+  /// 计算值页展示的友好字体名:隐藏系统字体显示为语义名称,其余用本地化显示名。
+  private static func friendlyFontName(_ font: NSFont) -> String {
+    font.fontName.hasPrefix(".") ? "系统等宽字体" : font.displayName ?? font.fontName
+  }
+
+  /// 枚举系统字体要遍历成百上千个字体名并逐个构造 `NSFont`，是外观页最贵的一步，
+  /// 而它的结果在一次会话里几乎不变。按进程缓存，字体库变化时由下面的监听作废。
+  private static var cachedFontFamilies: [FontPickerEntry]?
+  private static var cachedFontStyles: [FontPickerEntry]?
+  private static var fontLibraryObserver: NSObjectProtocol?
+
+  /// 注册一次字体库变更监听：用户在「字体册」里装了新字体后，选择器下次打开就能看到，
+  /// 不必重启应用。
+  private static func observeFontLibraryChangesIfNeeded() {
+    guard fontLibraryObserver == nil else { return }
+    fontLibraryObserver = NotificationCenter.default.addObserver(
+      forName: NSNotification.Name(kCTFontManagerRegisteredFontsChangedNotification as String),
+      object: nil,
+      queue: .main
+    ) { _ in
+      MainActor.assumeIsolated {
+        cachedFontFamilies = nil
+        cachedFontStyles = nil
+      }
+    }
+  }
+
+  /// 已安装字体族(过滤隐藏系统字体),供主字体选择器使用。
+  private static func installedFontFamilies() -> [FontPickerEntry] {
+    observeFontLibraryChangesIfNeeded()
+    if let cachedFontFamilies { return cachedFontFamilies }
+    let entries = NSFontManager.shared.availableFontFamilies
+      .filter { !$0.hasPrefix(".") }
+      .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+      .map { FontPickerEntry(title: $0, value: $0, previewFontName: $0) }
+    cachedFontFamilies = entries
+    return entries
+  }
+
+  /// 已安装的等宽字体样式(家族 + 字重/斜体成员),供粗体/斜体选择器使用。
+  /// 只列等宽:终端逐格渲染下比例字体没有实用价值,还会把菜单撑到上千项。
+  private static func installedFontStyles() -> [FontPickerEntry] {
+    observeFontLibraryChangesIfNeeded()
+    if let cachedFontStyles { return cachedFontStyles }
+    let manager = NSFontManager.shared
+    let fixedPitch = manager.availableFontNames(with: .fixedPitchFontMask) ?? []
+    let entries = fixedPitch
+      .filter { !$0.hasPrefix(".") }
+      .compactMap { name -> FontPickerEntry? in
+        guard let font = NSFont(name: name, size: 12) else { return nil }
+        return FontPickerEntry(
+          title: font.displayName ?? name, value: name, previewFontName: name)
+      }
+      .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    cachedFontStyles = entries
+    return entries
+  }
+
+  /// 字体选择行:组合框既可从已安装列表下拉选择,也可直接输入字体名;
+  /// 清空即「取消设置」。当前值未安装时原样保留显示,不静默丢弃用户配置。
+  private func fontPickerRow(
+    _ title: String,
+    _ detail: String,
+    entries: [FontPickerEntry],
+    selection: String?,
+    action: @escaping (String?) -> Void
+  ) -> NSView {
+    let picker = FontComboBox(entries: entries, selection: selection) { [weak self] value in
+      guard let self else { return }
+      self.performLocalControlAction(refreshAfterAction: true) { action(value) }
+    }
+    picker.translatesAutoresizingMaskIntoConstraints = false
+    picker.widthAnchor.constraint(equalToConstant: 230).isActive = true
+    return rowShell(title, detail, accessory: picker)
+  }
+
+  private func updateFocusedThemeStyle(
+    _ successMessage: String, _ mutate: (inout TerminalTheme) -> Void
+  ) {
     var editable = focusedTheme
     if editable.isBuiltIn {
       editable = preferences.duplicateTheme(editable)
       focusedThemeID = editable.id
     }
-    editable.style.fontFamilies = families.isEmpty ? nil : families
+    mutate(&editable)
     guard preferences.updateTheme(editable) else {
       message = "主题字体保存失败，请确认主题名称未冲突"
       refresh()
@@ -1625,11 +1889,20 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     }
     do {
       _ = try preferences.saveThemeToLibraryFolder(editable)
-      message = "已更新主题“\(editable.name)”的字体"
+      message = "\(successMessage)（\(editable.name)）"
     } catch {
       message = "主题字体已应用，但文件保存失败：\(error.localizedDescription)"
     }
     refresh()
+  }
+
+  private func updateFocusedThemeFontFamilies(_ value: String) {
+    let families = value.split(separator: ",").map {
+      $0.trimmingCharacters(in: .whitespacesAndNewlines)
+    }.filter { !$0.isEmpty }
+    updateFocusedThemeStyle("已更新主题字体候选栈") { theme in
+      theme.style.fontFamilies = families.isEmpty ? nil : families
+    }
   }
 
   private func openFontsFolder() {
@@ -1650,7 +1923,11 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     row.spacing = 14
     for layout in TabBarLayout.allCases {
       let card = LayoutChoiceButton(layout: layout, selected: preferences.tabBarLayout == layout) { [weak self] in
-        self?.preferences.tabBarLayout = layout
+        guard let self else { return }
+        // 选中描边在另外两张卡上，必须重建这一段内容才能取消旧选中。
+        self.performLocalControlAction(refreshAfterAction: true) {
+          self.preferences.tabBarLayout = layout
+        }
       }
       row.addArrangedSubview(card)
     }
@@ -1679,8 +1956,13 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       for theme in themes[start..<min(start + columns, themes.count)] {
         row.addArrangedSubview(
           ThemeCardButton(theme: theme, selected: theme.name == selectedName) { [weak self] in
-            self?.focusedThemeID = theme.id
-            self?.preferences.selectTheme(theme)
+            guard let self else { return }
+            // 选中框与详情区都要跟着换，必须刷新；但走本页局部通道，保证 24 张卡片
+            // 只重建一次（配置广播本身不再额外触发一次整页重建）。
+            self.performLocalControlAction(refreshAfterAction: true) {
+              self.focusedThemeID = theme.id
+              self.preferences.selectTheme(theme)
+            }
           })
       }
       // 末行不足四个时补占位视图，剩余卡片才不会被等分算法拉宽成异形。
@@ -2006,15 +2288,33 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     return rowShell(title, detail, accessory: control)
   }
 
+  /// 文本行：提交后不重建内容区，否则刚敲完回车就丢失焦点与光标位置。需要联动的
+  /// 调用方（例如写主题字体栈）自己在动作里刷新。
   private func textRow(_ title: String, _ detail: String, value: String, action: @escaping (String) -> Void) -> NSView {
-    let field = ClosureTextField(value: value, action: action)
+    let field = ClosureTextField(value: value) { [weak self] text in
+      guard let self else { return }
+      self.performLocalControlAction { action(text) }
+    }
     field.translatesAutoresizingMaskIntoConstraints = false
     field.widthAnchor.constraint(equalToConstant: 210).isActive = true
     return rowShell(title, detail, accessory: field)
   }
 
-  private func popupRow(_ title: String, _ detail: String, items: [String], selected: Int, action: @escaping (Int) -> Void) -> NSView {
-    rowShell(title, detail, accessory: ClosurePopUpButton(items: items, selected: selected, action: action))
+  /// 下拉行。默认选完刷新一次内容区（不少下拉会改变同页其它行的可见性与可用性），
+  /// 但走 `performLocalControlAction` 合并成一次，不再由配置广播额外触发整页重建。
+  private func popupRow(
+    _ title: String,
+    _ detail: String,
+    items: [String],
+    selected: Int,
+    refreshAfterAction: Bool = true,
+    action: @escaping (Int) -> Void
+  ) -> NSView {
+    let control = ClosurePopUpButton(items: items, selected: selected) { [weak self] index in
+      guard let self else { return }
+      self.performLocalControlAction(refreshAfterAction: refreshAfterAction) { action(index) }
+    }
+    return rowShell(title, detail, accessory: control)
   }
 
   /// 枚举下拉行：菜单项与选中索引都由 `allCases` 单一来源生成，杜绝文案数组与
@@ -2049,19 +2349,27 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     enabled: Bool = true,
     action: @escaping (Double) -> Void
   ) -> NSView {
-    let slider = ClosureSlider(value: value, range: range, action: action)
+    // 数值标签就地更新：滑杆变化不重建内容区，否则每次松手都会把正在操作的滑杆
+    // 销毁重建，连续微调时手感会一顿一顿。
+    func format(_ value: Double) -> String {
+      fractionDigits == 0
+        ? "\(Int(value)) \(suffix)"
+        : String(format: "%.\(fractionDigits)f \(suffix)", value)
+    }
+    let valueLabel = makeLabel(
+      format(value),
+      size: SettingsMetrics.rowDetailSize,
+      color: SettingsTheme.secondaryInk
+    )
+    let slider = ClosureSlider(value: value, range: range) { [weak self, weak valueLabel] next in
+      valueLabel?.stringValue = format(next)
+      guard let self else { return }
+      self.performLocalControlAction { action(next) }
+    }
     slider.identifier = identifier.map { NSUserInterfaceItemIdentifier($0) }
     slider.isEnabled = enabled
     slider.translatesAutoresizingMaskIntoConstraints = false
     slider.widthAnchor.constraint(equalToConstant: 180).isActive = true
-    let text = fractionDigits == 0
-      ? "\(Int(value)) \(suffix)"
-      : String(format: "%.\(fractionDigits)f \(suffix)", value)
-    let valueLabel = makeLabel(
-      text,
-      size: SettingsMetrics.rowDetailSize,
-      color: SettingsTheme.secondaryInk
-    )
     let stack = NSStackView(views: [slider, valueLabel])
     stack.orientation = .horizontal
     stack.spacing = 8
@@ -2090,8 +2398,13 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     }
   }
 
+  /// 步进行：控件自己已经就地更新数值标签，因此不再触发内容区重建。
   private func stepperRow(_ title: String, _ detail: String, value: Double, range: ClosedRange<Double>, action: @escaping (Double) -> Void) -> NSView {
-    rowShell(title, detail, accessory: ClosureStepper(value: value, range: range, action: action))
+    let control = ClosureStepper(value: value, range: range) { [weak self] next in
+      guard let self else { return }
+      self.performLocalControlAction { action(next) }
+    }
+    return rowShell(title, detail, accessory: control)
   }
 
   private func actionRow(_ title: String, _ detail: String, title buttonTitle: String, action: @escaping () -> Void) -> NSView {
@@ -2162,29 +2475,35 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
 /// 设置侧栏导航行：整宽方角高亮（Otty 风格），图标与文字通过内部子视图留出
 /// 左侧间隙——NSButton 自身的 imageLeading 布局无法控制内容内边距。
+///
+/// 选中态可就地翻转（`setSelected`），切换分类不再重建按钮；悬停有底色与手型光标，
+/// 让「这一行可以点」在指针移上去的瞬间就有反馈。
 @MainActor
 private final class SettingsSidebarButton: NSButton {
   private let handler: () -> Void
+  private let icon: NSImageView
+  private let sectionLabel: NSTextField
+  private var selected: Bool
+  private var isHovering = false { didSet { applyAppearance() } }
+  private var hoverTrackingArea: NSTrackingArea?
 
   init(section: SettingsViewController.Section, selected: Bool, action: @escaping () -> Void) {
     handler = action
+    self.selected = selected
+    icon = NSImageView(
+      image: NSImage(systemSymbolName: section.symbol, accessibilityDescription: section.rawValue) ?? NSImage()
+    )
+    sectionLabel = makeLabel(section.rawValue, size: 13, color: SettingsTheme.secondaryInk)
     super.init(frame: .zero)
     title = ""
     setAccessibilityLabel(section.rawValue)
     isBordered = false
     wantsLayer = true
-    layer?.backgroundColor = selected ? SettingsTheme.ink.withAlphaComponent(0.07).cgColor : NSColor.clear.cgColor
 
-    let tint = selected ? SettingsTheme.ink : SettingsTheme.secondaryInk
-    let icon = NSImageView(
-      image: NSImage(systemSymbolName: section.symbol, accessibilityDescription: section.rawValue) ?? NSImage()
-    )
     icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-    icon.contentTintColor = tint
     icon.translatesAutoresizingMaskIntoConstraints = false
     icon.widthAnchor.constraint(equalToConstant: 20).isActive = true
-    let label = makeLabel(section.rawValue, size: 13, color: tint)
-    let row = NSStackView(views: [icon, label])
+    let row = NSStackView(views: [icon, sectionLabel])
     row.orientation = .horizontal
     row.alignment = .centerY
     row.spacing = 9
@@ -2195,9 +2514,58 @@ private final class SettingsSidebarButton: NSButton {
     self.action = #selector(invoke)
     translatesAutoresizingMaskIntoConstraints = false
     heightAnchor.constraint(equalToConstant: 32).isActive = true
+    applyAppearance()
   }
 
   required init?(coder: NSCoder) { nil }
+
+  /// 由设置页在切换分类时调用；值没变就什么都不做，避免无谓重绘。
+  func setSelected(_ value: Bool) {
+    guard value != selected else { return }
+    selected = value
+    applyAppearance()
+  }
+
+  /// 供设置页在明暗外观变化后强制重算底色与图标/文字着色。
+  func refreshAppearance() { applyAppearance() }
+
+  /// 底色是 layer 上的 `CGColor`，动态 `NSColor` 按 `NSAppearance.current` 解析，
+  /// 因此必须在本视图的外观下取值，否则深色模式会拿到浅色高亮。
+  private func applyAppearance() {
+    let alpha: CGFloat = selected ? 0.07 : (isHovering ? 0.04 : 0)
+    effectiveAppearance.performAsCurrentDrawingAppearance { [self] in
+      layer?.backgroundColor = alpha == 0
+        ? NSColor.clear.cgColor
+        : SettingsTheme.ink.withAlphaComponent(alpha).cgColor
+    }
+    let tint = selected ? SettingsTheme.ink : SettingsTheme.secondaryInk
+    icon.contentTintColor = tint
+    sectionLabel.textColor = tint
+  }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+    let area = NSTrackingArea(
+      rect: .zero,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+      owner: self
+    )
+    addTrackingArea(area)
+    hoverTrackingArea = area
+  }
+
+  override func mouseEntered(with event: NSEvent) { isHovering = true }
+  override func mouseExited(with event: NSEvent) { isHovering = false }
+  override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+
+  /// 选中/悬停底色写在 layer 上（`CGColor` 不跟随外观），按钮常驻后必须在明暗切换时
+  /// 自己重算，否则深色模式下选中行仍是浅色高亮。
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    applyAppearance()
+  }
+
   @objc private func invoke() { handler() }
 }
 
@@ -2216,6 +2584,85 @@ private final class ClosureSwitch: NSSwitch {
 }
 
 @MainActor
+/// 字体选择器的候选项:title 为显示名,value 为写入配置的字体/家族名,
+/// previewFontName 用于把菜单项渲染成该字体自身的样子。
+struct FontPickerEntry {
+  let title: String
+  let value: String
+  let previewFontName: String
+}
+
+/// 字体组合框:下拉列出已安装字体供选择,也允许直接输入字体名(带自动补全)。
+/// 清空文本即「取消设置」(回到自动/继承);输入的名字与列表项匹配时写入对应
+/// 配置值,否则原样保存(计算值页展示实际解析结果)。
+@MainActor
+private final class FontComboBox: NSComboBox, NSComboBoxDelegate, NSComboBoxDataSource {
+  private let handler: (String?) -> Void
+  private let entries: [FontPickerEntry]
+
+  init(entries: [FontPickerEntry], selection: String?, action: @escaping (String?) -> Void) {
+    self.entries = entries
+    handler = action
+    super.init(frame: .zero)
+    font = NSFont.systemFont(ofSize: SettingsMetrics.controlTextSize)
+    placeholderString = "字体"
+    usesDataSource = true
+    dataSource = self
+    completes = true
+    numberOfVisibleItems = 16
+    isEditable = true
+    delegate = self
+    if let selection {
+      // 显示配置值对应的显示名;未安装时原样显示,不静默改写用户配置。
+      stringValue = entries.first(where: { $0.value == selection })?.title ?? selection
+    }
+    target = self
+    self.action = #selector(committed)
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  /// 把当前文本解析为配置值:匹配列表项(显示名或配置名)用其配置值,空串为取消设置。
+  private func commitCurrentText() {
+    let text = stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else {
+      handler(nil)
+      return
+    }
+    let matched = entries.first {
+      $0.title.caseInsensitiveCompare(text) == .orderedSame
+        || $0.value.caseInsensitiveCompare(text) == .orderedSame
+    }
+    handler(matched?.value ?? text)
+  }
+
+  @objc private func committed() { commitCurrentText() }
+
+  func comboBoxSelectionDidChange(_ notification: Notification) {
+    guard indexOfSelectedItem >= 0, entries.indices.contains(indexOfSelectedItem) else { return }
+    handler(entries[indexOfSelectedItem].value)
+  }
+
+  func controlTextDidEndEditing(_ notification: Notification) {
+    commitCurrentText()
+  }
+
+  // MARK: NSComboBoxDataSource
+
+  func numberOfItems(in comboBox: NSComboBox) -> Int { entries.count }
+
+  func comboBox(_ comboBox: NSComboBox, objectValueForItemAt index: Int) -> Any? {
+    entries.indices.contains(index) ? entries[index].title : nil
+  }
+
+  /// 输入自动补全:按显示名前缀匹配(不区分大小写)。
+  func comboBox(_ comboBox: NSComboBox, completedString string: String) -> String? {
+    entries.first {
+      $0.title.range(of: string, options: [.caseInsensitive, .anchored]) != nil
+    }?.title
+  }
+}
+
 private final class ClosurePopUpButton: NSPopUpButton {
   private let handler: (Int) -> Void
   init(items: [String], selected: Int, action: @escaping (Int) -> Void) {

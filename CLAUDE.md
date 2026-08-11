@@ -82,7 +82,7 @@ open dist/Aster.app
 
 ### 持久化
 
-全部走 `UserDefaults`，键带版本后缀：`aster.configuration.v2`、`aster.theme-library.v1`、`aster.workspace.snapshot.v1`、`aster.workspace.panel-layout.v1`、`aster.workspace.{additional-window-suites,recently-closed,closed-items}.v1`、`aster.sidebar.tab-{grouping,order}.v1`、`aster.inspector.{presented,section}.v1`、`aster.frequent-folders.v1`、`aster.workflow-recipe-trust.v1`、`aster.session.{running,end-reason,crash-count}.v1`、`aster.migration.compact-sidebar.v1`。配置以单个 JSON blob 原子写入；Panel 布局写入对应工作区窗口的 suite；终端相关配置改动后立即同步到已存在的终端视图（`TerminalSession.apply`）。加迁移时沿用「只迁移旧默认值、不动用户显式设置」的做法（见 compact-sidebar 迁移）。
+全部走 `UserDefaults`，键带版本后缀：`aster.configuration.v2`、`aster.theme-library.v1`、`aster.workspace.snapshot.v1`、`aster.workspace.panel-layout.v1`、`aster.workspace.{additional-window-suites,recently-closed,closed-items}.v1`、`aster.sidebar.tab-{grouping,order}.v1`、`aster.inspector.{presented,section}.v1`、`aster.settings.window-height.v1`、`aster.frequent-folders.v1`、`aster.workflow-recipe-trust.v1`、`aster.session.{running,end-reason,crash-count}.v1`、`aster.migration.compact-sidebar.v1`。配置以单个 JSON blob 原子写入；Panel 布局写入对应工作区窗口的 suite；终端相关配置改动后立即同步到已存在的终端视图（`TerminalSession.apply`）。加迁移时沿用「只迁移旧默认值、不动用户显式设置」的做法（见 compact-sidebar 迁移）。
 
 ## 测试约定
 
