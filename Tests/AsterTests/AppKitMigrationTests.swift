@@ -265,6 +265,7 @@ func ghosttyExtensionCapabilitiesWorkOnRealSurface() async throws {
   window.contentView?.addSubview(host)
   window.layoutIfNeeded()
   window.makeKeyAndOrderFront(nil)
+  defer { window.orderOut(nil) }
   view.createSurface()
 
   #expect(GhosttyApp.shared.startupError == nil)
@@ -276,12 +277,120 @@ func ghosttyExtensionCapabilitiesWorkOnRealSurface() async throws {
     try await Task.sleep(for: .milliseconds(20))
   }
   #expect(view.isProcessRunning)
+
+  // 在保留 Session 原处理链的同时记录真实 C callback，避免只凭 Swift 接口存在就
+  // 推断 ABI 已接通。PTY payload 与 OSC point 都必须来自正在运行的 Ghostty surface。
+  var observedRead: [UInt8] = []
+  var observedWrite: [UInt8] = []
+  var observedOSC: [(code: Int, payload: String, point: ghostty_aster_buffer_point_s)] = []
+  var observedGhosttyTitles: [String] = []
+  let sessionPTYRead = view.onPTYRead
+  let sessionPTYWrite = view.onPTYWrite
+  let sessionOSC = view.onOSC
+  let sessionTitle = view.onTitleChange
+  view.onPTYRead = { bytes in
+    observedRead.append(contentsOf: bytes)
+    sessionPTYRead?(bytes)
+  }
+  view.onPTYWrite = { bytes in
+    observedWrite.append(contentsOf: bytes)
+    sessionPTYWrite?(bytes)
+  }
+  view.onOSC = { code, payload, point in
+    observedOSC.append((code, String(decoding: payload, as: UTF8.self), point))
+    sessionOSC?(code, payload, point)
+  }
+  view.onTitleChange = { title in
+    observedGhosttyTitles.append(title)
+    sessionTitle?(title)
+  }
+
   #expect(view.typeText(
-    "printf '__GHOSTTY_UPPER__ __ghostty_upper__ https://example.com\\n'\n"))
+    "printf '__GHOSTTY_UPPER__ __ghostty_upper__ __DIRECTION__ __DIRECTION__ https://example.com\\n'\n"))
   for _ in 0..<150
   where view.readText(includeScrollback: true)?.contains("https://example.com") != true {
     try await Task.sleep(for: .milliseconds(20))
   }
+  let observedInput = String(decoding: observedWrite, as: UTF8.self)
+  let observedOutput = String(decoding: observedRead, as: UTF8.self)
+  #expect(observedInput.contains("__GHOSTTY_UPPER__"))
+  #expect(observedOutput.contains("__GHOSTTY_UPPER__"))
+
+  // 777 是 Ghostty/Aster 都不消费的任意扩展号。observer 必须收到完整 payload，
+  // 而同一 PTY 分片中 OSC 前后的普通文本仍须继续经过 Ghostty parser 并进入网格。
+  #expect(view.typeText(
+    "printf '__OSC_PREFIX__\\033]777;aster-observer\\007__OSC_SUFFIX__\\n'\n"))
+  for _ in 0..<150 where !observedOSC.contains(where: {
+    $0.code == 777 && $0.payload == "aster-observer"
+  }) {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  let arbitraryOSCEvents = observedOSC.filter {
+    $0.code == 777 && $0.payload == "aster-observer"
+  }
+  let arbitraryOSC = try #require(arbitraryOSCEvents.last)
+  for _ in 0..<150 where view.readText(includeScrollback: true)?.contains(
+    "__OSC_PREFIX____OSC_SUFFIX__") != true
+  {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(view.readText(includeScrollback: true)?.contains(
+    "__OSC_PREFIX____OSC_SUFFIX__") == true)
+  let resolvedArbitraryPoint = try #require(view.resolveBufferPoint(arbitraryOSC.point))
+  #expect(resolvedArbitraryPoint.page_serial == arbitraryOSC.point.page_serial)
+  #expect(resolvedArbitraryPoint.page_row == arbitraryOSC.point.page_row)
+  #expect(view.readLine(at: arbitraryOSC.point, startingAt: 0)?.contains(
+    "__OSC_PREFIX____OSC_SUFFIX__") == true)
+  let surface = try #require(view.surface)
+  var exactSelection = ghostty_aster_buffer_range_s(
+    start: arbitraryOSC.point,
+    end: arbitraryOSC.point,
+    rectangle: false
+  )
+  #expect(ghostty_aster_surface_set_selection(surface, &exactSelection))
+  var selectionRoundTrip = ghostty_aster_buffer_range_s()
+  #expect(ghostty_aster_surface_get_selection(surface, &selectionRoundTrip))
+  #expect(selectionRoundTrip.start.page_serial == arbitraryOSC.point.page_serial)
+  #expect(selectionRoundTrip.start.page_row == arbitraryOSC.point.page_row)
+  #expect(selectionRoundTrip.start.column == arbitraryOSC.point.column)
+  ghostty_aster_surface_clear_selection(surface)
+
+  // OSC 2 同时覆盖 observer 与 Ghostty 自己的 set-title action。若 observer 消费了
+  // 原流，底层 parser 就不会再产生 `onTitleChange`。
+  #expect(view.typeText("printf '\\033]2;aster-core-title\\007'\n"))
+  for _ in 0..<100 where !observedOSC.contains(where: {
+    $0.code == 2 && $0.payload == "aster-core-title"
+  }) || !observedGhosttyTitles.contains("aster-core-title") {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  let observedTitleOSC = observedOSC.contains {
+    $0.code == 2 && $0.payload == "aster-core-title"
+  }
+  #expect(observedTitleOSC)
+  #expect(observedGhosttyTitles.contains("aster-core-title"))
+
+  // 真实 Shell Integration 的 OSC 133 B 激活 tracker；PTY write/read 回调分别推进
+  // 本地输入和回显，最终应在 Ghostty caret 旁显示内置 git spec 的 inline suggestion。
+  for _ in 0..<150 where observedOSC.last(where: { $0.code == 133 })?.payload != "B" {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(observedOSC.last(where: { $0.code == 133 })?.payload == "B")
+  #expect(AutocompleteService.shared != nil)
+  #expect(view.descendants.contains {
+    String(describing: type(of: $0)).contains("TerminalAutocompleteOverlayView")
+  })
+  #expect(view.typeText("git ch"))
+  for _ in 0..<150 where !view.descendants.compactMap({ $0 as? NSTextField }).contains(where: {
+    !$0.isHidden && $0.stringValue == "eckout"
+  }) {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  let autocompleteVisible = view.descendants.compactMap { $0 as? NSTextField }.contains {
+    !$0.isHidden && $0.stringValue == "eckout"
+  }
+  #expect(autocompleteVisible)
+  #expect(view.sendBytes([0x15]))  // Ctrl-U：清空未提交的 `git ch`，继续后续 ABI 验收。
+  try await Task.sleep(for: .milliseconds(100))
 
   #expect(view.bufferInfo() != nil)
   #expect(view.find("__ghostty_upper__", previous: false, caseSensitive: true))
@@ -293,12 +402,15 @@ func ghosttyExtensionCapabilitiesWorkOnRealSurface() async throws {
   #expect(view.find("__GHOSTTY_[A-Z]+__", previous: false, caseSensitive: true,
     regularExpression: true))
   #expect(!view.find("[", previous: false, regularExpression: true))
+  view.clearSearch()
+  #expect(view.find("__DIRECTION__", previous: false, caseSensitive: true))
+  #expect(view.searchSelected == 1)
+  #expect(view.searchTotal >= 2)
+  #expect(view.find("__DIRECTION__", previous: false, caseSensitive: true))
+  #expect(view.searchSelected == 2)
+  #expect(view.find("__DIRECTION__", previous: true, caseSensitive: true))
+  #expect(view.searchSelected == 1)
 
-  view.enterMarkMode()
-  #expect(view.navigationMode == .vi(.mark))
-  let surface = try #require(view.surface)
-  var selection = ghostty_aster_buffer_range_s()
-  #expect(ghostty_aster_surface_get_selection(surface, &selection))
   let escape = try #require(NSEvent.keyEvent(
     with: .keyDown,
     location: .zero,
@@ -311,6 +423,14 @@ func ghosttyExtensionCapabilitiesWorkOnRealSurface() async throws {
     isARepeat: false,
     keyCode: 53
   ))
+  view.enterViMode()
+  #expect(view.navigationMode == .vi(.vi))
+  view.keyDown(with: escape)
+  #expect(view.navigationMode == .normal)
+  view.enterMarkMode()
+  #expect(view.navigationMode == .vi(.mark))
+  var selection = ghostty_aster_buffer_range_s()
+  #expect(ghostty_aster_surface_get_selection(surface, &selection))
   view.keyDown(with: escape)
   #expect(view.navigationMode == .normal)
   view.openHintMode()
@@ -335,6 +455,9 @@ func ghosttyExtensionCapabilitiesWorkOnRealSurface() async throws {
   }))
   #expect(outline.isJumpAvailable)
   #expect(session.revealAbsoluteRow(outline.absoluteRow))
+  let stablePointAfterFurtherOutput = try #require(view.resolveBufferPoint(arbitraryOSC.point))
+  #expect(stablePointAfterFurtherOutput.page_serial == arbitraryOSC.point.page_serial)
+  #expect(stablePointAfterFurtherOutput.page_row == arbitraryOSC.point.page_row)
 }
 
 @Test("设置页由单一 WebKit 宿主构成并保留九个分类")

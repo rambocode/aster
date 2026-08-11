@@ -118,7 +118,9 @@ Outline、Vi/Mark 模式和可见 URL/路径 Hint。重复的 OSC 133 仅在 pay
 
 - `swift test --no-parallel`：完整领域、AppKit 与旧适配器回归。
 - `terminalHostUsesGhosttySurface`：产品 host 必须包含 Ghostty 视图、配置可初始化，且不含 `AsterTerminalView`。
-- `ghosttyExtensionCapabilitiesWorkOnRealSurface`：真实 surface 覆盖搜索 flags、selection、Hint、OSC 6974、Outline 与跳转。
+- `ghosttyExtensionCapabilitiesWorkOnRealSurface`：真实 surface 直接核对 PTY read/write、任意 OSC observer 与
+  Ghostty 原 action 并存、稳定 anchor、Autocomplete、前后向搜索 flags、selection、Vi/Mark/Hint、
+  OSC 6974、Outline 与跳转。
 - `swift build -c release`：验证 binary target、Swift/C bridge 和 linker。
 - `./scripts/build-app.sh` 后运行 `codesign --verify --deep --strict dist/Aster.app`。
 - 检查 app 内 Aster resource bundle 包含 `ghostty/shell-integration` 与 `terminfo/78/xterm-ghostty`。
