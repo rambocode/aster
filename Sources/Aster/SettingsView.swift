@@ -1265,9 +1265,15 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         _ = try agentSetupService.uninstall(provider)
         message = "\(displayName) 集成已卸载；请重启该 Agent。"
       } else if current.executableAvailable {
-        let lifecycleHint = current.plan.linksAfterNextLifecycleEvent
-          ? " 启动后发送一条消息即可关联当前会话。"
-          : ""
+        let lifecycleHint: String
+        if provider == .codex {
+          // Codex 会按 hook 定义哈希要求用户首次信任；Aster 不能替用户绕过该安全门。
+          lifecycleHint = " 重启 Codex 后请运行 /hooks 审核并信任 Aster hook，再发送一条消息关联会话。"
+        } else {
+          lifecycleHint = current.plan.linksAfterNextLifecycleEvent
+            ? " 启动后发送一条消息即可关联当前会话。"
+            : ""
+        }
         _ = try agentSetupService.install(provider)
         message = "\(displayName) 集成已安装；请重启该 Agent。\(lifecycleHint)"
       } else {

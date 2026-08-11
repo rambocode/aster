@@ -150,6 +150,42 @@ func agentSetupPreservesUserJSONConfiguration() throws {
   #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o640)
 }
 
+@Test("Codex Hook 安装保留已有 Otty lifecycle 条目")
+func codexAgentSetupPreservesOttyHooks() throws {
+  let root = try agentSetupTemporaryDirectory(named: "aster-agent-setup-codex-otty")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let home = root.appendingPathComponent("home", isDirectory: true)
+  let bin = root.appendingPathComponent("bin", isDirectory: true)
+  let codexDirectory = home.appendingPathComponent(".codex", isDirectory: true)
+  try FileManager.default.createDirectory(at: codexDirectory, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+  try makeExecutable(named: AgentProvider.codex.commandName, in: bin)
+  try "hooks = true\n".write(
+    to: codexDirectory.appendingPathComponent("config.toml"),
+    atomically: true,
+    encoding: .utf8
+  )
+  let ottyEntry: [String: Any] = [
+    "_otty": true,
+    "hooks": [["type": "command", "command": "otty-session-start"]],
+  ]
+  let hooks: [String: Any] = ["hooks": ["SessionStart": [ottyEntry]]]
+  let hooksURL = codexDirectory.appendingPathComponent("hooks.json")
+  try JSONSerialization.data(withJSONObject: hooks, options: [.prettyPrinted]).write(to: hooksURL)
+  let service = AgentSetupService(homeDirectory: home, executableSearchDirectories: [bin])
+
+  let installed = try service.install(.codex)
+
+  #expect(installed.integrationInstalled)
+  let decoded = try #require(
+    JSONSerialization.jsonObject(with: Data(contentsOf: hooksURL)) as? [String: Any]
+  )
+  let installedHooks = try #require(decoded["hooks"] as? [String: Any])
+  let sessionStart = try #require(installedHooks["SessionStart"] as? [[String: Any]])
+  #expect(sessionStart.contains { $0["_otty"] as? Bool == true })
+  #expect(sessionStart.contains { $0[AgentSetupService.managedJSONKey] as? Bool == true })
+}
+
 @Test("Codex 与 Kimi 的 TOML 增量保留用户字节并只更新计划键")
 func agentSetupPreservesTOMLOutsideManagedValues() throws {
   let root = try agentSetupTemporaryDirectory(named: "aster-agent-setup-toml")
@@ -375,6 +411,74 @@ func agentSetupArtifactsEmitTerminalLifecycleSignals() throws {
     #expect(artifact.contains("Provider="))
     #expect(artifact.contains("SessionID="))
   }
+}
+
+@Test("Codex command hook 从官方 stdin 载荷关联当前会话 ID")
+func codexLifecycleHookExtractsSessionIDFromBoundedJSONInput() throws {
+  let payload = """
+    {"session_id":"repro-session-123","cwd":"/tmp/repro","hook_event_name":"SessionStart"}
+    """
+  let emitted = try runAgentLifecycleHook(payload: payload)
+
+  #expect(emitted.contains("AgentState=idle;Provider=codex;SessionID=repro-session-123"))
+}
+
+@Test("Agent command hook 拒绝非法或超限 session ID 载荷")
+func agentLifecycleHookRejectsUnsafeSessionIDPayloads() throws {
+  let invalid = try runAgentLifecycleHook(
+    payload: "{\"session_id\":\"unsafe;OSC\",\"hook_event_name\":\"SessionStart\"}"
+  )
+  let wrongType = try runAgentLifecycleHook(
+    payload: "{\"session_id\":123,\"hook_event_name\":\"SessionStart\"}"
+  )
+  let oversized = try runAgentLifecycleHook(
+    payload: "{\"session_id\":\"must-not-pass\",\"padding\":\""
+      + String(repeating: "x", count: 262_145)
+      + "\"}"
+  )
+
+  #expect(invalid.contains("AgentState=idle;Provider=codex"))
+  #expect(!invalid.contains("SessionID="))
+  #expect(!wrongType.contains("SessionID="))
+  #expect(oversized.contains("AgentState=idle;Provider=codex"))
+  #expect(!oversized.contains("SessionID="))
+}
+
+/// fixture 文件模拟 Codex 关闭后的 stdin pipe；`script` 只负责提供真实伪终端，使写往
+/// `/dev/tty` 的 OSC 可被捕获。这与 Aster Pane 内运行边界一致，不是只检查脚本文本。
+private func runAgentLifecycleHook(payload: String) throws -> String {
+  let hook = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .appendingPathComponent("Resources/agent-integration/aster-agent-hook.sh")
+  let payloadFile = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "aster-agent-hook-payload-\(UUID().uuidString).json"
+  )
+  try payload.write(to: payloadFile, atomically: true, encoding: .utf8)
+  defer { try? FileManager.default.removeItem(at: payloadFile) }
+
+  let process = Process()
+  let output = Pipe()
+  process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+  process.arguments = [
+    "-q", "/dev/null", "/bin/sh", "-c",
+    "exec /bin/sh \"$1\" idle codex < \"$2\"",
+    "aster-codex-hook-test", hook.path, payloadFile.path,
+  ]
+  process.standardInput = FileHandle.nullDevice
+  process.standardOutput = output
+  process.standardError = output
+  try process.run()
+  process.waitUntilExit()
+  let emitted = String(
+    decoding: try output.fileHandleForReading.readToEnd() ?? Data(),
+    as: UTF8.self
+  )
+  guard process.terminationStatus == 0 else {
+    throw CocoaError(.executableRuntimeMismatch)
+  }
+  return emitted
 }
 
 private func agentSetupTemporaryDirectory(named prefix: String) throws -> URL {
