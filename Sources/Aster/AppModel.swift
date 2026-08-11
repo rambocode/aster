@@ -1008,11 +1008,12 @@ final class AppModel: ObservableObject {
   var newTabPosition = NewTabPosition.automatic
   var frecencyAutoRecord = true
   var recipeReplayMode = RecipeReplayMode.confirmOnce
+  var savedRecipeReplayMode = RecipeReplayMode.automatic
   var openQuicklyInitialFilter = OpenQuicklyFilter.all
   var enabledAgentProviders: [AgentProvider] = []
   var agentLaunchCommands: [String: [String]] = [:]
   var workflowRecipeReplaySettings: WorkflowRecipeReplaySettings {
-    WorkflowRecipeReplaySettings(savedRecipes: .automatic, recipeFiles: recipeReplayMode)
+    WorkflowRecipeReplaySettings(savedRecipes: savedRecipeReplayMode, recipeFiles: recipeReplayMode)
   }
   var onTabOrderBecameManual: (() -> Void)?
   /// 窗口创建、置顶和 PiP 由 AppDelegate 持有真实 NSWindow；AppModel 只发布意图，

@@ -2,6 +2,7 @@ import AppKit
 import AsterCore
 import SwiftTerm
 import Testing
+import WebKit
 
 @testable import Aster
 
@@ -153,9 +154,9 @@ func workspaceUsesOnlyNativeAppKitViews() throws {
   #expect(controller.view.descendants.contains { $0 is NSSplitView } == true)
 }
 
-@Test("设置页由纯 AppKit 控件构成并保留九个分类")
+@Test("设置页由单一 WebKit 宿主构成并保留九个分类")
 @MainActor
-func settingsUsesOnlyNativeAppKitControls() throws {
+func settingsUsesSingleWebKitHost() throws {
   let defaults = isolatedDefaults()
   let preferences = AppPreferences(defaults: defaults)
   let controller = SettingsViewController(preferences: preferences)
@@ -163,8 +164,8 @@ func settingsUsesOnlyNativeAppKitControls() throws {
   controller.loadViewIfNeeded()
 
   #expect(controller.sections.count == 9)
-  #expect(controller.view.descendants.contains { String(describing: type(of: $0)).contains("NSHosting") } == false)
-  #expect(controller.view.descendants.contains { $0 is NSScrollView } == true)
+  #expect(controller.view is WKWebView)
+  #expect(controller.view === controller.settingsWebViewForTesting)
 }
 
 @Test("Dock 右键菜单不添加应用自定义入口")
@@ -911,7 +912,7 @@ func terminalNormalizesReportedWorkingDirectory() {
     TerminalSession.normalizeReportedWorkingDirectory("file://remote.example/home/mike") == "")
 }
 
-@Test("设置页从顶部开始并让导航与卡片占满可用宽度")
+@Test("设置页从顶部开始并让导航与卡片占满可用宽度", .disabled("已迁移为网页布局，由 SettingsResponsivenessTests 覆盖"))
 @MainActor
 func settingsLayoutUsesTopAnchoredFullWidthRows() throws {
   let defaults = isolatedDefaults()
@@ -951,7 +952,7 @@ func settingsLayoutUsesTopAnchoredFullWidthRows() throws {
   #expect(firstCard.arrangedSubviews.allSatisfy { $0.frame.height > 1 })
 }
 
-@Test("外观设置的主题网格每行放四张等宽卡片")
+@Test("外观设置的主题网格每行放四张等宽卡片", .disabled("已迁移为网页布局，由 SettingsResponsivenessTests 覆盖"))
 @MainActor
 func appearanceThemeGridUsesFourEqualColumns() throws {
   let defaults = isolatedDefaults()
@@ -979,7 +980,7 @@ func appearanceThemeGridUsesFourEqualColumns() throws {
   }
 }
 
-@Test("设置页配色不跟随终端主题，卡片使用固定灰底")
+@Test("设置页配色不跟随终端主题，卡片使用固定灰底", .disabled("已迁移为网页布局，由 SettingsResponsivenessTests 覆盖"))
 @MainActor
 func settingsChromeIgnoresTerminalTheme() throws {
   let defaults = isolatedDefaults()
@@ -1010,7 +1011,7 @@ func settingsChromeIgnoresTerminalTheme() throws {
   #expect(cardColors() == before)
 }
 
-@Test("色板改色写成覆盖层，内置主题不被复制成副本")
+@Test("色板改色写成覆盖层，内置主题不被复制成副本", .disabled("原生色板已由网页主题选择器替代"))
 @MainActor
 func themeSwatchColorPickWritesOverrideWithoutDuplicating() throws {
   let defaults = isolatedDefaults()
@@ -1063,7 +1064,7 @@ func themeSwatchColorPickWritesOverrideWithoutDuplicating() throws {
       == builtIn.palette.interfaceWindowBackground)
 }
 
-@Test("主题详情渲染出可点可悬停的完整 token 色板")
+@Test("主题详情渲染出可点可悬停的完整 token 色板", .disabled("原生主题详情已由网页主题选择器替代"))
 @MainActor
 func appearanceThemeDetailRendersFullColorSlotBoard() throws {
   let defaults = isolatedDefaults()
@@ -1101,7 +1102,7 @@ func appearanceThemeDetailRendersFullColorSlotBoard() throws {
     swatches.contains { $0.toolTip?.contains("跟随 Window 派生") == true })
 }
 
-@Test("设置页每个顶层区块在窄窗口与宽窗口下都保持左右边距")
+@Test("设置页每个顶层区块在窄窗口与宽窗口下都保持左右边距", .disabled("已迁移为 CSS 响应式布局"))
 @MainActor
 func settingsTopLevelBlocksKeepInsetsAtEverySize() throws {
   let defaults = isolatedDefaults()
@@ -1135,7 +1136,7 @@ func settingsTopLevelBlocksKeepInsetsAtEverySize() throws {
   }
 }
 
-@Test("设置页所有分类的卡片保持左右边距且占满内容宽度")
+@Test("设置页所有分类的卡片保持左右边距且占满内容宽度", .disabled("已迁移为 CSS 响应式布局"))
 @MainActor
 func settingsCardsKeepHorizontalInsetsAcrossSections() throws {
   let defaults = isolatedDefaults()
@@ -1164,7 +1165,7 @@ func settingsCardsKeepHorizontalInsetsAcrossSections() throws {
   }
 }
 
-@Test("设置分类页由真实可交互控件构成而非只读文字")
+@Test("设置分类页由真实可交互控件构成而非只读文字", .disabled("交互控件现由网页清单生成"))
 @MainActor
 func settingsSectionsExposeInteractiveControls() throws {
   let defaults = isolatedDefaults()
@@ -1192,7 +1193,7 @@ func settingsSectionsExposeInteractiveControls() throws {
   }
 }
 
-@Test("设置开关点击后就地更新且不重建当前页面")
+@Test("设置开关点击后就地更新且不重建当前页面", .disabled("网页桥写入由 SettingsResponsivenessTests 覆盖"))
 @MainActor
 func settingsSwitchUpdatesInPlaceWithoutRebuildingPage() async throws {
   let defaults = isolatedDefaults()
@@ -1214,7 +1215,7 @@ func settingsSwitchUpdatesInPlaceWithoutRebuildingPage() async throws {
   #expect(controller.view.descendants.contains { $0 === originalSwitch })
 }
 
-@Test("设置内容区字号小于左侧导航字号")
+@Test("设置内容区字号小于左侧导航字号", .disabled("字体层级现由 settings.css 维护"))
 @MainActor
 func settingsContentTypographyIsSmallerThanSidebarNavigation() throws {
   let defaults = isolatedDefaults()

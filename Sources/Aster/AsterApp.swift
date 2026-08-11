@@ -274,6 +274,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     DiagnosticsCenter.shared.record("application.launched", level: .notice, category: .lifecycle)
     synchronizeWorkspaceConfiguration()
     NSApp.mainMenu = makeMainMenu()
+    ShortcutOverrideApplier.apply(
+      to: NSApp.mainMenu,
+      values: preferences.settingsCompatibility
+    )
     // Finder「服务 → 在 Aster 中打开」的接收端；服务菜单项由 Info.plist NSServices 声明。
     NSApp.servicesProvider = self
     showMainWindow()
@@ -283,6 +287,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         DispatchQueue.main.async {
           self?.applyAppearance()
           self?.synchronizeWorkspaceConfiguration()
+          ShortcutOverrideApplier.apply(
+            to: NSApp.mainMenu,
+            values: self?.preferences.settingsCompatibility ?? [:]
+          )
         }
       }
       .store(in: &cancellables)
@@ -598,6 +606,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       workspaceModel.newTabPosition = preferences.configuration.appearance.resolvedNewTabPosition
       workspaceModel.frecencyAutoRecord = preferences.configuration.shell.resolvedFrecencyAutoRecord
       workspaceModel.recipeReplayMode = preferences.configuration.recipeReplayMode
+      workspaceModel.savedRecipeReplayMode = preferences.configuration.resolvedSavedRecipeReplayMode
       workspaceModel.enabledAgentProviders = AgentProvider.allCases.filter { provider in
         preferences.configuration.agents.enabledAgents.contains(provider.commandName)
       }

@@ -40,6 +40,8 @@ cp -R "$PROJECT_DIR/Resources/autocomplete" "$RESOURCES_DIR/autocomplete"
 cp -R "$PROJECT_DIR/Resources/agent-integration" "$RESOURCES_DIR/agent-integration"
 chmod 755 "$RESOURCES_DIR/agent-integration/aster-agent-hook.sh"
 cp -R "$PROJECT_DIR/Resources/fonts" "$RESOURCES_DIR/fonts"
+# 设置页由签名 Bundle 内的本地网页提供；与 Shell 资源并列复制，运行时不访问网络。
+cp -R "$PROJECT_DIR/Resources/settings-ui" "$RESOURCES_DIR/settings-ui"
 
 # Aster 自有 terminfo 在构建期编译进签名 Bundle。运行时只读取资源，不生成隐藏脚本
 # 或修改系统数据库；TERMINFO_DIRS 会把该目录放在系统条目前面。

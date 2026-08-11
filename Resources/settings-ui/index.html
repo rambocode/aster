@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    >
+    <title>Aster 设置</title>
+    <link rel="stylesheet" href="settings.css">
+    <script src="settings.js" defer></script>
+  </head>
+  <body>
+    <main id="app" class="settings-shell" aria-busy="true">
+      <aside class="sidebar">
+        <div class="titlebar-spacer" aria-hidden="true"></div>
+        <label class="search-wrap">
+          <svg aria-hidden="true" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"></circle><path d="m10.5 10.5 3 3"></path></svg>
+          <input id="settings-search" type="search" placeholder="搜索" autocomplete="off" spellcheck="false">
+        </label>
+        <nav id="settings-nav" aria-label="设置分类"></nav>
+      </aside>
+      <section id="settings-content" class="content" tabindex="-1">
+        <div class="loading-state">
+          <span class="spinner" aria-hidden="true"></span>
+          <span>正在载入设置…</span>
+        </div>
+      </section>
+    </main>
+    <div id="modal-root"></div>
+    <div id="toast-region" class="toast-region" role="status" aria-live="polite"></div>
+  </body>
+</html>

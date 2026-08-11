@@ -1,7 +1,9 @@
 import AppKit
 import AsterCore
 import Combine
+import CoreFoundation
 import UniformTypeIdentifiers
+import WebKit
 
 /// 保留 `NSSearchField` 的放大镜、清除按钮、输入法和焦点环，只把底色换成设置页自己的
 /// 中性灰。底色落在 backing layer 上，因此明暗外观切换时必须重新解析动态颜色。
@@ -117,6 +119,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private var sidebarButtons: [(section: Section, button: SettingsSidebarButton)] = []
   /// 当前侧栏按钮对应的分类列表；只有搜索过滤结果变化时才真的重建按钮。
   private var renderedSidebarSections: [Section] = []
+  /// 网页设置页是唯一可见 UI。脚本消息代理弱引用控制器，避免
+  /// `WKUserContentController -> handler -> controller -> webView` 的保留环。
+  private var settingsWebView: WKWebView?
+  private var settingsMessageProxy: SettingsScriptMessageProxy?
+  private var webRevision = 0
+  private var webReady = false
   static let sidebarIdentifier = NSUserInterfaceItemIdentifier("settings-sidebar")
   static let contentIdentifier = NSUserInterfaceItemIdentifier("settings-content")
   static let searchIdentifier = NSUserInterfaceItemIdentifier("settings-search")
@@ -151,8 +159,22 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   required init?(coder: NSCoder) { nil }
 
   override func loadView() {
-    // 初始尺寸取默认值；窗口宽高可由用户拉伸，内容超出高度时由分类滚动视图承载。
-    view = NSView(frame: NSRect(origin: .zero, size: Self.defaultContentSize))
+    let configuration = WKWebViewConfiguration()
+    configuration.websiteDataStore = .nonPersistent()
+    configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+    let proxy = SettingsScriptMessageProxy(controller: self)
+    configuration.userContentController.add(proxy, name: SettingsWebBridge.messageHandlerName)
+
+    let webView = WKWebView(
+      frame: NSRect(origin: .zero, size: Self.defaultContentSize),
+      configuration: configuration
+    )
+    webView.identifier = NSUserInterfaceItemIdentifier("settings-web-view")
+    webView.navigationDelegate = self
+    webView.setValue(false, forKey: "drawsBackground")
+    settingsMessageProxy = proxy
+    settingsWebView = webView
+    view = webView
   }
 
   override func viewDidLoad() {
@@ -175,13 +197,16 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       .sink { [weak self] _ in self?.scheduleRefresh() }
       .store(in: &cancellables)
     TerminalNotificationService.shared.refreshAuthorizationStatus()
-    refresh()
+    loadSettingsDocument()
   }
 
   /// 切换到指定分类并立即重建内容区；供布局测试与未来的深链入口使用。
   func showSection(_ section: Section) {
     selection = section
-    refresh()
+    sendWebMessage([
+      "type": "selectSection",
+      "section": section.webIdentifier,
+    ])
   }
 
   private func scheduleRefresh() {
@@ -215,6 +240,11 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   /// 一次就跳回顶部。骨架常驻是响应速度的关键：侧栏按钮、搜索框以及它们的焦点状态
   /// 都不会因为一次刷新被销毁。
   private func refresh() {
+    if settingsWebView != nil {
+      pushWebSnapshot()
+      return
+    }
+    // 仅供无法创建 WebKit 视图时的开发诊断回退；正常设置窗口不会进入此分支。
     installSkeletonIfNeeded()
     // 记录的是「当前树实际渲染的分类」而不是 selection：侧栏切换时 selection 已指向
     // 新分类，用它做 key 会把旧页的偏移写错桶。
@@ -2493,7 +2523,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     do {
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-      try encoder.encode(preferences.configuration).write(to: url, options: .atomic)
+      try encoder.encode(settingsExportEnvelope()).write(to: url, options: .atomic)
       message = "配置已导出"
     } catch { message = "导出失败：\(error.localizedDescription)" }
     refresh()
@@ -2505,11 +2535,1485 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     panel.canChooseDirectories = false
     guard panel.runModal() == .OK, let url = panel.url else { return }
     do {
-      let decoded = try JSONDecoder().decode(AsterConfiguration.self, from: Data(contentsOf: url))
-      preferences.importConfiguration(decoded)
+      try importSettingsData(Data(contentsOf: url))
       message = "配置已导入"
     } catch { message = "导入失败：\(error.localizedDescription)" }
     refresh()
+  }
+}
+
+// MARK: - Web settings bridge
+
+/// 网页与 Swift 之间只传递可校验的 JSON 消息；网页不能导航到网络，也不能直接访问
+/// 文件系统。所有副作用都在下方按 action allowlist 分发。
+private enum SettingsWebBridge {
+  static let messageHandlerName = "asterSettings"
+  static let protocolVersion = 1
+
+  /// 尚未进入强类型运行时配置的 Otty 兼容字段默认值。字段仍会持久化并跨平台往返；
+  /// 其中唯一在 macOS 上禁用的是 Windows DirectWrite 渲染模式。
+  static let compatibilityDefaults: [String: SettingsCompatibilityValue] = [
+    "general.shell": .string(ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"),
+    "general.hideDirtyIndicator": .bool(false),
+    "general.windowWorkingDirectory": .string("home"),
+    "general.tabWorkingDirectory": .string("currentSession"),
+    "general.splitWorkingDirectory": .string("currentSession"),
+    "general.customWorkingDirectory": .string(""),
+    "general.omitAsterPrefix": .bool(false),
+    "general.cliAllowOverwrite": .bool(false),
+    "general.cliAliases": .string(""),
+    "general.externalTerminalApps": .string(""),
+    "shell.enabledShells": .string("zsh, bash, fish"),
+    "shell.trackedFolders": .string(""),
+    "shell.ignoredFolders": .string(""),
+    "shell.zoxideEnabled": .bool(false),
+    "shell.terminalResumeProtocol": .bool(false),
+    "shell.restoreProcessAllowlist": .string(""),
+    "controls.optionAsMetaMode": .string("off"),
+    "controls.vtKeypadAppAllowed": .bool(true),
+    "controls.rightClickAction": .string("contextMenu"),
+    "controls.mouseHideWhileTyping": .bool(false),
+    "controls.shiftMouseSelection": .bool(true),
+    "controls.bypassMouseReporting": .string("shift"),
+    "controls.linkClickOverMouseMode": .bool(true),
+    "controls.cursorClickToMove": .bool(false),
+    "controls.linkOpenWith": .string("system"),
+    "controls.fileOpenWith": .string("aster"),
+    "controls.folderOpenWith": .string("aster"),
+    "controls.openWithApps": .string(""),
+    "controls.secureInputIndication": .bool(true),
+    "controls.selectionBackspaceDeletes": .bool(false),
+    "appearance.adjustCellHeight": .number(0),
+    "appearance.fontBlending": .string("srgbOver"),
+    "appearance.fontThicken": .number(0),
+    "appearance.windowsTextRendering": .string("natural"),
+    "appearance.ligatureAlphabet": .bool(false),
+    "appearance.tabBarVisibility": .string("default"),
+    "appearance.tabsPanelVisibility": .string("default"),
+    "appearance.windowSizeMode": .string("remember"),
+    "appearance.windowColumns": .number(80),
+    "appearance.windowRows": .number(24),
+    "recipes.savedReplayMode": .string("automatic"),
+    "recipes.fileReplayMode": .string("confirmOnce"),
+    "advanced.scrollbackLines": .number(10_000),
+    "advanced.minimumContrast": .number(1),
+    "advanced.backgroundOpacity": .number(1),
+    "advanced.faintOpacity": .number(0.5),
+    "advanced.mouseScrollMultiplier": .number(3),
+    "advanced.liveResizeDelayMS": .number(50),
+    "advanced.freezeInactiveTabs": .bool(false),
+    "advanced.deduplicateTUIRepaints": .bool(true),
+    "advanced.stripCJKWrapPadding": .bool(true),
+    "advanced.joinArrowBoxDrawing": .bool(true),
+    "advanced.kittyKeyboard": .bool(true),
+    "advanced.allowVTKAM": .bool(true),
+    "advanced.sessionLogMode": .string("redacted"),
+    "advanced.sessionLogSizeMB": .number(5),
+    "advanced.debugMode": .bool(false),
+  ]
+}
+
+/// 可编辑配置文件 v3 同时保存强类型运行时配置与网页兼容字段。旧版只含
+/// `AsterConfiguration` 的 JSON 仍可导入，升级不会破坏已有备份。
+private struct SettingsExportEnvelope: Codable {
+  var schemaVersion = 3
+  var configuration: AsterConfiguration
+  var compatibility: [String: SettingsCompatibilityValue]
+}
+
+/// `WKUserContentController` 强持有 handler，因此代理只能弱持有控制器。
+@MainActor
+private final class SettingsScriptMessageProxy: NSObject, WKScriptMessageHandler {
+  weak var controller: SettingsViewController?
+
+  init(controller: SettingsViewController) {
+    self.controller = controller
+  }
+
+  func userContentController(
+    _ userContentController: WKUserContentController,
+    didReceive message: WKScriptMessage
+  ) {
+    guard message.frameInfo.isMainFrame else { return }
+    controller?.handleSettingsMessage(message.body)
+  }
+}
+
+extension SettingsViewController: WKNavigationDelegate {
+  fileprivate func handleSettingsMessage(_ body: Any) {
+    guard let message = body as? [String: Any],
+      (message["version"] as? NSNumber)?.intValue == SettingsWebBridge.protocolVersion,
+      let kind = message["kind"] as? String
+    else {
+      sendWebToast("设置消息格式无效", level: "error")
+      return
+    }
+
+    switch kind {
+    case "ready":
+      webReady = true
+      pushWebSnapshot()
+    case "set":
+      handleWebSet(message)
+    case "action":
+      handleWebAction(message)
+    default:
+      sendWebToast("不支持的设置操作", level: "error")
+    }
+  }
+
+  fileprivate func loadSettingsDocument() {
+    guard let webView = settingsWebView,
+      let resources = AsterResourceLocations.resourcesDirectory(),
+      case let directory = resources.appendingPathComponent("settings-ui", isDirectory: true),
+      FileManager.default.fileExists(atPath: directory.appendingPathComponent("index.html").path)
+    else {
+      message = "找不到设置页资源，请重新构建 Aster.app。"
+      return
+    }
+    webView.loadFileURL(
+      directory.appendingPathComponent("index.html"),
+      allowingReadAccessTo: directory
+    )
+  }
+
+  public func webView(
+    _ webView: WKWebView,
+    decidePolicyFor navigationAction: WKNavigationAction,
+    decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+  ) {
+    guard let url = navigationAction.request.url,
+      url.isFileURL,
+      let resources = AsterResourceLocations.resourcesDirectory()
+    else {
+      decisionHandler(.cancel)
+      return
+    }
+    let allowedDirectory = resources.appendingPathComponent("settings-ui", isDirectory: true)
+      .standardizedFileURL.path
+    let candidate = url.standardizedFileURL.path
+    decisionHandler(
+      (candidate == allowedDirectory || candidate.hasPrefix(allowedDirectory + "/"))
+        ? .allow : .cancel
+    )
+  }
+
+  fileprivate func pushWebSnapshot() {
+    guard webReady else { return }
+    webRevision += 1
+    sendWebMessage([
+      "type": "snapshot",
+      "snapshot": makeWebSnapshot(),
+    ])
+  }
+
+  fileprivate func sendWebMessage(_ message: [String: Any]) {
+    guard let webView = settingsWebView,
+      JSONSerialization.isValidJSONObject(message)
+    else { return }
+    // 参数由 WebKit 结构化桥接，不把 JSON 拼进 JavaScript 源码，配置中的用户文本
+    // 即使包含引号或换行也不可能逃逸成脚本。
+    webView.callAsyncJavaScript(
+      "window.AsterSettings && window.AsterSettings.receive(message);",
+      arguments: ["message": message],
+      in: nil,
+      in: .page,
+      completionHandler: nil
+    )
+  }
+
+  private func sendWebToast(_ text: String, level: String = "info") {
+    sendWebMessage(["type": "toast", "message": text, "level": level])
+  }
+
+  private func makeWebSnapshot() -> [String: Any] {
+    var values = SettingsWebBridge.compatibilityDefaults.mapValues(\.jsonValue)
+    for (key, value) in preferences.settingsCompatibility { values[key] = value.jsonValue }
+    let configuration = preferences.configuration
+    if preferences.settingsCompatibility["controls.optionAsMetaMode"] == nil {
+      values["controls.optionAsMetaMode"] = configuration.controls.optionAsMeta ? "both" : "off"
+    }
+
+    let valueGroups: [[String: Any]] = [[
+      "general.language": configuration.general.language,
+      "launchBehavior": configuration.launchBehavior.rawValue,
+      "general.quitAfterLastWindowClosed": configuration.general.quitAfterLastWindowClosed,
+      "general.newWindowWhenAllClosed": configuration.general.newWindowWhenAllClosed,
+      "general.closeTabConfirmation": configuration.general.closeTabConfirmation.rawValue,
+      "general.closeWindowConfirmation": configuration.general.closeWindowConfirmation.rawValue,
+      "general.closePaneConfirmation": configuration.general.closePaneConfirmation.rawValue,
+      "appearance.newTabPosition": webNewTabPosition(configuration.appearance.resolvedNewTabPosition),
+      "about.version": AsterResourceLocations.productVersion(),
+    ], [
+      "appearance.terminalIdentity": configuration.appearance.terminalIdentity,
+      "shell.shellIntegration": configuration.shell.shellIntegration,
+      "shell.sshIntegration": configuration.shell.sshIntegration,
+      "shell.frecencyAutoRecord": configuration.shell.resolvedFrecencyAutoRecord,
+      "shell.restoreMultiplexerSessions": configuration.shell.restoreMultiplexerSessions,
+      "shell.restoreAgentSessions": configuration.shell.restoreAgentSessions,
+      "shell.restoreProcesses": configuration.shell.restoreProcesses,
+      "shell.notifyOnFinish": configuration.shell.notifyOnFinish,
+      "shell.notifyOnError": configuration.shell.notifyOnError,
+      "shell.notifyOnWatchFinish": configuration.shell.resolvedNotifyOnWatchFinish,
+      "shell.notificationShellControlled": configuration.shell.resolvedNotificationShellControlled,
+      "shell.notifyWhileForeground": webForegroundPolicy(configuration.shell.resolvedNotifyWhileForeground),
+      "shell.bounceDockIcon": configuration.shell.resolvedBounceDockIcon,
+      "shell.soundOnErrorExit": configuration.shell.resolvedSoundOnErrorExit,
+      "shell.terminalBell": configuration.shell.terminalBell,
+      "shell.notificationSound.errorExit": configuration.shell.resolvedNotificationSoundCategories.contains(.errorExit),
+      "shell.notificationSound.commandFinish": configuration.shell.resolvedNotificationSoundCategories.contains(.commandFinish),
+      "shell.notificationSound.application": configuration.shell.resolvedNotificationSoundCategories.contains(.application),
+      "shell.badgeCommandFinish": configuration.shell.resolvedBadgeCommandFinish,
+      "shell.badgeCommandFailure": configuration.shell.resolvedBadgeCommandFailure,
+      "shell.badgeAwaitingInput": configuration.shell.badgeAwaitingInput,
+    ], [
+      "controls.allowMouseReporting": configuration.controls.allowMouseReporting,
+      "controls.focusFollowsMouse": configuration.controls.focusFollowsMouse,
+      "controls.shiftArrowSelection": configuration.controls.resolvedShiftArrowSelection,
+      "controls.linkDetectionEnabled": configuration.controls.resolvedLinkDetectionEnabled,
+      "controls.detectAllLinkSchemes": configuration.controls.detectAllLinkSchemes ?? true,
+      "controls.customLinkSchemes": configuration.controls.resolvedCustomLinkSchemes.sorted().joined(separator: ", "),
+      "controls.allowedNonStandardLinkSchemes": configuration.controls.resolvedAllowedNonStandardLinkSchemes.sorted().joined(separator: ", "),
+      "controls.showLinkPreviews": configuration.controls.showLinkPreviews,
+      "controls.secureInputAutomatically": configuration.controls.secureInputAutomatically,
+      "controls.copyOnSelect": configuration.controls.copyOnSelect,
+      "controls.trimTrailingSpaces": configuration.controls.trimTrailingSpaces,
+      "controls.pasteProtection": configuration.controls.pasteProtection,
+      "controls.pasteBracketedSafe": configuration.controls.resolvedPasteBracketedSafe,
+      "controls.clearSelectionOnTyping": configuration.controls.resolvedClearSelectionOnTyping,
+      "controls.clearSelectionOnCopy": configuration.controls.resolvedClearSelectionOnCopy,
+      "controls.clipboardWriteAccess": configuration.controls.resolvedClipboardWriteAccess.rawValue,
+      "controls.clipboardReadAccess": configuration.controls.resolvedClipboardReadAccess.rawValue,
+      "controls.smoothScrolling": configuration.controls.smoothScrolling,
+      "controls.scrollPastLastLine": webScrollPastLast(configuration.controls.resolvedScrollPastLastLine),
+      "controls.scrollPastFirstLine": webScrollPastFirst(configuration.controls.resolvedScrollPastFirstLine),
+      "controls.autocompleteShortcut": webAutocompleteShortcut(configuration.controls.resolvedAutocompleteShortcut),
+      "controls.autocompleteCandidatePanel": webCandidatePanel(configuration.controls.resolvedAutocompleteCandidatePanel),
+      "controls.autocompleteInlineSuggestion": configuration.controls.resolvedAutocompleteInlineSuggestion,
+      "controls.autocompleteOnDeviceLearning": configuration.controls.resolvedAutocompleteOnDeviceLearning,
+      "controls.autocompleteHistoryIgnore": configuration.controls.resolvedAutocompleteHistoryIgnore.joined(separator: ", "),
+      "controls.autocompleteDescriptionLanguage": configuration.controls.resolvedAutocompleteDescriptionLanguage.rawValue,
+      "controls.ipcAllowSendKeys": configuration.controls.resolvedIPCAllowSendKeys,
+      "controls.ipcAllowSensitiveSessions": configuration.controls.resolvedIPCAllowSensitiveSessions,
+    ], [
+      "editor.lineWrap": configuration.editor.lineWrap,
+      "editor.showLineNumbers": configuration.editor.showLineNumbers,
+      "editor.showVisibleWhitespace": configuration.editor.showVisibleWhitespace,
+      "editor.tabSize": configuration.editor.tabSize,
+      "editor.scrollPastEnd": configuration.editor.scrollPastEnd,
+      "editor.vimKeyBindings": configuration.editor.vimKeyBindings,
+      "editor.previewRichDocuments": configuration.editor.previewRichDocuments,
+      "agents.badgeProcessing": configuration.agents.badgeProcessing,
+      "agents.badgeTaskComplete": configuration.agents.badgeTaskComplete,
+      "agents.badgeAwaitingInput": configuration.agents.badgeAwaitingInput,
+      "agents.notifyTaskComplete": configuration.agents.notifyTaskComplete,
+      "agents.notifyAwaitingInput": configuration.agents.notifyAwaitingInput,
+      "agents.preventSleepWhileProcessing": configuration.agents.preventSleepWhileProcessing,
+      "agents.resumeSessions": configuration.agents.resumeSessions,
+      "recipes.savedReplayMode": webRecipeReplay(configuration.resolvedSavedRecipeReplayMode),
+      "recipes.fileReplayMode": webRecipeReplay(configuration.recipeReplayMode),
+    ], [
+      "appearance.appearance": preferences.appearance.rawValue,
+      "appearance.useSeparateDarkTheme": configuration.appearance.useSeparateDarkTheme,
+      "appearance.autoMatchFontStyles": configuration.appearance.fontFamilyBold == nil
+        && configuration.appearance.fontFamilyItalic == nil
+        && configuration.appearance.fontFamilyBoldItalic == nil,
+      "appearance.fontFamily": configuration.appearance.fontFamily,
+      "appearance.fontFamilyBold": configuration.appearance.fontFamilyBold ?? "",
+      "appearance.fontFamilyItalic": configuration.appearance.fontFamilyItalic ?? "",
+      "appearance.fontFamilyBoldItalic": configuration.appearance.fontFamilyBoldItalic ?? "",
+      "appearance.fontFamilyFallback": configuration.appearance.resolvedFontFamilyFallback.joined(separator: ", "),
+      "appearance.fontFamilyFallbackBold": configuration.appearance.resolvedFontFamilyFallbackBold.joined(separator: ", "),
+      "appearance.fontFamilyFallbackItalic": configuration.appearance.resolvedFontFamilyFallbackItalic.joined(separator: ", "),
+      "appearance.fontFamilyFallbackBoldItalic": configuration.appearance.resolvedFontFamilyFallbackBoldItalic.joined(separator: ", "),
+      "appearance.fontSize": configuration.appearance.fontSize,
+      "appearance.lineHeight": configuration.appearance.lineHeight,
+      "appearance.fontSmoothing": configuration.appearance.resolvedFontSmoothing,
+      "appearance.bidirectionalText": configuration.appearance.resolvedBidirectionalText,
+      "appearance.ligatureLevel": webLigature(configuration.appearance.resolvedLigatureLevel),
+      "appearance.boldRendering": webTextStyle(configuration.appearance.resolvedBoldRendering),
+      "appearance.italicRendering": webTextStyle(configuration.appearance.resolvedItalicRendering),
+      "appearance.underlineRendering": configuration.appearance.resolvedUnderlineRendering,
+      "appearance.blinkRendering": configuration.appearance.resolvedBlinkRenderingPolicy == .animated ? "blink" : "steady",
+      "appearance.cursorStyle": webCursorStyle(configuration.appearance.cursorStyle),
+      "appearance.cursorBlinkMode": webCursorBlink(configuration.appearance.resolvedCursorBlinkMode),
+      "appearance.cursorAnimation": configuration.appearance.resolvedCursorAnimation.rawValue,
+      "appearance.cursorOpacity": configuration.appearance.resolvedCursorOpacity,
+      "appearance.cursorColor": configuration.appearance.cursorColorOverride?.stringValue ?? "",
+      "appearance.cursorTextColor": configuration.appearance.cursorTextColorOverride?.stringValue ?? "",
+      "tabBarLayout": webTabLayout(configuration.tabBarLayout),
+      "appearance.showTabBar": configuration.appearance.showTabBar,
+      "appearance.tabBarVisibility": configuration.appearance.autoHideTabs ? "automatic" : "always",
+      "appearance.sidebarWidth": panelLayoutBinding.state?.sidebarWidth ?? configuration.appearance.sidebarWidth,
+      "appearance.inspectorWidth": panelLayoutBinding.state?.inspectorWidth ?? WorkspacePanelLayoutState.default.inspectorWidth,
+      "appearance.windowWidth": configuration.appearance.windowWidth,
+      "appearance.windowHeight": configuration.appearance.windowHeight,
+      "appearance.animateDockIconOnProgress": configuration.appearance.resolvedAnimateDockIconOnProgress,
+      "appearance.redDockIconOnError": configuration.appearance.resolvedRedDockIconOnError,
+      "advanced.autoProgressCommands": configuration.shell.resolvedAutoProgressCommands.joined(separator: ", "),
+      "advanced.titleShellControlled": configuration.shell.resolvedTitleShellControlled,
+      "advanced.titleReport": configuration.shell.resolvedTitleReport,
+      "advanced.configPath": settingsConfigurationURL().path,
+    ]]
+    for group in valueGroups {
+      values.merge(group, uniquingKeysWith: { _, new in new })
+    }
+    for block in EastAsianAmbiguousBlock.allCases {
+      values["advanced.widened.\(block.rawValue)"] = configuration.appearance
+        .resolvedWidenedEastAsianAmbiguousBlocks.contains(block)
+    }
+
+    return [
+      "revision": webRevision,
+      "section": selection.webIdentifier,
+      "message": message ?? "",
+      "values": values,
+      "capabilities": ["windowsTextRendering": false],
+      "themes": makeWebThemes(),
+      "themeEditor": makeWebThemeEditor(),
+      "computedFonts": makeWebComputedFonts(),
+      "agents": makeWebAgents(),
+      "recipes": makeWebRecipes(),
+      "shortcuts": makeWebShortcuts(),
+    ]
+  }
+
+  private func makeWebThemes() -> [[String: Any]] {
+    allThemes.map { base in
+      let theme = preferences.resolved(base)
+      let selected = theme.mode == .dark
+        ? preferences.configuration.appearance.darkThemeName == theme.name
+        : preferences.configuration.appearance.themeName == theme.name
+      return [
+        "id": theme.id,
+        "name": theme.name,
+        "mode": theme.mode.rawValue,
+        "background": theme.palette.renderedTerminalBackground.stringValue,
+        "foreground": theme.palette.foreground.stringValue,
+        "accent": theme.palette.accent.stringValue,
+        "selected": selected,
+        "focused": theme.id == focusedTheme.id,
+      ]
+    }
+  }
+
+  /// 返回当前实际主题的完整颜色 token。派生 token 同时携带 `resolved` 和空的
+  /// `value`，网页可准确区分“当前显示色”和“用户显式覆盖色”。
+  private func makeWebThemeEditor() -> [String: Any] {
+    let theme = focusedTheme
+    let style = theme.style
+    return [
+      "id": theme.id,
+      "name": theme.name,
+      "ansi": theme.palette.ansiColors.map(\.displayString),
+      "fonts": [
+        "regular": style.fontFamilies?.first ?? "",
+        "bold": style.fontFamilyBold ?? "",
+        "italic": style.fontFamilyItalic ?? "",
+        "boldItalic": style.fontFamilyBoldItalic ?? "",
+      ],
+      "slots": theme.colorSlots.map { slot -> [String: Any] in
+        var result: [String: Any] = [
+          "id": slot.id,
+          "title": slot.title,
+          "group": slot.group.title,
+          "resolved": slot.resolved.displayString,
+          "derived": slot.isDerived,
+        ]
+        if let value = slot.value { result["value"] = value.displayString }
+        return result
+      },
+    ]
+  }
+
+  /// “计算值”页只展示 CoreText 最终采用的字体，不把系统回退结果重新写入配置。
+  private func makeWebComputedFonts() -> [String: String] {
+    let fonts = preferences.terminalFontVariants
+    func name(_ font: NSFont) -> String {
+      font.fontName.hasPrefix(".") ? "系统等宽字体" : font.displayName ?? font.fontName
+    }
+    return [
+      "regular": name(fonts.normal),
+      "bold": name(fonts.bold),
+      "italic": name(fonts.italic),
+      "boldItalic": name(fonts.boldItalic),
+    ]
+  }
+
+  private func makeWebAgents() -> [[String: Any]] {
+    AgentProvider.allCases.map { provider in
+      let status = try? agentSetupService.status(for: provider)
+      return [
+        "id": provider.rawValue,
+        "name": agentDisplayName(provider),
+        "command": preferences.configuration.agents.launchComponents(for: provider).joined(separator: " "),
+        "enabled": preferences.configuration.agents.enabledAgents.contains(provider.commandName),
+        "status": status?.integrationInstalled == true ? "已安装集成" : (status?.executableAvailable == true ? "已检测到 CLI" : "未检测到 CLI"),
+        "integrated": status?.integrationInstalled == true,
+      ]
+    }
+  }
+
+  private func makeWebRecipes() -> [[String: Any]] {
+    let directory = recipesDirectoryURL()
+    guard let urls = try? FileManager.default.contentsOfDirectory(
+      at: directory,
+      includingPropertiesForKeys: [.isRegularFileKey],
+      options: [.skipsHiddenFiles]
+    ) else { return [] }
+    return urls.filter { ["ottyrecipe", "asterrecipe"].contains($0.pathExtension.lowercased()) }
+      .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+      .map { url in
+        [
+          "id": url.path,
+          "name": url.deletingPathExtension().lastPathComponent,
+          "summary": url.pathExtension.lowercased() == "ottyrecipe" ? "Otty Recipe 文件" : "Aster Recipe 文件",
+          "shortcut": "查看",
+        ]
+      }
+  }
+
+  private func makeWebShortcuts() -> [[String: Any]] {
+    let shortcuts: [(String, String, String, String)] = [
+      ("new-window", "窗口", "新建窗口", "⌘N"),
+      ("new-tab", "窗口", "新建标签页", "⌘T"),
+      ("close", "窗口", "关闭当前项", "⌘W"),
+      ("open-file", "文件", "打开文件", "⌘O"),
+      ("save", "文件", "保存", "⌘S"),
+      ("find", "编辑", "在当前 Pane 查找", "⌘F"),
+      ("global-find", "编辑", "全局查找", "⇧⌘F"),
+      ("command-palette", "工作区", "命令面板", "⇧⌘P"),
+      ("split-right", "Pane", "向右分屏", "⌘D"),
+      ("split-down", "Pane", "向下分屏", "⇧⌘D"),
+      ("zoom-pane", "Pane", "缩放当前分屏", "⇧⌘↩"),
+      ("open-recipe", "Recipes", "打开 Recipe", "⇧⌘R"),
+      ("save-recipe", "Recipes", "保存为 Recipe", "⌥⇧⌘R"),
+      ("settings", "应用", "打开设置", "⌘,"),
+    ]
+    return shortcuts.map { id, group, label, keys in
+      let override = preferences.settingsCompatibility["shortcuts.\(id)"]?.jsonValue as? String
+      return ["id": id, "group": group, "label": label, "keys": override ?? keys, "detail": "点击修改快捷键"]
+    }
+  }
+
+  private func handleWebSet(_ request: [String: Any]) {
+    guard (request["baseRevision"] as? NSNumber)?.intValue == webRevision,
+      let changes = request["changes"] as? [[String: Any]],
+      !changes.isEmpty, changes.count <= 32
+    else {
+      sendWebToast("设置已变化，请重试", level: "error")
+      pushWebSnapshot()
+      return
+    }
+
+    do {
+      for change in changes {
+        guard let key = change["key"] as? String,
+          key.count <= 128,
+          let value = change["value"]
+        else { throw SettingsWebBridgeError.invalidValue }
+        try applyWebSetting(key: key, value: value)
+      }
+      message = nil
+      pushWebSnapshot()
+    } catch {
+      sendWebToast("设置值无效，未应用：\(error.localizedDescription)", level: "error")
+      pushWebSnapshot()
+    }
+  }
+
+  private func applyWebSetting(key: String, value: Any) throws {
+    let bool = { () throws -> Bool in
+      guard let value = value as? NSNumber,
+        CFGetTypeID(value) == CFBooleanGetTypeID()
+      else { throw SettingsWebBridgeError.invalidValue }
+      return value.boolValue
+    }
+    let string = { () throws -> String in
+      guard let value = value as? String, value.utf8.count <= 4_096,
+        !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+      else { throw SettingsWebBridgeError.invalidValue }
+      return value
+    }
+    let number = { () throws -> Double in
+      guard let value = value as? NSNumber,
+        CFGetTypeID(value) != CFBooleanGetTypeID(),
+        value.doubleValue.isFinite
+      else { throw SettingsWebBridgeError.invalidValue }
+      return value.doubleValue
+    }
+
+    switch key {
+    case "general.language": preferences.configuration.general.language = try string()
+    case "launchBehavior":
+      guard let parsed = LaunchBehavior(rawValue: try string()) else { throw SettingsWebBridgeError.invalidValue }
+      preferences.configuration.launchBehavior = parsed
+    case "general.quitAfterLastWindowClosed": preferences.configuration.general.quitAfterLastWindowClosed = try bool()
+    case "general.newWindowWhenAllClosed": preferences.configuration.general.newWindowWhenAllClosed = try bool()
+    case "general.closeTabConfirmation": preferences.configuration.general.closeTabConfirmation = try enumValue(string(), as: CloseConfirmation.self)
+    case "general.closeWindowConfirmation": preferences.configuration.general.closeWindowConfirmation = try enumValue(string(), as: CloseConfirmation.self)
+    case "general.closePaneConfirmation": preferences.configuration.general.closePaneConfirmation = try enumValue(string(), as: CloseConfirmation.self)
+    case "appearance.newTabPosition":
+      let raw = try string()
+      let mapped = raw == "automatic" ? "auto" : (raw == "afterCurrent" ? "after-current" : raw)
+      preferences.configuration.appearance.newTabPosition = try enumValue(mapped, as: NewTabPosition.self)
+    case "appearance.terminalIdentity": preferences.configuration.appearance.terminalIdentity = try string()
+    case "shell.shellIntegration": setShellIntegrationEnabled(try bool())
+    case "shell.sshIntegration": preferences.configuration.shell.sshIntegration = try bool()
+    case "shell.frecencyAutoRecord": preferences.configuration.shell.frecencyAutoRecord = try bool()
+    case "shell.restoreMultiplexerSessions": preferences.configuration.shell.restoreMultiplexerSessions = try bool()
+    case "shell.restoreAgentSessions": preferences.configuration.shell.restoreAgentSessions = try bool()
+    case "shell.restoreProcesses": preferences.configuration.shell.restoreProcesses = try bool()
+    case "shell.notifyOnFinish": preferences.configuration.shell.notifyOnFinish = try bool()
+    case "shell.notifyOnError": preferences.configuration.shell.notifyOnError = try bool()
+    case "shell.notifyOnWatchFinish": preferences.configuration.shell.notifyOnWatchFinish = try bool()
+    case "shell.notificationShellControlled": preferences.configuration.shell.notificationShellControlled = try bool()
+    case "shell.notifyWhileForeground":
+      let raw = try string()
+      let mapped = raw == "banner" ? "tab-unfocused" : raw
+      preferences.configuration.shell.notifyWhileForeground = try enumValue(mapped, as: NotificationForegroundPolicy.self)
+    case "shell.bounceDockIcon": preferences.configuration.shell.bounceDockIcon = try bool()
+    case "shell.soundOnErrorExit": preferences.configuration.shell.soundOnErrorExit = try bool()
+    case "shell.terminalBell": preferences.configuration.shell.terminalBell = try bool()
+    case "shell.notificationSound.errorExit": setNotificationSound(.errorExit, enabled: try bool())
+    case "shell.notificationSound.commandFinish": setNotificationSound(.commandFinish, enabled: try bool())
+    case "shell.notificationSound.application": setNotificationSound(.application, enabled: try bool())
+    case "shell.badgeCommandFinish": preferences.configuration.shell.badgeCommandFinish = try bool()
+    case "shell.badgeCommandFailure":
+      let enabled = try bool()
+      preferences.configuration.shell.badgeCommandFailure = enabled
+      preferences.configuration.shell.badgeExitStatus = enabled
+    case "shell.badgeAwaitingInput": preferences.configuration.shell.badgeAwaitingInput = try bool()
+    case "controls.allowMouseReporting": preferences.configuration.controls.allowMouseReporting = try bool()
+    case "controls.optionAsMetaMode":
+      let mode = try string()
+      guard ["off", "both", "left", "right"].contains(mode) else { throw SettingsWebBridgeError.invalidValue }
+      preferences.configuration.controls.optionAsMeta = mode != "off"
+      preferences.setCompatibilityValue(.string(mode), forKey: key)
+    case "controls.focusFollowsMouse": preferences.configuration.controls.focusFollowsMouse = try bool()
+    case "controls.shiftArrowSelection": preferences.configuration.controls.shiftArrowSelection = try bool()
+    case "controls.linkDetectionEnabled": preferences.configuration.controls.linkDetectionEnabled = try bool()
+    case "controls.detectAllLinkSchemes": preferences.configuration.controls.detectAllLinkSchemes = try bool()
+    case "controls.customLinkSchemes":
+      let schemes = try string().split(separator: ",").map {
+        $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      }.filter(LinkSchemePolicy.isSyntacticallyValid)
+      preferences.configuration.controls.customLinkSchemes = Set(schemes.prefix(64))
+    case "controls.allowedNonStandardLinkSchemes":
+      let schemes = try string().split(separator: ",").map {
+        $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      }.filter(LinkSchemePolicy.isSyntacticallyValid)
+      preferences.configuration.controls.allowedNonStandardLinkSchemes = Set(schemes.prefix(64))
+    case "controls.showLinkPreviews": preferences.configuration.controls.showLinkPreviews = try bool()
+    case "controls.secureInputAutomatically": preferences.configuration.controls.secureInputAutomatically = try bool()
+    case "controls.copyOnSelect": preferences.configuration.controls.copyOnSelect = try bool()
+    case "controls.trimTrailingSpaces": preferences.configuration.controls.trimTrailingSpaces = try bool()
+    case "controls.pasteProtection": preferences.configuration.controls.pasteProtection = try bool()
+    case "controls.pasteBracketedSafe": preferences.configuration.controls.pasteBracketedSafe = try bool()
+    case "controls.clearSelectionOnTyping": preferences.configuration.controls.clearSelectionOnTyping = try bool()
+    case "controls.clearSelectionOnCopy": preferences.configuration.controls.clearSelectionOnCopy = try bool()
+    case "controls.clipboardWriteAccess": preferences.configuration.controls.clipboardWriteAccess = try enumValue(string(), as: ClipboardAccess.self)
+    case "controls.clipboardReadAccess": preferences.configuration.controls.clipboardReadAccess = try enumValue(string(), as: ClipboardAccess.self)
+    case "controls.smoothScrolling": preferences.configuration.controls.smoothScrolling = try bool()
+    case "controls.scrollPastLastLine":
+      let raw = try string()
+      let mapped = ["lastContentAtTop": "lastLineWithContent", "cursorLineAtTop": "cursorLine"][raw] ?? raw
+      preferences.configuration.controls.scrollPastLastLine = try enumValue(mapped, as: TerminalScrollPastLastLine.self)
+    case "controls.scrollPastFirstLine":
+      let raw = try string()
+      let mapped = raw == "sameAsLast" ? "sameAsLastLine" : raw
+      preferences.configuration.controls.scrollPastFirstLine = try enumValue(mapped, as: TerminalScrollPastFirstLine.self)
+    case "controls.autocompleteShortcut":
+      let raw = try string()
+      let mapped = ["rightArrow": "tab+right-arrow", "disabled": "disable", "controlSpace": "ctrl+space"][raw] ?? raw
+      preferences.configuration.controls.autocompleteShortcut = try enumValue(mapped, as: AutocompleteShortcut.self)
+    case "controls.autocompleteCandidatePanel":
+      let raw = try string()
+      let mapped = ["automatic": "auto", "disabled": "disable"][raw] ?? raw
+      preferences.configuration.controls.autocompleteCandidatePanel = try enumValue(mapped, as: AutocompleteCandidatePanel.self)
+    case "controls.autocompleteInlineSuggestion": preferences.configuration.controls.autocompleteInlineSuggestion = try bool()
+    case "controls.autocompleteOnDeviceLearning": preferences.configuration.controls.autocompleteOnDeviceLearning = try bool()
+    case "controls.autocompleteHistoryIgnore":
+      preferences.configuration.controls.autocompleteHistoryIgnore = try string().split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    case "controls.autocompleteDescriptionLanguage": preferences.configuration.controls.autocompleteDescriptionLanguage = try enumValue(string(), as: AutocompleteDescriptionLanguage.self)
+    case "controls.ipcAllowSendKeys": preferences.configuration.controls.ipcAllowSendKeys = try bool()
+    case "controls.ipcAllowSensitiveSessions": preferences.configuration.controls.ipcAllowSensitiveSessions = try bool()
+    case "editor.lineWrap": preferences.configuration.editor.lineWrap = try bool()
+    case "editor.showLineNumbers": preferences.configuration.editor.showLineNumbers = try bool()
+    case "editor.showVisibleWhitespace": preferences.configuration.editor.showVisibleWhitespace = try bool()
+    case "editor.tabSize": preferences.configuration.editor.tabSize = Int(try number())
+    case "editor.scrollPastEnd": preferences.configuration.editor.scrollPastEnd = try bool()
+    case "editor.vimKeyBindings": preferences.configuration.editor.vimKeyBindings = try bool()
+    case "editor.previewRichDocuments": preferences.configuration.editor.previewRichDocuments = try bool()
+    case "agents.badgeProcessing": preferences.configuration.agents.badgeProcessing = try bool()
+    case "agents.badgeTaskComplete": preferences.configuration.agents.badgeTaskComplete = try bool()
+    case "agents.badgeAwaitingInput": preferences.configuration.agents.badgeAwaitingInput = try bool()
+    case "agents.notifyTaskComplete": preferences.configuration.agents.notifyTaskComplete = try bool()
+    case "agents.notifyAwaitingInput": preferences.configuration.agents.notifyAwaitingInput = try bool()
+    case "agents.preventSleepWhileProcessing": preferences.configuration.agents.preventSleepWhileProcessing = try bool()
+    case "agents.resumeSessions": preferences.configuration.agents.resumeSessions = try bool()
+    case "recipes.savedReplayMode": preferences.configuration.savedRecipeReplayMode = try recipeReplayValue(try string())
+    case "recipes.fileReplayMode": preferences.configuration.recipeReplayMode = try recipeReplayValue(try string())
+    case "appearance.appearance": preferences.appearance = try enumValue(string(), as: AppPreferences.Appearance.self)
+    case "appearance.useSeparateDarkTheme": preferences.configuration.appearance.useSeparateDarkTheme = try bool()
+    case "appearance.autoMatchFontStyles":
+      if try bool() {
+        preferences.configuration.appearance.fontFamilyBold = nil
+        preferences.configuration.appearance.fontFamilyItalic = nil
+        preferences.configuration.appearance.fontFamilyBoldItalic = nil
+      } else {
+        let family = preferences.configuration.appearance.fontFamily
+        preferences.configuration.appearance.fontFamilyBold = family
+        preferences.configuration.appearance.fontFamilyItalic = family
+        preferences.configuration.appearance.fontFamilyBoldItalic = family
+      }
+    case "appearance.fontFamily": preferences.configuration.appearance.fontFamily = try string()
+    case "appearance.fontFamilyBold": preferences.configuration.appearance.fontFamilyBold = optionalText(try string())
+    case "appearance.fontFamilyItalic": preferences.configuration.appearance.fontFamilyItalic = optionalText(try string())
+    case "appearance.fontFamilyBoldItalic": preferences.configuration.appearance.fontFamilyBoldItalic = optionalText(try string())
+    case "appearance.fontFamilyFallback": preferences.configuration.appearance.fontFamilyFallback = try string().split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    case "appearance.fontFamilyFallbackBold": preferences.configuration.appearance.fontFamilyFallbackBold = fontFamilyList(try string())
+    case "appearance.fontFamilyFallbackItalic": preferences.configuration.appearance.fontFamilyFallbackItalic = fontFamilyList(try string())
+    case "appearance.fontFamilyFallbackBoldItalic": preferences.configuration.appearance.fontFamilyFallbackBoldItalic = fontFamilyList(try string())
+    case "appearance.fontSize": preferences.configuration.appearance.fontSize = min(max(try number(), 9), 32)
+    case "appearance.lineHeight": preferences.configuration.appearance.lineHeight = min(max(try number(), 0.8), 2)
+    case "appearance.fontSmoothing": preferences.configuration.appearance.fontSmoothing = try bool()
+    case "appearance.bidirectionalText": preferences.configuration.appearance.bidirectionalText = try bool()
+    case "appearance.ligatureLevel":
+      let raw = try string()
+      let mapped = ["off": "none", "extended": "discretionary"][raw] ?? raw
+      preferences.configuration.appearance.ligatureLevel = try enumValue(mapped, as: TerminalLigatureLevel.self)
+    case "appearance.boldRendering", "appearance.italicRendering":
+      let raw = try string()
+      let mapped = ["off": "disabled", "primaryOnly": "primary-font-only"][raw] ?? raw
+      let parsed = try enumValue(mapped, as: TerminalTextStyleRendering.self)
+      if key == "appearance.boldRendering" { preferences.configuration.appearance.boldRendering = parsed }
+      else { preferences.configuration.appearance.italicRendering = parsed }
+    case "appearance.underlineRendering": preferences.configuration.appearance.underlineRendering = try bool()
+    case "appearance.blinkRendering": preferences.configuration.appearance.blinkRenderingPolicy = (try string()) == "blink" ? .animated : .steady
+    case "appearance.cursorStyle":
+      let raw = try string()
+      let mapped = raw == "blockHollow" ? "hollowBlock" : raw
+      preferences.configuration.appearance.cursorStyle = try enumValue(mapped, as: CursorStyle.self)
+    case "appearance.cursorBlinkMode":
+      let mapped = ["defaultOff": "default-off", "defaultOn": "default-on", "alwaysOff": "always-off", "alwaysOn": "always-on"][try string()] ?? ""
+      preferences.configuration.appearance.cursorBlinkMode = try enumValue(mapped, as: TerminalCursorBlinkMode.self)
+    case "appearance.cursorAnimation": preferences.configuration.appearance.cursorAnimation = try enumValue(string(), as: TerminalCursorAnimation.self)
+    case "appearance.cursorOpacity": preferences.configuration.appearance.cursorOpacity = min(max(try number(), 0.1), 1)
+    case "appearance.cursorColor": preferences.configuration.appearance.cursorColorOverride = try colorValue(try string())
+    case "appearance.cursorTextColor": preferences.configuration.appearance.cursorTextColorOverride = try colorValue(try string())
+    case "tabBarLayout":
+      let raw = try string()
+      let mapped = ["horizontalTop": "top", "horizontalBottom": "bottom"][raw] ?? raw
+      preferences.configuration.tabBarLayout = try enumValue(mapped, as: TabBarLayout.self)
+    case "appearance.showTabBar": preferences.configuration.appearance.showTabBar = try bool()
+    case "appearance.tabBarVisibility":
+      switch try string() {
+      case "always":
+        preferences.configuration.appearance.showTabBar = true
+        preferences.configuration.appearance.autoHideTabs = false
+      case "automatic", "default":
+        preferences.configuration.appearance.showTabBar = true
+        preferences.configuration.appearance.autoHideTabs = true
+      default: throw SettingsWebBridgeError.invalidValue
+      }
+    case "appearance.sidebarWidth": panelLayoutBinding.setPreferredWidth(try number(), for: .sidebar)
+    case "appearance.inspectorWidth": panelLayoutBinding.setPreferredWidth(try number(), for: .inspector)
+    case "appearance.windowWidth": preferences.configuration.appearance.windowWidth = min(max(try number(), 820), 3_840)
+    case "appearance.windowHeight": preferences.configuration.appearance.windowHeight = min(max(try number(), 520), 2_160)
+    case "appearance.animateDockIconOnProgress": preferences.configuration.appearance.animateDockIconOnProgress = try bool()
+    case "appearance.redDockIconOnError": preferences.configuration.appearance.redDockIconOnError = try bool()
+    case "advanced.autoProgressCommands":
+      preferences.configuration.shell.autoProgressCommands = Array(try string()
+        .split(separator: ",", omittingEmptySubsequences: true)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .prefix(128))
+    case "advanced.titleShellControlled": preferences.configuration.shell.titleShellControlled = try bool()
+    case "advanced.titleReport": preferences.configuration.shell.titleReport = try bool()
+    default:
+      if key.hasPrefix("agents.enabled."),
+        let provider = AgentProvider(rawValue: String(key.dropFirst("agents.enabled.".count)))
+      {
+        let enabled = try bool()
+        var agents = Set(preferences.configuration.agents.enabledAgents)
+        if enabled { agents.insert(provider.commandName) } else { agents.remove(provider.commandName) }
+        preferences.configuration.agents.enabledAgents = agents.sorted()
+        return
+      }
+      if key.hasPrefix("agents.launchCommand."),
+        let provider = AgentProvider(rawValue: String(key.dropFirst("agents.launchCommand.".count)))
+      {
+        updateAgentLaunchCommand(
+          try string(),
+          provider: provider,
+          displayName: agentDisplayName(provider)
+        )
+        return
+      }
+      if key.hasPrefix("advanced.widened."),
+        let block = EastAsianAmbiguousBlock(
+          rawValue: String(key.dropFirst("advanced.widened.".count))
+        ).normalizedKnownValue
+      {
+        var blocks = preferences.configuration.appearance.resolvedWidenedEastAsianAmbiguousBlocks
+        if try bool() { blocks.insert(block) } else { blocks.remove(block) }
+        preferences.configuration.appearance.widenedEastAsianAmbiguousBlocks = blocks
+        return
+      }
+      if key.hasPrefix("shortcuts."), key.count <= 96 {
+        let shortcut = try string()
+        guard ShortcutOverrideApplier.isValidDisplayShortcut(shortcut) else {
+          throw SettingsWebBridgeError.invalidValue
+        }
+        preferences.setCompatibilityValue(.string(shortcut), forKey: key)
+        ShortcutOverrideApplier.apply(
+          to: NSApp.mainMenu,
+          values: preferences.settingsCompatibility
+        )
+        return
+      }
+      guard SettingsWebBridge.compatibilityDefaults[key] != nil else {
+        throw SettingsWebBridgeError.unknownKey
+      }
+      preferences.setCompatibilityValue(
+        try validatedCompatibilityValue(key: key, jsonValue: value),
+        forKey: key
+      )
+    }
+  }
+
+  /// 兼容字段也必须遵循与强类型字段相同的信任边界：值类型必须和清单默认值一致，
+  /// 文本不能携带控制字符或无限增长，数值必须有限且位于控件公开范围内。
+  private func validatedCompatibilityValue(
+    key: String,
+    jsonValue: Any
+  ) throws -> SettingsCompatibilityValue {
+    guard let expected = SettingsWebBridge.compatibilityDefaults[key] else {
+      throw SettingsWebBridgeError.unknownKey
+    }
+    switch expected {
+    case .bool:
+      guard let value = jsonValue as? NSNumber,
+        CFGetTypeID(value) == CFBooleanGetTypeID()
+      else { throw SettingsWebBridgeError.invalidValue }
+      return .bool(value.boolValue)
+    case .number:
+      guard let value = jsonValue as? NSNumber,
+        CFGetTypeID(value) != CFBooleanGetTypeID(),
+        value.doubleValue.isFinite
+      else { throw SettingsWebBridgeError.invalidValue }
+      let number = value.doubleValue
+      let allowedRange: ClosedRange<Double>? = switch key {
+      case "appearance.adjustCellHeight": -8...16
+      case "appearance.fontThicken": 0...4
+      case "appearance.windowColumns": 40...400
+      case "appearance.windowRows": 12...200
+      case "advanced.scrollbackLines": 1_000...1_000_000
+      case "advanced.minimumContrast": 1...21
+      case "advanced.backgroundOpacity": 0...1
+      case "advanced.faintOpacity": 0.05...1
+      case "advanced.mouseScrollMultiplier": 0.1...10
+      case "advanced.liveResizeDelayMS": 0...5_000
+      case "advanced.sessionLogSizeMB": 1...1_024
+      default: nil
+      }
+      guard allowedRange?.contains(number) ?? true else {
+        throw SettingsWebBridgeError.invalidValue
+      }
+      return .number(number)
+    case .string:
+      guard let value = jsonValue as? String,
+        value.utf8.count <= 4_096,
+        !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+      else { throw SettingsWebBridgeError.invalidValue }
+      let choices: [String: Set<String>] = [
+        "general.windowWorkingDirectory": ["home", "currentSession", "custom"],
+        "general.tabWorkingDirectory": ["home", "currentSession", "custom"],
+        "general.splitWorkingDirectory": ["home", "currentSession", "custom"],
+        "shell.enabledShells": ["zsh, bash, fish"],
+        "controls.optionAsMetaMode": ["off", "both", "left", "right"],
+        "controls.rightClickAction": ["contextMenu", "copy", "paste", "copyOrPaste", "ignore"],
+        "controls.bypassMouseReporting": ["none", "shift", "control", "option", "controlShift", "command"],
+        "controls.linkOpenWith": ["system", "aster"],
+        "controls.fileOpenWith": ["system", "aster"],
+        "controls.folderOpenWith": ["finder", "aster"],
+        "appearance.fontBlending": ["srgbOver", "macOSLike", "linear", "perceptual"],
+        "appearance.windowsTextRendering": ["natural", "naturalSymmetric", "gdi", "clearType", "aliased"],
+        "appearance.tabBarVisibility": ["always", "automatic", "default"],
+        "appearance.tabsPanelVisibility": ["always", "automatic", "default"],
+        "appearance.windowSizeMode": ["remember", "grid", "frame"],
+        "advanced.sessionLogMode": ["off", "redacted", "plain"],
+      ]
+      guard choices[key]?.contains(value) ?? true else {
+        throw SettingsWebBridgeError.invalidValue
+      }
+      return .string(value)
+    }
+  }
+
+  /// 通知声音是一个集合而不是三个彼此独立的布尔字段；网页切换任一项时只修改对应
+  /// category，保留另外两项，避免连续操作互相覆盖。
+  private func setNotificationSound(
+    _ category: TerminalNotificationCategory,
+    enabled: Bool
+  ) {
+    var categories = preferences.configuration.shell.resolvedNotificationSoundCategories
+    if enabled { categories.insert(category) } else { categories.remove(category) }
+    preferences.configuration.shell.notificationSoundCategories = categories
+  }
+
+  /// Otty 的 Theme 字体页编辑主题自身的 font-mono 字段。内置主题保持只读：首次
+  /// 修改先创建自定义副本，再原位更新该副本并切换到它。
+  private func updateWebThemeFont(themeID: String, role: String, value: String) {
+    guard value.utf8.count <= 128,
+      !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+      let source = allThemes.first(where: { $0.id == themeID })
+    else {
+      sendWebToast("主题字体名称无效", level: "error")
+      return
+    }
+    var theme = source.isBuiltIn ? preferences.duplicateTheme(source) : source
+    focusedThemeID = theme.id
+    let normalized = optionalText(value)
+    switch role {
+    case "regular":
+      let tail = Array((theme.style.fontFamilies ?? []).dropFirst())
+      theme.style.fontFamilies = normalized.map { [$0] + tail }
+    case "bold": theme.style.fontFamilyBold = normalized
+    case "italic": theme.style.fontFamilyItalic = normalized
+    case "boldItalic": theme.style.fontFamilyBoldItalic = normalized
+    default:
+      sendWebToast("未知主题字体样式", level: "error")
+      return
+    }
+    do {
+      try TerminalThemeStore.validate(theme)
+      guard preferences.updateTheme(theme) else {
+        sendWebToast("主题字体无法保存", level: "error")
+        return
+      }
+      preferences.selectTheme(theme)
+      _ = try preferences.saveThemeToLibraryFolder(theme)
+      message = "已更新主题“\(theme.name)”的字体。"
+    } catch {
+      message = "主题字体保存失败：\(error.localizedDescription)"
+    }
+    refresh()
+  }
+
+  /// ANSI 16 色属于主题调色板整体，不能写进单 token override。内置主题首次改色时
+  /// 创建自定义副本，之后所有色位都在该副本上原位保存。
+  private func updateWebThemeANSIColor(themeID: String, index: Int, color: HexColor) {
+    guard let source = allThemes.first(where: { $0.id == themeID }),
+      source.palette.ansiColors.indices.contains(index)
+    else {
+      sendWebToast("ANSI 色位不存在", level: "error")
+      return
+    }
+    var theme = source.isBuiltIn ? preferences.duplicateTheme(source) : source
+    focusedThemeID = theme.id
+    theme.palette.ansiColors[index] = color
+    do {
+      try TerminalThemeStore.validate(theme)
+      guard preferences.updateTheme(theme) else {
+        sendWebToast("ANSI 调色板无法保存", level: "error")
+        return
+      }
+      preferences.selectTheme(theme)
+      _ = try preferences.saveThemeToLibraryFolder(theme)
+      message = "已更新主题“\(theme.name)”的 ANSI 调色板。"
+    } catch {
+      message = "ANSI 调色板保存失败：\(error.localizedDescription)"
+    }
+    refresh()
+  }
+
+  private func handleWebAction(_ request: [String: Any]) {
+    guard (request["baseRevision"] as? NSNumber)?.intValue == webRevision,
+      let action = request["action"] as? String,
+      let payload = request["payload"] as? [String: Any]
+    else {
+      sendWebToast("操作已过期，请重试", level: "error")
+      pushWebSnapshot()
+      return
+    }
+
+    switch action {
+    case "setDefaultTerminal": registerAsDefaultTerminal()
+    case "installCLI": installCLI()
+    case "openFinderSettings": openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts")
+    case "openFullDiskAccess": openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+    case "openNotificationSettings": openSystemSettingsPane("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+    case "openCredits": NSApp.orderFrontStandardAboutPanel(nil)
+    case "editCLIAliases":
+      editCompatibilityText(
+        key: "general.cliAliases",
+        title: "自定义 CLI 别名",
+        detail: "使用逗号分隔 alias=subcommand，例如 e=edit, v=view。"
+      )
+    case "configureExternalApps":
+      editCompatibilityText(
+        key: "general.externalTerminalApps",
+        title: "常用应用终端集成",
+        detail: "输入需要由 Aster 打开的应用 bundle ID，以逗号分隔。"
+      )
+    case "configureShells":
+      editCompatibilityText(
+        key: "shell.enabledShells",
+        title: "启用 Shell 集成",
+        detail: "以逗号分隔允许注入受管集成的 Shell：zsh、bash、fish。"
+      )
+    case "manageFolders": manageTrackedFolders()
+    case "configureOpenWithApps":
+      editCompatibilityText(
+        key: "controls.openWithApps",
+        title: "自定义打开方式",
+        detail: "输入应用 bundle ID，以逗号分隔。"
+      )
+    case "resetLinkApprovals":
+      preferences.configuration.controls.allowedNonStandardLinkSchemes = []
+      message = "已清除链接安全授权。"
+      refresh()
+    case "updateAutocomplete": updateAutocompleteSpecs()
+    case "clearAutocomplete": clearAutocompleteLearning()
+    case "installAgent", "uninstallAgent":
+      guard let id = payload["provider"] as? String, let provider = AgentProvider(rawValue: id) else {
+        sendWebToast("智能体标识无效", level: "error"); return
+      }
+      performAgentSetupAction(provider, displayName: agentDisplayName(provider))
+    case "selectTheme":
+      guard let id = payload["id"] as? String, let theme = allThemes.first(where: { $0.id == id }) else {
+        sendWebToast("主题不存在", level: "error"); return
+      }
+      focusedThemeID = theme.id
+      preferences.selectTheme(theme)
+      message = "已选择主题“\(theme.name)”。"
+      refresh()
+    case "duplicateTheme":
+      guard let id = payload["id"] as? String,
+        let source = allThemes.first(where: { $0.id == id })
+      else {
+        sendWebToast("主题不存在", level: "error")
+        return
+      }
+      let duplicate = preferences.duplicateTheme(source)
+      focusedThemeID = duplicate.id
+      do {
+        _ = try preferences.saveThemeToLibraryFolder(duplicate)
+        message = "已创建主题“\(duplicate.name)”。"
+      } catch {
+        message = "主题副本已创建，但文件保存失败：\(error.localizedDescription)"
+      }
+      refresh()
+    case "setThemeFont":
+      guard let themeID = payload["themeID"] as? String,
+        let role = payload["role"] as? String,
+        let value = payload["value"] as? String
+      else {
+        sendWebToast("主题字体参数无效", level: "error")
+        return
+      }
+      updateWebThemeFont(themeID: themeID, role: role, value: value)
+    case "setThemeANSIColor":
+      guard let themeID = payload["themeID"] as? String,
+        let index = (payload["index"] as? NSNumber)?.intValue,
+        let rawColor = payload["color"] as? String,
+        let color = try? colorValue(rawColor)
+      else {
+        sendWebToast("ANSI 颜色参数无效", level: "error")
+        return
+      }
+      updateWebThemeANSIColor(themeID: themeID, index: index, color: color)
+    case "setThemeColor":
+      guard let themeID = payload["themeID"] as? String,
+        let theme = allThemes.first(where: { $0.id == themeID }),
+        let slotID = payload["slotID"] as? String,
+        theme.colorSlots.contains(where: { $0.id == slotID }),
+        let rawColor = payload["color"] as? String,
+        let color = try? colorValue(rawColor)
+      else {
+        sendWebToast("主题颜色无效", level: "error")
+        return
+      }
+      preferences.setThemeColor(color, slotID: slotID, themeID: themeID)
+      do {
+        _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
+        message = "已更新主题“\(theme.name)”的颜色。"
+      } catch {
+        message = "颜色已应用；Otty 主题文件同步失败：\(error.localizedDescription)"
+      }
+      refresh()
+    case "resetThemeColors":
+      guard let themeID = payload["themeID"] as? String,
+        let theme = allThemes.first(where: { $0.id == themeID })
+      else {
+        sendWebToast("主题不存在", level: "error")
+        return
+      }
+      preferences.clearThemeOverrides(themeID: themeID)
+      do {
+        _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
+        message = "已恢复主题“\(theme.name)”的原始配色。"
+      } catch {
+        message = "已恢复原始配色；Otty 主题文件同步失败：\(error.localizedDescription)"
+      }
+      refresh()
+    case "importTheme": importTheme()
+    case "openThemesFolder": openThemesFolder()
+    case "installFont": NSFontManager.shared.orderFrontFontPanel(nil)
+    case "openFontsFolder": openFontsFolder()
+    case "openRecipesFolder":
+      do { try FileManager.default.createDirectory(at: recipesDirectoryURL(), withIntermediateDirectories: true); NSWorkspace.shared.open(recipesDirectoryURL()) }
+      catch { sendWebToast("无法打开 Recipe 文件夹：\(error.localizedDescription)", level: "error") }
+    case "openRecipeDetail":
+      guard let path = payload["id"] as? String, path.hasPrefix(recipesDirectoryURL().path) else { return }
+      NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    case "createTextSnippet": createTextSnippetRecipe()
+    case "openConfig":
+      do { try writeEditableConfiguration(); NSWorkspace.shared.open(settingsConfigurationURL()) }
+      catch { sendWebToast("无法打开配置：\(error.localizedDescription)", level: "error") }
+    case "reloadConfig": reloadEditableConfiguration()
+    case "exportConfiguration": exportConfiguration()
+    case "importConfiguration": importConfiguration()
+    case "importGhostty": importGhosttyConfiguration()
+    case "exportGhostty": exportGhosttyConfiguration()
+    case "openDebugLog": openDebugLog()
+    case "resetAdvanced":
+      for key in SettingsWebBridge.compatibilityDefaults.keys where key.hasPrefix("advanced.") {
+        if let value = SettingsWebBridge.compatibilityDefaults[key] { preferences.setCompatibilityValue(value, forKey: key) }
+      }
+      message = "高级设置已恢复默认值。"
+      refresh()
+    case "resetAll":
+      preferences.reset()
+      preferences.resetCompatibilityValues()
+      message = "所有设置已恢复默认值。"
+      refresh()
+    case "resetWarnings":
+      preferences.configuration.controls.allowedNonStandardLinkSchemes = []
+      message = "已重置所有警告和本机授权。"
+      refresh()
+    default:
+      sendWebToast("“\(action)”尚无可用的 macOS 操作", level: "error")
+    }
+  }
+
+  @discardableResult
+  private func editCompatibilityText(key: String, title: String, detail: String) -> Bool {
+    guard let defaultValue = SettingsWebBridge.compatibilityDefaults[key],
+      case .string(let fallback) = defaultValue
+    else { return false }
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.informativeText = detail
+    alert.addButton(withTitle: "保存")
+    alert.addButton(withTitle: "取消")
+    let field = NSTextField(string: (preferences.settingsCompatibility[key]?.jsonValue as? String) ?? fallback)
+    field.frame.size = NSSize(width: 360, height: 24)
+    alert.accessoryView = field
+    guard alert.runModal() == .alertFirstButtonReturn else { return false }
+    let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard value.utf8.count <= 4_096,
+      !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+    else {
+      sendWebToast("输入内容无效或过长", level: "error")
+      return false
+    }
+    preferences.setCompatibilityValue(.string(value), forKey: key)
+    message = "“\(title)”已保存。"
+    refresh()
+    return true
+  }
+
+  private func manageTrackedFolders() {
+    guard editCompatibilityText(
+      key: "shell.trackedFolders",
+      title: "已跟踪文件夹",
+      detail: "输入绝对路径，以逗号分隔。清空表示只使用自动学习记录。"
+    ) else { return }
+    editCompatibilityText(
+      key: "shell.ignoredFolders",
+      title: "已忽略文件夹",
+      detail: "输入不应进入 frecency 的绝对路径，以逗号分隔。"
+    )
+  }
+
+  private func createTextSnippetRecipe() {
+    let nameAlert = NSAlert()
+    nameAlert.messageText = "新建文本片段"
+    nameAlert.informativeText = "片段将保存为命令型 .ottyrecipe；打开时仍遵循 Recipe 重放确认策略。"
+    nameAlert.addButton(withTitle: "下一步")
+    nameAlert.addButton(withTitle: "取消")
+    let nameField = NSTextField(string: "Text Snippet")
+    nameField.frame.size = NSSize(width: 360, height: 24)
+    nameAlert.accessoryView = nameField
+    guard nameAlert.runModal() == .alertFirstButtonReturn else { return }
+
+    let textAlert = NSAlert()
+    textAlert.messageText = "片段内容"
+    textAlert.informativeText = "输入要在终端中重放的文本。"
+    textAlert.addButton(withTitle: "保存")
+    textAlert.addButton(withTitle: "取消")
+    let textField = NSTextField(string: "")
+    textField.frame.size = NSSize(width: 360, height: 24)
+    textAlert.accessoryView = textField
+    guard textAlert.runModal() == .alertFirstButtonReturn else { return }
+
+    let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let text = textField.stringValue
+    guard !name.isEmpty, name.utf8.count <= 128, !text.isEmpty, text.utf8.count <= 8_192,
+      !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+    else {
+      sendWebToast("片段名称或内容无效", level: "error")
+      return
+    }
+    do {
+      let directory = recipesDirectoryURL()
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      let safeName = name.replacingOccurrences(
+        of: "[^A-Za-z0-9._-]+",
+        with: "-",
+        options: .regularExpression
+      )
+      let url = directory.appendingPathComponent(safeName).appendingPathExtension("ottyrecipe")
+      let recipe = WorkflowRecipe(
+        name: name,
+        scope: .commands,
+        content: .includeCommands,
+        commands: [text]
+      )
+      try WorkflowRecipeTOML.save(recipe, to: url)
+      message = "文本片段“\(name)”已保存。"
+    } catch {
+      message = "文本片段保存失败：\(error.localizedDescription)"
+    }
+    refresh()
+  }
+
+  private func openDebugLog() {
+    let url = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Logs/Aster/diagnostics.jsonl")
+    do {
+      try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      if !FileManager.default.fileExists(atPath: url.path) {
+        try Data().write(to: url, options: .atomic)
+      }
+      NSWorkspace.shared.open(url)
+    } catch {
+      sendWebToast("无法打开调试日志：\(error.localizedDescription)", level: "error")
+    }
+  }
+
+  private func importGhosttyConfiguration() {
+    let panel = NSOpenPanel()
+    panel.message = "选择 Ghostty config 文件"
+    panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".config/ghostty", isDirectory: true)
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    do {
+      let text = try String(contentsOf: url, encoding: .utf8)
+      var imported = 0
+      var unsupported: [String] = []
+      for rawLine in text.split(whereSeparator: \.isNewline) {
+        let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !line.isEmpty, !line.hasPrefix("#"), let separator = line.firstIndex(of: "=") else { continue }
+        let key = line[..<separator].trimmingCharacters(in: .whitespaces)
+        let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces)
+        switch key {
+        case "font-family": preferences.configuration.appearance.fontFamily = value; imported += 1
+        case "font-size": if let number = Double(value) { preferences.fontSize = number; imported += 1 }
+        case "cursor-style":
+          if let style = CursorStyle(rawValue: value == "block_hollow" ? "hollowBlock" : value) {
+            preferences.configuration.appearance.cursorStyle = style; imported += 1
+          }
+        case "background-opacity":
+          if let number = Double(value) {
+            preferences.setCompatibilityValue(.number(min(max(number, 0), 1)), forKey: "advanced.backgroundOpacity")
+            imported += 1
+          }
+        default: unsupported.append(key)
+        }
+      }
+      message = "已从 Ghostty 导入 \(imported) 项；\(Set(unsupported).count) 项当前无法映射。"
+    } catch {
+      message = "Ghostty 导入失败：\(error.localizedDescription)"
+    }
+    refresh()
+  }
+
+  private func exportGhosttyConfiguration() {
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "aster-ghostty-config"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    let configuration = preferences.configuration
+    let opacity = preferences.settingsCompatibility["advanced.backgroundOpacity"]?.jsonValue as? Double ?? 1
+    let text = """
+      # Exported by Aster. Settings without a Ghostty equivalent are omitted.
+      font-family = \(configuration.appearance.fontFamily)
+      font-size = \(configuration.appearance.fontSize)
+      cursor-style = \(configuration.appearance.cursorStyle.rawValue)
+      background-opacity = \(opacity)
+      """
+    do {
+      try text.write(to: url, atomically: true, encoding: .utf8)
+      message = "已导出 Ghostty 配置；无法映射的 Aster 界面、Agent 和 Recipe 设置已省略。"
+    } catch {
+      message = "Ghostty 导出失败：\(error.localizedDescription)"
+    }
+    refresh()
+  }
+
+  private func settingsConfigurationURL() -> URL {
+    FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Application Support/Aster", isDirectory: true)
+      .appendingPathComponent("settings.json")
+  }
+
+  private func recipesDirectoryURL() -> URL {
+    FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Application Support/Aster/Recipes", isDirectory: true)
+  }
+
+  private func writeEditableConfiguration() throws {
+    let url = settingsConfigurationURL()
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    try encoder.encode(settingsExportEnvelope()).write(to: url, options: .atomic)
+  }
+
+  private func reloadEditableConfiguration() {
+    do {
+      try importSettingsData(Data(contentsOf: settingsConfigurationURL()))
+      message = "配置文件已重新加载。"
+    } catch {
+      message = "配置文件加载失败，现有设置未变：\(error.localizedDescription)"
+    }
+    refresh()
+  }
+
+  private func settingsExportEnvelope() -> SettingsExportEnvelope {
+    SettingsExportEnvelope(
+      configuration: preferences.configuration,
+      compatibility: preferences.settingsCompatibility
+    )
+  }
+
+  private func importSettingsData(_ data: Data) throws {
+    let decoder = JSONDecoder()
+    if let envelope = try? decoder.decode(SettingsExportEnvelope.self, from: data) {
+      guard envelope.schemaVersion == 3 else { throw SettingsWebBridgeError.unsupportedSchema }
+      let compatibility = try envelope.compatibility.reduce(
+        into: [String: SettingsCompatibilityValue](),
+        { result, entry in
+          // 未知新版本字段按向前兼容规则忽略；已知字段若类型或范围损坏则整次导入
+          // 失败。校验必须发生在替换主配置之前，保证失败时旧配置完整保留。
+          guard SettingsWebBridge.compatibilityDefaults[entry.key] != nil else { return }
+          result[entry.key] = try validatedCompatibilityValue(
+            key: entry.key,
+            jsonValue: entry.value.jsonValue
+          )
+        }
+      )
+      preferences.importConfiguration(envelope.configuration)
+      preferences.importCompatibilityValues(compatibility)
+      return
+    }
+    preferences.importConfiguration(try decoder.decode(AsterConfiguration.self, from: data))
+    preferences.resetCompatibilityValues()
+  }
+
+  private func agentDisplayName(_ provider: AgentProvider) -> String {
+    switch provider {
+    case .claudeCode: "Claude Code"
+    case .codex: "Codex"
+    case .openCode: "OpenCode"
+    case .cursorCLI: "Cursor Agent"
+    case .kimiCode: "Kimi Code"
+    case .pi: "Pi"
+    case .omp: "OMP"
+    }
+  }
+
+  private func optionalText(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
+  /// Otty 的逐样式 fallback 用逗号分隔。空白表示继承普通样式而不是保存一个空字体名。
+  private func fontFamilyList(_ value: String) -> [String]? {
+    let families = value.split(separator: ",").map {
+      $0.trimmingCharacters(in: .whitespacesAndNewlines)
+    }.filter { !$0.isEmpty }
+    return families.isEmpty ? nil : families
+  }
+
+  private func colorValue(_ value: String) throws -> HexColor? {
+    if value.isEmpty { return nil }
+    guard let color = HexColor(value) else { throw SettingsWebBridgeError.invalidValue }
+    return color
+  }
+
+  private func enumValue<T: RawRepresentable>(
+    _ value: String,
+    as type: T.Type
+  ) throws -> T where T.RawValue == String {
+    guard let parsed = T(rawValue: value) else { throw SettingsWebBridgeError.invalidValue }
+    return parsed
+  }
+
+  private func webNewTabPosition(_ value: NewTabPosition) -> String {
+    switch value { case .automatic: "automatic"; case .end: "end"; case .afterCurrent: "afterCurrent" }
+  }
+  private func webForegroundPolicy(_ value: NotificationForegroundPolicy) -> String {
+    value == .tabUnfocused ? "banner" : value.rawValue
+  }
+  private func webScrollPastLast(_ value: TerminalScrollPastLastLine) -> String {
+    switch value { case .disabled: "disabled"; case .lastLineWithContent: "lastContentAtTop"; case .lastLineInMiddle: "lastLineInMiddle"; case .cursorLine: "cursorLineAtTop" }
+  }
+  private func webScrollPastFirst(_ value: TerminalScrollPastFirstLine) -> String {
+    switch value { case .disabled: "disabled"; case .sameAsLastLine: "sameAsLast"; case .firstLineWithContent: "firstLineWithContent"; case .firstLineInMiddle: "firstLineInMiddle" }
+  }
+  private func webAutocompleteShortcut(_ value: AutocompleteShortcut) -> String {
+    switch value { case .tab: "tab"; case .tabAndRightArrow: "rightArrow"; case .controlSpace: "controlSpace"; case .disabled: "disabled" }
+  }
+  private func webCandidatePanel(_ value: AutocompleteCandidatePanel) -> String {
+    switch value { case .disabled: "disabled"; case .automatic: "automatic"; case .escape: "escape"; case .optionEscape: "escape" }
+  }
+  private func webLigature(_ value: TerminalLigatureLevel) -> String {
+    switch value { case .none: "off"; case .standard: "standard"; case .discretionary: "extended" }
+  }
+  private func webTextStyle(_ value: TerminalTextStyleRendering) -> String {
+    switch value { case .automatic: "automatic"; case .disabled: "off"; case .primaryFontOnly: "primaryOnly"; case .synthetic: "synthetic" }
+  }
+  private func webCursorStyle(_ value: CursorStyle) -> String { value == .hollowBlock ? "blockHollow" : value.rawValue }
+  private func webCursorBlink(_ value: TerminalCursorBlinkMode) -> String {
+    switch value { case .defaultOff: "defaultOff"; case .defaultOn: "defaultOn"; case .alwaysOff: "alwaysOff"; case .alwaysOn: "alwaysOn" }
+  }
+  private func webTabLayout(_ value: TabBarLayout) -> String {
+    switch value { case .top: "horizontalTop"; case .bottom: "horizontalBottom"; case .vertical: "vertical" }
+  }
+  private func webRecipeReplay(_ value: RecipeReplayMode) -> String {
+    value == .oneByOne ? "manual" : value.rawValue
+  }
+  private func recipeReplayValue(_ value: String) throws -> RecipeReplayMode {
+    try enumValue(value == "manual" ? "oneByOne" : value, as: RecipeReplayMode.self)
+  }
+
+  /// 测试只读 seam：测试桥协议与领域映射，不依赖 WebKit 的异步渲染时序。
+  var settingsWebViewForTesting: WKWebView? { settingsWebView }
+  func settingsSnapshotForTesting() -> [String: Any] { makeWebSnapshot() }
+  func applySettingForTesting(key: String, value: Any) throws {
+    try applyWebSetting(key: key, value: value)
+  }
+}
+
+private enum SettingsWebBridgeError: LocalizedError {
+  case invalidValue
+  case unknownKey
+  case unsupportedSchema
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidValue: "字段类型或范围不正确"
+    case .unknownKey: "字段不在允许列表中"
+    case .unsupportedSchema: "配置文件版本不受支持"
+    }
+  }
+}
+
+/// 把网页录制的可读快捷键应用到现有 AppKit 菜单。菜单仍是命令的唯一执行入口；
+/// 设置页只修改 `keyEquivalent`，不会复制 selector 或绕过 responder chain。
+enum ShortcutOverrideApplier {
+  private static let menuTitles: [String: String] = [
+    "new-window": "新建窗口",
+    "new-tab": "新建标签页",
+    "close": "关闭",
+    "open-file": "打开文件…",
+    "save": "保存",
+    "find": "查找",
+    "global-find": "在全部 Pane 中查找",
+    "command-palette": "命令面板",
+    "split-right": "向右拆分",
+    "split-down": "向下拆分",
+    "zoom-pane": "缩放拆分",
+    "open-recipe": "打开 Recipe…",
+    "save-recipe": "保存为 Recipe…",
+    "settings": "设置…",
+  ]
+
+  static func isValidDisplayShortcut(_ value: String) -> Bool {
+    guard !value.isEmpty, value.utf8.count <= 32 else { return false }
+    return parsed(value) != nil
+  }
+
+  @MainActor
+  static func apply(to menu: NSMenu?, values: [String: SettingsCompatibilityValue]) {
+    guard let menu else { return }
+    for (key, stored) in values where key.hasPrefix("shortcuts.") {
+      guard case .string(let display) = stored,
+        let parsed = parsed(display),
+        let title = menuTitles[String(key.dropFirst("shortcuts.".count))]
+      else { continue }
+      apply(parsed, title: title, in: menu)
+    }
+  }
+
+  private static func apply(
+    _ shortcut: (key: String, modifiers: NSEvent.ModifierFlags),
+    title: String,
+    in menu: NSMenu
+  ) {
+    for item in menu.items {
+      if item.title == title {
+        item.keyEquivalent = shortcut.key
+        item.keyEquivalentModifierMask = shortcut.modifiers
+      }
+      if let submenu = item.submenu { apply(shortcut, title: title, in: submenu) }
+    }
+  }
+
+  private static func parsed(_ display: String) -> (key: String, modifiers: NSEvent.ModifierFlags)? {
+    var remainder = display
+    var modifiers: NSEvent.ModifierFlags = []
+    for (symbol, flag) in [("⌘", NSEvent.ModifierFlags.command), ("⌥", .option), ("⇧", .shift), ("⌃", .control)] {
+      if remainder.contains(symbol) {
+        modifiers.insert(flag)
+        remainder = remainder.replacingOccurrences(of: symbol, with: "")
+      }
+    }
+    guard !modifiers.isEmpty, !remainder.isEmpty else { return nil }
+    let key: String
+    switch remainder {
+    case "↩": key = "\r"
+    case "⇥": key = "\t"
+    case "Space": key = " "
+    case "↑": key = String(UnicodeScalar(NSUpArrowFunctionKey)!)
+    case "↓": key = String(UnicodeScalar(NSDownArrowFunctionKey)!)
+    case "←": key = String(UnicodeScalar(NSLeftArrowFunctionKey)!)
+    case "→": key = String(UnicodeScalar(NSRightArrowFunctionKey)!)
+    default:
+      guard remainder.count == 1 else { return nil }
+      key = remainder.lowercased()
+    }
+    return (key, modifiers)
+  }
+}
+
+private extension SettingsViewController.Section {
+  var webIdentifier: String {
+    switch self {
+    case .general: "general"
+    case .shell: "shell"
+    case .controls: "controls"
+    case .editor: "editor"
+    case .agents: "agents"
+    case .appearance: "appearance"
+    case .recipes: "recipes"
+    case .shortcuts: "shortcuts"
+    case .advanced: "advanced"
+    }
   }
 }
 

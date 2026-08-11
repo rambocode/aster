@@ -76,9 +76,9 @@ func workspacePanelSettingsBindingFollowsTheMostRecentWindow() {
   #expect(first.state.inspectorWidth == 410)
 }
 
-@Test("外观设置为最近工作区提供左右 Panel 宽度滑杆")
+@Test("网页外观设置为最近工作区提供左右 Panel 宽度")
 @MainActor
-func appearanceSettingsExposeBoundPanelWidthSliders() throws {
+func appearanceSettingsExposeBoundPanelWidths() throws {
   let defaults = panelLayoutDefaults("settings")
   let preferences = AppPreferences(defaults: defaults)
   let store = WorkspacePanelLayoutStore(defaults: defaults, legacySidebarWidth: 230)
@@ -90,29 +90,13 @@ func appearanceSettingsExposeBoundPanelWidthSliders() throws {
     panelLayoutBinding: binding
   )
   controller.loadViewIfNeeded()
-  controller.showSection(.appearance)
 
-  let sliders = controller.view.panelStoreDescendants.compactMap { $0 as? NSSlider }
-  let sidebar = try #require(
-    sliders.first { $0.identifier?.rawValue == "settings-panel-width-sidebar" }
-  )
-  let inspector = try #require(
-    sliders.first { $0.identifier?.rawValue == "settings-panel-width-inspector" }
-  )
-  #expect(sidebar.doubleValue == 230)
-  #expect(sidebar.minValue == 180)
-  #expect(sidebar.maxValue == 360)
-  #expect(inspector.doubleValue == 390)
-  #expect(inspector.minValue == 240)
-  #expect(inspector.maxValue == 480)
+  let values = try #require(controller.settingsSnapshotForTesting()["values"] as? [String: Any])
+  #expect(values["appearance.sidebarWidth"] as? Double == 230)
+  #expect(values["appearance.inspectorWidth"] as? Double == 390)
 
-  sidebar.doubleValue = 310
-  _ = sidebar.sendAction(sidebar.action, to: sidebar.target)
+  try controller.applySettingForTesting(key: "appearance.sidebarWidth", value: 310)
+  try controller.applySettingForTesting(key: "appearance.inspectorWidth", value: 440)
   #expect(store.state.sidebarWidth == 310)
-}
-
-extension NSView {
-  fileprivate var panelStoreDescendants: [NSView] {
-    subviews.flatMap { [$0] + $0.panelStoreDescendants }
-  }
+  #expect(store.state.inspectorWidth == 440)
 }

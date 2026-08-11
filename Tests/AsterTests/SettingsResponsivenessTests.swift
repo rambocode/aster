@@ -1,60 +1,19 @@
 import AppKit
 import Testing
+import WebKit
 
 @testable import Aster
 @testable import AsterCore
 
-// 设置页的响应性回归锁：
-// 1. 窗口宽高可拉伸并跨次记忆，侧栏固定、右侧内容填满剩余宽度；
-// 2. 切换分类只换内容区，侧栏按钮与搜索框都是同一批实例；
-// 3. 搜索只过滤侧栏导航，不重建内容区；
-// 4. 默认打开不聚焦搜索，搜索使用随明暗模式变化的中性灰底；
-// 5. 普通控件（开关、步进器）改配置后不重建内容区，点击反馈不被布局工作打断。
-
-extension NSView {
-  /// 整棵子树（含自身之外的所有后代），用于在视图树里定位私有类型的控件。
-  fileprivate var settingsDescendants: [NSView] {
-    subviews.flatMap { [$0] + $0.settingsDescendants }
-  }
-}
+// 网页设置页的回归锁聚焦边界而不是 DOM 实现细节：窗口几何、单一 WebKit 宿主、
+// Swift 快照完整性、强类型字段写入和 Otty 扩展字段持久化。
 
 @MainActor
 private func isolatedSettingsDefaults() -> UserDefaults {
-  let suite = "SettingsResponsiveness.\(UUID().uuidString)"
+  let suite = "SettingsWebView.\(UUID().uuidString)"
   let defaults = UserDefaults(suiteName: suite)!
   defaults.removePersistentDomain(forName: suite)
   return defaults
-}
-
-@MainActor
-private func settingsWindow(
-  _ controller: SettingsViewController, size: NSSize = SettingsViewController.defaultContentSize
-) -> NSWindow {
-  let window = NSWindow(
-    contentRect: NSRect(origin: .zero, size: size),
-    styleMask: [.titled, .resizable],
-    backing: .buffered,
-    defer: false
-  )
-  window.contentViewController = controller
-  window.contentView?.layoutSubtreeIfNeeded()
-  return window
-}
-
-/// 侧栏导航按钮：私有类型，按类名 + 无障碍标签识别。
-@MainActor
-private func sidebarButtons(in controller: SettingsViewController) -> [NSButton] {
-  controller.view.settingsDescendants.compactMap { view in
-    guard String(describing: type(of: view)).contains("SettingsSidebarButton") else { return nil }
-    return view as? NSButton
-  }
-}
-
-@MainActor
-private func contentDocument(in controller: SettingsViewController) throws -> NSView {
-  let scroll = try #require(
-    controller.view.settingsDescendants.compactMap { $0 as? NSScrollView }.first)
-  return try #require(scroll.documentView)
 }
 
 @Test("设置窗口宽高可拉伸并跨次打开被记住")
@@ -68,16 +27,10 @@ func settingsWindowRemembersSizeAcrossOpens() throws {
     defaults: defaults
   )
   let firstWindow = try #require(first.window)
-  let defaultContentSize = firstWindow.contentRect(forFrameRect: firstWindow.frame).size
-  #expect(defaultContentSize.width == CGFloat(SettingsWindowGeometry.width))
-  #expect(defaultContentSize.height == CGFloat(SettingsWindowGeometry.defaultHeight))
+  #expect(firstWindow.contentRect(forFrameRect: firstWindow.frame).size == SettingsViewController.defaultContentSize)
 
-  // 用户把窗口拉宽、拉高后由 delegate 记一次。
   firstWindow.setContentSize(NSSize(width: 940, height: 720))
-  #expect(firstWindow.contentRect(forFrameRect: firstWindow.frame).size == NSSize(width: 940, height: 720))
   first.persistContentSize()
-  #expect(defaults.object(forKey: SettingsWindowGeometry.widthDefaultsKey) as? Double == 940)
-  #expect(defaults.object(forKey: SettingsWindowGeometry.heightDefaultsKey) as? Double == 720)
 
   let second = AsterSettingsWindowController(
     content: SettingsViewController(preferences: preferences),
@@ -86,7 +39,7 @@ func settingsWindowRemembersSizeAcrossOpens() throws {
   )
   let secondWindow = try #require(second.window)
   #expect(secondWindow.contentRect(forFrameRect: secondWindow.frame).size == NSSize(width: 940, height: 720))
-  #expect(secondWindow.minSize.width < secondWindow.maxSize.width)
+  #expect(secondWindow.styleMask.contains(.resizable))
 }
 
 @Test("屏幕放不下的记忆高度不会让窗口超出可视区域")
@@ -94,223 +47,208 @@ func settingsWindowRemembersSizeAcrossOpens() throws {
 func settingsWindowClampsRememberedHeightToScreen() throws {
   let defaults = isolatedSettingsDefaults()
   defaults.set(9_000.0, forKey: SettingsWindowGeometry.heightDefaultsKey)
-  let preferences = AppPreferences(defaults: defaults)
   let controller = AsterSettingsWindowController(
-    content: SettingsViewController(preferences: preferences),
+    content: SettingsViewController(preferences: AppPreferences(defaults: defaults)),
     appearance: nil,
     defaults: defaults
   )
   let window = try #require(controller.window)
-  // 无头会话拿不到屏幕时不做上界钳制，断言退化为「不会被莫名缩小」。
   let available = NSScreen.main?.visibleFrame.height ?? .greatestFiniteMagnitude
   #expect(window.contentRect(forFrameRect: window.frame).height <= available)
 }
 
-@Test("设置窗口横向拉伸时侧栏固定且右侧内容填满剩余宽度")
+@Test("设置页使用单一非持久化 WKWebView 宿主")
 @MainActor
-func settingsWindowWidthDrivesResponsiveContent() throws {
+func settingsUsesOneEphemeralWebView() throws {
   let defaults = isolatedSettingsDefaults()
-  let preferences = AppPreferences(defaults: defaults)
-  let content = SettingsViewController(preferences: preferences)
-  let controller = AsterSettingsWindowController(
-    content: content,
-    appearance: nil,
-    defaults: defaults
-  )
-  let window = try #require(controller.window)
-  let sidebar = try #require(
-    content.view.settingsDescendants.first { $0.identifier == SettingsViewController.sidebarIdentifier })
-  let detail = try #require(
-    content.view.settingsDescendants.first { $0.identifier == SettingsViewController.contentIdentifier })
+  let controller = SettingsViewController(preferences: AppPreferences(defaults: defaults))
+  controller.loadViewIfNeeded()
 
-  for width in [700.0, 940.0, 1_400.0] as [CGFloat] {
-    window.setContentSize(NSSize(width: width, height: 720))
-    window.contentView?.layoutSubtreeIfNeeded()
-    #expect(abs(sidebar.frame.width - 200) < 0.5)
-    #expect(abs(detail.frame.width - (width - 200)) < 0.5)
+  let webView = try #require(controller.settingsWebViewForTesting)
+  #expect(controller.view === webView)
+  #expect(!webView.configuration.websiteDataStore.isPersistent)
+  #expect(webView.identifier?.rawValue == "settings-web-view")
+  #expect(controller.sections.count == 9)
+}
+
+@MainActor
+private func evaluateString(_ script: String, in webView: WKWebView) async throws -> String {
+  try await withCheckedThrowingContinuation { continuation in
+    webView.evaluateJavaScript(script) { result, error in
+      if let error { continuation.resume(throwing: error) }
+      else { continuation.resume(returning: result as? String ?? "") }
+    }
   }
 }
 
-@Test("设置窗口每次打开都不默认聚焦搜索框")
+@Test("本地设置文档通过 CSP 加载并渲染九类导航")
 @MainActor
-func settingsWindowPresentationClearsSearchFocus() throws {
+func settingsDocumentLoadsAndRendersNavigation() async throws {
   let defaults = isolatedSettingsDefaults()
-  let preferences = AppPreferences(defaults: defaults)
-  let content = SettingsViewController(preferences: preferences)
-  let controller = AsterSettingsWindowController(
-    content: content,
-    appearance: nil,
-    defaults: defaults
-  )
-  let window = try #require(controller.window)
-  defer { window.orderOut(nil) }
-  let search = try #require(
-    content.view.settingsDescendants.first { $0.identifier == SettingsViewController.searchIdentifier }
-      as? NSSearchField)
+  let controller = SettingsViewController(preferences: AppPreferences(defaults: defaults))
+  controller.loadViewIfNeeded()
+  let webView = try #require(controller.settingsWebViewForTesting)
 
-  controller.present(nil)
-  #expect(search.currentEditor() == nil)
-
-  search.stringValue = "外观"
-  content.controlTextDidChange(
-    Notification(name: NSControl.textDidChangeNotification, object: search))
-  #expect(window.makeFirstResponder(search))
-  #expect(search.currentEditor() != nil)
-  controller.present(nil)
-  #expect(search.currentEditor() == nil)
-  #expect(search.stringValue == "外观")
-}
-
-@Test("侧栏搜索框使用固定中性灰并随明暗外观切换")
-@MainActor
-func settingsSearchFieldUsesNeutralGrayBackground() throws {
-  let defaults = isolatedSettingsDefaults()
-  let preferences = AppPreferences(defaults: defaults)
-  let controller = SettingsViewController(preferences: preferences)
-  let window = settingsWindow(controller)
-  defer { window.orderOut(nil) }
-  let search = try #require(
-    controller.view.settingsDescendants.first { $0.identifier == SettingsViewController.searchIdentifier }
-      as? SettingsSearchField)
-
-  func resolvedLayerColor() throws -> NSColor {
-    let color = try #require(search.layer?.backgroundColor)
-    return try #require(NSColor(cgColor: color)?.usingColorSpace(.sRGB))
+  var count = 0
+  for _ in 0..<100 {
+    if let value = Int(try await evaluateString(
+      "String(document.querySelectorAll('.nav-item').length)",
+      in: webView
+    )) {
+      count = value
+      if count == 9 { break }
+    }
+    try await Task.sleep(for: .milliseconds(20))
   }
 
-  window.appearance = NSAppearance(named: .aqua)
-  search.refreshAppearance()
-  let light = try resolvedLayerColor()
-  #expect(abs(light.redComponent - 0xE9 as CGFloat / 255) < 0.01)
-  #expect(abs(light.greenComponent - 0xE9 as CGFloat / 255) < 0.01)
-  #expect(abs(light.blueComponent - 0xEC as CGFloat / 255) < 0.01)
+  #expect(count == 9)
+  #expect(try await evaluateString("document.querySelector('.page-title')?.textContent ?? ''", in: webView) == "通用")
+  #expect(Int(try await evaluateString("String(document.querySelectorAll('.setting-row').length)", in: webView)) ?? 0 > 10)
 
-  window.appearance = NSAppearance(named: .darkAqua)
-  search.refreshAppearance()
-  let dark = try resolvedLayerColor()
-  #expect(abs(dark.redComponent - 0x2C as CGFloat / 255) < 0.01)
-  #expect(abs(dark.greenComponent - 0x2C as CGFloat / 255) < 0.01)
-  #expect(abs(dark.blueComponent - 0x2E as CGFloat / 255) < 0.01)
+  _ = try await evaluateString(
+    "document.querySelector('[data-section=\"appearance\"]')?.click(); 'ok'",
+    in: webView
+  )
+  for _ in 0..<50 {
+    if try await evaluateString("document.querySelector('.page-title')?.textContent ?? ''", in: webView) == "外观" {
+      break
+    }
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(Int(try await evaluateString("String(document.querySelectorAll('.layout-choice').length)", in: webView)) == 3)
+  #expect(Int(try await evaluateString("String(document.querySelectorAll('.theme-token-pill').length)", in: webView)) ?? 0 >= 8)
+  #expect(Int(try await evaluateString("String(document.querySelectorAll('.font-scope-tabs button').length)", in: webView)) == 4)
+  #expect(try await evaluateString("String(Boolean(document.querySelector('.cursor-preview')))", in: webView) == "true")
+  #expect(try await evaluateString("String(Boolean(document.querySelector('.dock-icon-preview')))", in: webView) == "true")
+  // range 必须先写 min/max 再写 value；否则浏览器会按默认 0...100 截断 220pt 和 1.0 等真值。
+  #expect(try await evaluateString(
+    "document.querySelector('[data-setting-key=\"appearance.sidebarWidth\"] input')?.value ?? ''",
+    in: webView
+  ) == "220")
+  #expect(try await evaluateString(
+    "document.querySelector('[data-setting-key=\"appearance.cursorOpacity\"] input')?.value ?? ''",
+    in: webView
+  ) == "1")
 }
 
-@Test("切换分类只重建内容区，侧栏按钮与搜索框保持同一批实例")
+@Test("设置网页资源包含严格 CSP 和九个分类清单")
+func settingsWebAssetsAreBundledAndSelfContained() throws {
+  let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Resources/settings-ui", isDirectory: true)
+  let html = try String(contentsOf: directory.appendingPathComponent("index.html"), encoding: .utf8)
+  let script = try String(contentsOf: directory.appendingPathComponent("settings.js"), encoding: .utf8)
+  let style = try String(contentsOf: directory.appendingPathComponent("settings.css"), encoding: .utf8)
+
+  #expect(html.contains("default-src 'none'"))
+  #expect(html.contains("connect-src 'none'"))
+  #expect(!html.contains("http://") && !html.contains("https://"))
+  for section in ["general", "shell", "controls", "editor", "agents", "appearance", "recipes", "shortcuts", "advanced"] {
+    #expect(script.contains("id: \"\(section)\""))
+  }
+  #expect(style.contains("grid-template-columns: 200px minmax(0, 1fr)"))
+  #expect(script.contains("window.webkit?.messageHandlers?.asterSettings"))
+}
+
+@Test("网页桥快照覆盖九类真实设置并标记 Windows 限制")
 @MainActor
-func switchingSectionKeepsSidebarInstances() throws {
+func settingsSnapshotContainsRuntimeValuesAndCapabilities() throws {
+  let defaults = isolatedSettingsDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.editor.tabSize = 6
+  let controller = SettingsViewController(preferences: preferences)
+  controller.loadViewIfNeeded()
+
+  let snapshot = controller.settingsSnapshotForTesting()
+  let values = try #require(snapshot["values"] as? [String: Any])
+  let capabilities = try #require(snapshot["capabilities"] as? [String: Bool])
+  let themes = try #require(snapshot["themes"] as? [[String: Any]])
+  let agents = try #require(snapshot["agents"] as? [[String: Any]])
+  let themeEditor = try #require(snapshot["themeEditor"] as? [String: Any])
+  let computedFonts = try #require(snapshot["computedFonts"] as? [String: String])
+
+  #expect(values["editor.tabSize"] as? Int == 6)
+  #expect(values["general.closeTabConfirmation"] as? String == "runningProcess")
+  #expect(values["advanced.scrollbackLines"] as? Double == 10_000)
+  #expect(capabilities["windowsTextRendering"] == false)
+  #expect(themes.count >= 8)
+  #expect(agents.count == AgentProvider.allCases.count)
+  #expect((themeEditor["ansi"] as? [String])?.count == 16)
+  #expect(computedFonts.values.allSatisfy { !$0.isEmpty })
+}
+
+@Test("网页桥写入强类型字段并持久化扩展字段")
+@MainActor
+func settingsBridgeWritesTypedAndCompatibilityValues() throws {
   let defaults = isolatedSettingsDefaults()
   let preferences = AppPreferences(defaults: defaults)
   let controller = SettingsViewController(preferences: preferences)
-  let window = settingsWindow(controller)
-  defer { window.orderOut(nil) }
+  controller.loadViewIfNeeded()
 
-  let buttonsBefore = sidebarButtons(in: controller)
-  let searchBefore = try #require(
-    controller.view.settingsDescendants.compactMap { $0 as? NSSearchField }.first)
-  let documentBefore = try contentDocument(in: controller)
-  #expect(buttonsBefore.count == 9)
+  try controller.applySettingForTesting(key: "editor.tabSize", value: 7)
+  try controller.applySettingForTesting(key: "controls.clipboardReadAccess", value: "deny")
+  try controller.applySettingForTesting(key: "advanced.scrollbackLines", value: 240_000)
+  try controller.applySettingForTesting(key: "appearance.windowsTextRendering", value: "clearType")
+  try controller.applySettingForTesting(key: "appearance.fontFamilyFallbackBold", value: "Menlo, Monaco")
 
-  // 走与用户点击完全相同的路径。
-  let appearanceButton = try #require(
-    buttonsBefore.first { $0.accessibilityLabel() == SettingsViewController.Section.appearance.rawValue })
-  appearanceButton.performClick(nil)
-  window.contentView?.layoutSubtreeIfNeeded()
-
-  let buttonsAfter = sidebarButtons(in: controller)
-  let searchAfter = try #require(
-    controller.view.settingsDescendants.compactMap { $0 as? NSSearchField }.first)
-  #expect(buttonsAfter.map(ObjectIdentifier.init) == buttonsBefore.map(ObjectIdentifier.init))
-  #expect(searchAfter === searchBefore)
-  // 内容区确实换了：文档视图是新的，且渲染的是外观页。
-  #expect(try contentDocument(in: controller) !== documentBefore)
-  let titles = controller.view.settingsDescendants.compactMap { ($0 as? NSTextField)?.stringValue }
-  #expect(titles.contains("主题"))
+  #expect(preferences.configuration.editor.tabSize == 7)
+  #expect(preferences.configuration.controls.resolvedClipboardReadAccess == .deny)
+  #expect(preferences.configuration.appearance.resolvedFontFamilyFallbackBold == ["Menlo", "Monaco"])
+  let reloaded = AppPreferences(defaults: defaults)
+  #expect(reloaded.settingsCompatibility["advanced.scrollbackLines"]?.jsonValue as? Double == 240_000)
+  #expect(reloaded.settingsCompatibility["appearance.windowsTextRendering"]?.jsonValue as? String == "clearType")
 }
 
-@Test("侧栏搜索只过滤导航，不重建内容区")
+@Test("网页桥覆盖通知、链接、宽字符、Agent 与菜单快捷键")
 @MainActor
-func sidebarSearchDoesNotRebuildContent() throws {
+func settingsBridgeCoversCompositeAndDynamicSettings() throws {
   let defaults = isolatedSettingsDefaults()
   let preferences = AppPreferences(defaults: defaults)
   let controller = SettingsViewController(preferences: preferences)
-  let window = settingsWindow(controller)
-  defer { window.orderOut(nil) }
+  controller.loadViewIfNeeded()
 
-  let documentBefore = try contentDocument(in: controller)
-  let search = try #require(controller.view.settingsDescendants.compactMap { $0 as? NSSearchField }.first)
-  search.stringValue = "外观"
-  controller.controlTextDidChange(
-    Notification(name: NSControl.textDidChangeNotification, object: search))
-  window.contentView?.layoutSubtreeIfNeeded()
+  try controller.applySettingForTesting(key: "shell.notificationSound.commandFinish", value: true)
+  try controller.applySettingForTesting(key: "controls.linkDetectionEnabled", value: false)
+  try controller.applySettingForTesting(key: "advanced.widened.arrows", value: true)
+  try controller.applySettingForTesting(key: "agents.enabled.openCode", value: true)
+  try controller.applySettingForTesting(key: "agents.launchCommand.openCode", value: "opencode --continue")
+  try controller.applySettingForTesting(key: "shortcuts.new-window", value: "⌥⇧N")
+  #expect(throws: (any Error).self) {
+    try controller.applySettingForTesting(key: "advanced.scrollbackLines", value: -1)
+  }
+  #expect(throws: (any Error).self) {
+    try controller.applySettingForTesting(key: "controls.mouseHideWhileTyping", value: "true")
+  }
 
-  #expect(sidebarButtons(in: controller).count == 1)
-  #expect(try contentDocument(in: controller) === documentBefore)
+  #expect(preferences.configuration.shell.resolvedNotificationSoundCategories.contains(.commandFinish))
+  #expect(!preferences.configuration.controls.resolvedLinkDetectionEnabled)
+  #expect(preferences.configuration.appearance.resolvedWidenedEastAsianAmbiguousBlocks.contains(.arrows))
+  #expect(preferences.configuration.agents.enabledAgents.contains(AgentProvider.openCode.commandName))
+  #expect(preferences.configuration.agents.launchComponents(for: .openCode) == ["opencode", "--continue"])
 
-  // 清空搜索恢复九个分类，内容区仍然没有被重建过。
-  search.stringValue = ""
-  controller.controlTextDidChange(
-    Notification(name: NSControl.textDidChangeNotification, object: search))
-  #expect(sidebarButtons(in: controller).count == 9)
-  #expect(try contentDocument(in: controller) === documentBefore)
+  let menu = NSMenu(title: "测试")
+  let item = NSMenuItem(title: "新建窗口", action: nil, keyEquivalent: "n")
+  menu.addItem(item)
+  ShortcutOverrideApplier.apply(to: menu, values: preferences.settingsCompatibility)
+  #expect(item.keyEquivalent == "n")
+  #expect(item.keyEquivalentModifierMask == [.option, .shift])
 }
 
-@Test("明暗切换后常驻侧栏底色跟随外观")
+@Test("网页桥将 Panel 宽度写回最近活动工作区")
 @MainActor
-func skeletonChromeFollowsAppearance() throws {
+func settingsBridgeUpdatesBoundPanelWidths() throws {
   let defaults = isolatedSettingsDefaults()
-  let preferences = AppPreferences(defaults: defaults)
-  let controller = SettingsViewController(preferences: preferences)
-  let window = settingsWindow(controller)
-  defer { window.orderOut(nil) }
+  let store = WorkspacePanelLayoutStore(defaults: defaults, legacySidebarWidth: 230)
+  let binding = WorkspacePanelSettingsBinding()
+  binding.bind(store)
+  let controller = SettingsViewController(
+    preferences: AppPreferences(defaults: defaults),
+    panelLayoutBinding: binding
+  )
+  controller.loadViewIfNeeded()
 
-  // 侧栏宿主：导航按钮 → 垂直栈 → 宿主。底色写在 layer 上，不会自己跟随外观。
-  let shellButton = try #require(
-    sidebarButtons(in: controller)
-      .first { $0.accessibilityLabel() == SettingsViewController.Section.shell.rawValue })
-  let host = try #require(shellButton.superview?.superview)
+  try controller.applySettingForTesting(key: "appearance.sidebarWidth", value: 310)
+  try controller.applySettingForTesting(key: "appearance.inspectorWidth", value: 420)
 
-  preferences.appearance = .light
-  controller.showSection(.shell)
-  let lightCanvas = try #require(host.layer?.backgroundColor)
-  let lightSelection = try #require(shellButton.layer?.backgroundColor)
-
-  preferences.appearance = .dark
-  controller.showSection(.shell)
-
-  // 按钮实例没有被重建，但底色必须已经换成深色那套。
-  #expect(sidebarButtons(in: controller).contains { $0 === shellButton })
-  #expect(host.layer?.backgroundColor != lightCanvas)
-  #expect(shellButton.layer?.backgroundColor != lightSelection)
-}
-
-@Test("开关与步进器改配置后不重建内容区")
-@MainActor
-func plainControlsDoNotRebuildContent() throws {
-  let defaults = isolatedSettingsDefaults()
-  let preferences = AppPreferences(defaults: defaults)
-  let controller = SettingsViewController(preferences: preferences)
-  let window = settingsWindow(controller)
-  defer { window.orderOut(nil) }
-
-  let documentBefore = try contentDocument(in: controller)
-  let toggle = try #require(controller.view.settingsDescendants.compactMap { $0 as? NSSwitch }.first)
-  let before = preferences.configuration.general.quitAfterLastWindowClosed
-  toggle.performClick(nil)
-  window.contentView?.layoutSubtreeIfNeeded()
-
-  // 配置确实写进去了，但视图树没有被推倒重来。
-  #expect(preferences.configuration.general.quitAfterLastWindowClosed != before)
-  #expect(try contentDocument(in: controller) === documentBefore)
-  #expect(controller.view.settingsDescendants.contains { $0 === toggle })
-
-  // 字号步进器同理：数值由控件自己就地更新。
-  controller.showSection(.appearance)
-  window.contentView?.layoutSubtreeIfNeeded()
-  let appearanceDocument = try contentDocument(in: controller)
-  let stepper = try #require(controller.view.settingsDescendants.compactMap { $0 as? NSStepper }.first)
-  let fontSizeBefore = preferences.fontSize
-  stepper.doubleValue = fontSizeBefore + 1
-  if let action = stepper.action { stepper.sendAction(action, to: stepper.target) }
-  window.contentView?.layoutSubtreeIfNeeded()
-
-  #expect(preferences.fontSize == fontSizeBefore + 1)
-  #expect(try contentDocument(in: controller) === appearanceDocument)
+  #expect(store.state.sidebarWidth == 310)
+  #expect(store.state.inspectorWidth == 420)
 }

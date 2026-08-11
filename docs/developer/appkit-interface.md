@@ -2,7 +2,7 @@
 
 ## 业务背景
 
-Aster 0.4.1 的工作区、独立设置窗口和所有交互控件均使用 AppKit。目标是获得稳定的 macOS 窗口材质、分屏拖动、菜单、键盘焦点和终端视图生命周期，同时继续精确应用 Otty 主题中的窗口、侧栏、标签、容器、阴影和材质令牌。
+Aster 的工作区、窗口生命周期和系统动作使用 AppKit；独立设置窗口是明确例外，内容由 Bundle 内本地 `WKWebView` 渲染。目标是获得稳定的 macOS 窗口材质、分屏拖动、菜单、键盘焦点和终端视图生命周期，同时以网页方式对齐 Otty 设置的信息架构。
 
 ## 领域概念
 
@@ -10,7 +10,7 @@ Aster 0.4.1 的工作区、独立设置窗口和所有交互控件均使用 AppK
 - **WorkspaceViewController**：工作区组合根节点，把 Sidebar、Content 和 Inspector 内容编排为顶层 Panel。
 - **WorkspacePanel / WorkspacePanelSplitView**：窗口第一层的语义区域与唯一横向布局边界；与 Content 内的递归 Pane 树严格区分。
 - **WorkspacePanelLayoutStore**：每个工作区窗口独立的左右 Panel 首选宽度与持久化边界。
-- **SettingsViewController**：九类设置的原生侧栏和内容区；全局配置写入 `AppPreferences`，Panel 宽度通过活动窗口 binding 写入对应 store。
+- **SettingsViewController**：九类设置的 `WKWebView` 宿主和受限消息桥；全局配置写入 `AppPreferences`，Panel 宽度通过活动窗口 binding 写入对应 store。桥协议与资源边界见 [网页设置架构](settings-web.md)。
 - **WorkspacePaneRuntime**：持有 SwiftTerm 或文档缓冲，独立于 AppKit 视图的重排与刷新。
 - **ThemeVisualEffectView**：将主题材质与色彩令牌映射为 `NSVisualEffectView`。
 - **SidebarOptionsButton**：`TABS` 右侧的原生菜单入口，管理标签分组、时间排序和手动分隔线。
@@ -102,7 +102,11 @@ Open Quickly 使用独立 `openQuicklyPresentationChanged` 事件局部挂载，
 
 命令面板、Open Quickly、全局查找和 Agent 历史统一由 `WorkspaceViewController` 的窗口级 key monitor 兜底处理 `Esc`。监听按事件所属 `NSWindow` 隔离，只在本窗口确有工作区临时浮层时消费按键并调用 `dismissWorkspaceOverlays()`；搜索框失焦到结果按钮、transcript 或后方终端后仍能关闭。没有浮层时事件原样放行，因此终端、Vi/Hint Mode 与 Autocomplete 的既有 `Esc` 语义不变。主题选择器与 Git diff 预览位于独立展示边界，继续使用各自现有的展示期 monitor。
 
-`SettingsViewController` 使用 `NSSearchField`、`NSPopUpButton`、`NSSwitch`、`NSSlider`、`NSColorWell` 和 `NSGridView`，由唯一 `AsterSettingsWindowController` 承载。设置窗口独立于工作区，打开后主窗口及 Pane / PTY 保持原尺寸、原层级和完整可见状态；设置页不提供返回按钮，红灯只关闭设置窗口。内容尺寸默认 `700 × 460 pt`，宽度下限 `700 pt`、高度下限 `460 pt`，宽高上界均放开，保留原生红绿灯位置并禁用 miniaturize。侧栏固定 `200 pt`，右侧滚动宿主、文档和单列顶层区块通过 leading/trailing 约束填满剩余宽度；窗口在 `700 / 940 / 1400 pt` 下都不得出现右侧空白或卡片靠边。超出高度的内容继续由既有滚动区域承载。
+`SettingsViewController` 由唯一 `AsterSettingsWindowController` 承载，内容是 Bundle 内 `Resources/settings-ui` 的单一非持久化 `WKWebView`。设置窗口独立于工作区，打开后主窗口及 Pane / PTY 保持原尺寸、原层级和完整可见状态；默认内容尺寸 `700 × 460 pt`，最小尺寸相同，宽高上界放开并跨启动记忆。网页保持 200px 侧栏、九类导航、搜索和滚动内容区；详细协议、安全边界、配置映射与测试契约见 [网页设置架构](settings-web.md)。
+
+### 历史：原生设置页（已废弃）
+
+以下原生控件与 token 色板说明只用于解释旧实现和相关迁移测试，不再是当前设置页契约；新功能不得继续扩展这条路径。
 
 设置窗口宽高跨启动记忆：`SettingsWindowGeometry`（AsterCore）提供宽高默认值、下界以及 `clampWidth` / `clampHeight` 纯函数，`AsterSettingsWindowController` 用 `aster.settings.window-width.v1` 和 `aster.settings.window-height.v1` 读写。delegate 只在 `windowDidEndLiveResize` 与 `windowWillClose` 记录一次，避免实时拖动期间逐帧写 UserDefaults；恢复时按 `NSScreen.main.visibleFrame` 钳制，外接屏移除后不会恢复成超过当前屏幕的窗口。尺寸必须在 `contentViewController` 赋值**之后**套用，因为赋值会把窗口收缩回控制器视图默认尺寸。它们属于窗口状态，不进入 `AsterConfiguration`，配置导出不会带走。`AsterSettingsWindowController.present(_:)` 每次显示后调用 `makeFirstResponder(nil)`，设置默认打开时不聚焦搜索框；搜索文字仍由常驻控制器保留，用户点击搜索框后原生输入法、清除按钮与焦点环照常工作。设置窗口设置 `isExcludedFromWindowsMenu`，应用不实现自定义 `applicationDockMenu`，所以 Dock 菜单既没有“打开设置…”也不会列出“Aster 设置”。
 

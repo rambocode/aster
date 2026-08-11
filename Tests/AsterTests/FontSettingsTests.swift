@@ -83,39 +83,22 @@ func ottyThemeParsesStyleFontKeys() throws {
   #expect(theme.style.fontFamilyBoldItalic == "Menlo-BoldItalic")
 }
 
-@Test("字体页全局与主题 scope 使用字体选择器,不再要求手输字体名")
+@Test("网页字体设置快照保留全局与逐样式字体")
 @MainActor
-func fontScopesOfferPickers() throws {
+func fontSettingsSnapshotIncludesEveryStyle() throws {
   let preferences = try isolatedPreferences()
-  let controller = SettingsViewController(preferences: preferences)
-  let window = NSWindow(
-    contentRect: NSRect(x: 0, y: 0, width: 700, height: 460),
-    styleMask: [.titled], backing: .buffered, defer: false)
-  window.contentViewController = controller
-  defer { window.orderOut(nil) }
-
-  func pickerCount() -> Int {
-    controller.view.descendantTree.count {
-      String(describing: type(of: $0)).contains("FontComboBox")
-    }
-  }
-
-  controller.fontScope = .global
-  controller.showSection(.appearance)
-  window.contentView?.layoutSubtreeIfNeeded()
-  // 全局:主字体选择器始终存在;默认自动匹配开启,逐样式选择器隐藏。
-  #expect(pickerCount() == 1)
-
-  // 关闭自动匹配后展开三个逐样式选择器(总计 4 个)。
+  preferences.configuration.appearance.fontFamily = "JetBrains Mono"
   preferences.configuration.appearance.fontFamilyBold = "Menlo-Bold"
-  controller.showSection(.appearance)
-  window.contentView?.layoutSubtreeIfNeeded()
-  #expect(pickerCount() == 4)
+  preferences.configuration.appearance.fontFamilyItalic = "Menlo-Italic"
+  preferences.configuration.appearance.fontFamilyBoldItalic = "Menlo-BoldItalic"
+  let controller = SettingsViewController(preferences: preferences)
+  controller.loadViewIfNeeded()
+  let values = try #require(controller.settingsSnapshotForTesting()["values"] as? [String: Any])
 
-  controller.fontScope = .theme
-  controller.showSection(.appearance)
-  window.contentView?.layoutSubtreeIfNeeded()
-  #expect(pickerCount() >= 1, "主题 scope 应提供字体选择器")
+  #expect(values["appearance.fontFamily"] as? String == "JetBrains Mono")
+  #expect(values["appearance.fontFamilyBold"] as? String == "Menlo-Bold")
+  #expect(values["appearance.fontFamilyItalic"] as? String == "Menlo-Italic")
+  #expect(values["appearance.fontFamilyBoldItalic"] as? String == "Menlo-BoldItalic")
 }
 
 extension NSView {

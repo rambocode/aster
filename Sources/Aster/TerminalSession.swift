@@ -262,12 +262,19 @@ final class AsterTerminalView: LocalProcessTerminalView {
   /// Pane 在主题实时预览期间短暂或永久停留在不同主题。
   func applyThemePalette(_ preferences: AppPreferences) {
     nativeForegroundColor = preferences.terminalForegroundColor
-    nativeBackgroundColor = preferences.terminalCanvasBackgroundColor
+    let backgroundOpacity = min(max(
+      preferences.compatibilityNumber(forKey: "advanced.backgroundOpacity", default: 1),
+      0
+    ), 1)
+    let canvasBackground = preferences.terminalCanvasBackgroundColor.withAlphaComponent(
+      preferences.terminalCanvasBackgroundColor.alphaComponent * backgroundOpacity
+    )
+    nativeBackgroundColor = canvasBackground
     // SwiftTerm 只在初次尺寸初始化时把 native 背景同步到 NSView backing layer。
     // 主题实时切换若只改 `nativeBackgroundColor`，透明主题会露出该 layer 留下的旧黑底，
     // 直到 Pane 再次获得焦点触发重绘。这里同步 layer，确保所有可见 Pane 立即呈现
     // 完全相同的 RGBA 背景。
-    layer?.backgroundColor = preferences.terminalCanvasBackgroundColor.cgColor
+    layer?.backgroundColor = canvasBackground.cgColor
     caretColor = preferences.cursorColor
     caretTextColor = preferences.cursorTextColor
     selectedTextForegroundColor = preferences.selectionForegroundColor
@@ -2404,7 +2411,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     }
 
     let inheritedEnvironment = ProcessInfo.processInfo.environment
-    var shell = inheritedEnvironment["SHELL"] ?? "/bin/zsh"
+    var shell = preferences.compatibilityString(
+      forKey: "general.shell",
+      default: inheritedEnvironment["SHELL"] ?? "/bin/zsh"
+    )
     if !FileManager.default.isExecutableFile(atPath: shell) {
       appendStartupWarning("配置的 Shell 不可执行：\(shell)。已回退到 /bin/zsh。")
       shell = "/bin/zsh"
@@ -3045,6 +3055,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.terminalBellEnabled = preferences.configuration.shell.terminalBell
     view.titleShellControlled = preferences.configuration.shell.resolvedTitleShellControlled
     view.getTerminal().allowTitleReport = preferences.configuration.shell.resolvedTitleReport
+    let scrollback = Int(min(max(
+      preferences.compatibilityNumber(forKey: "advanced.scrollbackLines", default: 10_000),
+      1_000
+    ), 1_000_000))
+    if view.getTerminal().options.scrollback != scrollback {
+      view.changeScrollback(scrollback)
+    }
     automaticSecureInputEnabled = preferences.configuration.controls.secureInputAutomatically
     if automaticSecureInputEnabled {
       refreshAutomaticSecureInput()

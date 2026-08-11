@@ -397,6 +397,10 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var fontFamilyBoldItalic: String?
   /// 用户 fallback 位于内置 Nerd Symbols 之后、系统级级联之前。
   public var fontFamilyFallback: [String]?
+  /// 逐样式 fallback 为空时继承常规 fallback；显式空数组表示该样式不追加用户字体。
+  public var fontFamilyFallbackBold: [String]?
+  public var fontFamilyFallbackItalic: [String]?
+  public var fontFamilyFallbackBoldItalic: [String]?
   public var fontSize = 13.0
   public var lineHeight = 1.08
   public var foreground = HexColor("#202124")!
@@ -461,6 +465,15 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var resolvedUnderlineRendering: Bool { underlineRendering ?? true }
   public var resolvedFontSmoothing: Bool { fontSmoothing ?? true }
   public var resolvedFontFamilyFallback: [String] { fontFamilyFallback ?? [] }
+  public var resolvedFontFamilyFallbackBold: [String] {
+    fontFamilyFallbackBold ?? resolvedFontFamilyFallback
+  }
+  public var resolvedFontFamilyFallbackItalic: [String] {
+    fontFamilyFallbackItalic ?? resolvedFontFamilyFallback
+  }
+  public var resolvedFontFamilyFallbackBoldItalic: [String] {
+    fontFamilyFallbackBoldItalic ?? resolvedFontFamilyFallback
+  }
   public var resolvedCursorOpacity: Double { min(max(cursorOpacity ?? 1, 0.1), 1) }
   public var resolvedCursorBlinkMode: TerminalCursorBlinkMode {
     cursorBlinkMode ?? (cursorBlink ? .defaultOn : .defaultOff)
@@ -503,7 +516,14 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
   public var agents = AgentConfiguration()
   public var tabBarLayout = TabBarLayout.vertical
   public var launchBehavior = LaunchBehavior.restoreLastSession
+  /// Aster 内保存的 Recipe 默认可信，可自动重放；可选字段兼容旧版单一重放策略。
+  public var savedRecipeReplayMode: RecipeReplayMode? = .automatic
+  /// 外部文件继续使用旧字段，保证历史配置解码和运行时语义不变。
   public var recipeReplayMode = RecipeReplayMode.confirmOnce
+
+  public var resolvedSavedRecipeReplayMode: RecipeReplayMode {
+    savedRecipeReplayMode ?? .automatic
+  }
 
   public init() {}
 
@@ -533,6 +553,12 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
     result.appearance.cursorAnimation = result.appearance.resolvedCursorAnimation
     result.appearance.fontFamilyFallback = Self.normalizedFontFamilies(
       result.appearance.resolvedFontFamilyFallback)
+    result.appearance.fontFamilyFallbackBold = Self.normalizedFontFamilies(
+      result.appearance.resolvedFontFamilyFallbackBold)
+    result.appearance.fontFamilyFallbackItalic = Self.normalizedFontFamilies(
+      result.appearance.resolvedFontFamilyFallbackItalic)
+    result.appearance.fontFamilyFallbackBoldItalic = Self.normalizedFontFamilies(
+      result.appearance.resolvedFontFamilyFallbackBoldItalic)
     result.appearance.widenedEastAsianAmbiguousBlocks = Set(
       result.appearance.resolvedWidenedEastAsianAmbiguousBlocks.compactMap(\.normalizedKnownValue)
     )

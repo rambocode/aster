@@ -1,6 +1,7 @@
 import AppKit
 import AsterCore
 import Combine
+import CoreFoundation
 import Foundation
 
 struct TerminalFontVariants {
@@ -8,6 +9,40 @@ struct TerminalFontVariants {
   let bold: NSFont
   let italic: NSFont
   let boldItalic: NSFont
+}
+
+/// 网页设置清单中尚未进入 Aster 运行时领域模型的兼容字段。
+///
+/// 这些值不是占位 UI：它们会按原始 JSON 类型持久化并参与导入、导出和跨平台往返。
+/// macOS 当前不能应用的 Windows 字体渲染选项也保存在这里，避免打开设置后丢失配置。
+enum SettingsCompatibilityValue: Codable, Equatable {
+  case bool(Bool)
+  case number(Double)
+  case string(String)
+
+  init?(jsonValue: Any) {
+    // `NSNumber` 同时承载 JavaScript Boolean 与 Number，必须先通过 CoreFoundation
+    // 类型标识区分，否则 true 会被错误保存为 1。
+    if let number = jsonValue as? NSNumber {
+      if CFGetTypeID(number) == CFBooleanGetTypeID() {
+        self = .bool(number.boolValue)
+      } else {
+        self = .number(number.doubleValue)
+      }
+    } else if let string = jsonValue as? String {
+      self = .string(string)
+    } else {
+      return nil
+    }
+  }
+
+  var jsonValue: Any {
+    switch self {
+    case .bool(let value): value
+    case .number(let value): value
+    case .string(let value): value
+    }
+  }
 }
 
 /// 九类设置共享的持久化配置入口。领域配置以单个 JSON 数据块保存，确保 Recipe、
@@ -57,6 +92,12 @@ final class AppPreferences: ObservableObject {
       persistThemeOverrides()
       synchronizeThemeRuntime()
     }
+  }
+
+  /// Otty 兼容清单中的扩展设置。字段逐步接入运行时后可从这里迁入强类型领域配置；
+  /// 在此之前仍保证编辑、重启和跨平台往返不丢值。
+  @Published private(set) var settingsCompatibility: [String: SettingsCompatibilityValue] {
+    didSet { persistSettingsCompatibility() }
   }
 
   @Published var sidebarTabGrouping: SidebarTabGrouping {
@@ -120,6 +161,16 @@ final class AppPreferences: ObservableObject {
       themeOverrides = decoded
     } else {
       themeOverrides = ThemeOverrideLibrary()
+    }
+    if let data = defaults.data(forKey: Keys.settingsCompatibility),
+      let decoded = try? JSONDecoder().decode(
+        [String: SettingsCompatibilityValue].self,
+        from: data
+      )
+    {
+      settingsCompatibility = decoded
+    } else {
+      settingsCompatibility = [:]
     }
     sidebarTabGrouping =
       SidebarTabGrouping(rawValue: defaults.string(forKey: Keys.sidebarTabGrouping) ?? "") ?? .none
@@ -226,16 +277,15 @@ final class AppPreferences: ObservableObject {
       ?? manager.convert(normal, toHaveTrait: .italicFontMask)
     let boldItalic = styleFont(appearance.fontFamilyBoldItalic, themeStyle.fontFamilyBoldItalic)
       ?? manager.convert(normal, toHaveTrait: [.boldFontMask, .italicFontMask])
-    let fallbacks = appearance.resolvedFontFamilyFallback
     return TerminalFontVariants(
       normal: BundledFontRegistry.addingNerdSymbolsFallback(
-        to: normal, additionalFamilies: fallbacks),
+        to: normal, additionalFamilies: appearance.resolvedFontFamilyFallback),
       bold: BundledFontRegistry.addingNerdSymbolsFallback(
-        to: bold, additionalFamilies: fallbacks),
+        to: bold, additionalFamilies: appearance.resolvedFontFamilyFallbackBold),
       italic: BundledFontRegistry.addingNerdSymbolsFallback(
-        to: italic, additionalFamilies: fallbacks),
+        to: italic, additionalFamilies: appearance.resolvedFontFamilyFallbackItalic),
       boldItalic: BundledFontRegistry.addingNerdSymbolsFallback(
-        to: boldItalic, additionalFamilies: fallbacks)
+        to: boldItalic, additionalFamilies: appearance.resolvedFontFamilyFallbackBoldItalic)
     )
   }
 
@@ -504,6 +554,30 @@ final class AppPreferences: ObservableObject {
     appearance = .system
   }
 
+  /// 保存一个经过网页桥类型校验的兼容字段。空字符串仍是有效配置值，不在此层折叠。
+  func setCompatibilityValue(_ value: SettingsCompatibilityValue, forKey key: String) {
+    settingsCompatibility[key] = value
+  }
+
+  func resetCompatibilityValues() {
+    settingsCompatibility = [:]
+  }
+
+  /// 配置文件导入只接受桥层已完成类型解码的兼容字段；本机授权不存放在该字典中。
+  func importCompatibilityValues(_ values: [String: SettingsCompatibilityValue]) {
+    settingsCompatibility = values
+  }
+
+  func compatibilityNumber(forKey key: String, default fallback: Double) -> Double {
+    guard case .number(let value) = settingsCompatibility[key] else { return fallback }
+    return value
+  }
+
+  func compatibilityString(forKey key: String, default fallback: String) -> String {
+    guard case .string(let value) = settingsCompatibility[key] else { return fallback }
+    return value
+  }
+
   func importConfiguration(_ candidate: AsterConfiguration) {
     var imported = candidate.normalized()
     // 本机安全授权不能随 JSON 导入；否则第三方配置可预置 scheme 例外，或把 OSC 52
@@ -539,6 +613,11 @@ final class AppPreferences: ObservableObject {
   private func persistThemeLibrary() {
     guard let data = try? JSONEncoder().encode(themeLibrary) else { return }
     defaults.set(data, forKey: Keys.themeLibrary)
+  }
+
+  private func persistSettingsCompatibility() {
+    guard let data = try? JSONEncoder().encode(settingsCompatibility) else { return }
+    defaults.set(data, forKey: Keys.settingsCompatibility)
   }
 
   private func migrateMissingThemeSelections() {
@@ -584,6 +663,7 @@ final class AppPreferences: ObservableObject {
     static let configuration = "aster.configuration.v2"
     static let themeLibrary = "aster.theme-library.v1"
     static let themeOverrides = "aster.theme-overrides.v1"
+    static let settingsCompatibility = "aster.settings-compatibility.v1"
     static let compactSidebarMigration = "aster.migration.compact-sidebar.v1"
     static let sidebarTabGrouping = "aster.sidebar.tab-grouping.v1"
     static let sidebarTabOrder = "aster.sidebar.tab-order.v1"
