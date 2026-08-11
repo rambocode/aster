@@ -173,14 +173,25 @@ final class AppPreferences: ObservableObject {
     terminalFontVariants.normal
   }
 
+  /// 隐藏系统字体(以 "." 开头,如 `.AppleSystemUIFontMonospaced`)不是稳定 API,
+  /// 也不该出现在用户可见配置里;历史版本曾把计算结果原样固化进配置,这里统一
+  /// 视为未设置,让污染过的配置自愈回自动匹配。
+  private func sanitizedFontName(_ name: String?) -> String? {
+    guard let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !trimmed.isEmpty, !trimmed.hasPrefix(".")
+    else { return nil }
+    return trimmed
+  }
+
   var terminalFontVariants: TerminalFontVariants {
     let appearance = configuration.appearance
-    let globalFamily = appearance.fontFamily.trimmingCharacters(in: .whitespacesAndNewlines)
+    let globalFamily = sanitizedFontName(appearance.fontFamily) ?? ""
     let systemMonospaced = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+    let themeStyle = activeTheme.style
     let normal: NSFont
     if !globalFamily.isEmpty {
       normal = BundledFontRegistry.font(named: globalFamily, size: fontSize) ?? systemMonospaced
-    } else if let candidates = activeTheme.style.fontFamilies, !candidates.isEmpty {
+    } else if let candidates = themeStyle.fontFamilies, !candidates.isEmpty {
       // Otty 的 font-mono 是按顺序解析的字体栈；首项未安装不能直接退到系统字体，
       // 否则后面的 SF Mono / Menlo 永远没有机会生效。generic `monospace` 是栈终点。
       normal = candidates.lazy.compactMap { rawName -> NSFont? in
@@ -196,15 +207,18 @@ final class AppPreferences: ObservableObject {
         ?? systemMonospaced
     }
     let manager = NSFontManager.shared
-    let bold = appearance.fontFamilyBold.flatMap {
-      BundledFontRegistry.font(named: $0, size: fontSize)
-    } ?? manager.convert(normal, toHaveTrait: .boldFontMask)
-    let italic = appearance.fontFamilyItalic.flatMap {
-      BundledFontRegistry.font(named: $0, size: fontSize)
-    } ?? manager.convert(normal, toHaveTrait: .italicFontMask)
-    let boldItalic = appearance.fontFamilyBoldItalic.flatMap {
-      BundledFontRegistry.font(named: $0, size: fontSize)
-    } ?? manager.convert(normal, toHaveTrait: [.boldFontMask, .italicFontMask])
+    // 逐样式解析链与主链一致:全局显式设置 → 主题逐样式 → 从常规字体自动匹配。
+    func styleFont(_ globalName: String?, _ themeName: String?) -> NSFont? {
+      (sanitizedFontName(globalName) ?? sanitizedFontName(themeName)).flatMap {
+        BundledFontRegistry.font(named: $0, size: fontSize)
+      }
+    }
+    let bold = styleFont(appearance.fontFamilyBold, themeStyle.fontFamilyBold)
+      ?? manager.convert(normal, toHaveTrait: .boldFontMask)
+    let italic = styleFont(appearance.fontFamilyItalic, themeStyle.fontFamilyItalic)
+      ?? manager.convert(normal, toHaveTrait: .italicFontMask)
+    let boldItalic = styleFont(appearance.fontFamilyBoldItalic, themeStyle.fontFamilyBoldItalic)
+      ?? manager.convert(normal, toHaveTrait: [.boldFontMask, .italicFontMask])
     let fallbacks = appearance.resolvedFontFamilyFallback
     return TerminalFontVariants(
       normal: BundledFontRegistry.addingNerdSymbolsFallback(
@@ -499,7 +513,9 @@ final class AppPreferences: ObservableObject {
     case .light: false
     case .dark: true
     case .system:
-      NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+      // `NSApp` 在 NSApplication 创建前是 nil(串行测试首个用例即如此);
+      // `NSApplication.shared` 按需初始化,任何调用时序下都安全。
+      NSApplication.shared.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
   }
 

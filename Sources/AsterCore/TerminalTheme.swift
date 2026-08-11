@@ -125,6 +125,11 @@ public struct TerminalThemeStyle: Codable, Equatable, Sendable {
   public var radius: Double
   /// Otty `[token].font-mono` 的候选顺序；空值表示使用全局或应用 fallback。
   public var fontFamilies: [String]?
+  /// 主题级逐样式字体(Otty `token.font-mono-bold` / `-italic` / `-bold-italic`);
+  /// 空值表示从常规字体自动匹配对应粗细与样式。
+  public var fontFamilyBold: String?
+  public var fontFamilyItalic: String?
+  public var fontFamilyBoldItalic: String?
   public var sidebarBackground: HexColor?
   public var sidebarBorderColor: HexColor?
   public var sidebarBorderWidth: Double
@@ -143,6 +148,9 @@ public struct TerminalThemeStyle: Codable, Equatable, Sendable {
   public init(
     radius: Double = 8,
     fontFamilies: [String]? = nil,
+    fontFamilyBold: String? = nil,
+    fontFamilyItalic: String? = nil,
+    fontFamilyBoldItalic: String? = nil,
     sidebarBackground: HexColor? = nil,
     sidebarBorderColor: HexColor? = nil,
     sidebarBorderWidth: Double = 0,
@@ -160,6 +168,9 @@ public struct TerminalThemeStyle: Codable, Equatable, Sendable {
   ) {
     self.radius = radius
     self.fontFamilies = fontFamilies
+    self.fontFamilyBold = fontFamilyBold
+    self.fontFamilyItalic = fontFamilyItalic
+    self.fontFamilyBoldItalic = fontFamilyBoldItalic
     self.sidebarBackground = sidebarBackground
     self.sidebarBorderColor = sidebarBorderColor
     self.sidebarBorderWidth = sidebarBorderWidth

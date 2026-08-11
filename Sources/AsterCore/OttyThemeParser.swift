@@ -81,6 +81,10 @@ enum OttyThemeParser {
     return TerminalThemeStyle(
       radius: document.number("token.radius", in: 0...128) ?? 8,
       fontFamilies: document.strings("token.font-mono"),
+      // 逐样式字体是单值键;写成栈时取首项,与 font-mono 的解析语义保持一致。
+      fontFamilyBold: document.strings("token.font-mono-bold")?.first,
+      fontFamilyItalic: document.strings("token.font-mono-italic")?.first,
+      fontFamilyBoldItalic: document.strings("token.font-mono-bold-italic")?.first,
       sidebarBackground: document.color("sidebar.background"),
       sidebarBorderColor: sidebarBorder.color,
       sidebarBorderWidth: sidebarBorder.width,
