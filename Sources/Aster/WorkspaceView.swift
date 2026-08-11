@@ -1618,7 +1618,7 @@ final class WorkspaceViewController: NSViewController {
 
   private func makeWorkspaceHeader(_ tab: TerminalTabItem) -> NSView {
     let theme = preferences.activeTheme
-    let background = NSView()
+    let background = WorkspaceTitleBarBackgroundView()
     // 中央标题是 workspace 背景面上的内容，不是另一块 chrome。Window 已在控制器根
     // 视图统一承载实色或 material；标题若再建 NSVisualEffectView，会让透明主题重复
     // 合成一次玻璃并在 28pt 边界形成横向接缝。普通透明层同时保留标题的布局和命中区。

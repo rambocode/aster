@@ -1,6 +1,21 @@
 import AppKit
 import AsterCore
 
+/// 内容区顶条（`makeWorkspaceHeader` 的 `background`）：承载路径胶囊与安全输入指示器。
+/// 隐藏原生标题栏后（`titleVisibility = .hidden`）这条 28pt 区域失去了系统自带的
+/// 「双击标题栏放大/还原窗口」手势，这里在空白处（路径胶囊、指示器等子视图仍优先
+/// 吃掉命中）手动补回，双击调用 `NSWindow.performZoom` 与「显示」菜单的「缩放」项等效。
+@MainActor
+final class WorkspaceTitleBarBackgroundView: NSView {
+  override func mouseDown(with event: NSEvent) {
+    guard event.clickCount == 2 else {
+      super.mouseDown(with: event)
+      return
+    }
+    window?.performZoom(nil)
+  }
+}
+
 /// 工作区标题按钮。Otty 在左侧标签布局中常驻显示当前目录胶囊；程序标题仍保存在
 /// `programTitle` 中供窗口标题和辅助语义使用，但不会替换用户定位工作区所需的路径。
 @MainActor
