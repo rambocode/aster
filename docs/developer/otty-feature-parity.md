@@ -4,6 +4,10 @@
 
 Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、`workflows`、`terminal-features` 与 `agents` 四个栏目。本文是逐页审计入口；只有页面内全部可用行为均有实现与非 UI 功能测试时，状态才能改为“完成”。“部分”表示已有能力，但不能据此推断整页完成。
 
+> Ghostty 切换说明：本矩阵中的 SwiftTerm 精细交互完成度是迁移前基线。当前产品暂停
+> Vi/Mark/Hint、键盘扩展选区、大小写/正则终端查找、inline Autocomplete、精确命令
+> Outline 和 OSC 6974 Agent lifecycle；这些条目在 Ghostty 公开接口补齐前按“部分”处理。
+
 ## 状态定义
 
 - **待审计**：尚未逐段提炼规则与失败语义。

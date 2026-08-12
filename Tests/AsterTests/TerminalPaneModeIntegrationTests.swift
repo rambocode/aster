@@ -250,11 +250,14 @@ private func mouseEvent(_ type: NSEvent.EventType, at point: NSPoint) throws -> 
 func shellMenuPublishesPaneModeActions() throws {
   let menu = try #require(AsterAppDelegate().shellModeMenuItem().submenu)
   // 「把终端选区发送到 Chat」在 50c6f90 移入终端右键菜单,不再出现在 Shell 菜单。
+  // 顶部标签命名/清屏/工作目录动作与底部 Git、通知与权限对齐 Otty 的 Shell 菜单。
   #expect(
     menu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
+      "重命名标签页…", "设置标签页前缀…", "清屏",
+      "拷贝路径", "在访达中显示", "打开方式",
       "Vi Mode", "Mark Mode", "打开链接（Hint Mode）",
-      "Composer", "Agent 历史",
-      "只读模式", "显示/隐藏 Vi 按键提示",
+      "只读模式", "Composer", "Agent 历史",
+      "Git", "通知与权限…", "显示/隐藏 Vi 按键提示",
     ])
   let vi = try #require(menu.item(withTitle: "Vi Mode"))
   #expect(vi.keyEquivalent == " ")

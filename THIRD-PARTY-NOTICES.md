@@ -21,7 +21,18 @@ Copyright (c) 2020 Miguel de Icaza
 
 SwiftTerm is distributed under the MIT License. The full license is available in the upstream repository at <https://github.com/migueldeicaza/SwiftTerm/blob/main/LICENSE>.
 
-Aster uses SwiftTerm for VT100/xterm emulation and the macOS local-process terminal view. Aster's workspace, settings, file tools, Recipes, branding, and application UI are independent implementations.
+Aster retains SwiftTerm as a migration-time regression adapter. Product terminal panes use Ghostty. Aster's workspace, settings, file tools, Recipes, branding, and application UI are independent implementations.
+
+## Ghostty
+
+Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors
+
+Ghostty is distributed under the MIT License. The full license is available in the upstream
+repository at <https://github.com/ghostty-org/ghostty/blob/main/LICENSE>.
+
+Aster builds the internal libghostty C interface from pinned revision
+`4dcb09ada0c0909717d92547623b26eafa50ca8a`. The generated XCFramework is not a stable,
+versioned upstream SDK; Aster owns the compatibility validation for every revision update.
 
 ## Fig Autocomplete
 

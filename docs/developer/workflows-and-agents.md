@@ -4,6 +4,10 @@
 
 Aster 把 Otty 的工作区流程、CLI 与代码 Agent 能力放在同一安全边界内：用户可以恢复布局、重放 Recipe、从 Shell 控制 Pane，并在终端旁管理 Agent，但外部文件、历史记录和 lifecycle hook 均视为不可信输入。
 
+> Ghostty 切换期间，公开嵌入接口无法观察原始 OSC 6974 和逐字节输入/输出；因此自动
+> Prompt Queue 派发、精确 Agent 状态和 inline Autocomplete 暂停。手动发送、Composer、
+> 历史、恢复/Fork 与安全 IPC 仍保留。下述 lifecycle 规则是恢复该能力时必须满足的契约。
+
 ## 领域概念
 
 - `WorkflowRecipe`：可移植的 tab/window、Pane 树、内容级别和可选命令；不含 PID、FD 或运行对象。

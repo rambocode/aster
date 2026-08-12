@@ -18,6 +18,9 @@ let package = Package(
     .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.8.0"),
   ],
   targets: [
+    // libghostty 目前只发布 internal C header，仓库因此锁定上游 revision 并在本地
+    // 生成静态 XCFramework。来源、ABI 风险与更新流程记录在 Vendor/Ghostty/README.md。
+    .binaryTarget(name: "GhosttyKit", path: "Vendor/GhosttyKit.xcframework"),
     .target(
       name: "AsterPTY",
       publicHeadersPath: "include"
@@ -29,9 +32,8 @@ let package = Package(
         .product(name: "Markdown", package: "swift-markdown"),
       ]
     ),
-    // Aster 需要在终端内核边界实现原生键盘选区、矩形选区与像素级滚动；
-    // SwiftTerm 1.15 没有公开这些状态，因此以锁定上游 revision 的本地 target
-    // 维护最小补丁。来源、许可证和同步流程记录在 Vendor/SwiftTerm/UPSTREAM.md。
+    // SwiftTerm 仅保留为迁移期回归适配器，让旧内核的精细行为测试仍可独立运行；
+    // 产品终端由 GhosttyKit 承载，不再把 SwiftTerm 视图挂入工作区。
     .target(
       name: "SwiftTerm",
       path: "Vendor/SwiftTerm/Sources/SwiftTerm",
@@ -47,8 +49,28 @@ let package = Package(
       name: "Aster",
       dependencies: [
         "AsterCore",
+        "GhosttyKit",
         "SwiftTerm",
         .product(name: "Highlighter", package: "HighlighterSwift"),
+      ],
+      resources: [
+        // libghostty 运行时从 GHOSTTY_RESOURCES_DIR 寻找 shell integration，并从
+        // 同级目录推导 terminfo。两个目录必须保持层级，不能使用 `.process` 扁平化。
+        .copy("Ghostty/Resources/ghostty"),
+        .copy("Ghostty/Resources/terminfo"),
+      ],
+      swiftSettings: [
+        .unsafeFlags(["-Xcc", "-Wno-incomplete-umbrella"]),
+      ],
+      linkerSettings: [
+        .linkedFramework("Carbon"),
+        .linkedFramework("CoreGraphics"),
+        .linkedFramework("CoreText"),
+        .linkedFramework("IOKit"),
+        .linkedFramework("Metal"),
+        .linkedFramework("MetalKit"),
+        .linkedFramework("QuartzCore"),
+        .linkedLibrary("c++"),
       ]
     ),
     .testTarget(

@@ -11,7 +11,7 @@ Aster 的工作区、窗口生命周期和系统动作使用 AppKit；独立设�
 - **WorkspacePanel / WorkspacePanelSplitView**：窗口第一层的语义区域与唯一横向布局边界；与 Content 内的递归 Pane 树严格区分。
 - **WorkspacePanelLayoutStore**：每个工作区窗口独立的左右 Panel 首选宽度与持久化边界。
 - **SettingsViewController**：九类设置的 `WKWebView` 宿主和受限消息桥；全局配置写入 `AppPreferences`，Panel 宽度通过活动窗口 binding 写入对应 store。桥协议与资源边界见 [网页设置架构](settings-web.md)。
-- **WorkspacePaneRuntime**：持有 SwiftTerm 或文档缓冲，独立于 AppKit 视图的重排与刷新。
+- **WorkspacePaneRuntime**：持有 Ghostty `TerminalSession` 或文档缓冲，独立于 AppKit 视图的重排与刷新。
 - **ThemeVisualEffectView**：将主题材质与色彩令牌映射为 `NSVisualEffectView`。
 - **SidebarOptionsButton**：`TABS` 右侧的原生菜单入口，管理标签分组、时间排序和手动分隔线。
 - **ActionButton / ActionMenuItem**：将局部闭包安全桥接到 AppKit target/action。
@@ -46,7 +46,7 @@ flowchart LR
   E --> G[Content Panel]
   E --> H[Inspector Panel]
   G --> I[Recursive Pane NSSplitView]
-  I --> J[SwiftTerm / File Browser / Editor / Preview]
+  I --> J[Ghostty / File Browser / Editor / Preview]
   D --> O[Native AppKit Controls]
   D --> K[WorkspacePanelSettingsBinding]
   O --> L[AppPreferences]
@@ -60,6 +60,8 @@ flowchart LR
 
 `AsterApp.swift` 使用自定义 `@main` 调用 `NSApplication`，由 `AsterAppDelegate` 管理窗口、菜单和退出事务。「显示」菜单集中全部分屏命令：四个方向的拆分、缩放拆分、「调整拆分大小」与「聚焦面板」两个子菜单、关闭当前面板；只在多面板下有意义的项由 `NSMenuItemValidation` 按 `AppModel.selectedTabHasSplits` 置灰。`⌘W` 走 `closeSelectedPaneOrTab()`：还有分屏时只关闭聚焦面板，最后一个面板才关闭标签页（`⇧⌘W` 始终关标签页）。
 
+「Shell」菜单在 `menuNeedsUpdate` 时按当前窗口的聚焦标签整体重建（`populateShellMenu`），结构对齐 Otty：标签命名（重命名 / 前缀共用 `promptRenameSelectedTab`，前缀入口预选动态前缀模式）→ 清屏（`⌘K`，Ghostty 走 `clear_screen` binding，SwiftTerm 回归路径退化为 Ctrl+L）→ 工作目录动作（拷贝路径 / 在访达中显示由 `NSMenuItemValidation` 按 `selectedTab?.workingDirectory` 置灰；「打开方式」在无 CWD 时挂占位子菜单）→ Vi/Mark/Hint/只读/Composer/Agent 历史 → 「Git」与按焦点动态出现的 Agent 子菜单 → 「通知与权限…」（落到设置 Shell 分类）。「打开方式」与「Git」子菜单由 `ShellDirectoryMenuBuilder` 单一来源构建，与工作区标题胶囊弹层完全共用：Git 命令仍只经 `TerminalSession.typeText` 预填，不在后台执行仓库写操作。
+
 `AsterAppDelegate` 同时管理主窗口和附加工作区窗口。菜单、命令面板与 CLI `--new-window` 统一经模型回调创建窗口；Pin 只接受工作区窗口，PiP 可固定当前 Pane 或跟随活动 Pane。正常退出保存仍打开的附加 suite，用户主动关闭则删除；关闭确认发生在可取消的 `windowShouldClose`，应用退出由 `WorkspaceTerminationTransaction` 先确认全部模型再统一提交，避免后续窗口取消时前序 PTY 已被终止。crash loop 规则仍由各模型独立执行。Dock 聚合器订阅全部窗口，错误跳转和 Agent 防睡不会漏掉后台窗口。
 
 **顶层 Panel 布局**：`WorkspacePanelSplitView` 是工作区窗口唯一的横向区域容器，按角色而非可见索引管理 Sidebar、Content、Inspector。垂直标签布局显示三者；顶部、底部或隐藏标签布局省略 Sidebar，Content 与 Inspector 仍由同一实现组合。Sidebar 首选范围为 180...360pt（默认 220pt），Inspector 为 240...480pt（默认 278pt），Content 尽量保留至少 320pt。两条 divider 都是 1pt 原生命中宽度，悬停加深为系统灰（不切换主题强调色），双击按外侧角色复位；拖动只改宽度，不能顺带折叠。窄窗口只临时压缩实际 frame，先让 Inspector、再让 Sidebar 接近下限，不覆盖用户保存的首选值。
@@ -72,7 +74,7 @@ PiP 与主工作区共享同一个长期 `TerminalSession` 容器。`PanePicture
 
 **窗口与 Pane 活动状态**：窗口失去 key 状态时叠加 `InactiveWindowOverlayView`（主题 `paper` 色 45% 透明、`hitTest` 返回 nil，失焦窗口的第一次点击照常落到终端）。AppKit 只会自动灰化系统控件，终端网格与自绘视图不受影响，没有这层遮罩时非活动窗口看起来仍然「亮着」。通知按 `notification.object === view.window` 过滤，多窗口互不影响；`refresh()` 会清空子视图，因此刷新末尾要重新安放遮罩。分隔条的悬停加深态在窗口非 key 时也一律退回静止灰线。窗口状态下发到全部会话，Pane 状态则由稳定 `activePaneID` 在初次挂载和局部切换时下发。`AsterTerminalView` 关闭 SwiftTerm 的 `caretViewTracksFocus`，避免其把竖线或下划线失焦光标无条件改成空心方块；非活动窗口或 Pane 只把当前样式换成同形状的 `nonBlinking` 变体。用户配置仍是光标几何唯一真值，DECSCUSR 在 Default 模式只贡献 blink 位，Always 模式则连 blink 位也不能覆盖。
 
-SwiftTerm 的 overlay `NSScroller` 在 `AsterTerminalView.didAddSubview` 里被隐藏：它是一条 5.5 pt 灰条，随滚动闪现又消失、并盖住右侧文字。SwiftTerm 的 `reservedScrollerWidth` 在 scroller 隐藏时归零，终端网格会自动收回这几个点，不会留白。
+Ghostty surface 不挂 AppKit overlay `NSScroller`；滚动历史由 surface 自己处理，不在右侧预留额外宽度。
 
 **分屏容器的尺寸约束**：`NSSplitView` 的子视图走 autoresizing，它无法反推内容尺寸，于是给每个子视图加 `PreferredSize/FallbackSize`（`height == 0 @250`）回退约束，自身在分隔方向的垂直方向上只剩分隔条厚度的固有尺寸。因此容器链两个方向都必须给必需约束：内容区绑定到外层 stack 的宽/高，`wrapper` 钉到 stack 底边，无 Composer 时 Pane 区直接钉到 `inner` 底边，有 Composer 时由 Composer 占据底边。只约束宽度时，上下分屏会把整个内容区塌成一条分隔条，两个终端高度都是 0（表现为窗口大面积空白、标题区被挤到垂直中央）。`PersistedSplitView.layout()` 还要等容器给出有效尺寸（>1pt）后才定位分隔条，否则首轮布局会把比例锁死在无效值上。
 

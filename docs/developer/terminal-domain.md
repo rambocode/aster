@@ -29,7 +29,7 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 
 1. 工作区始终至少保留一个标签。
 2. 分屏操作只替换目标叶节点；关闭 Pane 后提升兄弟节点，不留下空容器。
-3. `TerminalSession` 强持有唯一 `LocalProcessTerminalView`，AppKit 视图重排不得重建 PTY。
+3. `TerminalSession` 强持有唯一 `GhosttySurfaceView`，AppKit 视图重排不得重建 PTY；SwiftTerm 只用于迁移回归测试。
 4. 会话恢复和 Recipe 只能持久化可重建状态，禁止序列化运行进程身份和敏感环境数据。
 5. 编辑器保存使用原子替换；保存失败必须保留 dirty 状态并显示错误。
 6. 配置以单个 JSON 数据块持久化；终端相关配置立即同步到已存在的终端视图。
@@ -58,7 +58,7 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 flowchart LR
   A[创建或恢复标签] --> B[构建 PaneLayout]
   B --> C{Pane 类型}
-  C -->|Terminal| D[LocalProcessTerminalView]
+  C -->|Terminal| D[GhosttySurfaceView]
   C -->|File Browser| E[目录读取]
   C -->|Editor| F[DocumentBuffer]
   C -->|Preview| G[只读内容]
@@ -92,9 +92,11 @@ flowchart LR
 
 ### 完整终端网格
 
-界面使用 SwiftTerm 的 `LocalProcessTerminalView` 承载 VT100/xterm 网格、本地进程、alternate screen、ANSI 颜色、宽字符、选择、鼠标报告、超链接和窗口尺寸同步。`TerminalSession` 是唯一适配边界，负责延迟创建视图、设置 `TERM=xterm-256color`、发送命令和 Ctrl+C、查找滚动缓冲区、同步标题/目录以及终止进程。
+产品界面使用 `GhosttySurfaceView` 承载 libghostty 的 PTY、VT state、scrollback 与 Metal surface。`TerminalSession` 是唯一会话适配边界，负责延迟创建视图、发送命令和 Ctrl+C、读取选择/缓冲区、同步标题与目录，以及终止进程。C interface、资源定位、输入法、键鼠和 callback 生命周期只存在于 `Sources/Aster/Ghostty/`。完整边界和暂不支持项见 [Ghostty 终端引擎](ghostty-terminal-engine.md)。
 
-#### PTY 输出消息总线
+#### Legacy SwiftTerm 输出消息总线
+
+以下消息总线只服务迁移期 SwiftTerm 回归适配器，不在产品 Ghostty surface 的输出路径上。Ghostty 自己拥有 PTY 读取、背压、parser 与 renderer 调度。
 
 每个 `AsterTerminalView` 还持有独立的 `TerminalOutputMessageBus`。`LocalProcess` 把 PTY
 读取回调投递到该 Pane 的串行输出队列；该队列只复制并发布原始字节，不直接触碰 AppKit、
@@ -127,31 +129,24 @@ Session 的退出状态。测试直接在主线程调用 `dataReceived` 时保�
 #### Shell 结束与恢复
 
 `TerminalSessionLifecycleState` 区分未启动、启动中、运行中、已结束、启动失败和主动停止。
-SwiftTerm 回传的是 `waitpid` 原始状态，`TerminalProcessTermination` 将其归一化为正常退出码、
-终止信号或 PTY I/O 失败，避免把 `exit 7` 显示为 `1792`。结束卡片覆盖在最后一帧之上，
+Ghostty 的 child-exited action 回传 Shell 退出码，`TerminalProcessTermination` 将其归一化为正常退出、
+异常退出或 I/O 失败。旧 SwiftTerm 回归入口仍接受 `waitpid` 原始状态。结束卡片覆盖在最后一帧之上，
 卡片外区域仍可选择和复制历史内容；正常 `exit` 不会被当成需要自动重启的错误。
 
 用户点击“重新启动 Shell”时，Session 保留 Pane 身份和稳定 host view，但丢弃旧
-`AsterTerminalView`，创建新的 `LocalProcess`、PTY 和输出总线。每个新 view 定义一个进程
+`GhosttySurfaceView`，创建新的 libghostty surface 与 PTY。每个新 view 定义一个进程
 代次，终止回调必须匹配当前 view 身份；旧 DispatchIO/monitor 的迟到回调只写诊断事件，
 不能覆盖新进程状态。
 重启失败会继续显示可操作状态，不做后台重试或形成崩溃循环。
 
 #### 终端渲染后端
 
-`AsterTerminalView` 默认保持 SwiftTerm 的 Core Graphics renderer。Claude Code、Kimi 等
-alternate-screen TUI 会高频组合 DEC 2026 同步输出、擦除、滚动、spinner 与光标移动；
-SwiftTerm 当前 Metal 行缓存和独立光标层在该负载下可能混合不同逻辑时刻的画面，表现为
-旧 spinner/状态行残留和输入光标偏行。生产环境因此使用单一网格、单一绘制事务的
-Core Graphics 路径，正确性优先于逐行 GPU 缓存。
+产品终端直接使用 Ghostty 的 Metal renderer、VT state 与同步输出实现。Aster 不再维护
+另一份网格或逐字节驱动 AppKit 绘制，只响应 libghostty 的 render action；这消除了宿主层
+把 parser 状态与绘制帧拆开的路径。高频输出的读取、背压和 renderer 调度由 Ghostty 内核负责。
 
-vendored Metal renderer、shader bundle 和显式测试仍保留，便于后续在取得真实
-alternate-screen 字节重放与像素级验收后继续修复；生产适配器不得自动调用
-`setUseMetal(true)`。这项策略不改变字体注册、PTY 字节顺序、滚动历史或终端协议能力。
-
-Claude Code 完成一轮输出时可能只发送 OSC 窗口标题，不再产生 dirty row。alternate-screen
-的 Core Graphics 路径会对这种纯协议尾帧请求一次全画面校正重绘，使 AppKit backing store
-重新与最终网格一致，避免临时 spinner 或标题字符留在已经恢复的输入框旁。
+SwiftTerm 的 Core Graphics/Metal 测试与本地 target 仅作为迁移期对照保留，不能从
+`makeTerminalHost` 进入产品视图树。
 
 `AsterCore` 中原有的 `PTYShellProcess`、`ANSICleaner` 和 `TerminalTranscript` 仍作为底层行为测试与备用基础设施保留，但主 UI 不再以滚动纯文本模拟终端。
 

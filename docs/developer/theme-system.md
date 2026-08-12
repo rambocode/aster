@@ -76,11 +76,11 @@ flowchart LR
 
 容器背景的解析遵循「与终端画布连续」：主题未显式声明 `container` 时回退到终端背景本身（透明 `none` 保持透明以透出玻璃材质），**不借用 panel** —— panel 是侧栏等面板的底色，借用它会让 April 这类「panel 灰绿 + 终端纯白」的主题在右侧内容区套上一层 panel 色，与终端画布视觉割裂。
 
-`TerminalSession.apply` 在每次偏好更新时同步 SwiftTerm 的四种角色字体、默认前景/背景、选区前景/背景、光标前景/文字、光标不透明度和 ANSI 16 色。主题视觉令牌集中由 `AsterTerminalView.applyThemePalette` 下发；工作区同时更新全部存活 Session，并扫描当前可见终端补发一次，覆盖 AppKit 整树替换期间仍在屏幕上的旧 Pane host。透明浅色终端的 `terminalCanvasBackgroundColor` 保留 Otty 原始 alpha，并同步到 SwiftTerm backing layer；`renderedTerminalBackground` 只给 PiP、候选面板等没有材质宿主的浮层提供主题 `surface`。SwiftTerm 以 ANSI 16 色派生完整 256 色调色板。下划线渲染、字体平滑、连字、行高和 SGR 闪烁同样立即作用于已有会话；行高扩大的是终端网格和行间留白，竖线光标仍按未放大的字体自然高度绘制，并在完整 cell 内上下居中，避免伸入上一行或在输入框内偏低。生产环境默认使用 Core Graphics 的 `CaretView`；Metal renderer 只在显式后端测试中启用，但仍必须遵循相同的光标高度、垂直 inset 与字体重绘规则。Metal 的 `MTKView` 采用暂停并按需绘制，测试中的字号或字体变化除了更新网格尺寸，还必须显式请求新帧，使缓存签名按新字体重建行数据并立即呈现；平滑策略变化时则同时清空 glyph atlas 与行缓存，避免继续显示旧策略生成的字形。
+`TerminalSession.apply` 在每次偏好更新时通过 `GhosttyConfiguration` 同步字体、字号、行高、前景/背景、选区、光标与 ANSI 16 色，并由 `ghostty_app_update_config` 广播到全部存活 surface；工作区同时扫描当前可见终端补发一次，覆盖 AppKit 整树替换期间仍在屏幕上的旧 Pane host。透明终端的 alpha 进入 Ghostty `background-opacity`，`renderedTerminalBackground` 只给 PiP 等没有材质宿主的浮层提供主题 `surface`。字形、网格和 Metal renderer 缓存失效由 Ghostty 内核管理。SwiftTerm 的字体、Core Graphics/Metal 与 caret 测试只保留为迁移期对照，不代表产品渲染路径。
 
 浅色内置主题未显式声明选区背景时，Aster 使用终端前景的 30% 透明度（8-bit alpha 为 77）；显式的选区前景/背景始终优先。这样既保持 Otty 缺省语义，也避免浅色主题选中文字时被不透明前景色遮住。本阶段不改变深色内置主题的既有回退。
 
-`AsterTerminalView` 保存程序最近一次 DECSCUSR 请求，并把请求拆成几何与 blink 两部分：几何始终来自 `preferredCursorStyle`，`default-off/default-on` 只接受程序的 blink 位，`always-off/always-on` 连 blink 位也固定为用户值。SwiftTerm 的通用失焦策略会把所有形状画成空心方块，因此 Aster 关闭 `caretViewTracksFocus`，改由窗口活动状态和稳定 `activePaneID` 把当前样式切换为同形状的非闪烁变体。Agent 领域状态为 `processing` 时也临时使用该变体，进入 `awaiting-input` / `idle` 后恢复配置。空心方块在 AppKit caret、共享栅格和 Metal 绘制路径都有独立轮廓；AppKit caret 与 Metal renderer 都会为同一行的短距离移动做 100 ms 插值，并在“减少动态效果”开启时自动停用。
+`GhosttyConfiguration` 把 Aster 的 block / hollow block / bar / underline 与 blink 设置投影到 Ghostty。窗口与 Pane 焦点通过 `ghostty_surface_set_focus` 同步，光标绘制和 DECSCUSR 优先级由 Ghostty 内核处理。旧 `AsterTerminalView` 的自绘 caret、Agent blink 抑制和插值逻辑只在迁移回归测试中保留。
 
 ## 失败语义
 

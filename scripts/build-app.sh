@@ -13,6 +13,7 @@ ICONSET_DIR="$BUILD_DIR/AsterIcon.iconset"
 ICON_PREVIEW_DIR="$BUILD_DIR/icon-preview"
 
 cd "$PROJECT_DIR"
+"$PROJECT_DIR/scripts/setup-ghostty.sh"
 swift build --scratch-path "$BUILD_DIR" -c release
 
 # 每次从空 bundle 开始，避免删掉源码后旧资源仍残留在交付包。目标路径由项目目录
@@ -66,6 +67,15 @@ if [[ ! -d "$HIGHLIGHTER_BUNDLE" ]]; then
   exit 1
 fi
 cp -R "$HIGHLIGHTER_BUNDLE" "$RESOURCES_DIR/Highlighter_Highlighter.bundle"
+
+# Aster executable target 的 SwiftPM resource bundle 承载与 XCFramework 同 revision 的
+# Ghostty shell integration 和 terminfo。Bundle.module 在发布 App 内按此标准位置查找。
+GHOSTTY_BUNDLE="$BUILD_DIR/release/AsterTerminal_Aster.bundle"
+if [[ ! -d "$GHOSTTY_BUNDLE" ]]; then
+  echo "Missing Ghostty resource bundle: $GHOSTTY_BUNDLE" >&2
+  exit 1
+fi
+cp -R "$GHOSTTY_BUNDLE" "$RESOURCES_DIR/AsterTerminal_Aster.bundle"
 
 # Quick Look 能稳定地把项目内的矢量源渲染成 1024px PNG；后续尺寸均由同一母版生成，
 # 避免图标在不同缩放档位出现构图漂移。

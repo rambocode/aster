@@ -6,6 +6,21 @@ Packages/
 *.xcodeproj
 *.xcworkspace
 
+# libghostty 单 Pane PoC 的本机构建产物。XCFramework、terminfo 与 shell
+# integration 都由 scripts/setup-ghostty-poc.sh 从锁定的上游 revision 生成，
+# 不提交二进制或可重建资源。
+Prototypes/GhosttyPane/GhosttyKit.xcframework
+Prototypes/GhosttyPane/.ghostty-revision
+Prototypes/GhosttyPane/Sources/GhosttyPane/Resources/ghostty
+Prototypes/GhosttyPane/Sources/GhosttyPane/Resources/terminfo
+
+# Aster 主程序使用的 libghostty 构建产物。由 scripts/setup-ghostty.sh 从锁定
+# revision 原子生成；源码仓库不提交平台二进制与可重建的上游资源。
+Vendor/GhosttyKit.xcframework
+Vendor/Ghostty/.ghostty-revision
+Sources/Aster/Ghostty/Resources/ghostty
+Sources/Aster/Ghostty/Resources/terminfo
+
 # 打包脚本输出的 .app 与 .dmg
 dist/
 

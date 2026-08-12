@@ -86,6 +86,12 @@ final class OSC52ClipboardCoordinator {
     }
   }
 
+  /// libghostty 已完成 OSC 52 语法与大小校验时复用同一授权状态机。
+  /// 仅返回本次访问是否允许，不直接读取或写入剪贴板正文。
+  func allows(_ operation: OSC52ClipboardOperation) -> Bool {
+    isAllowed(operation)
+  }
+
   private static func presentConfirmation(_ operation: OSC52ClipboardOperation) -> Bool {
     let alert = NSAlert()
     alert.alertStyle = .warning

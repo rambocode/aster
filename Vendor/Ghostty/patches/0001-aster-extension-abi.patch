@@ -1,0 +1,1001 @@
+diff --git a/include/ghostty.h b/include/ghostty.h
+index b099741..04ece52 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -440,11 +440,72 @@ typedef struct {
+   bool rectangle;
+ } ghostty_selection_s;
+ 
++// Stable point for the lifetime of a retained Ghostty page. `screen_row` is
++// the zero-based row in the current retained scrollback. The page tuple lets
++// Aster resolve the same cell after rows are appended or old pages are pruned.
++typedef struct {
++  uint32_t column;
++  uint64_t screen_row;
++  uint64_t page_serial;
++  uint32_t page_row;
++} ghostty_aster_buffer_point_s;
++
++typedef struct {
++  ghostty_aster_buffer_point_s start;
++  ghostty_aster_buffer_point_s end;
++  bool rectangle;
++} ghostty_aster_buffer_range_s;
++
++typedef struct {
++  uint64_t screen_rows;
++  uint64_t viewport_top;
++  uint32_t viewport_rows;
++  uint32_t columns;
++  uint64_t first_page_serial;
++  uint64_t latest_page_serial;
++  ghostty_aster_buffer_point_s cursor;
++  bool alternate_screen;
++} ghostty_aster_buffer_info_s;
++
++// Search flags are intentionally a bit mask so the Aster ABI can add new
++// orthogonal options without changing the function signature.
++typedef uint32_t ghostty_aster_search_flags_t;
++#define GHOSTTY_ASTER_SEARCH_CASE_SENSITIVE (1u << 0)
++#define GHOSTTY_ASTER_SEARCH_REGULAR_EXPRESSION (1u << 1)
++#define GHOSTTY_ASTER_SEARCH_BACKWARDS (1u << 2)
++
++typedef struct {
++  bool pattern_valid;
++  bool found;
++  uint64_t selected;
++  uint64_t total;
++  ghostty_aster_buffer_range_s match;
++} ghostty_aster_search_result_s;
++
++typedef struct {
++  uint32_t codepoint;
++  uint8_t width;
++  bool has_text;
++} ghostty_aster_cell_s;
++
+ typedef struct {
+   const char* key;
+   const char* value;
+ } ghostty_env_var_s;
+ 
++// Aster embeds a pinned Ghostty revision and maintains this versioned extension
++// ABI for capabilities that are intentionally not part of libghostty's internal
++// embedding API. Callback payloads are borrowed and only valid for the duration
++// of the callback; embedders must copy data they retain.
++#define GHOSTTY_ASTER_EXTENSION_ABI_VERSION 1u
++
++typedef void (*ghostty_aster_pty_io_cb)(void*, const uint8_t*, size_t);
++typedef void (*ghostty_aster_osc_cb)(void*,
++                                    uint32_t,
++                                    const uint8_t*,
++                                    size_t,
++                                    const ghostty_aster_buffer_point_s*);
++
+ typedef struct {
+   void* nsview;
+ } ghostty_platform_macos_s;
+@@ -477,6 +538,9 @@ typedef struct {
+   const char* initial_input;
+   bool wait_after_command;
+   ghostty_surface_context_e context;
++  ghostty_aster_pty_io_cb aster_pty_read_cb;
++  ghostty_aster_pty_io_cb aster_pty_write_cb;
++  ghostty_aster_osc_cb aster_osc_cb;
+ } ghostty_surface_config_s;
+ 
+ typedef struct {
+@@ -1098,6 +1162,9 @@ GHOSTTY_API void ghostty_app_set_color_scheme(ghostty_app_t, ghostty_color_schem
+ 
+ GHOSTTY_API ghostty_surface_config_s ghostty_surface_config_new();
+ 
++// Returns the ABI version of the Aster-only extension symbols and fields.
++GHOSTTY_API uint32_t ghostty_aster_extension_abi_version(void);
++
+ GHOSTTY_API ghostty_surface_t ghostty_surface_new(ghostty_app_t,
+                                                      const ghostty_surface_config_s*);
+ GHOSTTY_API void ghostty_surface_free(ghostty_surface_t);
+@@ -1161,6 +1228,28 @@ GHOSTTY_API bool ghostty_surface_read_text(ghostty_surface_t,
+                                               ghostty_text_s*);
+ GHOSTTY_API void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
+ 
++// Aster extension: current retained buffer geometry and tracked selection.
++GHOSTTY_API bool ghostty_aster_surface_buffer_info(
++    ghostty_surface_t, ghostty_aster_buffer_info_s*);
++GHOSTTY_API bool ghostty_aster_surface_get_selection(
++    ghostty_surface_t, ghostty_aster_buffer_range_s*);
++GHOSTTY_API bool ghostty_aster_surface_set_selection(
++    ghostty_surface_t, const ghostty_aster_buffer_range_s*);
++GHOSTTY_API void ghostty_aster_surface_clear_selection(ghostty_surface_t);
++GHOSTTY_API bool ghostty_aster_surface_scroll_to_row(ghostty_surface_t, uint64_t);
++GHOSTTY_API bool ghostty_aster_surface_resolve_point(
++    ghostty_surface_t, ghostty_aster_buffer_point_s*);
++GHOSTTY_API bool ghostty_aster_surface_point_at(
++    ghostty_surface_t, uint64_t, uint32_t, ghostty_aster_buffer_point_s*);
++GHOSTTY_API size_t ghostty_aster_surface_read_cells(
++    ghostty_surface_t, uint64_t, ghostty_aster_cell_s*, size_t);
++GHOSTTY_API bool ghostty_aster_surface_search(
++    ghostty_surface_t,
++    const uint8_t*,
++    size_t,
++    ghostty_aster_search_flags_t,
++    ghostty_aster_search_result_s*);
++
+ #ifdef __APPLE__
+ GHOSTTY_API void ghostty_surface_set_display_id(ghostty_surface_t, uint32_t);
+ GHOSTTY_API void* ghostty_surface_quicklook_font(ghostty_surface_t);
+diff --git a/src/Surface.zig b/src/Surface.zig
+index 5d16f33..53de691 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -17,6 +17,7 @@ pub const Message = apprt.surface.Message;
+ 
+ const std = @import("std");
+ const builtin = @import("builtin");
++const build_config = @import("build_config.zig");
+ const assert = @import("quirks.zig").inlineAssert;
+ const Allocator = std.mem.Allocator;
+ const ArenaAllocator = std.heap.ArenaAllocator;
+@@ -684,6 +685,12 @@ pub fn init(
+             .renderer_wakeup = render_thread.wakeup,
+             .renderer_mailbox = render_thread.mailbox,
+             .surface_mailbox = .{ .surface = self, .app = app_mailbox },
++            .aster_observer = if (comptime build_config.artifact == .lib) .{
++                .userdata = rt_surface.userdata,
++                .pty_read = rt_surface.aster_pty_read_cb,
++                .pty_write = rt_surface.aster_pty_write_cb,
++                .osc = rt_surface.aster_osc_cb,
++            } else .{},
+         });
+     }
+     // Outside the block, IO has now taken ownership of our temporary state
+@@ -2369,6 +2376,162 @@ fn setSelection(self: *Surface, sel_: ?terminal.Selection) !void {
+     }
+ }
+ 
++/// Aster extension entrypoint for setting or clearing an exact terminal
++/// selection. The caller constructs untracked pins while holding no locks;
++/// `Screen.select` converts them to tracked pins before this method returns.
++pub fn asterSetSelection(self: *Surface, sel: ?terminal.Selection) bool {
++    self.renderer_state.mutex.lock();
++    defer self.renderer_state.mutex.unlock();
++
++    return self.asterSetSelectionLocked(sel);
++}
++
++/// Variant for the embedded ABI after it has resolved stable page anchors
++/// while already holding the renderer mutex.
++pub fn asterSetSelectionLocked(self: *Surface, sel: ?terminal.Selection) bool {
++
++    self.setSelection(sel) catch |err| {
++        log.warn("Aster selection update failed err={}", .{err});
++        return false;
++    };
++    self.io.terminal.screens.active.dirty.selection = true;
++    self.queueRender() catch |err| {
++        log.warn("Aster selection render failed err={}", .{err});
++    };
++    return true;
++}
++
++/// Scroll to an absolute row in the currently retained screen. The PageList
++/// clamps rows above or below the valid range to its top/active viewport.
++pub fn asterScrollToRow(self: *Surface, row: usize) bool {
++    self.renderer_state.mutex.lock();
++    self.io.terminal.screens.active.pages.scroll(.{ .row = row });
++    self.renderer_state.mutex.unlock();
++    self.queueRender() catch |err| {
++        log.warn("Aster viewport render failed err={}", .{err});
++        return false;
++    };
++    return true;
++}
++
++pub const AsterSearchOptions = struct {
++    case_sensitive: bool = false,
++    regular_expression: bool = false,
++    backwards: bool = false,
++};
++
++pub const AsterSearchResult = struct {
++    screen: *terminal.Screen,
++    selection: ?terminal.Selection,
++    /// One-based match index for direct display as `N / M`.
++    selected: u64,
++    total: u64,
++};
++
++/// Search the complete retained buffer and select the requested match. Search
++/// uses Ghostty's byte-to-pin map, preserving exact cell coordinates across
++/// Unicode and wrapped rows. Empty matches are ignored because they cannot be
++/// represented as a terminal cell selection.
++pub fn asterSearch(
++    self: *Surface,
++    pattern: []const u8,
++    opts: AsterSearchOptions,
++) !AsterSearchResult {
++    self.renderer_state.mutex.lock();
++    defer self.renderer_state.mutex.unlock();
++
++    const screen = self.io.terminal.screens.active;
++    const all = screen.selectAll() orelse return .{
++        .screen = screen,
++        .selection = null,
++        .selected = 0,
++        .total = 0,
++    };
++
++    var string_map: terminal.StringMap = undefined;
++    const text = try screen.selectionString(self.alloc, .{
++        .sel = all,
++        .trim = false,
++        .map = &string_map,
++    });
++    self.alloc.free(text);
++    defer string_map.deinit(self.alloc);
++
++    var regex = oni.Regex.init(
++        pattern,
++        .{
++            .ignorecase = !opts.case_sensitive,
++            .find_not_empty = true,
++        },
++        oni.Encoding.utf8,
++        if (opts.regular_expression) oni.Syntax.default else oni.Syntax.asis,
++        null,
++    ) catch return error.InvalidSearchPattern;
++    defer regex.deinit();
++
++    const current = screen.selection;
++    const current_start = if (current) |sel|
++        screen.pages.pointFromPin(.screen, sel.topLeft(screen)).?.screen
++    else
++        null;
++    const current_end = if (current) |sel|
++        screen.pages.pointFromPin(.screen, sel.bottomRight(screen)).?.screen
++    else
++        null;
++
++    const Candidate = struct { selection: terminal.Selection, index: u64 };
++    var first: ?Candidate = null;
++    var last: ?Candidate = null;
++    var forward: ?Candidate = null;
++    var backward: ?Candidate = null;
++    var total: u64 = 0;
++    var iterator = string_map.searchIterator(regex);
++    while (try iterator.next()) |match_value| {
++        var match = match_value;
++        defer match.deinit();
++        const selection = match.selection();
++        total += 1;
++        const candidate: Candidate = .{ .selection = selection, .index = total };
++        if (first == null) first = candidate;
++        last = candidate;
++
++        const start = screen.pages.pointFromPin(.screen, selection.topLeft(screen)).?.screen;
++        const end = screen.pages.pointFromPin(.screen, selection.bottomRight(screen)).?.screen;
++        if (current_end) |reference| {
++            if (forward == null and asterPointAfter(start, reference)) forward = candidate;
++        }
++        if (current_start) |reference| {
++            if (asterPointBefore(end, reference)) backward = candidate;
++        }
++    }
++
++    const chosen = if (opts.backwards)
++        (backward orelse last)
++    else
++        (forward orelse first);
++    if (chosen) |value| {
++        self.setSelection(value.selection) catch return error.OutOfMemory;
++        screen.dirty.selection = true;
++        self.queueRender() catch |err| log.warn("Aster search render failed err={}", .{err});
++        return .{
++            .screen = screen,
++            .selection = value.selection,
++            .selected = value.index,
++            .total = total,
++        };
++    }
++
++    return .{ .screen = screen, .selection = null, .selected = 0, .total = total };
++}
++
++fn asterPointBefore(lhs: terminal.point.Coordinate, rhs: terminal.point.Coordinate) bool {
++    return lhs.y < rhs.y or (lhs.y == rhs.y and lhs.x < rhs.x);
++}
++
++fn asterPointAfter(lhs: terminal.point.Coordinate, rhs: terminal.point.Coordinate) bool {
++    return lhs.y > rhs.y or (lhs.y == rhs.y and lhs.x > rhs.x);
++}
++
+ /// Change the cell size for the terminal grid. This can happen as
+ /// a result of changing the font size at runtime.
+ fn setCellSize(self: *Surface, size: rendererpkg.CellSize) !void {
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 730913e..9a9f9f8 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -410,6 +410,9 @@ pub const Surface = struct {
+     app: *App,
+     platform: Platform,
+     userdata: ?*anyopaque = null,
++    aster_pty_read_cb: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
++    aster_pty_write_cb: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
++    aster_osc_cb: ?*const fn (?*anyopaque, u32, [*]const u8, usize, *const @import("../termio/Options.zig").AsterObserver.BufferPoint) callconv(.c) void = null,
+     core_surface: CoreSurface,
+     content_scale: apprt.ContentScale,
+     size: apprt.SurfaceSize,
+@@ -461,6 +464,12 @@ pub const Surface = struct {
+ 
+         /// Context for the new surface
+         context: apprt.surface.NewSurfaceContext = .window,
++
++        /// Aster extension callbacks. These are synchronous observation-only
++        /// hooks; payloads are borrowed for the duration of the callback.
++        aster_pty_read_cb: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
++        aster_pty_write_cb: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
++        aster_osc_cb: ?*const fn (?*anyopaque, u32, [*]const u8, usize, *const @import("../termio/Options.zig").AsterObserver.BufferPoint) callconv(.c) void = null,
+     };
+ 
+     pub fn init(self: *Surface, app: *App, opts: Options) !void {
+@@ -468,6 +477,9 @@ pub const Surface = struct {
+             .app = app,
+             .platform = try .init(opts.platform_tag, opts.platform),
+             .userdata = opts.userdata,
++            .aster_pty_read_cb = opts.aster_pty_read_cb,
++            .aster_pty_write_cb = opts.aster_pty_write_cb,
++            .aster_osc_cb = opts.aster_osc_cb,
+             .core_surface = undefined,
+             .content_scale = .{
+                 .x = @floatCast(opts.scale_factor),
+@@ -1386,6 +1398,68 @@ pub const CAPI = struct {
+         }
+     };
+ 
++    const AsterBufferPoint = extern struct {
++        column: u32,
++        screen_row: u64,
++        page_serial: u64,
++        page_row: u32,
++
++        fn fromPin(screen: *const terminal.Screen, pin: terminal.Pin) ?AsterBufferPoint {
++            const point = screen.pages.pointFromPin(.screen, pin) orelse return null;
++            return .{
++                .column = pin.x,
++                .screen_row = point.screen.y,
++                .page_serial = pin.node.serial,
++                .page_row = pin.y,
++            };
++        }
++
++        fn resolve(self: AsterBufferPoint, screen: *const terminal.Screen) ?terminal.Pin {
++            var node = screen.pages.pages.first;
++            while (node) |candidate| : (node = candidate.next) {
++                if (candidate.serial != self.page_serial) continue;
++                if (self.page_row >= candidate.data.size.rows) return null;
++                return .{
++                    .node = candidate,
++                    .x = @min(self.column, candidate.data.size.cols -| 1),
++                    .y = @intCast(self.page_row),
++                };
++            }
++            return null;
++        }
++    };
++
++    const AsterBufferRange = extern struct {
++        start: AsterBufferPoint,
++        end: AsterBufferPoint,
++        rectangle: bool,
++    };
++
++    const AsterBufferInfo = extern struct {
++        screen_rows: u64,
++        viewport_top: u64,
++        viewport_rows: u32,
++        columns: u32,
++        first_page_serial: u64,
++        latest_page_serial: u64,
++        cursor: AsterBufferPoint,
++        alternate_screen: bool,
++    };
++
++    const AsterSearchResult = extern struct {
++        pattern_valid: bool,
++        found: bool,
++        selected: u64,
++        total: u64,
++        match: AsterBufferRange,
++    };
++
++    const AsterCell = extern struct {
++        codepoint: u32,
++        width: u8,
++        has_text: bool,
++    };
++
+     // Reference the conditional exports based on target platform
+     // so they're included in the C API.
+     comptime {
+@@ -1538,6 +1612,11 @@ pub const CAPI = struct {
+         return .{};
+     }
+ 
++    /// Version gate for the Aster-only extension ABI.
++    export fn ghostty_aster_extension_abi_version() u32 {
++        return 1;
++    }
++
+     /// Create a new surface as part of an app.
+     export fn ghostty_surface_new(
+         app: *App,
+@@ -1680,6 +1759,196 @@ pub const CAPI = struct {
+         ptr.deinit();
+     }
+ 
++    export fn ghostty_aster_surface_buffer_info(
++        surface: *Surface,
++        result: *AsterBufferInfo,
++    ) bool {
++        const core_surface = &surface.core_surface;
++        core_surface.renderer_state.mutex.lock();
++        defer core_surface.renderer_state.mutex.unlock();
++
++        const terminal_state = core_surface.renderer_state.terminal;
++        const screen = terminal_state.screens.active;
++        const scrollbar = screen.pages.scrollbar();
++        const cursor = AsterBufferPoint.fromPin(screen, screen.cursor.page_pin.*) orelse return false;
++        result.* = .{
++            .screen_rows = scrollbar.total,
++            .viewport_top = scrollbar.offset,
++            .viewport_rows = @intCast(scrollbar.len),
++            .columns = screen.pages.cols,
++            .first_page_serial = screen.pages.pages.first.?.serial,
++            .latest_page_serial = screen.pages.page_serial,
++            .cursor = cursor,
++            .alternate_screen = terminal_state.screens.active_key == .alternate,
++        };
++        return true;
++    }
++
++    export fn ghostty_aster_surface_get_selection(
++        surface: *Surface,
++        result: *AsterBufferRange,
++    ) bool {
++        const core_surface = &surface.core_surface;
++        core_surface.renderer_state.mutex.lock();
++        defer core_surface.renderer_state.mutex.unlock();
++
++        const screen = core_surface.renderer_state.terminal.screens.active;
++        const selection = screen.selection orelse return false;
++        result.* = .{
++            .start = AsterBufferPoint.fromPin(screen, selection.start()) orelse return false,
++            .end = AsterBufferPoint.fromPin(screen, selection.end()) orelse return false,
++            .rectangle = selection.rectangle,
++        };
++        return true;
++    }
++
++    export fn ghostty_aster_surface_set_selection(
++        surface: *Surface,
++        value: *const AsterBufferRange,
++    ) bool {
++        const core_surface = &surface.core_surface;
++        core_surface.renderer_state.mutex.lock();
++        const screen = core_surface.renderer_state.terminal.screens.active;
++        const start = value.start.resolve(screen) orelse {
++            core_surface.renderer_state.mutex.unlock();
++            return false;
++        };
++        const end = value.end.resolve(screen) orelse {
++            core_surface.renderer_state.mutex.unlock();
++            return false;
++        };
++        const updated = core_surface.asterSetSelectionLocked(.init(start, end, value.rectangle));
++        core_surface.renderer_state.mutex.unlock();
++        return updated;
++    }
++
++    export fn ghostty_aster_surface_clear_selection(surface: *Surface) void {
++        _ = surface.core_surface.asterSetSelection(null);
++    }
++
++    export fn ghostty_aster_surface_scroll_to_row(surface: *Surface, row: u64) bool {
++        const target = std.math.cast(usize, row) orelse return false;
++        return surface.core_surface.asterScrollToRow(target);
++    }
++
++    export fn ghostty_aster_surface_resolve_point(
++        surface: *Surface,
++        point: *AsterBufferPoint,
++    ) bool {
++        const core_surface = &surface.core_surface;
++        core_surface.renderer_state.mutex.lock();
++        defer core_surface.renderer_state.mutex.unlock();
++
++        const screen = core_surface.renderer_state.terminal.screens.active;
++        const pin = point.resolve(screen) orelse return false;
++        point.* = AsterBufferPoint.fromPin(screen, pin) orelse return false;
++        return true;
++    }
++
++    export fn ghostty_aster_surface_point_at(
++        surface: *Surface,
++        row: u64,
++        column: u32,
++        result: *AsterBufferPoint,
++    ) bool {
++        const screen_row = std.math.cast(u32, row) orelse return false;
++        surface.core_surface.renderer_state.mutex.lock();
++        defer surface.core_surface.renderer_state.mutex.unlock();
++        const screen = surface.core_surface.renderer_state.terminal.screens.active;
++        const pin = screen.pages.pin(.{ .screen = .{
++            .x = std.math.cast(terminal.size.CellCountInt, column) orelse return false,
++            .y = screen_row,
++        } }) orelse return false;
++        result.* = AsterBufferPoint.fromPin(screen, pin) orelse return false;
++        return true;
++    }
++
++    /// Copy one physical row as fixed-width cell metadata. Grapheme tails stay
++    /// associated with their leading cell; Aster only needs the base codepoint
++    /// and width marker for exact navigation and selection coordinates.
++    export fn ghostty_aster_surface_read_cells(
++        surface: *Surface,
++        row: u64,
++        cells: [*]AsterCell,
++        capacity: usize,
++    ) usize {
++        const screen_row = std.math.cast(u32, row) orelse return 0;
++        const core_surface = &surface.core_surface;
++        core_surface.renderer_state.mutex.lock();
++        defer core_surface.renderer_state.mutex.unlock();
++        const screen = core_surface.renderer_state.terminal.screens.active;
++        const start = screen.pages.pin(.{ .screen = .{ .x = 0, .y = screen_row } }) orelse return 0;
++        const row_and_cell = start.rowAndCell();
++        const source = start.node.data.getCells(row_and_cell.row);
++        const count = @min(capacity, source.len);
++        for (source[0..count], cells[0..count]) |cell, *result| {
++            result.* = .{
++                .codepoint = if (cell.hasText()) cell.codepoint() else 0,
++                .width = switch (cell.wide) {
++                    .narrow => 1,
++                    .wide => 2,
++                    .spacer_tail, .spacer_head => 0,
++                },
++                .has_text = cell.hasText(),
++            };
++        }
++        return count;
++    }
++
++    /// Search the retained primary or alternate screen with exact terminal
++    /// coordinates. The core owns pattern parsing and byte-to-cell mapping so
++    /// regex matches cannot drift from rendered grapheme cells.
++    export fn ghostty_aster_surface_search(
++        surface: *Surface,
++        pattern_ptr: [*]const u8,
++        pattern_len: usize,
++        flags: u32,
++        result: *AsterSearchResult,
++    ) bool {
++        const empty_point: AsterBufferPoint = .{
++            .column = 0,
++            .screen_row = 0,
++            .page_serial = 0,
++            .page_row = 0,
++        };
++        result.* = .{
++            .pattern_valid = true,
++            .found = false,
++            .selected = 0,
++            .total = 0,
++            .match = .{ .start = empty_point, .end = empty_point, .rectangle = false },
++        };
++        if (pattern_len == 0) return true;
++
++        const search = surface.core_surface.asterSearch(
++            pattern_ptr[0..pattern_len],
++            .{
++                .case_sensitive = flags & 1 != 0,
++                .regular_expression = flags & 2 != 0,
++                .backwards = flags & 4 != 0,
++            },
++        ) catch |err| switch (err) {
++            error.InvalidSearchPattern => {
++                result.pattern_valid = false;
++                return false;
++            },
++            else => {
++                log.warn("Aster terminal search failed err={}", .{err});
++                return false;
++            },
++        };
++        result.total = search.total;
++        const selected = search.selection orelse return true;
++        result.found = true;
++        result.selected = search.selected;
++        result.match = .{
++            .start = AsterBufferPoint.fromPin(search.screen, selected.start()) orelse return false,
++            .end = AsterBufferPoint.fromPin(search.screen, selected.end()) orelse return false,
++            .rectangle = selected.rectangle,
++        };
++        return true;
++    }
++
+     /// Tell the surface that it needs to schedule a render
+     export fn ghostty_surface_refresh(surface: *Surface) void {
+         surface.refresh();
+diff --git a/src/renderer/generic.zig b/src/renderer/generic.zig
+index 0f4a294..d6dece9 100644
+--- a/src/renderer/generic.zig
++++ b/src/renderer/generic.zig
+@@ -691,7 +691,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+ 
+             const display_link: ?DisplayLink = switch (builtin.os.tag) {
+                 .macos => if (options.config.vsync)
+-                    try macos.video.DisplayLink.createWithActiveCGDisplays()
++                    macos.video.DisplayLink.createWithActiveCGDisplays() catch |err| fallback: {
++                        // Embedded hosts can run before macOS exposes an active display (for
++                        // example, an XCTest process). Rendering remains functional without a
++                        // display link, so degrade to non-vsync rather than rejecting the PTY.
++                        log.warn("unable to create display link, disabling vsync err={}", .{err});
++                        break :fallback null;
++                    }
+                 else
+                     null,
+                 else => null,
+diff --git a/src/termio/Options.zig b/src/termio/Options.zig
+index a6bf8c4..f470e91 100644
+--- a/src/termio/Options.zig
++++ b/src/termio/Options.zig
+@@ -6,6 +6,40 @@ const renderer = @import("../renderer.zig");
+ const Config = @import("../config.zig").Config;
+ const termio = @import("../termio.zig");
+ 
++/// Aster-only observation hooks for the pinned embedded build. These callbacks
++/// observe bytes without consuming or changing the normal Ghostty parser path.
++/// Payload memory is borrowed for the duration of each callback.
++pub const AsterObserver = struct {
++    pub const BufferPoint = extern struct {
++        column: u32,
++        screen_row: u64,
++        page_serial: u64,
++        page_row: u32,
++    };
++
++    userdata: ?*anyopaque = null,
++    pty_read: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
++    pty_write: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
++    osc: ?*const fn (?*anyopaque, u32, [*]const u8, usize, *const BufferPoint) callconv(.c) void = null,
++
++    pub inline fn notifyPtyRead(self: AsterObserver, data: []const u8) void {
++        if (self.pty_read) |callback| callback(self.userdata, data.ptr, data.len);
++    }
++
++    pub inline fn notifyPtyWrite(self: AsterObserver, data: []const u8) void {
++        if (self.pty_write) |callback| callback(self.userdata, data.ptr, data.len);
++    }
++
++    pub inline fn notifyOSC(
++        self: AsterObserver,
++        code: u32,
++        payload: []const u8,
++        point: BufferPoint,
++    ) void {
++        if (self.osc) |callback| callback(self.userdata, code, payload.ptr, payload.len, &point);
++    }
++};
++
+ /// All size metrics for the terminal.
+ size: renderer.Size,
+ 
+@@ -39,3 +73,6 @@ renderer_mailbox: *renderer.Thread.Mailbox,
+ 
+ /// The mailbox for sending the surface messages.
+ surface_mailbox: apprt.surface.Mailbox,
++
++/// Versioned Aster observation hooks. Other runtimes leave this empty.
++aster_observer: AsterObserver = .{},
+diff --git a/src/termio/Termio.zig b/src/termio/Termio.zig
+index 1d1bfe2..8919790 100644
+--- a/src/termio/Termio.zig
++++ b/src/termio/Termio.zig
+@@ -53,6 +53,11 @@ renderer_mailbox: *renderer.Thread.Mailbox,
+ /// The mailbox for communicating with the surface.
+ surface_mailbox: apprt.surface.Mailbox,
+ 
++/// Aster's observer never owns or mutates terminal data. It mirrors PTY bytes
++/// and runs a separate bounded OSC scanner before Ghostty consumes the stream.
++aster_observer: termio.Options.AsterObserver,
++aster_osc_scanner: AsterOSCScanner,
++
+ /// The cached size info
+ size: renderer.Size,
+ 
+@@ -303,6 +308,8 @@ pub fn init(self: *Termio, alloc: Allocator, opts: termio.Options) !void {
+         .renderer_wakeup = opts.renderer_wakeup,
+         .renderer_mailbox = opts.renderer_mailbox,
+         .surface_mailbox = opts.surface_mailbox,
++        .aster_observer = opts.aster_observer,
++        .aster_osc_scanner = .init(opts.aster_observer),
+         .size = opts.size,
+         .backend = backend,
+         .mailbox = opts.mailbox,
+@@ -414,6 +421,7 @@ pub inline fn queueWrite(
+     data: []const u8,
+     linefeed: bool,
+ ) !void {
++    self.aster_observer.notifyPtyWrite(data);
+     try self.backend.queueWrite(self.alloc, td, data, linefeed);
+ }
+ 
+@@ -641,6 +649,9 @@ pub fn focusGained(self: *Termio, td: *ThreadData, focused: bool) !void {
+ /// call with pty data but it is also called by the read thread when using
+ /// an exec subprocess.
+ pub fn processOutput(self: *Termio, buf: []const u8) void {
++    // Observation happens before taking the renderer mutex. Callbacks are
++    // synchronous and must copy borrowed bytes before returning.
++    self.aster_observer.notifyPtyRead(buf);
+     // We are modifying terminal state from here on out and we need
+     // the lock to grab our read data.
+     self.renderer_state.mutex.lock();
+@@ -648,6 +659,214 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
+     self.processOutputLocked(buf);
+ }
+ 
++/// Streaming OSC scanner used only by the Aster extension ABI. Ghostty's
++/// parser still receives every original byte; malformed and over-limit OSCs
++/// are dropped only from this observer channel.
++const AsterOSCScanner = struct {
++    const max_payload_len = 64 * 1024;
++
++    const State = enum {
++        ground,
++        escape,
++        code,
++        payload,
++        payload_escape,
++        discard,
++        discard_escape,
++    };
++
++    state: State = .ground,
++    code: u32 = 0,
++    has_code: bool = false,
++    payload: [max_payload_len]u8 = undefined,
++    payload_len: usize = 0,
++    utf8_continuations: u3 = 0,
++
++    const Event = struct { code: u32, payload: []const u8 };
++
++    fn init(_: termio.Options.AsterObserver) AsterOSCScanner { return .{}; }
++
++    fn reset(self: *AsterOSCScanner) void {
++        self.state = .ground;
++        self.code = 0;
++        self.has_code = false;
++        self.payload_len = 0;
++        self.utf8_continuations = 0;
++    }
++
++    fn begin(self: *AsterOSCScanner) void {
++        self.state = .code;
++        self.code = 0;
++        self.has_code = false;
++        self.payload_len = 0;
++        self.utf8_continuations = 0;
++    }
++
++    fn emit(self: *AsterOSCScanner) ?Event {
++        const event: ?Event = if (self.has_code)
++            .{ .code = self.code, .payload = self.payload[0..self.payload_len] }
++        else
++            null;
++        self.reset();
++        return event;
++    }
++
++    fn append(self: *AsterOSCScanner, byte: u8) void {
++        if (self.payload_len >= self.payload.len) {
++            self.state = .discard;
++            return;
++        }
++        self.payload[self.payload_len] = byte;
++        self.payload_len += 1;
++    }
++
++    fn next(self: *AsterOSCScanner, byte: u8) ?Event {
++        return switch (self.state) {
++            .ground => {
++                // Avoid interpreting UTF-8 continuation byte 0x9D as C1 OSC.
++                if (self.utf8_continuations > 0) {
++                    if (byte & 0xC0 == 0x80) self.utf8_continuations -= 1 else self.utf8_continuations = 0;
++                    return null;
++                }
++                self.utf8_continuations = switch (byte) {
++                    0xC2...0xDF => 1,
++                    0xE0...0xEF => 2,
++                    0xF0...0xF4 => 3,
++                    else => 0,
++                };
++                if (byte == 0x1B) self.state = .escape else if (byte == 0x9D) self.begin();
++                return null;
++            },
++            .escape => {
++                if (byte == ']') self.begin() else if (byte != 0x1B) self.state = .ground;
++                return null;
++            },
++            .code => switch (byte) {
++                '0'...'9' => {
++                    self.has_code = true;
++                    self.code = self.code *| 10 +| byte - '0';
++                    return null;
++                },
++                ';' => if (self.has_code) {
++                    self.state = .payload;
++                    return null;
++                } else {
++                    self.state = .discard;
++                    return null;
++                },
++                0x07, 0x9C => return self.emit(),
++                0x1B => { self.state = .payload_escape; return null; },
++                else => { self.state = .discard; return null; },
++            },
++            .payload => {
++                // 0x9C is also a UTF-8 continuation byte (e.g. U+2733 "✳" is
++                // E2 9C B3). Only treat it as a C1 ST terminator when we are
++                // not inside a multibyte sequence, mirroring the ground state.
++                if (self.utf8_continuations > 0) {
++                    if (byte & 0xC0 == 0x80) {
++                        self.utf8_continuations -= 1;
++                        self.append(byte);
++                        return null;
++                    }
++                    self.utf8_continuations = 0;
++                }
++                switch (byte) {
++                    0x07, 0x9C => return self.emit(),
++                    0x1B => {
++                        self.state = .payload_escape;
++                        return null;
++                    },
++                    else => {
++                        self.utf8_continuations = switch (byte) {
++                            0xC2...0xDF => 1,
++                            0xE0...0xEF => 2,
++                            0xF0...0xF4 => 3,
++                            else => 0,
++                        };
++                        self.append(byte);
++                        return null;
++                    },
++                }
++            },
++            .payload_escape => if (byte == '\\') {
++                return self.emit();
++            } else {
++                self.append(0x1B);
++                if (self.state != .discard) {
++                    self.append(byte);
++                    if (self.state != .discard) self.state = .payload;
++                }
++                return null;
++            },
++            .discard => switch (byte) {
++                0x07, 0x9C => { self.reset(); return null; },
++                0x1B => { self.state = .discard_escape; return null; },
++                else => return null,
++            },
++            .discard_escape => {
++                if (byte == '\\') self.reset() else if (byte != 0x1B) self.state = .discard;
++                return null;
++            },
++        };
++    }
++};
++
++test "Aster OSC observer preserves fragmented arbitrary OSC" {
++    var scanner: AsterOSCScanner = .init(.{
++        .osc = null,
++    });
++
++    for ("\x1b]6974;hel") |byte| try std.testing.expect(scanner.next(byte) == null);
++    for ("lo\x1b") |byte| try std.testing.expect(scanner.next(byte) == null);
++    const event = scanner.next('\\').?;
++    try std.testing.expectEqual(@as(u32, 6974), event.code);
++    try std.testing.expectEqualStrings("hello", event.payload);
++}
++
++test "Aster OSC observer supports C1 controls but not UTF-8 continuation bytes" {
++    var scanner: AsterOSCScanner = .init(.{
++        .osc = null,
++    });
++
++    for (&[_]u8{ 0xC2, 0x9D }) |byte| try std.testing.expect(scanner.next(byte) == null);
++    var event: ?AsterOSCScanner.Event = null;
++    for (&[_]u8{ 0x9D, '9', ';', 'o', 'k', 0x9C }) |byte| event = scanner.next(byte) orelse event;
++    try std.testing.expectEqual(@as(u32, 9), event.?.code);
++    try std.testing.expectEqualStrings("ok", event.?.payload);
++}
++
++test "Aster OSC observer keeps UTF-8 continuation byte 0x9C inside payload" {
++    var scanner: AsterOSCScanner = .init(.{
++        .osc = null,
++    });
++
++    // "✳ hi" 的 U+2733 编码为 E2 9C B3；0x9C 不得被当作 ST 提前终止 OSC 0 标题。
++    for ("\x1b]0;") |byte| try std.testing.expect(scanner.next(byte) == null);
++    for (&[_]u8{ 0xE2, 0x9C, 0xB3, ' ', 'h', 'i' }) |byte|
++        try std.testing.expect(scanner.next(byte) == null);
++    const event = scanner.next(0x07).?;
++    try std.testing.expectEqual(@as(u32, 0), event.code);
++    try std.testing.expectEqualStrings("\xE2\x9C\xB3 hi", event.payload);
++
++    // 序列结束后 0x9C 恢复 ST 语义。
++    for ("\x1b]2;ab") |byte| try std.testing.expect(scanner.next(byte) == null);
++    const second = scanner.next(0x9C).?;
++    try std.testing.expectEqual(@as(u32, 2), second.code);
++    try std.testing.expectEqualStrings("ab", second.payload);
++}
++
++test "Aster OSC observer drops over-limit payload only from observer channel" {
++    var scanner: AsterOSCScanner = .init(.{
++        .osc = null,
++    });
++    for ("\x1b]6974;") |byte| try std.testing.expect(scanner.next(byte) == null);
++    var payload: [AsterOSCScanner.max_payload_len + 1]u8 = @splat('x');
++    for (&payload) |byte| try std.testing.expect(scanner.next(byte) == null);
++    try std.testing.expect(scanner.next(0x07) == null);
++
++    try std.testing.expectEqual(AsterOSCScanner.State.ground, scanner.state);
++}
++
+ /// Process output from readdata but the lock is already held.
+ fn processOutputLocked(self: *Termio, buf: []const u8) void {
+     // Schedule a render. We can call this first because we have the lock.
+@@ -687,7 +906,23 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
+             };
+ 
+             self.terminal_stream.next(byte);
++            if (self.aster_observer.osc != null) {
++                if (self.aster_osc_scanner.next(byte)) |event| self.notifyAsterOSC(event);
++            }
++        }
++    } else if (self.aster_observer.osc != null) {
++        // Keep Ghostty's fast slice parser for ordinary output. We split only
++        // at complete OSC boundaries so the callback sees the cursor exactly
++        // where that OSC occurred, before bytes following it are parsed.
++        var segment_start: usize = 0;
++        for (buf, 0..) |byte, i| {
++            if (self.aster_osc_scanner.next(byte)) |event| {
++                self.terminal_stream.nextSlice(buf[segment_start .. i + 1]);
++                self.notifyAsterOSC(event);
++                segment_start = i + 1;
++            }
+         }
++        if (segment_start < buf.len) self.terminal_stream.nextSlice(buf[segment_start..]);
+     } else {
+         self.terminal_stream.nextSlice(buf);
+     }
+@@ -700,6 +935,18 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
+     }
+ }
+ 
++fn notifyAsterOSC(self: *Termio, event: AsterOSCScanner.Event) void {
++    const screen = self.terminal.screens.active;
++    const pin = screen.cursor.page_pin.*;
++    const point = screen.pages.pointFromPin(.screen, pin) orelse return;
++    self.aster_observer.notifyOSC(event.code, event.payload, .{
++        .column = pin.x,
++        .screen_row = point.screen.y,
++        .page_serial = pin.node.serial,
++        .page_row = pin.y,
++    });
++}
++
+ /// Sends a DSR response for the current color scheme to the pty.
+ pub fn colorSchemeReport(self: *Termio, td: *ThreadData, force: bool) !void {
+     self.renderer_state.mutex.lock();

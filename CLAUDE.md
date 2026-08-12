@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概览
 
-Aster 是一个**纯 AppKit** 的原生 macOS 终端工作区（SwiftPM 包，非 Xcode 项目）。当前版本 0.4.1 (6)，要求 macOS 14+、Swift 6.2 工具链。`Package.swift` 的 `dependencies` 为空 —— SwiftTerm 以固定上游 revision **vendored 在 `Vendor/SwiftTerm/`** 并作为本地 target 编译（见下方「Vendored SwiftTerm」）。
+Aster 是一个**纯 AppKit** 的原生 macOS 终端工作区（SwiftPM 包，非 Xcode 项目）。当前版本 0.4.1 (6)，要求 macOS 14+、Swift 6.2、Zig 0.15.2 与 Xcode Metal Toolchain。产品终端使用固定 revision 构建的 internal libghostty；SwiftTerm 只保留为迁移期回归适配器。
 
 ## 常用命令
 
@@ -18,19 +18,22 @@ swift test --filter <名称片段>    # 跑单个测试；匹配 @Test 的函数
 open dist/Aster.app
 ```
 
+首次构建或更新 Ghostty revision 前运行 `./scripts/setup-ghostty.sh`；`build-app.sh` 会自动执行该步骤。
+
 发布前完整流程（见 `docs/developer/terminal-domain.md`）：
 `swift test --no-parallel` → `swift build -c release` → `./scripts/build-app.sh` → `codesign --verify --deep --strict dist/Aster.app` → 实机启动验证。
 
-`build-app.sh` 默认使用 ad-hoc 签名；正式分发通过 `ASTER_SIGN_IDENTITY="Developer ID Application: ..."` 覆盖。该脚本还会用 `qlmanage` 把 `Resources/AsterIcon.svg` 渲染成 iconset，并把 SwiftTerm 的 Metal shader bundle 复制到 `Contents/Resources`（放在 .app 根目录会破坏签名）。
+`build-app.sh` 默认使用 ad-hoc 签名；正式分发通过 `ASTER_SIGN_IDENTITY="Developer ID Application: ..."` 覆盖。该脚本还会用 `qlmanage` 把 `Resources/AsterIcon.svg` 渲染成 iconset，并把 Aster、SwiftTerm 与 Highlighter 的 SwiftPM resource bundle 复制到 `Contents/Resources`（放在 .app 根目录会破坏签名）。Ghostty 的 shell integration 与 terminfo 位于 Aster resource bundle 内。
 
 ## 架构分层
 
-四个 target 的边界是本项目最重要的约束：
+五个 target 的边界是本项目最重要的约束：
 
 - **`AsterPTY`**（C）：`forkpty` 等 POSIX PTY 原语，供 `PTYShellProcess` 使用。
-- **`SwiftTerm`**（vendored，Swift 5 语言模式）：VT100/xterm 网格与渲染。
+- **`GhosttyKit`**（本机生成的 binary target）：产品 PTY、VT state 与 Metal surface；C API 仅由 `Sources/Aster/Ghostty` 封装。
+- **`SwiftTerm`**（vendored，Swift 5 语言模式）：迁移期旧适配器与精细回归测试，不挂入产品工作区。
 - **`AsterCore`**（无 AppKit 依赖，纯值语义）：领域模型与持久化格式。除工作区本体（`WorkspaceLayout`/`WorkspaceState`/`WorkspacePersistence`/`WorkspacePanelLayout`/`AsterConfiguration`/`TerminalTheme`+`OttyBuiltInThemes`）外，还承载 Agent 域（`AgentState`/`AgentProvider`/`AgentComposer`/`AgentPromptQueue`/`AgentHistory`/`AgentChatContext`）、Workflow 域（`WorkflowRecipe`/`WorkflowRecipeSecurity`/`WorkflowCLI`/`WorkflowDeepLink`/`WorkflowRecovery`）、终端语义域（`TerminalInput`/`TerminalClipboard`/`TerminalActivity`/`TerminalPaneMode`/`TerminalIdentification`/`ShellIntegration`/`Autocomplete`/`DetectedTarget`）。所有类型 `Codable + Equatable + Sendable`。**测试真值都放在这里**：能写成纯函数的逻辑不要留在 AppKit 层。
-- **`Aster`**（可执行，全部 AppKit）：`AsterApp.swift`（自定义 `@main` → `AsterAppDelegate`，管理多窗口与菜单）、`AppModel`（每窗口一个，持有标签与快照）、`WorkspaceViewController`（`WorkspaceView.swift`，主窗口组合根）、`SettingsViewController`（九类设置）、`TerminalSession`（SwiftTerm 的**唯一**适配边界）、`DesignSystem.swift`（`ThemeRuntime` + 动态 `NSColor` + `ThemeVisualEffectView`）。主窗口辅助代码按语义放在 `Workspace/Panels`、`Workspace/Sidebar`、`Workspace/Panes`、`Workspace/FileBrowser`、`Workspace/Overlays` 和 `Workspace/Components`；新增能力进入对应目录或独立服务，不得重新堆回组合根。其余是无状态或单一职责的服务层：`AsterCLIRequestService`、`WorkflowRuntimeService`、`AgentIntegrationService`/`AgentSetupService`、`AutocompleteService`、`ShellIntegrationInstaller`、`WorkspaceInspectionService`、`SecureInputCoordinator`、`TerminalNotificationService`、`DockActivityCoordinator`、`TerminalTargetOpenCoordinator`、`PanePictureInPictureController`、`DiagnosticsCenter`（Unified Logging、本地受限 JSONL 与用户主动反馈归档）。
+- **`Aster`**（可执行，全部 AppKit）：`AsterApp.swift`（自定义 `@main` → `AsterAppDelegate`，管理多窗口与菜单）、`AppModel`（每窗口一个，持有标签与快照）、`WorkspaceViewController`（`WorkspaceView.swift`，主窗口组合根）、`SettingsViewController`（九类设置）、`TerminalSession`（终端引擎的**唯一**会话适配边界）、`Sources/Aster/Ghostty`（libghostty C/Swift bridge）、`DesignSystem.swift`（`ThemeRuntime` + 动态 `NSColor` + `ThemeVisualEffectView`）。主窗口辅助代码按语义放在 `Workspace/Panels`、`Workspace/Sidebar`、`Workspace/Panes`、`Workspace/FileBrowser`、`Workspace/Overlays` 和 `Workspace/Components`；新增能力进入对应目录或独立服务，不得重新堆回组合根。其余是无状态或单一职责的服务层：`AsterCLIRequestService`、`WorkflowRuntimeService`、`AgentIntegrationService`/`AgentSetupService`、`AutocompleteService`、`ShellIntegrationInstaller`、`WorkspaceInspectionService`、`SecureInputCoordinator`、`TerminalNotificationService`、`DockActivityCoordinator`、`TerminalTargetOpenCoordinator`、`PanePictureInPictureController`、`DiagnosticsCenter`（Unified Logging、本地受限 JSONL 与用户主动反馈归档）。
 
 ### 描述符与运行态必须分离
 
@@ -39,20 +42,24 @@ open dist/Aster.app
 ### AppKit 硬性规则
 
 1. `Sources/Aster` **不得导入 SwiftUI**，不得创建 `NSHostingView`/`NSHostingController`。`AppKitMigrationTests` 会静态扫描视图树里是否出现 `NSHosting*` 类名并使测试失败。
-2. `TerminalSession` 强持有唯一 `LocalProcessTerminalView`；AppKit 布局重建/标签切换**不得重启 PTY**。Session 生命周期内有稳定的终端容器视图，刷新只重新安放外层容器。
+2. `TerminalSession` 强持有唯一 `GhosttySurfaceView`；AppKit 布局重建/标签切换**不得重启 PTY**。Session 生命周期内有稳定的终端容器视图，刷新只重新安放外层容器。旧 `makeTerminalView` 只供 SwiftTerm 回归测试。
 3. Window 第一层用 `WorkspacePanelSplitView` 组合 Sidebar / Content / Inspector，边缘宽度按窗口保存 point 值；递归 Pane 树只存在于 Content 内，由 `PersistedSplitView` 渲染并保存 `0.05...0.95` 比例。Panel 与 Pane 不得混名或共用状态。
 4. 主题色只能经由 `ThemeRuntime` 的动态 `NSColor` 和 `ThemeVisualEffectView` 进入视图，**不要在视图里散落固定色值**。
-5. Pane 容器在**宽和高两个方向**都需要必需尺寸约束。`NSStackView` 的固有尺寸推断会把 SwiftTerm 网格压成 0：`NSSplitView` 给每个子面板加了 `PreferredSize/FallbackSize`（`== 0 @250`）回退约束，缺高度约束时上下分屏会把整个内容区塌成一条分隔条。约束链是「内容区绑定外层 stack 宽高 → wrapper 钉 stack 底边 → 状态栏钉 inner 底边 → Pane 区填充剩余」。设置页滚动文档用 `FlippedDocumentView`（左上原点）从 `NSClipView` 顶部锚定，内部放标准 `NSStackView`——不要直接翻转 StackView，AppKit 会同时反转 arrangedSubviews 的垂直排布。
+5. Pane 容器在**宽和高两个方向**都需要必需尺寸约束。`NSStackView` 的固有尺寸推断会把终端 surface 压成 0：`NSSplitView` 给每个子面板加了 `PreferredSize/FallbackSize`（`== 0 @250`）回退约束，缺高度约束时上下分屏会把整个内容区塌成一条分隔条。约束链是「内容区绑定外层 stack 宽高 → wrapper 钉 stack 底边 → 状态栏钉 inner 底边 → Pane 区填充剩余」。设置页滚动文档用 `FlippedDocumentView`（左上原点）从 `NSClipView` 顶部锚定，内部放标准 `NSStackView`——不要直接翻转 StackView，AppKit 会同时反转 arrangedSubviews 的垂直排布。
 6. 切换聚焦 Pane 只做局部更新（内容 alpha 褪色翻转 + first responder），**不触发整树重建**；Outline/Shell Integration 时间线变化也走专用事件局部刷新。高频会话字段（OSC 标题、`hasRunningCommand`、Agent provider）只走徽章/标题局部通道，禁止进入 `objectWillChange` → `refresh()` 链。
 7. **主线程禁止泵 runloop 的等待**（`Process.waitUntilExit`、`runModal` 等会排空主队列，把排队任务拉进当前调用半途造成重入——曾致同一 Session 启动两个 PTY）；子进程等待用 `terminationHandler` + 信号量。昂贵的一次性创建入口（如 `makeTerminalView`）先登记资源再接线，保证重入命中缓存分支。完整清单与现场诊断方法论见 **`docs/developer/engineering-pitfalls.md`**，改动创建/刷新/焦点路径前先读。
 
-### Vendored SwiftTerm
+### Vendored Ghostty
+
+`Vendor/Ghostty` 锁定 revision `4dcb09ada0c0909717d92547623b26eafa50ca8a`，由 `scripts/setup-ghostty.sh` 使用 Zig 0.15.2 生成 gitignored 的 `Vendor/GhosttyKit.xcframework` 与运行时资源。`include/ghostty.h` 是上游 internal、未版本化接口；升级时必须审查 ABI、重建产物、跑完整测试与发行 App 验收。Ghostty C 调用不得越过 `Sources/Aster/Ghostty` 扩散到工作区。
+
+### Vendored SwiftTerm（迁移回归）
 
 `Vendor/SwiftTerm` 锁定 1.15.0 / revision `dd2fb8a`，补丁面（键盘与矩形选区、精确滚动与动量、非消费式 OSC 观察者、绝对缓冲坐标、只读模式的输入预检 seam、Vi Mode 的滚动不变行范围、DA1/DA2/XTVERSION 身份）逐条记录在 `Vendor/SwiftTerm/UPSTREAM.md`。**改动 vendored 源码必须**：窄范围修改 + 注释说明为什么不能在宿主层实现、补测试、同步更新 `UPSTREAM.md` 的补丁面清单。宁可扩大上游的 `open`/可见性 seam，也不要把 Aster 业务逻辑写进 SwiftTerm。
 
 ### 进程关闭语义
 
-`TerminalRetirementCoordinator`（进程级单例，位于 `TerminalSession.swift`）在 Pane/Session 释放后继续强持有 retiring view：先 `SIGHUP` 进程组，750ms 后未退出升级 `SIGKILL`，并轮询到 SwiftTerm monitor 完成 `waitpid`。只在 `process.running` 为真且 `shellPid` 未变时发信号 —— 对已保留的旧 PID 发信号会在 PID 复用后误杀无关进程。应用整体退出走 `immediately: true`。
+产品 Pane 关闭时销毁唯一 Ghostty surface，由 libghostty 关闭 child、PTY 并完成回收；重复关闭必须幂等。旧 SwiftTerm 回归路径仍由 `TerminalRetirementCoordinator` 托管：先 `SIGHUP` 进程组，750ms 后未退出升级 `SIGKILL`，并等待 monitor 完成 `waitpid`。应用整体退出走 `immediately: true`。
 
 ### 多窗口
 
