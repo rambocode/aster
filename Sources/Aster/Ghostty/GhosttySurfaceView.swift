@@ -2,6 +2,7 @@ import AppKit
 import AsterCore
 @preconcurrency import GhosttyKit
 import QuartzCore
+import os
 
 /// Aster 的 libghostty Adapter：一个长期存活的 Metal surface 与其本地 Shell。
 ///
@@ -62,6 +63,17 @@ final class GhosttySurfaceView: NSView {
   var focusFollowsMouse = false
   var pasteProtectionEnabled = true
   var pasteBracketedSafe = true
+  /// 链接预览开关（controls.showLinkPreviews）：按住 Command 悬停链接时在底部展示完整路径或 URL。
+  var linkPreviewEnabled = true {
+    didSet { if !linkPreviewEnabled { removeLinkPreview() } }
+  }
+  /// 宿主侧预览文本格式化器：命中检测仍用 Ghostty 报告的原始链接，仅展示时展开相对路径。
+  var linkPreviewFormatter: ((String) -> String)?
+  private var linkPreviewBadge: GhosttyLinkPreviewBadge?
+  var linkPreviewText: String? { linkPreviewBadge?.textField.stringValue }
+  /// 当前预览来源:true 为 Ghostty 原生 mouse_over_link(URL),false 为 Aster 侧裸路径悬停。
+  /// 原生的清除信号(空 URL)不得抹掉 Aster 侧刚显示的路径预览。
+  private(set) var linkPreviewIsNative = false
 
   var markedTextRange = NSRange(location: NSNotFound, length: 0)
   var selectedTextRange = NSRange(location: NSNotFound, length: 0)
@@ -150,6 +162,55 @@ final class GhosttySurfaceView: NSView {
   }
 
   func handleOpenURL(_ value: String) { onOpenURL?(value) }
+
+  /// Ghostty 的 mouse_over_link action：按住 Command 悬停链接时携带 URL，空字符串表示离开链接。
+  func handleMouseOverLink(_ url: String) {
+    guard linkPreviewEnabled, !url.isEmpty else {
+      // 原生空信号只能清除原生来源的预览，避免与 Aster 侧路径预览互相覆盖。
+      if linkPreviewIsNative { removeLinkPreview() }
+      return
+    }
+    showLinkPreview(url, native: true)
+  }
+
+  /// 在终端左下角展示预览徽章；徽章不参与命中测试，指针事件继续到达终端。
+  func showLinkPreview(_ url: String, native: Bool) {
+    guard linkPreviewEnabled else { return }
+    linkPreviewIsNative = native
+    let displayValue = linkPreviewFormatter?(url) ?? url
+    let badge: GhosttyLinkPreviewBadge
+    if let existing = linkPreviewBadge {
+      badge = existing
+    } else {
+      badge = GhosttyLinkPreviewBadge(frame: .zero)
+      badge.autoresizingMask = [.maxXMargin, .maxYMargin]
+      addSubview(badge)
+      linkPreviewBadge = badge
+    }
+    badge.update(
+      text: displayValue,
+      maximumWidth: max(1, bounds.width - GhosttyLinkPreviewBadge.horizontalInset * 2)
+    )
+    badge.frame.origin = CGPoint(x: GhosttyLinkPreviewBadge.horizontalInset, y: 0)
+  }
+
+  /// 分屏或侧栏改变终端尺寸时保持底部内边距与宽度上限。
+  func layoutLinkPreviewBadge() {
+    guard let badge = linkPreviewBadge else { return }
+    badge.update(
+      text: badge.textField.stringValue,
+      maximumWidth: max(1, bounds.width - GhosttyLinkPreviewBadge.horizontalInset * 2)
+    )
+    badge.frame.origin = CGPoint(x: GhosttyLinkPreviewBadge.horizontalInset, y: 0)
+  }
+
+  /// 幂等移除预览徽章。
+  func removeLinkPreview() {
+    if let badge = linkPreviewBadge {
+      badge.removeFromSuperview()
+      linkPreviewBadge = nil
+    }
+  }
 
   func handleSecureInput(_ mode: ghostty_action_secure_input_e) {
     switch mode {
@@ -347,6 +408,7 @@ final class GhosttySurfaceView: NSView {
     onPaneModeActivated = nil
     onRequestOpenTarget = nil
     onResolveHintCopyTarget = nil
+    linkPreviewFormatter = nil
   }
 
   override func viewDidMoveToWindow() {
@@ -365,6 +427,7 @@ final class GhosttySurfaceView: NSView {
   override func layout() {
     super.layout()
     layoutGhosttyModeHUD()
+    layoutLinkPreviewBadge()
   }
 
   override func viewDidChangeBackingProperties() {
@@ -468,4 +531,87 @@ final class GhosttySurfaceView: NSView {
     default: NSCursor.arrow.set()
     }
   }
+}
+
+/// 链接预览徽章：按住 Command 悬停链接时钉在终端左下角展示完整路径或 URL。
+/// 与 SwiftTerm 回归路径的 `TerminalLinkPreviewBadge` 保持同一视觉规格。
+final class GhosttyLinkPreviewBadge: NSView {
+  static let horizontalInset: CGFloat = 16
+  static let height: CGFloat = 52
+  static let cornerRadius: CGFloat = 12
+  private static let horizontalTextPadding: CGFloat = 20
+  private let label = NSTextField(labelWithString: "")
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    wantsLayer = true
+    // Ghostty 的 CAMetalLayer 是手工 addSublayer 加到 surface view 的 backing layer 上,
+    // 与子视图 layer 属同级;显式抬高 zPosition,保证徽章始终绘制在终端画面之上。
+    layer?.zPosition = 1_000
+    layer?.cornerRadius = Self.cornerRadius
+    layer?.cornerCurve = .continuous
+    layer?.masksToBounds = true
+
+    label.isBezeled = false
+    label.drawsBackground = false
+    label.isEditable = false
+    label.isSelectable = false
+    label.usesSingleLineMode = true
+    label.maximumNumberOfLines = 1
+    label.lineBreakMode = .byTruncatingMiddle
+    label.font = NSFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+    addSubview(label)
+    updateAppearanceColors()
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  /// 依据文本宽度自适应徽章尺寸，超出可用宽度时中间截断。
+  func update(text: String, maximumWidth: CGFloat) {
+    label.stringValue = text
+    label.toolTip = text
+    let measuredWidth = ceil(
+      (text as NSString).size(withAttributes: [.font: label.font!]).width
+    )
+    let availableWidth = max(1, maximumWidth)
+    let idealWidth = max(80, measuredWidth + Self.horizontalTextPadding * 2)
+    frame.size = CGSize(width: min(availableWidth, idealWidth), height: Self.height)
+    needsLayout = true
+    layoutSubtreeIfNeeded()
+  }
+
+  override func layout() {
+    super.layout()
+    let labelHeight = min(bounds.height, max(1, ceil(label.intrinsicContentSize.height)))
+    label.frame = CGRect(
+      x: Self.horizontalTextPadding,
+      y: floor((bounds.height - labelHeight) / 2),
+      width: max(0, bounds.width - Self.horizontalTextPadding * 2),
+      height: labelHeight
+    )
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    updateAppearanceColors()
+  }
+
+  /// 徽章只是视觉反馈；指针事件必须继续到达终端。
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+  /// 与系统外观联动的高对比配色，深浅色分别取反底色保证可读性。
+  private func updateAppearanceColors() {
+    let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    if isDark {
+      layer?.backgroundColor = NSColor.white.withAlphaComponent(0.82).cgColor
+      label.textColor = NSColor.black.withAlphaComponent(0.90)
+    } else {
+      layer?.backgroundColor = NSColor.black.withAlphaComponent(0.78).cgColor
+      label.textColor = NSColor.white.withAlphaComponent(0.96)
+    }
+  }
+
+  var textField: NSTextField { label }
 }

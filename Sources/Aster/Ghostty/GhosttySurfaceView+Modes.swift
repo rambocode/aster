@@ -411,6 +411,53 @@ extension GhosttySurfaceView {
     )
   }
 
+  /// Command 悬停的 Aster 侧补充预览:Ghostty 原生 mouse_over_link 只覆盖 URL 正则,
+  /// 裸文件路径（`~/`、`./`、`/` 等）由本方法用 hint 模式同一套正则在悬停单元格上识别。
+  func updateCommandHoverPreview(with event: NSEvent) {
+    guard linkPreviewEnabled, navigationMode == .normal else { return }
+    guard event.modifierFlags.contains(.command),
+      let target = ghosttyHoverTarget(at: convert(event.locationInWindow, from: nil)),
+      // 带 scheme 的 URL 交给 Ghostty 原生通道,避免两个来源交替显示/清除。
+      !target.contains("://")
+    else {
+      if !linkPreviewIsNative { removeLinkPreview() }
+      return
+    }
+    showLinkPreview(target, native: false)
+  }
+
+  /// 把视图坐标换算成 viewport 单元格,并返回覆盖该单元格的目标文本(若有)。
+  private func ghosttyHoverTarget(at local: NSPoint) -> String? {
+    guard bounds.contains(local), let surface, let info = bufferInfo() else { return nil }
+    let size = ghostty_surface_size(surface)
+    guard size.cell_width_px > 0, size.cell_height_px > 0 else { return nil }
+    let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+    let width = CGFloat(size.cell_width_px) / scale
+    let height = CGFloat(size.cell_height_px) / scale
+    let rowInViewport = Int((bounds.maxY - local.y) / height)
+    let column = Int(local.x / width)
+    guard rowInViewport >= 0, rowInViewport < Int(info.viewport_rows),
+      column >= 0, column < Int(info.columns)
+    else { return nil }
+    let screenRow = Int(clamping: info.viewport_top) + rowInViewport
+    let mapped = ghosttyCellText(row: screenRow, columns: Int(info.columns))
+    guard !mapped.text.isEmpty, let expression = Self.targetExpression else { return nil }
+    let range = NSRange(mapped.text.startIndex..<mapped.text.endIndex, in: mapped.text)
+    for match in expression.matches(in: mapped.text, range: range) {
+      guard let swiftRange = Range(match.range, in: mapped.text) else { continue }
+      let startOffset = mapped.text.distance(
+        from: mapped.text.startIndex, to: swiftRange.lowerBound)
+      let endOffset = mapped.text.distance(from: mapped.text.startIndex, to: swiftRange.upperBound)
+      guard startOffset < mapped.columns.count else { continue }
+      let startColumn = mapped.columns[startOffset]
+      let endColumn = mapped.columns[min(max(endOffset - 1, startOffset), mapped.columns.count - 1)]
+      if column >= startColumn, column <= endColumn {
+        return String(mapped.text[swiftRange])
+      }
+    }
+    return nil
+  }
+
   private func ghosttyFrame(screenRow: Int, column: Int) -> NSRect? {
     guard let surface, let info = bufferInfo() else { return nil }
     let row = screenRow - Int(clamping: info.viewport_top)

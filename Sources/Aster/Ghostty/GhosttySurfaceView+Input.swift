@@ -89,6 +89,8 @@ extension GhosttySurfaceView {
   }
 
   override func flagsChanged(with event: NSEvent) {
+    // 按下/松开 Command 本身也要刷新路径预览,即使鼠标没有移动。
+    updateCommandHoverPreview(with: event)
     guard navigationMode == .normal, let surface else { return }
     let action: ghostty_input_action_e =
       modifierWasPressed(event) ? GHOSTTY_ACTION_PRESS : GHOSTTY_ACTION_RELEASE
@@ -169,6 +171,7 @@ extension GhosttySurfaceView {
 
   override func mouseMoved(with event: NSEvent) {
     if navigationMode == .normal { reportMousePosition(event) }
+    updateCommandHoverPreview(with: event)
   }
   override func mouseDragged(with event: NSEvent) {
     if navigationMode == .normal { reportMousePosition(event) }
@@ -181,6 +184,8 @@ extension GhosttySurfaceView {
   }
 
   override func mouseExited(with event: NSEvent) {
+    // 指针离开 surface 时,两个来源的预览都必须清除(原生的清除信号只覆盖 URL 场景)。
+    removeLinkPreview()
     guard let surface, NSEvent.pressedMouseButtons == 0 else { return }
     ghostty_surface_mouse_pos(surface, -1, -1, modifiers(event))
   }

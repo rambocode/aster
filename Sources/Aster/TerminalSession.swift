@@ -2714,6 +2714,17 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         break
       }
     }
+    // 链接预览与 SwiftTerm 路径同源：命中检测用 Ghostty 报告的原始链接，展示前经
+    // TerminalTargetOpenCoordinator 依据可靠 OSC 7 CWD 展开相对路径。
+    view.linkPreviewEnabled = preferences.configuration.controls.showLinkPreviews
+    view.linkPreviewFormatter = { [weak self] rawValue in
+      guard let self else { return rawValue }
+      return targetOpenCoordinator.previewText(
+        rawValue,
+        currentDirectory: self.currentWorkingDirectoryIsLocal
+          ? self.currentWorkingDirectory : ""
+      )
+    }
     view.onOpenURL = { [weak self] rawValue in
       guard let self else { return }
       self.targetOpenCoordinator?.open(
@@ -3113,6 +3124,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       ghosttyView.focusFollowsMouse = controls.focusFollowsMouse
       ghosttyView.pasteProtectionEnabled = controls.pasteProtection
       ghosttyView.pasteBracketedSafe = controls.resolvedPasteBracketedSafe
+      ghosttyView.linkPreviewEnabled = controls.showLinkPreviews
       ghosttyView.updateConfiguration(GhosttyConfiguration.make(preferences: preferences))
       automaticSecureInputEnabled = controls.secureInputAutomatically
     }

@@ -81,6 +81,17 @@ final class GhosttyCallbacks: @unchecked Sendable {
       let title = payload.title.map { String(cString: $0) } ?? ""
       let body = payload.body.map { String(cString: $0) } ?? ""
       DispatchQueue.main.async { view.handleNotification(title: title, body: body) }
+    case GHOSTTY_ACTION_MOUSE_OVER_LINK:
+      // 空 URL 表示指针离开链接，用于清除预览徽章；字节必须在 callback 内复制。
+      let payload = action.action.mouse_over_link
+      let value: String
+      if let pointer = payload.url, payload.len > 0 {
+        value = String(
+          decoding: UnsafeRawBufferPointer(start: pointer, count: Int(payload.len)), as: UTF8.self)
+      } else {
+        value = ""
+      }
+      DispatchQueue.main.async { view.handleMouseOverLink(value) }
     case GHOSTTY_ACTION_MOUSE_SHAPE:
       let shape = action.action.mouse_shape
       DispatchQueue.main.async { view.applyMouseShape(shape) }
