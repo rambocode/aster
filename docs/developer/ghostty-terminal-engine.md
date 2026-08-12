@@ -93,7 +93,7 @@ OSC 133/6974。Wakeup 合并为最多一个待执行 tick，避免输出风暴�
 
 固定补丁在 Ghostty internal C interface 之外提供：
 
-- 原始 PTY read/write callback，以及支持 BEL、ESC ST、C1 ST 和 64 KiB 上限的任意数字 OSC observer；
+- 原始 PTY read/write callback，以及支持 BEL、ESC ST、C1 ST 和 64 KiB 上限的任意数字 OSC observer。observer 的流式扫描在 ground 与 payload 状态都跟踪 UTF-8 多字节序列，0x9C/0x9D 处于续字节位置时不会被误判为 C1 终止符（否则 OSC 0 标题里的 "✳"（E2 9C B3）会被截成 U+FFFD）；
 - OSC 发生位置的稳定 page anchor、绝对 retained-screen 坐标和 scrollback 裁剪后的重新解析；
 - buffer geometry、固定宽度 cell row、selection get/set/clear 和绝对 row 滚动；
 - literal/regex、大小写、前后方向的完整搜索，以及精确总数、选中序号和 match range；

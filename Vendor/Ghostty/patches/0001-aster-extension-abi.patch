@@ -5,7 +5,7 @@ index b099741..04ece52 100644
 @@ -440,11 +440,72 @@ typedef struct {
    bool rectangle;
  } ghostty_selection_s;
-
+ 
 +// Stable point for the lifetime of a retained Ghostty page. `screen_row` is
 +// the zero-based row in the current retained scrollback. The page tuple lets
 +// Aster resolve the same cell after rows are appended or old pages are pruned.
@@ -58,7 +58,7 @@ index b099741..04ece52 100644
    const char* key;
    const char* value;
  } ghostty_env_var_s;
-
+ 
 +// Aster embeds a pinned Ghostty revision and maintains this versioned extension
 +// ABI for capabilities that are intentionally not part of libghostty's internal
 +// embedding API. Callback payloads are borrowed and only valid for the duration
@@ -83,12 +83,12 @@ index b099741..04ece52 100644
 +  ghostty_aster_pty_io_cb aster_pty_write_cb;
 +  ghostty_aster_osc_cb aster_osc_cb;
  } ghostty_surface_config_s;
-
+ 
  typedef struct {
 @@ -1098,6 +1162,9 @@ GHOSTTY_API void ghostty_app_set_color_scheme(ghostty_app_t, ghostty_color_schem
-
+ 
  GHOSTTY_API ghostty_surface_config_s ghostty_surface_config_new();
-
+ 
 +// Returns the ABI version of the Aster-only extension symbols and fields.
 +GHOSTTY_API uint32_t ghostty_aster_extension_abi_version(void);
 +
@@ -98,7 +98,7 @@ index b099741..04ece52 100644
 @@ -1161,6 +1228,28 @@ GHOSTTY_API bool ghostty_surface_read_text(ghostty_surface_t,
                                                ghostty_text_s*);
  GHOSTTY_API void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
-
+ 
 +// Aster extension: current retained buffer geometry and tracked selection.
 +GHOSTTY_API bool ghostty_aster_surface_buffer_info(
 +    ghostty_surface_t, ghostty_aster_buffer_info_s*);
@@ -129,7 +129,7 @@ index 5d16f33..53de691 100644
 --- a/src/Surface.zig
 +++ b/src/Surface.zig
 @@ -17,6 +17,7 @@ pub const Message = apprt.surface.Message;
-
+ 
  const std = @import("std");
  const builtin = @import("builtin");
 +const build_config = @import("build_config.zig");
@@ -152,7 +152,7 @@ index 5d16f33..53de691 100644
 @@ -2369,6 +2376,162 @@ fn setSelection(self: *Surface, sel_: ?terminal.Selection) !void {
      }
  }
-
+ 
 +/// Aster extension entrypoint for setting or clearing an exact terminal
 +/// selection. The caller constructs untracked pins while holding no locks;
 +/// `Screen.select` converts them to tracked pins before this method returns.
@@ -327,7 +327,7 @@ index 730913e..9a9f9f8 100644
      content_scale: apprt.ContentScale,
      size: apprt.SurfaceSize,
 @@ -461,6 +464,12 @@ pub const Surface = struct {
-
+ 
          /// Context for the new surface
          context: apprt.surface.NewSurfaceContext = .window,
 +
@@ -337,7 +337,7 @@ index 730913e..9a9f9f8 100644
 +        aster_pty_write_cb: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
 +        aster_osc_cb: ?*const fn (?*anyopaque, u32, [*]const u8, usize, *const @import("../termio/Options.zig").AsterObserver.BufferPoint) callconv(.c) void = null,
      };
-
+ 
      pub fn init(self: *Surface, app: *App, opts: Options) !void {
 @@ -468,6 +477,9 @@ pub const Surface = struct {
              .app = app,
@@ -352,7 +352,7 @@ index 730913e..9a9f9f8 100644
 @@ -1386,6 +1398,68 @@ pub const CAPI = struct {
          }
      };
-
+ 
 +    const AsterBufferPoint = extern struct {
 +        column: u32,
 +        screen_row: u64,
@@ -421,7 +421,7 @@ index 730913e..9a9f9f8 100644
 @@ -1538,6 +1612,11 @@ pub const CAPI = struct {
          return .{};
      }
-
+ 
 +    /// Version gate for the Aster-only extension ABI.
 +    export fn ghostty_aster_extension_abi_version() u32 {
 +        return 1;
@@ -433,7 +433,7 @@ index 730913e..9a9f9f8 100644
 @@ -1680,6 +1759,196 @@ pub const CAPI = struct {
          ptr.deinit();
      }
-
+ 
 +    export fn ghostty_aster_surface_buffer_info(
 +        surface: *Surface,
 +        result: *AsterBufferInfo,
@@ -627,6 +627,25 @@ index 730913e..9a9f9f8 100644
      /// Tell the surface that it needs to schedule a render
      export fn ghostty_surface_refresh(surface: *Surface) void {
          surface.refresh();
+diff --git a/src/renderer/generic.zig b/src/renderer/generic.zig
+index 0f4a294..d6dece9 100644
+--- a/src/renderer/generic.zig
++++ b/src/renderer/generic.zig
+@@ -691,7 +691,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+ 
+             const display_link: ?DisplayLink = switch (builtin.os.tag) {
+                 .macos => if (options.config.vsync)
+-                    try macos.video.DisplayLink.createWithActiveCGDisplays()
++                    macos.video.DisplayLink.createWithActiveCGDisplays() catch |err| fallback: {
++                        // Embedded hosts can run before macOS exposes an active display (for
++                        // example, an XCTest process). Rendering remains functional without a
++                        // display link, so degrade to non-vsync rather than rejecting the PTY.
++                        log.warn("unable to create display link, disabling vsync err={}", .{err});
++                        break :fallback null;
++                    }
+                 else
+                     null,
+                 else => null,
 diff --git a/src/termio/Options.zig b/src/termio/Options.zig
 index a6bf8c4..f470e91 100644
 --- a/src/termio/Options.zig
@@ -634,7 +653,7 @@ index a6bf8c4..f470e91 100644
 @@ -6,6 +6,40 @@ const renderer = @import("../renderer.zig");
  const Config = @import("../config.zig").Config;
  const termio = @import("../termio.zig");
-
+ 
 +/// Aster-only observation hooks for the pinned embedded build. These callbacks
 +/// observe bytes without consuming or changing the normal Ghostty parser path.
 +/// Payload memory is borrowed for the duration of each callback.
@@ -671,22 +690,22 @@ index a6bf8c4..f470e91 100644
 +
  /// All size metrics for the terminal.
  size: renderer.Size,
-
+ 
 @@ -39,3 +73,6 @@ renderer_mailbox: *renderer.Thread.Mailbox,
-
+ 
  /// The mailbox for sending the surface messages.
  surface_mailbox: apprt.surface.Mailbox,
 +
 +/// Versioned Aster observation hooks. Other runtimes leave this empty.
 +aster_observer: AsterObserver = .{},
 diff --git a/src/termio/Termio.zig b/src/termio/Termio.zig
-index 1d1bfe2..e6d9557 100644
+index 1d1bfe2..8919790 100644
 --- a/src/termio/Termio.zig
 +++ b/src/termio/Termio.zig
 @@ -53,6 +53,11 @@ renderer_mailbox: *renderer.Thread.Mailbox,
  /// The mailbox for communicating with the surface.
  surface_mailbox: apprt.surface.Mailbox,
-
+ 
 +/// Aster's observer never owns or mutates terminal data. It mirrors PTY bytes
 +/// and runs a separate bounded OSC scanner before Ghostty consumes the stream.
 +aster_observer: termio.Options.AsterObserver,
@@ -694,7 +713,7 @@ index 1d1bfe2..e6d9557 100644
 +
  /// The cached size info
  size: renderer.Size,
-
+ 
 @@ -303,6 +308,8 @@ pub fn init(self: *Termio, alloc: Allocator, opts: termio.Options) !void {
          .renderer_wakeup = opts.renderer_wakeup,
          .renderer_mailbox = opts.renderer_mailbox,
@@ -711,7 +730,7 @@ index 1d1bfe2..e6d9557 100644
 +    self.aster_observer.notifyPtyWrite(data);
      try self.backend.queueWrite(self.alloc, td, data, linefeed);
  }
-
+ 
 @@ -641,6 +649,9 @@ pub fn focusGained(self: *Termio, td: *ThreadData, focused: bool) !void {
  /// call with pty data but it is also called by the read thread when using
  /// an exec subprocess.
@@ -722,10 +741,10 @@ index 1d1bfe2..e6d9557 100644
      // We are modifying terminal state from here on out and we need
      // the lock to grab our read data.
      self.renderer_state.mutex.lock();
-@@ -648,6 +659,167 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
+@@ -648,6 +659,214 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
      self.processOutputLocked(buf);
  }
-
+ 
 +/// Streaming OSC scanner used only by the Aster extension ABI. Ghostty's
 +/// parser still receives every original byte; malformed and over-limit OSCs
 +/// are dropped only from this observer channel.
@@ -758,6 +777,7 @@ index 1d1bfe2..e6d9557 100644
 +        self.code = 0;
 +        self.has_code = false;
 +        self.payload_len = 0;
++        self.utf8_continuations = 0;
 +    }
 +
 +    fn begin(self: *AsterOSCScanner) void {
@@ -765,6 +785,7 @@ index 1d1bfe2..e6d9557 100644
 +        self.code = 0;
 +        self.has_code = false;
 +        self.payload_len = 0;
++        self.utf8_continuations = 0;
 +    }
 +
 +    fn emit(self: *AsterOSCScanner) ?Event {
@@ -823,10 +844,35 @@ index 1d1bfe2..e6d9557 100644
 +                0x1B => { self.state = .payload_escape; return null; },
 +                else => { self.state = .discard; return null; },
 +            },
-+            .payload => switch (byte) {
-+                0x07, 0x9C => return self.emit(),
-+                0x1B => { self.state = .payload_escape; return null; },
-+                else => { self.append(byte); return null; },
++            .payload => {
++                // 0x9C is also a UTF-8 continuation byte (e.g. U+2733 "✳" is
++                // E2 9C B3). Only treat it as a C1 ST terminator when we are
++                // not inside a multibyte sequence, mirroring the ground state.
++                if (self.utf8_continuations > 0) {
++                    if (byte & 0xC0 == 0x80) {
++                        self.utf8_continuations -= 1;
++                        self.append(byte);
++                        return null;
++                    }
++                    self.utf8_continuations = 0;
++                }
++                switch (byte) {
++                    0x07, 0x9C => return self.emit(),
++                    0x1B => {
++                        self.state = .payload_escape;
++                        return null;
++                    },
++                    else => {
++                        self.utf8_continuations = switch (byte) {
++                            0xC2...0xDF => 1,
++                            0xE0...0xEF => 2,
++                            0xF0...0xF4 => 3,
++                            else => 0,
++                        };
++                        self.append(byte);
++                        return null;
++                    },
++                }
 +            },
 +            .payload_escape => if (byte == '\\') {
 +                return self.emit();
@@ -875,6 +921,26 @@ index 1d1bfe2..e6d9557 100644
 +    try std.testing.expectEqualStrings("ok", event.?.payload);
 +}
 +
++test "Aster OSC observer keeps UTF-8 continuation byte 0x9C inside payload" {
++    var scanner: AsterOSCScanner = .init(.{
++        .osc = null,
++    });
++
++    // "✳ hi" 的 U+2733 编码为 E2 9C B3；0x9C 不得被当作 ST 提前终止 OSC 0 标题。
++    for ("\x1b]0;") |byte| try std.testing.expect(scanner.next(byte) == null);
++    for (&[_]u8{ 0xE2, 0x9C, 0xB3, ' ', 'h', 'i' }) |byte|
++        try std.testing.expect(scanner.next(byte) == null);
++    const event = scanner.next(0x07).?;
++    try std.testing.expectEqual(@as(u32, 0), event.code);
++    try std.testing.expectEqualStrings("\xE2\x9C\xB3 hi", event.payload);
++
++    // 序列结束后 0x9C 恢复 ST 语义。
++    for ("\x1b]2;ab") |byte| try std.testing.expect(scanner.next(byte) == null);
++    const second = scanner.next(0x9C).?;
++    try std.testing.expectEqual(@as(u32, 2), second.code);
++    try std.testing.expectEqualStrings("ab", second.payload);
++}
++
 +test "Aster OSC observer drops over-limit payload only from observer channel" {
 +    var scanner: AsterOSCScanner = .init(.{
 +        .osc = null,
@@ -890,14 +956,14 @@ index 1d1bfe2..e6d9557 100644
  /// Process output from readdata but the lock is already held.
  fn processOutputLocked(self: *Termio, buf: []const u8) void {
      // Schedule a render. We can call this first because we have the lock.
-@@ -687,7 +859,23 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
+@@ -687,7 +906,23 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
              };
-
+ 
              self.terminal_stream.next(byte);
 +            if (self.aster_observer.osc != null) {
 +                if (self.aster_osc_scanner.next(byte)) |event| self.notifyAsterOSC(event);
 +            }
-         }
++        }
 +    } else if (self.aster_observer.osc != null) {
 +        // Keep Ghostty's fast slice parser for ordinary output. We split only
 +        // at complete OSC boundaries so the callback sees the cursor exactly
@@ -909,15 +975,15 @@ index 1d1bfe2..e6d9557 100644
 +                self.notifyAsterOSC(event);
 +                segment_start = i + 1;
 +            }
-+        }
+         }
 +        if (segment_start < buf.len) self.terminal_stream.nextSlice(buf[segment_start..]);
      } else {
          self.terminal_stream.nextSlice(buf);
      }
-@@ -700,6 +888,18 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
+@@ -700,6 +935,18 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
      }
  }
-
+ 
 +fn notifyAsterOSC(self: *Termio, event: AsterOSCScanner.Event) void {
 +    const screen = self.terminal.screens.active;
 +    const pin = screen.cursor.page_pin.*;
@@ -933,22 +999,3 @@ index 1d1bfe2..e6d9557 100644
  /// Sends a DSR response for the current color scheme to the pty.
  pub fn colorSchemeReport(self: *Termio, td: *ThreadData, force: bool) !void {
      self.renderer_state.mutex.lock();
-diff --git a/src/renderer/generic.zig b/src/renderer/generic.zig
-index 0f4a294..d6dece9 100644
---- a/src/renderer/generic.zig
-+++ b/src/renderer/generic.zig
-@@ -691,7 +691,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
-
-             const display_link: ?DisplayLink = switch (builtin.os.tag) {
-                 .macos => if (options.config.vsync)
--                    try macos.video.DisplayLink.createWithActiveCGDisplays()
-+                    macos.video.DisplayLink.createWithActiveCGDisplays() catch |err| fallback: {
-+                        // Embedded hosts can run before macOS exposes an active display (for
-+                        // example, an XCTest process). Rendering remains functional without a
-+                        // display link, so degrade to non-vsync rather than rejecting the PTY.
-+                        log.warn("unable to create display link, disabling vsync err={}", .{err});
-+                        break :fallback null;
-+                    }
-                 else
-                     null,
-                 else => null,
