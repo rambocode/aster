@@ -2274,7 +2274,9 @@ final class AppModel: ObservableObject {
 
   /// 原生重命名对话框同时支持固定名称与动态前缀。第三个按钮直接恢复程序标题，
   /// 与留空固定名称的领域语义一致。
-  func promptRenameSelectedTab() {
+  /// `preselectPrefix` 供 Shell 菜单「设置标签页前缀…」入口预选动态前缀模式；
+  /// 已有覆盖值时仍以标签当前状态为准，避免对话框与真实配置不一致。
+  func promptRenameSelectedTab(preselectPrefix: Bool = false) {
     guard let tab = selectedTab else { return }
     let mode = NSPopUpButton()
     mode.addItems(withTitles: ["固定名称", "动态前缀"])
@@ -2282,6 +2284,7 @@ final class AppModel: ObservableObject {
     field.placeholderString = "输入名称或前缀"
     switch tab.tabTitleOverride {
     case .automatic:
+      mode.selectItem(at: preselectPrefix ? 1 : 0)
       field.stringValue = ""
     case .name(let value):
       mode.selectItem(at: 0)

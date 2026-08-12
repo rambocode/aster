@@ -514,121 +514,17 @@ final class WorkspaceTitlePopoverViewController: NSViewController {
     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: directory)])
   }
 
+  /// 「打开方式」与菜单栏 Shell 菜单共用 `ShellDirectoryMenuBuilder`，保证条目一致。
   private func showOpenInMenu(from sender: NSView) {
     guard let directory = tab?.workingDirectory else { return }
-    let url = URL(fileURLWithPath: directory)
-    let menu = NSMenu()
-    menu.addItem(ActionMenuItem(title: "New Terminal Tab") { [weak self] in
-      self?.model.newTab(workingDirectory: directory)
-    })
-    menu.addItem(ActionMenuItem(title: "Files Pane") { [weak self] in
-      self?.tab?.openFileBrowser()
-      self?.model.persistWorkspace()
-    })
-    let editors = WorkspaceEditorLocator.detect()
-    if !editors.isEmpty { menu.addItem(.separator()) }
-    for editor in editors {
-      menu.addItem(ActionMenuItem(title: editor.name) {
-        WorkspaceEditorLocator.open(directory: url, in: editor)
-      })
-    }
-    let editorBundleIdentifiers = Set(editors.map(\.bundleIdentifier))
-    for application in preferences.configuration.controls.resolvedOpenWithApplications
-      where !editorBundleIdentifiers.contains(application.bundleIdentifier)
-    {
-      menu.addItem(ActionMenuItem(title: application.name) {
-        Self.open(url, withBundleIdentifier: application.bundleIdentifier)
-      })
-    }
-    if editors.isEmpty && preferences.configuration.controls.resolvedOpenWithApplications.isEmpty {
-      let unavailable = NSMenuItem(title: "未检测到受支持的编辑器", action: nil, keyEquivalent: "")
-      unavailable.isEnabled = false
-      menu.addItem(unavailable)
-    }
+    let menu = ShellDirectoryMenuBuilder.openInMenu(
+      directory: directory, model: model, tab: tab, preferences: preferences)
     popUp(menu, from: sender)
   }
 
+  /// 「Git」与菜单栏 Shell 菜单共用 `ShellDirectoryMenuBuilder`，保证条目与注入语义一致。
   private func showGitMenu(from sender: NSView) {
-    let menu = NSMenu()
-    if let directory = tab?.workingDirectory,
-      let client = resolvedGitClient()
-    {
-      menu.addItem(ActionMenuItem(title: "在 \(client.name) 中打开") {
-        Self.open(URL(fileURLWithPath: directory), withBundleIdentifier: client.bundleIdentifier)
-      })
-      menu.addItem(.separator())
-    }
-    for (title, command) in [
-      ("Commit…", GitCommand.commit), ("Push", .push), ("Pull", .pull), ("Fetch", .fetch),
-    ] {
-      menu.addItem(ActionMenuItem(title: title) { [weak self] in self?.injectGitCommand(command) })
-    }
-    menu.addItem(.separator())
-    menu.addItem(ActionMenuItem(title: "Merge…") { [weak self] in
-      self?.promptBranch(title: "Merge 分支", action: "Merge") { branch in
-        self?.injectGitCommand(.merge(branch: branch))
-      }
-    })
-    menu.addItem(ActionMenuItem(title: "Rebase…") { [weak self] in
-      self?.promptBranch(title: "Rebase 到分支", action: "Rebase") { branch in
-        self?.injectGitCommand(.rebase(branch: branch))
-      }
-    })
-    popUp(menu, from: sender)
-  }
-
-  private func resolvedGitClient() -> OpenWithApplication? {
-    let builtIn = [
-      OpenWithApplication(name: "GitHub Desktop", bundleIdentifier: "com.github.GitHubClient"),
-      OpenWithApplication(name: "Fork", bundleIdentifier: "com.DanPristupov.Fork"),
-      OpenWithApplication(name: "Tower", bundleIdentifier: "com.fournova.Tower3"),
-      OpenWithApplication(name: "Sourcetree", bundleIdentifier: "com.torusknot.SourceTreeNotMAS"),
-      OpenWithApplication(name: "GitKraken", bundleIdentifier: "com.axosoft.gitkraken"),
-      OpenWithApplication(name: "Sublime Merge", bundleIdentifier: "com.sublimehq.Sublime-Merge"),
-    ]
-    let candidates = builtIn + preferences.configuration.controls.resolvedOpenWithApplications
-    if let selected = preferences.configuration.controls.defaultGitClient {
-      return candidates.first(where: {
-        $0.bundleIdentifier == selected
-          && NSWorkspace.shared.urlForApplication(withBundleIdentifier: selected) != nil
-      })
-    }
-    return candidates.first(where: {
-      NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleIdentifier) != nil
-    })
-  }
-
-  private static func open(_ url: URL, withBundleIdentifier bundleIdentifier: String) {
-    guard let applicationURL = NSWorkspace.shared.urlForApplication(
-      withBundleIdentifier: bundleIdentifier) else { return }
-    NSWorkspace.shared.open(
-      [url],
-      withApplicationAt: applicationURL,
-      configuration: NSWorkspace.OpenConfiguration()
-    )
-  }
-
-  private func injectGitCommand(_ command: GitCommand) {
-    guard let commandLine = command.commandLine else { return }
-    tab?.activeSession?.typeText(commandLine)
-  }
-
-  private func promptBranch(
-    title: String, action: String, completion: @escaping (String) -> Void
-  ) {
-    let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-    field.placeholderString = "分支名"
-    let alert = NSAlert()
-    alert.messageText = title
-    alert.informativeText = "命令会预填到终端输入行，确认后回车执行。"
-    alert.accessoryView = field
-    alert.addButton(withTitle: action)
-    alert.addButton(withTitle: "取消")
-    alert.window.initialFirstResponder = field
-    guard alert.runModal() == .alertFirstButtonReturn,
-      let branch = GitCommand.sanitizedBranch(field.stringValue)
-    else { return }
-    completion(branch)
+    popUp(ShellDirectoryMenuBuilder.gitMenu(tab: tab, preferences: preferences), from: sender)
   }
 
   private func showSplitMenu(from sender: NSView) {

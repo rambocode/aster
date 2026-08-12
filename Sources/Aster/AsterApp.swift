@@ -784,6 +784,27 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   }
   @objc private func reopenLastClosedTab(_ sender: Any?) { _ = activeWorkspaceModel.reopenLastClosedTab() }
   @objc private func renameTab(_ sender: Any?) { activeWorkspaceModel.promptRenameSelectedTab() }
+  /// Shell 菜单「设置标签页前缀…」：同一重命名对话框，预选动态前缀模式。
+  @objc private func setTabPrefix(_ sender: Any?) {
+    activeWorkspaceModel.promptRenameSelectedTab(preselectPrefix: true)
+  }
+  @objc private func clearActivePaneScreen(_ sender: Any?) {
+    activeWorkspaceModel.selectedTab?.activeSession?.clearScreen()
+  }
+  /// 拷贝聚焦标签最近一次可靠 OSC 7 CWD；无 CWD 时由 validate 置灰入口。
+  @objc private func copyActivePanePath(_ sender: Any?) {
+    guard let directory = activeWorkspaceModel.selectedTab?.workingDirectory else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(directory, forType: .string)
+  }
+  @objc private func revealActivePaneInFinder(_ sender: Any?) {
+    guard let directory = activeWorkspaceModel.selectedTab?.workingDirectory else { return }
+    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: directory)])
+  }
+  /// 「通知与权限」与标题 popover 一致，落到设置的 Shell 分类。
+  @objc private func showShellNotificationSettings(_ sender: Any?) {
+    showSettings(section: .shell)
+  }
   @objc private func openFile(_ sender: Any?) { activeWorkspaceModel.openFile() }
   @objc private func openFolder(_ sender: Any?) { activeWorkspaceModel.openFolder() }
   @objc private func closeTab(_ sender: Any?) { activeWorkspaceModel.closeSelectedTab() }
@@ -1099,6 +1120,38 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 把上一个 Pane 的 provider 缓存在菜单栏中。
   private func populateShellMenu(_ submenu: NSMenu) {
     submenu.removeAllItems()
+    let workspaceModel = activeWorkspaceModel
+    let tab = workspaceModel.selectedTab
+    let workingDirectory = tab?.workingDirectory
+
+    // 标签命名（对齐 Otty：重命名 + 前缀两个显式入口，共用同一原生对话框）。
+    submenu.addItem(menuItem("重命名标签页…", #selector(renameTab(_:)), "", modifiers: []))
+    submenu.addItem(menuItem("设置标签页前缀…", #selector(setTabPrefix(_:)), "", modifiers: []))
+    submenu.addItem(.separator())
+    submenu.addItem(menuItem("清屏", #selector(clearActivePaneScreen(_:)), "k"))
+    submenu.addItem(.separator())
+
+    // 工作目录动作依赖聚焦标签最近一次可靠的 OSC 7 CWD；缺失时禁用而不是隐藏，
+    // 让用户能感知能力存在（对齐 Otty 的置灰行为）。
+    submenu.addItem(menuItem("拷贝路径", #selector(copyActivePanePath(_:)), "", modifiers: []))
+    submenu.addItem(
+      menuItem("在访达中显示", #selector(revealActivePaneInFinder(_:)), "", modifiers: []))
+    let openIn = NSMenuItem(title: "打开方式", action: nil, keyEquivalent: "")
+    if let workingDirectory {
+      openIn.submenu = ShellDirectoryMenuBuilder.openInMenu(
+        directory: workingDirectory, model: workspaceModel, tab: tab, preferences: preferences)
+    } else {
+      // 无可靠 CWD 时保留入口但置灰，与拷贝路径/访达的 validate 行为一致。
+      let unavailable = NSMenu(title: "打开方式")
+      let placeholder = NSMenuItem(title: "无可用工作目录", action: nil, keyEquivalent: "")
+      placeholder.isEnabled = false
+      unavailable.autoenablesItems = false
+      unavailable.addItem(placeholder)
+      openIn.submenu = unavailable
+    }
+    submenu.addItem(openIn)
+    submenu.addItem(.separator())
+
     submenu.addItem(
       responderMenuItem(
         "Vi Mode", #selector(AsterTerminalView.enterViMode(_:)), " ",
@@ -1111,16 +1164,21 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         "打开链接（Hint Mode）", #selector(AsterTerminalView.openHintMode(_:)), "",
         modifiers: []))
     submenu.addItem(
+      menuItem("只读模式", #selector(toggleActivePaneReadOnly(_:)), "", modifiers: []))
+    submenu.addItem(
       menuItem("Composer", #selector(toggleComposer(_:)), "\r", modifiers: [.command, .shift]))
     submenu.addItem(menuItem("Agent 历史", #selector(showAgentHistory(_:)), "", modifiers: []))
-    let workspaceModel = activeWorkspaceModel
+    submenu.addItem(.separator())
+
+    let git = NSMenuItem(title: "Git", action: nil, keyEquivalent: "")
+    git.submenu = ShellDirectoryMenuBuilder.gitMenu(tab: tab, preferences: preferences)
+    submenu.addItem(git)
     if let context = workspaceModel.focusedAgentSessionContext {
       submenu.addItem(activeAgentMenuItem(context, workspaceModel: workspaceModel))
     }
     submenu.addItem(.separator())
     submenu.addItem(
-      menuItem("只读模式", #selector(toggleActivePaneReadOnly(_:)), "", modifiers: []))
-    submenu.addItem(.separator())
+      menuItem("通知与权限…", #selector(showShellNotificationSettings(_:)), "", modifiers: []))
     submenu.addItem(
       responderMenuItem(
         "显示/隐藏 Vi 按键提示", #selector(AsterTerminalView.toggleViKeyHints(_:)), "/",
@@ -1478,6 +1536,14 @@ extension AsterAppDelegate: NSMenuItemValidation {
     if action == #selector(toggleActivePaneReadOnly(_:)) {
       menuItem.state = activeWorkspaceModel.activePaneIsReadOnly ? .on : .off
       return activeWorkspaceModel.selectedTab?.activeRuntime != nil
+    }
+    if action == #selector(copyActivePanePath(_:))
+      || action == #selector(revealActivePaneInFinder(_:))
+    {
+      return activeWorkspaceModel.selectedTab?.workingDirectory != nil
+    }
+    if action == #selector(clearActivePaneScreen(_:)) {
+      return activeWorkspaceModel.selectedTab?.activeSession != nil
     }
     if action == #selector(togglePromptQueue(_:)) {
       return activeWorkspaceModel.canPresentPromptQueue

@@ -60,6 +60,8 @@ flowchart LR
 
 `AsterApp.swift` 使用自定义 `@main` 调用 `NSApplication`，由 `AsterAppDelegate` 管理窗口、菜单和退出事务。「显示」菜单集中全部分屏命令：四个方向的拆分、缩放拆分、「调整拆分大小」与「聚焦面板」两个子菜单、关闭当前面板；只在多面板下有意义的项由 `NSMenuItemValidation` 按 `AppModel.selectedTabHasSplits` 置灰。`⌘W` 走 `closeSelectedPaneOrTab()`：还有分屏时只关闭聚焦面板，最后一个面板才关闭标签页（`⇧⌘W` 始终关标签页）。
 
+「Shell」菜单在 `menuNeedsUpdate` 时按当前窗口的聚焦标签整体重建（`populateShellMenu`），结构对齐 Otty：标签命名（重命名 / 前缀共用 `promptRenameSelectedTab`，前缀入口预选动态前缀模式）→ 清屏（`⌘K`，Ghostty 走 `clear_screen` binding，SwiftTerm 回归路径退化为 Ctrl+L）→ 工作目录动作（拷贝路径 / 在访达中显示由 `NSMenuItemValidation` 按 `selectedTab?.workingDirectory` 置灰；「打开方式」在无 CWD 时挂占位子菜单）→ Vi/Mark/Hint/只读/Composer/Agent 历史 → 「Git」与按焦点动态出现的 Agent 子菜单 → 「通知与权限…」（落到设置 Shell 分类）。「打开方式」与「Git」子菜单由 `ShellDirectoryMenuBuilder` 单一来源构建，与工作区标题胶囊弹层完全共用：Git 命令仍只经 `TerminalSession.typeText` 预填，不在后台执行仓库写操作。
+
 `AsterAppDelegate` 同时管理主窗口和附加工作区窗口。菜单、命令面板与 CLI `--new-window` 统一经模型回调创建窗口；Pin 只接受工作区窗口，PiP 可固定当前 Pane 或跟随活动 Pane。正常退出保存仍打开的附加 suite，用户主动关闭则删除；关闭确认发生在可取消的 `windowShouldClose`，应用退出由 `WorkspaceTerminationTransaction` 先确认全部模型再统一提交，避免后续窗口取消时前序 PTY 已被终止。crash loop 规则仍由各模型独立执行。Dock 聚合器订阅全部窗口，错误跳转和 Agent 防睡不会漏掉后台窗口。
 
 **顶层 Panel 布局**：`WorkspacePanelSplitView` 是工作区窗口唯一的横向区域容器，按角色而非可见索引管理 Sidebar、Content、Inspector。垂直标签布局显示三者；顶部、底部或隐藏标签布局省略 Sidebar，Content 与 Inspector 仍由同一实现组合。Sidebar 首选范围为 180...360pt（默认 220pt），Inspector 为 240...480pt（默认 278pt），Content 尽量保留至少 320pt。两条 divider 都是 1pt 原生命中宽度，悬停加深为系统灰（不切换主题强调色），双击按外侧角色复位；拖动只改宽度，不能顺带折叠。窄窗口只临时压缩实际 frame，先让 Inspector、再让 Sidebar 接近下限，不覆盖用户保存的首选值。

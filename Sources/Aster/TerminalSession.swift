@@ -3154,6 +3154,16 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalView.send(data: bytes[...])
   }
 
+  /// Shell 菜单「清屏」：Ghostty 走内建 clear_screen binding（同时清除滚动历史锚点语义
+  /// 由引擎处理）；SwiftTerm 回归路径退化为向 PTY 发送 Ctrl+L，由前台程序自行重绘。
+  func clearScreen() {
+    if let ghosttyView {
+      _ = ghosttyView.performBindingAction("clear_screen")
+      return
+    }
+    typeText("\u{0C}")
+  }
+
   /// IPC send-text/send-keys 的原始用户输入入口。仍经 `AsterTerminalView.send`，因此
   /// Read-only、Vi/Hint 本地模式、选择清理与输入活跃度规则不会被自动化绕过。
   @discardableResult
