@@ -12,9 +12,10 @@ let package = Package(
     .executable(name: "Aster", targets: ["Aster"]),
   ],
   dependencies: [
-    // File Pane 使用固定版本的 GFM 解析器和 highlight.js 包装。精确版本避免
-    // 上游语法、资源 bundle 或 Swift 工具链要求在普通构建中漂移。
-    .package(url: "https://github.com/smittytone/HighlighterSwift.git", exact: "3.1.0"),
+    // HighlighterSwift 3.1.0 需要补充 macOS 发布包的资源定位：上游 `Bundle.module`
+    // 会在脱离构建机后 fatalError，因此固定源码和补丁一起放在 Vendor 下维护。
+    .package(path: "Vendor/HighlighterSwift"),
+    // Markdown 解析器继续锁定精确版本，避免语法和 Swift 工具链要求静默漂移。
     .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.8.0"),
   ],
   targets: [
@@ -79,7 +80,12 @@ let package = Package(
     ),
     .testTarget(
       name: "AsterTests",
-      dependencies: ["Aster", "AsterCore", "SwiftTerm"]
+      dependencies: [
+        "Aster",
+        "AsterCore",
+        "SwiftTerm",
+        .product(name: "Highlighter", package: "HighlighterSwift"),
+      ]
     ),
   ]
 )

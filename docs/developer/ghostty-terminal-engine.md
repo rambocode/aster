@@ -66,7 +66,14 @@ flowchart LR
 `4dcb09ada0c0909717d92547623b26eafa50ca8a` 生成 native macOS 静态
 `Vendor/GhosttyKit.xcframework`，并复制 `shell-integration`、themes 与 terminfo 到
 `Sources/Aster/Ghostty/Resources`。脚本先在临时目录构建和校验，再替换明确目标；stamp
-匹配时直接复用。`scripts/build-app.sh` 自动执行 setup 并把 Aster resource bundle 放进 app。
+匹配时直接复用。`scripts/build-app.sh` 自动执行 setup，并把 Aster resource bundle 放到
+已签名 App 的标准 `Contents/Resources` 目录。
+
+运行时禁止直接访问 SwiftPM 为 executable target 生成的 `Bundle.module`。该访问器只检查
+App 根目录和构建机绝对 `.build` 路径，DMG 安装到新电脑后会因找不到后者而 `fatalError`。
+`PackagedResourceBundle` 显式优先标准资源目录，并兼容命令行构建和 `.xctest` 布局；资源缺失
+只返回领域错误。HighlighterSwift 3.1.0 因存在同类问题固定在 `Vendor/HighlighterSwift`，其
+Aster 补丁面记录在 `UPSTREAM.md`。
 
 ### 配置所有权
 
@@ -122,6 +129,8 @@ Outline、Vi/Mark 模式和可见 URL/路径 Hint。重复的 OSC 133 仅在 pay
   Ghostty 原 action 并存、稳定 anchor、Autocomplete、前后向搜索 flags、selection、Vi/Mark/Hint、
   OSC 6974、Outline 与跳转。
 - `swift build -c release`：验证 binary target、Swift/C bridge 和 linker。
-- `./scripts/build-app.sh` 后运行 `codesign --verify --deep --strict dist/Aster.app`。
-- 检查 app 内 Aster resource bundle 包含 `ghostty/shell-integration` 与 `terminfo/78/xterm-ghostty`。
+- `./scripts/build-app.sh` 会从最终 App 执行 `--verify-packaged-resources`，真实加载 Ghostty 与
+  Highlighter bundle；随后运行 `codesign --verify --deep --strict dist/Aster.app`。
+- `./scripts/build-dmg.sh` 会对只读挂载卷内的 App 再执行严格签名和无窗口资源自检。发布验收
+  应使用独立 scratch 构建并在自检前移走 scratch，确保构建机绝对路径无法掩盖资源缺失。
 - 真机验收普通 Shell、中文 IME、持续输出、全屏 TUI、分屏/PiP、复制粘贴、查找、退出与重启。

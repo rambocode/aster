@@ -69,7 +69,8 @@ fi
 cp -R "$HIGHLIGHTER_BUNDLE" "$RESOURCES_DIR/Highlighter_Highlighter.bundle"
 
 # Aster executable target 的 SwiftPM resource bundle 承载与 XCFramework 同 revision 的
-# Ghostty shell integration 和 terminfo。Bundle.module 在发布 App 内按此标准位置查找。
+# Ghostty shell integration 和 terminfo。运行时显式从标准 `Contents/Resources` 读取；
+# 禁止改放 App 根目录，否则严格代码签名会把它判定为未密封内容。
 GHOSTTY_BUNDLE="$BUILD_DIR/release/AsterTerminal_Aster.bundle"
 if [[ ! -d "$GHOSTTY_BUNDLE" ]]; then
   echo "Missing Ghostty resource bundle: $GHOSTTY_BUNDLE" >&2
@@ -105,5 +106,9 @@ if [[ "$SIGN_IDENTITY" == "-" ]]; then
 else
   codesign --force --deep --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
 fi
+
+# 必须执行最终 App 内的真实资源加载代码。只检查目录存在或 codesign 无法发现
+# `Bundle.module` 回退到构建机绝对路径这类“本机可开、新电脑崩溃”的发布缺陷。
+"$CONTENTS_DIR/MacOS/Aster" --verify-packaged-resources
 
 echo "$APP_DIR"

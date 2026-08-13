@@ -142,7 +142,13 @@ final class GhosttyApp {
   }
 
   private func resolveResources() -> Bool {
-    guard let root = Bundle.module.resourceURL else {
+    // 不使用 SwiftPM 自动生成的 `Bundle.module`：executable target 的访问器只检查
+    // App 根目录和构建机绝对路径，无法找到已签名 App 的 `Contents/Resources`。
+    // 显式定位可以让 DMG 安装后的新电脑正常启动，并在资源缺失时返回可诊断错误。
+    guard
+      let bundle = PackagedResourceBundle.locate(named: "AsterTerminal_Aster.bundle"),
+      let root = bundle.resourceURL
+    else {
       unsetenv("GHOSTTY_RESOURCES_DIR")
       startupError = "未找到 libghostty 资源 Bundle。"
       return false

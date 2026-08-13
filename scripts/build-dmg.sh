@@ -26,5 +26,7 @@ hdiutil create -volname "Aster $VERSION" -srcfolder "$STAGING_DIR" -format UDZO 
 hdiutil verify "$DMG_PATH"
 hdiutil attach "$DMG_PATH" -readonly -noautoopen -mountpoint "$MOUNT_DIR" >/dev/null
 codesign --verify --deep --strict --verbose=2 "$MOUNT_DIR/Aster.app"
+# 从只读挂载卷运行无窗口资源自检，覆盖用户把 App 从 DMG 安装到新电脑时使用的布局。
+"$MOUNT_DIR/Aster.app/Contents/MacOS/Aster" --verify-packaged-resources
 
 echo "$DMG_PATH"

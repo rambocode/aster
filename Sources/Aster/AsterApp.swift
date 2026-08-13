@@ -79,6 +79,9 @@ enum AdditionalWorkspaceWindowRegistry {
 enum AsterApplication {
   @MainActor
   static func main() {
+    // 打包脚本通过无窗口自检验证最终 App 内的 SwiftPM 资源；命中后必须立即返回，
+    // 禁止为了发布验收创建 NSApplication、窗口或任何用户工作区状态。
+    if PackagedResourceVerifier.runIfRequested() { return }
     // 在创建窗口前开始记录，启动阶段的资源和集成失败才能进入同一诊断会话。
     DiagnosticsCenter.shared.start()
     DiagnosticsCenter.shared.cleanStaleFeedbackArchives()

@@ -293,4 +293,7 @@ swift build -c release
 codesign --verify --deep --strict dist/Aster.app
 ```
 
-随后实际启动 `.app`，检查主窗口、设置窗口、分屏、终端输入和资源 Bundle。
+`build-app.sh` 会从最终 App 可执行文件执行无窗口 `--verify-packaged-resources`，验证 Ghostty
+与代码高亮资源的实际加载路径；`build-dmg.sh` 在只读挂载卷中重复该检查。发布前应使用独立
+scratch 构建并在挂载后自检前移走 scratch，模拟新电脑不存在构建目录的环境。随后实际启动
+`.app`，检查主窗口、设置窗口、分屏和终端输入。
