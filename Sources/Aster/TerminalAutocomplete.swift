@@ -38,23 +38,17 @@ extension AsterTerminalView: TerminalAutocompleteHost {
 
 extension GhosttySurfaceView: TerminalAutocompleteHost {
   var autocompleteContainerView: NSView { self }
-  var autocompleteCaretFrame: NSRect {
-    guard let surface else { return .zero }
-    var x = 0.0
-    var y = 0.0
-    var width = 0.0
-    var height = 0.0
-    ghostty_surface_ime_point(surface, &x, &y, &width, &height)
-    let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-    let logicalHeight = height / scale
-    return NSRect(
-      x: x / scale,
-      y: bounds.height - y / scale - logicalHeight,
-      width: max(width / scale, 1),
-      height: max(logicalHeight, 1)
-    )
+  var autocompleteCaretFrame: NSRect { textCursorFrameInViewCoordinates }
+  var autocompleteFont: NSFont {
+    guard let surface, let fontPointer = ghostty_surface_quicklook_font(surface) else {
+      // Surface 尚未创建或当前字体后端无法导出 CoreText 字体时，补全也不会具备可靠的
+      // cursor 锚点；保留无副作用的系统字体仅用于防御性降级。
+      return .monospacedSystemFont(ofSize: 13, weight: .regular)
+    }
+    // libghostty 返回 +1 retained CTFontRef，且 CoreText 与 NSFont 在 macOS 上可桥接。
+    // 由 ARC 接管所有权，并使用与 Metal 网格相同的 face/size，保证相邻字形基线一致。
+    return Unmanaged<NSFont>.fromOpaque(fontPointer).takeRetainedValue()
   }
-  var autocompleteFont: NSFont { .monospacedSystemFont(ofSize: 13, weight: .regular) }
   var autocompleteForegroundColor: NSColor { .textColor }
   var autocompleteBackgroundColor: NSColor { AsterTheme.panel }
 
@@ -225,7 +219,7 @@ final class TerminalAutocompleteController {
       completedCommandOutput = completed
     }
     guard promptActive, awaitingInputEcho else { return }
-    // 输出捕获需先于同分片内的 OSC 命令完成事件，但 ghost 布局必须等 SwiftTerm
+    // 输出捕获需先于同分片内的 OSC 命令完成事件，但 ghost 布局必须等终端 surface
     // 消费完回显并更新 caretFrame。终端的状态报告、光标控制等同样会走 PTY 输出，
     // 因此不能把“收到任意输出”当成回显完成，否则 ghost 会锚定旧光标并覆盖输入。
     Task { @MainActor [weak self] in
@@ -444,7 +438,7 @@ final class TerminalAutocompleteController {
     dismiss()
   }
 
-  /// 仅当 SwiftTerm 的当前可见输入行已包含本地跟踪的完整命令时，才允许显示 ghost。
+  /// 仅当终端当前可见输入行已包含本地跟踪的完整命令时，才允许显示 ghost。
   /// PTY 会混入 OSC、CSI 等非回显字节；它们可能在用户输入与真实回显之间到达，不能
   /// 以它们为依据提前读取旧 `caretFrame`。
   private func currentPromptIsEchoed() -> Bool {
@@ -473,7 +467,7 @@ final class TerminalAutocompleteController {
 }
 
 /// 轻量 AppKit overlay：ghost label 不接收鼠标，候选面板最多显示 8 行并允许点击。
-/// 布局以 SwiftTerm 的公开 caretFrame 为锚点，优先显示在光标下方，空间不足时翻到上方。
+/// 布局以终端 adapter 的 caretFrame 为锚点，优先显示在光标下方，空间不足时翻到上方。
 @MainActor
 private final class TerminalAutocompleteOverlayView: NSView {
   var onCandidateSelected: ((Int) -> Void)?
@@ -518,7 +512,20 @@ private final class TerminalAutocompleteOverlayView: NSView {
     ghostLabel.stringValue = showInline ? (result.ghostText ?? "") : ""
     ghostLabel.isHidden = ghostLabel.stringValue.isEmpty
     ghostLabel.sizeToFit()
-    ghostLabel.frame.origin = NSPoint(x: caretFrame.maxX, y: caretFrame.minY)
+    let naturalBaselineFromBottom =
+      ghostLabel.frame.height - ghostLabel.firstBaselineOffsetFromTop
+    let centeredBaselineFromBottom =
+      naturalBaselineFromBottom + (caretFrame.height - ghostLabel.frame.height) / 2
+    let backingScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+    let alignedBaselineFromBottom =
+      (centeredBaselineFromBottom * backingScale).rounded() / backingScale
+    // Ghostty 会把 adjust-cell-height 增减的空间分到字形上下两侧；AppKit label 的
+    // sizeToFit 只包含字体自然行高。按 cell 中线平移并把 baseline 对齐到设备像素，
+    // 可避免补全文字始终贴住 cell 底边而比 Metal 字形低一个 Retina 像素。
+    ghostLabel.frame.origin = NSPoint(
+      x: caretFrame.maxX,
+      y: caretFrame.minY + alignedBaselineFromBottom - naturalBaselineFromBottom
+    )
     ghostLabel.frame.size.width = min(ghostLabel.frame.width, max(0, bounds.maxX - caretFrame.maxX))
 
     panel.arrangedSubviews.forEach {

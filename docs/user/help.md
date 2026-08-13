@@ -167,7 +167,8 @@ Core Graphics 网格路径。
 ### Autocomplete 与 Inline Suggestion
 
 Autocomplete 使用 Ghostty 的原始 PTY observer，继续显示 inline suggestion 和候选面板；
-接受候选、隐私过滤、本机学习与目录上下文规则保持不变。
+inline suggestion 会使用当前终端字体并与输入文字保持同一行、同一基线，不覆盖 prompt 或已经
+回显的命令。接受候选、隐私过滤、本机学习与目录上下文规则保持不变。
 
 候选来自内置命令/子命令/选项、当前目录文件和文件夹、Shell alias、本机历史、固定命令、README shell code block 和失败纠错。文件名会自动按 Shell 规则转义。Aster 不会自动扫描 `package.json`、Makefile 或 justfile；需要固定项目命令时，先在“设置 → 通用”安装 CLI，然后在目标目录运行：
 

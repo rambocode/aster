@@ -389,6 +389,52 @@ func ghosttyExtensionCapabilitiesWorkOnRealSurface() async throws {
     !$0.isHidden && $0.stringValue == "eckout"
   }
   #expect(autocompleteVisible)
+  let autocompleteOverlay = try #require(
+    view.descendants.first {
+      String(describing: type(of: $0)).contains("TerminalAutocompleteOverlayView")
+    }
+  )
+  let inlineSuggestion = try #require(
+    autocompleteOverlay.subviews.compactMap { $0 as? NSTextField }.first
+  )
+  let quickLookFontPointer = try #require(ghostty_surface_quicklook_font(surface))
+  let terminalFont = Unmanaged<NSFont>.fromOpaque(quickLookFontPointer).takeRetainedValue()
+  let inlineFont = try #require(inlineSuggestion.font)
+  // Inline suggestion 是覆盖在 Ghostty Metal 字形旁的 AppKit 文本；必须消费 surface
+  // 当前实际字体，固定的系统等宽字体即使字号相同也会因 descent/leading 不同而错开基线。
+  #expect(inlineFont.fontName == terminalFont.fontName)
+  #expect(abs(inlineFont.pointSize - terminalFont.pointSize) < 0.01)
+  var imeX = 0.0
+  var imeY = 0.0
+  var imeWidth = 0.0
+  var imeHeight = 0.0
+  ghostty_surface_ime_point(surface, &imeX, &imeY, &imeWidth, &imeHeight)
+  let imeLocalFrame = NSRect(
+    x: imeX,
+    y: view.bounds.height - imeY - imeHeight,
+    width: imeWidth,
+    height: imeHeight
+  )
+  let bufferInfo = try #require(view.bufferInfo())
+  let surfaceSize = ghostty_surface_size(surface)
+  let cellHeight = CGFloat(surfaceSize.cell_height_px) / window.backingScaleFactor
+  let cursorViewportRow = Int(clamping: bufferInfo.cursor.screen_row)
+    - Int(clamping: bufferInfo.viewport_top)
+  let cursorCellMinY = view.bounds.maxY - CGFloat(cursorViewportRow + 1) * cellHeight
+  let naturalBaselineFromBottom =
+    inlineSuggestion.frame.height - inlineSuggestion.firstBaselineOffsetFromTop
+  let centeredBaselineFromBottom =
+    naturalBaselineFromBottom + (cellHeight - inlineSuggestion.frame.height) / 2
+  let alignedBaselineFromBottom =
+    (centeredBaselineFromBottom * window.backingScaleFactor).rounded()
+    / window.backingScaleFactor
+  let inlineBaselineY = inlineSuggestion.frame.minY + naturalBaselineFromBottom
+  // 横向坐标直接消费系统 IME 的 point，不能再除 Retina scale；纵向则必须锚定当前
+  // cursor 网格行，不能使用为系统候选窗预留到下一行的 IME y 坐标。文字自身还要在
+  // cell 内垂直居中，才能跟随 Ghostty 的 adjust-cell-height 基线调整。
+  #expect(abs(inlineSuggestion.frame.minX - imeLocalFrame.maxX) < 0.75)
+  #expect(abs(inlineSuggestion.frame.minY - cursorCellMinY) < 0.75)
+  #expect(abs(inlineBaselineY - (cursorCellMinY + alignedBaselineFromBottom)) < 0.01)
   #expect(view.sendBytes([0x15]))  // Ctrl-U：清空未提交的 `git ch`，继续后续 ABI 验收。
   try await Task.sleep(for: .milliseconds(100))
 
