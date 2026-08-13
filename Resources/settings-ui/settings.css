@@ -303,6 +303,9 @@ input.control[type="text"]:focus, input.control[type="number"]:focus { border-co
 .layout-mini-bottom b { bottom: 3px; left: 5px; width: 18px; height: 3px; box-shadow: 22px 0 0 var(--text-tertiary); }
 
 .appearance-theme-shell { display: grid; gap: 12px; }
+.theme-mode-section { display: grid; gap: 8px; }
+.theme-mode-title { margin-top: 0; }
+.theme-mode-section + .theme-mode-section { margin-top: 4px; }
 .appearance-subtitle { margin: 1px 2px -3px; color: var(--text-tertiary); font-size: 9px; font-weight: 650; letter-spacing: .14em; text-transform: uppercase; }
 .theme-detail-card { padding: 14px; }
 .otty-terminal-preview, .cursor-preview { overflow: hidden; color: var(--terminal-fg, #e8e8e6); background: var(--terminal-bg, #171817); border: 1px solid var(--border-subtle); border-radius: 6px; font: 10.5px/1.48 "SF Mono", Menlo, monospace; white-space: nowrap; }

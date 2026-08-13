@@ -1544,7 +1544,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       })
     let actions = NSStackView(views: [
       contentActionButton(title: "复制") { [weak self] in self?.duplicateTheme() },
-      contentActionButton(title: "编辑当前主题") { [weak self] in self?.beginEditingTheme() },
+      contentActionButton(title: "创建可编辑副本") { [weak self] in self?.beginEditingTheme() },
       contentActionButton(title: "打开主题文件夹") { [weak self] in self?.openThemesFolder() },
       contentActionButton(title: "导入主题…") { [weak self] in self?.importTheme() },
       NSView(),
@@ -1552,7 +1552,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     // 覆盖是可撤销的：有覆盖时才给出入口，没改过就不要多一个永远点不动的按钮。
     if !preferences.themeOverrides(for: focusedTheme.id).isEmpty {
       actions.insertArrangedSubview(
-        contentActionButton(title: "恢复主题原色") { [weak self] in self?.resetThemeOverrides() },
+        contentActionButton(title: "恢复主题原始参数") { [weak self] in self?.resetThemeOverrides() },
         at: actions.arrangedSubviews.count - 1
       )
     }
@@ -1752,7 +1752,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         && style.fontFamilyItalic == nil
         && style.fontFamilyBoldItalic == nil
       var themeRows: [NSView] = [
-        cardCaptionRow("写入当前主题；修改内置主题时会自动创建可编辑副本"),
+        cardCaptionRow("写入当前主题的参数覆盖；不会自动创建主题副本"),
         toggleRow(
           "自动匹配粗细与样式",
           "关闭后可为该主题单独指定粗体与斜体字形",
@@ -1975,20 +1975,32 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private func updateFocusedThemeStyle(
     _ successMessage: String, _ mutate: (inout TerminalTheme) -> Void
   ) {
-    var editable = focusedTheme
-    if editable.isBuiltIn {
-      editable = preferences.duplicateTheme(editable)
-      focusedThemeID = editable.id
+    let original = focusedTheme
+    var edited = original
+    mutate(&edited)
+    let themeID = original.id
+    // 原生诊断回退页与网页设置页共用同一覆盖模型。只记录真正变化的字体角色，避免
+    // 修改粗体时把普通字体及其它角色也无意义地固化成覆盖参数。
+    if edited.style.fontFamilies != original.style.fontFamilies {
+      preferences.setThemeFontFamilies(
+        edited.style.fontFamilies ?? [], role: .regular, themeID: themeID)
     }
-    mutate(&editable)
-    guard preferences.updateTheme(editable) else {
-      message = "主题字体保存失败，请确认主题名称未冲突"
-      refresh()
-      return
+    if edited.style.fontFamilyBold != original.style.fontFamilyBold {
+      preferences.setThemeFontFamilies(
+        edited.style.fontFamilyBold.map { [$0] } ?? [], role: .bold, themeID: themeID)
+    }
+    if edited.style.fontFamilyItalic != original.style.fontFamilyItalic {
+      preferences.setThemeFontFamilies(
+        edited.style.fontFamilyItalic.map { [$0] } ?? [], role: .italic, themeID: themeID)
+    }
+    if edited.style.fontFamilyBoldItalic != original.style.fontFamilyBoldItalic {
+      preferences.setThemeFontFamilies(
+        edited.style.fontFamilyBoldItalic.map { [$0] } ?? [], role: .boldItalic,
+        themeID: themeID)
     }
     do {
-      _ = try preferences.saveThemeToLibraryFolder(editable)
-      message = "\(successMessage)（\(editable.name)）"
+      _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
+      message = "\(successMessage)（\(original.name)）"
     } catch {
       message = "主题字体已应用，但文件保存失败：\(error.localizedDescription)"
     }
@@ -2164,15 +2176,15 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     refresh()
   }
 
-  /// 撤销当前主题的全部颜色覆盖，回到主题自身（含内置真值表）的原始配色。
+  /// 撤销当前主题的全部参数覆盖，回到主题自身（含内置真值表）的原始配置。
   private func resetThemeOverrides() {
     let themeID = focusedTheme.id
     preferences.clearThemeOverrides(themeID: themeID)
     do {
       _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
-      message = "已恢复主题“\(focusedTheme.name)”的原始配色"
+      message = "已恢复主题“\(focusedTheme.name)”的原始参数"
     } catch {
-      message = "已恢复原始配色，但主题文件写入失败：\(error.localizedDescription)"
+      message = "已恢复原始参数，但主题文件写入失败：\(error.localizedDescription)"
     }
     refresh()
   }
@@ -3436,8 +3448,8 @@ extension SettingsViewController: WKNavigationDelegate {
     preferences.configuration.shell.notificationSoundCategories = categories
   }
 
-  /// Otty 的 Theme 字体页编辑主题自身的 font-mono 字段。内置主题保持只读：首次
-  /// 修改先创建自定义副本，再原位更新该副本并切换到它。
+  /// Otty 的 Theme 字体页编辑当前主题的 font-mono 覆盖参数。主题 ID 保持不变，
+  /// 不会因为修改字体自动生成一个自定义副本。
   private func updateWebThemeFont(themeID: String, role: String, value: String) {
     guard value.utf8.count <= 128,
       !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
@@ -3446,37 +3458,32 @@ extension SettingsViewController: WKNavigationDelegate {
       sendWebToast("主题字体名称无效", level: "error")
       return
     }
-    var theme = source.isBuiltIn ? preferences.duplicateTheme(source) : source
-    focusedThemeID = theme.id
-    let normalized = optionalText(value)
-    switch role {
-    case "regular":
-      let tail = Array((theme.style.fontFamilies ?? []).dropFirst())
-      theme.style.fontFamilies = normalized.map { [$0] + tail }
-    case "bold": theme.style.fontFamilyBold = normalized
-    case "italic": theme.style.fontFamilyItalic = normalized
-    case "boldItalic": theme.style.fontFamilyBoldItalic = normalized
-    default:
+    guard let fontRole = ThemeFontRole(rawValue: role) else {
       sendWebToast("未知主题字体样式", level: "error")
       return
     }
+    focusedThemeID = source.id
+    let normalized = optionalText(value)
+    let families: [String]
+    if fontRole == .regular, let normalized {
+      // 网页的“普通”输入只替换首选字体，原主题后续 fallback 继续保留。
+      let tail = Array(preferences.resolved(source).style.fontFamilies?.dropFirst() ?? [])
+      families = [normalized] + tail
+    } else {
+      families = normalized.map { [$0] } ?? []
+    }
+    preferences.setThemeFontFamilies(families, role: fontRole, themeID: themeID)
     do {
-      try TerminalThemeStore.validate(theme)
-      guard preferences.updateTheme(theme) else {
-        sendWebToast("主题字体无法保存", level: "error")
-        return
-      }
-      preferences.selectTheme(theme)
-      _ = try preferences.saveThemeToLibraryFolder(theme)
-      message = "已更新主题“\(theme.name)”的字体。"
+      _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
+      message = "已更新主题“\(source.name)”的字体参数。"
     } catch {
       message = "主题字体保存失败：\(error.localizedDescription)"
     }
     refresh()
   }
 
-  /// ANSI 16 色属于主题调色板整体，不能写进单 token override。内置主题首次改色时
-  /// 创建自定义副本，之后所有色位都在该副本上原位保存。
+  /// ANSI 16 色按色位写入当前主题覆盖层。序列化到 Otty managed 段时再把原主题与
+  /// 色位覆盖合成为完整 palette，避免修改一个颜色就复制整套主题。
   private func updateWebThemeANSIColor(themeID: String, index: Int, color: HexColor) {
     guard let source = allThemes.first(where: { $0.id == themeID }),
       source.palette.ansiColors.indices.contains(index)
@@ -3484,18 +3491,11 @@ extension SettingsViewController: WKNavigationDelegate {
       sendWebToast("ANSI 色位不存在", level: "error")
       return
     }
-    var theme = source.isBuiltIn ? preferences.duplicateTheme(source) : source
-    focusedThemeID = theme.id
-    theme.palette.ansiColors[index] = color
+    focusedThemeID = source.id
+    preferences.setThemeANSIColor(color, index: index, themeID: themeID)
     do {
-      try TerminalThemeStore.validate(theme)
-      guard preferences.updateTheme(theme) else {
-        sendWebToast("ANSI 调色板无法保存", level: "error")
-        return
-      }
-      preferences.selectTheme(theme)
-      _ = try preferences.saveThemeToLibraryFolder(theme)
-      message = "已更新主题“\(theme.name)”的 ANSI 调色板。"
+      _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
+      message = "已更新主题“\(source.name)”的 ANSI 参数。"
     } catch {
       message = "ANSI 调色板保存失败：\(error.localizedDescription)"
     }
@@ -3624,9 +3624,9 @@ extension SettingsViewController: WKNavigationDelegate {
       preferences.clearThemeOverrides(themeID: themeID)
       do {
         _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
-        message = "已恢复主题“\(theme.name)”的原始配色。"
+        message = "已恢复主题“\(theme.name)”的原始参数。"
       } catch {
-        message = "已恢复原始配色；Otty 主题文件同步失败：\(error.localizedDescription)"
+        message = "已恢复原始参数；Otty 主题文件同步失败：\(error.localizedDescription)"
       }
       refresh()
     case "importTheme": importTheme()
@@ -4010,6 +4010,13 @@ extension SettingsViewController: WKNavigationDelegate {
   func settingsSnapshotForTesting() -> [String: Any] { makeWebSnapshot() }
   func applySettingForTesting(key: String, value: Any) throws {
     try applyWebSetting(key: key, value: value)
+  }
+  func applyThemeActionForTesting(_ action: String, payload: [String: Any]) {
+    handleWebAction([
+      "baseRevision": NSNumber(value: webRevision),
+      "action": action,
+      "payload": payload,
+    ])
   }
 }
 

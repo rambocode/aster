@@ -153,6 +153,9 @@ func settingsWebAssetsAreBundledAndSelfContained() throws {
   }
   #expect(style.contains("grid-template-columns: 200px minmax(0, 1fr)"))
   #expect(script.contains("window.webkit?.messageHandlers?.asterSettings"))
+  #expect(script.contains("[\"light\", \"明亮主题\"]"))
+  #expect(script.contains("[\"dark\", \"黑暗主题\"]"))
+  #expect(script.contains("filter(item => item.mode === mode)"))
 }
 
 @Test("网页桥快照覆盖九类真实设置并标记 Windows 限制")
@@ -176,10 +179,68 @@ func settingsSnapshotContainsRuntimeValuesAndCapabilities() throws {
   #expect(values["general.closeTabConfirmation"] as? String == "runningProcess")
   #expect(values["advanced.scrollbackLines"] as? Double == 10_000)
   #expect(capabilities["windowsTextRendering"] == false)
-  #expect(themes.count >= 8)
+  #expect(themes.count == 24)
+  #expect(themes.filter { $0["mode"] as? String == "light" }.count == 9)
+  #expect(themes.filter { $0["mode"] as? String == "dark" }.count == 15)
   #expect(agents.count == AgentProvider.allCases.count)
   #expect((themeEditor["ansi"] as? [String])?.count == 16)
   #expect(computedFonts.values.allSatisfy { !$0.isEmpty })
+}
+
+@Test("网页主题编辑把黑暗主题参数追加到原配置而不创建副本")
+@MainActor
+func settingsThemeActionsUseOverridesForDarkTheme() throws {
+  let defaults = isolatedSettingsDefaults()
+  let themesDirectory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("AsterThemeOverrides-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: themesDirectory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: themesDirectory) }
+
+  let preferences = AppPreferences(
+    defaults: defaults,
+    ottyThemesDirectoryURL: themesDirectory
+  )
+  preferences.configuration.appearance.useSeparateDarkTheme = false
+  let darkTheme = try #require(TerminalThemeCatalog.theme(named: "Ayu Dark"))
+  let themeFile = themesDirectory
+    .appendingPathComponent(darkTheme.id)
+    .appendingPathExtension("ottytheme")
+  try "[meta]\nname = \"Ayu Dark\"\n".write(to: themeFile, atomically: true, encoding: .utf8)
+
+  let controller = SettingsViewController(preferences: preferences)
+  controller.loadViewIfNeeded()
+  controller.applyThemeActionForTesting("selectTheme", payload: ["id": darkTheme.id])
+  controller.applyThemeActionForTesting(
+    "setThemeANSIColor",
+    payload: ["themeID": darkTheme.id, "index": 3, "color": "#123456"]
+  )
+  controller.applyThemeActionForTesting(
+    "setThemeFont",
+    payload: ["themeID": darkTheme.id, "role": "regular", "value": "Menlo"]
+  )
+
+  let overrides = preferences.themeOverrides(for: darkTheme.id)
+  #expect(preferences.configuration.appearance.darkThemeName == "Ayu Dark")
+  #expect(preferences.configuration.appearance.useSeparateDarkTheme)
+  #expect(preferences.themeLibrary.customThemes.isEmpty)
+  #expect(overrides.ansiColors[3] == HexColor("#123456"))
+  #expect(overrides.fontFamilies(for: .regular)?.first == "Menlo")
+  #expect(preferences.darkTheme.id == darkTheme.id)
+  #expect(preferences.darkTheme.palette.ansiColors[3] == HexColor("#123456"))
+  #expect(preferences.darkTheme.style.fontFamilies?.first == "Menlo")
+
+  let reloaded = AppPreferences(
+    defaults: defaults,
+    ottyThemesDirectoryURL: themesDirectory
+  )
+  #expect(reloaded.darkTheme.id == darkTheme.id)
+  #expect(reloaded.darkTheme.palette.ansiColors[3] == HexColor("#123456"))
+  #expect(reloaded.darkTheme.style.fontFamilies?.first == "Menlo")
+
+  let persisted = try String(contentsOf: themeFile, encoding: .utf8)
+  #expect(persisted.contains(ThemeOverrideFileWriter.marker))
+  #expect(persisted.contains("# otty-added: terminal.palette"))
+  #expect(persisted.contains("# otty-added: token.font-mono"))
 }
 
 @Test("网页桥写入强类型字段并持久化扩展字段")

@@ -942,7 +942,7 @@
     const reset = document.createElement("button");
     reset.type = "button";
     reset.className = "action-button danger theme-color-reset";
-    reset.textContent = "恢复主题原色";
+    reset.textContent = "恢复主题原始参数";
     reset.addEventListener("click", () => send("action", {
       action: "resetThemeColors", payload: { themeID: editor.id },
     }));
@@ -954,19 +954,30 @@
     const editor = snapshot?.themeEditor;
     const shell = document.createElement("div");
     shell.className = "appearance-theme-shell";
-    const grid = document.createElement("div");
-    grid.className = "card theme-grid";
-    for (const theme of snapshot?.themes ?? []) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = `theme-card${theme.focused ? " selected" : ""}${theme.selected ? " configured" : ""}`;
-      button.style.setProperty("--theme-background", theme.background);
-      button.style.setProperty("--theme-foreground", theme.foreground);
-      button.style.setProperty("--theme-accent", theme.accent);
-      button.innerHTML = `<span class="theme-preview"><span class="theme-lines"></span><span class="theme-lines"></span></span><span class="theme-name"></span>`;
-      button.querySelector(".theme-name").textContent = theme.name;
-      button.addEventListener("click", () => send("action", { action: "selectTheme", payload: { id: theme.id } }));
-      grid.appendChild(button);
+    const modes = [["light", "明亮主题"], ["dark", "黑暗主题"]];
+    for (const [mode, title] of modes) {
+      const section = document.createElement("section");
+      section.className = "theme-mode-section";
+      const heading = document.createElement("div");
+      heading.className = "appearance-subtitle theme-mode-title";
+      heading.textContent = title;
+      const grid = document.createElement("div");
+      grid.className = "card theme-grid";
+      grid.dataset.themeMode = mode;
+      for (const theme of (snapshot?.themes ?? []).filter(item => item.mode === mode)) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `theme-card${theme.focused ? " selected" : ""}${theme.selected ? " configured" : ""}`;
+        button.style.setProperty("--theme-background", theme.background);
+        button.style.setProperty("--theme-foreground", theme.foreground);
+        button.style.setProperty("--theme-accent", theme.accent);
+        button.innerHTML = `<span class="theme-preview"><span class="theme-lines"></span><span class="theme-lines"></span></span><span class="theme-name"></span>`;
+        button.querySelector(".theme-name").textContent = theme.name;
+        button.addEventListener("click", () => send("action", { action: "selectTheme", payload: { id: theme.id } }));
+        grid.appendChild(button);
+      }
+      section.append(heading, grid);
+      shell.appendChild(section);
     }
     const detailLabel = document.createElement("div");
     detailLabel.className = "appearance-subtitle";
@@ -991,7 +1002,7 @@
       actions.appendChild(button);
     }
     detail.appendChild(actions);
-    shell.append(grid, detailLabel, detail, makeThemeEditor(editor));
+    shell.append(detailLabel, detail, makeThemeEditor(editor));
     const separate = rowMap.get("appearance.useSeparateDarkTheme");
     if (separate) shell.appendChild(cardForRows(rowMap, [separate.key], "separate-theme-card"));
     return makeAppearanceGroup("主题", shell, "theme-group");
@@ -1061,7 +1072,7 @@
       for (const [role, label] of roles) {
         const row = makeRow({
           key: `themeFont.${role}`, label,
-          detail: "写入当前主题；内置主题会先创建副本", type: "text",
+          detail: "追加到当前主题参数；不会自动创建副本", type: "text",
           value: fonts[role] ?? "",
           onCommit: value => send("action", {
             action: "setThemeFont",

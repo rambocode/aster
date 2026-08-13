@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import AsterCore
@@ -69,7 +70,7 @@ func overridesSerializeToOttySection() throws {
   overrides.set(HexColor("#FFFFFFFF")!, for: "interface.window")
   overrides.set(HexColor("#FFFFFFFF")!, for: "titlebar.background")
 
-  let section = TerminalTheme.ottyOverrideSection(overrides)
+  let section = makeBaseTheme().ottyOverrideSection(overrides)
 
   #expect(section.contains("[window]"))
   #expect(section.contains("# otty-added: window.background"))
@@ -85,7 +86,7 @@ func interfaceOnlyTokensAreNotSerialized() {
   var overrides = ThemeColorOverrides()
   overrides.set(HexColor("#123456FF")!, for: "interface.tertiaryForeground")
   // Otty 没有这个键，写进去只会让它解析出未知键；覆盖仍然保留在应用内。
-  #expect(TerminalTheme.ottyOverrideSection(overrides).isEmpty)
+  #expect(makeBaseTheme().ottyOverrideSection(overrides).isEmpty)
   #expect(OttyThemeKeyMap.entry(for: "interface.tertiaryForeground") == nil)
   #expect(OttyThemeKeyMap.entry(for: "interface.window")?.section == "window")
 }
@@ -119,4 +120,75 @@ func overrideApplicationIsDeterministic() {
 
   // 两者写的是同一个字段，顺序不定会让结果抖动；排序后必须一致。
   #expect(base.applyingOverrides(a) == base.applyingOverrides(b))
+}
+
+@Test("ANSI 与主题字体作为原主题参数覆盖，不创建新身份")
+func ansiAndFontsOverrideOriginalThemeIdentity() throws {
+  let base = makeBaseTheme()
+  var overrides = ThemeColorOverrides()
+  overrides.setANSIColor(HexColor("#123456FF")!, at: 3)
+  overrides.setFontFamilies(["JetBrains Mono", "Menlo"], for: .regular)
+  overrides.setFontFamilies(["JetBrains Mono Bold"], for: .bold)
+
+  let resolved = base.applyingOverrides(overrides)
+
+  #expect(resolved.id == base.id)
+  #expect(resolved.isBuiltIn)
+  #expect(resolved.palette.ansiColors[3] == HexColor("#123456FF")!)
+  #expect(resolved.style.fontFamilies == ["JetBrains Mono", "Menlo"])
+  #expect(resolved.style.fontFamilyBold == "JetBrains Mono Bold")
+  #expect(base.palette.ansiColors[3] == HexColor("#000000FF")!)
+  #expect(base.style.fontFamilies == nil)
+
+  let section = base.ottyOverrideSection(overrides)
+  #expect(section.contains("# otty-added: terminal.palette"))
+  #expect(section.contains("#123456"))
+  #expect(section.contains("# otty-added: token.font-mono"))
+  #expect(section.contains("font-mono = [\"JetBrains Mono\", \"Menlo\"]"))
+  #expect(section.contains("font-mono-bold = [\"JetBrains Mono Bold\"]"))
+}
+
+@Test("追加参数可被 Otty 解析器按最后声明重新载入")
+func managedParametersRoundTripThroughOttyParser() throws {
+  let base = makeBaseTheme()
+  var overrides = ThemeColorOverrides()
+  overrides.setANSIColor(HexColor("#123456FF")!, at: 3)
+  overrides.setFontFamilies(["JetBrains Mono", "Menlo"], for: .regular)
+  overrides.setFontFamilies([], for: .bold)
+  let source = """
+    [meta]
+    name = "Round Trip"
+    mode = "light"
+
+    [terminal]
+    foreground = "#2a2b33"
+    background = "#ffffff"
+    palette = ["#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000"]
+
+    [token]
+    font-mono = ["Old Font"]
+    font-mono-bold = ["Old Bold"]
+
+    \(ThemeOverrideFileWriter.marker)
+    \(base.ottyOverrideSection(overrides))
+    """
+
+  let parsed = try OttyThemeParser.parse(data: Data(source.utf8), sourceName: "round-trip")
+
+  #expect(parsed.palette.ansiColors[3] == HexColor("#123456FF")!)
+  #expect(parsed.style.fontFamilies == ["JetBrains Mono", "Menlo"])
+  #expect(parsed.style.fontFamilyBold == nil)
+}
+
+@Test("旧版只有颜色的覆盖数据可无损迁移")
+func legacyColorOnlyOverridesRemainDecodable() throws {
+  let data = Data(
+    #"{"colors":{"terminal.foreground":{"red":18,"green":52,"blue":86,"alpha":255}}}"#.utf8
+  )
+
+  let decoded = try JSONDecoder().decode(ThemeColorOverrides.self, from: data)
+
+  #expect(decoded["terminal.foreground"] == HexColor("#123456FF")!)
+  #expect(decoded.ansiColors.isEmpty)
+  #expect(decoded.fontFamiliesByRole.isEmpty)
 }

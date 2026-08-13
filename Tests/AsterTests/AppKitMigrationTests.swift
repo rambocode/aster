@@ -1912,14 +1912,16 @@ func workspaceShowsSecureInputIndicator() async throws {
   #expect(try #require(currentIndicator()).isHidden)
 }
 
-@Suite("浅色 Otty 主题呈现矩阵", .serialized)
+@Suite("全部 Otty 主题呈现矩阵", .serialized)
 @MainActor
-struct LightThemeRenderParityTests {
-  @Test("九套浅色主题的设置颜色逐项到达最终工作区对象")
-  func everyLightThemeReachesRenderedWorkspaceObjects() throws {
+struct AllThemeRenderParityTests {
+  @Test("九套明亮和十五套黑暗主题的参数逐项到达最终工作区对象")
+  func everyBuiltInThemeReachesRenderedWorkspaceObjects() throws {
     _ = NSApplication.shared
-    let themes = TerminalThemeCatalog.builtIns.filter { $0.mode == .light }
-    #expect(themes.count == 9)
+    let themes = TerminalThemeCatalog.builtIns
+    #expect(themes.filter { $0.mode == .light }.count == 9)
+    #expect(themes.filter { $0.mode == .dark }.count == 15)
+    #expect(themes.count == 24)
 
     for theme in themes {
       try verifyVerticalWorkspace(theme)
@@ -1932,7 +1934,7 @@ struct LightThemeRenderParityTests {
   private func verifyVerticalWorkspace(_ theme: TerminalTheme) throws {
     let defaults = isolatedDefaults()
     let preferences = AppPreferences(defaults: defaults)
-    preferences.appearance = .light
+    preferences.appearance = theme.mode == .dark ? .dark : .light
     preferences.selectTheme(theme)
     preferences.tabBarLayout = .vertical
     let activeTheme = preferences.activeTheme
@@ -2052,7 +2054,7 @@ struct LightThemeRenderParityTests {
   private func verifyHorizontalWorkspace(_ theme: TerminalTheme) throws {
     let defaults = isolatedDefaults()
     let preferences = AppPreferences(defaults: defaults)
-    preferences.appearance = .light
+    preferences.appearance = theme.mode == .dark ? .dark : .light
     preferences.selectTheme(theme)
     preferences.tabBarLayout = .top
     let activeTheme = preferences.activeTheme
@@ -2086,7 +2088,8 @@ struct LightThemeRenderParityTests {
   /// Panel 与 Accents 通过动态角色色进入查找栏、浮层、详情内容和通用控件；直接核对
   /// ThemeRuntime 可以避开某个业务页是否恰好有数据，同时仍锁住最终 AppKit 颜色入口。
   private func verifyRuntimeRoles(_ theme: TerminalTheme) throws {
-    let appearance = try #require(NSAppearance(named: .aqua))
+    let appearanceName: NSAppearance.Name = theme.mode == .dark ? .darkAqua : .aqua
+    let appearance = try #require(NSAppearance(named: appearanceName))
     let mappings: [(ThemeRuntime.Role, String)] = [
       (.panel, "panel.background"),
       (.surface, "panel.surface"),

@@ -85,8 +85,8 @@ final class AppPreferences: ObservableObject {
     }
   }
 
-  /// 用户对各套主题的颜色覆盖。改色写在这里而不是复制整套主题，内置真值表因此
-  /// 保持只读，主题列表也不会被一堆「副本」淹没。
+  /// 用户对各套主题的参数覆盖。颜色、ANSI 与主题字体都写在这里而不是复制整套主题，
+  /// 内置真值表因此保持只读，主题列表也不会被一堆自动生成的「副本」淹没。
   @Published private(set) var themeOverrides: ThemeOverrideLibrary {
     didSet {
       persistThemeOverrides()
@@ -421,6 +421,9 @@ final class AppPreferences: ObservableObject {
   func selectTheme(_ theme: TerminalTheme) {
     if theme.mode == .dark {
       configuration.appearance.darkThemeName = theme.name
+      // 用户明确选择暗色主题时，它必须成为可实际生效的配置。若此前关闭了独立暗色
+      // 主题，只写名称会让点击看起来毫无反应，因此同步开启该开关。
+      configuration.appearance.useSeparateDarkTheme = true
     } else {
       configuration.appearance.themeName = theme.name
     }
@@ -460,6 +463,23 @@ final class AppPreferences: ObservableObject {
   func setThemeColor(_ color: HexColor, slotID: String, themeID: String) {
     var library = themeOverrides
     library.setColor(color, slotID: slotID, themeID: themeID)
+    themeOverrides = library
+  }
+
+  /// 修改 ANSI 色位时只记录该 index 的覆盖，主题身份和其它 15 个色位保持不变。
+  func setThemeANSIColor(_ color: HexColor, index: Int, themeID: String) {
+    guard (0..<16).contains(index) else { return }
+    var library = themeOverrides
+    library.setANSIColor(color, index: index, themeID: themeID)
+    themeOverrides = library
+  }
+
+  /// 主题字体使用同一覆盖层。空数组是显式取消该主题参数，缺少覆盖才表示继承原主题。
+  func setThemeFontFamilies(
+    _ families: [String], role: ThemeFontRole, themeID: String
+  ) {
+    var library = themeOverrides
+    library.setFontFamilies(families, role: role, themeID: themeID)
     themeOverrides = library
   }
 
@@ -538,10 +558,10 @@ final class AppPreferences: ObservableObject {
   @discardableResult
   func writeThemeOverridesToLibraryFolder(themeID: String) throws -> URL? {
     let overrides = themeOverrides.overrides(for: themeID)
-    let section = TerminalTheme.ottyOverrideSection(overrides)
     guard let theme = (TerminalThemeCatalog.builtIns + themeLibrary.customThemes)
         .first(where: { $0.id == themeID })
     else { return nil }
+    let section = theme.ottyOverrideSection(overrides)
     let directory = try ottyThemesDirectory()
     let url = try ottyThemeFileURL(for: theme, in: directory)
     let existing = try String(contentsOf: url, encoding: .utf8)
@@ -549,7 +569,7 @@ final class AppPreferences: ObservableObject {
     let base = ThemeOverrideFileWriter.strippingPreviousOverrides(from: existing)
     let normalizedBase = base.trimmingCharacters(in: .newlines)
     // 清空覆盖时也必须重写文件，移除上一轮 managed 段；提前返回会让设置页显示已
-    // 恢复，而 Otty 下次启动仍继续读到旧的个性化颜色。
+    // 恢复，而 Otty 下次启动仍继续读到旧的个性化参数。
     let content = if section.isEmpty {
       normalizedBase.isEmpty ? "" : normalizedBase + "\n"
     } else {
@@ -561,7 +581,7 @@ final class AppPreferences: ObservableObject {
   }
 
   /// Otty 与 Aster 的自定义主题仓库职责不同：前者是双方共享的 `.ottytheme` 真值，
-  /// 后者保存 Aster 私有 `.astertheme`。颜色个性化只写前者，不能落进 App Support。
+  /// 后者保存 Aster 私有 `.astertheme`。参数个性化只写前者，不能落进 App Support。
   func ottyThemesDirectory() throws -> URL {
     let directory = ottyThemesDirectoryURL
       ?? FileManager.default.homeDirectoryForCurrentUser

@@ -2,7 +2,7 @@
 
 ## 业务背景
 
-Aster 0.4.0 将内置主题升级为 Otty 1.3.1 的完整主题集，并由纯 AppKit 界面逐层应用。用户可以从 9 个浅色与 15 个深色预设中选择主题，实时查看终端示例，再复制为自己的主题并修改界面角色色、ANSI 16 色、光标与文本设置。主题同时作用于工作区和既有终端，不要求重启应用。
+Aster 0.4.0 将内置主题升级为 Otty 1.3.1 的完整主题集，并由纯 AppKit 界面逐层应用。设置页分别展示 9 个明亮与 15 个黑暗预设；用户修改界面角色色、ANSI 16 色或主题字体时，Aster 在当前主题 ID 下增加参数覆盖，不自动创建副本。主题同时作用于工作区和既有终端，不要求重启应用。
 
 ## 领域概念
 
@@ -15,18 +15,18 @@ Aster 0.4.0 将内置主题升级为 Otty 1.3.1 的完整主题集，并由纯 A
 - **ThemeRuntime**：线程安全的界面调色板快照，为 AppKit 动态 `NSColor` 提供当前明暗主题。
 - **TerminalThemeStore**：`.astertheme` 与 `.ottytheme` 文件的统一安全读取、编解码和校验入口。
 - **OttyThemeParser**：只解析主题所需 TOML 子集的无副作用解析器；未知键被忽略，不执行外部命令，也不读取主题引用之外的文件。
-- **ThemeColorOverrides / ThemeOverrideLibrary**：用户对某套主题的颜色覆盖（按 `ThemeColorSlot.id` 记录），按主题 ID 存放。生效主题 = 基础主题 `applyingOverrides(_:)`。
+- **ThemeColorOverrides / ThemeOverrideLibrary**：为兼容既有持久化名称而保留的主题参数覆盖，按主题 ID 保存颜色 token、ANSI 色位及四类主题字体。生效主题 = 基础主题 `applyingOverrides(_:)`。
 - **OttyThemeKeyMap / ThemeOverrideFileWriter**：覆盖写回 `.ottytheme` 时的键映射与追加段规则。
 - **ThemeColorSlot / ThemeColorGroup**：主题详情色板的 token 真值表（`TerminalTheme.colorSlots`）。每个 slot 同时给出 `value`（主题显式声明的值，`nil` 表示未声明）与 `resolved`（当前实际生效色），`kind` 区分实心填充与只描边的 border token。`applyingColor(_:toSlot:)` 是配套的写回入口。
 
 ## 核心规则
 
-1. 内置主题不可原位修改。**改单个颜色写覆盖层，不复制整套主题**：内置的 24 套是 Otty 只读真值表，复制会让主题列表被「副本」堆满，副本还会与上游脱钩；覆盖只记用户显式改过的 token，清掉即完整回到原主题。整套改造（改名、换模式、批量调色）仍走「编辑当前主题」的副本流程。
+1. 内置主题真值表不可被运行时直接改写。**修改颜色、ANSI 16 色或主题字体一律写入当前主题的覆盖层，不复制整套主题**：覆盖只记用户显式改过的参数，主题 ID 和列表数量保持不变，清掉即完整回到原主题。只有用户明确点击“复制”并准备改名或改变模式时才创建新主题。
 2. 主题名称必须非空、不得超过 128 字节，并且不能与其它内置或自定义主题重名。
 3. 每个主题必须具有完整的 16 色 ANSI 调色板。
 4. 导入前必须确认文件是 256 KiB 以内的普通 `.astertheme` 或 `.ottytheme` 文件；符号链接、FIFO 和设备文件不得读取。
 5. 选择、复制、编辑或导入主题后，配置与用户主题库分别原子写入 `UserDefaults`。
-6. 浅色和深色主题可以独立选择；关闭独立主题后，两种系统外观使用同一套主题令牌。
+6. 明亮和黑暗主题在设置页分组完整展示并可独立选择；选择任一黑暗主题会启用独立黑暗主题，保证该操作可实际生效。关闭独立主题后，两种系统外观使用同一套明亮主题令牌。
 7. 主题变更必须同步更新 AppKit 工作区、设置窗口、终端前景/背景、ANSI 256 色派生、选区前景/背景和光标前景/文字。
 8. 标签栏自动隐藏只在开启该选项且工作区只有一个标签页时生效。
 9. Otty 的 `background = "none"` 必须保留为透明 RGBA；终端 `nativeBackgroundColor` 与 backing layer 同步使用该 RGBA，让 workspace 的原生材质直接透出。不得把截图采样灰、固定黑色透明度或主题 `surface` 当作 Glass 的真实终端背景。脱离工作区材质宿主的 PiP、候选面板等浮层仍使用主题 `surface`。旧版 `Catppuccin` 选择迁移为 `Catppuccin Mocha`。
@@ -48,16 +48,16 @@ flowchart LR
   D --> E
   E --> F[AppKit 工作区动态角色色刷新]
   E --> G[现有 SwiftTerm 会话刷新]
-  H[编辑内置主题] --> I[创建自定义副本]
-  I --> J[实时编辑调色板]
+  H[修改当前主题参数] --> I[按主题 ID 写覆盖层]
+  I --> J[追加到原 .ottytheme managed 段]
   J --> E
-  J --> K[保存 .astertheme]
-  L[导入 .astertheme 或 .ottytheme] --> M[后缀、普通文件与大小校验]
-  M --> N[名称与 ANSI 调色板校验]
-  N --> I
-  O[显示菜单打开主题选择器] --> P[方向键或悬停临时预览]
-  P -->|点击或回车| C
-  P -->|Esc 或点到面板外| Q[恢复持久化主题]
+  K[用户明确点击复制] --> L[创建自定义主题]
+  M[导入 .astertheme 或 .ottytheme] --> N[后缀、普通文件与大小校验]
+  N --> O[名称与 ANSI 调色板校验]
+  O --> L
+  P[显示菜单打开主题选择器] --> Q[方向键或悬停临时预览]
+  Q -->|点击或回车| C
+  Q -->|Esc 或点到面板外| R[恢复持久化主题]
 ```
 
 ## 关键实现
@@ -66,7 +66,7 @@ flowchart LR
 
 `OttyThemeParser` 将 Otty 主题中的 `meta`、`terminal`、`token`、`window`、`panel`、`sidebar`、`titlebar`、`tab-bar`、`tab`、`tab-bar.tab`、`container` 等令牌映射到领域模型；水平标签未覆盖的字段按 Otty 规则继承 `[tab]`。解析器支持主题实际使用的十六进制颜色、`rgba()`、`none`、边框、阴影与间距表达式；所有外部数值先检查有限性并约束到渲染安全范围，避免 NaN、Infinity 或超大值进入 AppKit。`meta.mode` 缺失时按可见终端背景的相对亮度推断，非法枚举则拒绝导入。导入后仍统一经过名称、模式和 ANSI 16 色完整性校验。内置主题继续由版本化 Swift 真值表提供，避免应用启动依赖用户的 `~/.config/otty/themes`；该目录中的主题可由用户显式导入。
 
-颜色覆盖的读写只有一条路径：`AppPreferences.resolved(_:)` 把覆盖叠到基础主题上，`lightTheme` / `darkTheme` / `themes(for:)` 全部经过它——任何绕过它的读取都会让终端与界面看到不同版本的同一套主题。覆盖持久化在 `aster.theme-overrides.v1`，并同步写进 `~/.config/otty/themes/<theme-id>.ottytheme`；自定义主题 ID 找不到直达文件时，再按 `[meta].name` 匹配已有文件，绝不创建只有覆盖键的残缺主题。文件保留原主题内容不动，末尾以 `# --- aster overrides (managed) ---` 起一段，每个键前带 `# otty-added: <section>.<key>` 注释；“恢复主题原色”会删除整个 managed 段。重写前先按 marker 截断上一轮内容，否则同一个键会在文件尾部越堆越多。`interface.*` 这类 Aster 自有的界面 token 在 Otty 里没有对应键，只留在应用内的覆盖表、不写进文件。覆盖应用顺序按 key 排序固定：`sidebar.foreground` 与 `interface.foreground` 写的是同一个字段，字典遍历顺序不稳定会让结果抖动。
+主题参数覆盖的读写只有一条路径：`AppPreferences.resolved(_:)` 把覆盖叠到基础主题上，`lightTheme` / `darkTheme` / `themes(for:)` 全部经过它——任何绕过它的读取都会让终端与界面看到不同版本的同一套主题。覆盖持久化在 `aster.theme-overrides.v1`，并同步写进 `~/.config/otty/themes/<theme-id>.ottytheme`；自定义主题 ID 找不到直达文件时，再按 `[meta].name` 匹配已有文件，绝不创建只有覆盖键的残缺主题。文件保留原主题内容不动，末尾以 `# --- aster overrides (managed) ---` 起一段：颜色写对应 section/key，ANSI 任一色位变化时写完整 `terminal.palette`，字体写 `token.font-mono*`；每个参数前都带 `# otty-added:` 注释。“恢复主题原始参数”会删除整个 managed 段。重写前先按 marker 截断上一轮内容，否则同一个键会在文件尾部越堆越多。`interface.*` 这类 Aster 自有的界面 token 在 Otty 里没有对应键，只留在应用内的覆盖表、不写进文件。覆盖应用顺序按 key 排序固定：`sidebar.foreground` 与 `interface.foreground` 写的是同一个字段，字典遍历顺序不稳定会让结果抖动。
 
 `ThemeRuntime` 使用锁保护当前浅色和深色完整主题。`AsterTheme` 通过 `TerminalTheme.resolvedColor(forSlot:)` 将详情页展示的 window、panel、sidebar、surface、token foreground/secondary/tertiary 等令牌映射为动态 `NSColor` Provider，因此设置页、主工作区和终端共享同一条缺省值级联；`ThemeVisualEffectView` 把 Glass 与 Vibrancy 映射为 macOS 原生 `NSVisualEffectView.Material`，并保留应用前的原始 tint/material 供对象级验收。主题 tint 以最底层内容 overlay 画在系统 material 上方：实色不会被 `NSVisualEffectView` 自带的白底覆盖，透明 Glass token 仍按原 alpha 透出材质。
 
@@ -98,11 +98,11 @@ flowchart LR
 - 符号链接、FIFO、设备文件、超限文件与不支持后缀均在读取内容前拒绝。
 - 字体角色解析、主题候选跳过、用户回退顺序、字号变化显式触发 Metal 新帧、光标颜色/文字色/不透明度、Core Graphics/Metal 竖线高度与垂直居中一致性、DECSCUSR 只改变 blink 位、Agent 处理期间暂停闪烁，以及 Pane 切换保持光标几何。
 - Otty `tab-bar.tab` 继承、缺失 mode 的亮度推断，以及非有限/超范围布局数值的安全规范化。
-- 9 套浅色主题逐套建立真实 AppKit 工作区，核对详情页中的 Terminal、Window、Container、Panel、Sidebar、Titlebar、Tabbar、Tab、Accents、光标、选区和 ANSI 16 色是否到达对应渲染对象。
+- 9 套明亮与 15 套黑暗主题逐套建立真实 AppKit 工作区，核对详情页中的 Terminal、Window、Container、Panel、Sidebar、Titlebar、Tabbar、Tab、Accents、光标、选区和 ANSI 16 色是否到达对应渲染对象。
 - 给无宽度的容器或活动标签边框设置颜色时自动启用 1pt，确保可编辑 token 不会“保存成功但不可见”。
 - 自定义主题复制、唯一命名、编辑与重名拒绝。
 - 主题选择的自定义优先与同模式回退。
 - 菜单选择器覆盖 9 套浅色主题，验证方向键预览不落盘、取消恢复和确认后新实例可读取。
 - 透明主题会同步清理所有 Pane 的旧 backing layer；非活动 Pane 不叠加改写背景的遮罩，分屏主题切换后每个存活及可见终端使用同一套 RGBA 与 ANSI 色。
-- 详情改单色写入对应 Otty 文件的 managed 段，“恢复主题原色”删除该段且不留下旧个性化配置。
+- 详情修改颜色、ANSI 或主题字体都写入同一 Otty 文件的 managed 段且不创建副本，“恢复主题原始参数”删除该段且不留下旧个性化配置。
 - 单标签自动隐藏与多标签恢复标签栏。
