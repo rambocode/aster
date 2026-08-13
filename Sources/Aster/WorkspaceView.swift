@@ -26,8 +26,9 @@ final class WorkspaceViewController: NSViewController {
   private var tabActivityRefreshScheduled = false
   private var retainedObjects: [AnyObject] = []
   private var refreshScheduled = false
-  /// 设置窗口独立于工作区，但配置仍是全局的。展示期间延后结构刷新，避免设置窗口的
-  /// NSSwitch 动画与多个工作区整树重建争抢主线程；现存终端偏好仍会立即就地应用。
+  /// 设置窗口独立于工作区，但配置仍是全局的。展示期间只延后配置触发的结构刷新，
+  /// 避免设置控件动画与多个工作区整树重建争抢主线程；Tab/Pane 等工作区模型变化
+  /// 必须继续立即刷新，现存终端偏好也会立即就地应用。
   private var settingsPresentationActive = false
   private var needsRefreshAfterSettingsDismiss = false
   private var terminalPreferenceApplyScheduled = false
@@ -662,10 +663,6 @@ final class WorkspaceViewController: NSViewController {
   }
 
   private func scheduleRefresh() {
-    guard !settingsPresentationActive else {
-      needsRefreshAfterSettingsDismiss = true
-      return
-    }
     guard !refreshScheduled else { return }
     refreshScheduled = true
     DispatchQueue.main.async { [weak self] in

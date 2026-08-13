@@ -559,6 +559,10 @@ func settingsUsesResizableIndependentWindow() throws {
   #expect(settingsWindow.minSize.height == settingsWindow.frame.height)
   #expect(settingsWindow.maxSize.height > settingsWindow.frame.height * 2)
   #expect(settingsWindow.styleMask.contains(.resizable))
+  // 设置页由 WKWebView 填满内容区域；内容不得延伸进系统标题栏，否则 WebKit 会吞掉
+  // 标题栏的 mouseDown，用户看得到窗口却无法拖动。
+  #expect(!settingsWindow.styleMask.contains(.fullSizeContentView))
+  #expect(settingsWindow.isMovable)
   #expect(settingsWindow.standardWindowButton(.miniaturizeButton)?.isEnabled == false)
   #expect(settingsWindow.isExcludedFromWindowsMenu)
   #expect(workspaceWindow.frame == workspaceFrame)
@@ -569,6 +573,50 @@ func settingsUsesResizableIndependentWindow() throws {
     ($0 as? NSTextField)?.stringValue
   }
   #expect(!visibleLabels.contains("返回工作区"))
+}
+
+@Test("设置窗口打开时新增 Tab 与 Pane 立即刷新工作区")
+@MainActor
+func workspaceMutationsStayVisibleWhileSettingsAreOpen() async throws {
+  let defaults = isolatedDefaults()
+  let model = try makeNonTerminalTestModel(
+    defaults: defaults,
+    directories: ["/tmp/settings-live-workspace"]
+  )
+  defer {
+    for tab in model.tabs { tab.stop(immediately: true) }
+  }
+  let preferences = AppPreferences(defaults: defaults)
+  let workspace = WorkspaceViewController(model: model, preferences: preferences)
+  workspace.loadViewIfNeeded()
+  workspace.setSettingsPresentationActive(true)
+
+  model.newTab(workingDirectory: "/tmp/settings-live-tab", hasContent: true)
+  let addedTab = try #require(model.selectedTab)
+  addedTab.split(
+    direction: .right,
+    kind: .editor,
+    resourcePath: "/tmp/settings-live-pane.txt"
+  )
+  try await Task.sleep(for: .milliseconds(30))
+
+  let tabIdentifier = "workspace-tab-row-\(addedTab.id.uuidString)"
+  let visibleTabWhileOpen = workspace.view.descendants.contains {
+    $0.identifier?.rawValue == tabIdentifier
+  }
+  let visiblePaneIDsWhileOpen = Set(
+    workspace.view.descendants.compactMap { ($0 as? ActivePaneHostView)?.paneID }
+  )
+  #expect(visibleTabWhileOpen)
+  #expect(visiblePaneIDsWhileOpen == Set(addedTab.layout.allPanes.map(\.id)))
+
+  // 关闭设置不应承担刷新职责；保留这一步可直接区分“操作已执行但 UI 被延迟”的回归。
+  workspace.setSettingsPresentationActive(false)
+  #expect(workspace.view.descendants.contains { $0.identifier?.rawValue == tabIdentifier })
+  #expect(
+    Set(workspace.view.descendants.compactMap { ($0 as? ActivePaneHostView)?.paneID })
+      == Set(addedTab.layout.allPanes.map(\.id))
+  )
 }
 
 @Test("设置窗口打开时切换主题会实时刷新主工作区")

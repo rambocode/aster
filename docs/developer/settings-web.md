@@ -37,6 +37,11 @@ flowchart LR
 
 设置变更通过 `AppPreferences.objectWillChange` 实时通知现有工作区。字体、主题 token、ANSI 16 色、光标、选择、剪贴板、通知声音、链接安全、Agent、Panel 宽度、Recipe 重放、终端类型和 East Asian Ambiguous 宽度等沿用强类型配置；Shell 路径、Scrollback 与背景透明度也会作用到新建或现有终端。普通、粗体、斜体和粗斜体各自拥有 fallback 链，未配置的样式继承普通 fallback。主题颜色写入按主题 ID 隔离的 override，内置主题在首次修改字体或 ANSI 色时先复制为用户主题；能映射到 Otty 的 token 同步到 `.ottytheme` managed 段。快捷键录制保存为可读符号串，由 `ShortcutOverrideApplier` 修改现有 AppKit 菜单的 `keyEquivalent`，不复制 selector 或绕开 responder chain。
 
+设置窗口打开期间，只合并由配置广播触发的工作区整树刷新；现存终端偏好仍就地应用，
+而 Tab、Pane、焦点和其它工作区模型变化继续经过普通 `scheduleRefresh()` 立即显示。设置页的
+`WKWebView` 只占据系统 content area，不使用 `.fullSizeContentView` 覆盖透明标题栏，窗口顶部
+因此保留原生拖动区域。
+
 可编辑配置文件位于 `~/Library/Application Support/Aster/settings.json`，schema 版本为 3，同时包含强类型配置和兼容字段。导入仍接受旧版单块 `AsterConfiguration` JSON；新格式只接收 allowlist 中的兼容字段，本机链接与剪贴板授权继续按原有安全规则剥离。
 
 ## 资源与失败语义
@@ -45,7 +50,7 @@ flowchart LR
 
 ## 验证
 
-`SettingsResponsivenessTests` 覆盖窗口几何、单一非持久化 WebView、CSP/九类资源、Otty 外观页结构与范围控件真值、主题详情快照、Windows capability、强类型与复合字段写入、动态 Agent 字段、菜单快捷键、兼容字段持久化和活动工作区 Panel 宽度。发布前还需运行：
+`SettingsResponsivenessTests` 与 `AppKitMigrationTests` 覆盖窗口几何、原生标题栏拖动边界、设置打开期间 Tab/Pane 实时刷新、单一非持久化 WebView、CSP/九类资源、Otty 外观页结构与范围控件真值、主题详情快照、Windows capability、强类型与复合字段写入、动态 Agent 字段、菜单快捷键、兼容字段持久化和活动工作区 Panel 宽度。发布前还需运行：
 
 ```bash
 node --check Resources/settings-ui/settings.js

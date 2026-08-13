@@ -109,7 +109,9 @@ final class AsterSettingsWindowController: NSWindowController {
         origin: .zero,
         size: restoredSize
       ),
-      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+      // 设置内容是占满 contentView 的 WKWebView，不能使用 fullSizeContentView：WebKit
+      // 会延伸到透明标题栏并吞掉 mouseDown，使系统标题栏失去窗口拖动能力。
+      styleMask: [.titled, .closable, .miniaturizable, .resizable],
       backing: .buffered,
       defer: false
     )
