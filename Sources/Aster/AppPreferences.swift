@@ -421,11 +421,13 @@ final class AppPreferences: ObservableObject {
   func selectTheme(_ theme: TerminalTheme) {
     if theme.mode == .dark {
       configuration.appearance.darkThemeName = theme.name
-      // 用户明确选择暗色主题时，它必须成为可实际生效的配置。若此前关闭了独立暗色
-      // 主题，只写名称会让点击看起来毫无反应，因此同步开启该开关。
+      // 主题卡和“显示 → 主题”都是“立即应用”入口。只保存暗色备用主题会让浅色
+      // 外观下的点击看起来毫无反应，因此同时切换当前外观并开启独立暗色主题。
       configuration.appearance.useSeparateDarkTheme = true
+      appearance = .dark
     } else {
       configuration.appearance.themeName = theme.name
+      appearance = .light
     }
   }
 

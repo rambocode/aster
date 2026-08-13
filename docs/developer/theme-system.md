@@ -26,7 +26,7 @@ Aster 0.4.0 将内置主题升级为 Otty 1.3.1 的完整主题集，并由纯 A
 3. 每个主题必须具有完整的 16 色 ANSI 调色板。
 4. 导入前必须确认文件是 256 KiB 以内的普通 `.astertheme` 或 `.ottytheme` 文件；符号链接、FIFO 和设备文件不得读取。
 5. 选择、复制、编辑或导入主题后，配置与用户主题库分别原子写入 `UserDefaults`。
-6. 明亮和黑暗主题在设置页分组完整展示并可独立选择；选择任一黑暗主题会启用独立黑暗主题，保证该操作可实际生效。关闭独立主题后，两种系统外观使用同一套明亮主题令牌。
+6. 明亮和黑暗主题在设置页及“显示 → 主题”中完整展示；选择主题会立即把当前外观切换到该主题的模式。选择黑暗主题还会启用独立黑暗主题，关闭独立主题后两种系统外观使用同一套明亮主题令牌。
 7. 主题变更必须同步更新 AppKit 工作区、设置窗口、终端前景/背景、ANSI 256 色派生、选区前景/背景和光标前景/文字。
 8. 标签栏自动隐藏只在开启该选项且工作区只有一个标签页时生效。
 9. Otty 的 `background = "none"` 必须保留为透明 RGBA；终端 `nativeBackgroundColor` 与 backing layer 同步使用该 RGBA，让 workspace 的原生材质直接透出。不得把截图采样灰、固定黑色透明度或主题 `surface` 当作 Glass 的真实终端背景。脱离工作区材质宿主的 PiP、候选面板等浮层仍使用主题 `surface`。旧版 `Catppuccin` 选择迁移为 `Catppuccin Mocha`。
@@ -70,7 +70,7 @@ flowchart LR
 
 `ThemeRuntime` 使用锁保护当前浅色和深色完整主题。`AsterTheme` 通过 `TerminalTheme.resolvedColor(forSlot:)` 将详情页展示的 window、panel、sidebar、surface、token foreground/secondary/tertiary 等令牌映射为动态 `NSColor` Provider，因此设置页、主工作区和终端共享同一条缺省值级联；`ThemeVisualEffectView` 把 Glass 与 Vibrancy 映射为 macOS 原生 `NSVisualEffectView.Material`，并保留应用前的原始 tint/material 供对象级验收。主题 tint 以最底层内容 overlay 画在系统 material 上方：实色不会被 `NSVisualEffectView` 自带的白底覆盖，透明 Glass token 仍按原 alpha 透出材质。
 
-`ThemeSwitcherPanelController` 在工作区窗口上方展示独立、可聚焦的主题 Panel；`ThemeSwitcherViewController` 负责搜索、方向键、悬停和色点列表。`AppPreferences.previewTheme(_:)` 只更新内存中的临时主题与 `ThemeRuntime`，不修改配置 JSON；`commitThemePreview()` 将预览写入当前明暗模式，`cancelThemePreview()` 恢复持久化选择。菜单跟踪结束后的下一轮 run loop 才让 Panel 成为 key，避免菜单收起时主窗口抢回焦点并误触取消。
+`ThemeSwitcherPanelController` 在工作区窗口上方展示独立、可聚焦的主题 Panel；`ThemeSwitcherViewController` 把 9 套明亮和 15 套黑暗主题放进同一搜索列表，负责方向键、悬停和色点预览。`AppPreferences.previewTheme(_:)` 只更新内存中的临时主题与 `ThemeRuntime`，不修改配置 JSON；`commitThemePreview()` 保存选择并把当前外观切换到主题自身的模式，`cancelThemePreview()` 恢复持久化选择。菜单跟踪结束后的下一轮 run loop 才让 Panel 成为 key，避免菜单收起时主窗口抢回焦点并误触取消。
 
 `TerminalThemeStyle` 逐项保留 Otty 的 sidebar/titlebar/tab/horizontal-tab/container 数据。AppKit 工作区让窗口根层消费 `window`，中央卡片消费 `container`，左右两栏（含各自顶部）共同消费 `sidebar`；中央标题是 workspace surface 上的透明内容层，不再创建第二个材质或独立底色，因而和下面 Pane 连成一个背景面。常驻工作目录胶囊只在主题显式声明时消费 `titlebar.background`，文字消费 `titlebar.foreground`。这种分层让 April 保持白色连续中央区，也让 Glass Light 不会在 28pt 标题边界重复合成材质形成横向接缝。横向标签栏及其下沿消费 `tabbar`，标签行消费 `tab`；标签高度、活动前景和背景、顶部选中线、容器圆角、边框、阴影及不同标签方向下的外边距也直接取自主题。`tab-bar.tab` 未声明的颜色、边框、字重和阴影按 Otty 规则逐字段继承基础 `[tab]`，不再用固定卡片样式或 AppKit 近似色替代。
 

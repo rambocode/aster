@@ -200,6 +200,7 @@ func settingsThemeActionsUseOverridesForDarkTheme() throws {
     defaults: defaults,
     ottyThemesDirectoryURL: themesDirectory
   )
+  preferences.appearance = .light
   preferences.configuration.appearance.useSeparateDarkTheme = false
   let darkTheme = try #require(TerminalThemeCatalog.theme(named: "Ayu Dark"))
   let themeFile = themesDirectory
@@ -222,6 +223,7 @@ func settingsThemeActionsUseOverridesForDarkTheme() throws {
   let overrides = preferences.themeOverrides(for: darkTheme.id)
   #expect(preferences.configuration.appearance.darkThemeName == "Ayu Dark")
   #expect(preferences.configuration.appearance.useSeparateDarkTheme)
+  #expect(preferences.activeTheme.id == darkTheme.id)
   #expect(preferences.themeLibrary.customThemes.isEmpty)
   #expect(overrides.ansiColors[3] == HexColor("#123456"))
   #expect(overrides.fontFamilies(for: .regular)?.first == "Menlo")

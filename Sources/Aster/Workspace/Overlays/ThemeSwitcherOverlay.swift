@@ -106,8 +106,9 @@ final class ThemeSwitcherViewController: NSViewController, NSSearchFieldDelegate
 
   init(preferences: AppPreferences) {
     self.preferences = preferences
-    let mode = preferences.activeTheme.mode
-    allThemes = preferences.themes(for: mode)
+    // “显示 → 主题”是完整主题选择器，不是当前明暗模式的过滤器。保持明亮在前、
+    // 黑暗在后，同时让搜索和键盘预览覆盖全部内置及自定义主题。
+    allThemes = TerminalThemeMode.allCases.flatMap { preferences.themes(for: $0) }
     super.init(nibName: nil, bundle: nil)
   }
 

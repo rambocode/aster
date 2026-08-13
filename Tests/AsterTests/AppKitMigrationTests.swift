@@ -619,7 +619,7 @@ func workspaceMutationsStayVisibleWhileSettingsAreOpen() async throws {
   )
 }
 
-@Test("设置窗口打开时切换主题会实时刷新主工作区")
+@Test("设置窗口打开时从明亮切换黑暗主题会实时刷新主工作区")
 @MainActor
 func themeSelectionRefreshesWorkspaceWhileSettingsStayOpen() async throws {
   let defaults = isolatedDefaults()
@@ -634,20 +634,22 @@ func themeSelectionRefreshesWorkspaceWhileSettingsStayOpen() async throws {
   window.contentView?.layoutSubtreeIfNeeded()
   workspace.setSettingsPresentationActive(true)
 
-  let pink = try #require(TerminalThemeCatalog.theme(named: "Pink"))
-  preferences.selectTheme(pink)
+  let ayuDark = try #require(TerminalThemeCatalog.theme(named: "Ayu Dark"))
+  preferences.selectTheme(ayuDark)
   // AppPreferences 在 will-change 阶段广播，工作区要等当前调用栈结束后读取新主题。
   try await Task.sleep(for: .milliseconds(30))
   window.contentView?.layoutSubtreeIfNeeded()
 
+  #expect(preferences.appearance == .dark)
+  #expect(preferences.activeTheme.id == ayuDark.id)
   let root = try #require(workspace.view as? ThemeVisualEffectView)
-  #expect(root.appliedThemeTint == pink.resolvedColor(forSlot: "interface.window"))
+  #expect(root.appliedThemeTint == ayuDark.resolvedColor(forSlot: "interface.window"))
   let sidebar = try #require(
     workspace.view.descendants.first {
       $0.identifier?.rawValue == "workspace-sidebar"
     } as? ThemeVisualEffectView
   )
-  #expect(sidebar.appliedThemeTint == pink.resolvedColor(forSlot: "sidebar.background"))
+  #expect(sidebar.appliedThemeTint == ayuDark.resolvedColor(forSlot: "sidebar.background"))
 }
 
 @Test("菜单主题选择器实时预览且仅在确认后持久化")
@@ -669,21 +671,30 @@ func themeSwitcherPreviewsAndCommitsAsOneTransaction() throws {
 
   let cancelled = ThemeSwitcherViewController(preferences: preferences)
   cancelled.loadViewIfNeeded()
-  #expect(cancelled.visibleThemeNames.count == 9)
+  #expect(cancelled.visibleThemeNames.count == 24)
+  #expect(cancelled.visibleThemeNames.contains("Ayu Dark"))
   #expect(cancelled.selectedThemeName == "Ayu Light")
-  cancelled.moveSelection(1)
+  let cancelledLightIndex = try #require(cancelled.visibleThemeNames.firstIndex(of: "Ayu Light"))
+  let cancelledDarkIndex = try #require(cancelled.visibleThemeNames.firstIndex(of: "Ayu Dark"))
+  cancelled.moveSelection(cancelledDarkIndex - cancelledLightIndex)
   let previewedName = try #require(cancelled.selectedThemeName)
-  #expect(previewedName != "Ayu Light")
+  #expect(previewedName == "Ayu Dark")
   #expect(preferences.activeTheme.name == previewedName)
   cancelled.cancelPresentation()
+  #expect(preferences.appearance == .light)
   #expect(preferences.activeTheme.name == "Ayu Light")
 
   let committed = ThemeSwitcherViewController(preferences: preferences)
   committed.loadViewIfNeeded()
-  committed.moveSelection(1)
+  let lightIndex = try #require(committed.visibleThemeNames.firstIndex(of: "Ayu Light"))
+  let darkIndex = try #require(committed.visibleThemeNames.firstIndex(of: "Ayu Dark"))
+  committed.moveSelection(darkIndex - lightIndex)
   let committedName = try #require(committed.selectedThemeName)
+  #expect(committedName == "Ayu Dark")
+  #expect(preferences.activeTheme.name == "Ayu Dark")
   committed.commitSelection()
-  #expect(preferences.configuration.appearance.themeName == committedName)
+  #expect(preferences.appearance == .dark)
+  #expect(preferences.configuration.appearance.darkThemeName == committedName)
   #expect(AppPreferences(defaults: defaults).activeTheme.name == committedName)
 }
 
