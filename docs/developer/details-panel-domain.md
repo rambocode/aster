@@ -8,6 +8,8 @@ Pane，不能用目录、进程名或最近会话推断另一个 Pane 的数据�
 ## 领域概念
 
 Info 是环境摘要，Outline 是可跳转索引；两者均保留旧快照作为刷新中的不可交互视觉帧。
+History 是**跨会话的工程记录**：它读的不是当前 Pane 的运行态，而是 Session Memory
+数据库里已经落盘的历史（详见 [Session Memory 与 Context 领域](session-memory-domain.md)）。
 
 ## 核心规则
 
@@ -23,6 +25,24 @@ Info 是环境摘要，Outline 是可跳转索引；两者均保留旧快照作�
   退出状态。没有 Shell Integration 时不得抓取终端文本猜命令。
 - 文档 Outline 的每一项必须拥有真实源码行。JSON 按原始文本顺序定位 key；JSONL 复用
   `AgentTranscriptParser` 的 canonical schema，不维护另一份简化 schema。
+- History 页按**当前聚焦 Pane 所属项目**列出历史 session，不做跨项目聚合，也不用
+  最近会话或目录相似度推测归属。切 Pane 必须连同详情态、展开态与已读全文缓存一起清空
+  ——新 Pane 可能属于另一个项目，留着旧缓存就是串项目展示。
+- 空状态分三态，因为用户的下一步动作完全不同：**正在读取**（等）、
+  **未开启记录**（去设置；`makeReader()` 返回 nil，涵盖库不存在、打不开与 schema 版本不匹配）、
+  **确实没有记录**（列表态与详情态各自的文案）。把「未开启」显示成「无记录」是错的，
+  未开启是正常状态而不是故障。
+- 事件行的展示模型由 `SessionTimelineProjection`（AsterCore 纯函数）产出，视图层只负责
+  把行模型摆进表格。来自 provider transcript 的补录事件（`SessionTimelineRow.isTranscriptSourced`）
+  必须与终端实测事件可区分：它们可能因格式漂移而缺失，可信度不同。标注用标题右侧的
+  文字徽章加整行 tooltip，**不换图标**——图标始终表达事件 kind，不承载来源信息。
+- History 的数据读取走独立只读连接（`MemoryStoreAccess.makeReader()`），与记录侧的
+  单写者并发安全；`Task.detached` 开连接、用完即弃，主线程只做行模型替换。
+  提交结果前必须校验 tab、Pane 与请求参数三重身份，迟到结果一律丢弃。
+- History **没有推送通道**（session 可能在别的 Pane 甚至别的窗口结束），因此刷新语义是
+  「进入本页时按过期时间重取」加一颗手动刷新按钮，**不接入 `objectWillChange → refresh()` 链**。
+- 实现 `tableView(_:heightOfRow:)` 会让 `rowHeight` 对**所有**表失效，因此该方法必须逐表
+  返回 Outline / Git / Files 原有的固定行高，不能只顾 History 自己。
 
 ## 业务流程
 

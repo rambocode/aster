@@ -65,8 +65,9 @@ func inspectorPreferencesRoundTripThroughDefaults() {
   #expect(reloaded.inspectorPresented == true)
   #expect(reloaded.inspectorSection == 2)
 
+  // 上界随 History 页加入放宽到 4；越界值仍夹到最后一页而不是回落 Info。
   reloaded.inspectorSection = 9
-  #expect(reloaded.inspectorSection == 3)
+  #expect(reloaded.inspectorSection == 4)
 }
 
 @Test("详情面板显隐复用同一颗固定位置图标")
@@ -279,7 +280,7 @@ func inspectorRemovalDoesNotAnimateTerminalViewTree() throws {
   #expect(gridSizes.count <= 1)
 }
 
-@Test("面板显隐始终保留唯一切换入口并呈现四个页签 chip")
+@Test("面板显隐始终保留唯一切换入口并呈现五个页签 chip")
 @MainActor
 func workspaceHeaderRevealsInspectorToggleAndPanelChips() {
   let collapsedDefaults = panelTestDefaults()
@@ -318,6 +319,7 @@ func workspaceHeaderRevealsInspectorToggleAndPanelChips() {
     "details-chip-outline",
     "details-chip-git",
     "details-chip-files",
+    "details-chip-history",
   ] {
     #expect(identifiers.contains(chip))
   }
@@ -2132,8 +2134,195 @@ func workingDirectoryChangeRefreshesFilesWithoutRebuildingWorkspaceOrStealingFoc
   withExtendedLifetime(directorySubscription) {}
 }
 
+// MARK: - History
+
+@Test("History 页挂载专用表格与刷新入口，并给出可区分的空状态")
+@MainActor
+func historySectionMountsTableAndDistinguishableEmptyState() throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 4
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  let controller = DetailsPanelViewController(model: model, preferences: preferences)
+  controller.loadViewIfNeeded()
+
+  let table = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-history-table" })
+  #expect(table.numberOfRows == 0)
+
+  let identifiers = controller.view.allDescendants.compactMap { $0.identifier?.rawValue }
+  #expect(identifiers.contains("details-history-refresh"))
+  // 返回按钮只属于详情态；列表态必须隐藏，否则用户会点到一个无处可返回的入口。
+  let back = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSButton }
+      .first { $0.identifier?.rawValue == "details-history-back" })
+  #expect(back.isHidden)
+
+  // 空状态必须说清原因：仍在读取、未开启记录，还是确实没有记录。
+  let texts = controller.view.allDescendants.compactMap { ($0 as? NSTextField)?.stringValue }
+  #expect(
+    texts.contains {
+      $0.contains("正在读取会话记录") || $0.contains("未开启记录") || $0.contains("暂无记录")
+    })
+}
+
+@Test("切到 History 页只切换可见性，已挂载的其它页内容保持在视图树中")
+@MainActor
+func historyChipSwitchesVisibilityWithoutRebuildingOtherSections() throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 3
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  let controller = DetailsPanelViewController(model: model, preferences: preferences)
+  controller.loadViewIfNeeded()
+
+  let filesTable = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-files-table" })
+  let chip = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSButton }
+      .first { $0.identifier?.rawValue == "details-chip-history" })
+  chip.performClick(nil)
+
+  #expect(preferences.inspectorSection == 4)
+  let historyTable = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-history-table" })
+  // Files 页仍留在视图树里（只是被祖先隐藏），回切不需要重建数百个控件与约束。
+  #expect(controller.view.allDescendants.contains { $0 === filesTable })
+  #expect(filesTable.isHiddenByAncestor)
+  #expect(historyTable.isHiddenByAncestor == false)
+}
+
+@Test("History 行高按行类型区分，展开正文块受最大高度约束")
+@MainActor
+func historyRowHeightsVaryByRowKind() throws {
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  let controller = DetailsPanelViewController(model: model, preferences: preferences)
+
+  let timelineRow = SessionTimelineRow(
+    id: "session#1",
+    sequence: 1,
+    timestamp: Date(),
+    kind: .command,
+    title: "swift build",
+    subtitle: "/repo",
+    status: .failed(1)
+  )
+  let width: CGFloat = 260
+  #expect(
+    controller.historyRowHeight(.sectionHeader("时间线"), width: width)
+      == SessionHistoryMetrics.sectionHeaderHeight)
+  #expect(
+    controller.historyRowHeight(.timeline(timelineRow, isExpanded: false), width: width)
+      == SessionHistoryMetrics.timelineRowHeight)
+  // 1MiB 的 artifact 不能把单行撑成一屏；超长正文靠「复制」而不是无限行高。
+  let huge = SessionHistoryRow.expandedText(
+    id: "session#1",
+    text: String(repeating: "some long output line\n", count: 500),
+    isFullText: true,
+    canLoadFullText: false
+  )
+  #expect(
+    controller.historyRowHeight(huge, width: width)
+      == SessionHistoryMetrics.expandedTextMaximumHeight)
+  let short = SessionHistoryRow.expandedText(
+    id: "session#1", text: "one line", isFullText: false, canLoadFullText: true)
+  #expect(
+    controller.historyRowHeight(short, width: width)
+      < SessionHistoryMetrics.expandedTextMaximumHeight)
+}
+
+@Test("时间线行没有可展开内容时不给出悬停高亮这一空承诺")
+@MainActor
+func historyTimelineRowOnlyPromisesInteractionWhenExpandable() throws {
+  let cell = SessionHistoryTimelineRowView(
+    identifier: NSUserInterfaceItemIdentifier("details-history-row"))
+  let plain = SessionTimelineRow(
+    id: "session#1", sequence: 1, timestamp: Date(), kind: .gitSnapshot,
+    title: "main", subtitle: "abcdef1", status: .none, source: .git, detail: nil)
+  cell.configure(row: plain, isExpanded: false) {}
+  #expect(cell.isHoverHighlightEnabled == false)
+
+  let expandable = SessionTimelineRow(
+    id: "session#2", sequence: 2, timestamp: Date(), kind: .command,
+    title: "swift test", subtitle: "/repo", status: .failed(1), source: .terminal,
+    detail: SessionTimelineDetail(excerpt: "failed", artifactRelativePath: nil))
+  cell.configure(row: expandable, isExpanded: false) {}
+  #expect(cell.isHoverHighlightEnabled)
+}
+
+@Test("transcript 补录的事件在行上有可见来源标注")
+@MainActor
+func historyTimelineRowMarksTranscriptSourcedEvents() throws {
+  let cell = SessionHistoryTimelineRowView(
+    identifier: NSUserInterfaceItemIdentifier("details-history-row"))
+  let terminal = SessionTimelineRow(
+    id: "session#1", sequence: 1, timestamp: Date(), kind: .command,
+    title: "swift build", subtitle: "/repo", status: .succeeded, source: .terminal)
+  cell.configure(row: terminal, isExpanded: false) {}
+  #expect(
+    cell.allDescendants.compactMap { ($0 as? NSTextField)?.stringValue }
+      .contains("transcript") == false)
+
+  let transcript = SessionTimelineRow(
+    id: "session#2", sequence: 2, timestamp: Date(), kind: .fileModified,
+    title: "App.swift", subtitle: "/repo/Sources/App.swift", status: .none, source: .transcript)
+  cell.configure(row: transcript, isExpanded: false) {}
+  let badge = cell.allDescendants.compactMap { $0 as? NSTextField }
+    .first { $0.stringValue == "transcript" }
+  #expect(badge?.isHidden == false)
+  #expect(cell.toolTip?.contains("非终端实测") == true)
+}
+
+@Test("History 各类行走复用池并带稳定的行标识")
+@MainActor
+func historyRowsUseReusableCellsWithStableIdentifiers() throws {
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  let controller = DetailsPanelViewController(model: model, preferences: preferences)
+  let table = NSTableView()
+
+  let timelineRow = SessionTimelineRow(
+    id: "session#1", sequence: 1, timestamp: Date(), kind: .toolCall,
+    title: "Edit", subtitle: "/repo/App.swift", status: .none, source: .transcript)
+  let cases: [(SessionHistoryRow, String)] = [
+    (.sectionHeader("Memory"), "details-history-section"),
+    (.memory(title: "标题", body: "正文", sources: "来源：规则提炼 · event ×2"), "details-history-memory"),
+    (.timeline(timelineRow, isExpanded: false), "details-history-row"),
+    (
+      .expandedText(id: "session#1", text: "output", isFullText: false, canLoadFullText: true),
+      "details-history-output"
+    ),
+  ]
+  for (row, identifier) in cases {
+    let view = try #require(controller.makeHistoryRowView(row, in: table))
+    #expect(view.identifier?.rawValue == identifier)
+  }
+}
+
 extension NSView {
   fileprivate var allDescendants: [NSView] {
     subviews.flatMap { [$0] + $0.allDescendants }
+  }
+
+  /// 页签切换只翻转页根视图的 `isHidden`，因此判断某个深层控件是否可见必须一路上溯。
+  fileprivate var isHiddenByAncestor: Bool {
+    var node: NSView? = self
+    while let current = node {
+      if current.isHidden { return true }
+      node = current.superview
+    }
+    return false
   }
 }

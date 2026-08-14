@@ -10,6 +10,9 @@ let package = Package(
   products: [
     .library(name: "AsterCore", targets: ["AsterCore"]),
     .executable(name: "Aster", targets: ["Aster"]),
+    // 独立 MCP server：Claude Code / Codex 经 stdio 只读查询 Session Memory，
+    // 与主应用进程解耦，App 未运行时依然可查历史。
+    .executable(name: "aster-memory-mcp", targets: ["AsterMemoryMCP"]),
   ],
   dependencies: [
     // HighlighterSwift 3.1.0 需要补充 macOS 发布包的资源定位：上游 `Bundle.module`
@@ -46,10 +49,22 @@ let package = Package(
         .swiftLanguageMode(.v5)
       ]
     ),
+    // Session Memory 存储层：系统 libsqlite3 + FTS5，零外部依赖。
+    // 领域模型留在 AsterCore；本 target 只做 SQL 编解码与文件布局。
+    .target(
+      name: "AsterMemory",
+      dependencies: ["AsterCore"]
+    ),
+    // stdio JSON-RPC 2.0 的 MCP server，可执行名 aster-memory-mcp；只读开库。
+    .executableTarget(
+      name: "AsterMemoryMCP",
+      dependencies: ["AsterCore", "AsterMemory"]
+    ),
     .executableTarget(
       name: "Aster",
       dependencies: [
         "AsterCore",
+        "AsterMemory",
         "GhosttyKit",
         "SwiftTerm",
         .product(name: "Highlighter", package: "HighlighterSwift"),
@@ -77,6 +92,10 @@ let package = Package(
     .testTarget(
       name: "AsterCoreTests",
       dependencies: ["AsterCore"]
+    ),
+    .testTarget(
+      name: "AsterMemoryTests",
+      dependencies: ["AsterMemory", "AsterCore"]
     ),
     .testTarget(
       name: "AsterTests",

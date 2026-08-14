@@ -72,7 +72,8 @@ enum AgentHistoryDiscoveryService {
         }?.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = firstPrompt.map { String($0.prefix(120)) }
           ?? url.deletingPathExtension().lastPathComponent
-        let projectDirectory = inferredProjectDirectory(url: url, provider: provider, home: homeDirectory)
+        let projectDirectory = inferredProjectDirectory(
+          url: url, provider: provider, home: homeDirectory, transcriptData: data)
         let metadata = AgentSessionMetadata(
           id: url.deletingPathExtension().lastPathComponent,
           configuration: .init(provider: provider),
@@ -87,19 +88,45 @@ enum AgentHistoryDiscoveryService {
     return histories
   }
 
-  private static func inferredProjectDirectory(
+  /// 会话的项目归属。规则本身是 `AgentTranscriptProjectMapping` 的纯函数，这里只注入
+  /// 文件系统存在性判定并做限流。
+  ///
+  /// 判不出来时返回空串而**不是**主目录：伪造 home 会让所有 Agent 会话塌缩成同一个假项目，
+  /// 按项目组织历史与 Session Memory 就彻底失真。空串对启动路径是安全的——
+  /// `TerminalSession` 在启动 PTY 前会校验目录是否存在，不存在即回退主目录并给出提示。
+  static func inferredProjectDirectory(
     url: URL,
     provider: AgentProvider,
-    home: URL
+    home: URL,
+    transcriptData: Data
   ) -> String {
-    switch provider {
-    case .claudeCode, .cursorCLI:
-      // 这些 provider 的目录名是编码后的项目标识，无法无损反解；使用主目录作为
-      // 可启动回退，并保留原会话 ID 给原生 resume 命令解析真实工作区。
-      return home.path
-    case .codex, .openCode, .kimiCode, .pi, .omp:
-      return home.path
-    }
+    projectAttribution(url: url, provider: provider, home: home, transcriptData: transcriptData)?
+      .path ?? ""
+  }
+
+  /// 带置信度的项目归属，供 Session Memory 侧标注来源可靠性。
+  static func projectAttribution(
+    url: URL,
+    provider: AgentProvider,
+    home: URL,
+    transcriptData: Data
+  ) -> AgentProjectAttribution? {
+    let manager = FileManager.default
+    var checks = 0
+    return AgentTranscriptProjectMapping.attribution(
+      provider: provider,
+      sessionFileURL: url,
+      homeDirectory: home,
+      transcriptWorkingDirectory: AgentTranscriptProjectMapping.workingDirectory(
+        inTranscript: transcriptData),
+      directoryExists: { path in
+        // 反解是有损编码的逆向搜索，必须给磁盘访问一个硬上限；超限即当作判不出来。
+        guard checks < AgentTranscriptProjectMapping.maximumExistenceChecks else { return false }
+        checks += 1
+        var isDirectory: ObjCBool = false
+        return manager.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+      }
+    )
   }
 }
 

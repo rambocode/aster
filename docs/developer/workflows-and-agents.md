@@ -57,6 +57,34 @@ flowchart LR
 
 内置 `AsterNerdSymbols-Regular.ttf` 以进程级 CoreText 注册，并作为终端基础字体 cascade fallback；来源和许可证见 `THIRD-PARTY-NOTICES.md`。
 
+### Project Memory MCP
+
+`aster-memory-mcp`（target `AsterMemoryMCP`）是独立可执行文件，通过 stdio JSON-RPC 2.0 把
+Session Memory 暴露给任何支持 MCP 的 Agent，协议版本 `2025-06-18`。它以
+`SQLITE_OPEN_READONLY` 打开数据库，**Aster 未运行时同样可查**；打开时用
+`PRAGMA user_version` 与 `MemorySchema.currentVersion` 握手，不匹配返回结构化 `isError`
+而不是崩溃。领域与存储契约见 [Session Memory 与 Context 领域](session-memory-domain.md)。
+
+P0 工具：`search_memory`、`get_project_context`、`get_session`、`get_related_history`、
+`get_task`、`get_recent_commands`。`project_path` 缺省取 MCP 进程的 `getcwd()`
+（Claude Code / Codex 都在项目根目录 spawn server），传 `"*"` 表示跨全部项目。
+参数经 `MCPArguments` 限长与 UUID 校验，输出经 `MCPRenderer` 清除控制字符并施加总长上限。
+
+每次成功的 `tools/call` 由 `ContextReceiptWriter` 追加一条 `ContextReceipt`
+（`trigger=agent_query`、`delivery=mcp`）。这是单写者约定的**唯一例外**：短生命周期读写
+连接、只触碰 `context_receipts` 一张表、失败静默——留痕失败绝不能让 Agent 的查询失败。
+
+`MCPInstallService` 负责注册：读-改-写项目的 `.mcp.json`，**只管理 `aster-memory` 一项并
+保留用户已有的其它 server**，原子发布，拒绝符号链接与非普通文件（沿用
+`AsterCLIRequestService` 的 `O_NOFOLLOW` + `fstat` 校验范式）。可执行文件优先取 app bundle
+内路径，SwiftPM 调试环境回落 `.build`。Codex 侧只生成需要用户自己粘贴的配置文本，
+**不自动修改 `~/.codex/config.toml`** —— 与 Agent 集成安装同样的所有权边界。
+
+> 路径陷阱：`URL.resolvingSymlinksInPath()` 在解析符号链接之后还会去掉开头的 `/private`，
+> 因此它与子进程 `getcwd()` 的结果不相等。跨进程比较路径必须用 `realpath()`。
+> 生产路径本身一致（录制侧用 git toplevel、MCP 侧用 getcwd，都是物理路径），
+> 只有测试构造临时目录时会踩到。
+
 ## 失败语义
 
 - 无法验证 Recipe、CLI token、Agent 配置所有权或文件身份：拒绝操作，不做部分写入。

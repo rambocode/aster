@@ -1,5 +1,6 @@
 import AppKit
 import AsterCore
+import AsterMemory
 import Combine
 import CoreFoundation
 import UniformTypeIdentifiers
@@ -125,6 +126,43 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private var settingsMessageProxy: SettingsScriptMessageProxy?
   private var webRevision = 0
   private var webReady = false
+  /// Session Memory 目录的已用空间文本。目录遍历是磁盘 IO，绝不能落在快照构建里
+  /// （每次设置改动都会重建快照）；这里只缓存后台算好的结果。
+  private var memoryStoreSizeText = "计算中…"
+  private var memoryStoreSizeTaskRunning = false
+  /// 提炼器重装读取的 defaults。生产固定 `.standard`：提炼与记录都是进程级通道，
+  /// `CLIAgentMemoryExtractor` 与 `SessionRecordingService` 都从 `.standard` 取真值，
+  /// 跟着窗口级 suite 走会让同一用户的两个窗口读到不同策略。
+  /// 测试注入隔离 suite，避免用例结果依赖开发者本机的真实提炼设置。
+  var memoryExtractionDefaults: UserDefaults = .standard
+  /// MCP 注册状态。`MCPInstallService.state` 要读项目里的 `.mcp.json`，是磁盘 IO，
+  /// 同样只能缓存后台结果，不能在快照构建里现算。
+  private var memoryMCPStatus = MemoryMCPStatus()
+  private var memoryMCPTaskRunning = false
+
+  /// MCP 注册状态的可跨隔离传递形式。刻意不用 `[String: Any]`：
+  /// 它不是 `Sendable`，从后台任务返回主线程会被 Swift 6 拒绝。
+  struct MemoryMCPStatus: Sendable {
+    var projectPath = ""
+    var status = "没有可注册的项目"
+    var detail = "先在工作区里打开一个项目目录，再回到这里注册。"
+    var installed = false
+    var actionTitle = "安装"
+    var canInstall = false
+    var codex = ""
+
+    var jsonValue: [String: Any] {
+      [
+        "projectPath": projectPath,
+        "status": status,
+        "detail": detail,
+        "installed": installed,
+        "actionTitle": actionTitle,
+        "canInstall": canInstall,
+        "codex": codex,
+      ]
+    }
+  }
   static let sidebarIdentifier = NSUserInterfaceItemIdentifier("settings-sidebar")
   static let contentIdentifier = NSUserInterfaceItemIdentifier("settings-content")
   static let searchIdentifier = NSUserInterfaceItemIdentifier("settings-search")
@@ -197,6 +235,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       .sink { [weak self] _ in self?.scheduleRefresh() }
       .store(in: &cancellables)
     TerminalNotificationService.shared.refreshAuthorizationStatus()
+    refreshMemoryStoreSize()
+    refreshMemoryMCPState()
     loadSettingsDocument()
   }
 
@@ -2897,6 +2937,19 @@ extension SettingsViewController: WKNavigationDelegate {
       "advanced.titleShellControlled": configuration.shell.resolvedTitleShellControlled,
       "advanced.titleReport": configuration.shell.resolvedTitleReport,
       "advanced.configPath": settingsConfigurationURL().path,
+    ], [
+      // Session Memory 的记录与提炼开关。真值在 AppPreferences 的独立键上，
+      // 不进 AsterConfiguration —— 记录层是独立隐私通道，不随配置导入导出流转。
+      "memory.recordingMode": preferences.memoryRecordingMode.rawValue,
+      "memory.excludedPaths": preferences.memoryExcludedPaths.joined(separator: ", "),
+      "memory.excludedCommands": preferences.memoryExcludedCommands.joined(separator: ", "),
+      "memory.storeSize": memoryStoreSizeText,
+      "memory.extractionEnabled": preferences.memoryExtractionEnabled,
+      "memory.extractionProvider": preferences.memoryExtractionProvider
+        ?? AgentProvider.claudeCode.rawValue,
+      // 网页侧的 `disabledWhen` 只看真值，因此提供一个取反后的派生键，
+      // 而不是让 JS 自己推断「关闭时禁用 provider 选择器」。
+      "memory.extractionDisabled": !preferences.memoryExtractionEnabled,
     ]]
     for group in valueGroups {
       values.merge(group, uniquingKeysWith: { _, new in new })
@@ -2916,6 +2969,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "themeEditor": makeWebThemeEditor(),
       "computedFonts": makeWebComputedFonts(),
       "agents": makeWebAgents(),
+      "memoryMCP": memoryMCPStatus.jsonValue,
       "recipes": makeWebRecipes(),
       "shortcuts": makeWebShortcuts(),
     ]
@@ -3316,6 +3370,23 @@ extension SettingsViewController: WKNavigationDelegate {
         .prefix(128))
     case "advanced.titleShellControlled": preferences.configuration.shell.titleShellControlled = try bool()
     case "advanced.titleReport": preferences.configuration.shell.titleReport = try bool()
+    case "memory.recordingMode":
+      guard let mode = RecordingMode(rawValue: try string()) else {
+        throw SettingsWebBridgeError.invalidValue
+      }
+      preferences.memoryRecordingMode = mode
+    case "memory.excludedPaths":
+      preferences.memoryExcludedPaths = Self.memoryExcludedPathList(try string())
+    case "memory.excludedCommands":
+      preferences.memoryExcludedCommands = Self.memoryExcludedCommandList(try string())
+    case "memory.extractionEnabled":
+      setMemoryExtractionEnabled(try bool())
+    case "memory.extractionProvider":
+      guard let provider = AgentProvider(rawValue: try string()) else {
+        throw SettingsWebBridgeError.invalidValue
+      }
+      preferences.memoryExtractionProvider = provider.rawValue
+      reinstallMemoryExtractionProvider()
     default:
       if key.hasPrefix("agents.enabled."),
         let provider = AgentProvider(rawValue: String(key.dropFirst("agents.enabled.".count)))
@@ -3649,6 +3720,13 @@ extension SettingsViewController: WKNavigationDelegate {
     case "importGhostty": importGhosttyConfiguration()
     case "exportGhostty": exportGhosttyConfiguration()
     case "openDebugLog": openDebugLog()
+    case "addMemoryExcludedPath": addMemoryExcludedPath()
+    case "openMemoryFolder": openMemoryStoreFolder()
+    case "clearMemoryStore": confirmClearMemoryStore()
+    case "previewExtractionPayload": presentMemoryExtractionPreview()
+    case "installMemoryMCP": performMemoryMCPInstall(install: true)
+    case "uninstallMemoryMCP": performMemoryMCPInstall(install: false)
+    case "copyCodexMCPInstructions": copyCodexMCPInstructions()
     case "resetAdvanced":
       for key in SettingsWebBridge.compatibilityDefaults.keys where key.hasPrefix("advanced.") {
         if let value = SettingsWebBridge.compatibilityDefaults[key] { preferences.setCompatibilityValue(value, forKey: key) }
@@ -3669,6 +3747,430 @@ extension SettingsViewController: WKNavigationDelegate {
     default:
       sendWebToast("“\(action)”尚无可用的 macOS 操作", level: "error")
     }
+  }
+
+  // MARK: - MCP 集成
+
+  /// 最近一个工作区窗口的当前工作目录。
+  ///
+  /// 不用 `keyWindow`：设置页打开时 key window 就是设置窗口本身。`orderedWindows`
+  /// 是前后顺序，取第一个工作区窗口即用户最后操作过的那个。
+  private func activeWorkspaceDirectory() -> String? {
+    for window in NSApp.orderedWindows {
+      guard let workspace = window.contentViewController as? WorkspaceViewController else {
+        continue
+      }
+      return workspace.model.selectedTab?.workingDirectory
+    }
+    return nil
+  }
+
+  /// 后台读取 `.mcp.json` 并回填快照。同一时刻只允许一个任务，避免连点堆积。
+  func refreshMemoryMCPState() {
+    guard !memoryMCPTaskRunning else { return }
+    memoryMCPTaskRunning = true
+    let directory = activeWorkspaceDirectory()
+    Task { [weak self] in
+      let status = await Self.memoryMCPStatus(projectDirectory: directory)
+      guard let self else { return }
+      self.memoryMCPTaskRunning = false
+      self.memoryMCPStatus = status
+      self.refresh()
+    }
+  }
+
+  private nonisolated static func memoryMCPStatus(projectDirectory: String?) async
+    -> MemoryMCPStatus
+  {
+    guard let projectDirectory, !projectDirectory.isEmpty else { return MemoryMCPStatus() }
+    var status = MemoryMCPStatus()
+    status.projectPath = projectDirectory
+    status.codex = MCPInstallService.codexInstructions()
+    let executableAvailable = MCPInstallService.resolveExecutableURL() != nil
+    status.canInstall = executableAvailable
+    let url = URL(fileURLWithPath: projectDirectory, isDirectory: true)
+    // 读配置失败（权限、软链、超大文件、坏 JSON）不是「未安装」，必须原样报出来，
+    // 否则用户点安装只会再撞一次同一个错。
+    do {
+      switch try MCPInstallService.state(projectDirectory: url) {
+      case .notInstalled:
+        status.status = "未注册"
+        status.detail =
+          executableAvailable
+          ? "注册后，在该项目里运行的 Claude Code 就能查到这个项目的历史记忆。"
+          : "找不到 aster-memory-mcp 可执行文件，请重新构建 Aster.app。"
+        status.actionTitle = "安装"
+      case .installed(let commandPath):
+        status.status = "已注册"
+        status.detail = commandPath
+        status.installed = true
+        status.actionTitle = "已安装"
+      case .outdated(let commandPath, let expected):
+        status.status = "需要修复"
+        status.detail = "记录的路径已失效：\(commandPath)\n当前可执行文件：\(expected)"
+        status.installed = true
+        status.actionTitle = "修复路径"
+      }
+    } catch {
+      let message =
+        (error as? MCPInstallService.ServiceError)?.localizedMessage
+        ?? error.localizedDescription
+      status.status = "无法读取 .mcp.json"
+      status.detail = message
+      status.canInstall = false
+    }
+    return status
+  }
+
+  /// 安装或移除 `.mcp.json` 里的 `aster-memory` 注册项。写文件在后台完成。
+  private func performMemoryMCPInstall(install: Bool) {
+    guard let directory = activeWorkspaceDirectory(), !directory.isEmpty else {
+      sendWebToast("没有可注册的项目，请先在工作区打开一个目录", level: "error")
+      return
+    }
+    let url = URL(fileURLWithPath: directory, isDirectory: true)
+    Task { [weak self] in
+      let failure = await Self.applyMemoryMCP(install: install, projectDirectory: url)
+      guard let self else { return }
+      if let failure {
+        self.sendWebToast(failure, level: "error")
+      } else {
+        self.message =
+          install
+          ? "已把 aster-memory 注册到该项目的 .mcp.json。重启 Claude Code 后生效。"
+          : "已从该项目的 .mcp.json 移除 aster-memory。"
+      }
+      self.refresh()
+      self.refreshMemoryMCPState()
+    }
+  }
+
+  private nonisolated static func applyMemoryMCP(install: Bool, projectDirectory: URL) async
+    -> String?
+  {
+    do {
+      if install {
+        _ = try MCPInstallService.install(projectDirectory: projectDirectory)
+      } else {
+        try MCPInstallService.uninstall(projectDirectory: projectDirectory)
+      }
+      return nil
+    } catch let error as MCPInstallService.ServiceError {
+      return error.localizedMessage
+    } catch {
+      return error.localizedDescription
+    }
+  }
+
+  /// Codex 只给出可复制的配置片段。**绝不自动改 `~/.codex/config.toml`**：
+  /// 那是用户自己的全局配置，不是项目内的受管文件。
+  private func copyCodexMCPInstructions() {
+    let text =
+      memoryMCPStatus.codex.isEmpty
+      ? MCPInstallService.codexInstructions() : memoryMCPStatus.codex
+    NSPasteboard.general.clearContents()
+    guard NSPasteboard.general.setString(text, forType: .string) else {
+      sendWebToast("无法写入剪贴板", level: "error")
+      return
+    }
+    message = "已复制 Codex 配置片段。"
+    refresh()
+  }
+
+  // MARK: - Session Memory 记录设置
+
+  /// 解析用户输入的排除目录列表。只接受绝对路径：`RecordingPolicy` 在事件源头用
+  /// 路径段前缀比较判定，相对路径永远匹配不上，收下它等于制造一条静默失效的隐私规则。
+  static func memoryExcludedPathList(_ raw: String) -> [String] {
+    var seen = Set<String>()
+    return
+      raw
+      .split(separator: ",", omittingEmptySubsequences: true)
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .map { path -> String in
+        var value = (path as NSString).expandingTildeInPath
+        while value.count > 1, value.hasSuffix("/") { value.removeLast() }
+        return value
+      }
+      .filter { $0.hasPrefix("/") && seen.insert($0).inserted }
+      .prefix(128)
+      .map { $0 }
+  }
+
+  /// 解析排除命令列表。只保留命令名本身（去掉目录部分），与 `RecordingPolicy`
+  /// 用 `lastPathComponent` 比较首个 token 的判定方式对齐。
+  static func memoryExcludedCommandList(_ raw: String) -> [String] {
+    var seen = Set<String>()
+    return
+      raw
+      .split(whereSeparator: { $0 == "," || $0.isWhitespace })
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty && seen.insert($0).inserted }
+      .prefix(128)
+      .map { $0 }
+  }
+
+  /// 提炼开关。首次开启必须先确认外发提示（PRD §73）：确认前不写入 enabled，
+  /// 因此用户取消时开关自动弹回关闭状态，不会出现「看起来开了但实际不发」的歧义。
+  private func setMemoryExtractionEnabled(_ enabled: Bool) {
+    guard enabled else {
+      preferences.memoryExtractionEnabled = false
+      reinstallMemoryExtractionProvider()
+      return
+    }
+    guard !preferences.memoryExtractionAcknowledged else {
+      preferences.memoryExtractionEnabled = true
+      reinstallMemoryExtractionProvider()
+      return
+    }
+    guard let window = view.window else {
+      sendWebToast("请在设置窗口中确认数据外发提示", level: "error")
+      return
+    }
+    let provider =
+      preferences.memoryExtractionProvider.flatMap(AgentProvider.init(rawValue:))
+      ?? .claudeCode
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = "开启 CLI Agent 提炼会把会话摘要发送到云端"
+    alert.informativeText = """
+      每次终端会话结束后，Aster 会调用本机的 \(agentDisplayName(provider)) CLI，\
+      把该会话的命令、退出码与输出摘录整理成摘要交给它提炼。这些内容会离开本机，\
+      按该 Agent 自己的隐私策略处理。
+
+      不发送：prompt 正文、工具参数全文、环境变量、被排除目录与排除命令的任何内容。
+
+      关闭此开关时，Aster 仍会用完全本地的规则式提炼生成 Memory。
+      """
+    alert.addButton(withTitle: "开启并允许外发")
+    alert.addButton(withTitle: "取消")
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard let self, response == .alertFirstButtonReturn else { return }
+      self.preferences.memoryExtractionAcknowledged = true
+      self.preferences.memoryExtractionEnabled = true
+      if self.preferences.memoryExtractionProvider == nil {
+        self.preferences.memoryExtractionProvider = provider.rawValue
+      }
+      self.reinstallMemoryExtractionProvider()
+      self.message = "已开启 CLI Agent 提炼。"
+      self.refresh()
+    }
+  }
+
+  /// 让提炼设置立刻生效。`MemoryExtraction.provider` 是进程级单例，不改它的话
+  /// 用户关掉开关后，下一个结束的会话仍然会被发出去。
+  private func reinstallMemoryExtractionProvider() {
+    CLIAgentMemoryExtractor.installIfEnabled(defaults: memoryExtractionDefaults)
+  }
+
+  /// 用系统目录选择器追加一条排除目录。用 sheet 而不是 `runModal`：
+  /// 模态泵会排空主队列，把排队中的刷新任务拉进当前调用（见 engineering-pitfalls）。
+  private func addMemoryExcludedPath() {
+    guard let window = view.window else { return }
+    let panel = NSOpenPanel()
+    panel.title = "选择不参与记录的目录"
+    panel.prompt = "排除"
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = true
+    panel.beginSheetModal(for: window) { [weak self] response in
+      guard let self, response == .OK else { return }
+      var paths = self.preferences.memoryExcludedPaths
+      for url in panel.urls {
+        let path = url.standardizedFileURL.path
+        guard !paths.contains(path) else { continue }
+        paths.append(path)
+      }
+      self.preferences.memoryExcludedPaths = Array(paths.prefix(128))
+      self.message = "已更新排除目录。"
+      self.refresh()
+    }
+  }
+
+  /// 打开 Memory 存储目录。目录可能尚未创建（用户从未开启记录），先按 0700 建好再打开，
+  /// 让用户任何时候都能确认「东西到底存在哪」。
+  private func openMemoryStoreFolder() {
+    let location = MemoryStoreAccess.location
+    do {
+      try location.prepareDirectory()
+      NSWorkspace.shared.open(location.rootDirectory)
+    } catch {
+      sendWebToast("无法打开存储目录：\(error.localizedDescription)", level: "error")
+    }
+  }
+
+  /// 清空全部记录。二次确认后在后台删除数据库与输出正文目录。
+  private func confirmClearMemoryStore() {
+    guard let window = view.window else { return }
+    let alert = NSAlert()
+    alert.alertStyle = .critical
+    alert.messageText = "清空全部 Session Memory 记录？"
+    alert.informativeText = """
+      将删除本机保存的全部 session、事件、命令输出正文与已提炼的 Memory。\
+      此操作不可撤销，也无法恢复已被 Agent 引用过的历史。
+
+      设置项本身（记录模式、排除规则）保持不变，之后新产生的活动会重新开始记录。
+      """
+    alert.addButton(withTitle: "清空")
+    alert.addButton(withTitle: "取消")
+    alert.buttons.first?.hasDestructiveAction = true
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard let self, response == .alertFirstButtonReturn else { return }
+      self.clearMemoryStore()
+    }
+  }
+
+  /// 清空必须经 `EventWriter.purgeAll()` 而不是自己删文件：writer 是 actor，
+  /// 只有它能先关掉自己的 SQLite 连接。绕过它直接删，writer 会继续往一个已 unlink
+  /// 的 inode 写，用户看到的「已清空」在重启前都是假的。
+  ///
+  /// 全程异步。绝不能在主线程用信号量等这次 `await` —— 那等同于 `waitUntilExit`，
+  /// 会排空主队列造成重入（见 `docs/developer/engineering-pitfalls.md`）。
+  private func clearMemoryStore() {
+    Task { [weak self] in
+      await MemoryStoreAccess.writer.purgeAll()
+      guard let self else { return }
+      self.message = "已清空全部记录。"
+      self.memoryStoreSizeText = "尚无记录"
+      self.refresh()
+      self.refreshMemoryStoreSize()
+    }
+  }
+
+  /// 后台统计存储占用并回填快照。目录可能有成千上万个 transcript 文件，
+  /// 遍历必须离开主线程；同一时刻只允许一个统计任务，避免连点堆积。
+  func refreshMemoryStoreSize() {
+    guard !memoryStoreSizeTaskRunning else { return }
+    memoryStoreSizeTaskRunning = true
+    let root = MemoryStoreAccess.location.rootDirectory
+    Task { [weak self] in
+      let text = await Self.memoryStoreSizeDescription(at: root)
+      await MainActor.run {
+        guard let self else { return }
+        self.memoryStoreSizeTaskRunning = false
+        guard self.memoryStoreSizeText != text else { return }
+        self.memoryStoreSizeText = text
+        self.refresh()
+      }
+    }
+  }
+
+  private nonisolated static func memoryStoreSizeDescription(at root: URL) async -> String {
+    let total = memoryStoreByteCount(at: root)
+    guard total > 0 else { return "尚无记录" }
+    return ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
+  }
+
+  /// 目录遍历本身是同步 API：`FileManager.DirectoryEnumerator` 的迭代器在异步上下文
+  /// 不可用，因此把它留在同步函数里，由外层的 async 包装决定在哪个执行器上跑。
+  nonisolated static func memoryStoreByteCount(at root: URL) -> Int64 {
+    let manager = FileManager.default
+    guard manager.fileExists(atPath: root.path) else { return 0 }
+    guard
+      let enumerator = manager.enumerator(
+        at: root,
+        includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+        options: [.skipsHiddenFiles]
+      )
+    else { return 0 }
+    var total: Int64 = 0
+    for case let url as URL in enumerator {
+      let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+      guard values?.isRegularFile == true, let size = values?.fileSize else { continue }
+      total += Int64(size)
+    }
+    return total
+  }
+
+  /// 「查看将发送的内容」（PRD §73）。
+  ///
+  /// 展示的文本与真正外发的 prompt 逐字节一致，由 `CLIAgentMemoryExtractor` 的同一个
+  /// 构造器渲染 —— 预览若自成一套文案，就变成了营销话术而不是隐私披露。
+  /// 还没有任何已记录 session 时回落到合成样例，按钮因此永远可点。
+  private func presentMemoryExtractionPreview() {
+    let provider =
+      preferences.memoryExtractionProvider.flatMap(AgentProvider.init(rawValue:)) ?? .claudeCode
+    let header = "目标 Agent：\(agentDisplayName(provider))（本机 CLI，由它自行上传到其云端）"
+    Task { [weak self] in
+      let preview = await Self.loadExtractionPreview()
+      guard let self else { return }
+      let notice = preview.isSample ? "以下为示例数据，不是你机器上的真实记录。\n" : ""
+      self.presentMemoryTextSheet(
+        title: "提炼时会发送的内容",
+        body: "\(header)\n\(notice)\n\(preview.text)"
+      )
+    }
+  }
+
+  /// 取最近一个已记录 session 渲染真实 payload；没有则回落合成样例。
+  /// 读库在后台完成，主线程只拿到最终字符串。
+  private nonisolated static func loadExtractionPreview() async -> (text: String, isSample: Bool) {
+    guard let reader = MemoryStoreAccess.makeReader(),
+      let latest = (try? reader.sessions(projectPath: nil, limit: 1))?.first,
+      let detail = try? reader.sessionDetail(id: latest.descriptor.id)
+    else {
+      return (CLIAgentMemoryExtractor.samplePreviewPayload(), true)
+    }
+    let text = CLIAgentMemoryExtractor.previewPayload(
+      session: detail.descriptor, events: detail.events)
+    return (text, false)
+  }
+
+  /// 只读文本面板。用独立 sheet 承载长说明，避免把多段文字塞进 NSAlert 的
+  /// informativeText 让窗口无限变高。
+  private func presentMemoryTextSheet(title: String, body: String) {
+    guard let window = view.window else { return }
+    let sheet = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 520, height: 380),
+      styleMask: [.titled, .closable],
+      backing: .buffered,
+      defer: false
+    )
+    sheet.title = title
+    let scroll = NSScrollView()
+    scroll.hasVerticalScroller = true
+    scroll.drawsBackground = false
+    // NSTextView 放进 NSScrollView 必须自己接好可变高度与宽度跟随，
+    // 否则 documentView 停在零尺寸，面板看起来是空的。
+    let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 488, height: 300))
+    text.isEditable = false
+    text.isSelectable = true
+    text.drawsBackground = false
+    text.autoresizingMask = [.width]
+    text.isVerticallyResizable = true
+    text.isHorizontallyResizable = false
+    text.textContainer?.widthTracksTextView = true
+    text.textContainer?.containerSize = NSSize(
+      width: 488, height: CGFloat.greatestFiniteMagnitude)
+    text.textContainerInset = NSSize(width: 14, height: 14)
+    text.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+    text.string = body
+    scroll.documentView = text
+    let close = NSButton(title: "完成", target: nil, action: nil)
+    close.keyEquivalent = "\r"
+    close.bezelStyle = .rounded
+    let host = NSView()
+    host.addSubview(scroll)
+    host.addSubview(close)
+    scroll.translatesAutoresizingMaskIntoConstraints = false
+    close.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      scroll.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 16),
+      scroll.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -16),
+      scroll.topAnchor.constraint(equalTo: host.topAnchor, constant: 16),
+      close.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 12),
+      close.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -16),
+      close.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -16),
+    ])
+    sheet.contentView = host
+    close.target = self
+    close.action = #selector(dismissMemoryTextSheet(_:))
+    window.beginSheet(sheet, completionHandler: nil)
+  }
+
+  @objc fileprivate func dismissMemoryTextSheet(_ sender: NSButton) {
+    guard let sheet = sender.window else { return }
+    sheet.sheetParent?.endSheet(sheet)
   }
 
   /// 通过系统应用选择器取得真实 bundle ID。配置不保存路径，后续每次打开都由

@@ -260,6 +260,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
     TerminalNotificationService.shared.refreshAuthorizationStatus()
     dockActivityCoordinator.start()
+    // Session Memory 的提炼器按当前设置装配：未授权外发时装规则式实现。
+    // 必须在任何 Session 结束之前完成，否则首个结束的会话会用错提炼器。
+    CLIAgentMemoryExtractor.installIfEnabled()
     // 提前创建 0600 CLI token，使首次执行 `aster learn` 无需先打开设置页或等待 Pane。
     _ = AutocompleteService.shared
     startCLIRequestConsumer()

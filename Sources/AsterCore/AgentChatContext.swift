@@ -156,14 +156,17 @@ public struct AgentChatContextBuilder: Equatable, Sendable {
   }
 }
 
-private enum AgentContextRedactor {
-  struct Result {
-    let value: String
-    let count: Int
+/// 常见 secret 模式的遮盖器。Send to Chat 与 Session Recording 共用同一套规则，
+/// 保证任何离开进程或落盘的终端文本先经过一致的脱敏边界。
+public enum AgentContextRedactor {
+  /// 遮盖结果：处理后的文本与命中的 secret 数量（供 UI 提示与测试断言）。
+  public struct Result {
+    public let value: String
+    public let count: Int
   }
 
   /// 顺序从结构化 secret 到裸 token；前一步的 `[REDACTED]` 不会再次命中后续规则。
-  static func redact(_ value: String) -> Result {
+  public static func redact(_ value: String) -> Result {
     let patterns: [(String, String)] = [
       (
         #"(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----"#,

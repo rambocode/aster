@@ -1,5 +1,6 @@
 import AppKit
 import AsterCore
+import AsterMemory
 import Combine
 import Foundation
 
@@ -190,6 +191,8 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
     self.descriptor = descriptor
     if descriptor.kind == .terminal {
       terminalSession = TerminalSession(workingDirectory: descriptor.workingDirectory)
+      // Session Recording 是全局装配的旁路消费者；开关关闭时服务内部直接丢弃事件。
+      terminalSession?.eventRecorder = SessionRecordingService.shared
     } else {
       terminalSession = nil
     }
@@ -1044,6 +1047,12 @@ final class AppModel: ObservableObject {
   @Published var isGlobalFindPresented = false
   @Published var isComposerPresented = false
   @Published var isAgentHistoryPresented = false
+  /// Memory 浏览器是独立面板窗口，不是 `@Published` 状态：它的显隐不参与工作区
+  /// 视图树的任何一次重建，因此终端、侧栏与详情面板都不会因为打开它而重新布局。
+  var memoryBrowserController: MemoryBrowserWindowController?
+  /// 项目路径解析要跑 `git rev-parse`，面板因此不是同步创建的。这个标志防止
+  /// 命令面板连按两次时，在第一次解析返回前又建出第二个面板窗口。
+  var memoryBrowserPresentationPending = false
   /// Prompt Queue 仅局部挂载到活动 Pane，不能通过 `objectWillChange` 触发整棵终端
   /// 视图重建，否则正在输入的 TUI 会短暂失焦。
   let promptQueuePresentationChanged = PassthroughSubject<UUID?, Never>()
@@ -3254,6 +3263,10 @@ final class AppModel: ObservableObject {
       .init(id: "prompt-queue", title: "切换 Prompt 队列", keywords: ["agent", "prompt", "queue"]),
       .init(id: "send-to-chat", title: "发送到聊天", keywords: ["agent", "selection", "transcript", "context"]),
       .init(id: "agent-history", title: "Agent 历史", keywords: ["resume", "fork", "transcript"], scope: .window),
+      .init(id: "memory-browser", title: "浏览 Session Memory", keywords: ["memory", "history", "context", "receipt"], scope: .window),
+      .init(id: "memory-new-task", title: "新建 Task", keywords: ["task", "memory", "new"], scope: .window),
+      .init(id: "memory-assign-task", title: "把当前会话归入 Task", keywords: ["task", "memory", "assign", "session"], scope: .window),
+      .init(id: "memory-continue-task", title: "继续 Task", keywords: ["task", "memory", "continue", "resume"], scope: .window),
       .init(id: "close-pane", title: "关闭当前面板", keywords: ["pane", "close"]),
       .init(id: "close-tab", title: "关闭标签页", keywords: ["tab", "close"], scope: .window),
       .init(id: "settings", title: "打开设置", keywords: ["preferences"], scope: .application),
@@ -3308,6 +3321,10 @@ final class AppModel: ObservableObject {
     case "prompt-queue": togglePromptQueue()
     case "send-to-chat": presentAgentChat()
     case "agent-history": toggleAgentHistory()
+    case "memory-browser": presentMemoryBrowser()
+    case "memory-new-task": promptNewMemoryTask()
+    case "memory-assign-task": promptAssignSessionToTask()
+    case "memory-continue-task": presentMemoryBrowser(tab: .tasks)
     case "close-pane": closeActivePane()
     case "close-tab": closeSelectedTab()
     case "settings": (NSApp.delegate as? AsterAppDelegate)?.showSettings(nil)
@@ -3412,5 +3429,179 @@ final class AppModel: ObservableObject {
     guard confirmTermination() else { return false }
     commitTermination()
     return true
+  }
+}
+
+// MARK: - Session Memory：Task 闭环与 Memory 浏览
+
+@MainActor
+extension AppModel {
+  /// 当前聚焦 Pane 的工作目录。Task 与 Memory 都按项目隔离，没有目录就谈不上归属。
+  var activeMemoryWorkingDirectory: String? {
+    selectedTab?.workingDirectory
+  }
+
+  /// 记录是否真的在跑。关闭时 Task 仍可创建，但当前会话不会有可关联的行，
+  /// 用户必须被明确告知，否则「归入 Task」会变成一次静默无效的操作。
+  var isMemoryRecordingActive: Bool {
+    AppPreferences.memoryRecordingPolicy(from: .standard).mode == .on
+  }
+
+  /// 打开 Memory 浏览面板。项目归属按 git toplevel 解析，解析是子进程调用，
+  /// 因此先异步拿到路径再建面板；面板已存在时只把它带到最前。
+  func presentMemoryBrowser(
+    tab: MemoryBrowserTab = .memories,
+    selectedTaskID: UUID? = nil
+  ) {
+    if let existing = memoryBrowserController {
+      existing.present()
+      return
+    }
+    guard !memoryBrowserPresentationPending else { return }
+    memoryBrowserPresentationPending = true
+    let directory = activeMemoryWorkingDirectory
+    Task { [weak self] in
+      var projectPath: String?
+      if let directory {
+        projectPath = await ProjectResolutionService.shared.project(for: directory)?.path
+      }
+      guard let self else { return }
+      self.memoryBrowserPresentationPending = false
+      let controller = MemoryBrowserWindowController(
+        model: self,
+        projectPath: projectPath,
+        initialTab: tab,
+        selectedTaskID: selectedTaskID
+      )
+      controller.onClose = { [weak self] in self?.memoryBrowserController = nil }
+      self.memoryBrowserController = controller
+      controller.present()
+    }
+  }
+
+  func toggleMemoryBrowser() {
+    if let existing = memoryBrowserController {
+      existing.close()
+      memoryBrowserController = nil
+      return
+    }
+    presentMemoryBrowser()
+  }
+
+  /// 新建 Task。标题经 `TaskDescriptor.sanitizedTitle` 清洗：控制字符会破坏列表与
+  /// MCP 输出的渲染，空标题会产生一个用户永远认不出来的条目。
+  func promptNewMemoryTask() {
+    guard let window = NSApp.keyWindow else { return }
+    let field = NSTextField()
+    field.placeholderString = "例如：修复 WebSocket 重连"
+    field.translatesAutoresizingMaskIntoConstraints = false
+    field.widthAnchor.constraint(equalToConstant: 320).isActive = true
+
+    let alert = NSAlert()
+    alert.messageText = "新建 Task"
+    alert.informativeText =
+      "Task 把跨 Agent、跨会话的工作过程归成一组。创建后可以用“把当前会话归入 Task”关联终端会话。"
+    alert.accessoryView = field
+    alert.addButton(withTitle: "创建")
+    alert.addButton(withTitle: "取消")
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard let self, response == .alertFirstButtonReturn else { return }
+      guard let title = TaskDescriptor.sanitizedTitle(field.stringValue) else {
+        self.notice = "Task 标题不能为空。"
+        return
+      }
+      self.createMemoryTask(title: title)
+    }
+    // sheet 出现后才有 window，焦点必须在这之后再交给输入框，否则第一个字符会丢。
+    DispatchQueue.main.async { [weak field] in field?.window?.makeFirstResponder(field) }
+  }
+
+  private func createMemoryTask(title: String) {
+    let directory = activeMemoryWorkingDirectory
+    Task { [weak self] in
+      var projectPath = directory
+      if let directory {
+        projectPath =
+          await ProjectResolutionService.shared.project(for: directory)?.path ?? directory
+      }
+      guard let self else { return }
+      guard let projectPath, !projectPath.isEmpty else {
+        self.notice = "无法确定当前项目，Task 未创建。"
+        return
+      }
+      let task = TaskDescriptor(projectPath: projectPath, title: title)
+      await MemoryStoreAccess.writer.record(.upsertTask(task))
+      await MemoryStoreAccess.writer.flush()
+      self.notice = "已创建 Task「\(title)」。"
+    }
+  }
+
+  /// 把当前聚焦 Pane 的会话归入某个 Task。先异步读出候选，再弹出选择器；
+  /// 没有候选时直接引导去新建，而不是弹一个空列表。
+  func promptAssignSessionToTask() {
+    guard selectedTab?.activeSession != nil else {
+      notice = "请先选择一个终端 Pane。"
+      return
+    }
+    guard isMemoryRecordingActive else {
+      notice = "记录当前未开启，会话没有可关联的记录。"
+      return
+    }
+    let directory = activeMemoryWorkingDirectory
+    Task { [weak self] in
+      var projectPath: String?
+      if let directory {
+        projectPath = await ProjectResolutionService.shared.project(for: directory)?.path
+      }
+      let tasks = await Self.fetchOpenTasks(projectPath: projectPath)
+      guard let self else { return }
+      guard !tasks.isEmpty else {
+        self.notice = "该项目还没有进行中的 Task，请先新建。"
+        return
+      }
+      self.presentTaskPicker(tasks)
+    }
+  }
+
+  private nonisolated static func fetchOpenTasks(projectPath: String?) async -> [TaskDescriptor] {
+    guard let reader = MemoryStoreAccess.makeReader() else { return [] }
+    let all = (try? reader.tasks(projectPath: projectPath, limit: 100)) ?? []
+    return MemoryBrowsing.assignableTasks(all)
+  }
+
+  private func presentTaskPicker(_ tasks: [TaskDescriptor]) {
+    guard let window = NSApp.keyWindow else { return }
+    let popUp = NSPopUpButton()
+    popUp.addItems(withTitles: tasks.map(\.title))
+    popUp.translatesAutoresizingMaskIntoConstraints = false
+    popUp.widthAnchor.constraint(equalToConstant: 320).isActive = true
+
+    let alert = NSAlert()
+    alert.messageText = "把当前会话归入 Task"
+    alert.informativeText = "归入后，这个会话产生的 Memory 会带上 Task 归属，Agent 检索时能看到。"
+    alert.accessoryView = popUp
+    alert.addButton(withTitle: "归入")
+    alert.addButton(withTitle: "取消")
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard let self, response == .alertFirstButtonReturn else { return }
+      let index = popUp.indexOfSelectedItem
+      guard tasks.indices.contains(index) else { return }
+      self.assignActiveSession(toTask: tasks[index])
+    }
+  }
+
+  /// 把当前会话写入指定 Task。会话 ID 即 `TerminalSession.id`，与记录层的
+  /// session 行主键同源，因此不需要额外的映射表。
+  func assignActiveSession(toTask task: TaskDescriptor) {
+    guard let sessionID = selectedTab?.activeSession?.id else {
+      notice = "请先选择一个终端 Pane。"
+      return
+    }
+    Task { [weak self] in
+      await MemoryStoreAccess.writer.record(
+        .assignSessionTask(sessionID: sessionID, taskID: task.id))
+      await MemoryStoreAccess.writer.flush()
+      self?.notice = "已把当前会话归入「\(task.title)」。"
+    }
   }
 }

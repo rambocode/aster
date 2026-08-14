@@ -41,6 +41,8 @@
     windowSize: [["remember", "记住上次尺寸"], ["grid", "按列数和行数"], ["frame", "按像素宽高"]],
     fontBlending: [["srgbOver", "sRGB Over"], ["macOSLike", "macOS 原生"], ["linear", "线性"], ["perceptual", "感知"]],
     windowsText: [["natural", "自然"], ["naturalSymmetric", "自然对称"], ["gdi", "GDI 经典"], ["clearType", "ClearType"], ["aliased", "无抗锯齿"]],
+    recordingMode: [["off", "关闭"], ["on", "记录中"], ["incognito", "隐身"]],
+    memoryExtractionProvider: [["claudeCode", "Claude Code"], ["codex", "Codex"], ["openCode", "OpenCode"], ["cursorCLI", "Cursor Agent"], ["kimiCode", "Kimi Code"], ["pi", "Pi"], ["omp", "OMP"]],
   };
 
   const row = (key, label, detail, type = "toggle", extra = {}) => ({ key, label, detail, type, ...extra });
@@ -216,6 +218,20 @@
         row("agents.notifyAwaitingInput", "等待输入时通知", "Agent 等待用户时发送系统通知"),
         row("agents.preventSleepWhileProcessing", "处理期间阻止睡眠", "Agent 工作时保持 macOS 唤醒"),
         row("agents.resumeSessions", "恢复时重连会话", "窗口恢复时继续 Agent 原生会话"),
+      ]},
+      { title: "Session Memory 记录", description: "记录终端活动，让 Agent 能查到项目的历史工作过程。数据只保存在本机 ~/Library/Application Support/Aster/Memory/。", rows: [
+        row("memory.recordingMode", "记录模式", "“记录中”会在本机保存命令、退出码与输出摘录；“隐身”与“关闭”都零落盘", "select", { options: options.recordingMode }),
+        row("memory.excludedPaths", "排除目录", "逗号分隔的绝对路径；这些目录下的活动从不写入数据库", "text"),
+        action("addMemoryExcludedPath", "添加排除目录", "从文件选择器挑一个目录加入排除列表", "选择目录…"),
+        row("memory.excludedCommands", "排除命令", "逗号分隔的命令名，例如 op、vault；命中的命令连同它的输出都不记录", "text"),
+        row("memory.storeSize", "已用存储", "数据库与输出正文占用的磁盘空间", "readonly"),
+        action("openMemoryFolder", "存储位置", "打开数据库与输出正文所在目录", "打开"),
+        action("clearMemoryStore", "清空全部记录", "删除所有 session、事件、输出正文与已提炼的 Memory", "清空…", { danger: true }),
+      ]},
+      { title: "Memory 提炼", description: "会话结束后把事件流提炼成可复用的结论。本地规则式提炼始终启用；CLI Agent 提炼是可选增强。", rows: [
+        row("memory.extractionEnabled", "使用 CLI Agent 提炼", "会话结束后调用本机 Agent CLI 生成叙述性 Memory；这会把会话摘要发送到该 Agent 的云端"),
+        row("memory.extractionProvider", "提炼使用的 Agent", "承担提炼的本机 Agent CLI", "select", { options: options.memoryExtractionProvider, disabledWhen: "memory.extractionDisabled", disabledDetail: "先开启 CLI Agent 提炼" }),
+        action("previewExtractionPayload", "查看将发送的内容", "预览提炼时会离开本机的会话摘要", "查看…"),
       ]},
     ]},
     { id: "appearance", title: "外观", description: "主题、字体、光标、布局和窗口。", special: "appearance", groups: [
@@ -1220,6 +1236,77 @@
     return group;
   }
 
+  /// MCP 注册卡片。按钮文案随状态变化（安装 / 已安装 / 修复路径），因此必须由快照
+  /// 驱动动态渲染，不能写进静态 rows 数组。
+  function makeMemoryMCPGroup() {
+    const state = snapshot?.memoryMCP ?? {};
+    const group = document.createElement("section");
+    group.className = "group";
+    const title = document.createElement("h2");
+    title.className = "group-title";
+    title.textContent = "项目记忆 MCP";
+    const description = document.createElement("p");
+    description.className = "group-description";
+    description.textContent = "把 Aster 的项目记忆接给 Agent，让它们查得到这个项目过去发生了什么。";
+    const card = document.createElement("div");
+    card.className = "card";
+
+    card.appendChild(makeRow({
+      key: "memoryMCP.projectPath",
+      label: "当前项目",
+      detail: "注册项写入该目录的 .mcp.json",
+      type: "readonly",
+      value: state.projectPath || "—",
+    }));
+
+    // Claude Code 一行两个按钮：主动作随状态变化，移除只在已注册时出现。
+    const claudeRow = document.createElement("div");
+    claudeRow.className = "setting-row";
+    claudeRow.dataset.settingKey = "installMemoryMCP";
+    const copy = document.createElement("div");
+    copy.className = "setting-copy";
+    const label = document.createElement("span");
+    label.className = "setting-label";
+    label.textContent = `Claude Code — ${state.status ?? "未知"}`;
+    const detail = document.createElement("span");
+    detail.className = "setting-detail";
+    detail.textContent = state.detail ?? "";
+    copy.append(label, detail);
+    const controls = document.createElement("div");
+    controls.className = "setting-control";
+    if (state.installed) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "action-button danger";
+      remove.textContent = "移除";
+      remove.addEventListener("click", () => send("action", { action: "uninstallMemoryMCP", payload: {} }));
+      controls.appendChild(remove);
+    }
+    const primary = document.createElement("button");
+    primary.type = "button";
+    primary.className = "action-button";
+    primary.textContent = state.actionTitle ?? "安装";
+    // 已注册且路径正确时没有可做的动作，按钮保持禁用而不是假装可点。
+    primary.disabled = state.canInstall === false || state.actionTitle === "已安装";
+    primary.addEventListener("click", () => send("action", { action: "installMemoryMCP", payload: {} }));
+    controls.appendChild(primary);
+    claudeRow.append(copy, controls);
+    card.appendChild(claudeRow);
+
+    card.appendChild(makeRow({
+      label: "Codex",
+      detail: "Codex 读全局 ~/.codex/config.toml，Aster 不会替你改它——复制下面的片段自行追加。",
+      type: "action",
+      action: "copyCodexMCPInstructions",
+      button: "复制配置",
+      confirmDuration: 1600,
+      confirmedLabel: "已复制",
+    }));
+
+    group.append(title, description, card);
+    return group;
+  }
+
   function makeRecipesGroup() {
     const group = document.createElement("section");
     group.className = "group";
@@ -1370,6 +1457,8 @@
     if (section.special !== "appearance") {
       for (const group of section.groups) page.appendChild(makeGroup(group));
     }
+    // MCP 卡片排在记录与提炼之后：先决定记不记、怎么提炼，才轮到交给谁用。
+    if (section.special === "agents") page.appendChild(makeMemoryMCPGroup());
     content.replaceChildren(page);
   }
 

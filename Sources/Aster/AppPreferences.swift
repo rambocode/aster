@@ -117,9 +117,84 @@ final class AppPreferences: ObservableObject {
     set { defaults.set(newValue, forKey: Keys.inspectorPresented) }
   }
 
+  /// 详情面板选中页。上界随 `DetailsPanelViewController.Section` 的 case 数量增长：
+  /// 新增 section 必须同步这里，否则新页永远无法从上次会话恢复。
   var inspectorSection: Int {
-    get { min(max(defaults.integer(forKey: Keys.inspectorSection), 0), 3) }
-    set { defaults.set(min(max(newValue, 0), 3), forKey: Keys.inspectorSection) }
+    get { min(max(defaults.integer(forKey: Keys.inspectorSection), 0), 4) }
+    set { defaults.set(min(max(newValue, 0), 4), forKey: Keys.inspectorSection) }
+  }
+
+  // MARK: - Session Memory（记录与提炼）
+
+  /// 记录总开关（PRD §69）。默认关闭：记录会持久化命令与输出摘录，必须用户主动开启。
+  var memoryRecordingMode: RecordingMode {
+    get {
+      defaults.string(forKey: Keys.memoryRecordingMode)
+        .flatMap(RecordingMode.init(rawValue:)) ?? .off
+    }
+    set { defaults.set(newValue.rawValue, forKey: Keys.memoryRecordingMode) }
+  }
+
+  /// 排除目录：这些路径下的活动完全不进记录管线。
+  var memoryExcludedPaths: [String] {
+    get { defaults.stringArray(forKey: Keys.memoryExcludedPaths) ?? [] }
+    set { defaults.set(newValue, forKey: Keys.memoryExcludedPaths) }
+  }
+
+  /// 排除命令：首个 token 命中即整条命令与其输出都不记录（如 `op`、`vault`）。
+  var memoryExcludedCommands: [String] {
+    get { defaults.stringArray(forKey: Keys.memoryExcludedCommands) ?? [] }
+    set { defaults.set(newValue, forKey: Keys.memoryExcludedCommands) }
+  }
+
+  /// 当前生效的记录策略（三项设置的组合投影）。
+  var memoryRecordingPolicy: RecordingPolicy {
+    RecordingPolicy(
+      mode: memoryRecordingMode,
+      excludedPathPrefixes: memoryExcludedPaths,
+      excludedCommandPrefixes: memoryExcludedCommands
+    )
+  }
+
+  /// 是否允许调用本机 CLI Agent 提炼 Session Memory。默认关闭：
+  /// 该操作会把会话摘要发送给对应 Agent 的云端（PRD §73）。
+  var memoryExtractionEnabled: Bool {
+    get { defaults.bool(forKey: Keys.memoryExtractionEnabled) }
+    set { defaults.set(newValue, forKey: Keys.memoryExtractionEnabled) }
+  }
+
+  /// 用于提炼的 provider rawValue（如 `claudeCode`）。
+  var memoryExtractionProvider: String? {
+    get { defaults.string(forKey: Keys.memoryExtractionProvider) }
+    set { defaults.set(newValue, forKey: Keys.memoryExtractionProvider) }
+  }
+
+  /// 用户是否已确认过外发提示。未确认时即便开关为真也不得发送。
+  var memoryExtractionAcknowledged: Bool {
+    get { defaults.bool(forKey: Keys.memoryExtractionAcknowledged) }
+    set { defaults.set(newValue, forKey: Keys.memoryExtractionAcknowledged) }
+  }
+
+  /// 从任意 `UserDefaults` 读取记录策略。记录服务是进程级单例，不持有窗口级
+  /// `AppPreferences` 实例；这里提供无实例读取，避免为一个只读设置引入装配依赖。
+  static func memoryRecordingPolicy(from defaults: UserDefaults) -> RecordingPolicy {
+    RecordingPolicy(
+      mode: defaults.string(forKey: Keys.memoryRecordingMode)
+        .flatMap(RecordingMode.init(rawValue:)) ?? .off,
+      excludedPathPrefixes: defaults.stringArray(forKey: Keys.memoryExcludedPaths) ?? [],
+      excludedCommandPrefixes: defaults.stringArray(forKey: Keys.memoryExcludedCommands) ?? []
+    )
+  }
+
+  /// 同上：提炼设置的无实例读取。`enabled` 与 `acknowledged` 必须同时为真才允许外发。
+  static func memoryExtractionSettings(from defaults: UserDefaults)
+    -> (enabled: Bool, provider: String?, acknowledged: Bool)
+  {
+    (
+      defaults.bool(forKey: Keys.memoryExtractionEnabled),
+      defaults.string(forKey: Keys.memoryExtractionProvider),
+      defaults.bool(forKey: Keys.memoryExtractionAcknowledged)
+    )
   }
 
   /// Git 页「在编辑器中打开」记住的目标 bundle ID。只是一个偏好指针：真正可用的编辑器
@@ -751,5 +826,11 @@ final class AppPreferences: ObservableObject {
     static let inspectorPresented = "aster.inspector.presented.v1"
     static let inspectorSection = "aster.inspector.section.v1"
     static let inspectorGitEditor = "aster.inspector.git-editor.v1"
+    static let memoryRecordingMode = "aster.memory.recording-mode.v1"
+    static let memoryExcludedPaths = "aster.memory.excluded-paths.v1"
+    static let memoryExcludedCommands = "aster.memory.excluded-commands.v1"
+    static let memoryExtractionEnabled = "aster.memory.extraction-enabled.v1"
+    static let memoryExtractionProvider = "aster.memory.extraction-provider.v1"
+    static let memoryExtractionAcknowledged = "aster.memory.extraction-acknowledged.v1"
   }
 }

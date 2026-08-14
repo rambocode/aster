@@ -2162,6 +2162,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// Outline 页只关心命令时间线结构变化；使用专用事件避免把高频终端输出提升为
   /// `objectWillChange`，也让已打开的大纲能在命令完成后局部更新。
   let outlineChanged = PassthroughSubject<Void, Never>()
+  /// Session Recording 状态的专用变更通道。记录状态会随命令、隐身切换频繁变化，
+  /// 走 `objectWillChange` 会把整棵 Pane 树拖进 `refresh()`（CLAUDE.md AppKit 规则 #6）。
+  let recordingStateChanged = PassthroughSubject<RecordingMode, Never>()
 
   @Published private(set) var isRunning = false
   @Published private(set) var currentWorkingDirectory: String
@@ -2252,6 +2255,24 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var ghosttyShellProcessIdentifier: Int32?
   private var targetOpenCoordinator: TerminalTargetOpenCoordinator?
   private var autocompleteController: TerminalAutocompleteController?
+  /// Session Recording 的注入点。nil 或记录层故障都不影响终端本职；
+  /// Session 只转发已有状态，绝不为记录层做额外解析。
+  weak var eventRecorder: (any TerminalEventRecording)?
+  /// 本 Session 当前的记录状态（只读）。没有接入记录层时恒为 `.off`。
+  var recordingMode: RecordingMode {
+    eventRecorder?.recordingMode(for: id) ?? .off
+  }
+  /// 是否真的在落盘。`recordingMode == .on` 但目录被排除时这里仍为 false。
+  var isRecordingToDisk: Bool {
+    eventRecorder?.isRecording(id: id) ?? false
+  }
+
+  /// 切换本 Session 的临时隐身。只影响当前 Session，不改全局设置；
+  /// UI 通过 `recordingStateChanged` 获知结果，不触发工作区重建。
+  func setRecordingIncognito(_ incognito: Bool) {
+    eventRecorder?.setIncognito(incognito, for: id)
+    recordingStateChanged.send(recordingMode)
+  }
   /// OSC 0/1/2 的独立通道回调。Tab 领域状态负责固定名称、前缀与持久化。
   var onTitleUpdate: ((Int, String) -> Void)?
   /// Vi `/` 或 `?` 请求显示现有查找栏；工作区拥有展示状态，Session 只保存方向。
@@ -2756,6 +2777,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.onPTYRead = { [weak self, weak view] bytes in
       guard let self, let view else { return }
       self.autocompleteController?.receiveOutput(bytes)
+      // 记录层是 PTY 字节的并列消费者：只做拷贝转发，解析在后台管线完成。
+      self.eventRecorder?.receivePTYOutput(id: self.id, bytes: bytes)
       if let line = view.readText(includeScrollback: false, maximumLines: 1) {
         self.receiveActivityOutput(line)
       }
@@ -2830,6 +2853,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         self.lifecycleState = self.isRunning ? .running : .startFailed
         self.ghosttyShellProcessIdentifier = view.foregroundProcessIdentifier
         if self.isRunning {
+          // 记录层按 Session UUID 幂等；surface 重启复用同一 Session 继续记录。
+          self.eventRecorder?.sessionStarted(
+            id: self.id,
+            projectPath: self.workingDirectory,
+            shell: ProcessInfo.processInfo.environment["SHELL"]
+          )
+          self.recordingStateChanged.send(self.recordingMode)
           self.diagnostics.record(
             "terminal.process_started",
             level: .info,
@@ -2943,6 +2973,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   private func handleGhosttyProcessExit(code: Int32?) {
+    eventRecorder?.sessionEnded(id: id, exitCode: code)
     let termination = TerminalProcessTermination(rawWaitStatus: code.map { $0 << 8 })
     lifecycleState = .ended(termination)
     exitCode = code ?? termination.shellExitCode
@@ -3885,6 +3916,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     case .promptStart, .inputStart:
       break
     case .commandStart:
+      eventRecorder?.commandStarted(
+        id: id,
+        command: submittedCommand,
+        workingDirectory: currentWorkingDirectoryIsLocal ? currentWorkingDirectory : ""
+      )
       clearAwaitingInput()
       completedFlashTask?.cancel()
       showsCompletedFlash = false
@@ -3906,6 +3942,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       else { return }
       progressState = .indeterminate
     case .commandFinished(let exitStatus):
+      // 必须在本分支尾部把 submittedCommand 置 nil 之前上报。
+      eventRecorder?.commandFinished(
+        id: id, command: submittedCommand, exitStatus: exitStatus)
       defer { onCommandFinished?() }
       clearAwaitingInput()
       agentTaskState = .idle
@@ -4081,6 +4120,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     activeAgentProvider = directive.provider
     if let sessionID = directive.sessionID { activeAgentSessionID = sessionID }
     agentLifecycleIsAuthoritative = true
+    eventRecorder?.agentChanged(
+      id: id,
+      provider: directive.provider.rawValue,
+      agentSessionID: activeAgentSessionID
+    )
     let previous = agentStateReducer.state
     consumeAgentTaskStateSignal(directive.signal)
     if directive.signal == .awaitingInput {

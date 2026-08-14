@@ -1,16 +1,18 @@
 import AppKit
 import AsterCore
+import AsterMemory
 import Combine
 
-/// 右侧详情面板：Info / Outline / Git / Files 四页 chip 切换。进程、端口、Git、文件树
-/// 数据全部来自 `WorkspaceInspectionService` 的只读快照；Commit、stage 等写操作不后台
-/// 执行 git，而是把命令注入当前终端输入行，由用户审阅后自行回车（不触发隐藏 hook）。
+/// 右侧详情面板：Info / Outline / Git / Files / History 五页 chip 切换。进程、端口、Git、
+/// 文件树数据全部来自 `WorkspaceInspectionService` 的只读快照；History 来自 Session Memory
+/// 的只读连接。Commit、stage 等写操作不后台执行 git，而是把命令注入当前终端输入行，
+/// 由用户审阅后自行回车（不触发隐藏 hook）。
 @MainActor
 final class DetailsPanelViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate,
   NSMenuDelegate
 {
   private enum Section: Int, CaseIterable {
-    case info, outline, git, files
+    case info, outline, git, files, history
 
     var title: String {
       switch self {
@@ -18,6 +20,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       case .outline: "Outline"
       case .git: "Git"
       case .files: "Files"
+      case .history: "History"
       }
     }
 
@@ -27,6 +30,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       case .outline: "list.bullet"
       case .git: "arrow.triangle.branch"
       case .files: "folder"
+      case .history: "clock.arrow.circlepath"
       }
     }
 
@@ -36,6 +40,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       case .outline: "details-chip-outline"
       case .git: "details-chip-git"
       case .files: "details-chip-files"
+      case .history: "details-chip-history"
       }
     }
   }
@@ -111,6 +116,32 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   private var visibleFileRows: [FileRow] = []
   private var pendingFileSelectionPath: String?
   private var didRequestAgentHistory = false
+  /// History 页：session 列表与事件时间线共用同一张表，模式切换只替换行数组。
+  let historyTable = NSTableView()
+  weak var historyBackButton: NSButton?
+  weak var historyRefreshButton: NSButton?
+  weak var historyTitleLabel: NSTextField?
+  weak var historyEmptyLabel: NSTextField?
+  private var historyMode: SessionHistoryMode = .sessionList
+  private var historyRows: [SessionHistoryRow] = []
+  private var historySessions: [SessionSummaryRow] = []
+  private var historyDetail: SessionDetail?
+  /// 该 session 当前仍存在的 artifact 相对路径。配额轮转会真的删正文文件，
+  /// 因此「能否查看全文」必须按实际存在的 artifact 判断，而不是按事件推断。
+  private var historyArtifactPaths: Set<String> = []
+  private var historyMemorySources: [MemorySourceRef] = []
+  private var historyExpandedRowIDs: Set<String> = []
+  /// 已读入的 artifact 全文，按行 id 缓存；收起再展开不重复读盘。
+  private var historyFullTexts: [String: String] = [:]
+  private var historyStatus: SessionHistoryStatus = .loading
+  private var historyProjectPath: String?
+  private var historyLoadedDirectory: String?
+  private var historyInspectedAt: Date?
+  private var historyRequestedDirectory: String?
+  private var historyRequestedSessionID: UUID?
+  private var historyTask: Task<Void, Never>?
+  private var historyDetailTask: Task<Void, Never>?
+  private var historyArtifactTask: Task<Void, Never>?
   private var renderedTheme: TerminalTheme?
   /// 控制器在面板收起后继续缓存，但隐藏期间不得因 CWD、Pane 或文档事件重新启动工作。
   private var isPresentationActive = true
@@ -190,6 +221,9 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     filesTask?.cancel()
     outlineTask?.cancel()
     gitDiffTask?.cancel()
+    historyTask?.cancel()
+    historyDetailTask?.cancel()
+    historyArtifactTask?.cancel()
   }
 
   /// 工作区会在主题变化时复用详情控制器；只有主题真实变化才清理页缓存，普通模型
@@ -314,6 +348,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     case .outline:
       if outlineTask != nil { outlineNeedsRefresh = true }
       outlineTask?.cancel()
+    case .history:
+      // 三个任务都读 SQLite；切页后没有任何一个的结果还有用处。
+      historyTask?.cancel()
+      historyDetailTask?.cancel()
+      historyArtifactTask?.cancel()
     }
   }
 
@@ -337,6 +376,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         self.requestedFilesDirectory = nil
         self.outlineTask?.cancel()
         self.outlineNeedsRefresh = true
+        self.resetHistoryForPaneChange()
         // 旧 Info/Outline/Git/Files 模型留在原表格中，只由覆盖层拦截交互；新快照通过
         // 既有身份守卫后再一次性替换，避免视图层经历可见的空白中间态。
         self.observeOutlineChanges()
@@ -362,6 +402,10 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
           self.refreshGit(directory: change.directory)
         case .files:
           self.refreshFiles(directory: change.directory)
+        case .history:
+          // cd 到另一个仓库就是换了项目：时间线必须跟着换，且回到列表态。
+          self.historyMode = .sessionList
+          self.refreshHistory(directory: change.directory)
         case .outline:
           break
         }
@@ -526,6 +570,9 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       if filesDirectory != directory { refreshFiles() }
     case .outline:
       if outlineNeedsRefresh { refreshOutline(debounced: false) }
+    case .history:
+      // 目录没变也可能过期：期间可能有新 session 结束并落库。
+      if historyLoadedDirectory != directory || isHistorySnapshotExpired { refreshHistory() }
     }
   }
 
@@ -541,6 +588,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       case .git: content = makeGitContent()
       case .files: content = makeFilesContent()
       case .info: content = makeInformationContent()
+      case .history: content = makeHistoryContent()
       }
       cachedContent[selection] = content
       // 控制器级刷新屏障永远位于页内容之上；后续首次创建隐藏页时也不能盖住屏障。
@@ -1466,10 +1514,23 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     if tableView === filesTable { return visibleFileRows.count }
     if tableView === outlineTable { return outlineRows.count }
     if tableView === gitTable { return gitRows.count }
+    if tableView === historyTable { return historyRows.count }
     return 0
   }
 
+  /// History 的 Memory 卡片与展开正文块必须按实际文本测量高度；其余表格保持各自的固定
+  /// 行高。实现了本方法后 `rowHeight` 对所有表格都失效，因此这里必须逐表返回。
+  func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+    guard tableView === historyTable else { return tableView.rowHeight }
+    guard historyRows.indices.contains(row) else { return SessionHistoryMetrics.timelineRowHeight }
+    return historyRowHeight(historyRows[row], width: tableView.bounds.width)
+  }
+
   func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+    if tableView === historyTable {
+      guard historyRows.indices.contains(row) else { return nil }
+      return makeHistoryRowView(historyRows[row], in: tableView)
+    }
     if tableView === gitTable {
       guard gitRows.indices.contains(row) else { return nil }
       let identifier = NSUserInterfaceItemIdentifier("details-git-row")
@@ -1755,6 +1816,317 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     expandedPaths.insert(url.standardizedFileURL.path)
     pendingFileSelectionPath = selection?.standardizedFileURL.path
     refreshFiles(directory: filesDirectory ?? requestedFilesDirectory)
+  }
+
+  // MARK: - History
+
+  /// 「已有快照且超过 30 秒」。History 没有推送通道（session 在别的 Pane 里结束也会落库），
+  /// 因此重新展示该页时按时间重取；从未加载过（nil）不算过期，由目录比较负责首次请求。
+  private var isHistorySnapshotExpired: Bool {
+    guard let historyInspectedAt else { return false }
+    return now().timeIntervalSince(historyInspectedAt) > 30
+  }
+
+  /// Pane 焦点变化时清空 History 的全部派生状态。
+  ///
+  /// 详情面板只服务当前聚焦 Pane：新 Pane 可能属于另一个项目，旧 session 详情、展开态与
+  /// 已读全文都不能继承，否则会把别的 Pane 的历史显示成当前 Pane 的。
+  private func resetHistoryForPaneChange() {
+    historyTask?.cancel()
+    historyDetailTask?.cancel()
+    historyArtifactTask?.cancel()
+    historyMode = .sessionList
+    historyLoadedDirectory = nil
+    historyRequestedDirectory = nil
+    historyRequestedSessionID = nil
+    historyInspectedAt = nil
+    historyDetail = nil
+    historyArtifactPaths = []
+    historyMemorySources = []
+    historyExpandedRowIDs = []
+    historyFullTexts = [:]
+  }
+
+  /// 读取当前 Pane 所属项目的 session 列表。
+  ///
+  /// 项目归属由 `ProjectResolutionService` 从 cwd 解析（git toplevel 优先），SQLite 只读
+  /// 连接在 detached task 上开与关，主线程只做行模型替换——AppKit 规则：主线程零同步 IO。
+  private func refreshHistory(directory requestedDirectory: String? = nil) {
+    historyTask?.cancel()
+    historyDetailTask?.cancel()
+    guard let tab = model.selectedTab else { return }
+    let tabID = tab.id
+    let paneID = tab.activePaneID
+    let directory = requestedDirectory ?? tab.workingDirectory
+    historyRequestedDirectory = directory
+    if historyLoadedDirectory != directory {
+      historyStatus = .loading
+      historySessions = []
+      applyHistoryRows()
+    }
+    historyTask = Task { @MainActor [weak self] in
+      let project = await ProjectResolutionService.shared.project(for: directory)
+      guard !Task.isCancelled, let self else { return }
+      let projectPath = project?.path ?? directory
+      let query = Task.detached(priority: .userInitiated) { () -> SessionHistoryFetch in
+        guard let reader = MemoryStoreAccess.makeReader() else { return .unavailable }
+        guard let rows = try? reader.sessions(projectPath: projectPath, limit: 30) else {
+          return .unavailable
+        }
+        return .sessions(rows)
+      }
+      let result = await withTaskCancellationHandler {
+        await query.value
+      } onCancel: {
+        query.cancel()
+      }
+      guard !Task.isCancelled, self.model.selectedTab?.id == tabID,
+        self.model.selectedTab?.activePaneID == paneID,
+        self.historyRequestedDirectory == directory
+      else { return }
+      switch result {
+      case .unavailable:
+        self.historyStatus = .unavailable
+        self.historySessions = []
+      case .sessions(let rows):
+        self.historyStatus = .ready
+        self.historySessions = rows
+      }
+      self.historyProjectPath = projectPath
+      self.historyLoadedDirectory = directory
+      self.historyInspectedAt = self.now()
+      self.applyHistoryRows()
+      self.completePaneRefresh(for: .history)
+      self.historyTask = nil
+    }
+  }
+
+  /// 进入某个 session 的事件时间线。展开态与已读全文都随切换清空：它们按行 id 索引，
+  /// 而 id 只在单个 session 内稳定。
+  func showHistorySessionDetail(_ sessionID: UUID) {
+    historyDetailTask?.cancel()
+    historyArtifactTask?.cancel()
+    historyMode = .sessionDetail(sessionID)
+    historyDetail = nil
+    historyArtifactPaths = []
+    historyMemorySources = []
+    historyExpandedRowIDs = []
+    historyFullTexts = [:]
+    historyRequestedSessionID = sessionID
+    historyStatus = .loading
+    applyHistoryRows()
+    guard let tab = model.selectedTab else { return }
+    let tabID = tab.id
+    let paneID = tab.activePaneID
+    historyDetailTask = Task { @MainActor [weak self] in
+      let query = Task.detached(priority: .userInitiated) { () -> SessionHistoryDetailFetch in
+        guard let reader = MemoryStoreAccess.makeReader(),
+          // `try?` 会把 `SessionDetail??` 展平成 `SessionDetail?`：抛错与「没这条 session」
+          // 在这里是同一种结果，都按不可用处理。
+          let detail = try? reader.sessionDetail(id: sessionID)
+        else { return .unavailable }
+        let artifacts = (try? reader.artifacts(sessionID: sessionID)) ?? []
+        let sources = detail.memory.flatMap { try? reader.memorySources(memoryID: $0.id) } ?? []
+        return .detail(
+          detail, artifactPaths: Set(artifacts.map(\.relativePath)), sources: sources)
+      }
+      let result = await withTaskCancellationHandler {
+        await query.value
+      } onCancel: {
+        query.cancel()
+      }
+      guard !Task.isCancelled, let self, self.model.selectedTab?.id == tabID,
+        self.model.selectedTab?.activePaneID == paneID,
+        self.historyRequestedSessionID == sessionID
+      else { return }
+      switch result {
+      case .unavailable:
+        self.historyStatus = .unavailable
+      case .detail(let detail, let artifactPaths, let sources):
+        self.historyStatus = .ready
+        self.historyDetail = detail
+        self.historyArtifactPaths = artifactPaths
+        self.historyMemorySources = sources
+      }
+      self.applyHistoryRows()
+      self.historyDetailTask = nil
+    }
+  }
+
+  /// 复制展开的输出正文，并给出与 Outline 复制一致的通知反馈。
+  func copyHistoryOutput(_ text: String) {
+    NSPasteboard.general.clearContents()
+    let copied = NSPasteboard.general.setString(text, forType: .string)
+    model.notice = copied ? "已复制输出内容。" : "无法复制输出内容。"
+  }
+
+  /// 用户点击刷新：强制重取，不看目录是否变化，也不看快照是否过期。
+  func refreshHistoryFromUser() {
+    historyLoadedDirectory = nil
+    historyInspectedAt = nil
+    refreshHistory()
+  }
+
+  /// 返回 session 列表。列表数据仍在内存里，因此这里只切模式不重新查询。
+  func showHistorySessionList() {
+    historyDetailTask?.cancel()
+    historyArtifactTask?.cancel()
+    historyMode = .sessionList
+    historyRequestedSessionID = nil
+    historyDetail = nil
+    historyExpandedRowIDs = []
+    historyFullTexts = [:]
+    historyStatus = historySessions.isEmpty && historyLoadedDirectory == nil ? .loading : .ready
+    applyHistoryRows()
+  }
+
+  /// 展开/收起某条时间线行的输出。只改行数组，不重新查询数据库。
+  func toggleHistoryRowExpansion(_ row: SessionTimelineRow) {
+    guard row.detail != nil else { return }
+    if historyExpandedRowIDs.contains(row.id) {
+      historyExpandedRowIDs.remove(row.id)
+    } else {
+      historyExpandedRowIDs.insert(row.id)
+    }
+    applyHistoryRows()
+  }
+
+  /// 读取某行对应 artifact 的正文全文。文件可能已被配额轮转删除，读不到时给出明确提示，
+  /// 而不是静默让展开区停在摘录上。
+  func loadHistoryArtifact(rowID: String) {
+    guard let relativePath = currentHistoryTimelineRows()
+      .first(where: { $0.id == rowID })?.detail?.artifactRelativePath
+    else { return }
+    historyArtifactTask?.cancel()
+    historyArtifactTask = Task { @MainActor [weak self] in
+      let query = Task.detached(priority: .userInitiated) { () -> String? in
+        MemoryStoreAccess.makeReader()?.artifactContents(relativePath: relativePath)
+      }
+      let contents = await withTaskCancellationHandler {
+        await query.value
+      } onCancel: {
+        query.cancel()
+      }
+      guard !Task.isCancelled, let self, self.historyExpandedRowIDs.contains(rowID) else { return }
+      guard let contents, !contents.isEmpty else {
+        self.model.notice = "输出正文已被清理，只保留摘录。"
+        return
+      }
+      self.historyFullTexts[rowID] = contents
+      self.applyHistoryRows()
+      self.historyArtifactTask = nil
+    }
+  }
+
+  /// 当前详情态的时间线行。视图与 artifact 读取都以它为唯一真值来源。
+  private func currentHistoryTimelineRows() -> [SessionTimelineRow] {
+    guard let historyDetail else { return [] }
+    return SessionTimelineProjection.rows(
+      for: historyDetail.events, artifactPaths: historyArtifactPaths)
+  }
+
+  /// 由当前模式与已加载数据重建行数组，并同步页头、空状态与表格。
+  func applyHistoryRows() {
+    var rows: [SessionHistoryRow] = []
+    switch historyMode {
+    case .sessionList:
+      if !historySessions.isEmpty {
+        rows.append(.sectionHeader("会话"))
+        rows.append(
+          contentsOf: historySessions.map { summary in
+            .session(
+              summary,
+              durationText: SessionTimelineProjection.durationText(
+                from: summary.descriptor.startedAt, to: summary.endedAt))
+          })
+      }
+    case .sessionDetail:
+      if let detail = historyDetail {
+        if let memory = detail.memory {
+          rows.append(.sectionHeader("Memory"))
+          rows.append(
+            .memory(
+              title: memory.title,
+              body: Self.historyMemoryBody(memory),
+              sources: Self.historyMemorySourcesText(memory, refs: historyMemorySources)))
+        }
+        let timeline = currentHistoryTimelineRows()
+        if !timeline.isEmpty { rows.append(.sectionHeader("时间线")) }
+        for row in timeline {
+          let expanded = historyExpandedRowIDs.contains(row.id)
+          rows.append(.timeline(row, isExpanded: expanded))
+          guard expanded, let content = row.detail else { continue }
+          let full = historyFullTexts[row.id]
+          rows.append(
+            .expandedText(
+              id: row.id,
+              text: full ?? content.excerpt,
+              isFullText: full != nil,
+              canLoadFullText: content.artifactRelativePath != nil))
+        }
+      }
+    }
+    historyRows = rows
+    updateHistoryChrome(hasRows: !rows.isEmpty)
+    historyTable.reloadData()
+  }
+
+  /// 页头（返回按钮、标题）与空状态文案。空状态必须区分「未开启记录」「暂无记录」和
+  /// 「正在读取」，否则用户无法判断该去开设置还是该等一下。
+  private func updateHistoryChrome(hasRows: Bool) {
+    let inDetail: Bool
+    if case .sessionDetail = historyMode { inDetail = true } else { inDetail = false }
+    historyBackButton?.isHidden = !inDetail
+    historyRefreshButton?.isHidden = inDetail
+    if inDetail, let detail = historyDetail {
+      let agent = detail.descriptor.agentProvider
+        ?? detail.descriptor.shell.map { ($0 as NSString).lastPathComponent } ?? "Shell"
+      historyTitleLabel?.stringValue = agent
+      historyTitleLabel?.toolTip = detail.descriptor.projectPath
+    } else if inDetail {
+      historyTitleLabel?.stringValue = "会话详情"
+      historyTitleLabel?.toolTip = nil
+    } else {
+      let name = historyProjectPath.map { ($0 as NSString).lastPathComponent }
+      historyTitleLabel?.stringValue = name ?? "History"
+      historyTitleLabel?.toolTip = historyProjectPath
+    }
+
+    guard let empty = historyEmptyLabel else { return }
+    empty.isHidden = hasRows
+    guard !hasRows else { return }
+    switch historyStatus {
+    case .loading:
+      empty.stringValue = "正在读取会话记录…"
+    case .unavailable:
+      empty.stringValue = "未开启记录。在设置中开启 Session Recording 后，这里会显示会话时间线。"
+    case .ready:
+      empty.stringValue = inDetail ? "此会话没有可展示的事件。" : "此项目暂无记录。"
+    }
+  }
+
+  /// Memory 正文摘要：优先 summary，没有时截 content 的开头。整段正文由 Memory 管理界面
+  /// 承担，详情面板只给能一眼读完的量。
+  private static func historyMemoryBody(_ memory: MemoryRecord) -> String {
+    let raw = memory.summary?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let source = (raw?.isEmpty == false ? raw! : memory.content)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard source.count > 400 else { return source }
+    return String(source.prefix(400)) + "…"
+  }
+
+  /// 来源回链说明。回链本身指向 session / event / commit，详情面板先给出可核对的计数与
+  /// 提炼来源；点进具体事件由后续阶段的 Memory 管理界面承担。
+  private static func historyMemorySourcesText(
+    _ memory: MemoryRecord, refs: [MemorySourceRef]
+  ) -> String {
+    var parts = ["来源：\(memory.extractor.displayName)"]
+    let counts = Dictionary(grouping: refs, by: \.kind).mapValues(\.count)
+    for kind in [MemorySourceRef.Kind.session, .event, .task, .gitCommit] {
+      guard let count = counts[kind], count > 0 else { continue }
+      parts.append("\(kind.rawValue) ×\(count)")
+    }
+    return parts.joined(separator: " · ")
   }
 
   // MARK: - 共享构建辅助
