@@ -321,22 +321,62 @@ private func withClient(
     }
   }
 
-  @Test("project_path 过滤过窄时给出放宽提示，\"*\" 跨项目检索")
+  @Test("项目内零命中时自动 federation 回落并标注 cross-project")
   func projectScopeWidening() async throws {
     let fixture = try await makeFixture()
     try withClient(
       memoryDirectory: storeLocation(fixture).rootDirectory,
       workingDirectory: fixture.projectDirectory
     ) { client in
+      // 项目过滤查不到 → 自动放宽到全部项目，命中必须带跨项目声明，
+      // Agent 才知道这些结论来自别的项目、未必适用（zero-mem federation 语义）。
       let narrow = try client.callTool(
         "search_memory", arguments: ["query": "reconnect", "project_path": "/nowhere"])
       #expect(!narrow.isError)
-      #expect(narrow.text.contains("No results."))
-      #expect(narrow.text.contains("project_path \"*\""))
+      #expect(narrow.text.contains("[cross-project]"))
+      #expect(narrow.text.contains("OTHER projects"))
+      #expect(narrow.text.contains("memory_id: \(fixture.memoryID.uuidString)"))
 
       let wide = try client.callTool(
         "search_memory", arguments: ["query": "reconnect", "project_path": "*"])
       #expect(wide.text.contains("memory_id: \(fixture.memoryID.uuidString)"))
+      // 显式 "*" 是用户/Agent 主动跨项目，不算回落，不该标 cross-project。
+      #expect(!wide.text.contains("[cross-project]"))
+    }
+  }
+
+  @Test("零命中时附带库状态：区分「库有数据」与「记录未开启」")
+  func zeroHitReportsStoreStatus() async throws {
+    // 库有数据但查询无匹配：状态行给出计数与最后事件时间。
+    let fixture = try await makeFixture()
+    try withClient(
+      memoryDirectory: storeLocation(fixture).rootDirectory,
+      workingDirectory: fixture.projectDirectory
+    ) { client in
+      let miss = try client.callTool(
+        "search_memory", arguments: ["query": "zzzqqqnevermatched", "project_path": "*"])
+      #expect(!miss.isError)
+      #expect(miss.text.contains("No results."))
+      #expect(miss.text.contains("Store status: 1 sessions"))
+      #expect(miss.text.contains("latest event"))
+    }
+
+    // 库存在但没有任何事件与 memory：提示记录可能未开启。
+    let emptyRoot = FileManager.default.temporaryDirectory
+      .appendingPathComponent("aster-mcp-empty-\(UUID().uuidString)", isDirectory: true)
+    let writer = EventWriter(location: MemoryStoreLocation(rootDirectory: emptyRoot))
+    await writer.record(
+      .startSession(
+        RecordedSessionDescriptor(
+          id: UUID(), projectPath: "/tmp/elsewhere", shell: "zsh", startedAt: Date())))
+    await writer.flush()
+    try withClient(memoryDirectory: emptyRoot, workingDirectory: fixture.projectDirectory) {
+      client in
+      let result = try client.callTool(
+        "search_memory", arguments: ["query": "anything", "project_path": "*"])
+      #expect(!result.isError)
+      #expect(result.text.contains("Store status: empty"))
+      #expect(result.text.contains("recording is likely turned off"))
     }
   }
 

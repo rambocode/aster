@@ -154,6 +154,28 @@ public struct RecordingPolicy: Codable, Equatable, Sendable {
     self.init(mode: isEnabled ? .on : .off, excludedPathPrefixes: excludedPathPrefixes)
   }
 
+  // MARK: - 内置排除基线（零配置默认）
+
+  /// 高敏目录基线（home 相对）。装配策略时始终并入用户列表：
+  /// 用户配置只能追加排除项，不能移除基线 —— 与 Incognito「只能收紧」同一哲学。
+  public static let baselineExcludedDirectoryNames: [String] = [
+    ".ssh", ".gnupg", ".aws", ".kube", ".password-store",
+  ]
+
+  /// 秘密管理类 CLI 基线：这些命令的参数或输出几乎必然含 secret，
+  /// 即使 redactor 能遮盖大部分，也不该让它们进入记录管线。
+  public static let baselineExcludedCommandPrefixes: [String] = [
+    "op", "vault", "pass", "gpg", "security",
+  ]
+
+  /// 把目录基线展开成给定 home 下的绝对路径。纯函数：home 由调用方传入，
+  /// 测试可用假路径验证展开与边界语义。
+  public static func baselineExcludedPathPrefixes(homeDirectory: String) -> [String] {
+    let home = normalized(homeDirectory)
+    guard !home.isEmpty, home != "/" else { return [] }
+    return baselineExcludedDirectoryNames.map { "\(home)/\($0)" }
+  }
+
   /// 判定某条命令是否应被记录。命令为空时只按目录判定（如 session 生命周期事件）。
   public func shouldRecord(command: String?, workingDirectory: String) -> Bool {
     guard shouldRecord(workingDirectory: workingDirectory) else { return false }

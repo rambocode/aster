@@ -110,6 +110,7 @@ public enum MemoryBrowsing {
   public static func statusLabel(_ status: MemoryStatus) -> String {
     switch status {
     case .active: "生效中"
+    case .pinned: "已固定"
     case .archived: "已归档"
     case .superseded: "已被取代"
     case .disabled: "已禁用"

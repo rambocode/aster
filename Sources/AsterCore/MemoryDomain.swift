@@ -92,8 +92,11 @@ public enum MemoryType: String, Codable, Sendable, CaseIterable {
 
 /// Memory 生命周期状态（PRD §29）。`disabled` 由用户主动屏蔽，
 /// 对 MCP 检索不可见，用于切断错误历史造成的上下文污染（PRD §98）。
+/// `pinned` 是关键事实的固定席位（PRD §47 PINNED 模式）：`get_project_context`
+/// 无条件带上，不与普通检索排名竞争——关键决策不该依赖每次都被搜出来。
 public enum MemoryStatus: String, Codable, Sendable, CaseIterable {
   case active
+  case pinned
   case archived
   case superseded
   case disabled

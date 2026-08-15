@@ -132,4 +132,173 @@ private func commandEvent(
     #expect(MemoryStoreReader.ftsQuery(from: "a\"b -c:d") == "\"a\"* \"b\"* \"-c:d\"*")
     #expect(MemoryStoreReader.ftsQuery(from: "   ") == "")
   }
+
+  @Test("检索按 bm25 相关度排序：高相关的旧结果排在弱相关的新结果之前")
+  func searchOrdersByRelevanceNotRecency() async throws {
+    let location = temporaryLocation()
+    let writer = EventWriter(location: location)
+    let sessionID = UUID()
+    await writer.record(
+      .startSession(
+        RecordedSessionDescriptor(
+          id: sessionID, projectPath: "/tmp/project", shell: "zsh",
+          startedAt: Date(timeIntervalSince1970: 1_700_000_000))))
+    // 旧事件：词频高、正文短 → bm25 更相关；新事件：同词只出现一次且被长文稀释。
+    await writer.record(
+      .appendEvent(
+        RecordedEvent(
+          sessionID: sessionID, sequence: 1,
+          timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+          kind: .commandOutput,
+          outputExcerpt: "deploy failed: deploy hook rejected the deploy")))
+    let padding = (0..<50).map { "word\($0)" }.joined(separator: " ")
+    await writer.record(
+      .appendEvent(
+        RecordedEvent(
+          sessionID: sessionID, sequence: 2,
+          timestamp: Date(timeIntervalSince1970: 1_700_009_999),
+          kind: .commandOutput,
+          outputExcerpt: "\(padding) deploy \(padding)")))
+    await writer.flush()
+
+    let reader = try MemoryStoreReader(location: location)
+    let hits = try reader.search(query: "deploy", limit: 10)
+    #expect(hits.count == 2)
+    #expect(hits.first?.timestamp == Date(timeIntervalSince1970: 1_700_000_000))
+  }
+
+  @Test("混合检索的总量不超过 limit")
+  func searchRespectsCombinedLimit() async throws {
+    let location = temporaryLocation()
+    let writer = EventWriter(location: location)
+    let sessionID = UUID()
+    await writer.record(
+      .startSession(
+        RecordedSessionDescriptor(
+          id: sessionID, projectPath: "/tmp/project", shell: "zsh",
+          startedAt: Date(timeIntervalSince1970: 1_700_000_000))))
+    for index in 0..<6 {
+      await writer.record(
+        .appendEvent(commandEvent(session: sessionID, seq: index, command: "make release-\(index)")))
+    }
+    await writer.record(
+      .insertMemory(
+        SessionMemoryDraft(
+          sessionID: sessionID, projectPath: "/tmp/project",
+          title: "release 流程结论", content: "make release 需要先跑 codesign"),
+        createdAt: Date(timeIntervalSince1970: 1_700_000_100)))
+    await writer.flush()
+
+    let reader = try MemoryStoreReader(location: location)
+    // memory + 6 条命令都命中 “release”，旧实现会返回 2×limit 条。
+    let hits = try reader.search(query: "release", limit: 3)
+    #expect(hits.count == 3)
+  }
+
+  @Test("storeStatus 返回三表计数与最后事件时间")
+  func storeStatusReportsCounts() async throws {
+    let location = temporaryLocation()
+    let writer = EventWriter(location: location)
+    let sessionID = UUID()
+    await writer.record(
+      .startSession(
+        RecordedSessionDescriptor(
+          id: sessionID, projectPath: "/tmp/project", shell: "zsh",
+          startedAt: Date(timeIntervalSince1970: 1_700_000_000))))
+    await writer.flush()
+
+    // 只有 session、没有事件与 memory：事件侧应报告空。
+    let reader = try MemoryStoreReader(location: location)
+    let empty = try reader.storeStatus()
+    #expect(empty.sessionCount == 1)
+    #expect(empty.eventCount == 0)
+    #expect(empty.memoryCount == 0)
+    #expect(empty.latestEventAt == nil)
+
+    await writer.record(
+      .appendEvent(commandEvent(session: sessionID, seq: 7, command: "swift build")))
+    await writer.flush()
+    let status = try reader.storeStatus()
+    #expect(status.eventCount == 1)
+    #expect(status.latestEventAt == Date(timeIntervalSince1970: 1_700_000_007))
+  }
+
+  @Test("保留策略：超龄已结束 session 的 events 与 artifact 被裁剪，sessions 与 memories 保留")
+  func eventRetentionTrimsOldSessions() async throws {
+    let location = temporaryLocation()
+    defer { try? FileManager.default.removeItem(at: location.rootDirectory) }
+    let writer = EventWriter(location: location)
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let oldID = UUID()
+    let freshID = UUID()
+
+    // 超龄 session（100 天前）+ artifact 文件；新 session 保持完整。
+    for (id, age) in [(oldID, 100.0), (freshID, 1.0)] {
+      await writer.record(
+        .startSession(
+          RecordedSessionDescriptor(
+            id: id, projectPath: "/tmp/p", shell: "zsh",
+            startedAt: now.addingTimeInterval(-age * 24 * 3_600))))
+      await writer.record(
+        .appendEvent(commandEvent(session: id, seq: 1, command: "swift build")))
+      await writer.record(.endSession(sessionID: id, exitCode: 0, endedAt: now))
+    }
+    let artifactURL = location.rootDirectory.appendingPathComponent("transcripts/old.txt")
+    try FileManager.default.createDirectory(
+      at: artifactURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("payload".utf8).write(to: artifactURL)
+    await writer.record(
+      .appendArtifact(
+        ArtifactRef(
+          sessionID: oldID, kind: .commandOutput,
+          relativePath: "transcripts/old.txt", byteCount: 7)))
+    await writer.record(
+      .insertMemory(
+        SessionMemoryDraft(
+          sessionID: oldID, projectPath: "/tmp/p", title: "旧结论", content: "正文"),
+        createdAt: now))
+    await writer.flush()
+
+    await writer.enforceEventRetention(maximumAge: 90 * 24 * 3_600, now: now)
+
+    let reader = try MemoryStoreReader(location: location)
+    // 旧 session 的 events 与 artifact 文件消失；session 行与派生 memory 留存。
+    let oldDetail = try #require(try reader.sessionDetail(id: oldID))
+    #expect(oldDetail.events.isEmpty)
+    #expect(oldDetail.memory?.title == "旧结论")
+    #expect(FileManager.default.fileExists(atPath: artifactURL.path) == false)
+    // 新 session 不受影响。
+    let freshDetail = try #require(try reader.sessionDetail(id: freshID))
+    #expect(freshDetail.events.count == 1)
+  }
+
+  @Test("pinned memory 进入项目上下文的固定席位，普通检索仍可见")
+  func pinnedMemoriesJoinProjectContext() async throws {
+    let location = temporaryLocation()
+    defer { try? FileManager.default.removeItem(at: location.rootDirectory) }
+    let writer = EventWriter(location: location)
+    let pinnedID = UUID()
+    await writer.record(
+      .insertMemoryRecord(
+        MemoryRecord(
+          id: pinnedID, projectPath: "/tmp/p", type: .decision,
+          title: "连接生命周期归 ConnectionManager", content: "不要在 socket 循环里重连",
+          status: .pinned),
+        sources: []))
+    await writer.record(
+      .insertMemoryRecord(
+        MemoryRecord(
+          projectPath: "/tmp/p", type: .session, title: "普通会话结论", content: "正文"),
+        sources: []))
+    await writer.flush()
+
+    let reader = try MemoryStoreReader(location: location)
+    let pinned = try reader.pinnedMemories(projectPath: "/tmp/p")
+    #expect(pinned.map(\.id) == [pinnedID])
+    let context = try reader.projectContext(projectPath: "/tmp/p")
+    #expect(context.pinned.map(\.id) == [pinnedID])
+    // pinned 不属于 disabled：普通检索仍能搜到它（管理与用户搜索场景）。
+    let hits = try reader.search(query: "ConnectionManager", projectPath: "/tmp/p")
+    #expect(hits.contains { $0.identifier == pinnedID.uuidString })
+  }
 }

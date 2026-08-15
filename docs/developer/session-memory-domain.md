@@ -22,6 +22,9 @@ Terminal Activity → Session Events → Task → Memory → Context Engine → 
 - **RecordedSessionDescriptor**：一次终端会话的可持久化描述，不含 PID、FD 与运行对象。
 - **RecordingPolicy / RecordingMode**：`off | on | incognito` 三态，加排除目录与排除命令。
   判定发生在事件产生的源头，被排除的内容**从不落盘**，而不是落盘后再删。
+  内置**排除基线**（`RecordingPolicy.baselineExcluded*`：`~/.ssh` 等高敏目录与 `op`/`vault`
+  等秘密管理 CLI）在 `AppPreferences.mergedRecordingPolicy` 装配时并入，用户列表只能追加、
+  不能移除基线 —— 与 Incognito「只能收紧」同一哲学。偏好键里只存用户自己的项。
 - **ArtifactRef**：命令输出正文的文件指针。正文落在 `transcripts/` 目录，主库只存 ≤4KiB 摘录供 FTS。
 - **ProjectIdentity**：Memory 的隔离边界，按 git toplevel 解析，无仓库时回落工作目录。
 - **TaskDescriptor**：跨 Agent、跨 Session 的工作单元。
@@ -131,6 +134,44 @@ OSC barrier（`TerminalOutputMessageBus.enqueueBarrier`）保证同批字节先�
 FTS5 contentless 虚表 + 触发器同步：`events_fts(command, output_excerpt)` 与
 `memories_fts(title, content)`。用户输入经 `ftsQuery(from:)` 转成加引号的前缀 AND 表达式，
 避免 `-` / `:` 被当作 FTS 语法。检索结果排除 `status = 'disabled'` 的 Memory。
+
+以下四条借鉴 zero-mem-pi（Zero-Mem 论文的 pi 扩展）的生产教训：
+
+- **弱池门控**：「没有记忆」好过「混乱记忆」。判据是 FTS5 的 idf clamp——超半数文档
+  含有的查询词会被 clamp 成 ~1e-6 量级的 rank（稀有词正常在 -3 量级，实测差 6 个数量级），
+  池内最优 rank 落在 clamp 区即整池丢弃。**不要改成绝对 bm25 分数门槛**：clamp 行为加上
+  前缀查询语义让绝对分数在 FTS5 上不可靠。语料低于 `minimumGatedCorpus` 时豁免
+  （微型库里合法词也会超半数触发 clamp）。浏览器 UI 检索关闭门控，用户可看全量自行判断。
+- **federation 回落**：项目内零命中时自动放宽到全部项目重查一次，命中标注
+  `isCrossProject`，渲染时整体声明「来自其它项目、未必适用」。项目内有任何命中绝不触发。
+- **PINNED 固定席位**：`status = 'pinned'` 的 Memory 由 `get_project_context` 无条件全量
+  交付、排在最前，不与检索排名竞争（zero-mem 连续五个身份类 live bug 的结论：关键事实
+  需要 slot，不能依赖每次都被搜出来）。pinned 与 disabled 互斥；普通检索仍可搜到 pinned。
+- **检索质量 eval**：`RetrievalQualityTests` 是确定性 eval（种子事实 + 干扰项 +
+  hard-negative 对 + 弱池 + 小库豁免 + federation 语义）。任何改动检索排序、门控或
+  FTS 查询构造的提交都必须让它保持绿。
+
+### 保留策略
+
+Raw events 不能无限增长（PRD §23）。`EventWriter.enforceEventRetention`（默认 90 天）
+在 session 收尾时裁剪**已结束且超龄** session 的 events 行与 artifact 文件；
+sessions 行与 memories **永久保留**——「Raw 可裁，结论长存」与提炼分层一致。
+裁剪以 session 为原子单位，artifact 文件删除失败会在下次重试。
+
+混合检索按 **bm25 相关度**排序（FTS5 隐藏列 `rank`），不是时间倒序：高相关但年代久远的
+结论不能被新的噪音命令挤出窗口。memory 命中乘以 `memoryRankBoost`（bm25 为负值，系数 >1
+即整体前移）——同等相关度下，已提炼的结论比单条历史命令更有价值。两个 FTS 索引的 bm25
+不严格同尺度（语料统计不同），该系数是工程近似。相关度相同才回落时间倒序；两类命中合并后
+统一截断到 `limit`，不再各取 N 条返回 2N。
+
+### 零命中提示（数据新鲜度）
+
+Agent 查到空结果时必须能区分三种情况：记录没开、项目过滤太窄、真的没发生过。
+`MemoryStoreReader.storeStatus()` 一次查询返回三表计数与最后事件时间；MCP 侧在零命中的
+`search_memory` / `get_related_history` / `get_recent_commands` 与空项目的
+`get_project_context` 结果里附加状态行：库为空时提示「记录可能未开启」，库有数据时给出
+计数 + 最后事件时间（写端有批量延迟，这也是「数据截至」的可信标记）。
+状态查询失败只是不附加提示，绝不影响主结果。
 
 ## 失败语义
 

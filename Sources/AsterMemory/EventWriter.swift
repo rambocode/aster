@@ -124,6 +124,46 @@ public actor EventWriter {
     return rows.first.flatMap(MemoryRowMapping.sessionDescriptor(row:))
   }
 
+  /// Raw events 的保留策略（PRD §23：Memory 不能无限增长；借鉴 zero-mem 的 retention）。
+  ///
+  /// 裁剪对象是**已结束且超龄** session 的 events 行与 artifact 文件——L0 原始层可裁剪；
+  /// sessions 行（含 git/agent 归属与统计意义）和 memories（提炼层，长期资产）永久保留，
+  /// 这与「Raw 可丢、结论长存」的分层一致。events 删除经 FTS 触发器同步清索引。
+  /// 幂等且以 session 为原子单位：不会留下裁了一半事件的 session。
+  public func enforceEventRetention(
+    maximumAge: TimeInterval = 90 * 24 * 3_600,
+    now: Date = Date()
+  ) {
+    flushNow()
+    guard let database = openDatabaseIfNeeded() else { return }
+    let cutoff = now.timeIntervalSince1970 - maximumAge
+    let doomed =
+      (try? database.query(
+        """
+        SELECT id FROM sessions
+        WHERE status = 'ended' AND started_at < ?
+          AND EXISTS (SELECT 1 FROM events e WHERE e.session_id = sessions.id)
+        """,
+        [.real(cutoff)]
+      )) ?? []
+    guard !doomed.isEmpty else { return }
+    for row in doomed {
+      let sessionID = MemoryRowMapping.string(row, 0)
+      // 先删 artifact 文件再删行：文件删除失败下次仍会被同一查询捞到重试。
+      let artifactRows =
+        (try? database.query(
+          "SELECT relative_path FROM artifacts WHERE session_id = ?", [.text(sessionID)]
+        )) ?? []
+      for artifactRow in artifactRows {
+        let path = MemoryRowMapping.string(artifactRow, 0)
+        try? FileManager.default.removeItem(
+          at: location.rootDirectory.appendingPathComponent(path))
+      }
+      try? database.run("DELETE FROM artifacts WHERE session_id = ?", [.text(sessionID)])
+      try? database.run("DELETE FROM events WHERE session_id = ?", [.text(sessionID)])
+    }
+  }
+
   /// transcripts 目录的总配额裁剪：超过上限时按创建时间删除最旧的 artifact 文件，
   /// 并把对应行标记为 purged（保留事件与指针，只丢正文）。
   public func enforceArtifactQuota(maximumBytes: Int) {

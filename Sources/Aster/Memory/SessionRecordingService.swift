@@ -535,5 +535,8 @@ final class SessionRecordingService: TerminalEventRecording {
     await writer.record(
       .insertMemoryRecord(extracted.memory, sources: extracted.sources))
     await writer.flush()
+    // Session 收尾是保留策略的天然时机：低频（每次会话一次）、已在后台、
+    // 且刚写完新数据正是裁旧数据的时候。Raw events 超龄裁剪，memories 长存。
+    await writer.enforceEventRetention()
   }
 }

@@ -146,6 +146,8 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
   private let detailText = NSTextView()
   private let statusLabel = makeLabel("", size: 11, color: AsterTheme.secondaryInk)
   private let primaryButton = NSButton(title: "", target: nil, action: nil)
+  /// PINNED 固定席位的开关（zero-mem 教训：关键事实不该依赖检索排名）。
+  private let pinButton = NSButton(title: "", target: nil, action: nil)
   private let deleteButton = NSButton(title: "删除", target: nil, action: nil)
   /// Task 的状态流转。用下拉而不是「标记完成」单个按钮：状态是三态机，
   /// 用户既要能完成也要能放弃，还要能把关掉的 Task 重新打开。
@@ -264,11 +266,12 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     body.spacing = 10
     body.distribution = .fill
 
-    for button in [primaryButton, deleteButton] {
+    for button in [primaryButton, pinButton, deleteButton] {
       button.bezelStyle = .rounded
       button.target = self
     }
     primaryButton.action = #selector(primaryAction(_:))
+    pinButton.action = #selector(pinAction(_:))
     deleteButton.action = #selector(deleteAction(_:))
     deleteButton.contentTintColor = AsterTheme.warning
     taskStatusPopUp.addItems(withTitles: TaskStatus.allCases.map(\.displayName))
@@ -276,7 +279,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     taskStatusPopUp.action = #selector(taskStatusChanged(_:))
     taskStatusPopUp.toolTip = "改变这个 Task 的状态"
     let footer = NSStackView(
-      views: [statusLabel, NSView(), taskStatusPopUp, deleteButton, primaryButton])
+      views: [statusLabel, NSView(), taskStatusPopUp, deleteButton, pinButton, primaryButton])
     footer.orientation = .horizontal
     footer.spacing = 8
 
@@ -441,6 +444,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     case .memories:
       let record = selectedMemory
       primaryButton.isHidden = record == nil
+      pinButton.isHidden = record == nil
       deleteButton.isHidden = record == nil
       taskStatusPopUp.isHidden = true
       primaryButton.isEnabled = true
@@ -448,9 +452,17 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
       primaryButton.toolTip =
         record?.status == .disabled
         ? "重新允许该 Memory 进入 Agent 检索" : "禁用后 MCP 检索完全看不到这条 Memory"
+      // 固定与禁用互斥：禁用中的条目先启用才能固定，避免出现「固定但不可见」的矛盾态。
+      pinButton.isEnabled = record?.status != .disabled
+      pinButton.title = record?.status == .pinned ? "取消固定" : "固定"
+      pinButton.toolTip =
+        record?.status == .pinned
+        ? "移出固定席位，回到普通检索"
+        : "固定后无条件随项目上下文交给 Agent，不参与检索排名"
     case .tasks:
       let task = selectedTask
       primaryButton.isHidden = task == nil
+      pinButton.isHidden = true
       deleteButton.isHidden = true
       taskStatusPopUp.isHidden = task == nil
       if let task, let index = TaskStatus.allCases.firstIndex(of: task.status) {
@@ -466,6 +478,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
         : "只有进行中的 Task 可以关联新会话"
     case .receipts:
       primaryButton.isHidden = true
+      pinButton.isHidden = true
       deleteButton.isHidden = true
       taskStatusPopUp.isHidden = true
     }
@@ -593,6 +606,18 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
       reload()
     case .receipts:
       break
+    }
+  }
+
+  /// 固定 / 取消固定。pinned 是关键事实的固定席位：`get_project_context` 无条件带上，
+  /// 不与检索排名竞争（zero-mem 五个身份类 live bug 的教训）。
+  @objc private func pinAction(_ sender: NSButton) {
+    guard tab == .memories, let record = selectedMemory, record.status != .disabled else { return }
+    let next: MemoryStatus = record.status == .pinned ? .active : .pinned
+    Task { [weak self] in
+      await MemoryStoreAccess.writer.record(.updateMemoryStatus(id: record.id, status: next))
+      await MemoryStoreAccess.writer.flush()
+      self?.reload()
     }
   }
 

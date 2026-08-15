@@ -97,12 +97,16 @@ struct MCPServer {
       let query = try MCPArguments.requiredString(
         arguments, "query", maximumBytes: MCPArguments.maximumQueryBytes)
       let project = projectFilter(arguments)
+      // federation 回落：项目内零命中时自动放宽到全部项目（命中带 cross-project 标注），
+      // Agent 不用再调一次；项目内有命中时绝不触发。
       let hits = try reader.search(
         query: query, projectPath: project,
-        limit: MCPArguments.integer(arguments, "limit", default: 10, minimum: 1, maximum: 50))
+        limit: MCPArguments.integer(arguments, "limit", default: 10, minimum: 1, maximum: 50),
+        fallbackAcrossProjects: true)
       return ToolOutcome(
         text: MCPRenderer.hits(
-          hits, header: "# Aster memory search: \(query)", emptyHint: widenHint(project)),
+          hits, header: "# Aster memory search: \(query)",
+          emptyHint: hits.isEmpty ? emptyResultHint(project: project, reader: reader) : nil),
         memoryIDs: memoryIdentifiers(in: hits),
         projectPath: project,
         query: "search_memory: \(query)")
@@ -110,9 +114,12 @@ struct MCPServer {
     case "get_project_context":
       let project = try requiredProjectPath(arguments)
       let snapshot = try reader.projectContext(projectPath: project)
+      // 项目下一无所有时补库状态行；项目有数据时逐条时间戳已足够判断新鲜度。
+      let empty = snapshot.sessions.isEmpty && snapshot.memories.isEmpty && snapshot.tasks.isEmpty
       return ToolOutcome(
-        text: MCPRenderer.projectContext(snapshot),
-        memoryIDs: snapshot.memories.map(\.id.uuidString),
+        text: MCPRenderer.projectContext(
+          snapshot, statusLine: empty ? storeStatusLine(reader: reader) : nil),
+        memoryIDs: (snapshot.pinned + snapshot.memories).map(\.id.uuidString),
         projectPath: project,
         query: "get_project_context: \(project)")
 
@@ -143,10 +150,12 @@ struct MCPServer {
       let project = projectFilter(arguments)
       let hits = try reader.relatedHistory(
         keyword: keyword, projectPath: project,
-        limit: MCPArguments.integer(arguments, "limit", default: 20, minimum: 1, maximum: 50))
+        limit: MCPArguments.integer(arguments, "limit", default: 20, minimum: 1, maximum: 50),
+        fallbackAcrossProjects: true)
       return ToolOutcome(
         text: MCPRenderer.hits(
-          hits, header: "# Aster related history: \(keyword)", emptyHint: widenHint(project)),
+          hits, header: "# Aster related history: \(keyword)",
+          emptyHint: hits.isEmpty ? emptyResultHint(project: project, reader: reader) : nil),
         memoryIDs: memoryIdentifiers(in: hits),
         projectPath: project,
         query: "get_related_history: \(keyword)")
@@ -176,7 +185,8 @@ struct MCPServer {
         limit: MCPArguments.integer(arguments, "limit", default: 20, minimum: 1, maximum: 100))
       return ToolOutcome(
         text: MCPRenderer.hits(
-          hits, header: "# Aster recent commands", emptyHint: widenHint(project)),
+          hits, header: "# Aster recent commands",
+          emptyHint: hits.isEmpty ? emptyResultHint(project: project, reader: reader) : nil),
         projectPath: project,
         query: "get_recent_commands: \(project ?? "*")")
 
@@ -210,6 +220,29 @@ struct MCPServer {
     guard let project else { return nil }
     return "Scope was project \(project). Retry with project_path \"*\" to search every "
       + "recorded project, or pass the correct project root."
+  }
+
+  /// 零命中时的组合提示：库状态行 + 放宽范围建议。
+  /// 库状态让 Agent 分清三种情况：记录没开（库为空）、项目过滤太窄、真的没发生过。
+  private func emptyResultHint(project: String?, reader: MemoryStoreReader) -> String? {
+    let parts = [storeStatusLine(reader: reader), widenHint(project)].compactMap { $0 }
+    return parts.isEmpty ? nil : parts.joined(separator: "\n")
+  }
+
+  /// 一行库状态。状态查询失败不影响主结果（返回 nil 即不附加）。
+  private func storeStatusLine(reader: MemoryStoreReader) -> String? {
+    guard let status = try? reader.storeStatus() else { return nil }
+    if status.eventCount == 0, status.memoryCount == 0 {
+      return "Store status: empty — recording is likely turned off in Aster settings "
+        + "(Session Memory), so nothing has been captured yet."
+    }
+    var line =
+      "Store status: \(status.sessionCount) sessions, \(status.eventCount) events, "
+      + "\(status.memoryCount) memories"
+    if let latest = status.latestEventAt {
+      line += ", latest event \(MCPRenderer.timestamp(latest))"
+    }
+    return line + ". The store has data, so no match likely means it was never recorded."
   }
 
   /// 从混合命中里挑出 memory id —— command 命中的 identifier 是 session id，不算 memory。

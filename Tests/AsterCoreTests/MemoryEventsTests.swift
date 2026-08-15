@@ -39,6 +39,33 @@ private func event(
     let policy = RecordingPolicy(isEnabled: true)
     #expect(!policy.shouldRecord(workingDirectory: ""))
   }
+
+  @Test("内置基线展开成 home 下的绝对路径，异常 home 返回空")
+  func baselinePathExpansion() {
+    let expanded = RecordingPolicy.baselineExcludedPathPrefixes(homeDirectory: "/Users/x/")
+    #expect(expanded.contains("/Users/x/.ssh"))
+    #expect(expanded.contains("/Users/x/.gnupg"))
+    #expect(expanded.count == RecordingPolicy.baselineExcludedDirectoryNames.count)
+    // home 缺失或为根目录时不能生成 “/.ssh” 这类误伤全局的前缀。
+    #expect(RecordingPolicy.baselineExcludedPathPrefixes(homeDirectory: "").isEmpty)
+    #expect(RecordingPolicy.baselineExcludedPathPrefixes(homeDirectory: "/").isEmpty)
+  }
+
+  @Test("装配基线后的策略拦截高敏目录与秘密管理命令")
+  func baselinePolicyBlocksSensitiveActivity() {
+    let policy = RecordingPolicy(
+      mode: .on,
+      excludedPathPrefixes: RecordingPolicy.baselineExcludedPathPrefixes(
+        homeDirectory: "/Users/x"),
+      excludedCommandPrefixes: RecordingPolicy.baselineExcludedCommandPrefixes)
+    #expect(!policy.shouldRecord(workingDirectory: "/Users/x/.ssh"))
+    #expect(!policy.shouldRecord(workingDirectory: "/Users/x/.aws/config-dir"))
+    // 同段前缀不误伤：.sshx 不是 .ssh。
+    #expect(policy.shouldRecord(workingDirectory: "/Users/x/.sshx"))
+    #expect(!policy.shouldRecord(command: "op read secret", workingDirectory: "/Users/x/work"))
+    #expect(!policy.shouldRecord(command: "vault kv get x", workingDirectory: "/Users/x/work"))
+    #expect(policy.shouldRecord(command: "git push", workingDirectory: "/Users/x/work"))
+  }
 }
 
 @Suite struct RuleBasedSessionMemoryExtractorTests {

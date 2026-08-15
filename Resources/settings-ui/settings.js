@@ -221,9 +221,9 @@
       ]},
       { title: "Session Memory 记录", description: "记录终端活动，让 Agent 能查到项目的历史工作过程。数据只保存在本机 ~/Library/Application Support/Aster/Memory/。", rows: [
         row("memory.recordingMode", "记录模式", "“记录中”会在本机保存命令、退出码与输出摘录；“隐身”与“关闭”都零落盘", "select", { options: options.recordingMode }),
-        row("memory.excludedPaths", "排除目录", "逗号分隔的绝对路径；这些目录下的活动从不写入数据库", "text"),
+        row("memory.excludedPaths", "排除目录", "逗号分隔的绝对路径；这些目录下的活动从不写入数据库。~/.ssh、~/.gnupg、~/.aws、~/.kube、~/.password-store 已内置排除", "text"),
         action("addMemoryExcludedPath", "添加排除目录", "从文件选择器挑一个目录加入排除列表", "选择目录…"),
-        row("memory.excludedCommands", "排除命令", "逗号分隔的命令名，例如 op、vault；命中的命令连同它的输出都不记录", "text"),
+        row("memory.excludedCommands", "排除命令", "逗号分隔的命令名；命中的命令连同它的输出都不记录。op、vault、pass、gpg、security 已内置排除", "text"),
         row("memory.storeSize", "已用存储", "数据库与输出正文占用的磁盘空间", "readonly"),
         action("openMemoryFolder", "存储位置", "打开数据库与输出正文所在目录", "打开"),
         action("clearMemoryStore", "清空全部记录", "删除所有 session、事件、输出正文与已提炼的 Memory", "清空…", { danger: true }),

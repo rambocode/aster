@@ -101,6 +101,30 @@ func memoryRecordingSettingsRoundTrip() throws {
   #expect(values["memory.excludedPaths"] as? String == "/Users/me/secrets, /var/tmp")
 }
 
+@Test("排除基线始终并入生效策略，用户列表保持只含用户自己的项")
+@MainActor
+func baselineExclusionsAlwaysApply() throws {
+  let (defaults, preferences, controller) = makeMemorySettings()
+  try controller.applySettingForTesting(key: "memory.recordingMode", value: "on")
+  // 用户重复添加基线里已有的 op：策略里不得出现重复项。
+  try controller.applySettingForTesting(key: "memory.excludedCommands", value: "op, mytool")
+
+  // 偏好里只有用户自己的项（设置页展示的就是这个列表）。
+  #expect(preferences.memoryExcludedPaths == [])
+  #expect(preferences.memoryExcludedCommands == ["op", "mytool"])
+
+  // 实例属性与静态读取两条装配路径都必须带上基线。
+  for policy in [
+    preferences.memoryRecordingPolicy, AppPreferences.memoryRecordingPolicy(from: defaults),
+  ] {
+    #expect(!policy.shouldRecord(workingDirectory: NSHomeDirectory() + "/.ssh"))
+    #expect(!policy.shouldRecord(command: "vault kv get x", workingDirectory: "/tmp/work"))
+    #expect(!policy.shouldRecord(command: "mytool run", workingDirectory: "/tmp/work"))
+    #expect(policy.shouldRecord(command: "git push", workingDirectory: "/tmp/work"))
+    #expect(policy.excludedCommandPrefixes.filter { $0 == "op" }.count == 1)
+  }
+}
+
 @Test("隐身模式同样零落盘")
 @MainActor
 func incognitoModeRecordsNothing() throws {

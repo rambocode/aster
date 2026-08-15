@@ -147,12 +147,13 @@ final class AppPreferences: ObservableObject {
     set { defaults.set(newValue, forKey: Keys.memoryExcludedCommands) }
   }
 
-  /// 当前生效的记录策略（三项设置的组合投影）。
+  /// 当前生效的记录策略（三项设置的组合投影 + 内置排除基线）。
+  /// 基线在装配时并入而不落入用户偏好：设置页只展示、只保存用户自己加的项。
   var memoryRecordingPolicy: RecordingPolicy {
-    RecordingPolicy(
+    Self.mergedRecordingPolicy(
       mode: memoryRecordingMode,
-      excludedPathPrefixes: memoryExcludedPaths,
-      excludedCommandPrefixes: memoryExcludedCommands
+      userPaths: memoryExcludedPaths,
+      userCommands: memoryExcludedCommands
     )
   }
 
@@ -178,12 +179,37 @@ final class AppPreferences: ObservableObject {
   /// 从任意 `UserDefaults` 读取记录策略。记录服务是进程级单例，不持有窗口级
   /// `AppPreferences` 实例；这里提供无实例读取，避免为一个只读设置引入装配依赖。
   static func memoryRecordingPolicy(from defaults: UserDefaults) -> RecordingPolicy {
-    RecordingPolicy(
+    mergedRecordingPolicy(
       mode: defaults.string(forKey: Keys.memoryRecordingMode)
         .flatMap(RecordingMode.init(rawValue:)) ?? .off,
-      excludedPathPrefixes: defaults.stringArray(forKey: Keys.memoryExcludedPaths) ?? [],
-      excludedCommandPrefixes: defaults.stringArray(forKey: Keys.memoryExcludedCommands) ?? []
+      userPaths: defaults.stringArray(forKey: Keys.memoryExcludedPaths) ?? [],
+      userCommands: defaults.stringArray(forKey: Keys.memoryExcludedCommands) ?? []
     )
+  }
+
+  /// 用户排除列表 + 内置基线的合并装配：基线永远生效、用户项只能追加。
+  /// 集中在这里保证实例属性与静态读取两条路径的策略语义一致。
+  static func mergedRecordingPolicy(
+    mode: RecordingMode, userPaths: [String], userCommands: [String]
+  ) -> RecordingPolicy {
+    RecordingPolicy(
+      mode: mode,
+      excludedPathPrefixes: mergedUnique(
+        RecordingPolicy.baselineExcludedPathPrefixes(homeDirectory: NSHomeDirectory()),
+        userPaths),
+      excludedCommandPrefixes: mergedUnique(
+        RecordingPolicy.baselineExcludedCommandPrefixes, userCommands)
+    )
+  }
+
+  /// 顺序保持的去重合并（基线在前，用户项在后）。
+  private static func mergedUnique(_ base: [String], _ extra: [String]) -> [String] {
+    var seen = Set<String>()
+    var result: [String] = []
+    for item in base + extra where seen.insert(item).inserted {
+      result.append(item)
+    }
+    return result
   }
 
   /// 同上：提炼设置的无实例读取。`enabled` 与 `acknowledged` 必须同时为真才允许外发。
