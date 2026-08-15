@@ -4,8 +4,10 @@ import AsterMemory
 import Combine
 
 /// 右侧详情面板：Info / Outline / Git / Files / History 五页 chip 切换。进程、端口、Git、
-/// 文件树数据全部来自 `WorkspaceInspectionService` 的只读快照；History 来自 Session Memory
-/// 的只读连接。Commit、stage 等写操作不后台执行 git，而是把命令注入当前终端输入行，
+/// 文件树数据全部来自 `WorkspaceInspectionService` 的只读快照。Outline 页是「时间线」：
+/// 上半部为当前 Pane 的现场命令 Outline，下半部为本项目过去的会话记录（Session Memory
+/// 只读连接）；History 页是 Memory 功能：当前项目的记忆列表与 Memory 浏览器入口。
+/// Commit、stage 等写操作不后台执行 git，而是把命令注入当前终端输入行，
 /// 由用户审阅后自行回车（不触发隐藏 hook）。
 @MainActor
 final class DetailsPanelViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate,
@@ -142,6 +144,19 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   private var historyTask: Task<Void, Never>?
   private var historyDetailTask: Task<Void, Never>?
   private var historyArtifactTask: Task<Void, Never>?
+  /// History（Memory）页：当前项目的记忆列表。会话时间线浏览已并入 Outline 页。
+  let memoryTable = NSTableView()
+  weak var memoryTitleLabel: NSTextField?
+  weak var memoryRefreshButton: NSButton?
+  weak var memoryEmptyLabel: NSTextField?
+  private var memoryRows: [SessionHistoryRow] = []
+  private var memoryRecords: [MemoryRecord] = []
+  private var memoryStatus: SessionHistoryStatus = .loading
+  private var memoryProjectPath: String?
+  private var memoryLoadedDirectory: String?
+  private var memoryInspectedAt: Date?
+  private var memoryRequestedDirectory: String?
+  private var memoryTask: Task<Void, Never>?
   private var renderedTheme: TerminalTheme?
   /// 控制器在面板收起后继续缓存，但隐藏期间不得因 CWD、Pane 或文档事件重新启动工作。
   private var isPresentationActive = true
@@ -348,11 +363,12 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     case .outline:
       if outlineTask != nil { outlineNeedsRefresh = true }
       outlineTask?.cancel()
-    case .history:
-      // 三个任务都读 SQLite；切页后没有任何一个的结果还有用处。
+      // 会话时间线区域在 Outline 页内；三个任务都读 SQLite，切页后结果无用。
       historyTask?.cancel()
       historyDetailTask?.cancel()
       historyArtifactTask?.cancel()
+    case .history:
+      memoryTask?.cancel()
     }
   }
 
@@ -377,6 +393,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         self.outlineTask?.cancel()
         self.outlineNeedsRefresh = true
         self.resetHistoryForPaneChange()
+        self.resetMemoryForPaneChange()
         // 旧 Info/Outline/Git/Files 模型留在原表格中，只由覆盖层拦截交互；新快照通过
         // 既有身份守卫后再一次性替换，避免视图层经历可见的空白中间态。
         self.observeOutlineChanges()
@@ -403,11 +420,12 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         case .files:
           self.refreshFiles(directory: change.directory)
         case .history:
-          // cd 到另一个仓库就是换了项目：时间线必须跟着换，且回到列表态。
+          // cd 到另一个仓库就是换了项目：记忆列表必须跟着换。
+          self.refreshMemory(directory: change.directory)
+        case .outline:
+          // 会话区同理：换项目后时间线跟着换，且回到列表态。
           self.historyMode = .sessionList
           self.refreshHistory(directory: change.directory)
-        case .outline:
-          break
         }
       }
       .store(in: &cancellables)
@@ -570,9 +588,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       if filesDirectory != directory { refreshFiles() }
     case .outline:
       if outlineNeedsRefresh { refreshOutline(debounced: false) }
-    case .history:
-      // 目录没变也可能过期：期间可能有新 session 结束并落库。
+      // 会话区目录没变也可能过期：期间可能有新 session 结束并落库。
       if historyLoadedDirectory != directory || isHistorySnapshotExpired { refreshHistory() }
+    case .history:
+      // 目录没变也可能过期：期间可能有新 session 结束并提炼出新 Memory。
+      if memoryLoadedDirectory != directory || isMemorySnapshotExpired { refreshMemory() }
     }
   }
 
@@ -588,7 +608,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       case .git: content = makeGitContent()
       case .files: content = makeFilesContent()
       case .info: content = makeInformationContent()
-      case .history: content = makeHistoryContent()
+      case .history: content = makeMemoryContent()
       }
       cachedContent[selection] = content
       // 控制器级刷新屏障永远位于页内容之上；后续首次创建隐藏页时也不能盖住屏障。
@@ -808,14 +828,37 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     root.addSubview(empty)
     empty.translatesAutoresizingMaskIntoConstraints = false
     outlineEmptyLabel = empty
+
+    // 会话时间线区域：Outline 是「时间线」页——上半部为当前 Pane 的现场命令，
+    // 下半部为本项目过去的会话记录（原 History 实现整体内嵌）。
+    let sessions = makeSessionHistoryArea()
+    root.addSubview(sessions)
+    sessions.translatesAutoresizingMaskIntoConstraints = false
+
+    let divider = NSView()
+    divider.wantsLayer = true
+    divider.layer?.backgroundColor = AsterTheme.hairline.cgColor
+    root.addSubview(divider)
+    divider.translatesAutoresizingMaskIntoConstraints = false
+
     NSLayoutConstraint.activate([
+      divider.heightAnchor.constraint(equalToConstant: 1),
       header.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
       header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
       header.topAnchor.constraint(equalTo: root.topAnchor, constant: 14),
       scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
       scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
       scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
-      scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+      // 上下两个区域都必须有确定高度（CLAUDE.md 规则 5）：现场 Outline 固定占面板
+      // 上半部，剩余高度全部交给会话区，缺一侧约束会把内容压成 0。
+      scroll.heightAnchor.constraint(equalTo: root.heightAnchor, multiplier: 0.5, constant: -36),
+      divider.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+      divider.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+      divider.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 4),
+      sessions.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+      sessions.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+      sessions.topAnchor.constraint(equalTo: divider.bottomAnchor),
+      sessions.bottomAnchor.constraint(equalTo: root.bottomAnchor),
       empty.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: 14),
       empty.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -14),
       empty.centerXAnchor.constraint(equalTo: root.centerXAnchor),
@@ -1515,21 +1558,33 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     if tableView === outlineTable { return outlineRows.count }
     if tableView === gitTable { return gitRows.count }
     if tableView === historyTable { return historyRows.count }
+    if tableView === memoryTable { return memoryRows.count }
     return 0
   }
 
-  /// History 的 Memory 卡片与展开正文块必须按实际文本测量高度；其余表格保持各自的固定
-  /// 行高。实现了本方法后 `rowHeight` 对所有表格都失效，因此这里必须逐表返回。
+  /// 会话区与 Memory 页的卡片、展开正文块必须按实际文本测量高度；其余表格保持各自的
+  /// 固定行高。实现了本方法后 `rowHeight` 对所有表格都失效，因此这里必须逐表返回。
   func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-    guard tableView === historyTable else { return tableView.rowHeight }
-    guard historyRows.indices.contains(row) else { return SessionHistoryMetrics.timelineRowHeight }
-    return historyRowHeight(historyRows[row], width: tableView.bounds.width)
+    if tableView === historyTable {
+      guard historyRows.indices.contains(row) else { return SessionHistoryMetrics.timelineRowHeight }
+      return historyRowHeight(historyRows[row], width: tableView.bounds.width)
+    }
+    if tableView === memoryTable {
+      guard memoryRows.indices.contains(row) else { return SessionHistoryMetrics.timelineRowHeight }
+      return historyRowHeight(memoryRows[row], width: tableView.bounds.width)
+    }
+    return tableView.rowHeight
   }
 
   func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
     if tableView === historyTable {
       guard historyRows.indices.contains(row) else { return nil }
       return makeHistoryRowView(historyRows[row], in: tableView)
+    }
+    if tableView === memoryTable {
+      guard memoryRows.indices.contains(row) else { return nil }
+      // Memory 页复用会话区的行池：同一批行类型（分组标题 + Memory 卡片）。
+      return makeHistoryRowView(memoryRows[row], in: tableView)
     }
     if tableView === gitTable {
       guard gitRows.indices.contains(row) else { return nil }
@@ -1896,7 +1951,8 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       self.historyLoadedDirectory = directory
       self.historyInspectedAt = self.now()
       self.applyHistoryRows()
-      self.completePaneRefresh(for: .history)
+      // 会话区属于 Outline 页；现场 Outline 与会话记录任一先提交都可撤下该页屏障。
+      self.completePaneRefresh(for: .outline)
       self.historyTask = nil
     }
   }
@@ -2088,7 +2144,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       historyTitleLabel?.toolTip = nil
     } else {
       let name = historyProjectPath.map { ($0 as NSString).lastPathComponent }
-      historyTitleLabel?.stringValue = name ?? "History"
+      historyTitleLabel?.stringValue = name.map { "会话 · \($0)" } ?? "会话"
       historyTitleLabel?.toolTip = historyProjectPath
     }
 
@@ -2127,6 +2183,136 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       parts.append("\(kind.rawValue) ×\(count)")
     }
     return parts.joined(separator: " · ")
+  }
+
+  // MARK: - Memory（History 页）
+
+  /// 「已有快照且超过 30 秒」。提炼在 session 结束后异步落库，没有推送通道，
+  /// 重新展示该页时按时间重取；从未加载过（nil）不算过期，由目录比较负责首次请求。
+  private var isMemorySnapshotExpired: Bool {
+    guard let memoryInspectedAt else { return false }
+    return now().timeIntervalSince(memoryInspectedAt) > 30
+  }
+
+  /// Pane 焦点变化时清空 Memory 页的加载身份。行内容保留为不可交互视觉帧
+  ///（与 Info/Git/Files 一致），新快照通过身份校验后原子替换。
+  private func resetMemoryForPaneChange() {
+    memoryTask?.cancel()
+    memoryLoadedDirectory = nil
+    memoryRequestedDirectory = nil
+    memoryInspectedAt = nil
+  }
+
+  /// 读取当前 Pane 所属项目的记忆列表。
+  ///
+  /// 与 refreshHistory 同构：项目归属由 `ProjectResolutionService` 解析，SQLite 只读
+  /// 连接在 detached task 上开与关，主线程只做行模型替换（主线程零同步 IO）。
+  private func refreshMemory(directory requestedDirectory: String? = nil) {
+    memoryTask?.cancel()
+    guard let tab = model.selectedTab else { return }
+    let tabID = tab.id
+    let paneID = tab.activePaneID
+    let directory = requestedDirectory ?? tab.workingDirectory
+    memoryRequestedDirectory = directory
+    if memoryLoadedDirectory != directory {
+      memoryStatus = .loading
+      memoryRecords = []
+      applyMemoryRows()
+    }
+    memoryTask = Task { @MainActor [weak self] in
+      let project = await ProjectResolutionService.shared.project(for: directory)
+      guard !Task.isCancelled, let self else { return }
+      let projectPath = project?.path ?? directory
+      let query = Task.detached(priority: .userInitiated) { () -> ProjectMemoryFetch in
+        guard let reader = MemoryStoreAccess.makeReader(),
+          let records = try? reader.memories(projectPath: projectPath, limit: 50)
+        else { return .unavailable }
+        return .memories(records)
+      }
+      let result = await withTaskCancellationHandler {
+        await query.value
+      } onCancel: {
+        query.cancel()
+      }
+      guard !Task.isCancelled, self.model.selectedTab?.id == tabID,
+        self.model.selectedTab?.activePaneID == paneID,
+        self.memoryRequestedDirectory == directory
+      else { return }
+      switch result {
+      case .unavailable:
+        self.memoryStatus = .unavailable
+        self.memoryRecords = []
+      case .memories(let records):
+        self.memoryStatus = .ready
+        self.memoryRecords = records
+      }
+      self.memoryProjectPath = projectPath
+      self.memoryLoadedDirectory = directory
+      self.memoryInspectedAt = self.now()
+      self.applyMemoryRows()
+      self.completePaneRefresh(for: .history)
+      self.memoryTask = nil
+    }
+  }
+
+  /// 用户点击刷新：强制重取，不看目录是否变化，也不看快照是否过期。
+  func refreshMemoryFromUser() {
+    memoryLoadedDirectory = nil
+    memoryInspectedAt = nil
+    refreshMemory()
+  }
+
+  /// 管理入口。Memory 浏览器归 `AppModel` 持有；面板只发意图，不自建窗口。
+  func presentMemoryBrowserFromPanel() {
+    model.presentMemoryBrowser()
+  }
+
+  /// 由已加载记录重建行数组：PINNED 固定席位永远置顶成组，其余按 reader 的
+  /// 创建时间倒序展示，不引入第二套排序规则。
+  func applyMemoryRows() {
+    var rows: [SessionHistoryRow] = []
+    let pinned = memoryRecords.filter { $0.status == .pinned }
+    let rest = memoryRecords.filter { $0.status != .pinned }
+    if !pinned.isEmpty {
+      rows.append(.sectionHeader("已固定"))
+      rows.append(contentsOf: pinned.map(memoryListRow))
+    }
+    if !rest.isEmpty {
+      rows.append(.sectionHeader("记忆"))
+      rows.append(contentsOf: rest.map(memoryListRow))
+    }
+    memoryRows = rows
+    updateMemoryChrome(hasRows: !rows.isEmpty)
+    memoryTable.reloadData()
+  }
+
+  /// 单条 Memory 的列表行。副标题复用 `MemoryBrowsing.listItem` 的拼装规则，
+  /// 与 Memory 浏览器展示同一份真值。
+  private func memoryListRow(_ memory: MemoryRecord) -> SessionHistoryRow {
+    let item = MemoryBrowsing.listItem(for: memory, now: now())
+    return .memory(
+      title: item.title,
+      body: Self.historyMemoryBody(memory),
+      sources: item.subtitle
+    )
+  }
+
+  /// 页头与空状态文案。空状态必须区分「未开启记录」「暂无记忆」和「正在读取」。
+  private func updateMemoryChrome(hasRows: Bool) {
+    let name = memoryProjectPath.map { ($0 as NSString).lastPathComponent }
+    memoryTitleLabel?.stringValue = name.map { "Memory · \($0)" } ?? "Memory"
+    memoryTitleLabel?.toolTip = memoryProjectPath
+    guard let empty = memoryEmptyLabel else { return }
+    empty.isHidden = hasRows
+    guard !hasRows else { return }
+    switch memoryStatus {
+    case .loading:
+      empty.stringValue = "正在读取项目记忆…"
+    case .unavailable:
+      empty.stringValue = "未开启记录。在设置中开启 Session Recording 后，这里会积累项目记忆。"
+    case .ready:
+      empty.stringValue = "此项目暂无记忆。会话结束后自动提炼的 Memory 会显示在这里。"
+    }
   }
 
   // MARK: - 共享构建辅助

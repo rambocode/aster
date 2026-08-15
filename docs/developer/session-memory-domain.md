@@ -42,18 +42,22 @@ Terminal Activity → Session Events → Task → Memory → Context Engine → 
    解析、脱敏与 IO 全在后台；`TerminalSession` 创建路径零新增同步 IO。
 3. **源头拦截**：`off` 与 `incognito` 都零落盘；排除目录与排除命令在事件产生处判定，
    命令被排除时其输出一并排除。
-4. **写入前脱敏**：命令、输出摘录、artifact 正文与 transcript 补录路径统一经 `AgentContextRedactor`，
+4. **延迟物化**：sessions 行与开场事件在首条有意义事件（通过策略的命令、Agent 关联）出现
+   之前只缓存在管线内存里；空会话（开个 pane 又关掉）零落盘，连惰性开库也不触发。
+   读取侧 `sessions()` 默认过滤零命令且无 Agent/Task 关联的旧数据行，
+   「zsh · 0 条命令」不得出现在 Inspector 会话时间线（Outline 页下半部）或 MCP 结果里。
+5. **写入前脱敏**：命令、输出摘录、artifact 正文与 transcript 补录路径统一经 `AgentContextRedactor`，
    与 Send to Chat 共用同一套 secret 规则。
-5. **单写者**：进程内只有一个 `EventWriter` actor 持写连接（WAL + busy_timeout）。
+6. **单写者**：进程内只有一个 `EventWriter` actor 持写连接（WAL + busy_timeout）。
    MCP server 以只读连接查询；唯一例外是 `context_receipts`，由 `ContextReceiptWriter` 用
    短生命周期连接单表写入，失败静默。
-6. **通道隔离**：Session Memory 与 `DiagnosticsCenter` 是两个独立存储与两套隐私策略。
+7. **通道隔离**：Session Memory 与 `DiagnosticsCenter` 是两个独立存储与两套隐私策略。
    诊断通道刻意剔除 path/command/content 类字段，绝不可把该策略套用到本领域，反之亦然。
-7. **不记录 prompt**：Agent lifecycle hook 与 transcript 补录都只上报状态、工具名与可判定路径，
+8. **不记录 prompt**：Agent lifecycle hook 与 transcript 补录都只上报状态、工具名与可判定路径，
    不记录 prompt 正文、工具参数全文或 Agent 输出正文。
-8. **可见与可删**：用户能看到记录状态、能进入隐身、能删除 session 与 memory；删除必须连带清理
+9. **可见与可删**：用户能看到记录状态、能进入隐身、能删除 session 与 memory；删除必须连带清理
    事件、artifact 文件与派生 Memory，而不只是从列表消失。
-9. **外发需授权**：CLI Agent 提炼会把会话摘要发给对应 Agent 的云端，默认关闭，
+10. **外发需授权**：CLI Agent 提炼会把会话摘要发给对应 Agent 的云端，默认关闭，
    需显式开启且确认过外发提示，内容可预览（PRD §73）。
 
 ## 业务流程
@@ -92,6 +96,15 @@ AsterMemoryMCP  独立 stdio JSON-RPC server，只读开库
 ```
 
 `AsterCore` 不 import SQLite3，保持纯值可测；SQL 编解码集中在 `AsterMemory`。
+
+### Inspector 呈现分工
+
+时间线与记忆在详情面板中分属两页：**Outline 页**是「时间线」——上半部为当前 Pane 的
+现场命令 Outline，下半部内嵌会话时间线区域（session 列表 → 事件详情，`makeSessionHistoryArea`）；
+**History 页**是 Memory 功能——当前项目的记忆列表（PINNED 固定席位置顶成组，其余按创建时间
+倒序），副标题复用 `MemoryBrowsing.listItem` 的拼装规则，管理动作（固定/禁用/删除、搜索、
+Context 留痕）由 Memory 浏览器承担，面板只提供只读概览与浏览器入口。两页共用
+`SessionHistoryRow` 行池与行高测量。
 
 ### 存储布局
 

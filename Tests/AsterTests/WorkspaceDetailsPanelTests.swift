@@ -2136,9 +2136,9 @@ func workingDirectoryChangeRefreshesFilesWithoutRebuildingWorkspaceOrStealingFoc
 
 // MARK: - History
 
-@Test("History 页挂载专用表格与刷新入口，并给出可区分的空状态")
+@Test("History（Memory）页挂载专用表格、刷新与浏览器入口，并给出可区分的空状态")
 @MainActor
-func historySectionMountsTableAndDistinguishableEmptyState() throws {
+func memorySectionMountsTableAndDistinguishableEmptyState() throws {
   _ = NSApplication.shared
   let defaults = panelTestDefaults()
   let preferences = AppPreferences(defaults: defaults)
@@ -2151,8 +2151,44 @@ func historySectionMountsTableAndDistinguishableEmptyState() throws {
 
   let table = try #require(
     controller.view.allDescendants.compactMap { $0 as? NSTableView }
-      .first { $0.identifier?.rawValue == "details-history-table" })
+      .first { $0.identifier?.rawValue == "details-memory-table" })
   #expect(table.numberOfRows == 0)
+
+  let identifiers = controller.view.allDescendants.compactMap { $0.identifier?.rawValue }
+  #expect(identifiers.contains("details-memory-refresh"))
+  // 管理（固定/禁用/删除）由 Memory 浏览器承担，本页必须给出显式入口。
+  #expect(identifiers.contains("details-memory-manage"))
+
+  // 空状态必须说清原因：仍在读取、未开启记录，还是确实没有记忆。
+  let texts = controller.view.allDescendants.compactMap { ($0 as? NSTextField)?.stringValue }
+  #expect(
+    texts.contains {
+      $0.contains("正在读取项目记忆") || $0.contains("未开启记录") || $0.contains("暂无记忆")
+    })
+}
+
+@Test("Outline 页下半部内嵌会话时间线区域，返回按钮在列表态隐藏")
+@MainActor
+func outlineSectionEmbedsSessionHistoryArea() throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.inspectorSection = 1
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  let controller = DetailsPanelViewController(model: model, preferences: preferences)
+  controller.loadViewIfNeeded()
+
+  // 现场命令 Outline 与过去的会话记录同属「时间线」，必须同页可见。
+  let outlineTable = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-outline-table" })
+  let historyTable = try #require(
+    controller.view.allDescendants.compactMap { $0 as? NSTableView }
+      .first { $0.identifier?.rawValue == "details-history-table" })
+  #expect(outlineTable.isHiddenByAncestor == false)
+  #expect(historyTable.isHiddenByAncestor == false)
 
   let identifiers = controller.view.allDescendants.compactMap { $0.identifier?.rawValue }
   #expect(identifiers.contains("details-history-refresh"))
@@ -2162,7 +2198,7 @@ func historySectionMountsTableAndDistinguishableEmptyState() throws {
       .first { $0.identifier?.rawValue == "details-history-back" })
   #expect(back.isHidden)
 
-  // 空状态必须说清原因：仍在读取、未开启记录，还是确实没有记录。
+  // 会话区空状态必须说清原因：仍在读取、未开启记录，还是确实没有记录。
   let texts = controller.view.allDescendants.compactMap { ($0 as? NSTextField)?.stringValue }
   #expect(
     texts.contains {
@@ -2192,13 +2228,13 @@ func historyChipSwitchesVisibilityWithoutRebuildingOtherSections() throws {
   chip.performClick(nil)
 
   #expect(preferences.inspectorSection == 4)
-  let historyTable = try #require(
+  let memoryTable = try #require(
     controller.view.allDescendants.compactMap { $0 as? NSTableView }
-      .first { $0.identifier?.rawValue == "details-history-table" })
+      .first { $0.identifier?.rawValue == "details-memory-table" })
   // Files 页仍留在视图树里（只是被祖先隐藏），回切不需要重建数百个控件与约束。
   #expect(controller.view.allDescendants.contains { $0 === filesTable })
   #expect(filesTable.isHiddenByAncestor)
-  #expect(historyTable.isHiddenByAncestor == false)
+  #expect(memoryTable.isHiddenByAncestor == false)
 }
 
 @Test("History 行高按行类型区分，展开正文块受最大高度约束")

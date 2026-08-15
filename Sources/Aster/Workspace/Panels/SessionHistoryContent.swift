@@ -3,13 +3,13 @@ import AsterCore
 import AsterMemory
 import Foundation
 
-/// Inspector History 页的视图构造与可复用行。
+/// Inspector 会话时间线（Outline 页内嵌区域）与 History（Memory）页的视图构造与可复用行。
 ///
 /// 控制器（`DetailsPanelViewController`）只保留生命周期、身份校验与数据装配；
 /// 这里放大块 AppKit 组装代码，避免把组合根继续堆大（CLAUDE.md 分层约束）。
 /// 所有行模型都来自 `SessionTimelineProjection` 的纯函数投影，本文件不解析事件语义。
 
-/// History 页的两种浏览态。详情态只由用户显式点击 session 进入。
+/// 会话时间线区域的两种浏览态。详情态只由用户显式点击 session 进入。
 enum SessionHistoryMode: Equatable {
   case sessionList
   case sessionDetail(UUID)
@@ -34,6 +34,12 @@ enum SessionHistoryFetch: Sendable {
 enum SessionHistoryDetailFetch: Sendable {
   case unavailable
   case detail(SessionDetail, artifactPaths: Set<String>, sources: [MemorySourceRef])
+}
+
+/// History（Memory）页项目记忆列表查询的结果。跨 concurrency domain 传回主线程。
+enum ProjectMemoryFetch: Sendable {
+  case unavailable
+  case memories([MemoryRecord])
 }
 
 /// History 表格的一行。session 列表与事件时间线共用同一张表，
@@ -90,8 +96,10 @@ enum SessionHistoryMetrics {
 }
 
 extension DetailsPanelViewController {
-  /// History 页根视图。只在首次展示时构建一次，之后切页仅切换 `isHidden`。
-  func makeHistoryContent() -> NSView {
+  /// 会话时间线区域根视图，嵌入 Outline 页下半部。只在 Outline 页首次展示时构建一次。
+  /// 会话浏览本质上是「过去的时间线」，与 Outline 的现场命令时间线同页，History 页
+  /// 留给项目记忆（Memory）。
+  func makeSessionHistoryArea() -> NSView {
     let root = NSView()
 
     let back = IconHoverButton(symbol: "chevron.left") { [weak self] in
@@ -104,11 +112,11 @@ extension DetailsPanelViewController {
     back.isHidden = true
     historyBackButton = back
 
-    let title = makeLabel("History", size: 11, weight: .semibold, color: AsterTheme.secondaryInk)
+    let title = makeLabel("会话", size: 11, weight: .semibold, color: AsterTheme.secondaryInk)
     title.lineBreakMode = .byTruncatingMiddle
     historyTitleLabel = title
 
-    // History 没有推送通道（session 可能在别的 Pane 或别的窗口里结束），除了进入本页时
+    // 会话记录没有推送通道（session 可能在别的 Pane 或别的窗口里结束），除了展示时
     // 的过期重取，用户还需要一个确定性的手动刷新入口。
     let refresh = IconHoverButton(symbol: "arrow.clockwise") { [weak self] in
       self?.refreshHistoryFromUser()
@@ -177,6 +185,97 @@ extension DetailsPanelViewController {
       empty.topAnchor.constraint(equalTo: scroll.topAnchor, constant: 20),
     ])
     applyHistoryRows()
+    return root
+  }
+
+  /// History（Memory）页根视图：当前项目的记忆列表。只在首次展示时构建一次。
+  /// 完整管理（搜索、筛选、固定、禁用、删除）由 Memory 浏览器承担，此页提供只读
+  /// 概览与浏览器入口。
+  func makeMemoryContent() -> NSView {
+    let root = NSView()
+
+    let title = makeLabel("Memory", size: 11, weight: .semibold, color: AsterTheme.secondaryInk)
+    title.lineBreakMode = .byTruncatingMiddle
+    memoryTitleLabel = title
+
+    // 管理动作（固定/禁用/删除）在 Memory 浏览器里；面板只留一个显眼的入口。
+    let manage = IconHoverButton(symbol: "arrow.up.forward.app") { [weak self] in
+      self?.presentMemoryBrowserFromPanel()
+    }
+    manage.identifier = NSUserInterfaceItemIdentifier("details-memory-manage")
+    manage.toolTip = "在 Memory 浏览器中管理"
+    manage.setAccessibilityLabel("在 Memory 浏览器中管理")
+    manage.restingTint = AsterTheme.tertiaryInk
+
+    // Memory 没有推送通道（提炼在 session 结束后异步落库），除了进入本页时的过期重取，
+    // 用户还需要一个确定性的手动刷新入口。
+    let refresh = IconHoverButton(symbol: "arrow.clockwise") { [weak self] in
+      self?.refreshMemoryFromUser()
+    }
+    refresh.identifier = NSUserInterfaceItemIdentifier("details-memory-refresh")
+    refresh.toolTip = "重新读取项目记忆"
+    refresh.setAccessibilityLabel("重新读取项目记忆")
+    refresh.restingTint = AsterTheme.tertiaryInk
+    memoryRefreshButton = refresh
+
+    let spacer = NSView()
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    let header = NSStackView(views: [title, spacer, manage, refresh])
+    header.orientation = .horizontal
+    header.alignment = .centerY
+    header.spacing = 4
+    root.addSubview(header)
+    header.translatesAutoresizingMaskIntoConstraints = false
+
+    memoryTable.identifier = NSUserInterfaceItemIdentifier("details-memory-table")
+    memoryTable.headerView = nil
+    memoryTable.backgroundColor = .clear
+    memoryTable.style = .plain
+    memoryTable.rowHeight = SessionHistoryMetrics.timelineRowHeight
+    memoryTable.intercellSpacing = .zero
+    memoryTable.selectionHighlightStyle = .none
+    memoryTable.usesAutomaticRowHeights = false
+    memoryTable.dataSource = self
+    memoryTable.delegate = self
+    if memoryTable.tableColumns.isEmpty {
+      let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("details-memory-entry"))
+      column.resizingMask = .autoresizingMask
+      memoryTable.addTableColumn(column)
+    }
+    let scroll = NSScrollView()
+    scroll.drawsBackground = false
+    scroll.hasVerticalScroller = true
+    scroll.autohidesScrollers = true
+    scroll.documentView = memoryTable
+    root.addSubview(scroll)
+    scroll.translatesAutoresizingMaskIntoConstraints = false
+
+    let empty = makeLabel("", size: 11, color: AsterTheme.secondaryInk)
+    empty.alignment = .center
+    empty.maximumNumberOfLines = 3
+    empty.lineBreakMode = .byWordWrapping
+    root.addSubview(empty)
+    empty.translatesAutoresizingMaskIntoConstraints = false
+    memoryEmptyLabel = empty
+
+    NSLayoutConstraint.activate([
+      header.leadingAnchor.constraint(
+        equalTo: root.leadingAnchor, constant: SessionHistoryMetrics.horizontalInset),
+      header.trailingAnchor.constraint(
+        equalTo: root.trailingAnchor, constant: -SessionHistoryMetrics.horizontalInset),
+      header.topAnchor.constraint(equalTo: root.topAnchor, constant: 10),
+      scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+      scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+      scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
+      scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+      empty.leadingAnchor.constraint(
+        greaterThanOrEqualTo: root.leadingAnchor, constant: SessionHistoryMetrics.horizontalInset),
+      empty.trailingAnchor.constraint(
+        lessThanOrEqualTo: root.trailingAnchor, constant: -SessionHistoryMetrics.horizontalInset),
+      empty.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+      empty.topAnchor.constraint(equalTo: scroll.topAnchor, constant: 20),
+    ])
+    applyMemoryRows()
     return root
   }
 
