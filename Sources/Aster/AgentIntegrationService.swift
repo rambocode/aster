@@ -66,12 +66,14 @@ enum AgentHistoryDiscoveryService {
           let transcript = try? AgentTranscriptParser.parse(data, provider: provider)
         else { continue }
         totalBytes += size
-        let firstPrompt = transcript.entries.first { entry in
-          if case .message(role: .user) = entry.kind { return true }
-          return false
-        }?.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = firstPrompt.map { String($0.prefix(120)) }
-          ?? url.deletingPathExtension().lastPathComponent
+        // 标题从用户消息序列里推导：首条可能是 caveat/系统提醒等包装噪音，
+        // 清洗规则见 AgentSessionTitleCleaner，全部为噪音时回落文件名。
+        let userTexts = transcript.entries.compactMap { entry -> String? in
+          if case .message(role: .user) = entry.kind { return entry.text }
+          return nil
+        }
+        let title = AgentSessionTitleCleaner.title(
+          from: userTexts, fallback: url.deletingPathExtension().lastPathComponent)
         let projectDirectory = inferredProjectDirectory(
           url: url, provider: provider, home: homeDirectory, transcriptData: data)
         let metadata = AgentSessionMetadata(

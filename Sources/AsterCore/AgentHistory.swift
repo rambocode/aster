@@ -60,6 +60,56 @@ public enum AgentTranscriptRole: String, Codable, Equatable, Sendable {
   case system
 }
 
+/// 从 transcript 用户消息推导列表标题的清洗规则。
+///
+/// provider 会把 caveat、系统提醒、协作路由等模板内容包在 XML 风格标签里，
+/// 以 user 角色原样存进 transcript；直接取首条用户消息当标题会把
+/// `<local-command-caveat>…` 这类包装串显示到历史列表里。清洗策略分两级：
+/// 纯模板噪音的标签**连内文整段丢弃**，承载真实内容的标签只剥壳保留内文。
+public enum AgentSessionTitleCleaner {
+  /// 整段丢弃的包装标签：标签与内文都是模板噪音，不含用户意图。
+  private static let noiseSpanTags: [String] = [
+    "local-command-caveat", "system-reminder", "command-name", "command-args",
+    "command-message", "command-contents", "local-command-stdout",
+  ]
+
+  /// 清洗单条用户消息：剔除噪音 span → 其余标签剥壳留内文 → 压成单行。
+  /// 清洗后为空返回 nil，调用方应尝试下一条消息。
+  public static func cleaned(_ raw: String) -> String? {
+    var text = raw
+    for tag in noiseSpanTags {
+      // 先删完整 span；provider 截断可能造成只有开标签没有闭标签，
+      // 此时该标签起的剩余部分全是模板文，一并删除。
+      text = replacing(pattern: "<\(tag)\\b[^>]*>[\\s\\S]*?</\(tag)>", in: text)
+      text = replacing(pattern: "<\(tag)\\b[^>]*>[\\s\\S]*", in: text)
+    }
+    // 其余标签（如 teammate-message、untrusted-context）只剥壳：内文才是正文。
+    text = replacing(pattern: "</?[A-Za-z][^<>]{0,256}>", in: text)
+    let condensed = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    return condensed.isEmpty ? nil : condensed
+  }
+
+  /// 按时间顺序尝试每条用户消息，取第一条清洗后非空的作为标题；全部为空用 fallback。
+  public static func title(
+    from userTexts: [String], fallback: String, maxLength: Int = 120
+  ) -> String {
+    for raw in userTexts {
+      if let cleaned = cleaned(raw) {
+        return String(cleaned.prefix(maxLength))
+      }
+    }
+    return fallback
+  }
+
+  /// 正则替换为单空格。pattern 是本文件内的常量组合，编译失败视为编程错误，
+  /// 此时返回原文以保证清洗永不让标题变得更糟。
+  private static func replacing(pattern: String, in text: String) -> String {
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+    return regex.stringByReplacingMatches(
+      in: text, range: NSRange(text.startIndex..., in: text), withTemplate: " ")
+  }
+}
+
 /// Transcript 保留用户可读内容的语义类型；tool 输入不直接展开，避免把可能含有大块
 /// 二进制或敏感参数的任意 JSON 注入历史视图和搜索索引。
 public enum AgentTranscriptEntryKind: Equatable, Sendable {
