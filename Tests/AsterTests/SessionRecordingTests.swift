@@ -148,6 +148,32 @@ func emptyWorkingDirectoryIsRejected() async {
   #expect(fixture.databaseExists == false)
 }
 
+@Test("空会话（零命令、无 Agent 关联）不落库：开个 pane 又关掉零痕迹")
+@MainActor
+func emptySessionLeavesNoTrace() async throws {
+  let fixture = RecordingFixture(mode: .on)
+  defer { fixture.cleanUp() }
+  // 空会话：只有启动与结束，没有任何命令。延迟物化下连数据库文件都不该创建。
+  let emptyID = UUID()
+  fixture.service.sessionStarted(
+    id: emptyID, projectPath: fixture.projectRoot, shell: "/bin/zsh")
+  fixture.service.sessionEnded(id: emptyID, exitCode: 0)
+  await fixture.service.waitForCompletion(id: emptyID)
+  #expect(fixture.databaseExists == false)
+
+  // 同一服务随后的正常会话不受影响，且列表里只有这一个 session。
+  let realID = UUID()
+  await fixture.runSession(
+    id: realID, workingDirectory: fixture.projectRoot,
+    command: "swift build", output: "ok", exitStatus: 0)
+  let sessions = try fixture.reader().sessions(projectPath: nil)
+  #expect(sessions.map(\.descriptor.id) == [realID])
+  // 物化会补写缓存的 sessionStarted，事件序列从开场开始完整保留。
+  let detail = try #require(try fixture.reader().sessionDetail(id: realID))
+  #expect(detail.events.first?.kind == .sessionStarted)
+  #expect(detail.events.contains { $0.kind == .shellCommand })
+}
+
 // MARK: - 命令排除
 
 @Test("被排除的命令连同它的输出都不进事件流")

@@ -195,6 +195,39 @@ private func commandEvent(
     #expect(hits.count == 3)
   }
 
+  @Test("sessions 列表默认过滤空会话，Agent 关联的空会话保留")
+  func sessionListHidesEmptySessions() async throws {
+    let location = temporaryLocation()
+    let writer = EventWriter(location: location)
+    let emptyID = UUID()
+    let agentID = UUID()
+    let realID = UUID()
+    let base = Date(timeIntervalSince1970: 1_700_000_000)
+    // 旧版本写入侧留下的空会话行（零事件）；新写入侧不再产生，但旧库里存在。
+    await writer.record(
+      .startSession(
+        RecordedSessionDescriptor(id: emptyID, projectPath: "/tmp/p", shell: "zsh", startedAt: base)))
+    // 只有 Agent 关联、零 shell 命令的会话是有意义活动，不得被过滤。
+    await writer.record(
+      .startSession(
+        RecordedSessionDescriptor(
+          id: agentID, projectPath: "/tmp/p", shell: "zsh",
+          agentProvider: "claudeCode", startedAt: base.addingTimeInterval(1))))
+    await writer.record(
+      .startSession(
+        RecordedSessionDescriptor(
+          id: realID, projectPath: "/tmp/p", shell: "zsh", startedAt: base.addingTimeInterval(2))))
+    await writer.record(
+      .appendEvent(commandEvent(session: realID, seq: 1, command: "swift build")))
+    await writer.flush()
+
+    let reader = try MemoryStoreReader(location: location)
+    let visible = try reader.sessions(projectPath: "/tmp/p")
+    #expect(visible.map(\.descriptor.id) == [realID, agentID])
+    let all = try reader.sessions(projectPath: "/tmp/p", includeEmpty: true)
+    #expect(all.count == 3)
+  }
+
   @Test("storeStatus 返回三表计数与最后事件时间")
   func storeStatusReportsCounts() async throws {
     let location = temporaryLocation()

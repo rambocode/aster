@@ -345,7 +345,11 @@ public final class MemoryStoreReader {
   // MARK: - Session
 
   /// 某项目（或全部）的 session 列表，按开始时间倒序，附命令与失败计数。
-  public func sessions(projectPath: String?, limit: Int = 50) throws -> [SessionSummaryRow] {
+  /// 默认过滤空会话（零命令且无 Agent/Task 关联）：写入侧已不再产生这类行
+  ///（延迟物化），过滤只为旧数据——「zsh · 0 条命令」不该出现在任何列表里。
+  public func sessions(projectPath: String?, limit: Int = 50, includeEmpty: Bool = false) throws
+    -> [SessionSummaryRow]
+  {
     let bounded = max(1, min(limit, 200))
     var sql = """
       SELECT s.id, s.project_path, s.shell, s.agent_provider, s.agent_session_id, s.started_at,
@@ -356,10 +360,21 @@ public final class MemoryStoreReader {
              (SELECT m.title FROM memories m WHERE m.session_id = s.id LIMIT 1)
       FROM sessions s
       """
+    var clauses: [String] = []
     var values: [MemoryDatabase.Value] = []
     if let projectPath, !projectPath.isEmpty {
-      sql += " WHERE s.project_path = ?"
+      clauses.append("s.project_path = ?")
       values.append(.text(projectPath))
+    }
+    if !includeEmpty {
+      clauses.append(
+        """
+        (s.agent_provider IS NOT NULL OR s.task_id IS NOT NULL OR EXISTS (
+          SELECT 1 FROM events e WHERE e.session_id = s.id AND e.kind = 'shell_command'))
+        """)
+    }
+    if !clauses.isEmpty {
+      sql += " WHERE " + clauses.joined(separator: " AND ")
     }
     sql += " ORDER BY s.started_at DESC LIMIT ?"
     values.append(.integer(Int64(bounded)))

@@ -63,6 +63,14 @@ actor SessionEventPipeline {
   /// 定位 provider 自己的记录文件；终端侧无法从输出里可靠还原工具调用。
   private var agentProvider: AgentProvider?
   private var agentSessionIdentifier: String?
+  /// 会话是否已在库里物化。空会话（没有命令、没有 Agent 关联）**永不落库**：
+  /// 开个 pane 又关掉不该在 History 里留下「zsh · 0 条命令」的噪音行。
+  private var materialized = false
+  /// 物化前缓存的前置事件（sessionStarted 等）。有意义事件走物化后的直写路径，
+  /// 这里只会有个位数条目；上限纯属防御。
+  private var bufferedEvents: [RecordedEvent] = []
+  /// bootstrap 解析出的项目身份，物化时才写 projects 表。
+  private var pendingProject: ProjectIdentity?
 
   init(
     sessionID: UUID,
@@ -88,13 +96,26 @@ actor SessionEventPipeline {
     projectPath = startDirectory
   }
 
-  /// 建立 Session 行与项目归属。**必须在任何事件写入之前完成**：
-  /// events.session_id 是 sessions 的外键，且数据库开启了 `foreign_keys=ON`，
-  /// 顺序颠倒会让整批写入回滚。
+  /// 解析项目归属并缓存开场事件；**不写库**。落库推迟到首条有意义事件
+  ///（`materializeIfNeeded`），空 pane 开了就关不会留下任何行。
+  /// 首次 git 快照也一并推迟：不为随手开关的 pane fork git 子进程。
   func bootstrap() async {
     if let identity = await resolveProject(startDirectory) {
       projectPath = identity.path
-      await writer.record(.upsertProject(identity, openedAt: startedAt))
+      pendingProject = identity
+    }
+    await emit(kind: .sessionStarted, workingDirectory: startDirectory, source: .terminal)
+  }
+
+  /// 首条有意义事件（命令、Agent 关联）触发的真正落库：先写 projects/sessions 行，
+  /// 再按原始顺序补写缓存事件——events.session_id 是外键且 `foreign_keys=ON`，
+  /// 顺序颠倒会让整批写入回滚。
+  private func materializeIfNeeded() async {
+    guard !materialized else { return }
+    materialized = true
+    if let pendingProject {
+      await writer.record(.upsertProject(pendingProject, openedAt: startedAt))
+      self.pendingProject = nil
     }
     await writer.record(
       .startSession(
@@ -104,7 +125,10 @@ actor SessionEventPipeline {
           shell: shell,
           startedAt: startedAt
         )))
-    await emit(kind: .sessionStarted, workingDirectory: startDirectory, source: .terminal)
+    for event in bufferedEvents {
+      await writer.record(.appendEvent(event))
+    }
+    bufferedEvents = []
     scheduleGitSnapshot(force: true)
   }
 
@@ -123,6 +147,7 @@ actor SessionEventPipeline {
       guard policy.shouldRecord(command: command, workingDirectory: lastKnownDirectory) else {
         return
       }
+      await materializeIfNeeded()
       await emit(
         kind: .shellCommand,
         command: command,
@@ -132,6 +157,8 @@ actor SessionEventPipeline {
     case .commandFinished(let command, let exitStatus):
       let excluded = !policy.shouldRecord(
         command: command, workingDirectory: lastKnownDirectory)
+      // persistOutput 会直写事件与 artifact，必须先保证 sessions 行已存在。
+      if !excluded { await materializeIfNeeded() }
       if let buffered = pendingCapturedOutput {
         pendingCapturedOutput = nil
         if !excluded { await persistOutput(buffered) }
@@ -152,6 +179,8 @@ actor SessionEventPipeline {
       // 记住最近一次归属；provider 可能在同一 Session 内换人，补录以最后一次为准。
       if let provider, let parsed = AgentProvider(rawValue: provider) { agentProvider = parsed }
       if let agentSessionID, !agentSessionID.isEmpty { agentSessionIdentifier = agentSessionID }
+      // Agent 关联本身就是有意义活动：即便零 shell 命令也值得留下这个 Session。
+      await materializeIfNeeded()
       await emit(
         kind: .agentStateChanged,
         command: provider,
@@ -165,6 +194,11 @@ actor SessionEventPipeline {
       // 未配对的输出没有可靠的命令归属，无法判定是否被排除——直接丢弃。
       pendingCapturedOutput = nil
       pendingCommandExcluded = nil
+      // 从未物化 = 空会话：缓存的开场事件连同描述符一起丢弃，库里零痕迹。
+      guard materialized else {
+        bufferedEvents = []
+        return
+      }
       await emit(
         kind: .sessionEnded,
         workingDirectory: lastKnownDirectory,
@@ -192,21 +226,29 @@ actor SessionEventPipeline {
   ) async {
     sequence += 1
     let redactedCommand = command.map { AgentContextRedactor.redact($0).value }
-    await writer.record(
-      .appendEvent(
-        RecordedEvent(
-          sessionID: sessionID,
-          sequence: sequence,
-          timestamp: Date(),
-          kind: kind,
-          command: redactedCommand,
-          workingDirectory: workingDirectory,
-          exitStatus: exitStatus,
-          outputExcerpt: outputExcerpt,
-          source: source,
-          payload: payload
-        )))
+    let event = RecordedEvent(
+      sessionID: sessionID,
+      sequence: sequence,
+      timestamp: Date(),
+      kind: kind,
+      command: redactedCommand,
+      workingDirectory: workingDirectory,
+      exitStatus: exitStatus,
+      outputExcerpt: outputExcerpt,
+      source: source,
+      payload: payload
+    )
+    if materialized {
+      await writer.record(.appendEvent(event))
+    } else if bufferedEvents.count < 32 {
+      // 物化前只缓存不落库；空会话结束时这些缓存被整体丢弃。
+      bufferedEvents.append(event)
+    }
   }
+
+  /// 会话是否真的落过库。空会话必须在这里拦住收尾链：提炼会经 writer 读事件，
+  /// 惰性开库会为一个不存在的会话创建数据库文件，破坏「零痕迹」。
+  func didMaterialize() -> Bool { materialized }
 
   /// Session 结束后做 transcript 补录所需的参数。没有确认的 Agent 归属时返回 nil，
   /// 补录一律跳过——绝不靠猜测去读 provider 的本地记录文件。
@@ -292,6 +334,9 @@ actor SessionEventPipeline {
       source: .git,
       payload: payload.jsonString()
     )
+    // 快照只会由物化或失败命令触发，此处 materialized 恒真；守卫是防御——
+    // 未物化时 sessions 行不存在，UPDATE 是无意义空转。
+    guard materialized else { return }
     // commitBefore 由 SQL 的 coalesce 保护：只有首次快照会写入，后续只更新 after。
     await writer.record(
       .updateSessionGit(
@@ -440,8 +485,8 @@ final class SessionRecordingService: TerminalEventRecording {
     startInfo[id] = nil
     incognitoSessions.remove(id)
     guard let state = states.removeValue(forKey: id) else { return }
-    // 结束事件即便在隐身中也要落：sessions 行早就存在，让它永远停在 'active'
-    // 反而制造错误状态；这条事件不含任何新内容。
+    // 结束事件即便在隐身中也要投递：已物化的 Session 需要它闭合状态，否则行会
+    // 永远停在 'active'；未物化的空会话由管线自行丢弃，这条事件不含任何新内容。
     state.continuation.yield(.ended(exitCode: exitCode.map(Int.init)))
     state.continuation.finish()
   }
@@ -494,8 +539,9 @@ final class SessionRecordingService: TerminalEventRecording {
         if case .ended = input { completed = true }
         await pipeline.handle(input)
       }
-      // 只有真正结束的 Session 才提炼；因切换隐身而拆管线不产生半截 Memory。
-      guard completed else { return }
+      // 只有真正结束**且落过库**的 Session 才走收尾链；因切换隐身而拆管线
+      // 不产生半截 Memory，空会话不触发任何读写（惰性开库也算痕迹）。
+      guard completed, await pipeline.didMaterialize() else { return }
       // transcript 补录必须排在提炼**之前**：补录进来的工具调用与文件读写
       // 是 Session Memory 的一部分，晚一步就进不了草稿。补录自身幂等且静默降级。
       if let context = await pipeline.transcriptIngestionContext() {
