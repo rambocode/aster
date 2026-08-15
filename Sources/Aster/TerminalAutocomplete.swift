@@ -282,11 +282,14 @@ final class TerminalAutocompleteController {
     case .controlSpace: acceptsInline = key == .controlSpace
     case .disabled: acceptsInline = false
     }
-    if acceptsInline, currentResult.ghostText != nil {
+    // 只允许接受屏幕上真正显示的 ghost。等待回显期间（含 zsh-autosuggestions 等
+    // shell 端建议占据行尾、导致回显校验一直不通过的场景）候选是不可见的；此时吞掉
+    // Tab 会插入用户从未见过的文本，必须把按键放行给 Shell 自己的补全。
+    if acceptsInline, currentResult.ghostText != nil, inlineSuggestionDisplayable {
       return acceptCandidate(at: 0)
     }
 
-    if key == .escape, currentResult.ghostText != nil, !inlineDismissed {
+    if key == .escape, currentResult.ghostText != nil, inlineSuggestionDisplayable {
       inlineDismissed = true
       render()
       return true
@@ -446,13 +449,19 @@ final class TerminalAutocompleteController {
     return terminalView.visiblePromptEnds(with: tracker.line)
   }
 
+  /// Inline ghost 当前是否具备显示条件；接受候选与渲染必须共用同一判定，
+  /// 否则会出现“接受了一个不可见 ghost”的错乱（Tab 插入用户没看到的文本）。
+  private var inlineSuggestionDisplayable: Bool {
+    controls().resolvedAutocompleteInlineSuggestion
+      && !inlineDismissed
+      && !awaitingInputEcho
+  }
+
   private func render() {
     guard let terminalView else { return }
     overlay.render(
       result: currentResult,
-      showInline: controls().resolvedAutocompleteInlineSuggestion
-        && !inlineDismissed
-        && !awaitingInputEcho,
+      showInline: inlineSuggestionDisplayable,
       showPanel: panelVisible,
       selectedIndex: selectedIndex,
       caretFrame: terminalView.autocompleteCaretFrame,

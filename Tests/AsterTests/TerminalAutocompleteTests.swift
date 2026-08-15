@@ -7,7 +7,7 @@ import Testing
 
 @Test("可靠 prompt 生成 inline 候选，Tab 只发送尚未输入的后缀")
 @MainActor
-func terminalAutocompleteAcceptsOnlyCandidateSuffix() throws {
+func terminalAutocompleteAcceptsOnlyCandidateSuffix() async throws {
   let fixture = try makeTerminalAutocompleteFixture()
   defer { try? FileManager.default.removeItem(at: fixture.directory) }
   let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
@@ -21,17 +21,53 @@ func terminalAutocompleteAcceptsOnlyCandidateSuffix() throws {
   var sent: [UInt8] = []
   view.onEncodedInput = { sent.append(contentsOf: $0) }
   view.onAutocompleteInput = { controller.receiveInput($0) }
+  view.onAutocompleteOutput = { controller.receiveOutput($0) }
 
   controller.receive(.promptStart)
   controller.receive(.inputStart)
   controller.receiveInput(Array("git ch".utf8)[...])
   controller.refreshNow()
+  // Tab 只接受可见 ghost；必须先让 PTY 回显本次输入，ghost 才会真正显示。
+  view.dataReceived(slice: Array("git ch".utf8)[...])
+  await Task.yield()
 
   #expect(controller.currentResult.candidates.prefix(2).map(\.insertText) == ["checkout", "cherry-pick"])
   #expect(controller.currentResult.ghostText == "eckout")
   #expect(controller.handle(.tab))
   #expect(String(decoding: sent, as: UTF8.self) == "eckout")
   #expect(controller.lastSubmittedCommand == nil)
+}
+
+@Test("Shell 端 autosuggestion 占据行尾时 Tab 放行给 Shell，不接受不可见候选")
+@MainActor
+func terminalAutocompleteRefusesInvisibleGhostWhenShellSuggestionOwnsLine() async throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let controller = TerminalAutocompleteController(
+    service: fixture.service,
+    sessionIdentifier: "session",
+    controls: { fixture.controls.value },
+    currentDirectory: { "/project" }
+  )
+  controller.attach(to: view)
+  var sent: [UInt8] = []
+  view.onEncodedInput = { sent.append(contentsOf: $0) }
+  view.onAutocompleteOutput = { controller.receiveOutput($0) }
+
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.refreshNow()
+  // zsh-autosuggestions 等插件把自己的灰色建议画进网格，可见行不再以本地输入结尾，
+  // 回显校验因此一直不通过，Aster ghost 保持隐藏。此时吞掉 Tab 会插入用户从未
+  // 见过的候选文本；必须返回 false，让 Shell 自己的补全接管。
+  view.dataReceived(slice: Array("git checkout -b feature".utf8)[...])
+  await Task.yield()
+
+  #expect(controller.currentResult.ghostText != nil)
+  #expect(!controller.handle(.tab))
+  #expect(sent.isEmpty)
 }
 
 @Test("Shell 尚未回显本次输入时不显示 inline suggestion")
@@ -118,20 +154,26 @@ func terminalAutocompleteHidesStaleGhostBeforeDebouncedRefresh() async throws {
 
 @Test("Escape 先关闭 inline suggestion，再按一次打开候选面板")
 @MainActor
-func terminalAutocompleteEscapeSeparatesInlineAndPanelActions() throws {
+func terminalAutocompleteEscapeSeparatesInlineAndPanelActions() async throws {
   let fixture = try makeTerminalAutocompleteFixture()
   defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
   let controller = TerminalAutocompleteController(
     service: fixture.service,
     sessionIdentifier: "session",
     controls: { fixture.controls.value },
     currentDirectory: { "/project" }
   )
+  controller.attach(to: view)
+  view.onAutocompleteOutput = { controller.receiveOutput($0) }
 
   controller.receive(.promptStart)
   controller.receive(.inputStart)
   controller.receiveInput(Array("git ch".utf8)[...])
   controller.refreshNow()
+  // 第一次 Escape 关闭的是“可见”的 inline suggestion；先回显输入让 ghost 显示。
+  view.dataReceived(slice: Array("git ch".utf8)[...])
+  await Task.yield()
 
   #expect(controller.handle(.escape))
   #expect(!controller.panelVisible)
