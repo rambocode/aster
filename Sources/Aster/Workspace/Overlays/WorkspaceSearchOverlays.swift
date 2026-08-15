@@ -149,6 +149,7 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
   private let resultsStack = NSStackView()
   private let transcript = NSTextView()
   private var histories: [AgentSessionHistory] = []
+  private var rows: [AgentHistoryRowView] = []
   private var selectedIndex = 0
   private var historyCancellable: AnyCancellable?
 
@@ -164,20 +165,26 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
   required init?(coder: NSCoder) { nil }
 
   override func loadView() {
+    // 面板 chrome 与命令面板/Open Quickly 同一套：圆角 16、hairline 描边、
+    // layer 投影（NSShadow 在 layer-backed 视图上不稳定，统一走 layer）。
     let host = NSView()
     host.wantsLayer = true
     host.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.99).cgColor
-    host.layer?.cornerRadius = 12
+    host.layer?.cornerRadius = 16
     host.layer?.borderWidth = 1
-    host.layer?.borderColor = AsterTheme.hairline.cgColor
-    host.shadow = NSShadow()
-    host.shadow?.shadowBlurRadius = 24
-    host.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.22)
+    host.layer?.borderColor = AsterTheme.hairline.withAlphaComponent(0.90).cgColor
+    host.layer?.shadowColor = NSColor.black.cgColor
+    host.layer?.shadowOpacity = 0.22
+    host.layer?.shadowRadius = 24
+    host.layer?.shadowOffset = CGSize(width: 0, height: -10)
+    host.layer?.masksToBounds = false
 
     search.placeholderString = "搜索 Agent 标题、项目、模型或 transcript…"
     search.delegate = self
     search.onMove = { [weak self] delta in self?.moveSelection(delta) }
-    search.onActivate = { [weak self] _ in self?.resumeSelection() }
+    // Return 对齐 Otty：把会话历史作为标签打开（右侧渲染 transcript）；
+    // Resume/Fork 继续走 footer 按钮显式触发。
+    search.onActivate = { [weak self] _ in self?.openSelection() }
     search.onCancel = { [weak model] in model?.isAgentHistoryPresented = false }
     let refresh = ActionButton(symbol: "arrow.clockwise") { [weak model] in
       model?.reloadAgentHistory()
@@ -190,16 +197,35 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
     header.spacing = 8
 
     resultsStack.orientation = .vertical
+    // 竖排 NSStackView 默认 centerX 对齐，行会按内容宽度居中；
+    // .width 让每行撑满列宽，标题与元信息统一左对齐。
+    resultsStack.alignment = .width
     resultsStack.spacing = 4
     let resultsScroll = NSScrollView()
     resultsScroll.hasVerticalScroller = true
+    resultsScroll.autohidesScrollers = true
     resultsScroll.drawsBackground = false
-    resultsScroll.documentView = resultsStack
+    // 与命令面板同一套文档视图约束：stack 不能直接当 documentView——非 flipped 的
+    // 文档会把内容锚到底部，且 clip 宽度传导不可靠，行宽随内容漂移（曾致列表不齐）。
+    // FlippedDocumentView 从顶部排布，宽度钉死 clip 宽，行才能稳定撑满列宽。
+    let resultsDocument = FlippedDocumentView()
+    resultsDocument.addSubview(resultsStack)
+    resultsScroll.documentView = resultsDocument
     resultsStack.translatesAutoresizingMaskIntoConstraints = false
-    resultsStack.widthAnchor.constraint(equalTo: resultsScroll.contentView.widthAnchor).isActive =
-      true
+    resultsDocument.translatesAutoresizingMaskIntoConstraints = false
     resultsScroll.translatesAutoresizingMaskIntoConstraints = false
-    resultsScroll.widthAnchor.constraint(equalToConstant: 270).isActive = true
+    NSLayoutConstraint.activate([
+      resultsDocument.leadingAnchor.constraint(equalTo: resultsScroll.contentView.leadingAnchor),
+      resultsDocument.topAnchor.constraint(equalTo: resultsScroll.contentView.topAnchor),
+      resultsDocument.widthAnchor.constraint(equalTo: resultsScroll.contentView.widthAnchor),
+      resultsDocument.heightAnchor.constraint(
+        greaterThanOrEqualTo: resultsScroll.contentView.heightAnchor),
+      resultsStack.leadingAnchor.constraint(equalTo: resultsDocument.leadingAnchor),
+      resultsStack.trailingAnchor.constraint(equalTo: resultsDocument.trailingAnchor),
+      resultsStack.topAnchor.constraint(equalTo: resultsDocument.topAnchor),
+      resultsDocument.bottomAnchor.constraint(greaterThanOrEqualTo: resultsStack.bottomAnchor),
+      resultsScroll.widthAnchor.constraint(equalToConstant: 270),
+    ])
 
     transcript.isEditable = false
     transcript.isSelectable = true
@@ -210,6 +236,11 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
     let transcriptScroll = NSScrollView()
     transcriptScroll.hasVerticalScroller = true
     transcriptScroll.documentView = transcript
+    // 正文区做成圆角卡片，与列表区在视觉上分离，避免两块内容糊在一起。
+    transcriptScroll.wantsLayer = true
+    transcriptScroll.layer?.cornerRadius = 8
+    transcriptScroll.layer?.borderWidth = 1
+    transcriptScroll.layer?.borderColor = AsterTheme.hairline.withAlphaComponent(0.72).cgColor
     let body = NSStackView(views: [resultsScroll, transcriptScroll])
     body.orientation = .horizontal
     body.spacing = 8
@@ -221,11 +252,18 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
     let fork = ActionButton(title: "Fork / Branch", bezelStyle: .rounded) { [weak self] in
       self?.continueSelection(.fork)
     }
-    let footer = NSStackView(views: [NSView(), fork, resume])
+    let open = ActionButton(title: "打开", bezelStyle: .rounded) { [weak self] in
+      self?.openSelection()
+    }
+    open.identifier = NSUserInterfaceItemIdentifier("agent-history-open")
+    let footer = NSStackView(views: [NSView(), fork, resume, open])
     footer.orientation = .horizontal
     footer.spacing = 8
     let column = NSStackView(views: [header, body, footer])
     column.orientation = .vertical
+    // 外层同样必须 .width：否则 header/body/footer 按内容宽度居中，
+    // 列表列与正文区的左边缘对不上面板内边距。
+    column.alignment = .width
     column.spacing = 8
     column.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
     host.addSubview(column)
@@ -242,6 +280,7 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
 
   private func reload() {
     for view in resultsStack.arrangedSubviews { view.removeFromSuperview() }
+    rows = []
     let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     if query.isEmpty {
       histories = Array(model.agentHistories.prefix(100))
@@ -263,18 +302,20 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
     }
     for (index, history) in histories.enumerated() {
       let metadata = history.metadata
-      let button = ActionButton(
-        title: "\(metadata.title)\n\(metadata.configuration.provider.commandName)",
-        bezelStyle: .inline
+      // 元信息行：provider · 项目名 · 相对时间。项目推断失败时不显示空段。
+      var parts = [metadata.configuration.provider.commandName]
+      let projectName = (metadata.projectDirectory as NSString).lastPathComponent
+      if !projectName.isEmpty { parts.append(projectName) }
+      parts.append(RelativeTime.string(since: metadata.updatedAt))
+      let row = AgentHistoryRowView(
+        title: metadata.title,
+        subtitle: parts.joined(separator: " · ")
       ) { [weak self] in
         self?.selectedIndex = index
         self?.updateSelection()
       }
-      button.alignment = .left
-      button.isBordered = false
-      button.translatesAutoresizingMaskIntoConstraints = false
-      button.heightAnchor.constraint(equalToConstant: 46).isActive = true
-      resultsStack.addArrangedSubview(button)
+      rows.append(row)
+      resultsStack.addArrangedSubview(row)
     }
     updateSelection()
   }
@@ -286,12 +327,12 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
   }
 
   private func updateSelection() {
-    for (index, view) in resultsStack.arrangedSubviews.enumerated() {
-      view.wantsLayer = true
-      view.layer?.cornerRadius = 6
-      view.layer?.backgroundColor =
-        index == selectedIndex
-        ? AsterTheme.accent.withAlphaComponent(0.16).cgColor : NSColor.clear.cgColor
+    for (index, row) in rows.enumerated() {
+      row.isSelected = index == selectedIndex
+    }
+    // 键盘上下移动时选中行必须跟随滚动，否则列表长时选择会跑出可视区。
+    if rows.indices.contains(selectedIndex) {
+      rows[selectedIndex].scrollToVisible(rows[selectedIndex].bounds)
     }
     guard histories.indices.contains(selectedIndex) else {
       transcript.string = ""
@@ -313,9 +354,89 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
 
   private func resumeSelection() { continueSelection(.resume) }
 
+  /// 把选中会话作为标签打开（Otty 对齐：TABS 新增一项，右侧渲染 transcript）。
+  private func openSelection() {
+    guard histories.indices.contains(selectedIndex) else { return }
+    let metadata = histories[selectedIndex].metadata
+    model.isAgentHistoryPresented = false
+    model.openAgentTranscriptTab(metadata)
+  }
+
   private func continueSelection(_ kind: AgentContinuationKind) {
     guard histories.indices.contains(selectedIndex) else { return }
     model.continueAgentSession(histories[selectedIndex].metadata, kind: kind)
+  }
+}
+
+/// Agent 历史列表的一行：标题（主字重）+ 元信息（provider · 项目 · 时间，次级色），
+/// 与命令面板行同一套选中高亮，另有悬停底色与手型光标反馈（交互设计约定）。
+@MainActor
+final class AgentHistoryRowView: NSButton {
+  private var handler: (() -> Void)?
+  private var isHovered = false {
+    didSet { if oldValue != isHovered { applyBackground() } }
+  }
+  var isSelected = false {
+    didSet { if oldValue != isSelected { applyBackground() } }
+  }
+
+  init(title: String, subtitle: String, handler: @escaping () -> Void) {
+    super.init(frame: .zero)
+    self.title = ""
+    isBordered = false
+    wantsLayer = true
+    layer?.cornerRadius = 8
+    target = self
+    action = #selector(invoke)
+    self.handler = handler
+
+    let titleLabel = makeLabel(title, size: 13, weight: .medium, color: AsterTheme.ink)
+    titleLabel.lineBreakMode = .byTruncatingTail
+    titleLabel.maximumNumberOfLines = 1
+    let subtitleLabel = makeLabel(subtitle, size: 11, color: AsterTheme.secondaryInk)
+    subtitleLabel.lineBreakMode = .byTruncatingTail
+    subtitleLabel.maximumNumberOfLines = 1
+
+    let column = NSStackView(views: [titleLabel, subtitleLabel])
+    column.orientation = .vertical
+    column.alignment = .leading
+    column.spacing = 3
+    addSubview(column)
+    column.pinEdges(to: self, insets: NSEdgeInsets(top: 7, left: 10, bottom: 7, right: 10))
+    translatesAutoresizingMaskIntoConstraints = false
+    heightAnchor.constraint(equalToConstant: 52).isActive = true
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  @objc private func invoke() { handler?() }
+
+  private func applyBackground() {
+    // 选中高亮优先于悬停；悬停用更淡的同色，保证两种状态可区分。
+    let color: CGColor =
+      if isSelected {
+        AsterTheme.accent.withAlphaComponent(0.16).cgColor
+      } else if isHovered {
+        AsterTheme.accent.withAlphaComponent(0.07).cgColor
+      } else {
+        NSColor.clear.cgColor
+      }
+    layer?.backgroundColor = color
+  }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    for area in trackingAreas { removeTrackingArea(area) }
+    addTrackingArea(
+      NSTrackingArea(
+        rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self))
+  }
+
+  override func mouseEntered(with event: NSEvent) { isHovered = true }
+  override func mouseExited(with event: NSEvent) { isHovered = false }
+
+  override func resetCursorRects() {
+    addCursorRect(bounds, cursor: .pointingHand)
   }
 }
 

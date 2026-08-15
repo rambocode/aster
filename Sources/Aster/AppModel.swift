@@ -334,6 +334,12 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// 标题的局部更新通道；只刷新侧栏/标签行文案，不重建视图树。
   let titleChanged = PassthroughSubject<String, Never>()
   private var titleState: TerminalTitleState
+  /// 各 Pane 精确绑定的 Agent 会话标题（运行态，不进快照；恢复会话后由绑定事件重建）。
+  /// 有值时标签行与标题栏胶囊优先显示它；用户显式固定名（`.name` 覆盖）仍然最高优先。
+  private var paneAgentSessionTitles: [UUID: String] = [:]
+  /// Agent 绑定（provider / session ID）变化的定向出口。标题解析需要 `AppModel` 的
+  /// agentHistories，Tab 只上报事件，不自行匹配。
+  var onAgentSessionBindingChanged: (() -> Void)?
   @Published var layout: PaneLayout {
     didSet {
       markUpdated()
@@ -515,6 +521,36 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   }
   var windowTitle: String { titleState.windowTitle }
   var tabTitleOverride: TerminalTitleOverride { titleState.tabOverride }
+
+  /// 活动 Pane 的 Agent 会话标题。用户显式固定名优先级更高，此时返回 nil，
+  /// 标题胶囊与标签行回落到固定名/自动标题。
+  var activeAgentSessionTitle: String? {
+    if case .name = titleState.tabOverride { return nil }
+    return paneAgentSessionTitles[activePaneID]
+  }
+
+  /// 标签展示名：用户固定名 > 活动 Pane 的 Agent 会话标题 > OSC/目录自动标题。
+  /// 存储属性 `title` 保持 OSC 语义不变，展示层一律读这里。
+  var displayTitle: String {
+    activeAgentSessionTitle ?? title
+  }
+
+  /// 更新某个 Pane 的 Agent 会话标题；nil 表示清除（Agent 退出或会话无标题）。
+  /// 只有活动 Pane 的变化会触发标签行与胶囊的局部刷新。
+  func updateAgentSessionTitle(_ value: String?, paneID: UUID) {
+    let normalized = value.flatMap { raw -> String? in
+      let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+      return trimmed.isEmpty ? nil : trimmed
+    }
+    guard paneAgentSessionTitles[paneID] != normalized, runtimes[paneID] != nil else { return }
+    if let normalized {
+      paneAgentSessionTitles[paneID] = normalized
+    } else {
+      paneAgentSessionTitles.removeValue(forKey: paneID)
+    }
+    guard paneID == activePaneID else { return }
+    titleChanged.send(displayTitle)
+  }
   var workingDirectory: String {
     activeSession?.resolvedCurrentWorkingDirectory()
       ?? runtimes[activePaneID]?.descriptor.workingDirectory
@@ -639,6 +675,9 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     state.windowOverride = titleState.windowOverride
     paneTitleStates[paneID] = state
     applyActiveTitleState(state)
+    // Agent 会话标题按 Pane 存储；焦点切换后展示名可能变化而存储 `title` 未变，
+    // 主动发一次局部刷新（行内更新幂等，代价只是重写一遍文案）。
+    titleChanged.send(displayTitle)
     markUpdated()
     // 放大态下其它面板不可见，把焦点移出去会让 first responder 落在看不见的终端上。
     if zoomedPaneID != nil, zoomedPaneID != paneID { zoomedPaneID = nil }
@@ -763,6 +802,7 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       resourcePath: resourceURL.path
     )
     runtimes.removeValue(forKey: activePaneID)?.stop()
+    paneAgentSessionTitles.removeValue(forKey: activePaneID)
     layout = layout.updatingPane(paneID: activePaneID) { _ in replacement }
     addRuntime(for: replacement)
     updateTitleFallback(resourceURL.lastPathComponent, paneID: activePaneID)
@@ -852,6 +892,7 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     let removedPaneID = activePaneID
     runtimes.removeValue(forKey: removedPaneID)?.stop()
     paneTitleStates.removeValue(forKey: removedPaneID)
+    paneAgentSessionTitles.removeValue(forKey: removedPaneID)
     if zoomedPaneID == activePaneID { zoomedPaneID = nil }
     layout = updated
     activePaneID = successor ?? activePaneID
@@ -959,6 +1000,17 @@ final class TerminalTabItem: ObservableObject, Identifiable {
         .dropFirst()
         .sink { [weak self] state in self?.onAgentTaskStateChanged?(descriptor.id, state) }
         .store(in: &cancellables)
+
+      // Agent 绑定变化（OSC 6974 上报 provider / session ID）驱动会话标题解析。
+      // `willSet` 阶段发值，延后一轮再上报，让 AppModel 读到新绑定。
+      Publishers.MergeMany(
+        session.$activeAgentProvider.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        session.$activeAgentSessionID.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+      )
+      .sink { [weak self] _ in
+        DispatchQueue.main.async { [weak self] in self?.onAgentSessionBindingChanged?() }
+      }
+      .store(in: &cancellables)
     }
     runtime.terminalSession?.$currentWorkingDirectory
       .removeDuplicates()
@@ -1063,8 +1115,15 @@ final class AppModel: ObservableObject {
   /// 后台 I/O 完成把整个终端工作区重建。
   let agentHistoriesChanged = PassthroughSubject<[AgentSessionHistory], Never>()
   private(set) var agentHistories: [AgentSessionHistory] = [] {
-    didSet { agentHistoriesChanged.send(agentHistories) }
+    didSet {
+      agentHistoriesChanged.send(agentHistories)
+      // 历史刷新可能带来新的会话标题；只做局部标题投影，不触发整树刷新。
+      refreshAgentSessionTitles()
+    }
   }
+  /// 为解析会话标题触发的历史重扫节流点；扫描按 5 秒下限合并，避免 Agent 状态
+  /// 频繁翻转时反复枚举 transcript 目录。
+  private var agentTitleReloadAt: Date?
 #if DEBUG
   /// Test seam for exercising history-backed Open Quickly routes without scanning the user's
   /// real Agent session directories or exposing a mutable production history collection.
@@ -1257,6 +1316,27 @@ final class AppModel: ObservableObject {
       layout: .leaf(descriptor)
     )
     insertTab(tab, hasContent: true)
+  }
+
+  /// 从历史打开会话 transcript（对齐 Otty）：左侧 TABS 新增一个标签，右侧以只读
+  /// transcript Pane 渲染会话历史。已有承载同一 transcript 的标签时直接选中它，
+  /// 不重复开；标签名使用清洗后的会话标题（清洗失败仍等于文件名时保留文件名）。
+  func openAgentTranscriptTab(_ metadata: AgentSessionMetadata) {
+    let target = metadata.transcriptFileURL.standardizedFileURL
+    if let existing = tabs.first(where: { tab in
+      tab.layout.allPanes.contains { pane in
+        pane.kind == .preview
+          && pane.resourcePath.map { URL(fileURLWithPath: $0).standardizedFileURL == target }
+            == true
+      }
+    }) {
+      selectedTabID = existing.id
+      return
+    }
+    guard openResource(metadata.transcriptFileURL, mode: .view, placement: .newTab) else { return }
+    if metadata.title != metadata.id {
+      selectedTab?.setTabTitleOverride(.name(metadata.title))
+    }
   }
 
   /// Files、Open 面板与 CLI 共用的资源路由。普通文件默认由调用方选择 view/edit；
@@ -1941,6 +2021,39 @@ final class AppModel: ObservableObject {
       guard let self else { return }
       self.agentHistories = histories
     }
+  }
+
+  /// 把精确绑定的 Agent 会话标题投影到各标签（标签行与标题栏胶囊显示）。
+  ///
+  /// 只按 provider + session ID 精确匹配已扫描历史；松散匹配（目录、最近历史）会把
+  /// 别的会话标题标到当前 Pane。标题清洗后仍等于文件名（无有效用户消息）视为无标题。
+  /// `reloadIfUnmatched` 为 true 且存在已绑定但未解析出标题的会话时，节流触发一次
+  /// 历史重扫——首条 prompt 刚写入 transcript 时列表里还没有它。
+  func refreshAgentSessionTitles(reloadIfUnmatched: Bool = false) {
+    var hasUnresolvedBoundSession = false
+    for tab in tabs {
+      for (paneID, runtime) in tab.runtimes {
+        guard let session = runtime.terminalSession else { continue }
+        var resolved: String?
+        if let provider = session.activeAgentProvider,
+          let sessionID = session.activeAgentSessionID
+        {
+          let history = agentHistories.first {
+            $0.metadata.id == sessionID && $0.metadata.configuration.provider == provider
+          }
+          resolved = history.flatMap {
+            $0.metadata.title == $0.metadata.id ? nil : $0.metadata.title
+          }
+          if resolved == nil { hasUnresolvedBoundSession = true }
+        }
+        tab.updateAgentSessionTitle(resolved, paneID: paneID)
+      }
+    }
+    guard reloadIfUnmatched, hasUnresolvedBoundSession else { return }
+    let timestamp = Date()
+    if let last = agentTitleReloadAt, timestamp.timeIntervalSince(last) < 5 { return }
+    agentTitleReloadAt = timestamp
+    reloadAgentHistory()
   }
 
   /// 只从当前选中标签的聚焦 Pane 读取 Agent。不能回退到标签内其它 Pane、最近历史或
@@ -3376,6 +3489,12 @@ final class AppModel: ObservableObject {
     }
     tab.onAgentTaskStateChanged = { [weak self] paneID, state in
       self?.advancePromptQueue(paneID: paneID, reportedState: state)
+      // 状态翻转的时刻正是 transcript 落盘/追加的时刻：借此解析会话标题，
+      // 未命中时按节流重扫历史。
+      self?.refreshAgentSessionTitles(reloadIfUnmatched: true)
+    }
+    tab.onAgentSessionBindingChanged = { [weak self] in
+      self?.refreshAgentSessionTitles(reloadIfUnmatched: true)
     }
   }
 

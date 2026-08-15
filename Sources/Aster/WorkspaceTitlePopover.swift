@@ -26,6 +26,14 @@ final class WorkspaceTitleButton: NSButton {
   var workingDirectory: String {
     didSet { updatePresentation() }
   }
+  /// 活动 Pane 的 Agent 会话标题。有值时胶囊显示它（工作目录退到 toolTip），
+  /// 没有 Agent 或标题尚未产生时保持原有的缩写目录胶囊。
+  var agentSessionTitle: String? {
+    didSet {
+      guard agentSessionTitle != oldValue else { return }
+      updatePresentation()
+    }
+  }
 
   private let foregroundColor: NSColor
   /// Otty 的 `[titlebar].background` 只涂目录胶囊，胶囊外的整条标题区继承 Window。
@@ -96,8 +104,14 @@ final class WorkspaceTitleButton: NSButton {
   }
 
   private func updatePresentation() {
-    title = "\((workingDirectory as NSString).abbreviatingWithTildeInPath) ⋯"
-    toolTip = workingDirectory
+    if let agentSessionTitle {
+      title = "\(agentSessionTitle) ⋯"
+      // 会话标题占据胶囊时，目录定位信息仍要可达：toolTip 保留完整路径。
+      toolTip = workingDirectory
+    } else {
+      title = "\((workingDirectory as NSString).abbreviatingWithTildeInPath) ⋯"
+      toolTip = workingDirectory
+    }
     // 路径始终使用 titlebar.foreground；悬停只能为未显式设置胶囊背景的主题补充
     // 轻量反馈，不能覆盖 April / Ayu / Pink 等主题声明的 titlebar.background。
     contentTintColor = foregroundColor

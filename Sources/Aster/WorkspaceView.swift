@@ -916,6 +916,10 @@ final class WorkspaceViewController: NSViewController {
           for row in self.tabRowsByID[tab.id] ?? [] where row.window != nil {
             row.refreshTitle()
           }
+          // Agent 会话标题变化也走本通道；标题栏胶囊只跟随当前选中标签的活动 Pane。
+          if tab.id == self.model.selectedTabID {
+            self.workspaceTitleButton?.agentSessionTitle = tab.activeAgentSessionTitle
+          }
         }
         .store(in: &tabSubscriptions)
       tab.workingDirectoryChanged
@@ -1646,6 +1650,7 @@ final class WorkspaceViewController: NSViewController {
       self.showWorkspaceTitlePopover(anchor: button, tab: tab)
     }
     title.identifier = NSUserInterfaceItemIdentifier("workspace-title-button")
+    title.agentSessionTitle = tab.activeAgentSessionTitle
     workspaceTitleButton = title
     background.addSubview(title)
     title.translatesAutoresizingMaskIntoConstraints = false

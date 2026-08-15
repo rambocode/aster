@@ -31,6 +31,8 @@ Aster 把 Otty 的工作区流程、CLI 与代码 Agent 能力放在同一安全
 9. 队列的常规发送路径是 lifecycle hook 驱动的自动派发：只有 hook 已成为该 Pane 的权威状态源（`hasAuthoritativeAgentLifecycle`）且报告 `idle` 时才写入队首。`processing` 期间只排队；`awaiting-input` 同样不派发 —— 它来自 PermissionRequest hook，屏幕上是权限确认选择器，回车等于替用户批准一次工具调用。输出探针推断出的 idle 不参与派发，避免打断运行中的 TUI。
 10. 写入 Agent 输入框的编码由目标决定，不由调用方强制：`AsterTerminalView.typePromptText` 读取 `terminal.bracketedPasteMode`，协商过就按粘贴块投递，未协商才发裸 UTF-8。Claude Code / Codex 的输入框协商 2004 后会把裸字节流按逐键解释，`/`、`@`、方向键和候选列表会吃掉内容，表现为“点了发送但输入框没变化”。Prompt Queue 的 Return 在文本之后延时 60ms 单独发送 —— 同批到达的 CR 会被算进粘贴内容变成换行，只换行不提交。
 11. 自动派发严格单 in-flight：派发后必须观察到该轮从 `processing`/`awaiting-input` 回到 `idle` 才发下一条，防止多条 prompt 挤进同一轮对话。写入失败时 `restoreInFlight()` 把 prompt 放回队首并释放锁。每项左侧的发送图标是用户显式插队通道，不受 in-flight 锁与 hook 权威性限制。
+12. Agent 会话标题投影：Pane 经 OSC 6974 精确绑定 provider + session ID 后，`AppModel.refreshAgentSessionTitles` 从已扫描历史匹配会话标题（清洗后仍等于文件名视为无标题），投影到标签行展示名与标题栏胶囊；用户固定标签名优先级更高。禁止目录/最近历史等松散匹配 —— 会把别的会话标题标到当前 Pane。标题是运行态，不进快照；未命中时按 5 秒节流触发一次历史重扫（transcript 在首条 prompt 后才出现）。更新走 `titleChanged` 局部通道，不进 `objectWillChange`。
+13. 历史会话以标签承载（Otty 对齐）：Agent 历史浮层的 `↩`/「打开」调用 `AppModel.openAgentTranscriptTab`，经 `openResource(.view, .newTab)` 的安全校验开只读 transcript 预览标签，标签名写入清洗后的会话标题（`.name` 覆盖，随快照恢复）；同一 transcript 已有标签时只聚焦不重建。Resume / Fork 仍是显式动作，分别在浮层 footer 与 transcript 页头提供。transcript 正文由 `AgentTranscriptHTML` 在主线程外拼装、在与 Markdown 预览同源的加固 WKWebView（无 JS、CSP 锁死、无网络）中渲染：用户消息转义进卡片、assistant 消息走 swift-markdown HTMLFormatter、连续 toolCall/Reasoning/System 折叠为原生 `<details>` 摘要；单条 4,000 / 总量 400,000 字符双重上限，超限显式标注。禁止回到逐条 NSTextField 的实现——大会话会卡死主线程。
 12. Shell 菜单的 Agent 子菜单只读取当前窗口、当前标签、当前聚焦 Pane 的 `activeAgentProvider` 与 `activeAgentSessionID`，并在 `menuNeedsUpdate` 时重建。不得回退到同标签其它 Pane、窗口聚合状态或最近历史。provider 已识别但 session ID 尚未关联时保留身份与历史入口，复制和 Fork 明确禁用；支持 Fork 后可选择四向分屏、新标签或新窗口。
 
 ## 业务流程
@@ -91,6 +93,10 @@ P0 工具：`search_memory`、`get_project_context`、`get_session`、`get_relat
 - CLI 目标 Pane 不存在、未空闲、输出超限或无权限：返回非零退出码和 stderr；不隐式选择其它 Pane，也不把读取失败伪装成空成功。
 - Agent hook 缺失：退化为进程/提示检测，不伪造精确状态；Shell 菜单可以显示已识别的 provider，但在没有可信 session ID 时禁用复制与 Fork。
 - Agent 历史损坏或超限：跳过该记录，其它 provider 仍可使用。
+- Agent 历史的列表标题由 `AgentSessionTitleCleaner` 从用户消息序列推导：caveat/系统提醒等
+  模板包装段整段丢弃，内容型标签只剥壳保留内文，全部为噪音时回落 transcript 文件名——
+  provider 注入的 XML 风格包装串不得泄漏到历史列表。浮层 chrome（圆角/描边/layer 投影）
+  与命令面板、Open Quickly 保持同一套。
 - 窗口创建失败：CLI 返回失败；跨窗口标签移动会把原 Tab 放回源模型。
 
 ## 测试与验收

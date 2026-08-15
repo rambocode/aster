@@ -125,7 +125,7 @@ final class TabRowButton: NSButton {
     handler = action
     self.onDragEnd = onDragEnd
     super.init(frame: .zero)
-    title = horizontal ? tab.title : ""
+    title = horizontal ? tab.displayTitle : ""
     alignment = .left
     isBordered = false
     bezelStyle = .inline
@@ -160,10 +160,10 @@ final class TabRowButton: NSButton {
       ])
       self.rowBackground = rowBackground
 
-      // 选中与未选中显示同一份 `tab.title`（目录稳定显示名），切换标签时行文案
-      // 不再在「完整路径 / 短名」之间跳变。
+      // 选中与未选中显示同一份展示名（Agent 会话标题优先，其次目录稳定显示名），
+      // 切换标签时行文案不再在「完整路径 / 短名」之间跳变。
       let primary = makeLabel(
-        tab.title,
+        tab.displayTitle,
         size: selected ? 11.5 : 11,
         weight: selected ? .semibold : .regular,
         color: selected ? resolvedActiveForeground : resolvedForeground
@@ -185,7 +185,7 @@ final class TabRowButton: NSButton {
       close.toolTip = "关闭标签页"
       close.isBordered = false
       close.contentTintColor = AsterTheme.secondaryInk
-      close.setAccessibilityLabel("关闭标签页 \(tab.title)")
+      close.setAccessibilityLabel("关闭标签页 \(tab.displayTitle)")
       close.translatesAutoresizingMaskIntoConstraints = false
       accessorySlot.addSubview(close)
       closeButton = close
@@ -260,11 +260,11 @@ final class TabRowButton: NSButton {
   /// 程序标题（OSC 0/1/2）变化时就地更新行文案；不重建行、不触碰附件与终端视图。
   func refreshTitle() {
     if horizontal {
-      title = tab.title
+      title = tab.displayTitle
     } else {
-      titleLabel?.stringValue = tab.title
+      titleLabel?.stringValue = tab.displayTitle
     }
-    closeButton?.setAccessibilityLabel("关闭标签页 \(tab.title)")
+    closeButton?.setAccessibilityLabel("关闭标签页 \(tab.displayTitle)")
   }
 
   /// 只替换标签的状态附件，不重建 Sidebar、Pane 或长期存活的终端视图。Agent hook

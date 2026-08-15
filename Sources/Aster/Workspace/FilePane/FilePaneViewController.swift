@@ -80,6 +80,10 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
     let root = NSView()
     let column = NSStackView(views: [makeToolbar(), contentHost])
     column.orientation = .vertical
+    // 纵向 NSStackView 默认 centerX 对齐：内容视图一旦有固有宽度（如 transcript
+    // 页头的 label），就会被按 fitting 宽度居中而不是撑满 Pane。显式 .width 让
+    // 工具条与内容区始终跟随 Pane 宽度（规则 5：容器两个方向都要有确定尺寸）。
+    column.alignment = .width
     column.spacing = 0
     root.addSubview(column)
     column.pinEdges(to: root)
@@ -625,6 +629,24 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
     let title = NSTextField(labelWithString: history.metadata.title)
     title.font = NSFont.systemFont(ofSize: 19, weight: .bold)
     stack.addArrangedSubview(title)
+    // 标题下给出会话文件与归属元信息（对齐 Otty 的会话页头）：文件名一行，
+    // 项目路径 · provider · 更新时间一行，便于核对「这是哪个项目的哪次会话」。
+    let fileLine = NSTextField(labelWithString: url.lastPathComponent)
+    fileLine.font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
+    fileLine.textColor = AsterTheme.tertiaryInk
+    fileLine.lineBreakMode = .byTruncatingMiddle
+    stack.addArrangedSubview(fileLine)
+    var metaParts: [String] = []
+    if !history.metadata.projectDirectory.isEmpty {
+      metaParts.append((history.metadata.projectDirectory as NSString).abbreviatingWithTildeInPath)
+    }
+    metaParts.append(history.metadata.configuration.provider.commandName)
+    metaParts.append(RelativeTime.string(since: history.metadata.updatedAt))
+    let metaLine = NSTextField(labelWithString: metaParts.joined(separator: "  ·  "))
+    metaLine.font = NSFont.systemFont(ofSize: 11)
+    metaLine.textColor = AsterTheme.secondaryInk
+    metaLine.lineBreakMode = .byTruncatingMiddle
+    stack.addArrangedSubview(metaLine)
     let actions = NSStackView(views: [
       ActionButton(title: "Resume", bezelStyle: .rounded) { [weak self] in
         self?.model.continueAgentSession(history.metadata, kind: .resume)
@@ -635,40 +657,44 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
     ])
     actions.orientation = .horizontal
     stack.addArrangedSubview(actions)
-    for entry in history.transcript.entries {
-      let label: String =
-        switch entry.kind {
-        case .message(let role): role.rawValue.capitalized
-        case .reasoning: "Reasoning"
-        case .toolCall(let name): "Tool · \(name)"
-        case .attachment(let name): "Attachment · \(name ?? "File")"
-        }
-      let heading = NSTextField(labelWithString: label)
-      heading.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-      heading.textColor = AsterTheme.secondaryInk
-      let text = NSTextField(wrappingLabelWithString: entry.text)
-      text.font = NSFont.systemFont(ofSize: 13)
-      text.textColor = AsterTheme.ink
-      text.maximumNumberOfLines = 0
-      stack.addArrangedSubview(heading)
-      stack.addArrangedSubview(text)
-      text.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -48).isActive = true
+
+    // 正文用与 Markdown 预览同源的加固 WKWebView（无 JS、CSP 锁死、无网络）渲染 HTML：
+    // 用户消息进浅色卡片、Claude 输出按 Markdown 渲染、工具调用折叠成 <details> 摘要，
+    // 展开是原生 HTML 行为。构建在主线程外完成——曾经逐条建 wrapping NSTextField 的
+    // 实现在真实大会话上会把主线程卡死；HTML 拼装同样受单条/总量双重上限约束。
+    let configuration = WKWebViewConfiguration()
+    configuration.websiteDataStore = .nonPersistent()
+    configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+    let webView = WKWebView(frame: .zero, configuration: configuration)
+    webView.navigationDelegate = self
+    webView.loadHTMLString(
+      AgentTranscriptHTML.document(body: "<p class=\"notice\">正在渲染会话…</p>"), baseURL: nil)
+    let entries = history.transcript.entries
+    Task.detached(priority: .userInitiated) {
+      let document = AgentTranscriptHTML.document(body: AgentTranscriptHTML.body(entries: entries))
+      await MainActor.run { [weak webView] in
+        webView?.loadHTMLString(document, baseURL: nil)
+      }
     }
-    let document = NSView()
-    document.addSubview(stack)
+    let body: NSView = webView
+
+    let container = NSView()
+    container.addSubview(stack)
+    container.addSubview(body)
     stack.translatesAutoresizingMaskIntoConstraints = false
+    body.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      stack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
-      stack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
-      stack.topAnchor.constraint(equalTo: document.topAnchor),
-      stack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+      stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+      stack.topAnchor.constraint(equalTo: container.topAnchor),
+      body.topAnchor.constraint(equalTo: stack.bottomAnchor),
+      body.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      body.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+      body.bottomAnchor.constraint(equalTo: container.bottomAnchor),
     ])
-    let scroll = NSScrollView()
-    scroll.hasVerticalScroller = true
-    scroll.documentView = document
-    document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
-    return scroll
+    return container
   }
+
 
   private func showSharingPicker() {
     guard let fileURL, let button = shareButton else { return }
