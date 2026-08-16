@@ -34,6 +34,9 @@ fi
 rm -rf "$APP_DIR"
 mkdir -p "$CONTENTS_DIR/MacOS" "$RESOURCES_DIR" "$ICONSET_DIR" "$ICON_PREVIEW_DIR"
 cp "$BUILD_DIR/release/Aster" "$CONTENTS_DIR/MacOS/Aster"
+# MCPInstallService 按「与主程序同目录」解析 aster-memory-mcp，分发包必须把这个独立可执行文件
+# 一并放进 Contents/MacOS，否则用户在设置页一键安装 MCP 时会报 executableNotFound。
+cp "$BUILD_DIR/release/aster-memory-mcp" "$CONTENTS_DIR/MacOS/aster-memory-mcp"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$PROJECT_DIR/THIRD-PARTY-NOTICES.md" "$RESOURCES_DIR/THIRD-PARTY-NOTICES.md"
 cp -R "$PROJECT_DIR/Resources/shell-integration" "$RESOURCES_DIR/shell-integration"
@@ -102,7 +105,7 @@ done
 iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/AsterIcon.icns"
 SIGN_IDENTITY="${ASTER_SIGN_IDENTITY:--}"
 if [[ "$SIGN_IDENTITY" == "-" ]]; then
-  codesign --force --sign - --timestamp=none "$APP_DIR"
+  codesign --force --deep --sign - --timestamp=none "$APP_DIR"
 else
   codesign --force --deep --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
 fi
