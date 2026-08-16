@@ -1,25 +1,30 @@
 # Aster Terminal
 
-Aster 是一个完全使用 AppKit 构建的原生 macOS 终端工作区，采用轻量标签导航、弱化标题栏、纸张色画布和克制的苔绿色状态反馈。它使用独立品牌、图标和从零编写的工作区实现，不包含 Otty 的品牌资源或私有代码。
+English | [简体中文](README.zh-CN.md)
 
-## 能力
+Aster is a native macOS terminal workspace built entirely with AppKit — lightweight tab
+navigation, a minimal title bar, a paper-toned canvas, and restrained moss-green status
+accents. It ships its own brand, icon, and a workspace implementation written from
+scratch; it contains no Otty brand assets or proprietary code.
 
-- 完整 VT100/xterm 终端、ANSI 真彩色、鼠标、超链接和全屏 TUI
-- 多标签，垂直/顶部/底部三种标签布局
-- 左右/上下递归分屏，可混合终端、文件浏览器、编辑器和预览
-- Files 严格资源菜单与统一 File Pane，支持源码、Markdown/RST、图片、PDF、Quick Look、diff、hex 和 Agent transcript
-- 终端缓冲区查找、命令面板、详情面板和快捷键
-- `.asterrecipe` 工作区导入/导出及启动会话恢复
-- OSC 1/2/0 独立标题、固定名称/动态前缀，以及 `⇧⌘T` 最近关闭标签恢复
-- zsh/Bash/fish Shell Integration、命令锚点导航、退出状态与安全提示符选区删除
-- 本机 Autocomplete / inline suggestion、715 命令清单、文件与别名候选、隐私学习和 `aster learn`
-- `TERM=auto`/terminfo 安全回退、Aster 环境标识及 DA1/DA2/XTVERSION/DSR 回包
-- 通用、Shell、控制、编辑器、智能体、外观、Recipes、快捷键和高级九类设置
-- 与 Otty 1.3.1 对齐的 24 个内置主题、实时终端预览、自定义复制/编辑及安全 `.astertheme` 导入
-- 主窗口、设置、菜单、分屏、主题预览和全部交互控件均为原生 AppKit，无 SwiftUI/Hosting 桥接层
-- 独立应用图标、签名 `.app` 与 DMG 构建
+## Features
 
-## 构建
+- Full VT100/xterm terminal with ANSI true color, mouse, hyperlinks, and full-screen TUIs
+- Multiple tabs with vertical, top, or bottom tab layouts
+- Recursive horizontal/vertical splits, mixing terminals, file browsers, editors, and previews
+- Strict resource-scoped Files menu and a unified File Pane: source code, Markdown/RST, images, PDF, Quick Look, diff, hex, and Agent transcripts
+- Terminal buffer search, command palette, details panel, and keyboard shortcuts
+- `.asterrecipe` workspace import/export and session restore on launch
+- Independent OSC 1/2/0 titles, pinned names / dynamic prefixes, and `⇧⌘T` to reopen recently closed tabs
+- zsh/Bash/fish shell integration, command anchor navigation, exit status, and safe selection deletion at the prompt
+- Local autocomplete / inline suggestions: a 715-command inventory, file and alias candidates, privacy-aware learning, and `aster learn`
+- `TERM=auto`/terminfo safe fallback, Aster environment identification, and DA1/DA2/XTVERSION/DSR replies
+- Nine settings categories: General, Shell, Controls, Editor, Agents, Appearance, Recipes, Shortcuts, and Advanced
+- 24 built-in themes aligned with Otty 1.3.1, live terminal preview, custom copy/edit, and safe `.astertheme` import
+- Main window, settings, menus, splits, theme previews, and every interactive control are native AppKit — no SwiftUI/Hosting bridge layer
+- Standalone app icon, signed `.app`, and DMG build
+
+## Build
 
 ```bash
 brew install zig@0.15
@@ -31,34 +36,44 @@ swift test
 open dist/Aster.app
 ```
 
-需要 macOS 14 或更高版本、Swift 6.2、Zig 0.15.2 与 Xcode Metal Toolchain。
-`setup-ghostty.sh` 从固定 revision 生成本机 `GhosttyKit.xcframework` 和运行时资源；
-`build-app.sh` 会自动调用它。来源、ABI 风险与更新流程见 `Vendor/Ghostty/README.md`。
-SwiftTerm 仍以本地 target 保留，仅用于迁移期旧适配器回归测试，不进入产品终端视图树。
-默认构建使用本机 ad-hoc 签名，适合本机安装；正式分发时通过
-`ASTER_SIGN_IDENTITY="Developer ID Application: ..."` 提供 Developer ID，并在产物外部完成
-notarization/stapling。
+Requires macOS 14 or later, Swift 6.2, Zig 0.15.2, and the Xcode Metal Toolchain.
+`setup-ghostty.sh` generates the local `GhosttyKit.xcframework` and runtime resources
+from a pinned revision; `build-app.sh` runs it automatically. See
+`Vendor/Ghostty/README.md` for provenance, ABI risk, and the update procedure.
+SwiftTerm remains as a local target only for legacy-adapter regression tests during the
+migration; it is not part of the product terminal view tree.
+The default build uses local ad-hoc signing, suitable for installing on your own
+machine; for distribution, provide a Developer ID via
+`ASTER_SIGN_IDENTITY="Developer ID Application: ..."` and complete
+notarization/stapling outside the build artifacts.
 
-## 快捷键
+## Shortcuts
 
-| 操作 | 快捷键 |
+| Action | Shortcut |
 | --- | --- |
-| 新建标签页 | `⌘T` |
-| 打开文件 | `⌘O` |
-| 关闭标签页 | `⌘W` |
-| 向右分屏 | `⌘D` |
-| 向下分屏 | `⇧⌘D` |
-| 关闭 Pane | `⌥⌘W` |
-| 查找 | `⌘F` |
-| 命令面板 | `⌘K` |
-| 设置 | `⌘,` |
+| New tab | `⌘T` |
+| Open file | `⌘O` |
+| Close tab | `⌘W` |
+| Split right | `⌘D` |
+| Split down | `⇧⌘D` |
+| Close pane | `⌥⌘W` |
+| Find | `⌘F` |
+| Command palette | `⌘K` |
+| Settings | `⌘,` |
 
-## 文档
+## Documentation
 
-- [工作区领域与实现](docs/developer/terminal-domain.md)
-- [Ghostty 终端引擎](docs/developer/ghostty-terminal-engine.md)
-- [AppKit 界面架构](docs/developer/appkit-interface.md)
-- [文件、链接与 File Pane 领域](docs/developer/files-and-links-domain.md)
-- [外观主题领域与实现](docs/developer/theme-system.md)
-- [用户帮助](docs/user/help.md)
-- [第三方许可](THIRD-PARTY-NOTICES.md)
+Developer and user docs are currently written in Chinese.
+
+- [Workspace domain and implementation](docs/developer/terminal-domain.md)
+- [Ghostty terminal engine](docs/developer/ghostty-terminal-engine.md)
+- [AppKit interface architecture](docs/developer/appkit-interface.md)
+- [Files, links, and the File Pane domain](docs/developer/files-and-links-domain.md)
+- [Theme system domain and implementation](docs/developer/theme-system.md)
+- [User help](docs/user/help.md)
+- [Third-party licenses](THIRD-PARTY-NOTICES.md)
+
+## License
+
+MIT — see [LICENSE](LICENSE). Vendored components under `Vendor/` keep their own
+licenses; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

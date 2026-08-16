@@ -24,5 +24,8 @@ Sources/Aster/Ghostty/Resources/terminfo
 # 打包脚本输出的 .app 与 .dmg
 dist/
 
+# 本地规划文档，不进入开源仓库
+docs/plan/
+
 # macOS
 .DS_Store
