@@ -1306,7 +1306,77 @@ func sidebarOrganizerAppliesGroupingAndOrdering() throws {
   let groupHeaders = controller.view.descendants.compactMap { ($0 as? NSTextField) }.filter {
     $0.identifier?.rawValue == "sidebar-group-header"
   }.map(\.stringValue)
-  #expect(Set(groupHeaders) == Set(["mike", "tmp"]))
+  // 项目分组组头显示完整目录路径（home 缩写为 ~，保留尾斜杠），不再是末段目录名。
+  #expect(Set(groupHeaders) == Set(["~/", "/tmp/"]))
+}
+
+/// 复现真机链路：点击整理菜单项后，同一个窗口（不重建控制器）必须经
+/// objectWillChange → scheduleRefresh 自动刷新出分组标题；新建标签也不得
+/// 把用户显式选择的时间排序偷偷改掉。
+@Test("整理标签菜单点击后无需重建窗口即生效，且新建标签不重置排序")
+@MainActor
+func sidebarOrganizerMenuTakesEffectLiveAndOrderSurvivesNewTab() async throws {
+  let defaults = isolatedDefaults()
+  let model = try makeNonTerminalTestModel(
+    defaults: defaults,
+    directories: [NSHomeDirectory(), "/tmp"]
+  )
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  func organizerMenu() throws -> NSMenu {
+    let button = try #require(controller.view.descendants.compactMap { $0 as? NSButton }.first {
+      $0.toolTip == "整理标签"
+    })
+    return try #require(button.menu)
+  }
+  func groupHeaders() -> [String] {
+    controller.view.descendants.compactMap { ($0 as? NSTextField) }.filter {
+      $0.identifier?.rawValue == "sidebar-group-header"
+    }.map(\.stringValue)
+  }
+
+  #expect(groupHeaders().isEmpty)
+  var menu = try organizerMenu()
+  let byProject = try #require(menu.item(withTitle: "By Project"))
+  #expect(NSApp.sendAction(try #require(byProject.action), to: byProject.target, from: byProject))
+  // scheduleRefresh 走主队列 async；让主 actor 排空队列后断言同一控制器已重建侧栏。
+  try await Task.sleep(for: .milliseconds(80))
+  #expect(Set(groupHeaders()) == Set(["~/", "/tmp/"]))
+
+  menu = try organizerMenu()
+  let updated = try #require(menu.item(withTitle: "Updated Time"))
+  #expect(NSApp.sendAction(try #require(updated.action), to: updated.target, from: updated))
+  try await Task.sleep(for: .milliseconds(80))
+  #expect(preferences.sidebarTabOrder == .updatedTime)
+
+  // 曾经 insertTab 会经 onTabOrderBecameManual 把排序改回 manual，导致设置一直“失效”。
+  model.newTab(workingDirectory: "/tmp", hasContent: false)
+  try await Task.sleep(for: .milliseconds(80))
+  #expect(preferences.sidebarTabOrder == .updatedTime)
+  #expect(AppPreferences(defaults: defaults).sidebarTabOrder == .updatedTime)
+
+  // 设置窗口打开期间偏好通道会把结构刷新合并到关窗时；整理菜单是工作区直接交互，
+  // 仍必须立即生效（真机上「点了没反应」的根因之一）。
+  controller.setSettingsPresentationActive(true)
+  menu = try organizerMenu()
+  let noGrouping = try #require(menu.item(withTitle: "No Grouping"))
+  #expect(NSApp.sendAction(try #require(noGrouping.action), to: noGrouping.target, from: noGrouping))
+  try await Task.sleep(for: .milliseconds(80))
+  #expect(groupHeaders().isEmpty)
+  controller.setSettingsPresentationActive(false)
+}
+
+/// 旧版本会把 `aster.sidebar.tab-order.v1` 自动写成 manual（枚举值已删除）；
+/// 载入时必须回落到默认 createdTime，而不是留下菜单里两项都不勾选的死状态。
+@Test("历史遗留的 manual 排序值回落为按创建时间")
+@MainActor
+func legacyManualSidebarOrderFallsBackToCreatedTime() {
+  let defaults = isolatedDefaults()
+  defaults.set("manual", forKey: "aster.sidebar.tab-order.v1")
+  #expect(AppPreferences(defaults: defaults).sidebarTabOrder == .createdTime)
 }
 
 @Test("OSC 7 文件 URL 会规范化为可恢复的本地目录")

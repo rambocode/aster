@@ -201,6 +201,22 @@ import Testing
   }
 }
 
+// 「查看会话历史」按当前项目过滤的真值：等值比较前先归一化，坏路径一律不匹配。
+@Test func sessionProjectMembershipNormalizesPathsAndRejectsInvalidScopes() {
+  let metadata = AgentSessionMetadata.stub(
+    id: "scope", title: "Scope", updatedAt: Date(timeIntervalSince1970: 20))
+
+  #expect(metadata.belongsToProject("/tmp/project"))
+  // 尾部斜杠在两侧都会被归一化掉。
+  #expect(metadata.belongsToProject("/tmp/project/"))
+  // 子目录不算同一项目；宁可少显示也不跨项目混排。
+  #expect(!metadata.belongsToProject("/tmp/project/sub"))
+  #expect(!metadata.belongsToProject("/tmp/other"))
+  // 相对路径与含控制字符的输入通不过归一化，直接判不匹配。
+  #expect(!metadata.belongsToProject("tmp/project"))
+  #expect(!metadata.belongsToProject("/tmp/pro\u{0007}ject"))
+}
+
 extension AgentSessionMetadata {
   fileprivate static func stub(
     id: String,

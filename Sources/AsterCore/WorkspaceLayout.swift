@@ -14,12 +14,41 @@ public enum SidebarTabGrouping: String, CaseIterable, Codable, Equatable, Sendab
   case date
 }
 
+extension SidebarTabGrouping {
+  /// 项目分组的组头标题真值：显示完整目录路径（home 缩写为 `~`）并保留尾部斜杠，
+  /// 对齐 Otty 的 TABS 分组样式；目录为空时回退 `fallback`（标签标题）。
+  /// 标题同时充当分组 key：用完整路径而不是最后一段目录名，两个同名目录
+  /// （如不同仓库各自的 `src`）才不会被误并进同一组。
+  public static func projectGroupTitle(
+    forDirectory directory: String,
+    homeDirectory: String,
+    fallback: String
+  ) -> String {
+    // 去掉尾部斜杠再比较（根目录除外），避免 `/a/b/` 与 `/a/b` 分成两组。
+    func trimmedPath(_ path: String) -> String {
+      var value = path
+      while value.count > 1, value.hasSuffix("/") { value.removeLast() }
+      return value
+    }
+    let normalized = trimmedPath(directory)
+    guard !normalized.isEmpty else { return fallback }
+    let home = trimmedPath(homeDirectory)
+    if home.count > 1 {
+      if normalized == home { return "~/" }
+      if normalized.hasPrefix(home + "/") {
+        return "~" + normalized.dropFirst(home.count) + "/"
+      }
+    }
+    return normalized == "/" ? "/" : normalized + "/"
+  }
+}
+
 /// 左侧标签的时间排序依据，对应 Otty 标签整理菜单的 ORDER 区域。
+/// 早期版本还有 `manual`：任何新标签插入都会自动切换过去，导致用户选择的时间排序
+/// 悄悄失效；该值已删除，旧持久化的 "manual" 在载入时按 rawValue 解析失败回落默认。
 public enum SidebarTabOrder: String, CaseIterable, Codable, Equatable, Sendable {
   case createdTime
   case updatedTime
-  /// 用户插入或拖动改变物理顺序后使用；菜单中的时间排序项均不勾选。
-  case manual
 }
 
 /// 面板内容类型。终端、文件工具与网页共享同一分屏树，因此可以任意组合。

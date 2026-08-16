@@ -43,18 +43,94 @@ func appModelAppliesContextAwareNewTabPosition() throws {
   defaults.set(try JSONEncoder().encode(workspace), forKey: "aster.workspace.snapshot.v1")
   let model = AppModel(defaults: defaults)
   model.ensureInitialTab()
-  var switchedToManualOrder = false
-  model.onTabOrderBecameManual = { switchedToManualOrder = true }
 
   model.newTab(workingDirectory: "/tmp/empty", position: .automatic, hasContent: false)
   #expect(model.tabs.map(\.workingDirectory) == [
     "/tmp/group-0", "/tmp/group-1", "/tmp/empty", "/tmp/group-2", "/tmp/group-3",
   ])
-  #expect(switchedToManualOrder)
 
   model.select(model.tabs[0])
   model.newTab(workingDirectory: "/tmp/content", position: .automatic, hasContent: true)
   #expect(model.tabs[1].workingDirectory == "/tmp/content")
+}
+
+@Test("新建标签继承当前选中标签的工作目录，工作区为空时回退 home")
+@MainActor
+func newTabInheritsSelectedTabWorkingDirectory() throws {
+  let defaults = behaviorTestDefaults()
+  let snapshot = WorkspaceTabSnapshot(
+    id: UUID(),
+    title: "aster",
+    layout: .leaf(
+      PaneDescriptor(
+        kind: .editor,
+        workingDirectory: "/tmp/project-aster",
+        resourcePath: "/tmp/project-aster/note.md"
+      ))
+  )
+  let workspace = WorkspaceSnapshot(
+    selectedTabID: snapshot.id, tabs: [snapshot], dividerAfterTabIDs: [])
+  defaults.set(try JSONEncoder().encode(workspace), forKey: "aster.workspace.snapshot.v1")
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+
+  // ⌘T/侧栏「+」等无参入口：新标签落在当前标签的目录里，因此归入同一项目分组。
+  model.newTab()
+  #expect(model.tabs.count == 2)
+  #expect(model.selectedTab?.workingDirectory == "/tmp/project-aster")
+
+  // 没有可继承的标签（首个标签）时仍从 home 启动。
+  let empty = AppModel(defaults: behaviorTestDefaults())
+  empty.ensureInitialTab()
+  #expect(
+    empty.tabs.first?.workingDirectory
+      == FileManager.default.homeDirectoryForCurrentUser.path)
+}
+
+@Test("查看会话历史按聚焦 Pane 的项目过滤，通用入口回到全部")
+@MainActor
+func presentAgentHistoryScopesToFocusedPaneProject() {
+  let defaults = behaviorTestDefaults()
+  let model = AppModel(defaults: defaults)
+  let bound = AgentSessionHistory(
+    metadata: AgentSessionMetadata(
+      id: "claude-bound",
+      configuration: AgentSessionConfiguration(provider: .claudeCode),
+      projectDirectory: "/tmp/proj-a",
+      title: "Bound",
+      createdAt: Date(timeIntervalSince1970: 0),
+      updatedAt: Date(timeIntervalSince1970: 1),
+      transcriptFileURL: URL(fileURLWithPath: "/tmp/claude-bound.jsonl")
+    ),
+    transcript: .empty
+  )
+  model.replaceAgentHistoriesForTesting([bound])
+
+  // 已绑定 session ID：项目取历史里的归属，而不是 Pane 当前 cwd。
+  model.presentAgentHistory(
+    scopedTo: FocusedAgentSessionContext(
+      provider: .claudeCode,
+      sessionID: "claude-bound",
+      workingDirectory: "/tmp/pane-cwd",
+      configuration: AgentSessionConfiguration(provider: .claudeCode)
+    ))
+  #expect(model.isAgentHistoryPresented)
+  #expect(model.agentHistoryProjectScope == "/tmp/proj-a")
+
+  // 尚无 session ID：退回 Pane 工作目录，且经过归一化（去尾部斜杠）。
+  model.presentAgentHistory(
+    scopedTo: FocusedAgentSessionContext(
+      provider: .codex,
+      sessionID: nil,
+      workingDirectory: "/tmp/pane-cwd/",
+      configuration: AgentSessionConfiguration(provider: .codex)
+    ))
+  #expect(model.agentHistoryProjectScope == "/tmp/pane-cwd")
+
+  // 命令面板等无参入口必须清掉过滤范围，回到全部历史。
+  model.presentAgentHistory()
+  #expect(model.agentHistoryProjectScope == nil)
+  #expect(model.isAgentHistoryPresented)
 }
 
 @Test("Agent Fork 落点创建指定分屏或新标签并继承活动目录")
@@ -101,13 +177,10 @@ func endNewTabPositionPreservesTrailingDivider() throws {
   )
   let model = AppModel(defaults: defaults)
   model.ensureInitialTab()
-  var switchedToManualOrder = false
-  model.onTabOrderBecameManual = { switchedToManualOrder = true }
 
   model.newTab(workingDirectory: "/tmp/end", position: .end)
 
   #expect(model.dividerAfterTabIDs.contains(first.id))
-  #expect(switchedToManualOrder)
 }
 
 @Test("最近关闭标签跨启动持久化并按关闭顺序恢复")

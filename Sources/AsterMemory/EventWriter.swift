@@ -124,6 +124,28 @@ public actor EventWriter {
     return rows.first.flatMap(MemoryRowMapping.sessionDescriptor(row:))
   }
 
+  /// 上一进程遗留的未闭合会话（崩溃、强退或退出竞速让行永远停在 'active'）。
+  /// 返回每个会话最后一条事件的时间（无事件时取 started_at），供启动补收把它们
+  /// 按真实活动时间闭合并补跑提炼。调用方负责排除本进程仍活跃的会话。
+  public func abandonedActiveSessions() -> [(id: UUID, lastActivityAt: Date)] {
+    flushNow()
+    guard let database = openDatabaseIfNeeded() else { return [] }
+    let rows =
+      (try? database.query(
+        """
+        SELECT s.id, coalesce(max(e.at), s.started_at)
+        FROM sessions s LEFT JOIN events e ON e.session_id = s.id
+        WHERE s.status = 'active'
+        GROUP BY s.id
+        """)) ?? []
+    return rows.compactMap { row in
+      guard let id = UUID(uuidString: MemoryRowMapping.string(row, 0)),
+        let timestamp = MemoryRowMapping.real(row, 1)
+      else { return nil }
+      return (id, Date(timeIntervalSince1970: timestamp))
+    }
+  }
+
   /// Raw events 的保留策略（PRD §23：Memory 不能无限增长；借鉴 zero-mem 的 retention）。
   ///
   /// 裁剪对象是**已结束且超龄** session 的 events 行与 artifact 文件——L0 原始层可裁剪；

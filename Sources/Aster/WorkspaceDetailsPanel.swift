@@ -752,9 +752,9 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     }
     section.addArrangedSubview(
       makeLinkRow(symbol: "clock.arrow.circlepath", title: "View Session History") { [weak self] in
-        guard let self else { return }
-        self.model.isAgentHistoryPresented = true
-        self.model.reloadAgentHistory()
+        // 统一走 presentAgentHistory：它会清掉 Shell 菜单可能留下的项目过滤范围，
+        // 避免详情面板打开的历史被上一次的 scope 悄悄截短。
+        self?.model.presentAgentHistory()
       })
     return section
   }
@@ -980,8 +980,9 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         indentation: 0,
         toolTip: "Agent prompt",
         isJumpAvailable: true,
+        // 统一走 presentAgentHistory，清掉可能残留的项目过滤范围并触发历史重扫。
         action: { [weak self] in
-          self?.model.isAgentHistoryPresented = true
+          self?.model.presentAgentHistory()
         },
         copyText: text
       )

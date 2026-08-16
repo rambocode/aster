@@ -263,6 +263,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     // Session Memory 的提炼器按当前设置装配：未授权外发时装规则式实现。
     // 必须在任何 Session 结束之前完成，否则首个结束的会话会用错提炼器。
     CLIAgentMemoryExtractor.installIfEnabled()
+    // 上一进程崩溃或退出竞速遗留的 'active' 会话在这里闭合并补跑提炼；
+    // 排在提炼器装配之后，补收产出的 Memory 才用对实现。
+    SessionRecordingService.shared.reconcileAbandonedSessions()
     // 提前创建 0600 CLI token，使首次执行 `aster learn` 无需先打开设置页或等待 Pane。
     _ = AutocompleteService.shared
     startCLIRequestConsumer()
@@ -732,9 +735,6 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 把 AppKit 窗口动作注入每个模型；附加窗口与主窗口因此拥有完全相同的命令面板
   /// 和 CLI 路由，而模型测试无需构造 NSWindow。
   private func configureWorkspaceModel(_ workspaceModel: AppModel) {
-    workspaceModel.onTabOrderBecameManual = { [weak self] in
-      self?.preferences.sidebarTabOrder = .manual
-    }
     workspaceModel.onRequestNewWindow = { [weak self] descriptor in
       self?.createWorkspaceWindow(initialPane: descriptor, sender: nil) ?? false
     }
@@ -889,14 +889,16 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   }
   @objc private func toggleComposer(_ sender: Any?) { activeWorkspaceModel.toggleComposer() }
   @objc private func togglePromptQueue(_ sender: Any?) { activeWorkspaceModel.togglePromptQueue() }
-  @objc private func showAgentHistory(_ sender: Any?) { activeWorkspaceModel.toggleAgentHistory() }
   @objc private func copyActiveAgentSessionID(_ sender: Any?) {
     guard let sessionID = agentMenuContext(from: sender)?.sessionID else { return }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(sessionID, forType: .string)
   }
+  /// Agent 子菜单的「查看会话历史」：按菜单打开瞬间捕获的 Pane 上下文，把历史浮层
+  /// 过滤到当前项目。缺少受管载荷时拒绝打开，与其它会话动作同一防串会话语义。
   @objc private func showActiveAgentSessionHistory(_ sender: Any?) {
-    activeWorkspaceModel.presentAgentHistory()
+    guard let actionContext = agentMenuActionContext(from: sender) else { return }
+    actionContext.workspaceModel.presentAgentHistory(scopedTo: actionContext.session)
   }
   @objc private func forkActiveAgentToNewTab(_ sender: Any?) {
     guard let actionContext = agentMenuActionContext(from: sender) else { return }
@@ -1175,7 +1177,6 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       menuItem("只读模式", #selector(toggleActivePaneReadOnly(_:)), "", modifiers: []))
     submenu.addItem(
       menuItem("Composer", #selector(toggleComposer(_:)), "\r", modifiers: [.command, .shift]))
-    submenu.addItem(menuItem("Agent 历史", #selector(showAgentHistory(_:)), "", modifiers: []))
     submenu.addItem(.separator())
 
     let git = NSMenuItem(title: "Git", action: nil, keyEquivalent: "")
@@ -1213,9 +1214,15 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     )
     copySessionID.isEnabled = context.sessionID != nil
     submenu.addItem(copySessionID)
-    submenu.addItem(
-      menuItem(
-        "查看会话历史", #selector(showActiveAgentSessionHistory(_:)), "", modifiers: []))
+    // 历史入口按同一份 pane 级快照过滤到当前项目；无 session ID 时仍可用（退回
+    // Pane 工作目录判定项目），因此不像 Copy/Fork 那样禁用。
+    let sessionHistory = menuItem(
+      "查看会话历史", #selector(showActiveAgentSessionHistory(_:)), "", modifiers: [])
+    sessionHistory.representedObject = AgentMenuActionContext(
+      session: context,
+      workspaceModel: workspaceModel
+    )
+    submenu.addItem(sessionHistory)
 
     guard context.provider.capabilities.contains(.forkSession) else {
       item.submenu = submenu

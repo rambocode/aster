@@ -179,7 +179,7 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
     host.layer?.shadowOffset = CGSize(width: 0, height: -10)
     host.layer?.masksToBounds = false
 
-    search.placeholderString = "搜索 Agent 标题、项目、模型或 transcript…"
+    // placeholder 由 reload() 按项目过滤范围设置，这里不再重复赋初值。
     search.delegate = self
     search.onMove = { [weak self] delta in self?.moveSelection(delta) }
     // Return 对齐 Otty：把会话历史作为标签打开（右侧渲染 transcript）；
@@ -281,14 +281,24 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
   private func reload() {
     for view in resultsStack.arrangedSubviews { view.removeFromSuperview() }
     rows = []
+    // Shell 菜单 Agent 子菜单打开时按当前项目过滤；搜索也只在过滤后的集合内进行，
+    // 避免搜索结果把别的项目的会话带回列表。
+    let scope = model.agentHistoryProjectScope
+    let source = scope.map { directory in
+      model.agentHistories.filter { $0.metadata.belongsToProject(directory) }
+    } ?? model.agentHistories
+    search.placeholderString =
+      scope == nil
+      ? "搜索 Agent 标题、项目、模型或 transcript…"
+      : "搜索当前项目的 Agent 会话…"
     let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     if query.isEmpty {
-      histories = Array(model.agentHistories.prefix(100))
+      histories = Array(source.prefix(100))
     } else if let matches = try? AgentHistorySearch.search(
-      query: query, histories: model.agentHistories, limit: 100
+      query: query, histories: source, limit: 100
     ) {
       histories = matches.compactMap { match in
-        model.agentHistories.first { $0.metadata == match.metadata }
+        source.first { $0.metadata == match.metadata }
       }
     } else {
       histories = []
@@ -296,7 +306,9 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
     selectedIndex = min(selectedIndex, max(0, histories.count - 1))
     if histories.isEmpty {
       resultsStack.addArrangedSubview(
-        makeLabel("没有 Agent 历史", size: 11, color: AsterTheme.secondaryInk))
+        makeLabel(
+          scope == nil ? "没有 Agent 历史" : "当前项目没有 Agent 历史",
+          size: 11, color: AsterTheme.secondaryInk))
       transcript.string = ""
       return
     }

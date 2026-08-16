@@ -1099,6 +1099,10 @@ final class AppModel: ObservableObject {
   @Published var isGlobalFindPresented = false
   @Published var isComposerPresented = false
   @Published var isAgentHistoryPresented = false
+  /// Agent 历史浮层的项目过滤范围（已归一化的绝对路径）；nil 表示显示全部会话。
+  /// 只在 `presentAgentHistory` 里随每次呈现写入，因此不需要 `@Published`——浮层
+  /// 重建时读取即可，不会出现范围变了而面板不知道的窗口期。
+  private(set) var agentHistoryProjectScope: String?
   /// Memory 浏览器是独立面板窗口，不是 `@Published` 状态：它的显隐不参与工作区
   /// 视图树的任何一次重建，因此终端、侧栏与详情面板都不会因为打开它而重新布局。
   var memoryBrowserController: MemoryBrowserWindowController?
@@ -1153,7 +1157,6 @@ final class AppModel: ObservableObject {
   var workflowRecipeReplaySettings: WorkflowRecipeReplaySettings {
     WorkflowRecipeReplaySettings(savedRecipes: savedRecipeReplayMode, recipeFiles: recipeReplayMode)
   }
-  var onTabOrderBecameManual: (() -> Void)?
   /// 窗口创建、置顶和 PiP 由 AppDelegate 持有真实 NSWindow；AppModel 只发布意图，
   /// 保持 CLI、命令面板与工作区领域逻辑可在无窗口测试中独立验证。
   var onRequestNewWindow: ((PaneDescriptor?) -> Bool)?
@@ -1456,14 +1459,19 @@ final class AppModel: ObservableObject {
     return true
   }
 
+  /// 新建标签。未显式指定目录时继承当前选中标签的实时工作目录（OSC 7 回写后），
+  /// 使新标签落在同一项目分组；工作区为空（首个标签、跨窗口移空补位）时回退 home。
   func newTab(
-    workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
+    workingDirectory: String? = nil,
     position: NewTabPosition? = nil,
     hasContent: Bool = false
   ) {
+    let directory = workingDirectory
+      ?? selectedTab?.workingDirectory
+      ?? FileManager.default.homeDirectoryForCurrentUser.path
     let tab = TerminalTabItem(
-      title: TerminalTabItem.displayName(forDirectory: workingDirectory),
-      workingDirectory: workingDirectory
+      title: TerminalTabItem.displayName(forDirectory: directory),
+      workingDirectory: directory
     )
     insertTab(tab, position: position, hasContent: hasContent)
   }
@@ -1514,9 +1522,9 @@ final class AppModel: ObservableObject {
       }
     }
     tabs.insert(tab, at: insertionIndex)
-    // 时间排序会覆盖 `new-tab-position` 的物理顺序（尤其 `.end` 会被最新时间推到
-    // 顶部）。任何按位置创建的标签都切换到手动顺序，用户之后仍可显式选回时间排序。
-    onTabOrderBecameManual?()
+    // 物理插入位置只决定 tabs 数组（横向标签条、快照顺序）；侧栏的时间排序是用户
+    // 显式选择的视图层排序，插入标签不得改写它——早期在这里自动切到 manual，
+    // 导致整理菜单的 ORDER 选项每开一个新标签就悄悄失效。
     configurePersistence(for: tab)
     selectedTabID = tab.id
     persistWorkspace()
@@ -1970,8 +1978,27 @@ final class AppModel: ObservableObject {
   }
 
   /// 明确展示历史而不是切换。菜单“查看会话历史”重复触发时必须保持面板打开；只有
-  /// 通用 Toggle 命令才把第二次调用解释为关闭。
+  /// 通用 Toggle 命令才把第二次调用解释为关闭。无参入口一律展示全部历史。
   func presentAgentHistory() {
+    presentAgentHistory(projectScope: nil)
+  }
+
+  /// Shell 菜单 Agent 子菜单的「查看会话历史」：只显示当前项目的会话。项目目录优先
+  /// 取已绑定会话在历史里的归属（provider + session ID 精确匹配），Pane 尚未上报
+  /// session ID 或历史还没扫到时退回 Pane 当前工作目录。
+  func presentAgentHistory(scopedTo context: FocusedAgentSessionContext) {
+    let boundProject = context.sessionID.flatMap { identifier in
+      agentHistories.first {
+        $0.metadata.id == identifier && $0.metadata.configuration.provider == context.provider
+      }?.metadata.projectDirectory
+    }
+    presentAgentHistory(projectScope: boundProject ?? context.workingDirectory)
+  }
+
+  private func presentAgentHistory(projectScope: String?) {
+    // 过滤范围随每次展示重设：scope 只在本次呈现有效，命令面板等无参入口自动回到全部。
+    agentHistoryProjectScope =
+      projectScope.flatMap(AgentTranscriptProjectMapping.normalizedAbsolutePath)
     dismissWorkspaceOverlays()
     isAgentHistoryPresented = true
     reloadAgentHistory()

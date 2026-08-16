@@ -201,3 +201,26 @@ func recipeRoundTripsThroughJSON() throws {
 func tabLayoutsMatchReference() {
   #expect(TabBarLayout.allCases == [.vertical, .top, .bottom])
 }
+
+// 项目分组组头的显示真值：完整路径（home 缩写为 ~）+ 尾部斜杠，同名目录不合并。
+@Test("项目分组标题显示完整目录并把 home 缩写为 ~")
+func projectGroupTitleShowsFullDirectory() {
+  func title(_ directory: String, fallback: String = "shell") -> String {
+    SidebarTabGrouping.projectGroupTitle(
+      forDirectory: directory, homeDirectory: "/Users/mike", fallback: fallback)
+  }
+
+  #expect(title("/Users/mike/source/project/aster") == "~/source/project/aster/")
+  // 尾部斜杠先归一化再拼接，不产生双斜杠。
+  #expect(title("/Users/mike/source/ai/raglite/") == "~/source/ai/raglite/")
+  #expect(title("/Users/mike") == "~/")
+  // home 之外的目录保持绝对路径。
+  #expect(title("/opt/homebrew/bin") == "/opt/homebrew/bin/")
+  // 前缀相似但不是 home 子目录的路径不得被缩写。
+  #expect(title("/Users/mike2/repo") == "/Users/mike2/repo/")
+  #expect(title("/") == "/")
+  // 目录缺失时回退标签标题，不产生空组头。
+  #expect(title("", fallback: "zsh") == "zsh")
+  // 同名目录因完整路径不同而分属不同组。
+  #expect(title("/Users/mike/a/src") != title("/Users/mike/b/src"))
+}

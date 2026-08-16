@@ -3606,6 +3606,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 停止当前 Shell。关闭 Pane 时先给予 750ms 正常退出窗口；应用即将终止时必须
   /// 立即结束进程组，因为主事件循环不会继续存活到延迟升级任务执行。
   func stop(immediately: Bool = false) {
+    // 用户关闭 Pane/标签不会经过 GHOSTTY 的 child-exited 回调（destroySurface 直接
+    // 释放并清空回调）。必须在拆 surface 前显式闭合记录会话，否则 sessions 行永远
+    // 停在 active，挂在会话结束链上的 Memory 提炼永远不会发生。记录层按 id 幂等，
+    // shell 自行退出（exit/Ctrl-D）后的重复调用是 no-op；主动关闭没有退出码。
+    eventRecorder?.sessionEnded(id: id, exitCode: nil)
     lifecycleState = .stopping
     if let ghostty = ghosttyView {
       diagnostics.record(

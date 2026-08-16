@@ -488,6 +488,20 @@ public struct AgentSessionHistory: Equatable, Sendable {
   }
 }
 
+extension AgentSessionMetadata {
+  /// 会话是否归属指定项目目录，供「查看会话历史」按当前项目过滤。
+  /// 两侧都经 `normalizedAbsolutePath` 归一化（去尾部斜杠、拒绝相对路径/超限/控制
+  /// 字符）后做等值比较；归一化失败一律判不匹配——宁可少显示，也不把别的项目的
+  /// 会话混进当前项目视图。
+  public func belongsToProject(_ directory: String) -> Bool {
+    guard
+      let session = AgentTranscriptProjectMapping.normalizedAbsolutePath(projectDirectory),
+      let scope = AgentTranscriptProjectMapping.normalizedAbsolutePath(directory)
+    else { return false }
+    return session == scope
+  }
+}
+
 public struct AgentHistorySearchResult: Equatable, Sendable {
   public let sessionID: String
   public let metadata: AgentSessionMetadata

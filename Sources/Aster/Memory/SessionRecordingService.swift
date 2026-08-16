@@ -374,6 +374,8 @@ final class SessionRecordingService: TerminalEventRecording {
 
   private let writer: EventWriter
   private let artifacts: TranscriptArtifactStore
+  /// 启动补收要先判断库文件是否存在——从未记录过的机器不该因为补收建出空库。
+  private let location: MemoryStoreLocation
   private let defaults: UserDefaults
   private let resolveProject: @Sendable (String) async -> ProjectIdentity?
   private let inspectGit: @Sendable (String) async -> GitStatusSummary
@@ -411,6 +413,7 @@ final class SessionRecordingService: TerminalEventRecording {
   ) {
     self.writer = writer
     artifacts = TranscriptArtifactStore(location: location)
+    self.location = location
     self.defaults = defaults
     self.transcriptIngestionDelay = transcriptIngestionDelay
     self.resolveProject = resolveProject
@@ -494,6 +497,56 @@ final class SessionRecordingService: TerminalEventRecording {
   /// 测试用：等待某个 Session 的管线（含提炼）跑完。生产路径不调用。
   func waitForCompletion(id: UUID) async {
     await pipelineTasks[id]?.task.value
+  }
+
+  /// 启动补收：上一进程崩溃、强退或退出竞速会让 sessions 行永远停在 'active'，
+  /// 挂在会话结束链上的 Memory 提炼因此从未发生。这里把遗留会话按最后活动时间
+  /// 闭合，并补跑 transcript 补录与提炼（两者都幂等）。
+  ///
+  /// 竞态安全：本进程的 Session UUID 全部新生成且在写库**之前**必然已登记进
+  /// `startInfo`/`states`（`sessionStarted` 同步登记，物化只发生在其后的管线任务
+  /// 里），因此查询结果在 MainActor 上过滤掉这两个表后，剩下的必属已死进程。
+  @discardableResult
+  func reconcileAbandonedSessions() -> Task<Void, Never>? {
+    // 库文件从未创建过 = 这台机器从未记录：不为补收建出空库（零痕迹纪律）。
+    guard FileManager.default.fileExists(atPath: location.databaseURL.path) else { return nil }
+    let writer = writer
+    return Task(priority: .utility) { [weak self] in
+      let candidates = await writer.abandonedActiveSessions()
+      guard let self else { return }
+      let stale = candidates.filter {
+        self.states[$0.id] == nil && self.startInfo[$0.id] == nil
+      }
+      guard !stale.isEmpty else { return }
+      await Self.finalizeAbandonedSessions(stale, writer: writer)
+    }
+  }
+
+  /// 逐个闭合遗留会话。nonisolated：收尾链（读事件、定位 transcript、提炼）都是
+  /// 后台工作，不该占用 MainActor。
+  private nonisolated static func finalizeAbandonedSessions(
+    _ sessions: [(id: UUID, lastActivityAt: Date)],
+    writer: EventWriter
+  ) async {
+    for session in sessions {
+      await writer.record(
+        .endSession(sessionID: session.id, exitCode: nil, endedAt: session.lastActivityAt))
+      // 与正常收尾链同序：先补录 provider transcript（描述符里有确认的 Agent 归属
+      // 才做，幂等），再提炼——补录进来的工具调用是 Session Memory 的一部分。
+      if let descriptor = await writer.sessionDescriptor(sessionID: session.id),
+        let provider = descriptor.agentProvider.flatMap(AgentProvider.init(rawValue:)),
+        let agentSessionID = descriptor.agentSessionID, !agentSessionID.isEmpty
+      {
+        await AgentTranscriptIngestion.ingest(
+          sessionID: session.id,
+          provider: provider,
+          agentSessionID: agentSessionID,
+          projectPath: descriptor.projectPath,
+          writer: writer
+        )
+      }
+      await extractMemory(sessionID: session.id, writer: writer)
+    }
   }
 
   /// 取得可写入的入队口。隐身中的 Session 在这里就返回 nil，调用点不做任何拷贝。

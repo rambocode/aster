@@ -250,13 +250,14 @@ private func mouseEvent(_ type: NSEvent.EventType, at point: NSPoint) throws -> 
 func shellMenuPublishesPaneModeActions() throws {
   let menu = try #require(AsterAppDelegate().shellModeMenuItem().submenu)
   // 「把终端选区发送到 Chat」在 50c6f90 移入终端右键菜单,不再出现在 Shell 菜单。
-  // 顶部标签命名/清屏/工作目录动作与底部 Git、通知与权限对齐 Otty 的 Shell 菜单。
+  // 全局「Agent 历史」入口已移除：历史统一从 Agent 子菜单（按当前项目过滤）或
+  // 命令面板进入。顶部标签命名/清屏/工作目录动作与底部 Git、通知与权限对齐 Otty。
   #expect(
     menu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
       "重命名标签页…", "设置标签页前缀…", "清屏",
       "拷贝路径", "在访达中显示", "打开方式",
       "Vi Mode", "Mark Mode", "打开链接（Hint Mode）",
-      "只读模式", "Composer", "Agent 历史",
+      "只读模式", "Composer",
       "Git", "通知与权限…", "显示/隐藏 Vi 按键提示",
     ])
   let vi = try #require(menu.item(withTitle: "Vi Mode"))
@@ -433,4 +434,15 @@ func shellAgentMenuDisablesSessionActionsUntilLifecycleLinksSession() throws {
   #expect(agentMenu.item(withTitle: "查看会话历史")?.isEnabled == true)
   #expect(agentMenu.item(withTitle: "拷贝会话 ID")?.isEnabled == false)
   #expect(agentMenu.item(withTitle: "Fork 到 新建窗口")?.isEnabled == false)
+
+  // 「查看会话历史」从 Agent 子菜单进入时只显示当前项目：尚无 session ID，
+  // 项目范围退回 Pane 工作目录（经归一化）。
+  agentMenu.performActionForItem(
+    at: try #require(agentMenu.items.firstIndex { $0.title == "查看会话历史" }))
+  #expect(model.isAgentHistoryPresented)
+  #expect(
+    model.agentHistoryProjectScope
+      == AgentTranscriptProjectMapping.normalizedAbsolutePath(
+        session.resolvedCurrentWorkingDirectory()))
+  #expect(model.agentHistoryProjectScope != nil)
 }

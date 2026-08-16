@@ -18,6 +18,8 @@ private func isolatedDefaults() -> (suite: String, defaults: UserDefaults) {
 private struct RecordingFixture {
   let location: MemoryStoreLocation
   let service: SessionRecordingService
+  /// 与 service 共用的单写者；补收测试用它预置「上一进程遗留」的库状态。
+  let writer: EventWriter
   let defaults: UserDefaults
   let suiteName: String
   let projectRoot: String
@@ -42,9 +44,10 @@ private struct RecordingFixture {
     self.projectRoot = projectRoot
     // git 与项目解析都注入桩：测试不允许 fork 子进程，也不依赖机器上的仓库状态。
     // writer 也必须注入——生产单写者指向真实用户目录，测试绝不能碰。
+    writer = EventWriter(location: location)
     service = SessionRecordingService(
       location: location,
-      writer: EventWriter(location: location),
+      writer: writer,
       defaults: defaults,
       resolveProject: { _ in ProjectIdentity.make(path: projectRoot, gitRemote: "git@example:x") },
       inspectGit: { _ in git },
@@ -421,4 +424,99 @@ func leavingIncognitoResumesRecording() async throws {
   let commands = detail.events.compactMap(\.command)
   #expect(commands.contains("swift test"))
   #expect(commands.contains("op signin") == false)
+}
+
+// MARK: - 会话闭合与启动补收
+
+/// 只记录 sessionEnded 的记录层替身；其余回调是本测试无关的空实现。
+@MainActor
+private final class SessionEndSpy: TerminalEventRecording {
+  var endedSessionIDs: [UUID] = []
+  func sessionStarted(id: UUID, projectPath: String, shell: String?) {}
+  func commandStarted(id: UUID, command: String?, workingDirectory: String) {}
+  func commandFinished(id: UUID, command: String?, exitStatus: Int?) {}
+  func agentChanged(id: UUID, provider: String?, agentSessionID: String?) {}
+  func receivePTYOutput(id: UUID, bytes: ArraySlice<UInt8>) {}
+  func sessionEnded(id: UUID, exitCode: Int32?) { endedSessionIDs.append(id) }
+  func recordingMode(for id: UUID) -> RecordingMode { .on }
+  func isRecording(id: UUID) -> Bool { true }
+  func setIncognito(_ incognito: Bool, for id: UUID) {}
+}
+
+/// 关闭 Pane/标签走 `stop()` 而不是 GHOSTTY 的 child-exited 回调；曾因此 sessions 行
+/// 永远停在 active，挂在会话结束链上的 Memory 提炼从未发生（真机 memories 恒 0）。
+@Test("关闭 Pane 的 stop() 显式闭合记录会话")
+@MainActor
+func stopDispatchesSessionEndedToRecorder() {
+  let spy = SessionEndSpy()
+  let session = TerminalSession(workingDirectory: "/tmp")
+  session.eventRecorder = spy
+  session.stop()
+  #expect(spy.endedSessionIDs == [session.id])
+}
+
+@Test("启动补收闭合遗留 active 会话并补跑提炼，不碰本进程活跃会话")
+@MainActor
+func reconcileClosesAbandonedSessionsAndExtractsMemory() async throws {
+  let fixture = RecordingFixture(mode: .on)
+  defer { fixture.cleanUp() }
+
+  // 预置「上一进程遗留」的库状态：已物化、有命令、从未闭合的 active 行。
+  let abandoned = UUID()
+  let startedAt = Date(timeIntervalSinceNow: -3_600)
+  let lastActivity = Date(timeIntervalSinceNow: -1_800)
+  let project = try #require(
+    ProjectIdentity.make(path: fixture.projectRoot, gitRemote: "git@example:x"))
+  await fixture.writer.record(.upsertProject(project, openedAt: startedAt))
+  await fixture.writer.record(
+    .startSession(
+      RecordedSessionDescriptor(
+        id: abandoned, projectPath: fixture.projectRoot, shell: "/bin/zsh",
+        startedAt: startedAt)))
+  await fixture.writer.record(
+    .appendEvent(
+      RecordedEvent(
+        sessionID: abandoned, sequence: 1, timestamp: lastActivity, kind: .shellCommand,
+        command: "swift build", workingDirectory: fixture.projectRoot, exitStatus: nil,
+        outputExcerpt: nil, source: .shellIntegration, payload: nil)))
+  await fixture.writer.flush()
+
+  // 本进程活跃会话：sessionStarted 已同步登记，补收必须放过它。
+  let live = UUID()
+  fixture.service.sessionStarted(id: live, projectPath: fixture.projectRoot, shell: "/bin/zsh")
+  fixture.service.commandStarted(
+    id: live, command: "swift test", workingDirectory: fixture.projectRoot)
+
+  let reconcile = try #require(fixture.service.reconcileAbandonedSessions())
+  await reconcile.value
+
+  let closed = try #require(try fixture.reader().sessionDetail(id: abandoned))
+  let closedAt = try #require(closed.endedAt)
+  // 闭合时间取最后一条事件的时间，而不是补收执行时刻。
+  #expect(abs(closedAt.timeIntervalSince(lastActivity)) < 0.01)
+  let memory = try #require(
+    try fixture.reader().memories(projectPath: nil, sessionID: abandoned).first)
+  #expect(memory.sessionID == abandoned)
+
+  // 活跃会话不被闭合、不产生半截 Memory。
+  _ = await waitUntil {
+    await MainActor.run {
+      ((try? fixture.reader().sessionDetail(id: live)) ?? nil) != nil
+    }
+  }
+  let liveDetail = try #require(try fixture.reader().sessionDetail(id: live))
+  #expect(liveDetail.endedAt == nil)
+  #expect(try fixture.reader().memories(projectPath: nil, sessionID: live).isEmpty)
+  // 收尾活跃会话，让管线在 cleanUp 前排空。
+  fixture.service.sessionEnded(id: live, exitCode: 0)
+  await fixture.service.waitForCompletion(id: live)
+}
+
+@Test("从未记录过的机器上启动补收不创建数据库")
+@MainActor
+func reconcileWithoutDatabaseCreatesNothing() {
+  let fixture = RecordingFixture(mode: .on)
+  defer { fixture.cleanUp() }
+  #expect(fixture.service.reconcileAbandonedSessions() == nil)
+  #expect(fixture.databaseExists == false)
 }

@@ -1314,17 +1314,11 @@ final class WorkspaceViewController: NSViewController {
   /// 排序先于分组执行，使每个分组内部与未分组列表使用同一时间顺序；相同时间使用
   /// UUID 作为稳定兜底，避免 AppKit 刷新时标签随机跳动。
   private func sidebarTabSections() -> [(title: String?, tabs: [TerminalTabItem])] {
-    let sorted: [TerminalTabItem]
-    switch preferences.sidebarTabOrder {
-    case .manual:
-      sorted = model.tabs
-    case .createdTime, .updatedTime:
-      sorted = model.tabs.sorted { lhs, rhs in
-        let lhsDate = preferences.sidebarTabOrder == .createdTime ? lhs.createdAt : lhs.updatedAt
-        let rhsDate = preferences.sidebarTabOrder == .createdTime ? rhs.createdAt : rhs.updatedAt
-        if lhsDate != rhsDate { return lhsDate > rhsDate }
-        return lhs.id.uuidString < rhs.id.uuidString
-      }
+    let sorted = model.tabs.sorted { lhs, rhs in
+      let lhsDate = preferences.sidebarTabOrder == .createdTime ? lhs.createdAt : lhs.updatedAt
+      let rhsDate = preferences.sidebarTabOrder == .createdTime ? rhs.createdAt : rhs.updatedAt
+      if lhsDate != rhsDate { return lhsDate > rhsDate }
+      return lhs.id.uuidString < rhs.id.uuidString
     }
     guard preferences.sidebarTabGrouping != .none else {
       return [(nil, sorted)]
@@ -1338,8 +1332,13 @@ final class WorkspaceViewController: NSViewController {
       case .none:
         key = ""
       case .project:
-        let name = URL(fileURLWithPath: tab.workingDirectory).lastPathComponent
-        key = name.isEmpty ? tab.title : name
+        // 组头即完整项目路径（~ 缩写、尾斜杠），真值在 AsterCore；同名目录因
+        // 完整路径不同而分属不同组。
+        key = SidebarTabGrouping.projectGroupTitle(
+          forDirectory: tab.workingDirectory,
+          homeDirectory: NSHomeDirectory(),
+          fallback: tab.title
+        )
       case .date:
         key = sidebarDateGroupTitle(for: tab.createdAt)
       }
@@ -1360,19 +1359,41 @@ final class WorkspaceViewController: NSViewController {
     return formatter.string(from: date)
   }
 
+  /// 项目/日期分组的组头行：展开箭头 + 文件夹图标 + 完整标题，对齐 Otty 的 TABS
+  /// 分组样式。路径可能超出侧栏宽度，中间截断保住 `~/` 前缀与末段目录名，完整
+  /// 路径进 tooltip。
   private func makeSidebarGroupHeader(_ title: String) -> NSView {
     let host = NSView()
     host.translatesAutoresizingMaskIntoConstraints = false
     host.heightAnchor.constraint(equalToConstant: 30).isActive = true
+
+    let row = NSStackView()
+    row.orientation = .horizontal
+    row.spacing = 5
+    row.alignment = .centerY
+    for symbol in ["chevron.down", "folder"] {
+      let icon = NSImageView()
+      icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+        .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+      icon.contentTintColor = AsterTheme.tertiaryInk
+      icon.setContentHuggingPriority(.required, for: .horizontal)
+      icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+      row.addArrangedSubview(icon)
+    }
     let label = makeLabel(title, size: 10.5, weight: .semibold, color: AsterTheme.tertiaryInk)
     label.identifier = NSUserInterfaceItemIdentifier("sidebar-group-header")
-    host.addSubview(label)
-    label.translatesAutoresizingMaskIntoConstraints = false
+    label.lineBreakMode = .byTruncatingMiddle
+    label.toolTip = title
+    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    row.addArrangedSubview(label)
+
+    host.addSubview(row)
+    row.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
       // 分组标题同样对齐标签行文案的左缘。
-      label.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 16),
-      label.trailingAnchor.constraint(lessThanOrEqualTo: host.trailingAnchor, constant: -12),
-      label.centerYAnchor.constraint(equalTo: host.centerYAnchor),
+      row.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 16),
+      row.trailingAnchor.constraint(lessThanOrEqualTo: host.trailingAnchor, constant: -12),
+      row.centerYAnchor.constraint(equalTo: host.centerYAnchor),
     ])
     return host
   }
@@ -2293,11 +2314,29 @@ final class WorkspaceViewController: NSViewController {
 
   @objc private func newTab() { model.newTab() }
   @objc private func togglePalette() { model.togglePalette() }
-  @objc private func setSidebarGroupingNone() { preferences.sidebarTabGrouping = .none }
-  @objc private func setSidebarGroupingProject() { preferences.sidebarTabGrouping = .project }
-  @objc private func setSidebarGroupingDate() { preferences.sidebarTabGrouping = .date }
-  @objc private func setSidebarOrderCreated() { preferences.sidebarTabOrder = .createdTime }
-  @objc private func setSidebarOrderUpdated() { preferences.sidebarTabOrder = .updatedTime }
+  /// 整理菜单是工作区内的直接交互，点击必须立刻看到列表变化。偏好通道在设置窗口
+  /// 打开期间会把结构刷新合并到关窗时（schedulePreferenceRefresh 的动画去抖），
+  /// 这里各自补一次显式 scheduleRefresh，保证反馈不被那个去抖吞掉。
+  @objc private func setSidebarGroupingNone() {
+    preferences.sidebarTabGrouping = .none
+    scheduleRefresh()
+  }
+  @objc private func setSidebarGroupingProject() {
+    preferences.sidebarTabGrouping = .project
+    scheduleRefresh()
+  }
+  @objc private func setSidebarGroupingDate() {
+    preferences.sidebarTabGrouping = .date
+    scheduleRefresh()
+  }
+  @objc private func setSidebarOrderCreated() {
+    preferences.sidebarTabOrder = .createdTime
+    scheduleRefresh()
+  }
+  @objc private func setSidebarOrderUpdated() {
+    preferences.sidebarTabOrder = .updatedTime
+    scheduleRefresh()
+  }
   @objc private func insertSidebarDivider() { model.insertDividerAfterSelectedTab() }
   @objc private func removeAllSidebarDividers() { model.removeAllTabDividers() }
   @objc private func showSettings() { (NSApp.delegate as? AsterAppDelegate)?.showSettings(nil) }

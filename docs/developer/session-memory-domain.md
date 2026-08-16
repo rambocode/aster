@@ -73,7 +73,7 @@ flowchart LR
   G --> H[(SQLite + FTS5)]
   F --> I[transcripts/ artifact 文件]
   I --> G
-  J[Session 结束] --> K[SessionMemoryExtracting]
+  J[Session 结束<br/>shell 退出 / 关闭 Pane / 启动补收] --> K[SessionMemoryExtracting]
   K -->|规则式保底| L[MemoryRecord]
   K -->|CLI Agent 增强| L
   L --> G
@@ -128,7 +128,16 @@ MCP server 打开时以同一常量握手，不匹配则返回结构化错误而
 - `onPTYRead`：原始字节的并列消费者（与 Autocomplete 并存），只做拷贝转发。
   输出正文由记录层自持的 `ShellCommandOutputCapture` 从 OSC 133 C…D 区间抽取，128KiB/命令封顶。
 - `handleAgentTerminalDirective`：OSC 6974 的 provider 与 agent session 关联。
-- `handleGhosttyProcessExit`：session 结束，触发提炼。
+- 会话结束有**两条路径**，都汇入 `sessionEnded`（service 按 id 幂等，重复派发是 no-op）：
+  - `handleGhosttyProcessExit`：shell 自行退出（`exit`/Ctrl-D）经 GHOSTTY child-exited 回调。
+  - `TerminalSession.stop(immediately:)`：用户关闭 Pane/标签与应用退出。`destroySurface`
+    直接释放 surface 并清空回调，**不会**触发 child-exited；stop 必须在拆 surface 前
+    显式派发，否则 sessions 行永远停在 active，提炼永不发生（曾致真机 memories 恒 0）。
+- 兜底：应用退出（`immediately: true`）后收尾链可能来不及落盘；崩溃/强退同理。
+  启动时 `SessionRecordingService.reconcileAbandonedSessions()` 把库里遗留的 active 行
+  按最后一条事件时间闭合，并补跑 transcript 补录与提炼（全部幂等，memory id = session id）。
+  本进程会话在写库前必先登记 `startInfo`/`states`，补收按这两个表过滤，绝不误收活跃会话；
+  库文件不存在时直接跳过，不为补收建出空库。
 
 OSC barrier（`TerminalOutputMessageBus.enqueueBarrier`）保证同批字节先于 OSC 事件交付，
 这是「输出正文与完成事件正确配对」的前提。
@@ -196,6 +205,8 @@ Agent 查到空结果时必须能区分三种情况：记录没开、项目过�
 - MCP 侧库不存在、版本不匹配、参数非法：返回 `isError` 的可读文本，进程不崩溃；
   留痕（receipt）失败不影响查询结果。
 - 删除 session：连带清理事件、artifact 文件与派生 Memory；只删主行是错误实现。
+- 进程退出竞速 / 崩溃：sessions 行遗留 'active'、提炼缺失——下次启动的
+  `reconcileAbandonedSessions()` 闭合并补提炼；同一会话绝不产生第二条 Memory（幂等替换）。
 
 ## 测试与验收
 
