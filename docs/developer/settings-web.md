@@ -48,9 +48,11 @@ flowchart LR
 
 `scripts/build-app.sh` 必须把 `Resources/settings-ui` 复制到签名 App Bundle。资源缺失时设置窗口不回退到远程 URL，而是报告需要重新构建。异步动作把成功或失败消息回传页面；配置文件解码失败时保留当前配置不变。
 
+外观页 Dock 图标预览的品牌 logo 以内联 SVG 写在 `settings.js` 的 `makeDockGroup`：`WKWebView` 的读权限只覆盖 `settings-ui` 子树，网页引用不到上层 `Resources/AsterIcon.svg`。图稿真值仍是 `Resources/AsterIcon.svg`，改动 logo 时两处需逐路径同步。
+
 ## 验证
 
-`SettingsResponsivenessTests` 与 `AppKitMigrationTests` 覆盖窗口几何、原生标题栏拖动边界、设置打开期间 Tab/Pane 实时刷新、单一非持久化 WebView、CSP/九类资源、Otty 外观页结构与范围控件真值、主题详情快照、Windows capability、强类型与复合字段写入、动态 Agent 字段、菜单快捷键、兼容字段持久化和活动工作区 Panel 宽度。发布前还需运行：
+`SettingsResponsivenessTests` 与 `AppKitMigrationTests` 覆盖窗口几何、原生标题栏拖动边界、设置打开期间 Tab/Pane 与标签栏布局实时刷新、单一非持久化 WebView、CSP/九类资源、Otty 外观页结构与范围控件真值、主题详情快照、Windows capability、强类型与复合字段写入、动态 Agent 字段、菜单快捷键、兼容字段持久化和活动工作区 Panel 宽度。发布前还需运行：
 
 ```bash
 node --check Resources/settings-ui/settings.js

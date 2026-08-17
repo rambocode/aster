@@ -44,8 +44,8 @@ final class SidebarOptionsButton: NSButton {
 final class TabRowButton: NSButton {
   /// 视觉底卡两侧留白；按钮本身仍保持整行命中宽度。
   private static let sidebarRowInset: CGFloat = 6
-  /// 底卡圆角下限。多数 Otty 主题按「整行铺满」给的是 0，内缩之后必须圆角化。
-  private static let sidebarRowRadius: CGFloat = 8
+  /// 底卡/胶囊圆角下限。多数 Otty 主题按「整行铺满」给的是 0，内缩之后必须圆角化。
+  private static let rowCornerRadius: CGFloat = 8
   private let tab: TerminalTabItem
   private let selected: Bool
   private let horizontal: Bool
@@ -62,9 +62,13 @@ final class TabRowButton: NSButton {
   private let handler: () -> Void
   private let onDragEnd: (NSPoint) -> Void
   private var tracking: NSTrackingArea?
-  private weak var verticalAccessory: NSView?
-  private weak var verticalAccessorySlot: NSView?
+  /// 状态附件与其固定槽位；纵横两种方向共用同一套「附件 ↔ 关闭按钮」切换。
+  private weak var accessoryView: NSView?
+  private weak var accessorySlot: NSView?
   private weak var closeButton: NSButton?
+  /// 横向胶囊的槽位宽度：仅在需要展示关闭按钮或状态徽章时占位，
+  /// 未选中的纯文字标签收紧为 0，避免标签之间出现大段空白。
+  private var slotWidthConstraint: NSLayoutConstraint?
   /// 纵向行的标题标签；标题经 `titleChanged` 局部刷新，不重建整行。
   private weak var titleLabel: NSTextField?
   /// 最近一次渲染的徽章状态键；状态未变时跳过附件重建，避免 spinner 动画被反复重启。
@@ -84,6 +88,7 @@ final class TabRowButton: NSButton {
     tab: TerminalTabItem,
     selected: Bool,
     horizontal: Bool,
+    rowHeight: CGFloat? = nil,
     theme: TerminalTheme,
     showsExitStatus: Bool,
     showsFinished: Bool,
@@ -125,7 +130,7 @@ final class TabRowButton: NSButton {
     handler = action
     self.onDragEnd = onDragEnd
     super.init(frame: .zero)
-    title = horizontal ? tab.displayTitle : ""
+    title = ""
     alignment = .left
     isBordered = false
     bezelStyle = .inline
@@ -135,21 +140,27 @@ final class TabRowButton: NSButton {
     self.action = #selector(invoke)
     identifier = NSUserInterfaceItemIdentifier("workspace-tab-row-\(tab.id.uuidString)")
     translatesAutoresizingMaskIntoConstraints = false
-    heightAnchor.constraint(equalToConstant: style.height ?? (horizontal ? 31 : 47)).isActive = true
-    if horizontal { widthAnchor.constraint(greaterThanOrEqualToConstant: 92).isActive = true }
+    heightAnchor.constraint(
+      equalToConstant: horizontal ? (rowHeight ?? 40) : (style.height ?? 47)
+    ).isActive = true
+
+    // 纵横两个方向共用「整行命中 + 内缩圆角底」结构：纵向是左右内缩的行卡，
+    // 横向是上下内缩的胶囊。底必须先入栈，才能垫在标题与右侧附件下面。
+    let rowBackground = NSView()
+    rowBackground.identifier = NSUserInterfaceItemIdentifier(
+      "workspace-tab-background-\(tab.id.uuidString)")
+    rowBackground.wantsLayer = true
+    rowBackground.layer?.cornerCurve = .continuous
+    rowBackground.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(rowBackground)
     if horizontal {
-      imagePosition = .imageTrailing
-      refreshActivityBadge()
-    }
-    if !horizontal {
-      // 内缩圆角底必须先入栈，才能垫在标题与右侧附件下面。
-      let rowBackground = NSView()
-      rowBackground.identifier = NSUserInterfaceItemIdentifier(
-        "workspace-tab-background-\(tab.id.uuidString)")
-      rowBackground.wantsLayer = true
-      rowBackground.layer?.cornerCurve = .continuous
-      rowBackground.translatesAutoresizingMaskIntoConstraints = false
-      addSubview(rowBackground)
+      NSLayoutConstraint.activate([
+        rowBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+        rowBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
+        rowBackground.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+        rowBackground.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+      ])
+    } else {
       NSLayoutConstraint.activate([
         rowBackground.leadingAnchor.constraint(
           equalTo: leadingAnchor, constant: Self.sidebarRowInset),
@@ -158,37 +169,74 @@ final class TabRowButton: NSButton {
         rowBackground.topAnchor.constraint(equalTo: topAnchor, constant: 2),
         rowBackground.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
       ])
-      self.rowBackground = rowBackground
+    }
+    self.rowBackground = rowBackground
 
-      // 选中与未选中显示同一份展示名（Agent 会话标题优先，其次目录稳定显示名），
-      // 切换标签时行文案不再在「完整路径 / 短名」之间跳变。
-      let primary = makeLabel(
-        tab.displayTitle,
-        size: selected ? 11.5 : 11,
-        weight: selected ? .semibold : .regular,
-        color: selected ? resolvedActiveForeground : resolvedForeground
-      )
-      addSubview(primary)
-      primary.translatesAutoresizingMaskIntoConstraints = false
-      titleLabel = primary
+    // 选中与未选中显示同一份展示名（Agent 会话标题优先，其次目录稳定显示名），
+    // 切换标签时行文案不再在「完整路径 / 短名」之间跳变。
+    let primary = makeLabel(
+      tab.displayTitle,
+      size: horizontal ? 12 : (selected ? 11.5 : 11),
+      weight: selected
+        ? (horizontal ? NSFont.Weight(cssWeight: style.activeFontWeight) : .semibold)
+        : .regular,
+      color: selected ? resolvedActiveForeground : resolvedForeground
+    )
+    addSubview(primary)
+    primary.translatesAutoresizingMaskIntoConstraints = false
+    titleLabel = primary
 
-      // 状态附件与关闭按钮共用固定 28pt 槽位，悬停切换时标题不会
-      // 水平抖动。关闭动作直接针对该 tab，不先选中后台标签。
-      let accessorySlot = NSView()
-      accessorySlot.translatesAutoresizingMaskIntoConstraints = false
-      addSubview(accessorySlot)
-      verticalAccessorySlot = accessorySlot
-      let close = ActionButton(symbol: "xmark", bezelStyle: .inline) {
+    // 状态附件与关闭按钮共用固定槽位（纵向 28pt / 横向胶囊内 16pt），悬停切换时
+    // 标题不会水平抖动。关闭动作直接针对该 tab，不先选中后台标签。
+    let accessorySlot = NSView()
+    accessorySlot.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(accessorySlot)
+    self.accessorySlot = accessorySlot
+    let close: NSButton
+    if horizontal {
+      // 胶囊内的小号关闭按钮：IconHoverButton 自带悬停底色反馈。
+      let hoverClose = IconHoverButton(symbol: "xmark", accessibilityDescription: "关闭标签页") {
         onClose?()
       }
-      close.identifier = NSUserInterfaceItemIdentifier("sidebar-tab-close-\(tab.id.uuidString)")
-      close.toolTip = "关闭标签页"
+      hoverClose.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "关闭标签页")?
+        .withSymbolConfiguration(.init(pointSize: 8, weight: .bold))
+      hoverClose.restingTint = selected ? resolvedActiveForeground : resolvedForeground
+      close = hoverClose
+    } else {
+      close = ActionButton(symbol: "xmark", bezelStyle: .inline) {
+        onClose?()
+      }
       close.isBordered = false
       close.contentTintColor = AsterTheme.secondaryInk
-      close.setAccessibilityLabel("关闭标签页 \(tab.displayTitle)")
-      close.translatesAutoresizingMaskIntoConstraints = false
-      accessorySlot.addSubview(close)
-      closeButton = close
+    }
+    close.identifier = NSUserInterfaceItemIdentifier("sidebar-tab-close-\(tab.id.uuidString)")
+    close.toolTip = "关闭标签页"
+    close.setAccessibilityLabel("关闭标签页 \(tab.displayTitle)")
+    close.translatesAutoresizingMaskIntoConstraints = false
+    accessorySlot.addSubview(close)
+    closeButton = close
+    if horizontal {
+      // 槽位宽度是状态量（0 或 16），由 updateAccessoryVisibility 统一维护。
+      let slotWidth = accessorySlot.widthAnchor.constraint(equalToConstant: 16)
+      slotWidthConstraint = slotWidth
+      NSLayoutConstraint.activate([
+        // 标题按「等式」参与宽度求解：胶囊宽度 = 10 + 标题 + 4 + 槽 + 6，
+        // 上限 190pt 之后按尾部截断，长标题不会把标签栏挤爆。
+        primary.leadingAnchor.constraint(equalTo: rowBackground.leadingAnchor, constant: 10),
+        primary.centerYAnchor.constraint(equalTo: centerYAnchor),
+        primary.trailingAnchor.constraint(equalTo: accessorySlot.leadingAnchor, constant: -4),
+        primary.widthAnchor.constraint(lessThanOrEqualToConstant: 190),
+        accessorySlot.trailingAnchor.constraint(
+          equalTo: rowBackground.trailingAnchor, constant: -6),
+        accessorySlot.centerYAnchor.constraint(equalTo: centerYAnchor),
+        slotWidth,
+        accessorySlot.heightAnchor.constraint(equalToConstant: 16),
+        close.centerXAnchor.constraint(equalTo: accessorySlot.centerXAnchor),
+        close.centerYAnchor.constraint(equalTo: accessorySlot.centerYAnchor),
+        close.widthAnchor.constraint(equalToConstant: 16),
+        close.heightAnchor.constraint(equalToConstant: 16),
+      ])
+    } else {
       NSLayoutConstraint.activate([
         // 文案与右侧槽位都按圆角底的内缘对齐，卡片左右各留出 10pt 内边距。
         primary.leadingAnchor.constraint(equalTo: rowBackground.leadingAnchor, constant: 10),
@@ -205,9 +253,9 @@ final class TabRowButton: NSButton {
         close.widthAnchor.constraint(equalToConstant: 24),
         close.heightAnchor.constraint(equalToConstant: 24),
       ])
-      refreshActivityBadge()
-      updateAccessoryVisibility()
     }
+    refreshActivityBadge()
+    updateAccessoryVisibility()
     updateStyle()
   }
 
@@ -259,11 +307,7 @@ final class TabRowButton: NSButton {
 
   /// 程序标题（OSC 0/1/2）变化时就地更新行文案；不重建行、不触碰附件与终端视图。
   func refreshTitle() {
-    if horizontal {
-      title = tab.displayTitle
-    } else {
-      titleLabel?.stringValue = tab.displayTitle
-    }
+    titleLabel?.stringValue = tab.displayTitle
     closeButton?.setAccessibilityLabel("关闭标签页 \(tab.displayTitle)")
   }
 
@@ -273,33 +317,26 @@ final class TabRowButton: NSButton {
   /// spinner 若被销毁重建会不断重启动画，视觉上表现为“转得飞快”。
   func refreshActivityBadge() {
     let key = activityBadgeKey()
-    if horizontal {
-      guard key != renderedBadgeKey else { return }
-      renderedBadgeKey = key
-      image = horizontalActivityImage()
-      return
-    }
-    guard let slot = verticalAccessorySlot else { return }
-    if key == renderedBadgeKey, verticalAccessory != nil {
+    guard let slot = accessorySlot else { return }
+    if key == renderedBadgeKey, accessoryView != nil {
       updateAccessoryVisibility()
       return
     }
     renderedBadgeKey = key
-    verticalAccessory?.removeFromSuperview()
-    let accessory = makeVerticalActivityAccessory()
+    accessoryView?.removeFromSuperview()
+    let accessory = makeActivityAccessory()
     accessory.translatesAutoresizingMaskIntoConstraints = false
     slot.addSubview(accessory)
     NSLayoutConstraint.activate([
       accessory.centerXAnchor.constraint(equalTo: slot.centerXAnchor),
       accessory.centerYAnchor.constraint(equalTo: slot.centerYAnchor),
     ])
-    verticalAccessory = accessory
+    accessoryView = accessory
     updateAccessoryVisibility()
   }
 
-  /// 徽章渲染结果的等价键。与 `makeVerticalActivityAccessory` /
-  /// `horizontalActivityImage` 的分支一一对应；spinner 不显示百分比，因此
-  /// `.running` 的 percent 变化不进入键值，避免进度刷新重启动画。
+  /// 徽章渲染结果的等价键。与 `makeActivityAccessory` 的分支一一对应；spinner
+  /// 不显示百分比，因此 `.running` 的 percent 变化不进入键值，避免进度刷新重启动画。
   private func activityBadgeKey() -> String {
     switch tab.activityBadge {
     case .running:
@@ -317,26 +354,8 @@ final class TabRowButton: NSButton {
     }
   }
 
-  private func horizontalActivityImage() -> NSImage? {
-    switch tab.activityBadge {
-    case .running:
-      return NSImage(
-        systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "正在运行")
-    case .awaitingInput where showsAwaitingInput:
-      return NSImage(systemSymbolName: "hand.raised.fill", accessibilityDescription: "等待输入")
-    case .error where showsFailure && showsExitStatus:
-      return NSImage(
-        systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "执行失败")
-    case .finished where showsFinished && showsExitStatus:
-      return NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "已完成")
-    case .completed where showsFinished && showsExitStatus:
-      return NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "刚刚完成")
-    default:
-      return nil
-    }
-  }
-
-  private func makeVerticalActivityAccessory() -> NSView {
+  /// 构建当前活动状态的附件视图；纵横两种方向共用状态分支，只有 idle 内容不同。
+  private func makeActivityAccessory() -> NSView {
     let accessory: NSView
     let stateName: String
     let accessibilityLabel: String
@@ -371,8 +390,9 @@ final class TabRowButton: NSButton {
       stateName = "completed"
       accessibilityLabel = "刚刚完成"
     default:
+      // 横向胶囊里放不下 shell 名，idle 只留空槽占位；纵向沿用选中行显示 shell 名。
       accessory = makeLabel(
-        selected
+        !horizontal && selected
           ? URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
             .lastPathComponent
           : "",
@@ -387,30 +407,33 @@ final class TabRowButton: NSButton {
     return accessory
   }
 
+  /// 横向选中胶囊常显关闭按钮、未选中保持纯文字（对齐 Otty 顶/底部标签栏）；
+  /// 纵向沿用「悬停时徽章让位给关闭按钮」的切换。
   private func updateAccessoryVisibility() {
-    verticalAccessory?.isHidden = hovered
-    closeButton?.isHidden = !hovered
+    if horizontal {
+      closeButton?.isHidden = !selected
+      accessoryView?.isHidden = selected
+      // 关闭按钮或徽章至少有一个可见时槽位才占 16pt；纯文字标签收紧为 0，
+      // 悬停不改变宽度，标签排布不会抖动。
+      slotWidthConstraint?.constant = (selected || activityBadgeKey() != "idle") ? 16 : 0
+    } else {
+      accessoryView?.isHidden = hovered
+      closeButton?.isHidden = !hovered
+    }
   }
 
+  /// 依据选中/悬停状态刷新内缩底卡（纵向行卡与横向胶囊共用）的配色与装饰。
   private func updateStyle() {
+    // 前景与字重由 titleLabel 承载；contentTintColor 仍保留为主题矩阵测试的取值口。
     contentTintColor = selected ? resolvedActiveForeground : resolvedForeground
-    font = NSFont.systemFont(
-      ofSize: selected ? 12.5 : 12,
-      weight: selected ? NSFont.Weight(cssWeight: style.activeFontWeight) : .regular
-    )
-    // 侧栏行的装饰画在内缩底层上；横向标签栏仍然直接用按钮自身的 layer。
-    let decoration = rowBackground?.layer ?? layer
-    if rowBackground != nil {
-      // 行本体保持透明，否则内缩底外面会再糊一层直角色块。
-      layer?.backgroundColor = NSColor.clear.cgColor
-      layer?.borderWidth = 0
-      layer?.shadowOpacity = 0
-      // 主题给的是「整行铺满」语义下的圆角（多数为 0）。内缩成卡片后必须有可见
-      // 圆角，取一个下限；主题本来就更圆时沿用主题值。
-      decoration?.cornerRadius = max(style.radius, Self.sidebarRowRadius)
-    } else {
-      decoration?.cornerRadius = style.radius
-    }
+    // 装饰一律画在内缩底层上；行本体保持透明，否则内缩底外面会再糊一层直角色块。
+    let decoration = rowBackground?.layer
+    layer?.backgroundColor = NSColor.clear.cgColor
+    layer?.borderWidth = 0
+    layer?.shadowOpacity = 0
+    // 主题给的是「整行铺满」语义下的圆角（多数为 0）。内缩成卡片/胶囊后必须有
+    // 可见圆角，取一个下限；主题本来就更圆时沿用主题值。
+    decoration?.cornerRadius = max(style.radius, Self.rowCornerRadius)
     let background: NSColor
     if selected {
       background = resolvedActiveBackground

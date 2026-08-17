@@ -652,6 +652,96 @@ func themeSelectionRefreshesWorkspaceWhileSettingsStayOpen() async throws {
   #expect(sidebar.appliedThemeTint == ayuDark.resolvedColor(forSlot: "sidebar.background"))
 }
 
+@Test("设置窗口打开时切换标签栏布局会实时刷新主工作区")
+@MainActor
+func tabBarLayoutSelectionRefreshesWorkspaceWhileSettingsStayOpen() async throws {
+  let defaults = isolatedDefaults()
+  let model = try makeNonTerminalTestModel(defaults: defaults, directories: ["/tmp/live-layout"])
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.tabBarLayout = .top
+  let workspace = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(
+    content: workspace,
+    size: NSSize(width: 1_180, height: 760)
+  )
+  window.contentView?.layoutSubtreeIfNeeded()
+  workspace.setSettingsPresentationActive(true)
+
+  preferences.tabBarLayout = .vertical
+  // AppPreferences 在 will-change 阶段广播，工作区要等当前调用栈结束后读取新布局。
+  try await Task.sleep(for: .milliseconds(30))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let hasSidebar = workspace.view.descendants.contains {
+    $0.identifier?.rawValue == "workspace-sidebar"
+  }
+  let hasHorizontalTabbar = workspace.view.descendants.contains {
+    $0.identifier?.rawValue == "workspace-tabbar"
+  }
+  #expect(hasSidebar, "设置打开期间切到垂直布局应立即出现侧栏标签")
+  #expect(!hasHorizontalTabbar, "顶部标签栏应随布局切换立即移除")
+}
+
+@Test("顶部标签布局的标题带位于标签行上方且标签让开交通灯命中区")
+@MainActor
+func topTabBarPlacesTitleBandAboveTabsAndClearOfTrafficLights() throws {
+  let defaults = isolatedDefaults()
+  let model = try makeNonTerminalTestModel(defaults: defaults, directories: ["/tmp/top-band"])
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.tabBarLayout = .top
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  // 中央标题唯一且并入标签条顶部的标题带，内容区不再渲染第二份标题行。
+  let tabbar = try #require(
+    controller.view.descendants.first { $0.identifier?.rawValue == "workspace-tabbar" }
+  )
+  let titlebars = controller.view.descendants.filter {
+    $0.identifier?.rawValue == "workspace-titlebar"
+  }
+  #expect(titlebars.count == 1)
+  let titlebar = try #require(titlebars.first)
+  #expect(titlebar.isDescendant(of: tabbar))
+
+  // 标签按钮整体位于 28pt 标题带之下：顶缘不进入交通灯所在的窗口拖拽命中区。
+  let tabButton = try #require(
+    controller.view.descendants.compactMap { $0 as? TabRowButton }.first
+  )
+  let contentHeight = try #require(window.contentView?.frame.height)
+  let tabRectInWindow = tabButton.convert(tabButton.bounds, to: nil)
+  #expect(contentHeight - tabRectInWindow.maxY >= 27.5, "标签顶缘应让开 28pt 标题带")
+  // 标签行必须绑定栈宽后从左缘起排；纵向栈按固有宽度排布时整行会浮到窗口中间。
+  #expect(tabRectInWindow.minX <= 20, "标签应从窗口左缘起排（左对齐）")
+  let titleRectInWindow = titlebar.convert(titlebar.bounds, to: nil)
+  #expect(titleRectInWindow.minY >= tabRectInWindow.maxY - 0.5, "标题带应在标签行上方")
+
+  // 横向标签条只保留「+」新建入口，不再提供命令面板图标。
+  #expect(!tabbar.descendants.contains { ($0 as? NSButton)?.toolTip == "命令面板" })
+  #expect(tabbar.descendants.contains { ($0 as? NSButton)?.toolTip == "新建标签页" })
+}
+
+@Test("底部标签布局不提供命令面板图标且标题留在内容区顶部")
+@MainActor
+func bottomTabBarDropsPaletteIconAndKeepsTitleAtContentTop() throws {
+  let defaults = isolatedDefaults()
+  let model = try makeNonTerminalTestModel(defaults: defaults, directories: ["/tmp/bottom-band"])
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.tabBarLayout = .bottom
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let tabbar = try #require(
+    controller.view.descendants.first { $0.identifier?.rawValue == "workspace-tabbar" }
+  )
+  #expect(!tabbar.descendants.contains { ($0 as? NSButton)?.toolTip == "命令面板" })
+  let titlebar = try #require(
+    controller.view.descendants.first { $0.identifier?.rawValue == "workspace-titlebar" }
+  )
+  #expect(!titlebar.isDescendant(of: tabbar), "底部布局的标题行仍在内容区顶部")
+}
+
 @Test("菜单主题选择器实时预览且仅在确认后持久化")
 @MainActor
 func themeSwitcherPreviewsAndCommitsAsOneTransaction() throws {
@@ -2158,8 +2248,14 @@ struct AllThemeRenderParityTests {
     let activeBackground = style.activeBackground ?? fallbackActiveBackground
     let activeForeground = style.activeForeground ?? fallbackActiveForeground
     let tabTint = try #require(tab.contentTintColor)
-    #expect(layerColor(of: tab) == activeBackground, "\(theme.name) horizontal Tab active")
+    // 横向选中胶囊与侧栏行共用内缩 decoration 层；按钮本体保持透明。
+    let decoration = try tabDecoration(in: tab)
+    #expect(layerColor(of: decoration) == activeBackground, "\(theme.name) horizontal Tab active")
     #expect(HexColor(nsColor: tabTint) == activeForeground, "\(theme.name) horizontal Tab foreground")
+    // 选中胶囊常显小号关闭按钮，未选中标签保持纯文字。
+    let closeButton = try #require(
+      tab.descendants.first { $0.identifier?.rawValue.hasPrefix("sidebar-tab-close-") == true })
+    #expect(closeButton.isHidden == false, "\(theme.name) horizontal selected close")
   }
 
   private func slot(_ id: String, in theme: TerminalTheme) throws -> HexColor {

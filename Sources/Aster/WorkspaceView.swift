@@ -33,9 +33,10 @@ final class WorkspaceViewController: NSViewController {
   private var needsRefreshAfterSettingsDismiss = false
   private var terminalPreferenceApplyScheduled = false
   /// 设置窗口打开时仍要判断主题是否已离开当前渲染快照。普通配置继续延迟整树刷新，
-  /// 但主题或明暗外观变化必须实时重建主界面，不能只更新终端后等设置窗口关闭。
+  /// 但主题、明暗外观或标签栏布局变化必须实时重建主界面，不能只更新终端后等设置窗口关闭。
   private var renderedTheme: TerminalTheme?
   private var renderedAppearance: AppPreferences.Appearance?
+  private var renderedTabBarLayout: TabBarLayout?
   /// 当前渲染出来的面板容器。焦点切换只更新这里的状态与 first responder，
   /// 不重建视图树。
   private var paneHosts: [UUID: ActivePaneHostView] = [:]
@@ -672,8 +673,8 @@ final class WorkspaceViewController: NSViewController {
   }
 
   /// 配置在 `@Published` 的 will-change 阶段发出通知，因此先让出当前调用栈，再读取
-  /// 新值。设置展示期间，普通配置只更新终端并把结构刷新合并到关闭时；主题与明暗外观
-  /// 是用户正在预览的结果，必须立即刷新工作区全部 AppKit 对象。
+  /// 新值。设置展示期间，普通配置只更新终端并把结构刷新合并到关闭时；主题、明暗外观
+  /// 与标签栏布局是用户正在预览的结果，必须立即刷新工作区全部 AppKit 对象。
   private func schedulePreferenceRefresh() {
     if settingsPresentationActive { needsRefreshAfterSettingsDismiss = true }
     if !terminalPreferenceApplyScheduled {
@@ -696,6 +697,7 @@ final class WorkspaceViewController: NSViewController {
         if self.settingsPresentationActive,
           self.renderedTheme != self.preferences.activeTheme
             || self.renderedAppearance != self.preferences.appearance
+            || self.renderedTabBarLayout != self.preferences.tabBarLayout
         {
           self.refresh()
         }
@@ -762,6 +764,7 @@ final class WorkspaceViewController: NSViewController {
     let theme = preferences.activeTheme
     renderedTheme = theme
     renderedAppearance = preferences.appearance
+    renderedTabBarLayout = preferences.tabBarLayout
     if let background = view as? ThemeVisualEffectView {
       background.apply(
         material: theme.palette.material,
@@ -1125,8 +1128,12 @@ final class WorkspaceViewController: NSViewController {
       }
       // 与竖直标签栏布局同理：内容区没有固有宽度，左右分屏会被 NSSplitView 的
       // `width == 0 @250` 回退约束压到最窄。约束必须在入栈之后建立。
-      workspace.translatesAutoresizingMaskIntoConstraints = false
-      workspace.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+      // 标签栏与分隔线同样要显式绑定栈宽：纵向栈默认按固有宽度对齐，缺了这两条
+      // 约束时整条标签栏会缩成内容宽度的一小段浮在窗口中间。
+      for member in [workspace, bar, divider] {
+        member.translatesAutoresizingMaskIntoConstraints = false
+        member.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+      }
       content = stack
     }
 
@@ -1468,6 +1475,8 @@ final class WorkspaceViewController: NSViewController {
     return item
   }
 
+  /// 顶部/底部横向标签栏：满宽材质条 + 内容自适应的胶囊标签 + 「新建/整理」图标按钮。
+  /// 顶部布局在标签行上方多留 27pt 标题带，让交通灯落在自己的行里（对齐 Otty）。
   private func makeHorizontalTabBar(isBottom: Bool) -> NSView {
     let theme = preferences.activeTheme
     let background = ThemeVisualEffectView()
@@ -1478,30 +1487,36 @@ final class WorkspaceViewController: NSViewController {
         ?? theme.style.horizontalTabBarBackground ?? theme.style.sidebarBackground
           ?? theme.palette.panelBackground
     )
-    let height = theme.style.horizontalTabBarHeight ?? 40
+    let rowHeight = theme.style.horizontalTabBarHeight ?? 40
+    // 顶部布局在标签行上方叠一条 28pt 标题带（与交通灯同一行，承载中央目录胶囊）；
+    // 标签行整体落在系统标题栏命中区之下，标签左上角不会被窗口拖拽区吃掉点击。
+    let titleBandHeight: CGFloat = 28
     background.translatesAutoresizingMaskIntoConstraints = false
-    background.heightAnchor.constraint(equalToConstant: isBottom ? height : height + 27).isActive = true
+    background.heightAnchor.constraint(
+      equalToConstant: isBottom ? rowHeight : rowHeight + titleBandHeight
+    ).isActive = true
 
     let row = NSStackView()
     row.orientation = .horizontal
-    row.spacing = 3
+    row.spacing = 4
     row.alignment = .centerY
-    if !isBottom {
-      row.edgeInsets = NSEdgeInsets(top: 27, left: 70, bottom: 0, right: 8)
-    } else {
-      row.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
-    }
+    // 标签行独占自己的一行，左缘从窗口边起排。
+    row.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 8)
     for tab in model.tabs {
       let button = TabRowButton(
         tab: tab,
         selected: tab.id == model.selectedTabID,
         horizontal: true,
+        rowHeight: rowHeight,
         theme: theme,
         showsExitStatus: preferences.configuration.shell.badgeExitStatus,
         showsFinished: preferences.configuration.shell.resolvedBadgeCommandFinish,
         showsFailure: preferences.configuration.shell.resolvedBadgeCommandFailure,
         showsAwaitingInput: preferences.configuration.shell.badgeAwaitingInput,
-        onClose: nil,
+        onClose: { [weak self, weak tab] in
+          guard let tab else { return }
+          self?.model.closeTab(id: tab.id)
+        },
         action: { [weak self, weak tab] in
           guard let tab else { return }
           self?.model.select(tab)
@@ -1516,12 +1531,50 @@ final class WorkspaceViewController: NSViewController {
       tabRowsByID[tab.id, default: []].append(button)
       row.addArrangedSubview(button)
     }
-    row.addArrangedSubview(ActionButton(symbol: "plus") { [weak self] in self?.model.newTab() })
-    row.addArrangedSubview(ActionButton(symbol: "line.3.horizontal") { [weak self] in
-      self?.model.togglePalette()
-    })
-    background.addSubview(row)
-    row.pinEdges(to: background)
+    // 无边框图标按钮自带悬停底色反馈，与胶囊标签的视觉密度一致。横向标签条只保留
+    // 「+」新建入口；命令面板走快捷键与菜单，不在标签行占一个图标位。
+    let newTab = IconHoverButton(symbol: "plus", accessibilityDescription: "新建标签页") {
+      [weak self] in self?.model.newTab()
+    }
+    newTab.toolTip = "新建标签页"
+    newTab.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      newTab.widthAnchor.constraint(equalToConstant: 26),
+      newTab.heightAnchor.constraint(equalToConstant: 26),
+    ])
+    row.addArrangedSubview(newTab)
+    if isBottom {
+      background.addSubview(row)
+      row.pinEdges(to: background)
+    } else {
+      // 顶部布局：标题带在上、标签行在下。中央胶囊与交通灯共处 28pt 标题带，
+      // 内容区不再重复渲染标题行（见 makeTerminalWorkspace）。
+      let column = NSStackView()
+      column.orientation = .vertical
+      column.alignment = .width
+      column.spacing = 0
+      let titleBand: NSView
+      if let tab = model.selectedTab {
+        titleBand = makeWorkspaceHeader(tab)
+      } else {
+        // 没有可选中标签时仍保留交通灯行的高度占位，标签行不上浮进拖拽区。
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.heightAnchor.constraint(equalToConstant: titleBandHeight).isActive = true
+        titleBand = spacer
+      }
+      column.addArrangedSubview(titleBand)
+      row.translatesAutoresizingMaskIntoConstraints = false
+      row.heightAnchor.constraint(equalToConstant: rowHeight).isActive = true
+      column.addArrangedSubview(row)
+      background.addSubview(column)
+      column.pinEdges(to: background)
+      // 纵向栈默认按固有宽度排布子项；标题带与标签行必须显式绑定栈宽，否则标签行
+      // 会缩成内容宽度的一小段浮在中间、标签不再左对齐（与 makeWorkspaceLayout 同一坑）。
+      for member in [titleBand, row] {
+        member.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+      }
+    }
     return background
   }
 
@@ -1570,7 +1623,11 @@ final class WorkspaceViewController: NSViewController {
     stack.orientation = .vertical
     stack.alignment = .width
     stack.spacing = 0
-    stack.addArrangedSubview(makeWorkspaceHeader(tab))
+    // 顶部标签布局把中央标题并入标签条上方的标题带（与交通灯同一行），内容区不再
+    // 重复渲染；标题带在 makeHorizontalTabBar 中构建。其余布局保持内容区顶部标题。
+    let titleLivesInTabBar = preferences.tabBarLayout == .top
+      && preferences.configuration.appearance.showsTabBar(tabCount: model.tabs.count)
+    if !titleLivesInTabBar { stack.addArrangedSubview(makeWorkspaceHeader(tab)) }
     if model.isFindPresented { stack.addArrangedSubview(makeFindBar(tab)) }
 
     let style = preferences.activeTheme.style.container
