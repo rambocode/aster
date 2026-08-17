@@ -362,9 +362,9 @@ input.control[type="text"]:focus, input.control[type="number"]:focus { border-co
 .cursor-preview b { display: inline-block; padding: 0 1px; color: var(--cursor-text); background: color-mix(in srgb, var(--cursor-color) calc(var(--cursor-opacity) * 100%), transparent); font-weight: 400; }
 .dock-card { position: relative; min-height: 184px; padding-left: 150px; }
 .dock-card .setting-row { grid-template-columns: minmax(0, 1fr) auto; }
-.dock-icon-preview { position: absolute; top: 50%; left: 42px; width: 76px; height: 76px; transform: translateY(-50%); color: #fff; background: #55565a; border-radius: 50%; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 10%); }
-.dock-icon-preview span { position: absolute; top: 25px; left: 18px; font: 700 20px/1 "SF Mono", Menlo, monospace; transform: rotate(-8deg); }
-.dock-icon-preview i { position: absolute; top: 13px; right: 15px; font-style: normal; font-size: 14px; }
+/* 预览为内联品牌 SVG;图稿自带约 10% 透明边距,盒子放大到 92px 让可见圆角块与旧 76px 圆形体量相当。 */
+.dock-icon-preview { position: absolute; top: 50%; left: 42px; width: 92px; height: 92px; transform: translateY(-50%); }
+.dock-icon-preview svg { display: block; width: 100%; height: 100%; filter: drop-shadow(0 3px 7px rgb(0 0 0 / 18%)); }
 
 .agent-list, .recipe-list { display: flex; flex-direction: column; }
 .agent-card { border-top: 1px solid var(--border-subtle); }
@@ -400,8 +400,7 @@ input.control[type="text"]:focus, input.control[type="number"]:focus { border-co
   .theme-ansi-grid { grid-template-columns: repeat(8, 16px); gap: 4px; }
   .theme-ansi-dot { width: 15px; height: 15px; }
   .dock-card { padding-left: 112px; }
-  .dock-icon-preview { left: 22px; width: 66px; height: 66px; }
-  .dock-icon-preview span { top: 22px; left: 15px; font-size: 17px; }
+  .dock-icon-preview { left: 22px; width: 80px; height: 80px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

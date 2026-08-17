@@ -1132,13 +1132,22 @@
     return makeAppearanceGroup("光标", host, "cursor-group");
   }
 
+  // Dock 图标组：左侧预览内联 Aster 品牌 logo（真值是 Resources/AsterIcon.svg，
+  // 逐路径保持一致；改 logo 时需同步这里），右侧是三个 Dock 行为开关。
   function makeDockGroup(rowMap) {
     const card = cardForRows(rowMap, [
       "appearance.animateDockIconOnProgress", "appearance.redDockIconOnError", "shell.bounceDockIcon",
     ], "dock-card");
     const icon = document.createElement("div");
     icon.className = "dock-icon-preview";
-    icon.innerHTML = `<span>&gt;_</span><i>✦</i>`;
+    icon.innerHTML = `<svg viewBox="0 0 1024 1024" aria-hidden="true">
+      <rect x="100" y="100" width="824" height="824" rx="185" fill="#EA6D49"/>
+      <g transform="translate(512 512) scale(0.805) translate(-512 -512)">
+        <path d="M156 260 278 356 156 452" fill="none" stroke="#FFFFFF" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M684 676 C754 586 794 488 768 398 C731 272 597 231 474 286 C349 342 284 466 307 592 C331 724 445 797 572 800 C670 802 756 779 860 748 L860 610" fill="none" stroke="#FFFFFF" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M548 405 C558 480 599 520 674 530 C599 540 558 580 548 655 C538 580 497 540 422 530 C497 520 538 480 548 405Z" fill="#FFFFFF"/>
+      </g>
+    </svg>`;
     card.prepend(icon);
     return makeAppearanceGroup("Dock 图标", card, "dock-group");
   }
