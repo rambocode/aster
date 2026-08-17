@@ -23,7 +23,7 @@ open dist/Aster.app
 发布前完整流程（见 `docs/developer/terminal-domain.md`）：
 `swift test --no-parallel` → `swift build -c release` → `./scripts/build-app.sh` → `codesign --verify --deep --strict dist/Aster.app` → 实机启动验证。
 
-`build-app.sh` 默认使用 ad-hoc 签名；正式分发通过 `ASTER_SIGN_IDENTITY="Developer ID Application: ..."` 覆盖。该脚本还会用 `qlmanage` 把 `Resources/AsterIcon.svg` 渲染成 iconset，并把 Aster、SwiftTerm 与 Highlighter 的 SwiftPM resource bundle 复制到 `Contents/Resources`（放在 .app 根目录会破坏签名）。Ghostty 的 shell integration 与 terminfo 位于 Aster resource bundle 内。
+`build-app.sh` 默认使用 ad-hoc 签名；正式分发通过 `ASTER_SIGN_IDENTITY="Developer ID Application: ..."` 覆盖，并以 `ASTER_NOTARY_PROFILE=<notarytool keychain profile>` 让 `build-dmg.sh` 自动完成「签 DMG → 公证 → 装订 → spctl 终验」（注意 `build-dmg.sh` 内部重跑 `build-app.sh`，整条流程必须带 `ASTER_SIGN_IDENTITY`，缺变量会把 App 重签回 ad-hoc；详见 `docs/developer/terminal-domain.md`）。该脚本还会用 `qlmanage` 把 `Resources/AsterIcon.svg` 渲染成 iconset，并把 Aster、SwiftTerm 与 Highlighter 的 SwiftPM resource bundle 复制到 `Contents/Resources`（放在 .app 根目录会破坏签名）。Ghostty 的 shell integration 与 terminfo 位于 Aster resource bundle 内。
 
 ## 架构分层
 

@@ -297,3 +297,20 @@ codesign --verify --deep --strict dist/Aster.app
 与代码高亮资源的实际加载路径；`build-dmg.sh` 在只读挂载卷中重复该检查。发布前应使用独立
 scratch 构建并在挂载后自检前移走 scratch，模拟新电脑不存在构建目录的环境。随后实际启动
 `.app`，检查主窗口、设置窗口、分屏和终端输入。
+
+正式分发（签名 + 公证）由 `build-dmg.sh` 一条命令完成：
+
+```bash
+ASTER_SIGN_IDENTITY="Developer ID Application: ..." \
+ASTER_NOTARY_PROFILE=<notarytool keychain profile> \
+./scripts/build-dmg.sh
+```
+
+三条硬性规则：**整条流程必须带 `ASTER_SIGN_IDENTITY`**——`build-dmg.sh` 内部会重跑
+`build-app.sh`，缺变量会把已签好的 App 重签回 ad-hoc；DMG 按「签本体 → 公证 → 装订」
+顺序执行，先公证后签名会改变哈希、让票据失效只能整轮重来；公证凭据用
+`xcrun notarytool store-credentials <profile> --key <AuthKey.p8> --key-id <ID> --issuer <UUID>`
+一次性存入 keychain，此后只引用 profile 名。脚本以 `status: Accepted` 文本判定公证结果
+（notarytool 各版本 Invalid 时退出码不一致），并在结尾对 DMG 与 App 各跑一次 `spctl`
+终验，两项都必须返回 `Notarized Developer ID`。不带 `ASTER_NOTARY_PROFILE` 时跳过
+公证（本地/ad-hoc 构建路径不受影响）；只带 profile 不带签名身份会被提前拦截。
