@@ -44,12 +44,22 @@ func ghosttyAgentLifecycleEstablishesMenuContext() async throws {
     }
     try await Task.sleep(for: .milliseconds(20))
   }
-  let view = try #require(surfaceView, "工作区终端未启动")
+  _ = try #require(surfaceView, "工作区终端未启动")
   let session = try #require(model.selectedTab?.activeSession)
 
-  // 模拟 Claude Code lifecycle hook 向所属 TTY 写入的状态序列。
-  #expect(view.typeText(
-    "printf '\\033]6974;AgentState=processing;Provider=claudeCode;SessionID=test-session-42\\007'\n"))
+  // Surface 的进程 running 只表示 PTY 已创建，zsh 仍可能正在加载配置。必须等真实
+  // OSC 133 prompt marker 建立 Shell Integration 后再注入命令，否则低负载机器上会把
+  // 测试文本写进尚未进入输入态的启动窗口，形成与 renderer 无关的时序假失败。
+  for _ in 0..<150 where !session.shellIntegrationDetected {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(session.shellIntegrationDetected)
+
+  // Hook 是向所属 TTY 写原始字节，不经过键盘布局或输入法。这里走生产的自动化字节
+  // 入口，避免用逐键 typeText 把输入法时序误当成 OSC lifecycle 回归。
+  let directive =
+    "printf '\\033]6974;AgentState=processing;Provider=claudeCode;SessionID=test-session-42\\007'\n"
+  #expect(session.sendAutomationBytes(Array(directive.utf8)))
   for _ in 0..<150 where session.activeAgentProvider == nil {
     try await Task.sleep(for: .milliseconds(20))
   }
