@@ -375,6 +375,8 @@ func ghosttyExtensionCapabilitiesWorkOnRealSurface() async throws {
     try await Task.sleep(for: .milliseconds(20))
   }
   #expect(observedOSC.last(where: { $0.code == 133 })?.payload == "B")
+  #expect(session.shellIntegrationDetected)
+  #expect(!session.isUsingForegroundPollingFallback)
   #expect(AutocompleteService.shared != nil)
   #expect(view.descendants.contains {
     String(describing: type(of: $0)).contains("TerminalAutocompleteOverlayView")

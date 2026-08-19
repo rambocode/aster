@@ -19,6 +19,12 @@ OSC 的非消费式 observer、稳定 page anchor 与绝对缓冲区坐标、固
 同步 callback 期间有效，宿主跨线程保留前必须复制；page anchor 仅在对应 page 仍被
 scrollback 保留时可解析。
 
+Aster 的嵌入式 renderer 额外把 focused display link 改为按需运行：普通终端收到状态、
+光标或尺寸变化时启动，完成最新帧并再确认一轮没有新请求后停止；持续输出会在相邻刷新间
+重新置位请求，因此仍按屏幕节奏合并呈现。只有启用自定义 shader 动画时保持连续 vsync。
+这不等于 `window-vsync=false`：每个真实帧仍由 display link 对齐，避免撕裂、外接显示器
+性能问题和上游文档警告的 macOS 风险。
+
 构建 stamp 同时包含 revision 与 patch SHA-256，因此改动补丁后不会误复用旧二进制。
 更新 revision 时先在干净 clone 中执行 `git apply --check`，解决冲突后重新生成补丁，
 再运行 Zig 定向测试、完整 Swift 测试与 release App 验收，并核对导出的 ABI 版本。

@@ -40,8 +40,10 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
   private var pendingPreviewBody: String?
   private var sourceRenderTask: Task<Void, Never>?
   private var previewRenderTask: Task<Void, Never>?
-  // Timer 只在主线程创建和失效；标记 unsafe 是为了允许 nonisolated deinit 回收它。
-  private nonisolated(unsafe) var modificationTimer: Timer?
+  /// 监听目标文件的父目录可同时覆盖原位写入与 atomic replace；事件合并后仍由 mtime
+  /// 判重。只有 vnode 监听无法建立时才使用兼容 timer，保证外部修改检测不失效。
+  private var modificationWatcher: FileSystemDirectoryWatcher?
+  private nonisolated(unsafe) var modificationFallbackTimer: Timer?
   private var lastModificationDate: Date?
   private var reportedExternalConflict = false
   private weak var overflowButton: NSButton?
@@ -94,7 +96,7 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
   }
 
   deinit {
-    modificationTimer?.invalidate()
+    modificationFallbackTimer?.invalidate()
     sourceRenderTask?.cancel()
     previewRenderTask?.cancel()
   }
@@ -784,8 +786,22 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
 
   private func startModificationMonitoring() {
     lastModificationDate = modificationDate()
-    modificationTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) {
-      [weak self] _ in Task { @MainActor in self?.checkForExternalModification() }
+    guard let directory = fileURL?.deletingLastPathComponent() else { return }
+    let watcher = FileSystemDirectoryWatcher(directory: directory)
+    do {
+      try watcher.start { [weak self] in self?.checkForExternalModification() }
+      modificationWatcher = watcher
+    } catch {
+      DiagnosticsCenter.shared.record(
+        "file_pane.modification_watch_failed",
+        level: .warning,
+        category: .storage,
+        error: error
+      )
+      modificationFallbackTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) {
+        [weak self] _ in MainActor.assumeIsolated { self?.checkForExternalModification() }
+      }
+      modificationFallbackTimer?.tolerance = 0.2
     }
   }
 

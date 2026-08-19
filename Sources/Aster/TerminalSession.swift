@@ -2215,6 +2215,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var agentStateReducer = AgentTaskStateReducer()
 
   private var foregroundPollTask: Task<Void, Never>?
+  /// 诊断 seam：true 仅表示尚未取得权威 Shell Integration、仍需周期探测前台进程。
+  /// UI 不依赖该值；回归测试用它防止 Ghostty 已有 OSC 133 时重新引入空闲轮询。
+  var isUsingForegroundPollingFallback: Bool { foregroundPollTask != nil }
   // 输出活跃度探针：可见屏幕内容哈希。Claude Code 等 TUI 思考时在原位重绘状态行
   // （光标与滚动位置都不变，只有单元格内容变化），必须按内容而非光标位置探测，
   // 否则 spinner 会时有时无。
@@ -3905,6 +3908,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private func handleShellIntegrationTimeline(_ timeline: ShellCommandTimeline) {
     if shellIntegrationDetected != timeline.integrationDetected {
       shellIntegrationDetected = timeline.integrationDetected
+    }
+    if timeline.integrationDetected, ghosttyView != nil {
+      // Ghostty 的 OSC observer 已提供精确 C/D 生命周期，surface 退出也有独立 callback；
+      // 此后继续每秒读取前台 PID 只会制造与 Pane 数量线性增长的空闲唤醒。SwiftTerm
+      // 仍保留任务，因为它还承担无 I/O 时自动 Secure Input 的低频兜底采样。
+      foregroundPollTask?.cancel()
+      foregroundPollTask = nil
     }
     if hasRunningCommand != timeline.isCommandRunning {
       hasRunningCommand = timeline.isCommandRunning

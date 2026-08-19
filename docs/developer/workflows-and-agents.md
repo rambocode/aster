@@ -21,7 +21,7 @@ Aster 把 Otty 的工作区流程、CLI 与代码 Agent 能力放在同一安全
 ## 核心规则
 
 1. Recipe 导入拒绝符号链接、特殊文件、超限文本和越界资源；精确布局载荷受独立深度/字节预算约束，实例化时重建 Pane UUID。命令审查必须展示完整集合，逐条模式在每次写 PTY 前单独授权。
-2. CLI 使用当前用户专属 `0600` token、私有目录和原子 request/response 文件；`send/run/exec` 还需用户开启 IPC，SSH/sudo Pane 需第二层授权。启动和轮询会鉴权回收崩溃遗留的 `.processing` 请求并返回确定失败。
+2. CLI 使用当前用户专属 `0600` token、私有目录和原子 request/response 文件；`send/run/exec` 还需用户开启 IPC，SSH/sudo Pane 需第二层授权。启动时及每次目录事件消费前都会鉴权回收崩溃遗留的 `.processing` 请求并返回确定失败；正常路径由 vnode 事件唤醒，只有监听建立失败时才回退到 100ms 轮询。
 3. 工作区快照只保存描述符。主窗口和最多 16 个 UUID suite 附加窗口可恢复；用户主动关闭的附加窗口立即删除其 suite。退出先确认全部窗口，再统一写快照和终止 PTY，取消时不得部分提交。
 4. Agent 安装/卸载只修改 Aster managed JSON 项、TOML marker 区块或独立 artifact；不得覆盖用户 hook。Codex hooks 默认启用；用户显式关闭时，安装操作只把 `[features].hooks` 改为 `true`。Aster 0.4.1 曾写入的非法顶层 `hooks` 布尔值会在下次安装时迁移，卸载不改 feature 设置。
 5. lifecycle hook 只向所属 TTY 写有界 OSC 6974 状态，不记录 prompt、tool 参数或输出。

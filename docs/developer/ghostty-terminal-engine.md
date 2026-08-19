@@ -95,6 +95,9 @@ API；普通粘贴经 `ghostty_surface_text`，由 Ghostty 根据前台程序状
 通知和 URL 动作投递到 MainActor。Aster 扩展另外提供原始 PTY read/write 与任意 OSC 的
 非消费 observer；OSC barrier 保证同一序列之前的原始输出先进入 Autocomplete，再处理
 OSC 133/6974。Wakeup 合并为最多一个待执行 tick，避免输出风暴形成无界主队列任务。
+Pinned renderer patch 保留 `window-vsync=true`，但把无自定义 shader 的 display link 改为
+按需运行：`updateFrame` 置位并启动，display callback 消费最新帧，下一轮没有新请求就停止；
+持续输出在相邻刷新间重新置位，因此仍按屏幕刷新率合并，不退化为无 vsync 的即时绘制。
 
 ### Aster extension ABI v1
 
@@ -105,6 +108,8 @@ OSC 133/6974。Wakeup 合并为最多一个待执行 tick，避免输出风暴�
 - buffer geometry、固定宽度 cell row、selection get/set/clear 和绝对 row 滚动；
 - literal/regex、大小写、前后方向的完整搜索，以及精确总数、选中序号和 match range；
 - 无活动 display link 时保留 surface、仅关闭 vsync 的嵌入式降级。
+- focused 静态 surface 的按需 display link；光标、输入、PTY 输出和 resize 请求下一帧，
+  自定义 shader 动画继续使用连续 display link。
 
 Swift adapter 基于这些接口恢复 inline Autocomplete、OSC 6974 Agent 状态、OSC 133 精确
 Outline、Vi/Mark 模式和可见 URL/路径 Hint。重复的 OSC 133 仅在 payload 与稳定 cell 锚点

@@ -4,6 +4,30 @@ import Testing
 
 @testable import Aster
 
+@Test("CLI 请求目录通过文件系统事件唤醒消费者")
+@MainActor
+func asterCLIRequestWatcherUsesDirectoryEvents() async throws {
+  let directory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("aster-cli-watcher-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+  defer { try? FileManager.default.removeItem(at: directory) }
+
+  let watcher = FileSystemDirectoryWatcher(directory: directory)
+  var eventCount = 0
+  try watcher.start { eventCount += 1 }
+  #expect(watcher.isWatching)
+
+  try Data("request".utf8).write(to: directory.appendingPathComponent("event.request"))
+  let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+  while eventCount == 0, ContinuousClock.now < deadline {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+
+  #expect(eventCount > 0)
+  watcher.stop()
+  #expect(!watcher.isWatching)
+}
+
 @Test("Aster CLI 完整转发 capture 参数并同步返回输出与退出码")
 @MainActor
 func asterCLIForwardsCaptureAndReturnsSynchronousResponse() throws {

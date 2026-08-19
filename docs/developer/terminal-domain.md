@@ -194,7 +194,7 @@ Edit 菜单的“插入”提供文件/目录路径和交互式截屏，均把�
 
 同一菜单按 Otty 顺序提供“编辑器”(`⇧⌘E`)、“Prompt 队列…”(`⇧⌘M`) 与“发送到聊天…”。“编辑器”实际映射到 `toggleComposer()`：默认在当前活动 Pane 底部渲染 `AgentComposer`，不会创建文件选择器或资源 Pane；本地文件编辑继续经“文件”、文件树或路径入口的 `openResource(..., mode: .edit)` 创建。后两项直接调用既有 Prompt Queue 与 Agent Chat 领域流程，不创建菜单层状态副本。
 
-`TerminalSession` 在终端输出到达、用户输入写入 PTY 前、Pane 获焦和配置开启时立即对 PTY master 调用 `tcgetattr`，既有一秒轮询只作兜底。当自动保护开启、窗口与 Pane 聚焦、`ECHO` 关闭且 `ICANON` 仍开启时，向 `SecureInputCoordinator` 注册当前 Session；raw-mode TUI、失焦、恢复回显、进程结束、关闭 Pane 或关闭设置都会释放。协调器只在首个自动/手动请求时调用 `EnableSecureEventInput`，最后一个请求释放时调用 `DisableSecureEventInput`；启用或关闭失败都保留真实状态并允许后续同步重试。`isSystemProtectionActive` 是主窗口标题栏 `SECURE INPUT` 胶囊的唯一真值，只有 Carbon API 已真实启用时才显示。手动开关位于 Edit 菜单且不持久化为导入配置；应用失活时只暂停系统保护，重新激活后按用户开关恢复。
+`TerminalSession` 在终端输出到达、用户输入写入 PTY 前、Pane 获焦和配置开启时立即对 PTY master 调用 `tcgetattr`；SwiftTerm 的一秒轮询只作无 I/O Secure Input 兜底。Ghostty 由 `onSecureInputChange` 事件驱动，首次收到合法 OSC 133、建立权威命令时间线后会取消前台 PID 轮询，surface 退出继续由独立 callback 负责。当自动保护开启、窗口与 Pane 聚焦、`ECHO` 关闭且 `ICANON` 仍开启时，向 `SecureInputCoordinator` 注册当前 Session；raw-mode TUI、失焦、恢复回显、进程结束、关闭 Pane 或关闭设置都会释放。协调器只在首个自动/手动请求时调用 `EnableSecureEventInput`，最后一个请求释放时调用 `DisableSecureEventInput`；启用或关闭失败都保留真实状态并允许后续同步重试。`isSystemProtectionActive` 是主窗口标题栏 `SECURE INPUT` 胶囊的唯一真值，只有 Carbon API 已真实启用时才显示。手动开关位于 Edit 菜单且不持久化为导入配置；应用失活时只暂停系统保护，重新激活后按用户开关恢复。
 
 Display 菜单的 `⌘=`、`⌘-` 与 `⌘0` 直接调整全局 `appearance.fontSize`（9...32pt，默认 13pt），沿用配置广播就地刷新全部存活终端；边界上的增减命令会置灰。`Fn+F` 路由到当前工作区窗口的原生 `toggleFullScreen`，菜单标题随窗口状态切换为“进入全屏幕”或“退出全屏幕”。
 

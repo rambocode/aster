@@ -111,6 +111,12 @@ func dockIconStateTracksAgentLifecycleAndExplicitError() async throws {
   #expect(coordinator.currentState == .working)
   #expect(NSApp.dockTile.contentView != nil)
   #expect(NSApp.dockTile.badgeLabel == nil)
+  // 一圈最多生成 12 个离散角度；完成一圈后继续动画只能复用缓存帧。
+  try await Task.sleep(for: .seconds(3))
+  let renderedIconCount = coordinator.renderedIconCount
+  try await Task.sleep(for: .milliseconds(500))
+  #expect(renderedIconCount <= 12)
+  #expect(coordinator.renderedIconCount == renderedIconCount)
 
   terminalView.onAgentTerminalDirective?(
     AgentTerminalDirective(provider: .codex, signal: .idle)

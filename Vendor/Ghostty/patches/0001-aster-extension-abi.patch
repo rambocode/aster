@@ -627,12 +627,52 @@ index 730913e..9a9f9f8 100644
      /// Tell the surface that it needs to schedule a render
      export fn ghostty_surface_refresh(surface: *Surface) void {
          surface.refresh();
+diff --git a/src/renderer/Thread.zig b/src/renderer/Thread.zig
+index 5087213..2fa2626 100644
+--- a/src/renderer/Thread.zig
++++ b/src/renderer/Thread.zig
+@@ -564,6 +564,8 @@ fn drawNowCallback(
+
+     // Draw immediately
+     const t = self_.?;
++    if (@hasDecl(rendererpkg.Renderer, "consumeVsync") and
++        !t.renderer.consumeVsync()) return .rearm;
+     t.drawFrame(true);
+
+     return .rearm;
+@@ -613,6 +615,10 @@ fn renderCallback(
+     ) catch |err|
+         log.warn("error rendering err={}", .{err});
+
++    if (@hasDecl(rendererpkg.Renderer, "requestVsync")) {
++        t.renderer.requestVsync();
++    }
++
+     // Draw
+     t.drawFrame(false);
+
 diff --git a/src/renderer/generic.zig b/src/renderer/generic.zig
-index 0f4a294..d6dece9 100644
+index 0f4a294..b32f66f 100644
 --- a/src/renderer/generic.zig
 +++ b/src/renderer/generic.zig
-@@ -691,7 +691,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
- 
+@@ -115,6 +115,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+         /// True if the window is focused
+         focused: bool,
+
++        /// True while the embedded surface is visible. The display link is
++        /// armed only when both visibility and focus allow presenting frames.
++        visible: bool = true,
++
++        /// A focused macOS display link runs for pending visual work, then
++        /// stops after one quiet refresh. This preserves synchronized drawing
++        /// without waking at the full display rate while the terminal is idle.
++        vsync_requested: bool = true,
++
+         /// Flag to indicate that our focus state changed for custom
+         /// shaders to update their state.
+         custom_shader_focused_changed: bool = false,
+@@ -691,7 +700,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+
              const display_link: ?DisplayLink = switch (builtin.os.tag) {
                  .macos => if (options.config.vsync)
 -                    try macos.video.DisplayLink.createWithActiveCGDisplays()
@@ -646,6 +686,54 @@ index 0f4a294..d6dece9 100644
                  else
                      null,
                  else => null,
+@@ -1023,6 +1038,30 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+             return display_link.isRunning();
+         }
+
++        /// Arm the macOS display link for the next synchronized frame. Repeated
++        /// updates before the next refresh coalesce into the same presentation.
++        pub fn requestVsync(self: *Self) void {
++            if (comptime DisplayLink == void) return;
++            const display_link = self.display_link orelse return;
++            if (!self.focused or !self.visible) return;
++            self.vsync_requested = true;
++            display_link.start() catch {};
++        }
++
++        /// Consume one display-link refresh. Animated shaders remain
++        /// continuous; ordinary terminals stop after the first quiet refresh.
++        pub fn consumeVsync(self: *Self) bool {
++            if (comptime DisplayLink == void) return true;
++            const display_link = self.display_link orelse return true;
++            if (self.hasAnimations()) return true;
++            if (self.vsync_requested) {
++                self.vsync_requested = false;
++                return true;
++            }
++            display_link.stop() catch {};
++            return false;
++        }
++
+         /// Callback when the focus changes for the terminal this is rendering.
+         ///
+         /// Must be called on the render thread.
+@@ -1030,6 +1069,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+             assert(self.focused != focus);
+
+             self.focused = focus;
++            self.vsync_requested = focus;
+
+             // Flag that we need to update our custom shaders
+             self.custom_shader_focused_changed = true;
+@@ -1051,6 +1091,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+         ///
+         /// Must be called on the render thread.
+         pub fn setVisible(self: *Self, visible: bool) void {
++            self.visible = visible;
++            self.vsync_requested = visible and self.focused;
+             // If we're not visible, then we want to stop the display link
+             // because it is a waste of resources and we can move to pure
+             // change-driven updates.
 diff --git a/src/termio/Options.zig b/src/termio/Options.zig
 index a6bf8c4..f470e91 100644
 --- a/src/termio/Options.zig

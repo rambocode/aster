@@ -17,9 +17,16 @@ final class DockActivityCoordinator {
   private var agentSleepActivity: NSObjectProtocol?
   private var animationPhase = 0
   private let imageView = NSImageView()
+  /// Working 动画只有 12 个离散角度。按需缓存已经出现的帧，避免每 220ms 重复把同一
+  /// NSImage 栅格化；短任务只生成实际展示过的帧，长任务完成一圈后完全复用缓存。
+  private var cachedApplicationIcon: NSImage?
+  private var cachedWorkingFrames: [Int: NSImage] = [:]
+  private var cachedErrorIcon: NSImage?
   /// 最近一次已应用的聚合状态。它同时作为幂等诊断真值和自动化验收 seam；不包含
   /// 标签、命令或终端内容，也不参与持久化。
   private(set) var currentState = DockActivityState.idle
+  /// 图标真正执行栅格化的累计次数。仅用于性能回归诊断，不参与 UI 或持久化。
+  private(set) var renderedIconCount = 0
 
   init(model: AppModel, preferences: AppPreferences) {
     self.preferences = preferences
@@ -147,7 +154,7 @@ final class DockActivityCoordinator {
       NSApp.dockTile.badgeLabel = nil
       NSApp.dockTile.display()
     case .error:
-      imageView.image = renderedIcon(angle: 0, errorTint: true)
+      imageView.image = errorIcon()
       NSApp.dockTile.contentView = imageView
       NSApp.dockTile.badgeLabel = "!"
       NSApp.dockTile.display()
@@ -164,12 +171,43 @@ final class DockActivityCoordinator {
 
   private func advanceAnimation() {
     animationPhase = (animationPhase + 1) % 12
-    imageView.image = renderedIcon(angle: CGFloat(animationPhase) * 2.5, errorTint: false)
+    imageView.image = workingIcon(for: animationPhase)
     NSApp.dockTile.display()
   }
 
-  private func renderedIcon(angle: CGFloat, errorTint: Bool) -> NSImage {
+  private func workingIcon(for phase: Int) -> NSImage {
+    let source = applicationIcon()
+    if let cached = cachedWorkingFrames[phase] { return cached }
+    let image = renderedIcon(
+      source: source,
+      angle: CGFloat(phase) * 2.5,
+      errorTint: false
+    )
+    cachedWorkingFrames[phase] = image
+    return image
+  }
+
+  private func errorIcon() -> NSImage {
+    let source = applicationIcon()
+    if let cachedErrorIcon { return cachedErrorIcon }
+    let image = renderedIcon(source: source, angle: 0, errorTint: true)
+    cachedErrorIcon = image
+    return image
+  }
+
+  /// 应用图标在运行时被替换时清空派生帧，保证 Dock 始终展示当前品牌资源。
+  private func applicationIcon() -> NSImage {
     let source = NSApp.applicationIconImage ?? NSImage(size: NSSize(width: 128, height: 128))
+    if cachedApplicationIcon !== source {
+      cachedApplicationIcon = source
+      cachedWorkingFrames.removeAll(keepingCapacity: true)
+      cachedErrorIcon = nil
+    }
+    return source
+  }
+
+  private func renderedIcon(source: NSImage, angle: CGFloat, errorTint: Bool) -> NSImage {
+    renderedIconCount += 1
     let size = source.size.width > 0 ? source.size : NSSize(width: 128, height: 128)
     let result = NSImage(size: size)
     result.lockFocus()

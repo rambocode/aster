@@ -222,9 +222,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   private var pictureInPictureController: PanePictureInPictureController?
   /// sheet 必须被应用生命周期强持有，避免系统动画期间控制器提前释放。
   private var feedbackSheetController: FeedbackSheetController?
-  /// CLI 使用受保护文件传输而非常驻 socket。主线程定时器只消费已经落盘的小型
-  /// 请求头；实际 `run/exec` 完成由 Shell Integration 回调异步写回，不阻塞界面。
-  private var cliRequestTimer: Timer?
+  /// CLI 使用受保护文件传输而非常驻 socket。正常路径由目录 vnode 事件按需唤醒，
+  /// 避免应用空闲时每 100ms 扫描一次；只有文件系统监听无法建立时才启用兼容 timer。
+  private var cliRequestWatcher: FileSystemDirectoryWatcher?
+  private var cliRequestFallbackTimer: Timer?
   /// 附加窗口各自拥有独立 AppModel/PTY 树；Preferences 仍全局共享。以窗口对象身份
   /// 查找模型，菜单动作始终路由到 key window，不会误操作首个窗口。
   private var additionalWorkspaceWindows: [ObjectIdentifier: WorkspaceWindowRecord] = [:]
@@ -322,8 +323,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     themeSwitcherPanelController?.dismiss(commit: false)
     themeSwitcherPanelController = nil
     persistAdditionalWorkspaceSuites()
-    cliRequestTimer?.invalidate()
-    cliRequestTimer = nil
+    cliRequestWatcher?.stop()
+    cliRequestWatcher = nil
+    cliRequestFallbackTimer?.invalidate()
+    cliRequestFallbackTimer = nil
     dockActivityCoordinator.stop()
     SecureInputCoordinator.shared.setApplicationActive(false)
     DiagnosticsCenter.shared.finish(reason: "application_will_terminate")
@@ -373,31 +376,52 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     showMainWindow()
   }
 
-  /// 每轮设置消费上限，防止恶意或损坏目录持续产出请求而饿死 AppKit event loop。
-  /// 服务层会先完成 token、owner、权限、普通文件和参数校验，本层只做窗口路由。
+  /// 优先监听私有请求目录的 vnode 事件。DispatchSource 可能合并多个文件变更，因此
+  /// 每次唤醒都按有界批次持续排空；监听建立失败时保留原 100ms timer 作为功能兜底。
   private func startCLIRequestConsumer() {
-    guard cliRequestTimer == nil, AutocompleteService.shared?.cliRequestService != nil else {
+    guard cliRequestWatcher == nil, cliRequestFallbackTimer == nil,
+      let service = AutocompleteService.shared?.cliRequestService
+    else {
       return
     }
-    cliRequestTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) {
-      [weak self] _ in
-      MainActor.assumeIsolated { self?.drainCLIRequests() }
+
+    let watcher = FileSystemDirectoryWatcher(directory: service.requestsDirectory)
+    do {
+      try watcher.start { [weak self] in self?.consumeCLIRequests() }
+      cliRequestWatcher = watcher
+    } catch {
+      DiagnosticsCenter.shared.record(
+        "cli.request_watch_failed", level: .warning, category: .integration, error: error)
+      cliRequestFallbackTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) {
+        [weak self] _ in
+        MainActor.assumeIsolated { self?.consumeCLIRequests() }
+      }
+      cliRequestFallbackTimer?.tolerance = 0.025
     }
-    cliRequestTimer?.tolerance = 0.025
-    drainCLIRequests()
+    consumeCLIRequests()
   }
 
-  private func drainCLIRequests(maximumCount: Int = 32) {
-    guard let service = AutocompleteService.shared?.cliRequestService else { return }
+  /// 每轮设置消费上限，防止恶意或损坏目录持续产出请求而饿死 AppKit event loop。
+  /// 达到上限时让出一轮主队列再继续；服务层先完成所有安全校验，本层只做窗口路由。
+  private func consumeCLIRequests(maximumCount: Int = 32) {
+    guard drainCLIRequests(maximumCount: maximumCount) else { return }
+    DispatchQueue.main.async { [weak self] in
+      self?.consumeCLIRequests(maximumCount: maximumCount)
+    }
+  }
+
+  /// 返回 true 表示完整消耗了本轮预算，目录中可能仍有被合并事件覆盖的请求。
+  private func drainCLIRequests(maximumCount: Int) -> Bool {
+    guard let service = AutocompleteService.shared?.cliRequestService else { return false }
     for _ in 0..<maximumCount {
       let request: AsterCLIRequest
       do {
-        guard let next = try service.takeNextRequest() else { return }
+        guard let next = try service.takeNextRequest() else { return false }
         request = next
       } catch {
         DiagnosticsCenter.shared.record(
           "cli.request_consume_failed", level: .error, category: .integration, error: error)
-        return
+        return false
       }
       activeWorkspaceModel.executeWorkflowCLI(
         request.action,
@@ -417,6 +441,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         }
       }
     }
+    return true
   }
 
   private func showMainWindow() {

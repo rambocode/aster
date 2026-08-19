@@ -19,6 +19,52 @@ func fileRenderPipelineSupportsOperatorToken() async throws {
   #expect(!data.isEmpty)
 }
 
+@Test("File Pane 通过目录事件即时重载外部 atomic replace")
+@MainActor
+func filePaneReloadsExternalAtomicReplacementWithoutPolling() async throws {
+  _ = NSApplication.shared
+  let suite = "AsterFilePaneEventsTests.\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suite))
+  defaults.removePersistentDomain(forName: suite)
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "aster-file-pane-events-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+  defer {
+    defaults.removePersistentDomain(forName: suite)
+    try? FileManager.default.removeItem(at: root)
+  }
+  let file = root.appendingPathComponent("event.swift")
+  try Data("let value = 1\n".utf8).write(to: file)
+  let descriptor = PaneDescriptor(
+    kind: .editor,
+    workingDirectory: root.path,
+    resourcePath: file.path
+  )
+  let tab = TerminalTabItem(
+    title: "event.swift",
+    workingDirectory: root.path,
+    layout: .leaf(descriptor)
+  )
+  let runtime = try #require(tab.activeRuntime)
+  let controller = FilePaneViewController(
+    runtime: runtime,
+    tab: tab,
+    model: AppModel(defaults: defaults),
+    preferences: AppPreferences(defaults: defaults)
+  )
+  controller.loadViewIfNeeded()
+  try await Task.sleep(for: .milliseconds(20))
+
+  let replacement = "let value = 2\n"
+  try Data(replacement.utf8).write(to: file, options: .atomic)
+  let deadline = ContinuousClock.now.advanced(by: .milliseconds(500))
+  while runtime.documentText != replacement, ContinuousClock.now < deadline {
+    try await Task.sleep(for: .milliseconds(10))
+  }
+
+  #expect(runtime.documentText == replacement)
+}
+
 @Test("Preview File Pane 默认只读并展示统一保存关闭工具栏")
 @MainActor
 func previewFilePaneStartsReadOnlyWithUnifiedToolbar() throws {
