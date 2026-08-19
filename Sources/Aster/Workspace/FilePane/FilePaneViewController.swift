@@ -675,7 +675,7 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
     Task.detached(priority: .userInitiated) {
       let document = AgentTranscriptHTML.document(body: AgentTranscriptHTML.body(entries: entries))
       await MainActor.run { [weak webView] in
-        webView?.loadHTMLString(document, baseURL: nil)
+        _ = webView?.loadHTMLString(document, baseURL: nil)
       }
     }
     let body: NSView = webView

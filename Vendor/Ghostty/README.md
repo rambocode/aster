@@ -25,6 +25,13 @@ Aster 的嵌入式 renderer 额外把 focused display link 改为按需运行：
 这不等于 `window-vsync=false`：每个真实帧仍由 display link 对齐，避免撕裂、外接显示器
 性能问题和上游文档警告的 macOS 风险。
 
+Pinned patch 还把 dcimgui 的 `ext.cpp` 重命名为唯一的 `dcimgui_ext.cpp`。上游静态库同时
+链接 `pkg/macos/text/ext.c`，两个源文件原本都会生成名为 `ext.o` 的 archive member；Mach-O
+debug map 只保存 member basename，`dsymutil` 会选错对象并误报 ImGui 构造符号不存在。
+唯一 member 名保留完整 DWARF 调试信息，不以 strip 或 warning suppression 掩盖冲突。
+`setup-ghostty.sh` 会拒绝任何仍含重复 member basename 的生成库，把 debug-map 兼容性作为
+与 ABI header、terminfo 和 runtime resources 同级的产物门禁。
+
 构建 stamp 同时包含 revision 与 patch SHA-256，因此改动补丁后不会误复用旧二进制。
 更新 revision 时先在干净 clone 中执行 `git apply --check`，解决冲突后重新生成补丁，
 再运行 Zig 定向测试、完整 Swift 测试与 release App 验收，并核对导出的 ABI 版本。

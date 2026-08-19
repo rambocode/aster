@@ -76,11 +76,24 @@ cp -R "$build_dir/zig-out/share/terminfo" "$staging_dir/Resources/terminfo"
 
 shopt -s nullglob
 headers=("$staging_dir"/GhosttyKit.xcframework/macos-*/Headers/ghostty.h)
+libraries=("$staging_dir"/GhosttyKit.xcframework/macos-*/libghostty-internal-fat.a)
 shopt -u nullglob
 if [[ "${#headers[@]}" -ne 1 ]] ||
    ! /usr/bin/grep -q 'GHOSTTY_ASTER_EXTENSION_ABI_VERSION 1u' "${headers[0]}" ||
    ! /usr/bin/grep -q 'ghostty_aster_surface_search' "${headers[0]}"; then
   echo "error: generated GhosttyKit is missing the required Aster ABI v1" >&2
+  exit 1
+fi
+if [[ "${#libraries[@]}" -ne 1 ]]; then
+  echo "error: generated GhosttyKit does not contain exactly one static library" >&2
+  exit 1
+fi
+duplicate_members="$(/usr/bin/ar -t "${libraries[0]}" | LC_ALL=C /usr/bin/sort | /usr/bin/uniq -d)"
+if [[ -n "$duplicate_members" ]]; then
+  # Mach-O debug maps identify archive members by basename. Duplicate names make dsymutil
+  # resolve DWARF against the wrong object and emit misleading missing-symbol warnings.
+  echo "error: generated Ghostty archive contains duplicate member names:" >&2
+  echo "$duplicate_members" >&2
   exit 1
 fi
 if [[ ! -d "$staging_dir/Resources/ghostty/shell-integration" ]] ||

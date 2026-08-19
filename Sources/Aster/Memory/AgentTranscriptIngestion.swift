@@ -90,7 +90,7 @@ enum AgentTranscriptIngestion {
           )))
 
       // 只有拿到可判定路径时才派生文件事件；没有路径的读写工具不猜测目标。
-      guard let redactedPath else { continue }
+      guard redactedPath != nil else { continue }
       let derived: MemoryEventKind
       switch invocation.effect {
       case .read: derived = .fileRead

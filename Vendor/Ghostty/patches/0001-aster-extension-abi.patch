@@ -1087,3 +1087,18 @@ index 1d1bfe2..8919790 100644
  /// Sends a DSR response for the current color scheme to the pty.
  pub fn colorSchemeReport(self: *Termio, td: *ThreadData, force: bool) !void {
      self.renderer_state.mutex.lock();
+diff --git a/pkg/dcimgui/build.zig b/pkg/dcimgui/build.zig
+index 924e7c9..772f591 100644
+--- a/pkg/dcimgui/build.zig
++++ b/pkg/dcimgui/build.zig
+@@ -182,5 +182,5 @@ pub fn build(b: *std.Build) !void {
+         lib.addCSourceFiles(.{
+             .root = b.path(""),
+-            .files = &.{"ext.cpp"},
++            .files = &.{"dcimgui_ext.cpp"},
+             .flags = flags.items,
+         });
+diff --git a/pkg/dcimgui/ext.cpp b/pkg/dcimgui/dcimgui_ext.cpp
+similarity index 100%
+rename from pkg/dcimgui/ext.cpp
+rename to pkg/dcimgui/dcimgui_ext.cpp

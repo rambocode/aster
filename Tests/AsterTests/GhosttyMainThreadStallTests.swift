@@ -18,22 +18,32 @@ extension NSView {
 /// 用户可感知的"严重阻塞"至少是数百毫秒级。
 @MainActor
 private func maxHeartbeatGap(during body: @MainActor () async throws -> Void) async rethrows -> Duration {
-  var maxGap: Duration = .zero
-  var running = true
-  let heartbeat = Task { @MainActor in
+  let heartbeat = Task { @MainActor () -> Duration in
+    var maxGap: Duration = .zero
     var last = ContinuousClock.now
-    while running {
-      try? await Task.sleep(for: .milliseconds(10))
+    while !Task.isCancelled {
+      do {
+        try await Task.sleep(for: .milliseconds(10))
+      } catch {
+        break
+      }
       let now = ContinuousClock.now
       let gap = now - last
       if gap > maxGap { maxGap = gap }
       last = now
     }
+    return maxGap
   }
-  try await body()
-  running = false
-  _ = await heartbeat.value
-  return maxGap
+  do {
+    try await body()
+  } catch {
+    // body 失败时也必须结束心跳；否则测试结束后会残留永久 MainActor task。
+    heartbeat.cancel()
+    _ = await heartbeat.value
+    throw error
+  }
+  heartbeat.cancel()
+  return await heartbeat.value
 }
 
 /// 在测试窗口中创建一个已运行 Shell 的 Ghostty surface,返回其 host 与 view。
