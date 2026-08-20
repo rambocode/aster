@@ -166,6 +166,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   static let sidebarIdentifier = NSUserInterfaceItemIdentifier("settings-sidebar")
   static let contentIdentifier = NSUserInterfaceItemIdentifier("settings-content")
   static let searchIdentifier = NSUserInterfaceItemIdentifier("settings-search")
+  static let titlebarDragStripIdentifier = NSUserInterfaceItemIdentifier("settings-titlebar-drag")
 
   enum FontScope: Int, CaseIterable {
     case computed
@@ -212,7 +213,24 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     webView.setValue(false, forKey: "drawsBackground")
     settingsMessageProxy = proxy
     settingsWebView = webView
-    view = webView
+
+    // 窗口开了 fullSizeContentView（侧栏底色要一直铺到窗口顶部），网页因此延伸到透明
+    // 标题栏下面。WebKit 会吃掉自己区域内的 mouseDown，标题栏那一条就再也拖不动窗口，
+    // 所以在最上层压一条等高的透明视图，把这段区域的鼠标事件还给窗口。
+    let root = NSView(frame: NSRect(origin: .zero, size: Self.defaultContentSize))
+    root.addSubview(webView)
+    webView.pinEdges(to: root)
+    let dragStrip = SettingsTitlebarDragStrip()
+    dragStrip.identifier = Self.titlebarDragStripIdentifier
+    root.addSubview(dragStrip)
+    dragStrip.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      dragStrip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+      dragStrip.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+      dragStrip.topAnchor.constraint(equalTo: root.topAnchor),
+      dragStrip.heightAnchor.constraint(equalToConstant: SettingsMetrics.titlebarDragStripHeight)
+    ])
+    view = root
   }
 
   override func viewDidLoad() {

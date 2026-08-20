@@ -65,7 +65,13 @@ func settingsUsesOneEphemeralWebView() throws {
   controller.loadViewIfNeeded()
 
   let webView = try #require(controller.settingsWebViewForTesting)
-  #expect(controller.view === webView)
+  // 根视图不再是 WebView 本身：fullSizeContentView 下要在它上面压一条透明拖拽条，
+  // 否则标题栏区域的 mouseDown 会被 WebKit 吃掉，窗口拖不动。
+  #expect(webView.superview === controller.view)
+  #expect(controller.view.subviews.contains {
+    $0.identifier == SettingsViewController.titlebarDragStripIdentifier
+  })
+  #expect(controller.view.subviews.last is SettingsTitlebarDragStrip)
   #expect(!webView.configuration.websiteDataStore.isPersistent)
   #expect(webView.identifier?.rawValue == "settings-web-view")
   #expect(controller.sections.count == 9)

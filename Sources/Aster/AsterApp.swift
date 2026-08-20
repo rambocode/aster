@@ -112,15 +112,20 @@ final class AsterSettingsWindowController: NSWindowController {
         origin: .zero,
         size: restoredSize
       ),
-      // 设置内容是占满 contentView 的 WKWebView，不能使用 fullSizeContentView：WebKit
-      // 会延伸到透明标题栏并吞掉 mouseDown，使系统标题栏失去窗口拖动能力。
-      styleMask: [.titled, .closable, .miniaturizable, .resizable],
+      // fullSizeContentView 让网页一直铺到窗口顶部，侧栏底色因此能盖住标题栏那一条
+      // （对齐 Otty），否则顶部会露出一道窗口底色的白带。WebKit 会吃掉自己区域内的
+      // mouseDown，窗口拖拽由 `SettingsViewController` 压在顶部的透明拖拽条补回来。
+      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
     )
     window.title = "Aster 设置"
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
+    // fullSizeContentView 下窗口没有可点的标题栏留白，拖拽全靠顶部那条透明拖拽条把
+    // mouseDown 让给窗口；`mouseDownCanMoveWindow` 只有在窗口允许背景拖拽时才生效。
+    // 网页自己会消费落在控件上的事件，因此这不会让整页都变成拖拽区。
+    window.isMovableByWindowBackground = true
     window.contentViewController = content
     // min/max 是 frame 尺寸（含标题栏），必须由内容尺寸换算，直接拿内容高度会把可用
     // 高度少算一条标题栏，最小化拖拽时窗口会比设计下限更矮。

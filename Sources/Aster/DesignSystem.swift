@@ -308,6 +308,25 @@ enum SettingsMetrics {
   static let controlTextSize: CGFloat = 11
   // 全高侧栏窗口（fullSizeContentView）下为标题栏红绿灯让出的顶部空间。
   static let sidebarTopInset: CGFloat = 44
+  /// 标准 titled 窗口的标题栏高度；设置页用它盖出一条可拖拽的透明区域。
+  static let titlebarDragStripHeight: CGFloat = 28
+}
+
+/// 透明拖拽条。设置页内容是一整块 WKWebView，开了 fullSizeContentView 之后标题栏那一条
+/// 也落在网页上，WebKit 会吃掉 mouseDown 让窗口拖不动。这层视图压在最上面接管该区域：
+/// 单击拖拽交给 `performDrag`（比 `mouseDownCanMoveWindow` 可靠，不依赖窗口背景拖拽开关），
+/// 双击沿用系统标题栏的缩放行为。自身不绘制任何内容，透明标题栏下的网页依旧完整可见。
+final class SettingsTitlebarDragStrip: NSView {
+  override var mouseDownCanMoveWindow: Bool { true }
+
+  override func mouseDown(with event: NSEvent) {
+    guard let window else { return super.mouseDown(with: event) }
+    if event.clickCount == 2 {
+      window.performZoom(nil)
+      return
+    }
+    window.performDrag(with: event)
+  }
 }
 
 /// 滚动文档使用左上原点，内部仍放置标准 `NSStackView`。不要直接翻转 StackView：

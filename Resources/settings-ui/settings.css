@@ -8,6 +8,8 @@
   --bg-element: #262626;
   --accent: #666;
   --accent-muted: rgb(255 255 255 / 8%);
+  /* 侧栏选中行用中性灰而不是强调色：对齐 Otty，导航不该被染上蓝色。 */
+  --nav-selected: #2c2c2c;
   --text-primary: #eee;
   --text-secondary: #989898;
   --text-tertiary: #777;
@@ -35,6 +37,7 @@
     --bg-element: #fff;
     --accent: #007aff;
     --accent-muted: rgb(0 122 255 / 9%);
+    --nav-selected: #ebebeb;
     --text-primary: #1a1a1a;
     --text-secondary: #666;
     --text-tertiary: #aaa;
@@ -134,11 +137,12 @@ textarea { cursor: text; user-select: text; }
 
 .search-wrap input::placeholder { color: var(--text-tertiary); }
 
+/* 左右内边距必须为 0，且不能预留滚动条槽：选中行的底色要整宽贴到侧栏两侧边缘
+   （Otty 风格）。缩进改由 .nav-item 自己的 padding 提供，图标位置保持不变。 */
 #settings-nav {
   min-height: 0;
-  padding: 0 8px 14px;
+  padding: 0 0 14px;
   overflow-y: auto;
-  scrollbar-gutter: stable;
 }
 
 .nav-item {
@@ -147,17 +151,17 @@ textarea { cursor: text; user-select: text; }
   height: 31px;
   align-items: center;
   gap: 9px;
-  padding: 0 10px;
+  padding: 0 18px;
   color: var(--text-secondary);
   background: transparent;
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: 0;
   text-align: left;
   transition: color 120ms ease, background-color 120ms ease;
 }
 
 .nav-item:hover { color: var(--text-primary); background: var(--bg-hover); }
-.nav-item[aria-current="page"] { color: var(--text-primary); background: var(--accent-muted); font-weight: 600; }
+.nav-item[aria-current="page"] { color: var(--text-primary); background: var(--nav-selected); font-weight: 600; }
 .nav-item svg { width: 15px; height: 15px; flex: 0 0 15px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 
 .content {
