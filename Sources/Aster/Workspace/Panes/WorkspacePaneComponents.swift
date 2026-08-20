@@ -209,22 +209,6 @@ enum PaneDropGeometry {
   }
 }
 
-/// 窗口失去键盘焦点时叠在工作区之上的褪色遮罩。
-///
-/// AppKit 只会自动灰化系统控件，终端网格、侧栏和自绘视图都不受影响，非活动窗口
-/// 看起来仍然「亮着」，多窗口下分不清哪个在接收输入。遮罩用主题窗口底色，
-/// 因此深浅主题都是朝各自背景褪色，而不是压一层固定的灰。
-@MainActor
-final class InactiveWindowOverlayView: NSView {
-  /// 覆盖层不参与命中测试：失焦窗口的第一次点击仍应正常落到下面的终端上。
-  override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-  override func draw(_ dirtyRect: NSRect) {
-    AsterTheme.paper.withAlphaComponent(0.45).setFill()
-    dirtyRect.fill()
-  }
-}
-
 /// 拖动 Pane 时覆盖在工作区之上的落点提示层。参考应用用两种颜色区分语义：
 /// 面板边缘（强调色）＝插到这一侧，面板中心（绿色）＝与该面板交换位置。
 @MainActor

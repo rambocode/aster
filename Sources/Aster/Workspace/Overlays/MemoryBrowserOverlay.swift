@@ -57,6 +57,10 @@ final class MemoryBrowserRowButton: NSButton {
     action = #selector(invoke)
     translatesAutoresizingMaskIntoConstraints = false
     heightAnchor.constraint(equalToConstant: 46).isActive = true
+    // 行宽由列表列决定，不能由标题的固有宽度反推：长标题会把整列撑宽，
+    // 短标题又会让行缩成一小条并浮在列中间（截断交给 lineBreakMode）。
+    setContentHuggingPriority(.defaultLow, for: .horizontal)
+    setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     applyBackground()
   }
 
@@ -64,11 +68,15 @@ final class MemoryBrowserRowButton: NSButton {
 
   /// 两行富文本：标题一行、元信息一行。已禁用的条目整体降透明度，
   /// 让「这条不会再进入 Agent 上下文」在列表里一眼可见。
+  ///
+  /// 段落显式左对齐：`NSButtonCell` 绘制 attributedTitle 时只认 paragraph style 的
+  /// alignment，不设的话长短不一的标题会各自居中，列表左边缘参差不齐。
   private static func makeTitle(item: MemoryListItem) -> NSAttributedString {
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineBreakMode = .byTruncatingTail
+    paragraph.alignment = .left
     paragraph.lineSpacing = 1
-    let titleColor = item.isDisabled ? AsterTheme.tertiaryInk : AsterTheme.ink
+    let titleColor: NSColor = item.isDisabled ? .tertiaryLabelColor : .labelColor
     let result = NSMutableAttributedString(
       string: item.title + "\n",
       attributes: [
@@ -81,7 +89,7 @@ final class MemoryBrowserRowButton: NSButton {
         string: item.subtitle,
         attributes: [
           .font: NSFont.systemFont(ofSize: 10.5, weight: .regular),
-          .foregroundColor: AsterTheme.secondaryInk,
+          .foregroundColor: NSColor.secondaryLabelColor,
           .paragraphStyle: paragraph,
         ]))
     return result
@@ -114,12 +122,14 @@ final class MemoryBrowserRowButton: NSButton {
     applyBackground()
   }
 
+  /// 选中/悬停一律用系统语义色：这个面板是独立窗口，跟着终端主题走会和窗体
+  /// 底色打架，只应随系统的浅色/深色外观变化。
   private func applyBackground() {
     let color: NSColor
     if isSelectedRow {
-      color = AsterTheme.accent.withAlphaComponent(0.18)
+      color = .unemphasizedSelectedContentBackgroundColor
     } else if isHovering {
-      color = AsterTheme.accent.withAlphaComponent(0.08)
+      color = .quaternaryLabelColor
     } else {
       color = .clear
     }
@@ -141,10 +151,10 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
   private let segmented = NSSegmentedControl()
   private let search = OverlaySearchField()
   private let listStack = NSStackView()
-  private let detailTitle = makeLabel("", size: 13, weight: .semibold)
-  private let detailSubtitle = makeLabel("", size: 11, color: AsterTheme.secondaryInk)
+  private let detailTitle = makeLabel("", size: 13, weight: .semibold, color: .labelColor)
+  private let detailSubtitle = makeLabel("", size: 11, color: .secondaryLabelColor)
   private let detailText = NSTextView()
-  private let statusLabel = makeLabel("", size: 11, color: AsterTheme.secondaryInk)
+  private let statusLabel = makeLabel("", size: 11, color: .secondaryLabelColor)
   private let primaryButton = NSButton(title: "", target: nil, action: nil)
   /// PINNED 固定席位的开关（zero-mem 教训：关键事实不该依赖检索排名）。
   private let pinButton = NSButton(title: "", target: nil, action: nil)
@@ -180,16 +190,10 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
   required init?(coder: NSCoder) { nil }
 
   override func loadView() {
+    // 宿主刻意不画任何底色、圆角与边框：这是一个独立面板窗口，自绘 surface 会在
+    // 窗体背景上叠出一块「浮层」，看起来像内容和窗口分了家。留空即让 AppKit 的
+    // windowBackgroundColor 透上来，只随系统浅色/深色变化，不受终端主题影响。
     let host = NSView()
-    host.wantsLayer = true
-    // 浮层脱离工作区的 NSVisualEffectView 宿主，按主题 surface 取色（CLAUDE.md 主题规则）。
-    host.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.99).cgColor
-    host.layer?.cornerRadius = 12
-    host.layer?.borderWidth = 1
-    host.layer?.borderColor = AsterTheme.hairline.cgColor
-    host.shadow = NSShadow()
-    host.shadow?.shadowBlurRadius = 24
-    host.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.22)
 
     segmented.segmentCount = MemoryBrowserTab.allCases.count
     segmented.segmentStyle = .rounded
@@ -221,17 +225,38 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     header.orientation = .horizontal
     header.spacing = 8
 
+    // 列表列：宽度定死，内容满宽且从顶部开始排。直接把 StackView 当 documentView
+    // 会踩两个坑——内容不足一屏时整叠行沉到可视区底部，行宽又退回各自的固有宽度，
+    // 于是列表看起来「居中且忽宽忽窄」。用 FlippedDocumentView 承接并显式钉边。
     listStack.orientation = .vertical
     listStack.spacing = 2
     listStack.alignment = .leading
+    listStack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+    listStack.translatesAutoresizingMaskIntoConstraints = false
+    let listDocument = FlippedDocumentView()
+    listDocument.translatesAutoresizingMaskIntoConstraints = false
+    listDocument.addSubview(listStack)
     let listScroll = NSScrollView()
     listScroll.hasVerticalScroller = true
     listScroll.drawsBackground = false
-    listScroll.documentView = listStack
-    listStack.translatesAutoresizingMaskIntoConstraints = false
-    listStack.widthAnchor.constraint(equalTo: listScroll.contentView.widthAnchor).isActive = true
+    listScroll.documentView = listDocument
     listScroll.translatesAutoresizingMaskIntoConstraints = false
-    listScroll.widthAnchor.constraint(equalToConstant: 300).isActive = true
+    let listWidth = listScroll.widthAnchor.constraint(equalToConstant: 268)
+    NSLayoutConstraint.activate([
+      listDocument.leadingAnchor.constraint(equalTo: listScroll.contentView.leadingAnchor),
+      listDocument.topAnchor.constraint(equalTo: listScroll.contentView.topAnchor),
+      listDocument.widthAnchor.constraint(equalTo: listScroll.contentView.widthAnchor),
+      listDocument.heightAnchor.constraint(
+        greaterThanOrEqualTo: listScroll.contentView.heightAnchor),
+      listStack.leadingAnchor.constraint(equalTo: listDocument.leadingAnchor),
+      listStack.trailingAnchor.constraint(equalTo: listDocument.trailingAnchor),
+      listStack.topAnchor.constraint(equalTo: listDocument.topAnchor),
+      listDocument.bottomAnchor.constraint(greaterThanOrEqualTo: listStack.bottomAnchor),
+      listWidth,
+    ])
+    // 左列不参与剩余空间的分配：窗口变宽时多出来的宽度全部留给正文。
+    listScroll.setContentHuggingPriority(.required, for: .horizontal)
+    listScroll.setContentCompressionResistancePriority(.required, for: .horizontal)
 
     detailTitle.lineBreakMode = .byTruncatingTail
     detailSubtitle.lineBreakMode = .byTruncatingTail
@@ -239,9 +264,9 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     // 否则 documentView 停在零尺寸，正文区看起来永远是空的。
     detailText.isEditable = false
     detailText.isSelectable = true
-    detailText.drawsBackground = true
-    detailText.backgroundColor = AsterTheme.paper
-    detailText.textColor = AsterTheme.ink
+    // 正文不画自己的底色：一块与窗体不同的色块会把正文区切成独立浮层。
+    detailText.drawsBackground = false
+    detailText.textColor = .labelColor
     detailText.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
     detailText.textContainerInset = NSSize(width: 12, height: 12)
     detailText.isVerticallyResizable = true
@@ -252,19 +277,31 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     detailScroll.hasVerticalScroller = true
     detailScroll.drawsBackground = false
     detailScroll.documentView = detailText
+    detailScroll.translatesAutoresizingMaskIntoConstraints = false
     let detailColumn = NSStackView(views: [detailTitle, detailSubtitle, detailScroll])
     detailColumn.orientation = .vertical
     detailColumn.spacing = 4
     detailColumn.alignment = .leading
     detailTitle.translatesAutoresizingMaskIntoConstraints = false
     detailSubtitle.translatesAutoresizingMaskIntoConstraints = false
-    detailTitle.widthAnchor.constraint(equalTo: detailColumn.widthAnchor).isActive = true
-    detailSubtitle.widthAnchor.constraint(equalTo: detailColumn.widthAnchor).isActive = true
+    // 三个子视图一律钉到列的左右边：标题走截断、正文走换行，都按列宽走，
+    // 不让固有宽度反过来决定列宽。
+    for item in [detailTitle, detailSubtitle, detailScroll] as [NSView] {
+      NSLayoutConstraint.activate([
+        item.leadingAnchor.constraint(equalTo: detailColumn.leadingAnchor),
+        item.trailingAnchor.constraint(equalTo: detailColumn.trailingAnchor),
+      ])
+      item.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+    detailScroll.setContentHuggingPriority(.defaultLow, for: .vertical)
 
     let body = NSStackView(views: [listScroll, detailColumn])
     body.orientation = .horizontal
     body.spacing = 10
     body.distribution = .fill
+    // 正文列吃掉全部剩余宽度；下限保证窗口缩到最小时正文仍可读。
+    detailColumn.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    detailColumn.widthAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
 
     for button in [primaryButton, pinButton, deleteButton] {
       button.bezelStyle = .rounded
@@ -273,7 +310,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     primaryButton.action = #selector(primaryAction(_:))
     pinButton.action = #selector(pinAction(_:))
     deleteButton.action = #selector(deleteAction(_:))
-    deleteButton.contentTintColor = AsterTheme.warning
+    deleteButton.contentTintColor = .systemRed
     taskStatusPopUp.addItems(withTitles: TaskStatus.allCases.map(\.displayName))
     taskStatusPopUp.target = self
     taskStatusPopUp.action = #selector(taskStatusChanged(_:))
@@ -285,10 +322,18 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
 
     let column = NSStackView(views: [header, body, footer])
     column.orientation = .vertical
+    column.alignment = .leading
     column.spacing = 10
-    column.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
     host.addSubview(column)
-    column.pinEdges(to: host)
+    column.pinEdges(to: host, insets: NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12))
+    // 三行都显式钉到左右边。竖向 StackView 的 `.width` 对齐在这里不生效（body 会
+    // 停在 598pt 的固有宽度并悬在窗口中间，窗口再宽正文也不变宽），只能自己约束。
+    for row in [header, body, footer] as [NSView] {
+      NSLayoutConstraint.activate([
+        row.leadingAnchor.constraint(equalTo: column.leadingAnchor),
+        row.trailingAnchor.constraint(equalTo: column.trailingAnchor),
+      ])
+    }
     view = host
 
     renderList()
@@ -398,7 +443,12 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
 
     for view in listStack.arrangedSubviews { view.removeFromSuperview() }
     if items.isEmpty {
-      listStack.addArrangedSubview(makeLabel(emptyMessage(), size: 11, color: AsterTheme.secondaryInk))
+      // 空态文案比一行长，必须换行而不是被截断成半句话。
+      let empty = makeLabel(emptyMessage(), size: 11, color: .secondaryLabelColor)
+      empty.lineBreakMode = .byWordWrapping
+      empty.maximumNumberOfLines = 0
+      listStack.addArrangedSubview(empty)
+      pinToListWidth(empty)
     } else {
       for item in items {
         let button = MemoryBrowserRowButton(item: item) { [weak self] in
@@ -406,13 +456,23 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
           self?.updateSelection()
         }
         listStack.addArrangedSubview(button)
-        button.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
+        pinToListWidth(button)
       }
     }
     if selectedID == nil || !items.contains(where: { $0.id == selectedID }) {
       selectedID = items.first?.id
     }
     updateSelection()
+  }
+
+  /// 把一行钉到列表列的左右边缘。行的左边缘对齐靠这一对约束，不靠 StackView 的
+  /// alignment——只对齐 leading 时，短标题的行会缩成一小条，列表左侧就会参差不齐。
+  private func pinToListWidth(_ item: NSView) {
+    item.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      item.leadingAnchor.constraint(equalTo: listStack.leadingAnchor),
+      item.trailingAnchor.constraint(equalTo: listStack.trailingAnchor),
+    ])
   }
 
   private func emptyMessage() -> String {

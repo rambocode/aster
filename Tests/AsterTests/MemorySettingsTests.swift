@@ -326,6 +326,47 @@ func memoryBrowserExposesTaskStatusControl() {
   #expect(popUp?.itemTitles == TaskStatus.allCases.map(\.displayName))
 }
 
+@Test("Memory 浏览器左列宽度固定、右列吃满剩余宽度，且不叠自绘底色")
+@MainActor
+func memoryBrowserLayoutKeepsListFixedAndDetailFlexible() throws {
+  let suite = "MemorySettingsTests.\(UUID().uuidString)"
+  let defaults = UserDefaults(suiteName: suite)!
+  defaults.removePersistentDomain(forName: suite)
+  let model = AppModel(defaults: defaults)
+  let browser = MemoryBrowserViewController(
+    model: model, projectPath: nil, initialTab: .memories)
+  browser.loadViewIfNeeded()
+  browser.view.frame = NSRect(x: 0, y: 0, width: 880, height: 560)
+  browser.view.layoutSubtreeIfNeeded()
+
+  // 面板窗口自己的底色就是内容底色：宿主一旦自绘 surface，内容看起来就和窗体分家。
+  #expect(browser.view.layer?.backgroundColor == nil)
+
+  let scrolls = collectSubviews(in: browser.view) { $0 is NSScrollView }
+    .compactMap { $0 as? NSScrollView }
+  let listScroll = try #require(scrolls.first { $0.documentView is FlippedDocumentView })
+  let detailText = try #require(
+    scrolls.compactMap { $0.documentView as? NSTextView }.first)
+  let detailScroll = try #require(detailText.enclosingScrollView)
+
+  // 列表列贴住窗口左内边距：body 一旦停在固有宽度，整块会居中并在左边留出空白。
+  let listInHost = listScroll.convert(listScroll.bounds, to: browser.view)
+  #expect(abs(listInHost.minX - 12) < 0.5)
+  #expect(listScroll.frame.width == 268)
+  // 880 宽的窗口里，正文列必须拿走剩下的绝大部分宽度，而不是停在固有宽度上。
+  #expect(detailScroll.frame.width > 500)
+  #expect(detailText.drawsBackground == false)
+
+  // 列表行（或空态提示）左边缘贴齐列表列，宽度与列同宽。按 alignment rect 比较：
+  // NSButton 的 frame 比对齐矩形每边多出 2pt 的 bezel 补偿，直接比 frame 会误判。
+  let listStack = try #require(
+    findSubview(in: listScroll) { $0 is NSStackView } as? NSStackView)
+  let firstRow = try #require(listStack.arrangedSubviews.first)
+  let rowRect = firstRow.alignmentRect(forFrame: firstRow.frame)
+  #expect(abs(rowRect.minX) < 0.5)
+  #expect(abs(rowRect.width - listStack.frame.width) < 0.5)
+}
+
 /// 在视图树里找第一个满足条件的子视图。浮层没有 identifier 契约，
 /// 这里按类型定位即可，不锁具体层级——层级变化不该让测试变红。
 @MainActor
@@ -335,6 +376,17 @@ private func findSubview(in view: NSView, matching predicate: (NSView) -> Bool) 
     if let found = findSubview(in: subview, matching: predicate) { return found }
   }
   return nil
+}
+
+/// 收集视图树里所有满足条件的子视图，按先序排列。
+@MainActor
+private func collectSubviews(in view: NSView, matching predicate: (NSView) -> Bool) -> [NSView] {
+  var result: [NSView] = []
+  if predicate(view) { result.append(view) }
+  for subview in view.subviews {
+    result.append(contentsOf: collectSubviews(in: subview, matching: predicate))
+  }
+  return result
 }
 
 @Test("没有可关联会话时归入 Task 给出明确提示而不是静默失败")

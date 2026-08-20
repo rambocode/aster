@@ -54,9 +54,8 @@ final class WorkspaceViewController: NSViewController {
   /// 命令面板、Open Quickly、全局查找和 Agent 历史共用窗口级 Esc 兜底。搜索框
   /// 失焦后事件不会经过 `OverlaySearchField`，因此不能只依赖控件自己的 keyDown。
   private nonisolated(unsafe) var workspaceOverlayKeyMonitor: Any?
-  private var inactiveOverlay: InactiveWindowOverlayView?
-  /// 主题选择器是独立 key Panel；展示期间后方工作区仍是实时预览画布，不能套用普通
-  /// 非活动窗口的褪色遮罩，也不能暂停终端光标状态。
+  /// 主题选择器是独立 key Panel；展示期间后方工作区仍是实时预览画布，
+  /// 不能暂停终端光标状态。
   private var themeSwitcherPresentationActive = false
   /// 垂直侧栏顶部「+ 新建 / 折叠」悬停动作区；refresh 整树重建后重新赋值。
   private weak var sidebarHoverActions: NSView?
@@ -340,13 +339,12 @@ final class WorkspaceViewController: NSViewController {
       .store(in: &modelSubscriptions)
   }
 
-  /// 当前是否叠着失焦遮罩（供测试断言）。
-  var isShowingInactiveOverlay: Bool { inactiveOverlay?.superview === view }
-
-  /// 失焦时叠加褪色遮罩，重新聚焦时移除。遮罩始终是最上层视图，
-  /// 因此工作区刷新（会清空并重建子视图）之后必须重新安放。
+  /// 窗口获得/失去键盘焦点时同步依赖焦点的界面状态。
+  ///
+  /// 失焦时刻意不叠任何褪色遮罩：终端内容在非活动窗口里也保持原色，
+  /// 只有光标停闪与悬停控件隐藏这类「不接收输入」的提示。
   func updateWindowActivationOverlay() {
-    // 还没上屏的视图按「活动」处理，避免测试与首帧出现无谓的灰罩。
+    // 还没上屏的视图按「活动」处理，避免测试与首帧出现无谓的状态抖动。
     let isActive = (view.window?.isKeyWindow ?? true) || themeSwitcherPresentationActive
     // 悬停按钮只在键盘焦点窗口露出，窗口失焦/回焦都要按当前指针位置重算一次。
     updateSidebarHoverVisibility(animated: false)
@@ -357,19 +355,6 @@ final class WorkspaceViewController: NSViewController {
         runtime.terminalSession?.setWindowActive(isActive)
       }
     }
-    guard !isActive else {
-      inactiveOverlay?.removeFromSuperview()
-      inactiveOverlay = nil
-      return
-    }
-    if let inactiveOverlay, inactiveOverlay.superview === view {
-      view.addSubview(inactiveOverlay, positioned: .above, relativeTo: nil)
-      return
-    }
-    let overlay = InactiveWindowOverlayView(frame: view.bounds)
-    overlay.autoresizingMask = [.width, .height]
-    view.addSubview(overlay, positioned: .above, relativeTo: nil)
-    inactiveOverlay = overlay
   }
 
   deinit {

@@ -285,7 +285,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     row.spacing = 6
     row.edgeInsets = NSEdgeInsets(
       top: 0,
-      left: 10,
+      left: DetailsPanelHeaderMetrics.leadingInset,
       bottom: 0,
       right: InspectorToggleMetrics.trailingReservedWidth
     )
@@ -2500,6 +2500,15 @@ private final class DetailsPaneRefreshOverlay: NSView {
 /// 宽度由显式约束驱动并做一次短过渡，相邻 chip 平滑让位而不是瞬间跳到新位置；收起态
 /// 宽度固定，四个页签在默认状态下保持一致的间距，不随各自标题长度变化。背景色来自
 /// dynamic NSColor，需要在 appearance 变化时重填 cgColor。
+/// 详情面板页签行的固定度量。实现与测试共用同一个数字，改一处即可。
+enum DetailsPanelHeaderMetrics {
+  /// 首个 chip 的灰底左边缘到面板左缘的距离。
+  static let leadingInset: CGFloat = 15
+  /// chip 内图标左侧的呼吸空间。`NSButton` 没有内容内边距 API（换成 `configuration`
+  /// 会连带重置外观，并让宽度动画依赖的固有尺寸失效），因此把内边距做进图像本身。
+  static let iconLeadingPadding: CGFloat = 5
+}
+
 private final class PanelTabChip: NSButton {
   /// 收起态正方形宽度。展开宽度取「该值 + 标题实际宽度」，因为按钮内容居中，两种状态
   /// 下图标左右留白都是 `(collapsedWidth - 图标宽) / 2`，图标停在原处、只有文字从右侧
@@ -2523,7 +2532,7 @@ private final class PanelTabChip: NSButton {
   init(title: String, symbol: String, handler: @escaping () -> Void) {
     fullTitle = title
     super.init(frame: .zero)
-    image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+    image = Self.paddedSymbol(symbol, accessibilityDescription: title)
     imagePosition = .imageLeading
     bezelStyle = .accessoryBarAction
     isBordered = false
@@ -2544,6 +2553,34 @@ private final class PanelTabChip: NSButton {
   }
 
   required init?(coder: NSCoder) { nil }
+
+  /// SF Symbol 左侧补一段透明边距后再交给按钮。按钮把图标贴着自己的左缘绘制，
+  /// 原图只有约 1.5pt 的自带留白，选中态的灰底看起来就像直接压在图标上。
+  private static func paddedSymbol(_ symbol: String, accessibilityDescription: String) -> NSImage? {
+    guard let base = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibilityDescription)
+    else { return nil }
+    let baseSize = base.size
+    let padded = NSImage(
+      size: NSSize(
+        width: baseSize.width + DetailsPanelHeaderMetrics.iconLeadingPadding,
+        height: baseSize.height),
+      flipped: false
+    ) { _ in
+      base.draw(
+        in: NSRect(
+          origin: NSPoint(x: DetailsPanelHeaderMetrics.iconLeadingPadding, y: 0), size: baseSize))
+      return true
+    }
+    // 模板图才会跟随 contentTintColor，选中/未选中的墨色切换依赖这一点。
+    padded.isTemplate = true
+    padded.accessibilityDescription = accessibilityDescription
+    return padded
+  }
+
+  /// 灰底画在 layer（即 frame）上，而约束作用于对齐矩形。`accessoryBarAction` 的
+  /// bezel 会给对齐矩形留出几点内缩，于是「行左内边距 15」实际画出来只有十来点，
+  /// 首个 chip 看着仍贴着面板左缘。清零后 frame 与对齐矩形重合，边距所见即所得。
+  override var alignmentRectInsets: NSEdgeInsets { .zero }
 
   private var handler: (() -> Void)?
 

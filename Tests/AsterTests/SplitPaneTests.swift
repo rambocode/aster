@@ -236,19 +236,18 @@ func inactiveWindowStopsCursorBlinking() {
   #expect(terminal.options.cursorStyle == .steadyUnderline)
 }
 
-@Test("窗口失去键盘焦点时叠加褪色遮罩且不拦截点击")
+@Test("窗口失去键盘焦点时不叠加任何褪色遮罩")
 @MainActor
-func inactiveWindowShowsDimmingOverlay() throws {
+func inactiveWindowKeepsContentUndimmed() throws {
   let controller = try makeLaidOutSplitWorkspace(axis: .horizontal, tabBarLayout: .vertical)
 
   // 测试进程里的窗口不是 key window，等同于「非聚焦」。
   controller.updateWindowActivationOverlay()
-  #expect(controller.isShowingInactiveOverlay)
 
-  let overlay = try #require(
-    controller.view.subviews.last { String(describing: type(of: $0)).contains("InactiveWindow") })
-  #expect(overlay.hitTest(NSPoint(x: overlay.bounds.midX, y: overlay.bounds.midY)) == nil)
-  #expect(overlay.frame.size == controller.view.bounds.size)
+  let dimming = controller.view.subviews.filter {
+    String(describing: type(of: $0)).contains("InactiveWindow")
+  }
+  #expect(dimming.isEmpty)
 }
 
 @Test("终端不显示 SwiftTerm 的 overlay 滚动条")
