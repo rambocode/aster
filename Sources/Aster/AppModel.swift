@@ -913,14 +913,24 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     return true
   }
 
+  /// 快照除布局外还带上各终端 Pane 当前绑定的 Agent 会话身份，供「恢复时重连会话」
+  /// 在下次启动时重建原生会话。
   var snapshot: WorkspaceTabSnapshot {
-    WorkspaceTabSnapshot(
+    let agentSessions = layout.allPanes.compactMap { pane -> WorkspacePaneAgentSession? in
+      guard let session = runtimes[pane.id]?.terminalSession,
+        let provider = session.activeAgentProvider,
+        let sessionID = session.activeAgentSessionID
+      else { return nil }
+      return WorkspacePaneAgentSession(paneID: pane.id, provider: provider, sessionID: sessionID)
+    }
+    return WorkspaceTabSnapshot(
       id: id,
       title: title,
       layout: layout,
       titleState: titleState,
       createdAt: createdAt,
-      updatedAt: updatedAt
+      updatedAt: updatedAt,
+      agentSessions: agentSessions.isEmpty ? nil : agentSessions
     )
   }
 
@@ -1291,6 +1301,17 @@ final class AppModel: ObservableObject {
       !snapshot.tabs.isEmpty
     {
       tabs = snapshot.tabs.map(TerminalTabItem.init(snapshot:))
+      // 恢复各 Pane 绑定的 Agent 会话：这里只登记身份，真正的 resume 命令由
+      // TerminalSession 在 shell 首个 prompt 出现时发送，并在发送时检查
+      // `agents.resumeSessions` 开关（避免启动早期配置尚未同步的时序问题）。
+      for (tab, tabSnapshot) in zip(tabs, snapshot.tabs) {
+        for record in tabSnapshot.agentSessions ?? [] {
+          tab.runtime(for: record.paneID)?.terminalSession?.scheduleRestoredAgentResume(
+            provider: record.provider,
+            sessionID: record.sessionID
+          )
+        }
+      }
       dividerAfterTabIDs = Set(snapshot.dividerAfterTabIDs ?? [])
       let previousHistory = recentlyClosedTabs
       recentlyClosedTabs.removeEntries(withIDs: Set(tabs.map(\.id)))
@@ -3522,6 +3543,9 @@ final class AppModel: ObservableObject {
     }
     tab.onAgentSessionBindingChanged = { [weak self] in
       self?.refreshAgentSessionTitles(reloadIfUnmatched: true)
+      // Agent 绑定（provider / session ID）进入了工作区快照；变化时同步落盘，
+      // 否则强退或崩溃后快照里没有可重连的会话身份。
+      self?.schedulePersistWorkspace()
     }
   }
 

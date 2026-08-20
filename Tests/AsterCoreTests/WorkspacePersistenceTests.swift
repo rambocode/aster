@@ -158,3 +158,32 @@ import Testing
   #expect(restored == snapshot)
   #expect(restored.tabs[0].layout.allPanes[0].resourcePath == "/tmp/a.md")
 }
+
+// 恢复重连依赖快照携带的 Agent 会话身份；本测试锁定编码往返与旧快照兼容两条底线。
+@Test func workspaceSnapshotRoundTripsAgentSessionsAndDecodesLegacyJSON() throws {
+  let pane = PaneDescriptor(kind: .terminal, workingDirectory: "/tmp")
+  let tab = WorkspaceTabSnapshot(
+    id: UUID(),
+    title: "Shell",
+    layout: .leaf(pane),
+    agentSessions: [
+      WorkspacePaneAgentSession(paneID: pane.id, provider: .claudeCode, sessionID: "abc-123")
+    ]
+  )
+  let snapshot = WorkspaceSnapshot(selectedTabID: tab.id, tabs: [tab])
+  let data = try JSONEncoder().encode(snapshot)
+  let restored = try JSONDecoder().decode(WorkspaceSnapshot.self, from: data)
+  #expect(restored == snapshot)
+  #expect(restored.tabs[0].agentSessions?.first?.provider == .claudeCode)
+  #expect(restored.tabs[0].agentSessions?.first?.sessionID == "abc-123")
+
+  // 没有 agentSessions 字段的旧快照必须继续解码为 nil，不得报错或改变布局。
+  let legacy = WorkspaceTabSnapshot(id: tab.id, title: "Shell", layout: .leaf(pane))
+  var legacyJSON = try JSONSerialization.jsonObject(
+    with: JSONEncoder().encode(legacy)) as? [String: Any] ?? [:]
+  legacyJSON.removeValue(forKey: "agentSessions")
+  let legacyData = try JSONSerialization.data(withJSONObject: legacyJSON)
+  let decodedLegacy = try JSONDecoder().decode(WorkspaceTabSnapshot.self, from: legacyData)
+  #expect(decodedLegacy.agentSessions == nil)
+  #expect(decodedLegacy.layout == legacy.layout)
+}

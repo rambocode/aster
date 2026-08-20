@@ -725,11 +725,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         ) { [weak self] value in
           self?.preferences.configuration.shell.restoreMultiplexerSessions = value
         },
+        // 与智能体页「恢复时重连会话」是同一个开关的双入口；真值统一在 agents.resumeSessions。
         toggleRow(
           "恢复智能体会话", "恢复工作区时继续之前的智能体 CLI 会话",
-          value: preferences.configuration.shell.restoreAgentSessions
+          value: preferences.configuration.agents.resumeSessions
         ) { [weak self] value in
-          self?.preferences.configuration.shell.restoreAgentSessions = value
+          self?.preferences.configuration.agents.resumeSessions = value
         },
         toggleRow(
           "恢复运行中的进程", "恢复工作区时重新启动之前运行的命令",
@@ -3069,17 +3070,36 @@ extension SettingsViewController: WKNavigationDelegate {
     ]
   }
 
+  /// 编程智能体卡片的数据源（Otty 风格折叠行）：CLI 检测与集成状态拆成独立布尔值，
+  /// 启动命令只下发用户自定义部分，默认命令交给输入框 placeholder 展示。
   private func makeWebAgents() -> [[String: Any]] {
     AgentProvider.allCases.map { provider in
       let status = try? agentSetupService.status(for: provider)
+      let custom = preferences.configuration.agents.customLaunchCommands?[provider.rawValue]
       return [
         "id": provider.rawValue,
         "name": agentDisplayName(provider),
-        "command": preferences.configuration.agents.launchComponents(for: provider).joined(separator: " "),
+        "defaultCommand": provider.commandName,
+        "customCommand": custom.map { WorkflowShellCommandEncoder.encode($0) } ?? "",
+        "cliDetected": status?.executableAvailable == true,
         "enabled": preferences.configuration.agents.enabledAgents.contains(provider.commandName),
-        "status": status?.integrationInstalled == true ? "已安装集成" : (status?.executableAvailable == true ? "已检测到 CLI" : "未检测到 CLI"),
         "integrated": status?.integrationInstalled == true,
+        "hookDetail": agentHookDetail(provider),
       ]
+    }
+  }
+
+  /// 展开区的集成说明：写入哪个配置文件、起什么作用，与 AgentSetupService 的实际
+  /// 安装目标保持一致（改安装路径时需同步这里）。
+  private func agentHookDetail(_ provider: AgentProvider) -> String {
+    switch provider {
+    case .claudeCode: "把 Aster hooks 写入 ~/.claude/settings.json，实时同步任务状态。"
+    case .codex: "把 Aster hooks 写入 ~/.codex/hooks.json，实时同步任务状态。"
+    case .openCode: "把 Aster 插件写入 ~/.config/opencode/plugins/，实时同步任务状态。"
+    case .cursorCLI: "把 Aster hooks 写入 ~/.cursor/hooks.json，实时同步任务状态。"
+    case .kimiCode: "把 Aster hooks 写入 ~/.kimi-code/config.toml，实时同步任务状态。"
+    case .pi: "把 Aster 扩展写入 ~/.pi/agent/extensions/，实时同步任务状态。"
+    case .omp: "把 Aster 扩展写入 ~/.omp/agent/extensions/，实时同步任务状态。"
     }
   }
 

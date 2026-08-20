@@ -158,6 +158,20 @@ public enum RecipeStore {
   }
 }
 
+/// 某个 Pane 在快照时刻绑定的 Agent 会话身份。只保存恢复原生会话所需的最小信息
+/// （provider + session ID），不落任何 prompt 或输出内容。
+public struct WorkspacePaneAgentSession: Codable, Equatable, Sendable {
+  public let paneID: UUID
+  public let provider: AgentProvider
+  public let sessionID: String
+
+  public init(paneID: UUID, provider: AgentProvider, sessionID: String) {
+    self.paneID = paneID
+    self.provider = provider
+    self.sessionID = sessionID
+  }
+}
+
 /// 会话恢复快照仅描述可重建的工作区结构，不持久化进程身份和临时焦点。
 public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
   public let id: UUID
@@ -168,6 +182,8 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
   /// 可选时间戳兼容 0.4.1 之前的工作区快照；缺失时恢复层使用当前时间。
   public var createdAt: Date?
   public var updatedAt: Date?
+  /// 快照时各终端 Pane 绑定的 Agent 会话；可选字段保证旧快照无损解码。
+  public var agentSessions: [WorkspacePaneAgentSession]?
 
   public init(
     id: UUID,
@@ -175,7 +191,8 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
     layout: PaneLayout,
     titleState: TerminalTitleState? = nil,
     createdAt: Date? = nil,
-    updatedAt: Date? = nil
+    updatedAt: Date? = nil,
+    agentSessions: [WorkspacePaneAgentSession]? = nil
   ) {
     self.id = id
     self.title = title
@@ -183,6 +200,7 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
     self.titleState = titleState
     self.createdAt = createdAt
     self.updatedAt = updatedAt
+    self.agentSessions = agentSessions
   }
 }
 

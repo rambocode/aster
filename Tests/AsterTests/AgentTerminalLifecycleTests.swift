@@ -1,9 +1,10 @@
 import AppKit
-import AsterCore
 import Foundation
 import Testing
 
 @testable import Aster
+// 恢复重连测试需要 AgentConfiguration 的 internal memberwise init 来构造配置。
+@testable import AsterCore
 
 @Test("权威 Agent 等待输入在用户提交后回到处理中并保持序列单调")
 @MainActor
@@ -173,4 +174,95 @@ private func agentLifecycleSequence(of session: TerminalSession) throws -> UInt6
     $0.label == "agentLifecycleSequence"
   }?.value as? UInt64
   return try #require(sequence)
+}
+
+// 「恢复时重连会话」的命令构造是纯函数：锁定默认前缀、自定义前缀与非法会话 ID 三种路径。
+@Test("恢复重连命令沿用自定义启动前缀并拒绝非法会话 ID")
+func restoredAgentResumeCommandHonorsLaunchPrefix() {
+  var agents = AgentConfiguration()
+  #expect(
+    TerminalSession.restoredAgentResumeCommand(
+      provider: .claudeCode, sessionID: "abc-123", agents: agents
+    ) == "'claude' '--resume' 'abc-123'"
+  )
+
+  agents.customLaunchCommands = ["codex": ["codex", "--profile", "dev env"]]
+  #expect(
+    TerminalSession.restoredAgentResumeCommand(
+      provider: .codex, sessionID: "s1", agents: agents
+    ) == "'codex' '--profile' 'dev env' 'resume' 's1'"
+  )
+
+  #expect(
+    TerminalSession.restoredAgentResumeCommand(
+      provider: .claudeCode, sessionID: "", agents: agents
+    ) == nil
+  )
+}
+
+@Test("恢复重连在首个 prompt 处消费，用户提前输入则取消")
+@MainActor
+func restoredAgentResumeConsumesOnPromptAndCancelsOnUserInput() throws {
+  let suiteName = "AgentTerminalLifecycleTests.\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suiteName))
+  defaults.removePersistentDomain(forName: suiteName)
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+
+  // 场景一：prompt 到来时 pending 被一次性消费，后续 prompt 不会再触发。
+  let session = TerminalSession(workingDirectory: "/tmp")
+  let terminalView = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  defer { session.stop(immediately: true) }
+  session.scheduleRestoredAgentResume(provider: .claudeCode, sessionID: "abc-123")
+  #expect(session.hasPendingRestoredAgentResume)
+  terminalView.onShellIntegrationEvent?(.promptStart)
+  #expect(!session.hasPendingRestoredAgentResume)
+
+  // 场景二：用户在 prompt 之前输入任何内容都放弃自动重连。
+  let interrupted = TerminalSession(workingDirectory: "/tmp")
+  let interruptedView = try #require(
+    interrupted.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  defer { interrupted.stop(immediately: true) }
+  interrupted.scheduleRestoredAgentResume(provider: .codex, sessionID: "s1")
+  interruptedView.onTerminalUserInput?()
+  #expect(!interrupted.hasPendingRestoredAgentResume)
+}
+
+// 端到端：真实 shell 中 prompt 信号触发后，resume 命令必须真正写入 PTY 并被执行。
+// 启动前缀换成 echo，验证完整链路（调度 → prompt → send → shell 执行）而不真启动 Agent。
+@Test("恢复重连在真实 shell 的 prompt 后把 resume 命令写入 PTY")
+@MainActor
+func restoredAgentResumeWritesCommandIntoLiveShell() async throws {
+  let suiteName = "AgentTerminalLifecycleTests.\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suiteName))
+  defaults.removePersistentDomain(forName: suiteName)
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.agents.customLaunchCommands = [
+    "claudeCode": ["echo", "__ASTER_RESUME_TEST__"]
+  ]
+
+  let session = TerminalSession(workingDirectory: "/tmp")
+  let terminalView = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  defer { session.stop(immediately: true) }
+
+  session.scheduleRestoredAgentResume(provider: .claudeCode, sessionID: "test-1")
+  terminalView.onShellIntegrationEvent?(.promptStart)
+  #expect(!session.hasPendingRestoredAgentResume)
+
+  // echo 执行后 marker 出现在真实终端 grid 上，证明命令抵达 PTY 而不是停在回调层。
+  var joined = ""
+  for _ in 0..<80 {
+    joined = session.textSnapshot().lines.joined(separator: "\n")
+    if joined.contains("__ASTER_RESUME_TEST__"), joined.contains("--resume") { break }
+    try await Task.sleep(for: .milliseconds(25))
+  }
+  #expect(joined.contains("__ASTER_RESUME_TEST__"))
+  #expect(joined.contains("--resume"))
+  #expect(joined.contains("test-1"))
 }

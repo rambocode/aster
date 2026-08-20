@@ -108,7 +108,8 @@
         ]},
         { title: "会话恢复", rows: [
           row("shell.restoreMultiplexerSessions", "恢复复用器会话", "恢复窗口时重新附着 tmux / screen 复用器会话"),
-          row("shell.restoreAgentSessions", "恢复 Code Agent 会话", "恢复终端时继续 Agent CLI 的原生会话"),
+          // 与「智能体 → 智能体行为 → 恢复时重连会话」是同一个开关的双入口（对齐 Otty）。
+          row("agents.resumeSessions", "恢复 Code Agent 会话", "恢复终端时继续 Agent CLI 的原生会话"),
           row("shell.terminalResumeProtocol", "终端恢复协议", "允许编辑器、SSH 和编码代理声明如何重新启动自身，以便 Aster 在重启后恢复它们（OSC 88）"),
           row("shell.restoreProcessesMode", "恢复时重新运行进程", "恢复窗口时，重新启动每个面板中正在运行的命令", "select", { options: options.restoreProcesses }),
           row("shell.restoreProcessAllowlist", "命令白名单", "可重新运行的命令，按逗号分隔的前缀匹配", "text", { visibleWhen: ["shell.restoreProcessesMode", "whitelist"] }),
@@ -387,6 +388,8 @@
   });
   let pendingRequest = 0;
   const appearanceUIState = { fontScope: "computed", themeEditorOpen: false };
+  // 编程智能体卡片的展开状态：快照推送会整页重渲染，用模块级 Set 记住哪些行展开。
+  const agentUIState = { expanded: new Set() };
 
   const app = document.getElementById("app");
   const nav = document.getElementById("settings-nav");
@@ -1244,30 +1247,48 @@
     return fragment;
   }
 
+  /// 编程智能体卡片，对齐 Otty settings-ui 的结构：折叠行（名称 + CLI 检测、集成
+  /// 状态、启用开关、展开箭头），展开后才显示集成说明、启动命令与安装/卸载按钮。
   function makeAgentGroup() {
     const group = document.createElement("section");
     group.className = "group";
     const title = document.createElement("h2");
     title.className = "group-title";
     title.textContent = "编程智能体";
+    const description = document.createElement("p");
+    description.className = "group-description";
+    description.textContent = "接入你的编程智能体，获得实时角标、通知与会话恢复。";
     const card = document.createElement("div");
     card.className = "card agent-list";
     for (const agent of snapshot?.agents ?? []) {
-      const host = document.createElement("div");
-      host.className = "agent-card";
-      const summary = document.createElement("div");
-      summary.className = "agent-summary";
+      const expanded = agentUIState.expanded.has(agent.id);
+      const toggleExpanded = () => {
+        if (expanded) agentUIState.expanded.delete(agent.id);
+        else agentUIState.expanded.add(agent.id);
+        renderContent();
+      };
+      const row = document.createElement("div");
+      row.className = expanded ? "agent-row expanded" : "agent-row";
+
+      const head = document.createElement("div");
+      head.className = "agent-head";
+      const main = document.createElement("button");
+      main.type = "button";
+      main.className = "agent-head-main";
+      main.addEventListener("click", toggleExpanded);
       const copy = document.createElement("div");
+      copy.className = "agent-copy";
       const name = document.createElement("span");
-      name.className = "setting-label";
+      name.className = "agent-name";
       name.textContent = agent.name;
-      const command = document.createElement("span");
-      command.className = "setting-detail";
-      command.textContent = agent.command;
-      copy.append(name, command);
-      const status = document.createElement("span");
-      status.className = "agent-status";
-      status.textContent = agent.status;
+      const cli = document.createElement("span");
+      cli.className = agent.cliDetected ? "agent-cli detected" : "agent-cli";
+      cli.textContent = agent.cliDetected ? "已检测到 CLI" : "未检测到 CLI";
+      copy.append(name, cli);
+      main.appendChild(copy);
+      const state = document.createElement("span");
+      state.className = agent.integrated ? "agent-state installed" : "agent-state";
+      state.textContent = agent.integrated ? "已安装" : "未安装";
       const enabled = document.createElement("label");
       enabled.className = "toggle";
       const enabledInput = document.createElement("input");
@@ -1281,29 +1302,54 @@
       const enabledTrack = document.createElement("span");
       enabledTrack.className = "toggle-track";
       enabled.append(enabledInput, enabledTrack);
-      const button = document.createElement("button");
-      button.className = "action-button";
-      button.textContent = agent.integrated ? "卸载" : "安装";
-      button.addEventListener("click", () => send("action", { action: agent.integrated ? "uninstallAgent" : "installAgent", payload: { provider: agent.id } }));
-      summary.append(copy, status, enabled, button);
-      const commandRow = document.createElement("label");
-      commandRow.className = "agent-command";
-      const commandLabel = document.createElement("span");
-      commandLabel.className = "setting-detail";
-      commandLabel.textContent = "启动命令";
-      const commandInput = document.createElement("input");
-      commandInput.className = "control";
-      commandInput.type = "text";
-      commandInput.value = agent.command;
-      commandInput.addEventListener("change", () => commitValue(
-        { key: `agents.launchCommand.${agent.id}` },
-        commandInput.value.trim()
-      ));
-      commandRow.append(commandLabel, commandInput);
-      host.append(summary, commandRow);
-      card.appendChild(host);
+      const chevron = document.createElement("button");
+      chevron.type = "button";
+      chevron.className = "agent-chevron";
+      chevron.setAttribute("aria-label", expanded ? `收起 ${agent.name}` : `展开 ${agent.name}`);
+      chevron.setAttribute("aria-expanded", String(expanded));
+      chevron.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M8.47 4.22a.75.75 0 0 0 0 1.06L15.19 12l-6.72 6.72a.75.75 0 1 0 1.06 1.06l7.25-7.25a.75.75 0 0 0 0-1.06L9.53 4.22a.75.75 0 0 0-1.06 0"/></svg>`;
+      chevron.addEventListener("click", toggleExpanded);
+      head.append(main, state, enabled, chevron);
+      row.appendChild(head);
+
+      if (expanded) {
+        const detail = document.createElement("div");
+        detail.className = "agent-detail";
+        const hookDetail = document.createElement("p");
+        hookDetail.className = "agent-hook-detail";
+        hookDetail.textContent = agent.hookDetail;
+        const commandField = document.createElement("label");
+        commandField.className = "agent-command-field";
+        const commandLabel = document.createElement("span");
+        commandLabel.textContent = "启动命令";
+        const commandInput = document.createElement("input");
+        commandInput.className = "control";
+        commandInput.type = "text";
+        commandInput.spellcheck = false;
+        commandInput.placeholder = agent.defaultCommand;
+        commandInput.value = agent.customCommand;
+        commandInput.addEventListener("change", () => commitValue(
+          { key: `agents.launchCommand.${agent.id}` },
+          commandInput.value.trim()
+        ));
+        const commandHint = document.createElement("span");
+        commandHint.className = "agent-command-hint";
+        commandHint.textContent = "可选的可执行文件、wrapper 与全局参数；Aster 会自动追加原生 resume / fork 参数，留空恢复默认。";
+        commandField.append(commandLabel, commandInput, commandHint);
+        const actions = document.createElement("div");
+        actions.className = "agent-detail-actions";
+        const setup = document.createElement("button");
+        setup.type = "button";
+        setup.className = agent.integrated ? "action-button danger" : "action-button";
+        setup.textContent = agent.integrated ? "卸载集成" : "安装集成";
+        setup.addEventListener("click", () => send("action", { action: agent.integrated ? "uninstallAgent" : "installAgent", payload: { provider: agent.id } }));
+        actions.appendChild(setup);
+        detail.append(hookDetail, commandField, actions);
+        row.appendChild(detail);
+      }
+      card.appendChild(row);
     }
-    group.append(title, card);
+    group.append(title, description, card);
     return group;
   }
 

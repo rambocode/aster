@@ -2232,6 +2232,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private(set) var recipeCommandCandidates: [WorkflowRecipeCommandCandidate] = []
   private var activityOutputTail = ""
   private var awaitingInputTask: Task<Void, Never>?
+  /// 工作区恢复时待重连的 Agent 会话。真正的 resume 命令在 shell 首个 prompt 出现时
+  /// 才发送（此时 PTY 与 rc 都已就绪）；用户在此之前的任何输入都会取消重连。
+  private var pendingRestoredAgentResume: (provider: AgentProvider, sessionID: String)?
+  /// 诊断 seam：恢复重连是否仍在等待首个 prompt。仅供测试观察，UI 不消费。
+  var hasPendingRestoredAgentResume: Bool { pendingRestoredAgentResume != nil }
   private var completedFlashTask: Task<Void, Never>?
   private var progressExpiryTask: Task<Void, Never>?
   /// 通知交付属于应用基础设施边界；默认使用真实系统服务，测试可注入记录器验证
@@ -3930,7 +3935,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   private func handleShellIntegrationEvent(_ event: ShellIntegrationEvent) {
     switch event {
-    case .promptStart, .inputStart:
+    case .promptStart:
+      // shell 就绪的权威信号：恢复的 Agent 会话在首个 prompt 处重连。
+      deliverRestoredAgentResumeIfNeeded()
+    case .inputStart:
       break
     case .commandStart:
       eventRecorder?.commandStarted(
@@ -4093,6 +4101,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   private func handleTerminalUserInput() {
+    // 用户先动手就不再自动重连；重连命令晚到会打断用户正在输入的内容。
+    cancelRestoredAgentResume()
     if agentTaskCompletionUnread { agentTaskCompletionUnread = false }
     // Hook 成为权威来源后，清理启发式标记不足以改变 reducer 状态；用户输入必须映射
     // 为同一事件流中的 inputSubmitted，才能从 awaiting-input 恢复 processing。
@@ -4128,6 +4138,55 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // Agent 仍在生成内容时，固定显示不闪烁的用户光标；进入 awaiting-input / idle 后
     // 恢复设置中的 blink 模式。普通 Shell/TUI 不受该领域状态影响。
     terminalView?.setCursorBlinkSuppressed(activeAgentProvider != nil && next == .processing)
+  }
+
+  /// 登记一个待重连的 Agent 会话（来自工作区恢复快照）。这里只记录身份不发送命令；
+  /// 开关检查延后到发送时刻，设置变化因此总是取最新值。
+  func scheduleRestoredAgentResume(provider: AgentProvider, sessionID: String) {
+    pendingRestoredAgentResume = (provider, sessionID)
+  }
+
+  /// 用户在 prompt 出现前接管终端（输入任何内容）时放弃自动重连。
+  func cancelRestoredAgentResume() {
+    pendingRestoredAgentResume = nil
+  }
+
+  /// 由 shell 首个 prompt 触发：检查「恢复时重连会话」开关后把原生 resume 命令写入
+  /// PTY。无论是否发送，pending 都会被消费——后续 prompt 不能再触发第二次。
+  private func deliverRestoredAgentResumeIfNeeded() {
+    guard let pending = pendingRestoredAgentResume else { return }
+    pendingRestoredAgentResume = nil
+    guard let agents = preferences?.configuration.agents, agents.resumeSessions,
+      let command = Self.restoredAgentResumeCommand(
+        provider: pending.provider,
+        sessionID: pending.sessionID,
+        agents: agents
+      )
+    else { return }
+    send(command)
+  }
+
+  /// 构造恢复重连的 shell 命令：沿用用户自定义启动前缀，参数按 POSIX 单引号编码。
+  /// 纯函数便于单测；session ID 非法（超长、含 NUL）时返回 nil 而不是发送坏命令。
+  nonisolated static func restoredAgentResumeCommand(
+    provider: AgentProvider,
+    sessionID: String,
+    agents: AgentConfiguration
+  ) -> String? {
+    let components = agents.launchComponents(for: provider)
+    guard let executable = components.first,
+      let prefix = try? AgentLaunchPrefix(
+        executable: executable,
+        arguments: Array(components.dropFirst())
+      ),
+      let plan = try? AgentSessionCommandPlanner.plan(
+        .resume,
+        sessionID: sessionID,
+        configuration: AgentSessionConfiguration(provider: provider),
+        launchPrefix: prefix
+      )
+    else { return nil }
+    return AgentShellCommandEncoder.encode(plan)
   }
 
   private func handleAgentTerminalDirective(_ directive: AgentTerminalDirective) {
