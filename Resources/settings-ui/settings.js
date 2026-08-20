@@ -24,7 +24,9 @@
     openLink: [["browser", "系统浏览器"], ["otty", "在 Aster 中打开"]],
     openFile: [["default-app", "系统默认应用"], ["otty", "在 Aster 中打开"]],
     openFolder: [["default-app", "访达"], ["otty", "在 Aster 中打开"]],
-    foreground: [["off", "关闭"], ["banner", "显示横幅"], ["always", "始终通知"]],
+    foreground: [["off", "关闭（系统默认）"], ["banner", "仅当来源标签未聚焦时"], ["always", "始终显示"]],
+    restoreProcesses: [["none", "不重启"], ["whitelist", "仅白名单内"], ["all", "所有运行中的进程"]],
+    term: [["auto", "Auto (xterm-ghostty)"], ["xterm-ghostty", "xterm-ghostty (内置)"], ["aster", "aster (内置)"], ["xterm-256color", "xterm-256color"], ["tmux-256color", "tmux-256color"], ["custom", "自定义…"]],
     replay: [["automatic", "自动"], ["confirmOnce", "确认一次"], ["manual", "逐条"], ["skip", "跳过"]],
     scrollLast: [["disabled", "关闭"], ["lastContentAtTop", "最后有内容行置顶"], ["lastLineInMiddle", "内容行停在中间"], ["cursorLineAtTop", "光标行置顶"]],
     scrollFirst: [["disabled", "关闭"], ["sameAsLast", "与末尾设置一致"], ["firstLineWithContent", "历史首行置底"], ["firstLineInMiddle", "首行停在中间"]],
@@ -59,12 +61,6 @@
           row("general.newWindowWhenAllClosed", "关闭所有窗口后新建窗口", "点击 Dock 图标时自动创建工作区"),
           row("general.hideDirtyIndicator", "隐藏关闭按钮圆点", "红绿灯不显示运行中或未保存状态"),
         ]},
-        { title: "工作目录", rows: [
-          row("general.windowWorkingDirectory", "新窗口", "新窗口的初始目录", "select", { options: options.workingDirectory }),
-          row("general.tabWorkingDirectory", "新标签页", "新标签页的初始目录", "select", { options: options.workingDirectory }),
-          row("general.splitWorkingDirectory", "新分屏", "新 Pane 的初始目录", "select", { options: options.workingDirectory }),
-          row("general.customWorkingDirectory", "自定义目录", "工作目录策略选择“自定义”时使用", "text"),
-        ]},
         { title: "关闭确认", rows: [
           row("general.closeTabConfirmation", "关闭标签页", "何时在关闭标签页前询问", "select", { options: options.confirm }),
           row("general.closeWindowConfirmation", "关闭窗口", "何时在关闭窗口前询问", "select", { options: options.confirm }),
@@ -75,10 +71,6 @@
         ]},
         { title: "系统集成", rows: [
           action("setDefaultTerminal", "默认终端", "注册 Aster 处理 ssh:// 链接", "设为默认终端"),
-          action("installCLI", "安装 CLI", "将 aster 命令安装到 PATH", "安装 CLI"),
-          row("general.omitAsterPrefix", "省略 `aster` 前缀", "在 Aster Shell 中直接使用 edit、view、watch、jump、learn"),
-          row("general.cliAllowOverwrite", "覆盖已有命令", "允许受管 Shell 函数覆盖同名定义"),
-          action("editCLIAliases", "自定义别名", "给 Aster CLI 子命令设置 Shell 内别名", "配置…"),
           action("configureExternalApps", "为常用应用设为默认终端", "配置 VS Code、Cursor、Windsurf、VSCodium、Trae 和 Sublime Text", "配置…"),
           action("openFinderSettings", "Finder 集成", "配置 Finder 服务快捷键", "打开系统设置"),
           action("openFullDiskAccess", "完全磁盘访问权限", "仅在命令需要受保护目录时开启", "打开系统设置"),
@@ -90,47 +82,64 @@
       ]
     },
     {
-      id: "shell", title: "Shell", description: "Shell 集成、恢复、通知与活动状态。", groups: [
-        { title: "终端身份", rows: [
-          row("appearance.terminalIdentity", "终端类型", "auto 使用 xterm-256color；自定义值必须存在 terminfo", "text"),
+      id: "shell", title: "Shell", description: "工作目录、Shell 集成、CLI、恢复、声音与通知。", groups: [
+        { title: "工作目录", rows: [
+          row("general.windowWorkingDirectory", "新窗口", "新窗口的初始目录", "select", { options: options.workingDirectory }),
+          row("general.tabWorkingDirectory", "新标签页", "新标签页的初始目录", "select", { options: options.workingDirectory }),
+          row("general.splitWorkingDirectory", "新分屏", "新 Pane 的初始目录", "select", { options: options.workingDirectory }),
+          row("general.customWorkingDirectory", "自定义目录", "工作目录策略选择“自定义”时使用", "text"),
         ]},
         { title: "Shell 集成", rows: [
-          row("shell.shellIntegration", "提供 Shell 集成", "支撑提示符、CWD、命令状态和 Aster CLI 包装命令"),
+          row("shell.shellIntegration", "提供 Shell 集成", "支撑提示符标记、工作目录跟踪、命令状态以及 edit/view/jump 包装命令——会在 shell 启动文件里加一行"),
           action("configureShells", "按 Shell 单独配置", "分别启用 zsh、fish 与 bash", "配置…"),
-          row("shell.sshIntegration", "SSH 集成", "保持远端目录、标题、环境和终端能力"),
+          row("shell.sshIntegration", "SSH 集成", "包装 SSH 命令以转发环境变量、安装 terminfo，并保持远端目录与标题跟踪"),
+        ]},
+        { title: "Aster CLI", rows: [
+          action("installCLI", "命令", "将 `aster` 命令安装到 PATH", "安装 CLI"),
+          row("general.omitAsterPrefix", "省略 `aster` 前缀", "在 Aster 启动的 shell 中直接输入 edit foo.txt，无需写 aster edit foo.txt；自动注入 edit、view、watch、jump、learn 函数"),
+          row("general.cliAllowOverwrite", "覆盖已有命令", "启用“省略 aster 前缀”或“自定义别名”时，覆盖你已定义的 edit/view/jump 等 shell 函数，而非保留原定义"),
+          action("editCLIAliases", "自定义别名", "为内置命令设置别名（例如 v → view），仅在 Aster 启动的 shell 中生效；编辑后请重新打开 shell", "配置…"),
+          action("openCLIDocs", "了解更多", "查看完整的 Aster CLI 使用指南", "打开文档"),
         ]},
         { title: "常用文件夹", rows: [
-          row("shell.frecencyAutoRecord", "自动记录访问过的文件夹", "为 jump 和 Open Quickly 维护本机 frecency"),
-          action("manageFolders", "已跟踪与已忽略的文件夹", "添加、移除、忽略或恢复文件夹", "管理文件夹…"),
-          row("shell.zoxideEnabled", "与 Zoxide 同步", "忘记目录时同时从本地 zoxide 数据库移除"),
+          row("shell.frecencyAutoRecord", "自动记录访问过的文件夹", "将每次工作目录变更记录到 jump 数据库，为 aster jump 和 Open Quickly 的“文件夹”标签提供数据"),
+          action("manageFolders", "已跟踪与已忽略的文件夹", "浏览、添加或移除 jump 数据库记录的文件夹，可在“已跟踪”与“已忽略”列表之间移动", "管理文件夹…"),
+          row("shell.zoxideEnabled", "与 Zoxide 同步", "运行 aster ignore 或使用“忘记此文件夹”时，同时从本地 zoxide 数据库移除该路径（如已安装 zoxide）"),
         ]},
         { title: "会话恢复", rows: [
-          row("shell.restoreMultiplexerSessions", "恢复复用器会话", "重新附着 tmux / screen"),
-          row("shell.restoreAgentSessions", "恢复 Code Agent 会话", "继续 Agent CLI 的原生会话"),
-          row("shell.terminalResumeProtocol", "终端恢复协议", "允许受信任程序声明恢复 argv"),
-          row("shell.restoreProcesses", "恢复时重新运行进程", "按白名单重新启动普通命令"),
-          row("shell.restoreProcessAllowlist", "进程白名单", "逗号分隔的命令 token 前缀", "text"),
+          row("shell.restoreMultiplexerSessions", "恢复复用器会话", "恢复窗口时重新附着 tmux / screen 复用器会话"),
+          row("shell.restoreAgentSessions", "恢复 Code Agent 会话", "恢复终端时继续 Agent CLI 的原生会话"),
+          row("shell.terminalResumeProtocol", "终端恢复协议", "允许编辑器、SSH 和编码代理声明如何重新启动自身，以便 Aster 在重启后恢复它们（OSC 88）"),
+          row("shell.restoreProcessesMode", "恢复时重新运行进程", "恢复窗口时，重新启动每个面板中正在运行的命令", "select", { options: options.restoreProcesses }),
+          row("shell.restoreProcessAllowlist", "命令白名单", "可重新运行的命令，按逗号分隔的前缀匹配", "text", { visibleWhen: ["shell.restoreProcessesMode", "whitelist"] }),
+        ]},
+        { title: "声音", rows: [
+          row("shell.terminalBell", "允许终端响铃", "允许 shell 程序通过 BEL 字符播放提示音"),
+          row("shell.soundOnErrorExit", "命令出错时蜂鸣", "命令以非零状态退出时发出蜂鸣"),
         ]},
         { title: "通知", rows: [
-          action("openNotificationSettings", "系统权限", "查看或修改 macOS 通知权限", "打开系统设置"),
-          row("shell.notifyOnFinish", "命令完成时通知", "长时间命令完成后发送系统通知"),
-          row("shell.notifyOnError", "命令出错时通知", "非零退出时发送系统通知"),
-          row("shell.notifyOnWatchFinish", "Watch 完成时通知", "aster watch 命令结束后通知"),
-          row("shell.notificationShellControlled", "通知 — Shell Controlled", "允许终端程序通过受支持 OSC 发送通知"),
-          row("shell.notifyWhileForeground", "前台通知", "Aster 位于前台时的通知策略", "select", { options: options.foreground }),
-          row("shell.bounceDockIcon", "通知时弹跳 Dock 图标", "应用不活跃时请求用户注意"),
-          row("shell.soundOnErrorExit", "错误退出时播放声音", "非零退出时播放系统提示音"),
-          row("shell.terminalBell", "声音 — Shell Controlled", "允许 BEL 播放提示音"),
-        ]},
-        { title: "通知声音", rows: [
-          row("shell.notificationSound.errorExit", "错误退出", "错误退出通知附带系统声音"),
-          row("shell.notificationSound.commandFinish", "命令完成", "命令完成通知附带系统声音"),
-          row("shell.notificationSound.application", "应用通知", "Shell Controlled 应用通知附带系统声音"),
+          action("openNotificationSettings", "系统权限", "查看或修改 macOS 通知权限", "打开系统设置", { statusKey: "shell.notificationPermission", statusStateKey: "shell.notificationPermissionState" }),
+          row("shell.notificationShellControlled", "允许应用通知", "允许 shell 程序发送系统通知"),
+          row("shell.notifyOnFinish", "命令完成时通知", "后台命令完成时发送通知"),
+          row("shell.notifyOnError", "命令出错时通知", "命令失败时发送通知"),
+          row("shell.notifyOnWatchFinish", "watch 命令完成时通知", "aster watch 包装的命令完成时发送通知"),
+          row("shell.notifyWhileForeground", "前台时的通知", "Aster 处于前台时横幅的显示行为", "select", { options: options.foreground }),
+          row("shell.notificationSound", "通知声音", "为选中的通知类别播放声音；默认静音", "multiselect", { emptyLabel: "无", options: [
+            ["shell.notificationSound.errorExit", "命令出错退出时"],
+            ["shell.notificationSound.commandFinish", "命令完成时"],
+            ["shell.notificationSound.application", "应用通知"],
+          ] }),
+          row("shell.bounceDockIcon", "Dock 图标跳动", "Aster 不在前台时，收到通知则让 Dock 图标跳动"),
         ]},
         { title: "标签徽章", rows: [
           row("shell.badgeCommandFinish", "命令完成徽章", "成功退出后显示圆点"),
           row("shell.badgeCommandFailure", "命令失败徽章", "错误退出时显示警告"),
           row("shell.badgeAwaitingInput", "等待输入徽章", "检测交互提示并显示等待状态"),
+        ]},
+        { title: "终端标识", rows: [
+          row("appearance.terminalIdentityMode", "TERM", "向子进程声明的“终端类型”。Auto 是安全的默认值，优先使用内置 xterm-ghostty，缺条目回退 xterm-256color", "select", { options: options.term }),
+          row("appearance.terminalIdentity", "自定义 TERM", "值必须存在对应 terminfo 条目；无效时回退到 xterm-256color，保证行编辑正常工作", "text", { visibleWhen: ["appearance.terminalIdentityMode", "custom"] }),
+          action("openTermDocs", "了解更多", "TERM 取值与 terminfo 条目的说明", "打开文档"),
         ]},
       ]
     },
@@ -369,6 +378,13 @@
   let snapshot = null;
   let selectedSection = "general";
   let searchText = "";
+  // 当前展开的 multiselect 菜单的 item.key；快照重渲染后按它恢复展开态。
+  let openMultiselect = null;
+  document.addEventListener("click", () => {
+    if (openMultiselect === null) return;
+    openMultiselect = null;
+    for (const menu of document.querySelectorAll(".multiselect-menu")) menu.hidden = true;
+  });
   let pendingRequest = 0;
   const appearanceUIState = { fontScope: "computed", themeEditorOpen: false };
 
@@ -550,6 +566,41 @@
       input.addEventListener("change", () => commit(input.value.trim()));
       return input;
     }
+    if (item.type === "multiselect") {
+      // 每次 set 都会触发整页快照重渲染，菜单展开态记录在模块级变量里，重渲染后按
+      // item.key 恢复，连续勾选多个类别时菜单不会自动收起。
+      const wrap = document.createElement("div");
+      wrap.className = "multiselect";
+      const enabledLabels = item.options
+        .filter(([optionKey]) => Boolean(settingValue(optionKey)))
+        .map(([, label]) => label);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "control multiselect-summary";
+      button.textContent = enabledLabels.length ? enabledLabels.join("、") : (item.emptyLabel ?? "无");
+      button.disabled = !supported;
+      const menu = document.createElement("div");
+      menu.className = "multiselect-menu";
+      menu.hidden = openMultiselect !== item.key;
+      for (const [optionKey, label] of item.options) {
+        const option = document.createElement("label");
+        option.className = "multiselect-option";
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = Boolean(settingValue(optionKey));
+        box.addEventListener("change", () => commitValue({ key: optionKey }, box.checked));
+        option.append(box, document.createTextNode(label));
+        menu.appendChild(option);
+      }
+      button.addEventListener("click", event => {
+        event.stopPropagation();
+        openMultiselect = menu.hidden ? item.key : null;
+        menu.hidden = !menu.hidden;
+      });
+      menu.addEventListener("click", event => event.stopPropagation());
+      wrap.append(button, menu);
+      return wrap;
+    }
     if (item.type === "action") {
       const button = document.createElement("button");
       button.type = "button";
@@ -638,6 +689,17 @@
       ? `${item.detail}（当前平台不可用）`
       : (isDisabled(item) ? (item.disabledDetail ?? item.detail) : item.detail);
     copy.append(label, detail);
+    // statusKey 行（如通知系统权限）用彩色圆点 + 状态文本替代静态描述，状态由原生侧
+    // 随快照下发；statusStateKey 决定圆点颜色。
+    if (item.statusKey && settingValue(item.statusKey)) {
+      const status = document.createElement("span");
+      status.className = "setting-status";
+      const dot = document.createElement("i");
+      dot.className = "setting-status-dot";
+      dot.dataset.state = String(settingValue(item.statusStateKey) ?? "unknown");
+      status.append(dot, document.createTextNode(String(settingValue(item.statusKey))));
+      detail.replaceWith(status);
+    }
     const control = document.createElement("div");
     control.className = "setting-control";
     control.appendChild(makeControl(item));

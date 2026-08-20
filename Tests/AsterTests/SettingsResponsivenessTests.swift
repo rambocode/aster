@@ -310,6 +310,42 @@ func settingsBridgeCoversCompositeAndDynamicSettings() throws {
   #expect(item.keyEquivalentModifierMask == [.option, .shift])
 }
 
+@Test("Shell 页派生键：恢复进程三档与 TERM 下拉往返")
+@MainActor
+func settingsBridgeHandlesShellDerivedKeys() throws {
+  let defaults = isolatedSettingsDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = SettingsViewController(preferences: preferences)
+  controller.loadViewIfNeeded()
+
+  // 恢复进程：三档下拉映射 restoreProcesses 布尔 + scope 兼容字段。
+  try controller.applySettingForTesting(key: "shell.restoreProcessesMode", value: "all")
+  #expect(preferences.configuration.shell.restoreProcesses)
+  #expect(preferences.settingsCompatibility["shell.restoreProcessesScope"]?.jsonValue as? String == "all")
+  try controller.applySettingForTesting(key: "shell.restoreProcessesMode", value: "whitelist")
+  #expect(preferences.settingsCompatibility["shell.restoreProcessesScope"]?.jsonValue as? String == "whitelist")
+  try controller.applySettingForTesting(key: "shell.restoreProcessesMode", value: "none")
+  #expect(!preferences.configuration.shell.restoreProcesses)
+  #expect(throws: (any Error).self) {
+    try controller.applySettingForTesting(key: "shell.restoreProcessesMode", value: "sometimes")
+  }
+
+  // TERM：预置项直接写身份名；从预置项切“自定义”清空占位（空值按 auto 解析）；
+  // 已是自定义值时切“自定义”保持不变。
+  try controller.applySettingForTesting(key: "appearance.terminalIdentityMode", value: "xterm-ghostty")
+  #expect(preferences.configuration.appearance.terminalIdentity == "xterm-ghostty")
+  try controller.applySettingForTesting(key: "appearance.terminalIdentityMode", value: "custom")
+  #expect(preferences.configuration.appearance.terminalIdentity.isEmpty)
+  try controller.applySettingForTesting(key: "appearance.terminalIdentity", value: "wezterm")
+  try controller.applySettingForTesting(key: "appearance.terminalIdentityMode", value: "custom")
+  #expect(preferences.configuration.appearance.terminalIdentity == "wezterm")
+  try controller.applySettingForTesting(key: "appearance.terminalIdentityMode", value: "auto")
+  #expect(preferences.configuration.appearance.terminalIdentity == "auto")
+  #expect(throws: (any Error).self) {
+    try controller.applySettingForTesting(key: "appearance.terminalIdentityMode", value: "vt100")
+  }
+}
+
 @Test("网页桥将 Panel 宽度写回最近活动工作区")
 @MainActor
 func settingsBridgeUpdatesBoundPanelWidths() throws {

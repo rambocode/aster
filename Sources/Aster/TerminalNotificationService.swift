@@ -28,6 +28,8 @@ final class TerminalNotificationService: TerminalNotificationPosting {
 
   private let injectedCenter: UNUserNotificationCenter?
   private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
+  /// 横幅（alert）样式是否可用；已授权但横幅被设为“无”时设置页要给出琥珀色警示。
+  private(set) var alertSetting: UNNotificationSetting = .notSupported
 
   init(center: UNUserNotificationCenter? = nil) {
     injectedCenter = center
@@ -40,11 +42,14 @@ final class TerminalNotificationService: TerminalNotificationPosting {
     }
     center.getNotificationSettings { [weak self] settings in
       let statusValue = settings.authorizationStatus.rawValue
+      let alertValue = settings.alertSetting.rawValue
       Task { @MainActor [weak self] in
         guard let self else { return }
         let next = UNAuthorizationStatus(rawValue: statusValue) ?? .notDetermined
-        let changed = authorizationStatus != next
+        let nextAlert = UNNotificationSetting(rawValue: alertValue) ?? .notSupported
+        let changed = authorizationStatus != next || alertSetting != nextAlert
         authorizationStatus = next
+        alertSetting = nextAlert
         if changed {
           NotificationCenter.default.post(name: .terminalNotificationAuthorizationDidChange, object: self)
         }
@@ -60,6 +65,27 @@ final class TerminalNotificationService: TerminalNotificationPosting {
     case .denied: "已关闭"
     case .notDetermined: "尚未请求"
     @unknown default: "状态未知"
+    }
+  }
+
+  /// 设置页“系统权限”行的状态描述：text 直接展示，state 决定圆点颜色
+  /// （authorized 绿 / bannerDisabled 琥珀 / denied 红 / 其余中性）。
+  var webPermissionStatus: (text: String, state: String) {
+    guard notificationCenterIsAvailable else {
+      return ("通知在当前构建不可用", "unavailable")
+    }
+    switch authorizationStatus {
+    case .authorized, .provisional, .ephemeral:
+      if alertSetting == .disabled {
+        return ("已允许，但横幅样式设为“无”——横幅不会显示", "bannerDisabled")
+      }
+      return ("Aster 已被允许发送通知", "authorized")
+    case .denied:
+      return ("已在系统设置中关闭——横幅不会显示", "denied")
+    case .notDetermined:
+      return ("尚未请求通知权限", "notDetermined")
+    @unknown default:
+      return ("通知权限状态未知", "unknown")
     }
   }
 

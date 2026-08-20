@@ -657,12 +657,21 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     NSWorkspace.shared.open(url)
   }
 
+  /// 用户指南尚未随应用打包，“打开文档”统一跳转仓库内 docs/user/help.md 的在线版本。
+  /// GitHub 的中文标题锚点必须显式百分号编码，否则 `URL(string:)` 直接解析失败。
+  private func openUserGuide(anchor: String) {
+    let base = "https://github.com/rambocode/aster/blob/master/docs/user/help.md"
+    let encoded = anchor.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? ""
+    guard let url = URL(string: encoded.isEmpty ? base : "\(base)#\(encoded)") else { return }
+    NSWorkspace.shared.open(url)
+  }
+
   private func shellViews() -> [NSView] {
     [
       sectionTitle("通用"),
       card([
         infoRow("登录 Shell", ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh", "系统默认"),
-        textRow("终端类型", "auto 使用 xterm-256color；自定义名称必须已安装 terminfo", value: preferences.configuration.appearance.terminalIdentity) { [weak self] value in
+        textRow("终端类型", "auto 优先使用内置 xterm-ghostty，缺条目回退 xterm-256color；自定义名称必须已安装 terminfo", value: preferences.configuration.appearance.terminalIdentity) { [weak self] value in
           self?.preferences.configuration.appearance.terminalIdentity = value
         },
       ]),
@@ -2648,6 +2657,7 @@ private enum SettingsWebBridge {
     "shell.zoxideEnabled": .bool(false),
     "shell.terminalResumeProtocol": .bool(false),
     "shell.restoreProcessAllowlist": .string(""),
+    "shell.restoreProcessesScope": .string("whitelist"),
     "controls.shiftMouseSelection": .bool(true),
     "appearance.adjustCellHeight": .number(0),
     "appearance.fontBlending": .string("srgbOver"),
@@ -2811,6 +2821,10 @@ extension SettingsViewController: WKNavigationDelegate {
       "about.version": AsterResourceLocations.productVersion(),
     ], [
       "appearance.terminalIdentity": configuration.appearance.terminalIdentity,
+      "appearance.terminalIdentityMode": webTerminalIdentityMode(configuration.appearance.terminalIdentity),
+      "shell.restoreProcessesMode": webRestoreProcessesMode(),
+      "shell.notificationPermission": TerminalNotificationService.shared.webPermissionStatus.text,
+      "shell.notificationPermissionState": TerminalNotificationService.shared.webPermissionStatus.state,
       "shell.shellIntegration": configuration.shell.shellIntegration,
       "shell.sshIntegration": configuration.shell.sshIntegration,
       "shell.frecencyAutoRecord": configuration.shell.resolvedFrecencyAutoRecord,
@@ -3155,6 +3169,32 @@ extension SettingsViewController: WKNavigationDelegate {
       let mapped = raw == "automatic" ? "auto" : (raw == "afterCurrent" ? "after-current" : raw)
       preferences.configuration.appearance.newTabPosition = try enumValue(mapped, as: NewTabPosition.self)
     case "appearance.terminalIdentity": preferences.configuration.appearance.terminalIdentity = try string()
+    case "appearance.terminalIdentityMode":
+      // 预置项直接写入身份名；切到“自定义”时仅在当前值仍是预置项的情况下清空，
+      // 空值按 auto 解析，等用户在自定义文本框里填入真实 terminfo 名称。
+      let mode = try string()
+      switch mode {
+      case "auto", "xterm-ghostty", "aster", "xterm-256color", "tmux-256color":
+        preferences.configuration.appearance.terminalIdentity = mode
+      case "custom":
+        if Self.presetTerminalIdentities.contains(preferences.configuration.appearance.terminalIdentity) {
+          preferences.configuration.appearance.terminalIdentity = ""
+        }
+      default: throw SettingsWebBridgeError.invalidValue
+      }
+    case "shell.restoreProcessesMode":
+      // 三档下拉映射到 restoreProcesses 布尔 + 兼容字段里的范围（whitelist/all），
+      // 引擎接入范围语义前先完整持久化用户意图。
+      switch try string() {
+      case "none": preferences.configuration.shell.restoreProcesses = false
+      case "whitelist":
+        preferences.configuration.shell.restoreProcesses = true
+        preferences.setCompatibilityValue(.string("whitelist"), forKey: "shell.restoreProcessesScope")
+      case "all":
+        preferences.configuration.shell.restoreProcesses = true
+        preferences.setCompatibilityValue(.string("all"), forKey: "shell.restoreProcessesScope")
+      default: throw SettingsWebBridgeError.invalidValue
+      }
     case "shell.shellIntegration": setShellIntegrationEnabled(try bool())
     case "shell.sshIntegration": preferences.configuration.shell.sshIntegration = try bool()
     case "shell.frecencyAutoRecord": preferences.configuration.shell.frecencyAutoRecord = try bool()
@@ -3488,6 +3528,7 @@ extension SettingsViewController: WKNavigationDelegate {
         "general.tabWorkingDirectory": ["home", "currentSession", "custom"],
         "general.splitWorkingDirectory": ["home", "currentSession", "custom"],
         "shell.enabledShells": ["zsh, bash, fish"],
+        "shell.restoreProcessesScope": ["whitelist", "all"],
         "controls.optionAsMetaMode": ["off", "both", "left", "right"],
         "controls.rightClickAction": ["contextMenu", "copy", "paste", "copyOrPaste", "ignore"],
         "controls.bypassMouseReporting": ["none", "shift", "control", "option", "controlShift", "command"],
@@ -3588,7 +3629,12 @@ extension SettingsViewController: WKNavigationDelegate {
     case "installCLI": installCLI()
     case "openFinderSettings": openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts")
     case "openFullDiskAccess": openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
-    case "openNotificationSettings": openSystemSettingsPane("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+    case "openNotificationSettings":
+      openSystemSettingsPane("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+      // 用户从系统设置回来前先预约一次权限刷新；authorization 变化会经由通知触发快照重推。
+      TerminalNotificationService.shared.refreshAuthorizationStatus()
+    case "openCLIDocs": openUserGuide(anchor: "cli-与深链")
+    case "openTermDocs": openUserGuide(anchor: "九类设置")
     case "openCredits": NSApp.orderFrontStandardAboutPanel(nil)
     case "editCLIAliases":
       editCompatibilityText(
@@ -4474,6 +4520,19 @@ extension SettingsViewController: WKNavigationDelegate {
   }
   private func webForegroundPolicy(_ value: NotificationForegroundPolicy) -> String {
     value == .tabUnfocused ? "banner" : value.rawValue
+  }
+  /// TERM 下拉的预置项；不在此集合（含空串）的身份名一律归入“自定义”。
+  static let presetTerminalIdentities: Set<String> = [
+    "auto", "xterm-ghostty", "aster", "xterm-256color", "tmux-256color",
+  ]
+  private func webTerminalIdentityMode(_ identity: String) -> String {
+    Self.presetTerminalIdentities.contains(identity) ? identity : "custom"
+  }
+  /// 恢复进程三档：restoreProcesses 关闭即“不重启”；开启时按兼容字段区分白名单/全部。
+  private func webRestoreProcessesMode() -> String {
+    guard preferences.configuration.shell.restoreProcesses else { return "none" }
+    let scope = preferences.settingsCompatibility["shell.restoreProcessesScope"]?.jsonValue as? String
+    return scope == "all" ? "all" : "whitelist"
   }
   private func webScrollPastLast(_ value: TerminalScrollPastLastLine) -> String {
     switch value { case .disabled: "disabled"; case .lastLineWithContent: "lastContentAtTop"; case .lastLineInMiddle: "lastLineInMiddle"; case .cursorLine: "cursorLineAtTop" }
