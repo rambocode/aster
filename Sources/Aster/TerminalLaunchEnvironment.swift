@@ -19,15 +19,21 @@ enum TerminalLaunchEnvironmentBuilder {
     paneIdentifier: String,
     version: String,
     resourcesDirectory: String?,
+    engineTerminfoDirectory: String? = nil,
     terminfoEntryExists: (String, [String: String]) -> Bool
   ) -> TerminalLaunchEnvironmentResult {
-    let terminfoDirectory = resourcesDirectory.map { "\($0)/terminfo" }
+    // 主资源 terminfo（build-app.sh 合并生成）优先；引擎 Bundle 的 terminfo 让
+    // `swift run` 开发构建（没有合并目录）也能把 auto 解析到 xterm-ghostty。
+    let terminfoDirectories = [
+      resourcesDirectory.map { "\($0)/terminfo" },
+      engineTerminfoDirectory,
+    ].compactMap { $0 }
     let provisional = TerminalIdentityPolicy.environment(
       inherited: inherited,
       term: TerminalIdentityPolicy.fallbackTerm,
       version: version,
       paneIdentifier: paneIdentifier,
-      bundledTerminfoDirectory: terminfoDirectory
+      bundledTerminfoDirectories: terminfoDirectories
     )
     let resolution = TerminalIdentityPolicy.resolve(configuredName: configuredTerm) {
       terminfoEntryExists($0, provisional)
@@ -37,7 +43,7 @@ enum TerminalLaunchEnvironmentBuilder {
       term: resolution.term,
       version: version,
       paneIdentifier: paneIdentifier,
-      bundledTerminfoDirectory: terminfoDirectory
+      bundledTerminfoDirectories: terminfoDirectories
     )
     if let resourcesDirectory,
       let plan = ShellIntegrationLaunchPlan.make(
@@ -109,6 +115,20 @@ enum AsterResourceLocations {
       fileManager.fileExists(atPath: development.appendingPathComponent("autocomplete/fig-specs.json").path)
     else { return nil }
     return development
+  }
+
+  /// libghostty 引擎自带的 terminfo 目录（承载 67/ghostty、78/xterm-ghostty）。
+  /// 开发构建（swift run）没有 build-app.sh 合并出的主资源 terminfo，靠它让 auto
+  /// 依旧解析到 xterm-ghostty；打包应用中它与主资源目录内容重叠，仅作冗余回退。
+  static func engineTerminfoDirectory(fileManager: FileManager = .default) -> URL? {
+    guard
+      let bundle = PackagedResourceBundle.locate(named: "AsterTerminal_Aster.bundle"),
+      let root = bundle.resourceURL
+    else { return nil }
+    let terminfo = root.appendingPathComponent("terminfo", isDirectory: true)
+    guard fileManager.fileExists(atPath: terminfo.appendingPathComponent("78/xterm-ghostty").path)
+    else { return nil }
+    return terminfo
   }
 
   static func productVersion(bundle: Bundle = .main) -> String {

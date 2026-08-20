@@ -46,7 +46,7 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 17. 平滑滚动只改变 normal buffer 的视口；alternate screen 不允许首尾越界，手势结束必须回到完整字符行。
 18. Shell Integration 资源必须来自签名 Bundle；受管 rc 区块必须幂等、可卸载并保留区块外内容、权限与符号链接。所有目标先预检，后续写入失败时回滚已改目标。
 19. OSC 133 只接受 A/B/C/D 与非负退出码，不接收或持久化命令正文；命令位置使用包含已裁剪行数的绝对坐标。时间线变化通过专用 `outlineChanged` 事件局部刷新 Outline，不提升为通用工作区重建。
-20. `TERM=auto` 解析为 `xterm-256color`；自定义名称只有真实 terminfo 存在时才能进入子进程，终端不得冒充其它产品。
+20. `TERM=auto` 优先解析为内置的 `xterm-ghostty`（产品引擎即 GhosttyKit，能力集一致，不算冒充），缺条目时静默回退 `xterm-256color`；自定义名称只有真实 terminfo 存在时才能进入子进程，终端不得冒充能力不符的其它产品。
 21. Autocomplete 只在 OSC 133 确认的可靠 prompt 中工作；接受候选只发送尚未输入的后缀，不自动发送回车。
 22. 命令学习必须先脱敏并遵守忽略模式；关闭本机学习时不得读取历史/README、运行 help 探测或生成纠错。
 23. Shell 自然结束或崩溃后必须保留最后终端画面并显示明确原因；只允许用户显式创建全新 PTY 重启，禁止自动重启循环，旧代次回调不得结束新进程。
@@ -218,7 +218,7 @@ zsh、Bash 与 fish 的静态脚本位于 `Resources/shell-integration/`，由�
 
 脚本在提示符与命令边界发送 OSC 133 A/B/C/D，并在提示符发送 OSC 7。OSC 7 主机固定为 `localhost`，路径按 UTF-8 字节完整 URL 转义，目录名中的 BEL/ESC 不能截断控制序列。`AsterTerminalView` 把标记时刻的光标转换成包含 `totalLinesTrimmed` 的绝对位置，`ShellCommandTimeline` 组成最多 1,000 条命令记录。时间线驱动运行 spinner、最近退出码、标签徽标和详情面板 Outline；命令完成后 `TerminalSession.outlineChanged` 只失效 Outline 页缓存，点击条目按绝对行跳回未裁剪锚点。`Command+Page Up/Down` 使用同一导航基础。当前提示符内同一行的线性 ASCII 选区可安全映射成左右移动与 Backspace，Cut 先复制再删除；跨行、矩形、Unicode 或命令运行中的范围不发送猜测字节。
 
-`TerminalLaunchEnvironmentBuilder` 为每个 Pane 注入 `TERM`、`COLORTERM=truecolor`、`TERM_PROGRAM=aster`、应用版本、`CW_TERM=aster`、稳定 `ASTER_PANE_ID` 和兼容别名 `ASTER_SESSION_ID`。默认配置 `auto` 使用 `xterm-256color`；自定义名称先通过字符白名单，再由固定 `/usr/bin/infocmp -x` 验证。应用 Bundle 内置构建期编译的 `aster-direct` terminfo，并把其目录放在 `TERMINFO_DIRS` 首位。SwiftTerm 的 opt-in 产品身份返回 DA1 `CSI ? 6 c`、带语义版本整数的 DA2、`DCS > | aster(version) ST`、DSR 5/6，并对 DA3 保持无响应。
+`TerminalLaunchEnvironmentBuilder` 为每个 Pane 注入 `TERM`、`COLORTERM=truecolor`、`TERM_PROGRAM=aster`、应用版本、`CW_TERM=aster`、稳定 `ASTER_PANE_ID` 和兼容别名 `ASTER_SESSION_ID`。默认配置 `auto` 优先探测并使用内置的 `xterm-ghostty`，缺条目回退 `xterm-256color`；自定义名称先通过字符白名单，再由固定 `/usr/bin/infocmp -x` 验证。应用 Bundle 内置构建期编译的 terminfo 数据库（`61/aster`、`61/aster-direct` 由引擎条目派生，`67/ghostty`、`78/xterm-ghostty` 原样复制），并把其目录放在 `TERMINFO_DIRS` 首位；引擎资源 Bundle 的 terminfo 目录紧随其后，让 `swift run` 开发构建（没有合并目录）同样能解析 `xterm-ghostty`。SwiftTerm 的 opt-in 产品身份返回 DA1 `CSI ? 6 c`、带语义版本整数的 DA2、`DCS > | aster(version) ST`、DSR 5/6，并对 DA3 保持无响应。
 
 ```mermaid
 flowchart LR

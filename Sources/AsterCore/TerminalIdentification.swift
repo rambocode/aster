@@ -52,6 +52,9 @@ public struct TerminalProductVersion: Equatable, Sendable {
 /// 因而配置迁移、回退和环境拼接无需启动外部进程即可完整测试。
 public enum TerminalIdentityPolicy {
   public static let automaticName = "auto"
+  /// 产品终端由 GhosttyKit 承载，`xterm-ghostty` 是与引擎能力一致的首选身份；
+  /// 打包时 build-app.sh 会把该条目编译进 App 内置 terminfo 目录。
+  public static let preferredTerm = "xterm-ghostty"
   public static let fallbackTerm = "xterm-256color"
 
   /// terminfo 名称只能由数据库名称常用的安全字符组成。路径分隔符和空白均被拒绝，
@@ -73,14 +76,18 @@ public enum TerminalIdentityPolicy {
       || (UInt8(ascii: "a")...UInt8(ascii: "z")).contains(byte)
   }
 
-  /// 解析用户配置。`auto` 永远使用跨 Unix 环境都可用的 `xterm-256color`；自定义值
-  /// 必须通过语法检查并由调用方确认存在对应 terminfo 条目。
+  /// 解析用户配置。`auto` 优先使用与 Ghostty 引擎能力一致的 `xterm-ghostty`，条目
+  /// 不可用时静默回退到跨 Unix 环境都可用的 `xterm-256color`；自定义值必须通过
+  /// 语法检查并由调用方确认存在对应 terminfo 条目。
   public static func resolve(
     configuredName: String,
     entryExists: (String) -> Bool
   ) -> TerminalIdentityResolution {
     if configuredName == automaticName || configuredName.isEmpty {
-      return TerminalIdentityResolution(term: fallbackTerm)
+      // 开发构建（swift run）或异常裁剪的安装可能没有内置条目；auto 的回退是预期
+      // 行为而非配置错误，因此不产生 warning。
+      let term = entryExists(preferredTerm) ? preferredTerm : fallbackTerm
+      return TerminalIdentityResolution(term: term)
     }
     guard isSyntacticallyValid(configuredName) else {
       return TerminalIdentityResolution(
@@ -98,13 +105,13 @@ public enum TerminalIdentityPolicy {
   }
 
   /// 生成每个 Pane 的完整子进程环境。保留继承环境，仅覆盖终端能力与品牌标识；应用
-  /// 内置 terminfo 目录排在最前，系统目录始终保留为最后的兼容回退。
+  /// 内置 terminfo 目录按传入顺序排在最前，系统目录始终保留为最后的兼容回退。
   public static func environment(
     inherited: [String: String],
     term: String,
     version: String,
     paneIdentifier: String,
-    bundledTerminfoDirectory: String?
+    bundledTerminfoDirectories: [String]
   ) -> [String: String] {
     var result = inherited
     result["TERM"] = term
@@ -116,10 +123,7 @@ public enum TerminalIdentityPolicy {
     // 0.4.x 已公开 ASTER_SESSION_ID；保留别名避免现有脚本升级后失效。
     result["ASTER_SESSION_ID"] = paneIdentifier
 
-    var terminfoDirectories: [String] = []
-    if let bundledTerminfoDirectory, !bundledTerminfoDirectory.isEmpty {
-      terminfoDirectories.append(bundledTerminfoDirectory)
-    }
+    var terminfoDirectories: [String] = bundledTerminfoDirectories.filter { !$0.isEmpty }
     if let inheritedDirectories = inherited["TERMINFO_DIRS"] {
       terminfoDirectories.append(contentsOf: inheritedDirectories.split(separator: ":").map(String.init))
     }

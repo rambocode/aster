@@ -3,18 +3,29 @@ import Testing
 
 @testable import AsterCore
 
-@Test("TERM auto 使用保守默认值且不探测 terminfo")
-func automaticTerminalIdentityUsesConservativeDefault() {
+@Test("TERM auto 优先内置 xterm-ghostty")
+func automaticTerminalIdentityPrefersBundledGhosttyEntry() {
   var checkedNames: [String] = []
 
   let resolution = TerminalIdentityPolicy.resolve(configuredName: "auto") { name in
     checkedNames.append(name)
-    return false
+    return name == "xterm-ghostty"
   }
 
-  #expect(resolution.term == "xterm-256color")
+  #expect(resolution.term == "xterm-ghostty")
   #expect(resolution.warning == nil)
-  #expect(checkedNames.isEmpty)
+  #expect(checkedNames == ["xterm-ghostty"])
+}
+
+@Test("TERM auto 缺内置条目时静默回退且空配置等价 auto")
+func automaticTerminalIdentityFallsBackSilently() {
+  let missing = TerminalIdentityPolicy.resolve(configuredName: "auto") { _ in false }
+  let empty = TerminalIdentityPolicy.resolve(configuredName: "") { _ in false }
+
+  #expect(missing.term == "xterm-256color")
+  #expect(missing.warning == nil)
+  #expect(empty.term == "xterm-256color")
+  #expect(empty.warning == nil)
 }
 
 @Test("自定义 TERM 仅在语法安全且 terminfo 已安装时生效")
@@ -53,7 +64,10 @@ func terminalEnvironmentContainsIdentificationContract() {
     term: "aster-direct",
     version: "0.4.1",
     paneIdentifier: "pane-123",
-    bundledTerminfoDirectory: "/Applications/Aster.app/Contents/Resources/terminfo"
+    bundledTerminfoDirectories: [
+      "/Applications/Aster.app/Contents/Resources/terminfo",
+      "/Engine.bundle/terminfo",
+    ]
   )
 
   #expect(environment["TERM"] == "aster-direct")
@@ -65,7 +79,7 @@ func terminalEnvironmentContainsIdentificationContract() {
   #expect(environment["ASTER_SESSION_ID"] == "pane-123")
   #expect(
     environment["TERMINFO_DIRS"]
-      == "/Applications/Aster.app/Contents/Resources/terminfo:/custom/terminfo:/usr/share/terminfo"
+      == "/Applications/Aster.app/Contents/Resources/terminfo:/Engine.bundle/terminfo:/custom/terminfo:/usr/share/terminfo"
   )
   #expect(environment["PATH"] == "/usr/bin")
 }

@@ -554,7 +554,8 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var cursorOpacity: Double? = 1
   public var cursorBlinkMode: TerminalCursorBlinkMode? = .defaultOn
   public var cursorAnimation: TerminalCursorAnimation? = .off
-  /// `auto` 在 Pane 启动时解析为保守的 xterm-256color；自定义值必须存在 terminfo。
+  /// `auto` 在 Pane 启动时优先解析为内置的 xterm-ghostty，缺条目时回退到保守的
+  /// xterm-256color；自定义值必须存在 terminfo。
   public var terminalIdentity = "auto"
   public var showTabBar = true
   public var autoHideTabs = false

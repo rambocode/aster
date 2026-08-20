@@ -2572,6 +2572,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       paneIdentifier: id.uuidString,
       version: AsterResourceLocations.productVersion(),
       resourcesDirectory: resourcesDirectory,
+      engineTerminfoDirectory: AsterResourceLocations.engineTerminfoDirectory()?.path,
       terminfoEntryExists: SystemTerminfoChecker.entryExists
     )
     if let warning = launchEnvironment.resolution.warning {
@@ -2661,6 +2662,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       paneIdentifier: id.uuidString,
       version: AsterResourceLocations.productVersion(),
       resourcesDirectory: resourcesDirectory,
+      engineTerminfoDirectory: AsterResourceLocations.engineTerminfoDirectory()?.path,
       terminfoEntryExists: SystemTerminfoChecker.entryExists
     )
     if let warning = launchEnvironment.resolution.warning { appendStartupWarning(warning) }

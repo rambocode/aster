@@ -49,8 +49,23 @@ cp -R "$PROJECT_DIR/Resources/settings-ui" "$RESOURCES_DIR/settings-ui"
 
 # Aster 自有 terminfo 在构建期编译进签名 Bundle。运行时只读取资源，不生成隐藏脚本
 # 或修改系统数据库；TERMINFO_DIRS 会把该目录放在系统条目前面。
+# `aster` 基础条目从引擎自带的 xterm-ghostty 反编译改名生成，能力集与锁定的 Ghostty
+# revision 永远一致；仓库源文件只叠加 aster-direct 的 direct-color 差异。67/78 目录
+# 原样复制进来，auto 的 TERM 解析（xterm-ghostty）与用户显式配置都依赖它们存在。
+GHOSTTY_TERMINFO_DIR="$PROJECT_DIR/Sources/Aster/Ghostty/Resources/terminfo"
+ASTER_TERMINFO_SRC="$BUILD_DIR/aster-terminfo.src"
 mkdir -p "$RESOURCES_DIR/terminfo"
-/usr/bin/tic -x -o "$RESOURCES_DIR/terminfo" "$PROJECT_DIR/Resources/terminfo/aster.terminfo"
+TERMINFO="$GHOSTTY_TERMINFO_DIR" /usr/bin/infocmp -x xterm-ghostty \
+  | sed 's/^xterm-ghostty|ghostty|Ghostty,$/aster|Aster terminal,/' \
+  > "$ASTER_TERMINFO_SRC"
+# 上游若改了条目头，sed 会静默不匹配；这里显式失败，避免打出没有 aster 条目的包。
+if ! grep -q '^aster|Aster terminal,$' "$ASTER_TERMINFO_SRC"; then
+  echo "Failed to derive aster terminfo from xterm-ghostty (upstream entry renamed?)" >&2
+  exit 1
+fi
+cat "$PROJECT_DIR/Resources/terminfo/aster.terminfo" >> "$ASTER_TERMINFO_SRC"
+/usr/bin/tic -x -o "$RESOURCES_DIR/terminfo" "$ASTER_TERMINFO_SRC"
+cp -R "$GHOSTTY_TERMINFO_DIR/67" "$GHOSTTY_TERMINFO_DIR/78" "$RESOURCES_DIR/terminfo/"
 
 # SwiftPM 为 SwiftTerm 的 Metal shader 生成独立资源 Bundle。SwiftTerm 会从标准
 # `Contents/Resources` 位置探测该 Bundle；放在 .app 根目录会破坏 macOS 代码签名。

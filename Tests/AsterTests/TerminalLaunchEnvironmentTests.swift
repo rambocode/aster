@@ -41,6 +41,36 @@ func terminalLaunchEnvironmentResolvesTermAndShellIntegration() {
   #expect(result.programIdentity.deviceAttributesVersion == 401)
 }
 
+@Test("TERM auto 经内置 terminfo 目录探测并解析为 xterm-ghostty")
+func terminalLaunchEnvironmentResolvesAutomaticTermToBundledGhostty() {
+  var checked: [(String, String?)] = []
+  let result = TerminalLaunchEnvironmentBuilder.make(
+    inherited: ["HOME": "/Users/test"],
+    configuredTerm: "auto",
+    shellPath: "/bin/zsh",
+    shellIntegrationEnabled: false,
+    paneIdentifier: "pane-3",
+    version: "0.4.1",
+    resourcesDirectory: "/Applications/Aster.app/Contents/Resources",
+    engineTerminfoDirectory: "/Applications/Aster.app/Contents/Resources/AsterTerminal_Aster.bundle/terminfo"
+  ) { name, environment in
+    checked.append((name, environment["TERMINFO_DIRS"]))
+    return name == "xterm-ghostty"
+  }
+
+  #expect(result.resolution.term == "xterm-ghostty")
+  #expect(result.resolution.warning == nil)
+  #expect(result.environment["TERM"] == "xterm-ghostty")
+  // 探测必须携带含内置目录（主资源 + 引擎 Bundle）的 TERMINFO_DIRS，
+  // 否则打包条目永远探测不到；开发构建只有引擎 Bundle 目录可用。
+  #expect(checked.count == 1)
+  #expect(checked.first?.0 == "xterm-ghostty")
+  #expect(
+    checked.first?.1
+      == "/Applications/Aster.app/Contents/Resources/terminfo:/Applications/Aster.app/Contents/Resources/AsterTerminal_Aster.bundle/terminfo:/usr/share/terminfo"
+  )
+}
+
 @Test("缺失 terminfo 安全回退且关闭 Shell 集成时不注入标记变量")
 func terminalLaunchEnvironmentFallsBackWithoutShellInjection() {
   let result = TerminalLaunchEnvironmentBuilder.make(

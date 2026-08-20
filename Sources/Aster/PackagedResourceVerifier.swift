@@ -39,6 +39,18 @@ enum PackagedResourceVerifier {
       failures.append("libghostty resource bundle is missing")
     }
 
+    // 主资源目录的 terminfo 由 build-app.sh 生成：61/ 为品牌条目（aster、aster-direct），
+    // 67/78 为引擎条目；auto 的 TERM 解析依赖 78/xterm-ghostty 存在。
+    if let resources = Bundle.main.resourceURL {
+      let terminfo = resources.appendingPathComponent("terminfo", isDirectory: true)
+      let entries = ["61/aster", "61/aster-direct", "67/ghostty", "78/xterm-ghostty"]
+      if entries.contains(where: {
+        !fileManager.fileExists(atPath: terminfo.appendingPathComponent($0).path)
+      }) {
+        failures.append("bundled terminfo database is incomplete")
+      }
+    }
+
     guard let highlighter = Highlighter(), highlighter.setTheme("panda-syntax-light") else {
       failures.append("Highlighter resource bundle is missing or incomplete")
       return failures

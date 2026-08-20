@@ -1,4 +1,15 @@
-# Aster deliberately inherits the conservative xterm-256color capability set. Terminal-specific
-# extensions are negotiated through DA/XTVERSION and COLORTERM instead of false TERM claims.
-aster-direct|Aster direct terminal,
-  use=xterm-256color,
+# Aster's terminfo source only maintains the direct-color delta. The base `aster` entry is
+# generated at package time by build-app.sh: it decompiles the engine's own xterm-ghostty
+# entry and renames it, so the advertised capability set always matches the pinned Ghostty
+# revision instead of a hand-written list that could overclaim or lag behind.
+# Compiling this file alone fails because the `aster` base is missing — that is intentional;
+# build-app.sh concatenates the generated base in front of this file before running tic.
+#
+# The direct-color overrides mirror the conventional */-direct split (see alacritty-direct):
+# RGB semantics replace the 256-slot palette, so palette redefinition caps are removed.
+aster-direct|Aster direct-color terminal,
+  RGB, ccc@,
+  initc@, oc@,
+  setab=\E[%?%p1%{8}%<%t4%p1%d%e48\:2\:\:%p1%{65536}%/%d\:%p1%{256}%/%{255}%&%d\:%p1%{255}%&%d%;m,
+  setaf=\E[%?%p1%{8}%<%t3%p1%d%e38\:2\:\:%p1%{65536}%/%d\:%p1%{256}%/%{255}%&%d\:%p1%{255}%&%d%;m,
+  use=aster,
