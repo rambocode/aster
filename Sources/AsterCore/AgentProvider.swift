@@ -10,6 +10,7 @@ public enum AgentProvider: String, CaseIterable, Codable, Equatable, Sendable {
   case kimiCode
   case pi
   case omp
+  case grokBuild
 
   /// provider 的原生 CLI 名称。自定义启动前缀可以在命令规划阶段覆盖此值。
   public var commandName: String {
@@ -21,6 +22,7 @@ public enum AgentProvider: String, CaseIterable, Codable, Equatable, Sendable {
     case .kimiCode: "kimi"
     case .pi: "pi"
     case .omp: "omp"
+    case .grokBuild: "grok"
     }
   }
 
@@ -89,8 +91,8 @@ public enum AgentProvider: String, CaseIterable, Codable, Equatable, Sendable {
     {
       return .kimiCode
     }
-    // Pi/omp 通过 extension 上报真实 session path；官方契约未承诺固定历史根目录，
-    // 因而不能仅凭一个看似合理的本地路径推断 provider。
+    // Pi/omp 通过 extension 上报真实 session path；Grok 的 ~/.grok/sessions 尚未接入
+    // History。官方契约未承诺固定历史根目录时，不能仅凭看似合理的本地路径推断 provider。
     return nil
   }
 
@@ -220,13 +222,16 @@ extension AgentProvider {
       .installManagedArtifact(directory: "~/.pi/agent/extensions", kind: .extension)
     case .omp:
       .installManagedArtifact(directory: "~/.omp/agent/extensions", kind: .extension)
+    case .grokBuild:
+      // Grok 只把用户级 hook 当作 Claude 兼容层来读，装进 ~/.claude/settings.json。
+      .mergeManagedHooks(path: "~/.claude/settings.json", format: .json)
     }
   }
 
   fileprivate var linksOnLifecycleEvent: Bool {
     switch self {
     case .openCode, .pi, .omp: true
-    case .claudeCode, .codex, .cursorCLI, .kimiCode: false
+    case .claudeCode, .codex, .cursorCLI, .kimiCode, .grokBuild: false
     }
   }
 }
@@ -353,8 +358,8 @@ extension AgentProvider {
   fileprivate func arguments(for continuation: AgentContinuationKind, sessionID: String) -> [String]
   {
     switch (self, continuation) {
-    case (.claudeCode, .resume): ["--resume", sessionID]
-    case (.claudeCode, .fork): ["--resume", sessionID, "--fork-session"]
+    case (.claudeCode, .resume), (.grokBuild, .resume): ["--resume", sessionID]
+    case (.claudeCode, .fork), (.grokBuild, .fork): ["--resume", sessionID, "--fork-session"]
     case (.codex, .resume): ["resume", sessionID]
     case (.codex, .fork): ["fork", sessionID]
     case (.openCode, .resume): ["--session", sessionID]

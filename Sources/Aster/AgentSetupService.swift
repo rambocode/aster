@@ -60,7 +60,7 @@ struct AgentSetupStatus: Equatable {
   }
 }
 
-/// 七类代码 Agent 的最小增量安装边界。
+/// 内置代码 Agent 的最小增量安装边界。
 ///
 /// Planner 决定“需要做什么”，本服务只负责安全地把语义步骤落到当前用户目录：
 /// JSON 只维护事件数组中带 `_aster` 标识的条目，TOML 只维护带双 marker 的区块或 Planner
@@ -179,7 +179,7 @@ struct AgentSetupService {
   @discardableResult
   func uninstall(_ provider: AgentProvider) throws -> AgentSetupStatus {
     switch provider {
-    case .claudeCode, .codex, .cursorCLI:
+    case .claudeCode, .codex, .cursorCLI, .grokBuild:
       try uninstallJSONHooks(for: provider)
     case .kimiCode:
       try uninstallManagedTOMLBlock(for: provider)
@@ -191,7 +191,7 @@ struct AgentSetupService {
 
   private func uninstallJSONHooks(for provider: AgentProvider) throws {
     let path = switch provider {
-    case .claudeCode: "~/.claude/settings.json"
+    case .claudeCode, .grokBuild: "~/.claude/settings.json"
     case .codex: "~/.codex/hooks.json"
     case .cursorCLI: "~/.cursor/hooks.json"
     default: preconditionFailure("JSON provider switch must be exhaustive")
@@ -266,9 +266,9 @@ struct AgentSetupService {
 
   private func detectsManagedIntegration(for provider: AgentProvider) throws -> Bool {
     switch provider {
-    case .claudeCode, .codex, .cursorCLI:
+    case .claudeCode, .codex, .cursorCLI, .grokBuild:
       let path = switch provider {
-      case .claudeCode: "~/.claude/settings.json"
+      case .claudeCode, .grokBuild: "~/.claude/settings.json"
       case .codex: "~/.codex/hooks.json"
       case .cursorCLI: "~/.cursor/hooks.json"
       default: preconditionFailure("JSON provider switch must be exhaustive")
@@ -469,6 +469,15 @@ struct AgentSetupService {
         .init(event: "PostToolUse", state: .processing),
         .init(event: "Stop", state: .idle),
         .init(event: "PermissionRequest", state: .awaitingInput),
+      ]
+    case .grokBuild:
+      // Grok 读 Claude 兼容事件，但没有 PermissionRequest；awaiting-input 因此不报。
+      [
+        .init(event: "SessionStart", state: .idle),
+        .init(event: "UserPromptSubmit", state: .processing),
+        .init(event: "PreToolUse", state: .processing),
+        .init(event: "PostToolUse", state: .processing),
+        .init(event: "Stop", state: .idle),
       ]
     case .codex:
       [

@@ -1268,6 +1268,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       ("Kimi Code", .kimiCode),
       ("Pi", .pi),
       ("omp", .omp),
+      ("Grok Build", .grokBuild),
     ]
     // enabledAgents 是命令名数组：开关按「包含与否」读写，保持数组内不重复。
     let agentRows = providers.map { name, provider in
@@ -3172,6 +3173,7 @@ extension SettingsViewController: WKNavigationDelegate {
     case .kimiCode: "把 Aster hooks 写入 ~/.kimi-code/config.toml，实时同步任务状态。"
     case .pi: "把 Aster 扩展写入 ~/.pi/agent/extensions/，实时同步任务状态。"
     case .omp: "把 Aster 扩展写入 ~/.omp/agent/extensions/，实时同步任务状态。"
+    case .grokBuild: "把 Aster hooks 写入 ~/.claude/settings.json（Grok 作为 Claude 兼容层读取），与 Claude 条目并排、互不覆盖。"
     }
   }
 
@@ -4612,6 +4614,7 @@ extension SettingsViewController: WKNavigationDelegate {
     case .kimiCode: "Kimi Code"
     case .pi: "Pi"
     case .omp: "omp"
+    case .grokBuild: "Grok Build"
     }
   }
 
@@ -4626,6 +4629,7 @@ extension SettingsViewController: WKNavigationDelegate {
     case .kimiCode: "kimi"
     case .pi: "pi"
     case .omp: "omp"
+    case .grokBuild: "grok"
     }
   }
 

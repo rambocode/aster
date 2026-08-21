@@ -43,7 +43,7 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 
 ### Working with Agents
 
-- **接入与状态**：以最小增量安装 Claude、Codex、OpenCode、Cursor、Kimi、Pi、omp hook/plugin；上报 processing/idle/awaiting，驱动 badge、通知、防睡与恢复。
+- **接入与状态**：以最小增量安装 Claude、Codex、OpenCode、Cursor、Kimi、Pi、omp、Grok Build hook/plugin；上报 processing/idle/awaiting，驱动 badge、通知、防睡与恢复。
 - **历史与分支**：识别各 Agent 的会话文件，渲染 transcript，搜索/resume；在 split/tab/window 中使用原生命令 fork/branch，保留 provider/model/system prompt。
 - **输入工作流**：Composer 多行编辑、草稿、富粘贴、pin/float；Prompt Queue 在任意终端用 Return 入队、按列表项左侧按钮显式发送；Send to Chat 把终端/文件上下文预填到现有 Agent 会话。
 
@@ -93,14 +93,14 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 ### Working with Agents（9）
 
 - 完成：[Overview](https://docs.otty.sh/agents/agents-overview) — Agent 被建模为普通 PTY 上的 provider 会话，状态、历史、输入工作流与终端能力组合而非另建执行器。
-- 完成：[Setup](https://docs.otty.sh/agents/setup) — 七类 provider 的检测、最小增量安装、卸载、重启提示和结构化自定义启动命令已实现。
+- 完成：[Setup](https://docs.otty.sh/agents/setup) — 八类 provider（含 Grok Build）的检测、最小增量安装、卸载、重启提示和结构化自定义启动命令已实现。
 - 完成：[Monitor Tasks](https://docs.otty.sh/agents/parallel-tasks) — hook 状态驱动多标签/多窗口 badge、通知、Dock、防睡与聚焦。
 - 完成：[History](https://docs.otty.sh/agents/history) — 已知 provider 路径有界发现、解析、搜索和 Resume；无稳定路径的 provider 不做猜测。
 - 完成：[Composer](https://docs.otty.sh/agents/composer) — 多行草稿、附件、固定、浮动、取消和 bracketed 提交已实现。
 - 完成：[Prompt Queue](https://docs.otty.sh/agents/prompt-queue) — 容量/字节限制、重排/删除及 authoritative idle 后串行派发已实现。
 - 完成：[Send to Chat](https://docs.otty.sh/agents/send-to-chat) — 终端选区和文件上下文经过控制字符清理、secret 遮盖、provenance 包装与总预算后进入 Composer。
 - 完成：[Fork / Branch Session](https://docs.otty.sh/agents/fork-branch-session) — provider 原生 Resume/Fork 参数和能力拒绝已实现，并保留 provider/model/system prompt 元数据。
-- 完成：[Supported Agents](https://docs.otty.sh/agents/supported-agents) — Claude Code、Codex、OpenCode、Cursor CLI、Kimi Code、Pi、omp 能力矩阵与接入方式已编码。
+- 完成：[Supported Agents](https://docs.otty.sh/agents/supported-agents) — Claude Code、Codex、OpenCode、Cursor CLI、Kimi Code、Pi、omp、Grok Build 能力矩阵与接入方式已编码；Grok 会话历史扫描仍按上游未接线处理。
 
 ## 当前实现说明
 

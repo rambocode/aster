@@ -226,11 +226,16 @@ func settingsAgentSnapshotContainsDetectionEvidence() throws {
   let codex = try #require(agents.first { $0["id"] as? String == AgentProvider.codex.rawValue })
   let cursor = try #require(agents.first { $0["id"] as? String == AgentProvider.cursorCLI.rawValue })
   let omp = try #require(agents.first { $0["id"] as? String == AgentProvider.omp.rawValue })
+  let grok = try #require(agents.first { $0["id"] as? String == AgentProvider.grokBuild.rawValue })
   #expect(codex["executablePath"] as? String == codexPath.path)
   #expect(codex["icon"] as? String == "codex")
   #expect(codex["integrated"] as? Bool == false)
   #expect(cursor["name"] as? String == "Cursor CLI")
   #expect(omp["name"] as? String == "omp")
+  #expect(grok["name"] as? String == "Grok Build")
+  #expect(grok["icon"] as? String == "grok")
+  #expect(grok["defaultCommand"] as? String == "grok")
+  #expect(grok["integrated"] as? Bool == false)
 }
 
 @Test("网页主题编辑把黑暗主题参数追加到原配置而不创建副本")

@@ -14,6 +14,7 @@ extension AgentProvider {
     case .kimiCode: "Kimi"
     case .pi: "Pi"
     case .omp: "omp"
+    case .grokBuild: "Grok"
     }
   }
 }

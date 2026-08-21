@@ -13,6 +13,8 @@ import Testing
   #expect(AgentProvider.detect(executablePath: "kimi") == .kimiCode)
   #expect(AgentProvider.detect(executablePath: "pi") == .pi)
   #expect(AgentProvider.detect(executablePath: "omp") == .omp)
+  #expect(AgentProvider.detect(executablePath: "grok") == .grokBuild)
+  #expect(AgentProvider.detect(executablePath: "/Users/tester/.local/bin/grok") == .grokBuild)
   #expect(AgentProvider.detect(executablePath: "codex-helper") == nil)
 
   #expect(
@@ -33,14 +35,23 @@ import Testing
       homeDirectory: home
     ) == nil
   )
+  #expect(
+    AgentProvider.detect(
+      sessionFileURL: home.appendingPathComponent(
+        ".grok/sessions/Users-tester-project/abc/updates.jsonl"),
+      homeDirectory: home
+    ) == nil
+  )
 }
 
 @Test func providerCapabilitiesMatchNativeAgentSupport() {
-  #expect(AgentProvider.allCases.count == 7)
+  #expect(AgentProvider.allCases.count == 8)
   #expect(AgentProvider.codex.capabilities.contains(.lifecycleMonitoring))
   #expect(AgentProvider.codex.capabilities.contains(.history))
   #expect(AgentProvider.codex.capabilities.contains(.resumeSession))
   #expect(AgentProvider.codex.capabilities.contains(.forkSession))
+  #expect(AgentProvider.grokBuild.capabilities.contains(.forkSession))
+  #expect(AgentProvider.grokBuild.commandName == "grok")
   #expect(!AgentProvider.cursorCLI.capabilities.contains(.forkSession))
   #expect(!AgentProvider.kimiCode.capabilities.contains(.forkSession))
 }
@@ -116,6 +127,20 @@ import Testing
     ]
   )
   #expect(available.linksAfterNextLifecycleEvent)
+
+  let grok = AgentSetupPlanner.plan(
+    for: .grokBuild,
+    evidence: AgentSetupEvidence(
+      executableAvailable: true,
+      managedIntegrationInstalled: false
+    )
+  )
+  #expect(
+    grok.steps == [
+      .mergeManagedHooks(path: "~/.claude/settings.json", format: .json)
+    ]
+  )
+  #expect(!grok.linksAfterNextLifecycleEvent)
 }
 
 @Test func nativeContinuationPlansPreserveConfigurationAndKeepSessionIDAsOneArgument() throws {
@@ -165,6 +190,8 @@ import Testing
     (.pi, .fork, ["--fork", "s1"]),
     (.omp, .resume, ["--session", "s1"]),
     (.omp, .fork, ["--fork", "s1"]),
+    (.grokBuild, .resume, ["--resume", "s1"]),
+    (.grokBuild, .fork, ["--resume", "s1", "--fork-session"]),
   ]
 
   for (provider, kind, expectedArguments) in cases {

@@ -194,8 +194,8 @@ enum AgentTranscriptIngestion {
     return stem == agentSessionID || stem.hasSuffix("-" + agentSessionID)
   }
 
-  /// provider 的会话根目录。Pi 与 omp 没有稳定历史根目录，只能靠运行时 hook 上报，
-  /// 这里明确返回 nil 而不是去猜一个看似合理的路径。
+  /// provider 的会话根目录。Pi / omp / Grok 没有接入磁盘历史扫描，只能靠运行时 hook
+  /// 上报，这里明确返回 nil 而不是去猜一个看似合理的路径。
   static func transcriptRoot(for provider: AgentProvider, homeDirectory: URL) -> URL? {
     switch provider {
     case .claudeCode:
@@ -209,7 +209,7 @@ enum AgentTranscriptIngestion {
       homeDirectory.appendingPathComponent(".cursor/projects", isDirectory: true)
     case .kimiCode:
       homeDirectory.appendingPathComponent(".kimi-code/sessions", isDirectory: true)
-    case .pi, .omp:
+    case .pi, .omp, .grokBuild:
       nil
     }
   }

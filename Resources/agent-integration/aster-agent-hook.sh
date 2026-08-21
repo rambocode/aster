@@ -13,9 +13,31 @@ case "$state" in
   *) exit 0 ;;
 esac
 case "$provider" in
-  claudeCode|codex|openCode|cursorCLI|kimiCode|pi|omp) ;;
+  claudeCode|codex|openCode|cursorCLI|kimiCode|pi|omp|grokBuild) ;;
   *) exit 0 ;;
 esac
+
+# Claude Code 和 Grok 共用 ~/.claude/settings.json，对方 runner 会启动本条目。
+# Grok 每次 hook 都注入 GROK_HOOK_EVENT / GROK_SESSION_ID；对不上调用方就静默退出，
+# 避免把 Grok pane 标成 Claude（或反过来）。
+is_grok=0
+if [ -n "${GROK_HOOK_EVENT-}" ] || [ -n "${GROK_SESSION_ID-}" ]; then
+  is_grok=1
+fi
+if [ "$provider" = "grokBuild" ]; then
+  if [ "$is_grok" != 1 ]; then
+    /bin/cat >/dev/null 2>&1 || true
+    exit 0
+  fi
+elif [ "$is_grok" = 1 ]; then
+  /bin/cat >/dev/null 2>&1 || true
+  exit 0
+fi
+
+# Grok stdin 用 camelCase `sessionId`，现有 `session_id` 提取读不到；优先用注入的 ID。
+if [ -z "$session_id" ] && [ -n "${GROK_SESSION_ID-}" ]; then
+  session_id="$GROK_SESSION_ID"
+fi
 
 # Codex、Claude Code 等 command hook 把稳定 session id 放在 stdin JSON 的顶层
 # `session_id`。仅在调用方没有显式传入 ID 时读取；多取一个字节用于拒绝超限载荷，

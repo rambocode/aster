@@ -109,7 +109,7 @@
 
 ## Agents / Fonts 检查清单
 
-- [ ] 七类 Agent 行分别显示 CLI、集成状态；安装、重启、卸载后状态更新且用户自有 hook 不变。
+- [ ] 八类 Agent 行（含 Grok Build）分别显示 CLI、集成状态；安装、重启、卸载后状态更新且用户自有 hook 不变。Grok 与 Claude 共用 `~/.claude/settings.json` 时互不覆盖。
 - [ ] 自定义 Agent 启动命令同时用于命令面板、Open Quickly 和历史 Resume/Fork，带空格参数不会被拆错或执行替换语法。
 - [ ] processing、awaiting-input、idle 正确驱动 badge、通知、Prompt Queue 和防睡；多个窗口中的 Agent 都参与聚合。
 - [ ] Composer 多行、附件、固定/浮动与队列切换不丢草稿；终端/文件 Send to Chat 显示脱敏后的 `untrusted-context`。

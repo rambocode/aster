@@ -1463,6 +1463,7 @@
         kimi: "K",
         pi: "Pı",
         omp: "T",
+        grok: "X",
       };
       const iconName = Object.hasOwn(iconMarks, agent.icon) ? agent.icon : "default";
       const icon = document.createElement("span");

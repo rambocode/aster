@@ -462,6 +462,7 @@ input.control[type="text"]:focus, input.control[type="number"]:focus { border-co
 .agent-icon-kimi { background: #050607; font-size: 19px; }
 .agent-icon-pi { color: #111; background: #f3f3f5; font-size: 14px; letter-spacing: -2px; }
 .agent-icon-omp { color: #8f67ff; background: #17181b; font-size: 19px; }
+.agent-icon-grok { color: #fff; background: #111; font-size: 16px; font-weight: 700; }
 .agent-icon-default { color: var(--text-secondary); background: var(--bg-element); font-family: "SF Mono", Menlo, monospace; font-size: 12px; }
 .agent-copy { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
 .agent-name { overflow: hidden; font-size: 12px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }

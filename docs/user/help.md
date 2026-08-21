@@ -262,7 +262,7 @@ aster pane exec --format json -- git status --short
 
 ## Working with Agents
 
-Aster 支持 Claude Code、Codex、OpenCode、Cursor CLI、Kimi Code、Pi 和 omp。在“设置 → 智能体”中，每个 provider 会显示图标与检测到的 CLI 绝对路径；从 Finder 或 Dock 启动 Aster 时，也会识别 `~/.local/bin`、Homebrew 及常见 Node 版本管理器里的安装。右侧“已安装 / 关闭”和开关专指 Aster 受管 lifecycle 集成，与 CLI 路径是独立状态；展开一行后可另行控制它是否出现在快速启动入口，并为 wrapper、环境配置或自定义可执行文件设置结构化启动命令。安装和卸载只改动带 Aster 标识的 hook/plugin；用户自己的配置保持不变，变更后应重启对应 Agent。
+Aster 支持 Claude Code、Codex、OpenCode、Cursor CLI、Kimi Code、Pi、omp 和 Grok Build。在“设置 → 智能体”中，每个 provider 会显示图标与检测到的 CLI 绝对路径；从 Finder 或 Dock 启动 Aster 时，也会识别 `~/.local/bin`、Homebrew 及常见 Node 版本管理器里的安装。右侧“已安装 / 关闭”和开关专指 Aster 受管 lifecycle 集成，与 CLI 路径是独立状态；展开一行后可另行控制它是否出现在快速启动入口，并为 wrapper、环境配置或自定义可执行文件设置结构化启动命令。安装和卸载只改动带 Aster 标识的 hook/plugin；用户自己的配置保持不变，变更后应重启对应 Agent。Grok Build 的用户级 hook 写在 `~/.claude/settings.json`（Grok 把它当 Claude 兼容层读取），与 Claude Code 的 Aster 条目并排、互不覆盖；两边的 hook 会先确认调用方再上报状态，避免把 Grok 标签标成 Claude。Grok 首次在某个项目跑 hook 时可能要 `/hooks-trust`。Grok 会话暂时不会出现在 Agent 历史浮层或 Open Quickly。
 
 - lifecycle hook 把 `processing / idle / awaiting-input` 归一到所属 PTY，驱动标签徽章、完成/等待通知和“处理期间阻止睡眠”。不会读取或保存 prompt 正文。
 - “Shell”菜单对齐 Otty 的完整结构：顶部是“重命名标签页…”“设置标签页前缀…”（共用同一原生对话框，后者预选动态前缀模式）与“清屏”（`⌘K`）；随后是围绕当前工作目录的“拷贝路径”“在访达中显示”“打开方式”（无可靠 CWD 时置灰）；中段保留 Vi/Mark/Hint、只读模式与 Composer；底部是“Git”子菜单（图形客户端入口 + Commit/Push/Pull/Fetch/Merge…/Rebase…，全部只预填命令到终端，由你回车执行）与“通知与权限…”（跳到设置的 Shell 分类）。“打开方式”与“Git”和窗口标题胶囊弹层显示完全相同的条目。
@@ -318,7 +318,7 @@ Aster 附带一个本地 MCP server `aster-memory-mcp`，任何支持 MCP 的 Ag
 - **Shell**：按 Otty 同构排列——新窗口/新标签页/新分屏的工作目录、Shell/SSH 集成、Aster CLI（安装命令、省略 `aster` 前缀、覆盖已有命令、自定义别名）、常用文件夹（自动记录、管理已跟踪/已忽略、Zoxide 同步）、会话恢复（复用器、Code Agent、终端恢复协议、恢复进程三档：不重启/仅白名单内/所有运行中的进程）、声音（终端响铃、出错蜂鸣）、通知（系统权限状态、应用/完成/出错/watch 通知、前台策略、按类别选择的通知声音、Dock 图标跳动）、标签徽章和终端标识。`TERM` 通过下拉选择，`auto` 优先使用应用内置的 `xterm-ghostty`（能力与终端引擎一致），缺少条目时回退到兼容的 `xterm-256color`；选择“自定义…”后可填写本机真实安装的 terminfo 名称。
 - **控制**：与 Otty 相同，严格按自动补全、选择、滚动、打开方式、链接协议、键盘、鼠标、安全输入、剪贴板九组排列；包含 inline suggestion、Option/Meta、VT100 keypad、TUI 鼠标绕过、复制清理、危险粘贴、链接 scheme/安全例外、首尾滚动和安全输入指示。
 - **编辑器**：自动换行、行号、不可见字符、Tab 宽度、滚动越过末尾、Vim 按键与富文档预览。
-- **智能体**：七类 Agent 的启用状态、结构化启动命令、集成安装/卸载、标签徽章、通知与运行选项。
+- **智能体**：八类 Agent（含 Grok Build）的启用状态、结构化启动命令、集成安装/卸载、标签徽章、通知与运行选项。
 - **外观**：当前工作区左右 Panel 宽度、标签位置与自动隐藏、窗口尺寸、Dock 任务状态、浅深色主题、主题编辑/导入、文本样式、字体来源与回退、光标颜色/样式/闪烁/动画。
 - **Recipes**：命令重放与按内容信任策略；外部命令必须按所选策略确认。
 - **快捷键**：查看内置快捷键。

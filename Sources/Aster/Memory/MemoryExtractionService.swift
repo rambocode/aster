@@ -352,7 +352,7 @@ struct CLIAgentMemoryExtractor: SessionMemoryExtracting {
     switch provider {
     case .claudeCode: ["-p", prompt, "--output-format", "json"]
     case .codex: ["exec", prompt]
-    case .openCode, .cursorCLI, .kimiCode, .pi, .omp: nil
+    case .openCode, .cursorCLI, .kimiCode, .pi, .omp, .grokBuild: nil
     }
   }
 

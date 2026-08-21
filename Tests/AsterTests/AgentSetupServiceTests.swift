@@ -5,7 +5,7 @@ import Testing
 @testable import Aster
 import AsterCore
 
-@Test("七类 Agent 都按 Planner 完成检测与幂等安装")
+@Test("全部内置 Agent 都按 Planner 完成检测与幂等安装")
 func agentSetupInstallsEveryPlannedProviderIdempotently() throws {
   let root = try agentSetupTemporaryDirectory(named: "aster-agent-setup-all")
   defer { try? FileManager.default.removeItem(at: root) }
@@ -44,7 +44,7 @@ func agentSetupInstallsEveryPlannedProviderIdempotently() throws {
   )
 }
 
-@Test("七类 Agent 卸载只移除 Aster 受管内容并保持幂等")
+@Test("全部内置 Agent 卸载只移除 Aster 受管内容并保持幂等")
 func agentSetupUninstallsManagedContentWithoutRemovingUserConfiguration() throws {
   let root = try agentSetupTemporaryDirectory(named: "aster-agent-uninstall-all")
   defer { try? FileManager.default.removeItem(at: root) }
@@ -147,6 +147,90 @@ func agentSetupPreservesUserJSONConfiguration() throws {
   }))
   let attributes = try FileManager.default.attributesOfItem(atPath: settings.path)
   #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o640)
+}
+
+@Test("Claude 与 Grok 共用 settings.json 时互不覆盖且可独立卸载")
+func claudeAndGrokShareSettingsWithoutClobberingEachOther() throws {
+  let root = try agentSetupTemporaryDirectory(named: "aster-agent-setup-claude-grok")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let home = root.appendingPathComponent("home", isDirectory: true)
+  let bin = root.appendingPathComponent("bin", isDirectory: true)
+  try FileManager.default.createDirectory(
+    at: home.appendingPathComponent(".claude", isDirectory: true),
+    withIntermediateDirectories: true
+  )
+  try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+  try makeExecutable(named: AgentProvider.claudeCode.commandName, in: bin)
+  try makeExecutable(named: AgentProvider.grokBuild.commandName, in: bin)
+  let settings = home.appendingPathComponent(".claude/settings.json")
+  let original: [String: Any] = [
+    "theme": "user-dark",
+    "hooks": [
+      "Stop": [
+        ["hooks": [["type": "command", "command": "user-stop"]]]
+      ]
+    ],
+  ]
+  try JSONSerialization.data(withJSONObject: original, options: [.prettyPrinted])
+    .write(to: settings)
+  let service = AgentSetupService(
+    homeDirectory: home,
+    executableSearchDirectories: [bin]
+  )
+
+  #expect(try service.install(.claudeCode).integrationInstalled)
+  #expect(try service.install(.grokBuild).integrationInstalled)
+  #expect(try service.status(for: .claudeCode).integrationInstalled)
+  #expect(try service.status(for: .grokBuild).integrationInstalled)
+
+  let both = try #require(
+    JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any]
+  )
+  #expect(both["theme"] as? String == "user-dark")
+  let bothHooks = try #require(both["hooks"] as? [String: Any])
+  let stop = try #require(bothHooks["Stop"] as? [[String: Any]])
+  #expect(stop.contains { $0["_asterProvider"] as? String == AgentProvider.claudeCode.rawValue })
+  #expect(stop.contains { $0["_asterProvider"] as? String == AgentProvider.grokBuild.rawValue })
+  #expect(stop.contains { entry in
+    let commands = entry["hooks"] as? [[String: Any]]
+    return commands?.first?["command"] as? String == "user-stop"
+  })
+  #expect(bothHooks["PermissionRequest"] != nil)
+  let grokStop = try #require(
+    stop.first { $0["_asterProvider"] as? String == AgentProvider.grokBuild.rawValue }
+  )
+  let grokCommands = try #require(grokStop["hooks"] as? [[String: Any]])
+  #expect((grokCommands.first?["command"] as? String)?.contains("idle grokBuild") == true)
+
+  let uninstalledGrok = try service.uninstall(.grokBuild)
+  #expect(!uninstalledGrok.integrationInstalled)
+  #expect(try service.status(for: .claudeCode).integrationInstalled)
+  #expect(try service.status(for: .grokBuild).managedIntegrationInstalled == false)
+
+  let afterGrok = try #require(
+    JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any]
+  )
+  let afterGrokHooks = try #require(afterGrok["hooks"] as? [String: Any])
+  let afterGrokStop = try #require(afterGrokHooks["Stop"] as? [[String: Any]])
+  #expect(
+    afterGrokStop.contains { $0["_asterProvider"] as? String == AgentProvider.claudeCode.rawValue }
+  )
+  #expect(
+    !afterGrokStop.contains { $0["_asterProvider"] as? String == AgentProvider.grokBuild.rawValue }
+  )
+  #expect(afterGrok["theme"] as? String == "user-dark")
+
+  let uninstalledClaude = try service.uninstall(.claudeCode)
+  #expect(!uninstalledClaude.integrationInstalled)
+  let leftover = try #require(
+    JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any]
+  )
+  #expect(leftover["theme"] as? String == "user-dark")
+  let leftoverHooks = try #require(leftover["hooks"] as? [String: Any])
+  let leftoverStop = try #require(leftoverHooks["Stop"] as? [[String: Any]])
+  #expect(leftoverStop.count == 1)
+  let leftoverCommands = try #require(leftoverStop.first?["hooks"] as? [[String: Any]])
+  #expect(leftoverCommands.first?["command"] as? String == "user-stop")
 }
 
 @Test("Codex Hook 安装保留已有 Otty lifecycle 条目")
@@ -509,6 +593,29 @@ func codexLifecycleHookExtractsSessionIDFromBoundedJSONInput() throws {
   #expect(emitted.contains("AgentState=idle;Provider=codex;SessionID=repro-session-123"))
 }
 
+@Test("Grok hook 只用 GROK_SESSION_ID，且在 Claude runner 下静默退出")
+func grokLifecycleHookUsesInjectedSessionAndStandsDownForClaude() throws {
+  let grok = try runAgentLifecycleHook(
+    payload: "{\"sessionId\":\"ignored-camel-case\"}",
+    provider: "grokBuild",
+    environment: ["GROK_SESSION_ID": "grok-session-42", "GROK_HOOK_EVENT": "session_start"]
+  )
+  #expect(grok.contains("AgentState=idle;Provider=grokBuild;SessionID=grok-session-42"))
+
+  let withoutGrokEnv = try runAgentLifecycleHook(
+    payload: "{\"session_id\":\"should-not-emit\"}",
+    provider: "grokBuild"
+  )
+  #expect(!withoutGrokEnv.contains("AgentState="))
+
+  let claudeUnderGrok = try runAgentLifecycleHook(
+    payload: "{\"session_id\":\"claude-session\"}",
+    provider: "claudeCode",
+    environment: ["GROK_HOOK_EVENT": "session_start", "GROK_SESSION_ID": "grok-session-42"]
+  )
+  #expect(!claudeUnderGrok.contains("AgentState="))
+}
+
 @Test("Agent command hook 拒绝非法或超限 session ID 载荷")
 func agentLifecycleHookRejectsUnsafeSessionIDPayloads() throws {
   let invalid = try runAgentLifecycleHook(
@@ -532,7 +639,12 @@ func agentLifecycleHookRejectsUnsafeSessionIDPayloads() throws {
 
 /// fixture 文件模拟 Codex 关闭后的 stdin pipe；`script` 只负责提供真实伪终端，使写往
 /// `/dev/tty` 的 OSC 可被捕获。这与 Aster Pane 内运行边界一致，不是只检查脚本文本。
-private func runAgentLifecycleHook(payload: String) throws -> String {
+/// 在伪终端里跑 lifecycle hook，可选覆盖 provider 与 Grok 注入的环境变量。
+private func runAgentLifecycleHook(
+  payload: String,
+  provider: String = "codex",
+  environment: [String: String] = [:]
+) throws -> String {
   let hook = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .deletingLastPathComponent()
@@ -549,9 +661,16 @@ private func runAgentLifecycleHook(payload: String) throws -> String {
   process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
   process.arguments = [
     "-q", "/dev/null", "/bin/sh", "-c",
-    "exec /bin/sh \"$1\" idle codex < \"$2\"",
-    "aster-codex-hook-test", hook.path, payloadFile.path,
+    "exec /bin/sh \"$1\" idle \"$3\" < \"$2\"",
+    "aster-agent-hook-test", hook.path, payloadFile.path, provider,
   ]
+  var processEnvironment = ProcessInfo.processInfo.environment
+  processEnvironment.removeValue(forKey: "GROK_HOOK_EVENT")
+  processEnvironment.removeValue(forKey: "GROK_SESSION_ID")
+  for (key, value) in environment {
+    processEnvironment[key] = value
+  }
+  process.environment = processEnvironment
   process.standardInput = FileHandle.nullDevice
   process.standardOutput = output
   process.standardError = output
