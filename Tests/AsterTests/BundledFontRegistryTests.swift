@@ -70,7 +70,7 @@ func allOttyBundledFontsAreRegistered() throws {
     "OfficeCodePro-BoldItalic.ttf",
     "SymbolsNerdFontMono-Regular.ttf",
   ])
-  #expect(Set(BundledFontRegistry.ottyFontFileNames) == expectedFiles)
+  #expect(Set(BundledFontRegistry.bundledFontFileNames) == expectedFiles)
 
   let officeRegular = try #require(NSFont(name: "OfficeCodePro-Regular", size: 13))
   let officeBold = try #require(NSFont(name: "OfficeCodePro-Bold", size: 13))

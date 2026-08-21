@@ -804,7 +804,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
       )
     else { return [] }
     return entries.filter { url in
-      guard ["asterrecipe", "ottyrecipe"].contains(url.pathExtension.lowercased()),
+      guard url.pathExtension.lowercased() == WorkflowRecipeTOML.fileExtension,
         let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
       else { return false }
       return values.isRegularFile == true && values.isSymbolicLink != true

@@ -1,0 +1,51 @@
+[meta]
+name        = "April Dark"
+author      = "Abner"
+mode        = "dark"
+description = "Dark botanical theme with lime accent and mossy greens"
+
+[terminal]
+foreground = "#FFFFFF"
+background = "#141B18"
+palette = [
+    "#101513", "#E06C75", "#98C379", "#E5C07B",
+    "#61AFEF", "#B876B8", "#5FB8A0", "#8A9992",
+    "#5C6B64", "#EB8A91", "#C5E86C", "#F0D499",
+    "#82C2F3", "#D098D0", "#85CDB6", "#FFFFFF",
+]
+
+[token]
+foreground = "#FFFFFF"
+secondary  = "#8A9992"
+tertiary   = "#5C6B64"
+accent    = "#C5E86C"
+radius    = 4
+shadow    = "0 20px 40px rgba(0,0,0,0.4)"
+font-ui   = ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"]
+font-mono = ["JetBrains Mono", "Menlo", "monospace"]
+font-size = 13
+
+[panel]
+background = "#141B18"
+surface    = "#1A2420"
+border     = "#25332D"
+
+[sidebar]
+background   = "#1A2420"
+border-right = "1px solid #25332D"
+
+[tab]
+radius      = 4
+foreground  = "#8A9992"
+font-weight = 400
+
+[tab.active]
+background  = "#22302A"
+foreground  = "#FFFFFF"
+font-weight = 500
+
+[tab.hover]
+background = "#22302A"
+
+[container]
+radius = 4

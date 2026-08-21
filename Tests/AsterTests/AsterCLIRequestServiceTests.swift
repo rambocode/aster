@@ -90,7 +90,7 @@ func asterCLIForwardsBoundedStandardInput() throws {
   let process = try fixture.makeProcess(
     // WorkflowCLIParser 兼容可选的 `otty` 前缀，启动器也必须在此前缀下正确识别
     // `--stdin`，不能只转发参数却丢掉对应输入流。
-    arguments: ["otty", "pane", "send-text", "--pane", "p_123", "--stdin"],
+    arguments: ["aster", "pane", "send-text", "--pane", "p_123", "--stdin"],
     standardInput: input
   )
 

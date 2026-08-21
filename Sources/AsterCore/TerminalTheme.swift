@@ -5,6 +5,40 @@ public enum TerminalThemeMode: String, Codable, CaseIterable, Equatable, Sendabl
   case dark
 }
 
+/// Otty 原生 chrome 回退色：主题未声明侧栏 / 标签颜色时，Otty 用一套跟外观模式绑定的
+/// 设计 token 渲染窗口 chrome（与其设置窗口的 `--bg-sidebar` / `--bg-hover` /
+/// `--accent-muted` 同值），而不是从终端背景推导。Aster 的级联回退必须落到同一批值,
+/// 否则「终端-only」主题（Dracula、One Dark 等）两边的侧栏观感就会分叉。
+extension TerminalThemeMode {
+  /// 侧栏 / 面板底色默认值（Otty 浅色 #F7F7F7 / 深色 #1C1C1C）。
+  public var nativeChromeBackground: HexColor {
+    self == .light
+      ? HexColor(red: 0xF7, green: 0xF7, blue: 0xF7)
+      : HexColor(red: 0x1C, green: 0x1C, blue: 0x1C)
+  }
+
+  /// 标签悬停底色默认值（浅色黑 4% / 深色白 5% 叠加）。
+  public var nativeTabHoverBackground: HexColor {
+    self == .light
+      ? HexColor(red: 0, green: 0, blue: 0, alpha: 10)
+      : HexColor(red: 255, green: 255, blue: 255, alpha: 13)
+  }
+
+  /// 选中标签底色默认值（浅色黑 6% / 深色白 8% 叠加）。
+  public var nativeTabActiveBackground: HexColor {
+    self == .light
+      ? HexColor(red: 0, green: 0, blue: 0, alpha: 15)
+      : HexColor(red: 255, green: 255, blue: 255, alpha: 20)
+  }
+
+  /// 界面次要文字默认值（Otty `text-secondary`：浅色 #666666 / 深色 #888888）。
+  public var nativeSecondaryForeground: HexColor {
+    self == .light
+      ? HexColor(red: 0x66, green: 0x66, blue: 0x66)
+      : HexColor(red: 0x88, green: 0x88, blue: 0x88)
+  }
+}
+
 /// Otty 主题可声明的原生窗口材质。该值保留在主题模型中，透明主题因此不会退化成纯色主题。
 public enum TerminalThemeMaterial: String, Codable, Equatable, Sendable {
   case none
@@ -63,7 +97,7 @@ public struct TerminalTabStyle: Codable, Equatable, Sendable {
   public var activeShadow: ThemeShadow?
 
   public init(
-    radius: Double = 6,
+    radius: Double = 8,
     height: Double? = nil,
     foreground: HexColor? = nil,
     hoverBackground: HexColor? = nil,
@@ -134,6 +168,9 @@ public struct TerminalThemeStyle: Codable, Equatable, Sendable {
   public var sidebarBorderColor: HexColor?
   public var sidebarBorderWidth: Double
   public var sidebarMaterial: TerminalThemeMaterial?
+  /// Otty `[sidebar].padding`：标签列表两侧留白。nil = Otty 原生默认 8pt；
+  /// April 等主题显式写 0 实现「整行铺满」的旧式布局。
+  public var sidebarPadding: Double?
   public var titlebarBackground: HexColor?
   public var titlebarForeground: HexColor?
   public var titlebarMaterial: TerminalThemeMaterial?
@@ -155,6 +192,7 @@ public struct TerminalThemeStyle: Codable, Equatable, Sendable {
     sidebarBorderColor: HexColor? = nil,
     sidebarBorderWidth: Double = 0,
     sidebarMaterial: TerminalThemeMaterial? = nil,
+    sidebarPadding: Double? = nil,
     titlebarBackground: HexColor? = nil,
     titlebarForeground: HexColor? = nil,
     titlebarMaterial: TerminalThemeMaterial? = nil,
@@ -175,6 +213,7 @@ public struct TerminalThemeStyle: Codable, Equatable, Sendable {
     self.sidebarBorderColor = sidebarBorderColor
     self.sidebarBorderWidth = sidebarBorderWidth
     self.sidebarMaterial = sidebarMaterial
+    self.sidebarPadding = sidebarPadding
     self.titlebarBackground = titlebarBackground
     self.titlebarForeground = titlebarForeground
     self.titlebarMaterial = titlebarMaterial
@@ -359,7 +398,7 @@ public struct TerminalThemeLibrary: Codable, Equatable, Sendable {
 
 public enum TerminalThemeCatalog {
   /// 与 Otty 1.3.1 内置 `.ottytheme` 一一对应的 24 套主题。
-  public static let builtIns: [TerminalTheme] = OttyBuiltInThemes.all
+  public static let builtIns: [TerminalTheme] = BuiltInThemeTable.all
 
   public static func theme(named name: String) -> TerminalTheme? {
     builtIns.first { $0.name == name }
@@ -397,7 +436,7 @@ public enum TerminalThemeStoreError: Error, Equatable {
 extension TerminalThemeStoreError: LocalizedError {
   public var errorDescription: String? {
     switch self {
-    case .invalidFileExtension: "主题文件必须使用 .astertheme 或 .ottytheme 后缀。"
+    case .invalidFileExtension: "主题文件必须使用 .astertheme 后缀。"
     case .notRegularFile: "主题必须是普通文件。"
     case .fileTooLarge: "主题文件超过 256 KiB。"
     case .invalidFormat(let message): message
@@ -410,20 +449,20 @@ extension TerminalThemeStoreError: LocalizedError {
 
 public enum TerminalThemeStore {
   private static let maximumFileSize = 256 * 1_024
+  /// 主题文件唯一的后缀与格式：`.astertheme`，内容是 `ThemeFileParser` 读得懂的
+  /// TOML 子集。写出与读入共用一套编解码，用户手改文件和应用写回不会打架。
+  public static let fileExtension = "astertheme"
 
   public static func save(_ theme: TerminalTheme, to fileURL: URL) throws {
-    guard fileURL.pathExtension.lowercased() == "astertheme" else {
+    guard fileURL.pathExtension.lowercased() == fileExtension else {
       throw TerminalThemeStoreError.invalidFileExtension
     }
     try validate(theme)
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    try encoder.encode(theme).write(to: fileURL, options: .atomic)
+    try ThemeFileSerializer.serialize(theme).write(to: fileURL, atomically: true, encoding: .utf8)
   }
 
   public static func load(from fileURL: URL) throws -> TerminalTheme {
-    let fileExtension = fileURL.pathExtension.lowercased()
-    guard fileExtension == "astertheme" || fileExtension == "ottytheme" else {
+    guard fileURL.pathExtension.lowercased() == fileExtension else {
       throw TerminalThemeStoreError.invalidFileExtension
     }
     let values = try fileURL.resourceValues(forKeys: [
@@ -437,15 +476,10 @@ public enum TerminalThemeStore {
     }
     let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
     guard data.count <= maximumFileSize else { throw TerminalThemeStoreError.fileTooLarge }
-    var theme: TerminalTheme
-    if fileExtension == "ottytheme" {
-      theme = try OttyThemeParser.parse(
-        data: data,
-        sourceName: fileURL.deletingPathExtension().lastPathComponent
-      )
-    } else {
-      theme = try JSONDecoder().decode(TerminalTheme.self, from: data)
-    }
+    var theme = try ThemeFileParser.parse(
+      data: data,
+      sourceName: fileURL.deletingPathExtension().lastPathComponent
+    )
     theme.isBuiltIn = false
     try validate(theme)
     return theme

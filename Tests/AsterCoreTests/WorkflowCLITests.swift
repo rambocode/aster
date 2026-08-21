@@ -8,7 +8,7 @@ func workflowCLIParsesDocumentedTopLevelActions() throws {
   let parser = WorkflowCLIParser(currentDirectory: "/work/project")
 
   #expect(
-    try parser.parse(["otty", "open", ".", "--command", "npm run dev", "--title", "API"])
+    try parser.parse(["aster", "open", ".", "--command", "npm run dev", "--title", "API"])
       == .open(.init(path: "/work/project", command: "npm run dev", title: "API"))
   )
   #expect(
@@ -94,23 +94,27 @@ func workflowCLIRejectsUnsafeOrAmbiguousArguments() {
   }
 }
 
-@Test("otty 深链只描述 Window、Tab、Pane 聚焦，不携带命令或文件动作")
+@Test("深链只描述 Window、Tab、Pane 聚焦，不携带命令或文件动作")
 func workflowDeepLinksDescribeFocusOnlyActions() throws {
   #expect(
-    try WorkflowDeepLink.parse("otty://window/title:API%20Server")
+    try WorkflowDeepLink.parse("aster://window/title:API%20Server")
       == .focusWindow(.title("API Server"))
   )
-  #expect(try WorkflowDeepLink.parse("otty://tab/2") == .focusTab(.index(2)))
-  #expect(try WorkflowDeepLink.parse("otty://pane/p_123") == .focusPane(.identifier("p_123")))
+  #expect(try WorkflowDeepLink.parse("aster://tab/2") == .focusTab(.index(2)))
+  // 旧 scheme 不再受理。
+  #expect(throws: WorkflowDeepLinkError.invalidScheme) {
+    try WorkflowDeepLink.parse("otty://tab/2")
+  }
+  #expect(try WorkflowDeepLink.parse("aster://pane/p_123") == .focusPane(.identifier("p_123")))
   #expect(
-    try WorkflowDeepLink.parse("otty://pane/session-abc")
+    try WorkflowDeepLink.parse("aster://pane/session-abc")
       == .focusPane(.sessionIdentifier("session-abc"))
   )
 
   #expect(throws: WorkflowDeepLinkError.unexpectedURLComponent) {
-    try WorkflowDeepLink.parse("otty://pane/p_123?command=rm")
+    try WorkflowDeepLink.parse("aster://pane/p_123?command=rm")
   }
   #expect(throws: WorkflowDeepLinkError.invalidSelector) {
-    try WorkflowDeepLink.parse("otty://tab/current")
+    try WorkflowDeepLink.parse("aster://tab/current")
   }
 }

@@ -1,0 +1,17 @@
+[meta]
+name = "Monokai Classic"
+mode = "dark"
+
+[terminal]
+foreground           = "#FDFFF1"
+background           = "#272822"
+cursor               = "#C0C1B5"
+cursor-text          = "#8D8E82"
+selection-foreground = "#FDFFF1"
+selection-background = "#57584F"
+palette = [
+    "#272822", "#F92672", "#A6E22E", "#E6DB74",
+    "#FD971F", "#AE81FF", "#66D9EF", "#FDFFF1",
+    "#6E7066", "#F92672", "#A6E22E", "#E6DB74",
+    "#FD971F", "#AE81FF", "#66D9EF", "#FDFFF1",
+]

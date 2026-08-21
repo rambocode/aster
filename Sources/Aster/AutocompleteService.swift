@@ -139,7 +139,7 @@ enum AsterCLIScript {
         continue
       fi
       case "$scan_state:$argument" in
-        global:otty) ;;
+        global:aster) ;;
         global:--format) skip_global_value=1 ;;
         global:--json|global:-q|global:--quiet) ;;
         global:pane) scan_state=pane ;;

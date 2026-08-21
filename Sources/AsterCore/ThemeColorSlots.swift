@@ -138,8 +138,10 @@ extension TerminalTheme {
       slot("tabbar.background", "标签栏背景", .tabbar, style.horizontalTabBarBackground, derivedFrom: style.sidebarBackground ?? palette.panelBackground),
       slot("tabbar.border", "标签栏边框", .tabbar, style.horizontalTabBarBorderColor, derivedFrom: windowFallback, kind: .border),
       slot("tab.foreground", "标签文字", .tab, style.tab.foreground, derivedFrom: palette.secondaryForeground),
-      slot("tab.hoverBackground", "标签悬停底色", .tab, style.tab.hoverBackground, derivedFrom: palette.panelBackground),
-      slot("tab.activeBackground", "选中标签底色", .tab, style.tab.activeBackground, derivedFrom: palette.panelSurface ?? palette.panelBackground),
+      // Otty 级联：hover → ui.hover（原生叠加色）；active → 主题声明的 panel.surface，
+      // 否则原生选中叠加色。不能回退到 panel 底色——那会让选中/悬停与侧栏同色而不可见。
+      slot("tab.hoverBackground", "标签悬停底色", .tab, style.tab.hoverBackground, derivedFrom: mode.nativeTabHoverBackground),
+      slot("tab.activeBackground", "选中标签底色", .tab, style.tab.activeBackground, derivedFrom: palette.panelSurface ?? mode.nativeTabActiveBackground),
       slot("tab.activeForeground", "选中标签文字", .tab, style.tab.activeForeground, derivedFrom: palette.foreground),
       slot("tab.activeBorderColor", "选中标签边框", .tab, style.tab.activeBorderColor, derivedFrom: windowFallback, kind: .border),
       slot("interface.accent", "强调色", .accents, palette.accent, derivedFrom: palette.accent),

@@ -42,7 +42,10 @@ if [[ "$SIGN_IDENTITY" != "-" ]]; then
 fi
 if [[ -n "$NOTARY_PROFILE" ]]; then
   # notarytool 各版本在 Invalid 状态下的退出码不一致，按输出文本判定结果。
-  NOTARY_OUTPUT=$(xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1)
+  # `set -e` 会让赋值语句在命令失败时当场退出，输出还没 echo 就没了——凭据丢失、
+  # 网络不通这类错误因此会变成一句无来由的非零退出码。用 `|| true` 接住，先把
+  # 原始输出打出来，再由下面的文本判定给出结论。
+  NOTARY_OUTPUT=$(xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1 || true)
   echo "$NOTARY_OUTPUT"
   if [[ "$NOTARY_OUTPUT" != *"status: Accepted"* ]]; then
     echo "Notarization not accepted; inspect: xcrun notarytool log <submission-id> --keychain-profile $NOTARY_PROFILE" >&2

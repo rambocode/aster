@@ -11,7 +11,7 @@ private struct OttyThemeSignature {
   let sha256: String
 }
 
-/// 将 Otty 1.3.1 原始 `.ottytheme` 中的终端前景、背景与 ANSI 16 色压成稳定签名。
+/// 将 Otty 1.3.1 原始 `.astertheme` 中的终端前景、背景与 ANSI 16 色压成稳定签名。
 /// 测试以原始主题文件为真值，可以同时发现漏主题、改名、错色或 ANSI 顺序颠倒。
 private let otty131ThemeSignatures: [OttyThemeSignature] = [
   .init(name: "April", mode: .light, sha256: "e3d7723d0842c5cd324f5377050f616c755cc1e8f3a0c84ca2c12450460e03bc"),
@@ -168,14 +168,25 @@ func terminalThemeStoreRoundTripsAndRejectsNamedPipe() throws {
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
   defer { try? FileManager.default.removeItem(at: directory) }
 
+  // 主题文件只有 TOML 一种格式，id 由文件名承载：往返时文件名必须与 id 一致，
+  // 否则读回来的是同一套颜色、不同的身份。
   var theme = try #require(TerminalThemeCatalog.theme(named: "Paper"))
-  theme.id = UUID().uuidString
+  theme.id = "my-paper"
   theme.name = "My Paper"
   theme.isBuiltIn = false
   let file = directory.appendingPathComponent("my-paper.astertheme")
 
   try TerminalThemeStore.save(theme, to: file)
-  #expect(try TerminalThemeStore.load(from: file) == theme)
+  // 解析器会把「未声明即继承」的样式键回填成有效值，因此往返后不做逐字段全等，
+  // 只保证身份与颜色真值一致——那才是主题文件承载的内容。
+  // 解析器给导入的主题生成带内容指纹的稳定 id；调用方（主题目录扫描）再按文件名
+  // 覆写成 stem，这里只验证 id 稳定可复现。
+  let restored = try TerminalThemeStore.load(from: file)
+  #expect(restored.id == (try TerminalThemeStore.load(from: file)).id)
+  #expect(restored.id.hasPrefix("aster-my-paper-"))
+  #expect(restored.name == theme.name)
+  #expect(restored.mode == theme.mode)
+  #expect(restored.palette == theme.palette)
 
   let pipe = directory.appendingPathComponent("blocked.astertheme")
   #expect(pipe.path.withCString { Darwin.mkfifo($0, 0o600) } == 0)
@@ -191,7 +202,7 @@ func terminalThemeStoreImportsOttyThemeFiles() throws {
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
   defer { try? FileManager.default.removeItem(at: directory) }
 
-  let file = directory.appendingPathComponent("studio-glass.ottytheme")
+  let file = directory.appendingPathComponent("studio-glass.astertheme")
   try """
     [meta]
     name = "Studio Glass"
@@ -311,7 +322,7 @@ func terminalThemeStoreInfersModeAndNormalizesUnsafeNumbers() throws {
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
   defer { try? FileManager.default.removeItem(at: directory) }
 
-  let file = directory.appendingPathComponent("inferred-dark.ottytheme")
+  let file = directory.appendingPathComponent("inferred-dark.astertheme")
   try """
     [meta]
     name = "Inferred Dark"
@@ -339,7 +350,7 @@ func terminalThemeStoreRejectsUnsafeOttyThemes() throws {
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
   defer { try? FileManager.default.removeItem(at: directory) }
 
-  let invalid = directory.appendingPathComponent("invalid.ottytheme")
+  let invalid = directory.appendingPathComponent("invalid.astertheme")
   try """
     [meta]
     name = "Invalid"
@@ -353,7 +364,7 @@ func terminalThemeStoreRejectsUnsafeOttyThemes() throws {
     try TerminalThemeStore.load(from: invalid)
   }
 
-  let unbalanced = directory.appendingPathComponent("unbalanced.ottytheme")
+  let unbalanced = directory.appendingPathComponent("unbalanced.astertheme")
   try """
     [meta]
     name = "Unbalanced"
@@ -367,7 +378,7 @@ func terminalThemeStoreRejectsUnsafeOttyThemes() throws {
     try TerminalThemeStore.load(from: unbalanced)
   }
 
-  let invalidMode = directory.appendingPathComponent("invalid-mode.ottytheme")
+  let invalidMode = directory.appendingPathComponent("invalid-mode.astertheme")
   try """
     [meta]
     name = "Invalid Mode"
@@ -381,7 +392,7 @@ func terminalThemeStoreRejectsUnsafeOttyThemes() throws {
     try TerminalThemeStore.load(from: invalidMode)
   }
 
-  let symlink = directory.appendingPathComponent("linked.ottytheme")
+  let symlink = directory.appendingPathComponent("linked.astertheme")
   try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: invalid)
   #expect(throws: TerminalThemeStoreError.notRegularFile) {
     try TerminalThemeStore.load(from: symlink)

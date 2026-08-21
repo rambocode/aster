@@ -1,0 +1,68 @@
+[meta]
+name        = "Paper"
+author      = "Otty"
+mode        = "light"
+description = "Warm botanical tones with earthy greens and natural textures"
+
+[terminal]
+foreground = "#1A1A1A"
+background = "#FCFBF9"
+palette = [
+    "#1A1A1A", "#A33A3A", "#2B5A38", "#A85A20",
+    "#4A7A8A", "#4A3A6A", "#3A7A6A", "#C1BEB5",
+    "#8C8A80", "#C36A6A", "#6B9A78", "#C88A50",
+    "#7A9AAA", "#8A7A9A", "#6ABAAA", "#EBEBE6",
+]
+
+[token]
+foreground = "#1A1A1A"
+secondary  = "#8C8A80"
+tertiary   = "#C1BEB5"
+accent    = "#2B5A38"
+radius    = 4
+shadow    = "0 1px 2px rgba(0,0,0,0.02)"
+font-ui   = ["Inter", "-apple-system", "sans-serif"]
+font-mono = ["JetBrains Mono", "Menlo", "monospace"]
+font-size = 13
+
+[panel]
+background = "#F5F4F0"
+surface    = "#FCFBF9"
+border     = "#E0DFD5"
+
+[sidebar]
+background   = "#F5F4F0"
+border-right = "1px solid #E0DFD5"
+
+[tab]
+radius      = 4
+foreground  = "#8C8A80"
+font-weight = 400
+
+[tab.active]
+background  = "#FFFFFF"
+foreground  = "#1A1A1A"
+border      = "1px solid #E0DFD5"
+shadow      = "0 1px 2px rgba(0,0,0,0.02)"
+font-weight = 400
+
+[tab.hover]
+background = "#EBEAE5"
+
+# Top tab bar — overrides for the elevated floating-pill look. The
+# left tabs panel keeps `[tab]` above; `[tab-bar.tab]` inherits from
+# `[tab]` per field, so we only restate what the bar should change.
+
+[tab-bar]
+height  = 44
+padding = 8
+
+[tab-bar.tab]
+radius = 14
+height = 32
+
+[tab-bar.tab.active]
+shadow = "0 1px 4px rgba(0,0,0,0.06)"
+
+[container]
+radius = 0

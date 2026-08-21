@@ -1,0 +1,81 @@
+[meta]
+name        = "Glass Light"
+author      = "Otty"
+mode        = "light"
+description = "Liquid Glass light theme with gitlab light terminal colors"
+
+[terminal]
+foreground           = "#303030"
+background           = "none"
+cursor               = "#303030"
+cursor-text          = "#565656"
+selection-foreground = "#FAFAFF"
+selection-background = "#AD95E9"
+palette = [
+    "#303030", "#A31700", "#0A7F3D", "#AF551D",
+    "#006CD8", "#583CAC", "#00798A", "#e5e5e5",
+    "#8c8c8c", "#A31700", "#0A7F3D", "#AF551D",
+    "#006CD8", "#583CAC", "#00798A", "#cdcdcd",
+]
+
+[token]
+primary   = "#25313B"
+secondary = "#5D6872"
+tertiary  = "#93A0A9"
+accent    = "#4B8FB7"
+radius    = 12
+shadow    = "0 24px 64px rgba(44,68,86,0.18)"
+font-ui   = ["-apple-system", "BlinkMacSystemFont", "SF Pro", "sans-serif"]
+font-size = 13
+
+[panel]
+background = "#ffffff"
+surface = "#F7FBFD"
+border     = "rgba(46,62,74,0.16)"
+
+[window]
+material = "glass"
+background = "none"
+
+[sidebar]
+background = "#eaeaea00"
+border-right = "none"
+material = "glass"
+
+[details-panel]
+background = "none"
+border-right = "none"
+
+[titlebar]
+
+[tab]
+radius = 4.0
+foreground = "#5D6872"
+font-weight = 400
+
+[tab.active]
+background = "#aaaaaa3a"
+border      = "1px solid rgba(46,62,74,0.14)"
+shadow = "none"
+font-weight = 500
+
+[tab.hover]
+background = "rgba(255,255,255,0.38)"
+
+[container]
+radius = 0
+shadow = "none"
+margin = 0
+padding    = 8
+
+[tab-bar]
+
+[tab-bar.tab]
+
+[tab-bar.tab.active]
+border = "1px solid #d6d6d6cf"
+shadow = "none"
+background = "#8d8d8d43"
+
+[tab-bar.tab.hover]
+background = "#c0c0c061"

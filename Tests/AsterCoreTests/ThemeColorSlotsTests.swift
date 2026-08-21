@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import AsterCore
@@ -153,4 +154,106 @@ func tooltipShowsTokenAndHex() throws {
   #expect(foreground.tooltip == "前景色 · terminal.foreground = \"#2a2b33\"")
   let window = try #require(slots.first { $0.id == "interface.window" })
   #expect(window.tooltip.contains("跟随 Window 派生"))
+}
+
+@Test("标签悬停与选中在主题未声明时回退到 Otty 原生叠加色")
+func tabSlotsFallBackToNativeChromeOverlays() throws {
+  let theme = makeSparseTheme()
+  let slots = theme.colorSlots
+  func slot(_ id: String) throws -> ThemeColorSlot {
+    try #require(slots.first { $0.id == id })
+  }
+  // 浅色模式：hover = 黑 4%、active = 黑 6%——不能与侧栏底同色，否则选中不可见。
+  #expect(try slot("tab.hoverBackground").resolved == TerminalThemeMode.light.nativeTabHoverBackground)
+  #expect(try slot("tab.activeBackground").resolved == TerminalThemeMode.light.nativeTabActiveBackground)
+  // 主题显式声明 panel.surface 时，选中标签优先用 surface（Otty 级联）。
+  var surfaced = theme
+  surfaced.palette.panelSurface = HexColor("#E8E8E8FF")!
+  let surfacedSlots = surfaced.colorSlots
+  let active = try #require(surfacedSlots.first { $0.id == "tab.activeBackground" })
+  #expect(active.resolved == HexColor("#E8E8E8FF")!)
+}
+
+@Test("Otty 解析器对终端-only 主题使用原生 chrome 而不是终端背景")
+func parserDerivesNativeChromeForTerminalOnlyThemes() throws {
+  let source = """
+  [meta]
+  name = "Terminal Only"
+  mode = "dark"
+
+  [terminal]
+  foreground = "#F8F8F2"
+  background = "#282A36"
+  palette = [
+      "#000000", "#FF5555", "#50FA7B", "#F1FA8C",
+      "#BD93F9", "#FF79C6", "#8BE9FD", "#F8F8F2",
+      "#6272A4", "#FF6E6E", "#69FF94", "#FFFFA5",
+      "#D6ACFF", "#FF92DF", "#A4FFFF", "#FFFFFF",
+  ]
+  """
+  let theme = try ThemeFileParser.parse(
+    data: Data(source.utf8), sourceName: "terminal-only")
+  #expect(theme.palette.panelBackground == TerminalThemeMode.dark.nativeChromeBackground)
+  #expect(theme.palette.panelSurface == nil)
+  #expect(theme.palette.secondaryForeground == TerminalThemeMode.dark.nativeSecondaryForeground)
+  #expect(theme.style.sidebarPadding == nil)
+}
+
+@Test("Otty 解析器读取 sidebar.padding 与 tab 高度供行几何使用")
+func parserReadsSidebarPaddingAndTabHeight() throws {
+  let source = """
+  [meta]
+  name = "Padded"
+  mode = "light"
+
+  [terminal]
+  foreground = "#111111"
+  background = "#FFFFFF"
+  palette = [
+      "#000000", "#FF5555", "#50FA7B", "#F1FA8C",
+      "#BD93F9", "#FF79C6", "#8BE9FD", "#F8F8F2",
+      "#6272A4", "#FF6E6E", "#69FF94", "#FFFFA5",
+      "#D6ACFF", "#FF92DF", "#A4FFFF", "#FFFFFF",
+  ]
+
+  [sidebar]
+  padding = 0.0
+
+  [tab]
+  height = 32.0
+  radius = 0.0
+  """
+  let theme = try ThemeFileParser.parse(data: Data(source.utf8), sourceName: "padded")
+  #expect(theme.style.sidebarPadding == 0)
+  #expect(theme.style.tab.height == 32)
+  #expect(theme.style.tab.radius == 0)
+}
+
+@Test("内置主题序列化成主题文件后可被解析器无损读回")
+func builtInThemesRoundTripThroughOttySerializer() throws {
+  for builtin in TerminalThemeCatalog.builtIns {
+    let source = ThemeFileSerializer.serialize(builtin)
+    let parsed = try ThemeFileParser.parse(
+      data: Data(source.utf8), sourceName: builtin.id)
+    #expect(parsed.name == builtin.name, "\(builtin.id) name")
+    #expect(parsed.mode == builtin.mode, "\(builtin.id) mode")
+    #expect(parsed.palette == builtin.palette, "\(builtin.id) palette")
+    // 解析器对 tab-bar.tab 做逐字段继承（缺失键回填 [tab] 基础值），因此横向标签
+    // 只比较继承后的有效值；其余样式必须严格相等。
+    func inherited(_ style: TerminalThemeStyle) -> TerminalThemeStyle {
+      var copy = style
+      guard var horizontal = copy.horizontalTab else { return copy }
+      let base = copy.tab
+      horizontal.foreground = horizontal.foreground ?? base.foreground
+      horizontal.hoverBackground = horizontal.hoverBackground ?? base.hoverBackground
+      horizontal.activeBackground = horizontal.activeBackground ?? base.activeBackground
+      horizontal.activeForeground = horizontal.activeForeground ?? base.activeForeground
+      horizontal.activeBorderColor = horizontal.activeBorderColor ?? base.activeBorderColor
+      horizontal.activeShadow = horizontal.activeShadow ?? base.activeShadow
+      horizontal.height = horizontal.height ?? base.height
+      copy.horizontalTab = horizontal
+      return copy
+    }
+    #expect(inherited(parsed.style) == inherited(builtin.style), "\(builtin.id) style")
+  }
 }

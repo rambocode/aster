@@ -1,0 +1,48 @@
+[meta]
+name = "Ayu Light"
+mode = "light"
+
+[terminal]
+foreground = "#5C6166"
+background = "#FCFCFC"
+palette = ["#010101", "#E7666A", "#80AB24", "#EBA54D", "#4196DF", "#9870C3", "#51B891", "#C1C1C1", "#343434", "#EE9295", "#9FD32F", "#F0BC7B", "#6DAEE6", "#B294D2", "#75C7A8", "#DBDBDB"]
+
+[token]
+foreground = "#1A1A1A"
+secondary  = "#8E8E93"
+tertiary   = "#BBBBBB"
+accent    = "#4196DF"
+radius    = 6
+font-size = 13
+font-mono = "Menlo"
+adjust-cell-height = "20%"
+
+[panel]
+surface    = "#FFFFFF"
+border     = "#E0E0E0"
+
+[sidebar]
+border-right = "1px solid #d7d7d7"
+background = "#f4f4f400"
+material = "glass"
+padding = 0.0
+
+[tab]
+radius = 0.0
+
+[tab.active]
+background = "#6f869e50"
+foreground  = "#1A1A1A"
+shadow      = "0 1px 3px rgba(0,0,0,0.06)"
+font-weight = 600
+
+[tab.hover]
+background = "rgba(0,0,0,0.04)"
+
+[titlebar]
+background = "#f4f4f4"
+material = "vibrancy-thin"
+
+[tab-bar]
+border-bottom = "1px solid auto"
+material = "vibrancy-thin"

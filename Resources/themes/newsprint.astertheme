@@ -1,0 +1,61 @@
+[meta]
+name        = "Newsprint"
+author      = "Otty"
+mode        = "light"
+description = "Warm cream paper with deep ink — Typora-inspired editorial light theme using Inconsolata"
+
+[terminal]
+foreground = "#333638"
+background = "#f4f4f1"
+palette = [
+    "#262522", "#A33A35", "#5C7A3E", "#967927",
+    "#2F5F8A", "#904180", "#3E7A78", "#BFBAAE",
+    "#7A766B", "#C25852", "#7A9A52", "#d4a945",
+    "#4470a0", "#be79bb", "#739797", "#dfdbd1",
+]
+
+[token]
+foreground = "#262522"
+secondary  = "#7A766B"
+tertiary   = "#B8B3A6"
+accent    = "#2F5F8A"
+radius    = 4
+shadow    = "0 1px 2px rgba(0,0,0,0.03)"
+font-ui   = ["Inter", "-apple-system", "sans-serif"]
+font-size = 13
+
+[panel]
+background = "#f3f2ee"
+surface    = "#F4F1EA"
+border     = "#DBD6C8"
+
+[sidebar]
+background = "#f4f4f1"
+border-right = "1px solid #DBD6C8"
+material     = "none"
+
+[tab]
+radius      = 4
+foreground  = "#7A766B"
+font-weight = 400
+
+[tab.active]
+background = "#6d7478"
+foreground = "#ffffff"
+font-weight = 500
+
+[tab.hover]
+background = "#c4bfb16f"
+
+[tab-bar]
+height  = 44
+padding = 8
+border-bottom = "1px solid auto"
+
+[tab-bar.tab]
+radius = 14
+height = 32
+
+[tab-bar.tab.active]
+shadow = "0 1px 4px rgba(0,0,0,0.05)"
+

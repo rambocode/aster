@@ -245,6 +245,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   override init() {
     model = AppModel()
     preferences = AppPreferences()
+    // 共享主题目录（Otty 真值）在窗口构建前先就位，避免启动时先按内置表渲染再闪一次。
+    preferences.reloadDiskThemes()
     softwareUpdateController = SoftwareUpdateService.shared
     super.init()
   }
@@ -329,6 +331,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   func applicationDidBecomeActive(_ notification: Notification) {
     SecureInputCoordinator.shared.setApplicationActive(true)
     TerminalNotificationService.shared.refreshAuthorizationStatus()
+    // 用户可能刚在 Otty 里改过共享主题文件；回到前台时按目录指纹轻量刷新。
+    preferences.reloadDiskThemes()
   }
 
   func applicationDidResignActive(_ notification: Notification) {

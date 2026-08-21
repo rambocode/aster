@@ -1,3 +1,4 @@
+import AsterCore
 import Darwin
 import Foundation
 import Highlighter
@@ -48,6 +49,17 @@ enum PackagedResourceVerifier {
         !fileManager.fileExists(atPath: terminfo.appendingPathComponent($0).path)
       }) {
         failures.append("bundled terminfo database is incomplete")
+      }
+    }
+
+    // 主题种子：数量必须与代码内真值表对齐。少一套就意味着 build-app.sh 漏拷或
+    // 仓库基线被删，用户首次启动会静默回落到序列化版本，问题要到肉眼比色才暴露。
+    if let resources = Bundle.main.resourceURL {
+      let themes = resources.appendingPathComponent("themes", isDirectory: true)
+      let seeds = (try? fileManager.contentsOfDirectory(atPath: themes.path)) ?? []
+      let count = seeds.filter { $0.hasSuffix(".astertheme") }.count
+      if count != TerminalThemeCatalog.builtIns.count {
+        failures.append("bundled theme seeds are incomplete")
       }
     }
 

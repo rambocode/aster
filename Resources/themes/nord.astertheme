@@ -1,0 +1,203 @@
+# Nord — Otty Theme
+#
+# A reference dark theme that lists the common keys you can tune. Each
+# section is annotated so you can copy this file to
+# ~/.config/otty/themes/<name>.toml and use it as a starting point for
+# your own theme. All keys except `[meta]` and `[terminal]` are optional;
+# the values below match the defaults the app would derive on its own
+# when each key is omitted. See docs/spec/THEME_SPEC.md for the full
+# reference.
+
+# ── Metadata ──────────────────────────────────────────────────────────
+# `mode` is "light" or "dark". When omitted, Otty infers it from the
+# terminal background luminance.
+
+[meta]
+name        = "Nord"
+author      = "arcticicestudio"
+mode        = "dark"
+description = "An arctic, north-bluish color palette."
+
+# ── Terminal colors ───────────────────────────────────────────────────
+# The ANSI palette + fg/bg drives the text rendering area. `palette`
+# has exactly 16 entries: [0..7] are the normal colors, [8..15] are the
+# bright variants. `font-blending` lets the theme suggest a glyph
+# compositing mode (linear / srgb-over / macos-like / perceptual); the
+# user's config still wins when they have explicitly chosen a mode.
+
+[terminal]
+foreground = "#f1f6ff"
+background           = "#2E3440"
+cursor               = "#E5E9F0"
+cursor-text          = "#2E3440"
+selection-foreground = "#2e3440"
+selection-background = "#e5e9f0"
+font-blending        = "linear"
+palette = [
+    "#3B4252", "#BF616A", "#A3BE8C", "#EBCB8B",
+    "#81A1C1", "#B48EAD", "#88C0D0", "#E5E9F0",
+    "#4C566A", "#BF616A", "#A3BE8C", "#EBCB8B",
+    "#81A1C1", "#B48EAD", "#8FBCBB", "#ECEFF4",
+]
+
+# ── Cursor ────────────────────────────────────────────────────────────
+# Per-shape cursor overrides. The base color/text apply to all shapes;
+# the sub-tables only kick in when you want a specific shape to differ.
+
+[cursor]
+color = "#E5E9F0"
+text  = "#2E3440"
+
+[cursor.block]
+color = "#E5E9F0"
+text  = "#2E3440"
+
+[cursor.bar]
+color = "#88C0D0"
+
+[cursor.underline]
+color = "#88C0D0"
+
+# ── Tokens ────────────────────────────────────────────────────────────
+# Typography, semantic state, and shape tokens. `foreground` /
+# `secondary` / `tertiary` cascade down to UI text colors. `accent`
+# colors prompts and active indicators. `success` / `warning` /
+# `danger` drive status dots, search highlights, and toasts. Fonts and
+# radius set the project-wide defaults that elements inherit.
+
+[token]
+foreground = "#E5E9F0"
+secondary  = "#C0C7D3"
+tertiary   = "#7B8294"
+accent     = "#88C0D0"
+success    = "#A3BE8C"
+warning    = "#EBCB8B"
+danger     = "#BF616A"
+hover-bg   = "rgba(255,255,255,0.06)"
+active-bg  = "rgba(136,192,208,0.18)"
+radius     = 6
+shadow     = "0 8px 24px rgba(0,0,0,0.35)"
+font-ui    = ["-apple-system", "BlinkMacSystemFont", "SF Pro", "sans-serif"]
+font-mono  = ["JetBrains Mono", "SF Mono", "Menlo", "monospace"]
+font-size  = 13
+
+# ── Panel surfaces ────────────────────────────────────────────────────
+# Chrome backdrop and elevated surfaces shared by the sidebar, titlebar,
+# tab bar, and floating dialogs (Command Palette / Open Quickly /
+# Global Search). `background` is NOT the visible app background —
+# that's `[terminal].background` above.
+
+[panel]
+background = "#2E3440"
+surface    = "#3B4252"
+border     = "rgba(255,255,255,0.06)"
+
+# ── Window ────────────────────────────────────────────────────────────
+# Outermost frame. `material` enables a translucent native backdrop
+# (one of: none / vibrancy-thin / vibrancy-regular / vibrancy-thick /
+# glass). Set `background` to an rgba color (e.g. "#2e344080") when
+# using a material to tint the backdrop.
+
+[window]
+background = "#2E3440"
+material   = "none"
+radius     = 12
+
+[window.unfocused]
+opacity = 0.92
+
+# ── Titlebar ──────────────────────────────────────────────────────────
+# Sits above the terminal grid. Inherits its (background, material)
+# from `[panel]` when both are unset.
+
+[titlebar]
+foreground  = "#C0C7D3"
+font-size   = 13
+font-weight = 500
+height      = 40
+
+[titlebar.unfocused]
+foreground = "#7B8294"
+
+# ── Sidebar ───────────────────────────────────────────────────────────
+# Shared base for `[tabs-panel]` (left session list) and
+# `[details-panel]` (right inspector). Only set those sub-sections if
+# the two sides should differ.
+
+[sidebar]
+background   = "#2E3440"
+border-right = "1px solid #434C5E"
+width        = 220
+material     = "none"
+
+# [tabs-panel]
+# width = 240
+# material = "vibrancy-regular"
+#
+# [details-panel]
+# width = 320
+# background = "surface"
+
+# ── Tabs ──────────────────────────────────────────────────────────────
+# `[tab]` styles items inside the sidebar list. `[tab-bar]` is the
+# horizontal strip used by tabs-top / tabs-bottom layouts and
+# `[tab-bar.tab]` inherits per-field from `[tab]`, so you only restate
+# the fields that should differ on the strip.
+
+[tab]
+background  = "transparent"
+foreground  = "#C0C7D3"
+radius      = 6
+font-size   = 13
+font-weight = 400
+padding     = 10
+indicator-color = "#7B8294"
+
+[tab.hover]
+background = "rgba(255,255,255,0.05)"
+
+[tab.active]
+background  = "#3B4252"
+foreground  = "#ECEFF4"
+font-weight = 500
+shadow      = "0 1px 2px rgba(0,0,0,0.25)"
+indicator-color = "#88C0D0"
+
+[tab.active.unfocused]
+background = "#3B4252"
+foreground = "#C0C7D3"
+shadow     = "none"
+
+[tab-bar]
+height        = 36
+padding       = 8
+border-bottom = "1px solid rgba(255,255,255,0.06)"
+
+[tab-bar.tab]
+radius = 8
+height = 28
+
+# ── Container ─────────────────────────────────────────────────────────
+# The rounded card wrapping the terminal viewport. `margin` is an
+# extra inset on top of the intrinsic titlebar reserve, so margin=0
+# lands flush with the titlebar bottom. `padding` overrides the
+# built-in 8pt grid gutter.
+
+[container]
+background = "#2E3440"
+radius     = 0
+margin     = 0
+padding    = 8
+
+# [container.tabs-top]
+# margin = 12
+#
+# [container.tabs-bottom]
+# margin = 12
+
+# ── Divider ───────────────────────────────────────────────────────────
+# Color and thickness of split-pane dividers.
+
+[divider]
+color = "rgba(255,255,255,0.08)"
+width = 1

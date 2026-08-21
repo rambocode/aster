@@ -249,17 +249,17 @@ public enum MouseReportingBypass: String, CaseIterable, Codable, Equatable, Send
 
 public enum LinkOpenDestination: String, CaseIterable, Codable, Equatable, Sendable {
   case browser
-  case aster = "otty"
+  case aster
 }
 
 public enum FileOpenDestination: String, CaseIterable, Codable, Equatable, Sendable {
   case defaultApplication = "default-app"
-  case aster = "otty"
+  case aster
 }
 
 public enum FolderOpenDestination: String, CaseIterable, Codable, Equatable, Sendable {
   case finder = "default-app"
-  case aster = "otty"
+  case aster
 }
 
 /// “打开方式”只持久化显示名和 bundle ID，不保存应用路径；实际打开时由 LaunchServices
@@ -569,6 +569,9 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   /// Dock 聚合状态默认只标红错误；旋转动画需要用户主动开启。
   public var animateDockIconOnProgress: Bool? = false
   public var redDockIconOnError: Bool? = true
+  /// 非焦点分屏窗格的淡化不透明度；1 表示所有窗格保持完全清晰。可选字段兼容
+  /// 0.4.x JSON，缺失按 Otty 默认 0.6 解析。
+  public var unfocusedSplitOpacity: Double? = 0.6
 
   public func showsTabBar(tabCount: Int) -> Bool {
     showTabBar && !(autoHideTabs && tabCount <= 1)
@@ -601,6 +604,10 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
     fontFamilyFallbackBoldItalic ?? resolvedFontFamilyFallback
   }
   public var resolvedCursorOpacity: Double { min(max(cursorOpacity ?? 1, 0.1), 1) }
+  /// 读取处统一钳制到设置页公开的 0.15...1 区间，防止旧配置把窗格淡化到不可见。
+  public var resolvedUnfocusedSplitOpacity: Double {
+    min(max(unfocusedSplitOpacity ?? 0.6, 0.15), 1)
+  }
   public var resolvedCursorBlinkMode: TerminalCursorBlinkMode {
     cursorBlinkMode ?? (cursorBlink ? .defaultOn : .defaultOff)
   }
@@ -675,6 +682,7 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
     result.appearance.underlineRendering = result.appearance.resolvedUnderlineRendering
     result.appearance.fontSmoothing = result.appearance.resolvedFontSmoothing
     result.appearance.cursorOpacity = result.appearance.resolvedCursorOpacity
+    result.appearance.unfocusedSplitOpacity = result.appearance.resolvedUnfocusedSplitOpacity
     result.appearance.cursorBlinkMode = result.appearance.resolvedCursorBlinkMode
     result.appearance.cursorAnimation = result.appearance.resolvedCursorAnimation
     result.appearance.fontFamilyFallback = Self.normalizedFontFamilies(

@@ -46,6 +46,9 @@ chmod 755 "$RESOURCES_DIR/agent-integration/aster-agent-hook.sh"
 cp -R "$PROJECT_DIR/Resources/fonts" "$RESOURCES_DIR/fonts"
 # 设置页由签名 Bundle 内的本地网页提供；与 Shell 资源并列复制，运行时不访问网络。
 cp -R "$PROJECT_DIR/Resources/settings-ui" "$RESOURCES_DIR/settings-ui"
+# 24 套内置主题的原始文件。首次启动由 AppPreferences 复制到 ~/.config/aster/themes，
+# 用户机器上装没装 Otty 都不影响初始化；缺了这一步只会回落到代码内真值表。
+cp -R "$PROJECT_DIR/Resources/themes" "$RESOURCES_DIR/themes"
 
 # Aster 自有 terminfo 在构建期编译进签名 Bundle。运行时只读取资源，不生成隐藏脚本
 # 或修改系统数据库；TERMINFO_DIRS 会把该目录放在系统条目前面。

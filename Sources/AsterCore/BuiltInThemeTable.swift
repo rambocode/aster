@@ -5,7 +5,7 @@ import Foundation
 /// 终端前景、背景、ANSI 16 色及显式光标/选区颜色逐项来自 Otty 随应用发布的
 /// `.ottytheme`；界面令牌也优先采用主题中独立声明的值。未声明的光标与选区颜色
 /// 遵循 Otty 的级联规则；本阶段先把浅色选区回退对齐为终端前景的 30% 透明度。
-enum OttyBuiltInThemes {
+enum BuiltInThemeTable {
   static let all: [TerminalTheme] = [
     make(
       id: "april", name: "April", mode: .light, foreground: "#17703f", background: "#ffffff",
@@ -44,7 +44,7 @@ enum OttyBuiltInThemes {
     make(
       id: "one-light", name: "One Light", mode: .light, foreground: "#2A2B33", background: "#FFFFFF",
       ansi: "#000000 #DE3D35 #3E953A #D2B67B #2F5AF3 #A00095 #3E953A #BBBBBB #000000 #DE3D35 #3E953A #D2B67B #2F5AF3 #A00095 #3E953A #FFFFFF",
-      panel: "#F7F7F7", surface: "#F8F8F8", border: "#E5E5E5",
+      panel: "#F7F7F7", border: "#E5E5E5",
       interfaceWindow: "#FFFFFF", style: oneLightStyle),
     make(
       id: "paper", name: "Paper", mode: .light, foreground: "#1A1A1A", background: "#FCFBF9",
@@ -133,7 +133,8 @@ enum OttyBuiltInThemes {
       ansi: "#15161E #F7768E #9ECE6A #E0AF68 #7AA2F7 #BB9AF7 #7DCFFF #A9B1D6 #414868 #FF899D #9FE044 #FABA4A #8DB0FF #C7A9FF #A4DAFF #C0CAF5"),
   ]
 
-  // 以下结构化令牌逐项抄录自用户本机 `~/.config/otty/themes`。没有把阴影、
+  // 以下结构化令牌逐项抄录自 Otty 1.3.1 原始主题文件，仓库副本在 `Resources/themes`
+  // （`ThemeResourceBaselineTests` 比对两侧防漂移）。没有把阴影、
   // 透明度或边框“视觉近似”为统一值，确保主题之间原本的性格差异可以被渲染。
   private static let aprilStyle = TerminalThemeStyle(
     radius: 4,
@@ -295,22 +296,14 @@ enum OttyBuiltInThemes {
     container: TerminalContainerStyle()
   )
 
-  /// One Light 未声明 Sidebar，仍沿用 Otty 默认的轻微灰阶层次。当前 Otty 主题把
-  /// 终端与 Window chrome 都覆盖为纯白，左右边栏保留 #F7F7F7 才能维持层级。
+  /// 当前 Otty 的 One Light 不声明 [tab]/[panel.surface]：标签悬停 / 选中一律走
+  /// 原生叠加色（黑 4%/6%），侧栏底为原生 #F7F7F7。只保留主题真的声明过的
+  /// 标题栏白底与侧栏分隔线。
   private static let oneLightStyle = TerminalThemeStyle(
-    radius: 4,
     sidebarBackground: color("#F7F7F7"),
     sidebarBorderColor: color("#E5E5E5"),
     sidebarBorderWidth: 1,
     titlebarBackground: color("#FFFFFF"),
-    tab: TerminalTabStyle(
-      radius: 4,
-      foreground: color("#6B6F76"),
-      hoverBackground: color("#0000000A"),
-      activeBackground: color("#F8F8F8"),
-      activeForeground: color("#2A2B33"),
-      activeFontWeight: 500
-    ),
     container: TerminalContainerStyle(background: color("#FFFFFF"))
   )
 
@@ -454,20 +447,24 @@ enum OttyBuiltInThemes {
     let terminalForeground = color(foreground)
     let terminalBackground = color(background)
     let ansiColors = ansi.split(separator: " ").map { color(String($0)) }
-    let resolvedPanel = color(panel ?? normalized(background))
-    let resolvedSurface = color(surface ?? panel ?? normalized(background))
+    // Otty 语义：未声明 panel/surface 的主题（Dracula、One Dark 等终端-only 主题）
+    // chrome 用原生 token 色，而不是沿用终端背景；surface 保留 nil，选中标签才能
+    // 落到原生叠加色而不是与侧栏同色。
+    let resolvedPanel = panel.map(color) ?? mode.nativeChromeBackground
+    let resolvedSurface = surface.map(color)
     let resolvedInterfaceWindow = color(interfaceWindow ?? panel ?? normalized(background))
     let resolvedInterfaceForeground = color(interfaceForeground ?? foreground)
-    let resolvedSecondary = color(secondary ?? ansiColors[8].stringValue)
+    let resolvedSecondary = secondary.map(color) ?? mode.nativeSecondaryForeground
     // Otty 语义：容器默认与终端画布连续（继承终端背景），不借用 panel。
     // 借用 panel 会让 April 等「panel 灰绿 + 终端纯白」的主题在右侧内容区套上
     // 一层 panel 色，与白色终端画布割裂；透明背景（glass）仍保持透明。
     let resolvedContainer = color(container ?? normalized(background))
+    // 合成样式不再写死 hover/active 底色：留空让 slot 级联落到原生叠加色
+    // （浅色黑 4%/6%、深色白 5%/8%），与当前 Otty 的终端-only 主题渲染一致。
     let resolvedStyle = style ?? TerminalThemeStyle(
       sidebarBackground: resolvedPanel,
       tab: TerminalTabStyle(
         foreground: resolvedSecondary,
-        activeBackground: resolvedSurface,
         activeForeground: resolvedInterfaceForeground
       ),
       container: TerminalContainerStyle(background: resolvedContainer)
@@ -517,7 +514,7 @@ enum OttyBuiltInThemes {
 
   private static func color(_ value: String) -> HexColor {
     guard let result = HexColor(normalized(value)) else {
-      preconditionFailure("Otty 内置主题包含非法颜色：\(value)")
+      preconditionFailure("内置主题包含非法颜色：\(value)")
     }
     return result
   }

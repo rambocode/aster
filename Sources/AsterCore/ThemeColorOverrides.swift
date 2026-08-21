@@ -16,7 +16,8 @@ public enum ThemeFontRole: String, CaseIterable, Codable, Equatable, Sendable {
 /// 以后 Otty 更新了原主题也带不过来。覆盖层只记「用户显式改过的参数」，
 /// 渲染时叠在原主题之上；清掉覆盖就完整回到原主题。
 ///
-/// 这与 Otty 的做法一致：主题文件末尾追加 `# otty-added:` 段落，写明被覆盖的键。
+/// 主题文件末尾追加 `# aster-added:` 段落，写明被覆盖的键（沿用 Otty 的文件惯例，
+/// 早期版本写的是 `# otty-added:`，整段由 marker 统一剥离，不会残留）。
 public struct ThemeColorOverrides: Codable, Equatable, Sendable {
   /// key 是 `ThemeColorSlot.id`（如 `sidebar.background`）。
   public private(set) var colors: [String: HexColor]
@@ -182,17 +183,17 @@ extension TerminalTheme {
 
   /// 覆盖层序列化成 Otty `.ottytheme` 追加段。
   ///
-  /// 每个键都带 `# otty-added:` 注释：用户直接打开主题文件时能一眼看出哪些行是
+  /// 每个键都带 `# aster-added:` 注释：用户直接打开主题文件时能一眼看出哪些行是
   /// Aster 写进去的、哪些是原主题自带的，手工删掉注释下面那行就等于撤销覆盖。
-  public func ottyOverrideSection(_ overrides: ThemeColorOverrides) -> String {
+  public func themeOverrideSection(_ overrides: ThemeColorOverrides) -> String {
     guard !overrides.isEmpty else { return "" }
     var sections: [String: [String]] = [:]
     var sectionOrder: [String] = []
     for (slotID, color) in overrides.colors.sorted(by: { $0.key < $1.key }) {
-      guard let mapping = OttyThemeKeyMap.entry(for: slotID) else { continue }
+      guard let mapping = ThemeFileKeyMap.entry(for: slotID) else { continue }
       if sections[mapping.section] == nil { sectionOrder.append(mapping.section) }
       sections[mapping.section, default: []]
-        .append("# otty-added: \(mapping.section).\(mapping.key)")
+        .append("# aster-added: \(mapping.section).\(mapping.key)")
       sections[mapping.section]?.append("\(mapping.key) = \"\(color.displayString)\"")
     }
 
@@ -201,7 +202,7 @@ extension TerminalTheme {
       if sections["terminal"] == nil { sectionOrder.append("terminal") }
       let palette = resolved.palette.ansiColors.map { "\"\($0.displayString)\"" }
         .joined(separator: ", ")
-      sections["terminal", default: []].append("# otty-added: terminal.palette")
+      sections["terminal", default: []].append("# aster-added: terminal.palette")
       sections["terminal"]?.append("palette = [\(palette)]")
     }
 
@@ -222,7 +223,7 @@ extension TerminalTheme {
         case .boldItalic: resolved.style.fontFamilyBoldItalic.map { [$0] } ?? []
         }
       let value = families.map { "\"\(Self.escapeTOMLString($0))\"" }.joined(separator: ", ")
-      sections["token", default: []].append("# otty-added: token.\(key)")
+      sections["token", default: []].append("# aster-added: token.\(key)")
       sections["token"]?.append("\(key) = [\(value)]")
     }
 
@@ -242,7 +243,7 @@ extension TerminalTheme {
 ///
 /// 只映射 Otty 真的有的键；`interface.*` 这类 Aster 自己的界面 token 没有对应写法，
 /// 写进文件反而会让 Otty 解析出未知键，因此这里返回 nil、只留在应用内的覆盖表里。
-public enum OttyThemeKeyMap {
+public enum ThemeFileKeyMap {
   public struct Entry: Equatable, Sendable {
     public let section: String
     public let key: String

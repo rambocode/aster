@@ -94,6 +94,14 @@ final class AppPreferences: ObservableObject {
     }
   }
 
+  /// Aster 主题目录（`~/.config/aster/themes`）的解析快照，是主题的磁盘真值：
+  /// 内置表在首次运行时物化到这里，用户直接编辑文件即可改主题。按 id / 名字遮蔽
+  /// 内置表；id 取文件 stem（与内置 id 同形，如 `one-light`），既有的用户覆盖层
+  /// （按 id 存储）因此无缝套用。
+  @Published private(set) var diskThemes: [TerminalTheme] = []
+  /// 主题目录指纹（文件名 → mtime）。刷新入口先轻量比对，未变化不重新解析。
+  private var diskThemesFingerprint: [String: Date]?
+
   /// Otty 兼容清单中的扩展设置。字段逐步接入运行时后可从这里迁入强类型领域配置；
   /// 在此之前仍保证编辑、重启和跨平台往返不丢值。
   @Published private(set) var settingsCompatibility: [String: SettingsCompatibilityValue] {
@@ -106,6 +114,30 @@ final class AppPreferences: ObservableObject {
 
   @Published var sidebarTabOrder: SidebarTabOrder {
     didSet { defaults.set(sidebarTabOrder.rawValue, forKey: Keys.sidebarTabOrder) }
+  }
+
+  /// 侧栏分组的折叠集合。key 带分组模式前缀（如 `project:~/src/foo/`），
+  /// 切换分组模式后各自的折叠记忆互不串扰。
+  @Published private(set) var sidebarCollapsedGroups: Set<String> {
+    didSet { defaults.set(Array(sidebarCollapsedGroups).sorted(), forKey: Keys.sidebarCollapsedGroups) }
+  }
+
+  /// 折叠 key = 分组模式 + 组标题；调用方不自行拼接，保证规则只有一处。
+  func sidebarGroupKey(forTitle title: String) -> String {
+    "\(sidebarTabGrouping.rawValue):\(title)"
+  }
+
+  func isSidebarGroupCollapsed(title: String) -> Bool {
+    sidebarCollapsedGroups.contains(sidebarGroupKey(forTitle: title))
+  }
+
+  func toggleSidebarGroupCollapsed(title: String) {
+    let key = sidebarGroupKey(forTitle: title)
+    if sidebarCollapsedGroups.contains(key) {
+      sidebarCollapsedGroups.remove(key)
+    } else {
+      sidebarCollapsedGroups.insert(key)
+    }
   }
 
   /// 右侧详情面板的显隐与选中页属于轻量 UI 状态，随 UserDefaults 持久化但不进入
@@ -255,16 +287,16 @@ final class AppPreferences: ObservableObject {
   }
 
   private let defaults: UserDefaults
-  /// Otty 原始主题目录的可注入入口。生产环境固定使用 `~/.config/otty/themes`；测试传入
+  /// 主题目录的可注入入口。生产环境固定使用 `~/.config/aster/themes`；测试传入
   /// 临时目录，避免颜色覆盖测试碰触用户正在使用的主题文件。
-  private let ottyThemesDirectoryURL: URL?
+  private let themesDirectoryURL: URL?
   /// 菜单主题选择器的临时预览值。预览必须作用到完整工作区，但在用户点击或按回车
   /// 确认前不能写入配置；这样按 `Esc` 或点到面板外时可以无损回到原选择。
   private var previewedTheme: TerminalTheme?
 
-  init(defaults: UserDefaults = .standard, ottyThemesDirectoryURL: URL? = nil) {
+  init(defaults: UserDefaults = .standard, themesDirectoryURL: URL? = nil) {
     self.defaults = defaults
-    self.ottyThemesDirectoryURL = ottyThemesDirectoryURL
+    self.themesDirectoryURL = themesDirectoryURL
     appearance = Appearance(rawValue: defaults.string(forKey: Keys.appearance) ?? "") ?? .system
     if let data = defaults.data(forKey: Keys.configuration),
       let decoded = try? JSONDecoder().decode(AsterConfiguration.self, from: data)
@@ -301,10 +333,74 @@ final class AppPreferences: ObservableObject {
       SidebarTabGrouping(rawValue: defaults.string(forKey: Keys.sidebarTabGrouping) ?? "") ?? .none
     sidebarTabOrder =
       SidebarTabOrder(rawValue: defaults.string(forKey: Keys.sidebarTabOrder) ?? "") ?? .createdTime
+    sidebarCollapsedGroups = Set(
+      defaults.stringArray(forKey: Keys.sidebarCollapsedGroups) ?? [])
     migrateControlCompatibilityValues()
     migrateLegacySidebarWidth()
     migrateMissingThemeSelections()
     synchronizeThemeRuntime()
+  }
+
+  /// 主题文件后缀。目录里只认这一种，读写共用 `TerminalThemeStore`。
+  static let themeFileExtension = TerminalThemeStore.fileExtension
+
+  /// 安装包内的主题种子目录：`Aster.app/Contents/Resources/themes`。由
+  /// `build-app.sh` 从仓库的 `Resources/themes` 原样复制，因此用户机器上装没装
+  /// Otty 都不影响首次初始化。开发期（`swift run`）没有这个目录，返回 nil。
+  static func bundledThemeURL(forID id: String) -> URL? {
+    guard let root = Bundle.main.resourceURL else { return nil }
+    let url = root.appendingPathComponent("themes", isDirectory: true)
+      .appendingPathComponent(id)
+      .appendingPathExtension(themeFileExtension)
+    return FileManager.default.fileExists(atPath: url.path) ? url : nil
+  }
+
+  /// 重新扫描主题目录并解析变化。损坏或不完整的文件跳过（回落内置表），
+  /// 内容未变化时不触发发布，App 激活时可放心高频调用。
+  /// 刻意不在 init 里调用：单测大量直接构造 AppPreferences，init 期扫描会把
+  /// 用户机器上的真实主题目录混进测试环境，结果随机器状态漂移。
+  func reloadDiskThemes() {
+    guard let directory = try? themesDirectory() else { return }
+    // 把内置主题物化成文件，磁盘真值始终完整；已存在的文件（用户改过的）绝不覆盖。安装包自带 `Contents/Resources/themes` 一份原始文件，
+    // 优先直接拷贝：那才是随版本发布、逐字节可复核的主题；序列化只是 `swift run`
+    // 和单测这类没有 Bundle 资源时的兜底，两条路产出的主题语义相同。
+    for builtin in TerminalThemeCatalog.builtIns {
+      let url = directory.appendingPathComponent(builtin.id)
+        .appendingPathExtension(Self.themeFileExtension)
+      guard !FileManager.default.fileExists(atPath: url.path) else { continue }
+      if let seed = Self.bundledThemeURL(forID: builtin.id),
+        (try? FileManager.default.copyItem(at: seed, to: url)) != nil
+      {
+        continue
+      }
+      try? ThemeFileSerializer.serialize(builtin)
+        .write(to: url, atomically: true, encoding: .utf8)
+    }
+    let files = ((try? FileManager.default.contentsOfDirectory(
+      at: directory,
+      includingPropertiesForKeys: [.contentModificationDateKey],
+      options: [.skipsHiddenFiles]
+    )) ?? [])
+      .filter { $0.pathExtension.lowercased() == Self.themeFileExtension }
+      .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    var fingerprint: [String: Date] = [:]
+    for url in files {
+      fingerprint[url.lastPathComponent] =
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+        ?? .distantPast
+    }
+    guard fingerprint != diskThemesFingerprint else { return }
+    diskThemesFingerprint = fingerprint
+    var loaded: [TerminalTheme] = []
+    for url in files {
+      guard var theme = try? TerminalThemeStore.load(from: url) else { continue }
+      theme.id = url.deletingPathExtension().lastPathComponent
+      loaded.append(theme)
+    }
+    if diskThemes != loaded {
+      diskThemes = loaded
+      synchronizeThemeRuntime()
+    }
   }
 
   /// 早期控制页把可运行字段临时放在 compatibility 字典中。升级后一次性迁入领域配置
@@ -342,13 +438,13 @@ final class AppPreferences: ObservableObject {
     if let value = bool("controls.linkClickOverMouseMode") { controls.linkClickOverMouseMode = value }
     if let value = bool("controls.cursorClickToMove") { controls.cursorClickToMove = value }
     if let raw = string("controls.linkOpenWith") {
-      controls.linkOpenWith = LinkOpenDestination(rawValue: ["system": "browser", "aster": "otty"][raw] ?? raw)
+      controls.linkOpenWith = LinkOpenDestination(rawValue: ["system": "browser"][raw] ?? raw)
     }
     if let raw = string("controls.fileOpenWith") {
-      controls.fileOpenWith = FileOpenDestination(rawValue: ["system": "default-app", "aster": "otty"][raw] ?? raw)
+      controls.fileOpenWith = FileOpenDestination(rawValue: ["system": "default-app"][raw] ?? raw)
     }
     if let raw = string("controls.folderOpenWith") {
-      controls.folderOpenWith = FolderOpenDestination(rawValue: ["finder": "default-app", "aster": "otty"][raw] ?? raw)
+      controls.folderOpenWith = FolderOpenDestination(rawValue: ["finder": "default-app"][raw] ?? raw)
     }
     if let value = bool("controls.secureInputIndication") { controls.secureInputIndication = value }
     if let value = bool("controls.selectionBackspaceDeletes") { controls.selectionBackspaceDeletes = value }
@@ -505,11 +601,17 @@ final class AppPreferences: ObservableObject {
   }
   var ansiColors: [HexColor] { activeTheme.palette.ansiColors }
 
+  /// 参与名称解析的非内置主题：Aster 自有库优先，其次共享目录（Otty 真值），
+  /// 最后才轮到内置表。resolve 按数组顺序取第一个命中项。
+  private var overlayThemes: [TerminalTheme] {
+    themeLibrary.customThemes + diskThemes
+  }
+
   var lightTheme: TerminalTheme {
     resolved(
       TerminalThemeCatalog.resolve(
         named: configuration.appearance.themeName,
-        customThemes: themeLibrary.customThemes,
+        customThemes: overlayThemes,
         mode: .light
       ))
   }
@@ -518,7 +620,7 @@ final class AppPreferences: ObservableObject {
     resolved(
       TerminalThemeCatalog.resolve(
         named: configuration.appearance.darkThemeName,
-        customThemes: themeLibrary.customThemes,
+        customThemes: overlayThemes,
         mode: .dark
       ))
   }
@@ -538,9 +640,18 @@ final class AppPreferences: ObservableObject {
   }
 
   func themes(for mode: TerminalThemeMode) -> [TerminalTheme] {
-    (TerminalThemeCatalog.builtIns + themeLibrary.customThemes)
-      .filter { $0.mode == mode }
-      .map(resolved)
+    // 遮蔽规则与 resolve 一致：自有库 > 共享目录 > 内置表；同 id 或同名只保留
+    // 优先级最高的一份，主题网格才不会出现两个「One Light」。
+    var seenIDs: Set<String> = []
+    var seenNames: Set<String> = []
+    var merged: [TerminalTheme] = []
+    for theme in themeLibrary.customThemes + diskThemes + TerminalThemeCatalog.builtIns {
+      guard !seenIDs.contains(theme.id), !seenNames.contains(theme.name) else { continue }
+      seenIDs.insert(theme.id)
+      seenNames.insert(theme.name)
+      merged.append(theme)
+    }
+    return merged.filter { $0.mode == mode }.map(resolved)
   }
 
   func selectTheme(_ theme: TerminalTheme) {
@@ -585,7 +696,7 @@ final class AppPreferences: ObservableObject {
 
   /// 改一个 token 的颜色：写进覆盖表，原主题（含内置真值表）保持不动。
   ///
-  /// 覆盖同时落到主题文件夹里那份 `.ottytheme`：文件末尾追加带 `# otty-added:`
+  /// 覆盖同时落到主题目录里那份主题文件：文件末尾追加带 `# aster-added:`
   /// 注释的段落，用户能直接看到、也能手工删掉某一行来撤销覆盖。
   func setThemeColor(_ color: HexColor, slotID: String, themeID: String) {
     var library = themeOverrides
@@ -668,18 +779,21 @@ final class AppPreferences: ObservableObject {
     return stored
   }
 
+  /// 把一套主题写进主题目录。刻意用与内置主题物化相同的 TOML 文本格式，
+  /// 目录里因此只有一种可读、可手改的文件，用户导入后能直接编辑。
   func saveThemeToLibraryFolder(_ theme: TerminalTheme) throws -> URL {
     let directory = try themesDirectory()
     let safeName = theme.name.replacingOccurrences(
       of: "[^A-Za-z0-9._-]+", with: "-", options: .regularExpression)
-    let url = directory.appendingPathComponent(safeName).appendingPathExtension("astertheme")
+    let url = directory.appendingPathComponent(safeName)
+      .appendingPathExtension(Self.themeFileExtension)
     try TerminalThemeStore.save(theme, to: url)
     return url
   }
 
-  /// 把某套主题的用户覆盖写成 Otty 追加段落，落到主题文件夹里的同名 `.ottytheme`。
+  /// 把某套主题的用户覆盖写成追加段落，落到主题目录里的同名主题文件。
   ///
-  /// 追加而不是重写：文件里原主题的内容一字不动，用户覆盖以 `# otty-added:` 注释
+  /// 追加而不是重写：文件里原主题的内容一字不动，用户覆盖以 `# aster-added:` 注释
   /// 标出；清空覆盖时删除整段。找不到源文件会明确失败，避免创建只有覆盖键、无法被
   /// Otty 独立解析的残缺主题。
   @discardableResult
@@ -688,9 +802,9 @@ final class AppPreferences: ObservableObject {
     guard let theme = (TerminalThemeCatalog.builtIns + themeLibrary.customThemes)
         .first(where: { $0.id == themeID })
     else { return nil }
-    let section = theme.ottyOverrideSection(overrides)
-    let directory = try ottyThemesDirectory()
-    let url = try ottyThemeFileURL(for: theme, in: directory)
+    let section = theme.themeOverrideSection(overrides)
+    let directory = try themesDirectory()
+    let url = try themeFileURL(for: theme, in: directory)
     let existing = try String(contentsOf: url, encoding: .utf8)
     // 每次写出都先剥掉上一轮追加的段落，否则同一个键会在文件里越堆越多。
     let base = ThemeOverrideFileWriter.strippingPreviousOverrides(from: existing)
@@ -707,27 +821,29 @@ final class AppPreferences: ObservableObject {
     return url
   }
 
-  /// Otty 与 Aster 的自定义主题仓库职责不同：前者是双方共享的 `.ottytheme` 真值，
-  /// 后者保存 Aster 私有 `.astertheme`。参数个性化只写前者，不能落进 App Support。
-  func ottyThemesDirectory() throws -> URL {
-    let directory = ottyThemesDirectoryURL
+  /// 主题的唯一磁盘真值目录：`~/.config/aster/themes`。内置主题物化、用户参数
+  /// 个性化、导入的主题都落在这里，用户用任意编辑器改文件即可生效。Aster 是独立
+  /// 应用，不再读写 Otty 的目录，也不再把主题散落到 App Support。
+  func themesDirectory() throws -> URL {
+    let directory = themesDirectoryURL
       ?? FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/otty/themes", isDirectory: true)
+        .appendingPathComponent(".config/aster/themes", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     return directory
   }
 
-  /// 内置主题 ID 与 Otty 文件 stem 一致（如 `ayu-light`）。自定义/导入主题先尝试
+  /// 内置主题 ID 与文件 stem 一致（如 `ayu-light`）。自定义/导入主题先尝试
   /// 自身 ID，再按 `[meta].name` 扫描目录，避免把显示名大小写硬编码成错误的新文件。
-  private func ottyThemeFileURL(for theme: TerminalTheme, in directory: URL) throws -> URL {
-    let direct = directory.appendingPathComponent(theme.id).appendingPathExtension("ottytheme")
+  private func themeFileURL(for theme: TerminalTheme, in directory: URL) throws -> URL {
+    let direct = directory.appendingPathComponent(theme.id)
+      .appendingPathExtension(Self.themeFileExtension)
     if FileManager.default.fileExists(atPath: direct.path) { return direct }
 
     let candidates = try FileManager.default.contentsOfDirectory(
       at: directory,
       includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
       options: [.skipsHiddenFiles]
-    ).filter { $0.pathExtension.lowercased() == "ottytheme" }
+    ).filter { $0.pathExtension.lowercased() == Self.themeFileExtension }
     if let matched = candidates.first(where: { url in
       guard let candidate = try? TerminalThemeStore.load(from: url) else { return false }
       return candidate.name == theme.name
@@ -739,18 +855,6 @@ final class AppPreferences: ObservableObject {
       .fileNoSuchFile,
       userInfo: [NSFilePathErrorKey: direct.path]
     )
-  }
-
-  func themesDirectory() throws -> URL {
-    let base = try FileManager.default.url(
-      for: .applicationSupportDirectory,
-      in: .userDomainMask,
-      appropriateFor: nil,
-      create: true
-    )
-    let directory = base.appendingPathComponent("Aster/Themes", isDirectory: true)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    return directory
   }
 
   func reset() {
@@ -873,6 +977,7 @@ final class AppPreferences: ObservableObject {
     static let compactSidebarMigration = "aster.migration.compact-sidebar.v1"
     static let sidebarTabGrouping = "aster.sidebar.tab-grouping.v1"
     static let sidebarTabOrder = "aster.sidebar.tab-order.v1"
+    static let sidebarCollapsedGroups = "aster.sidebar.collapsed-groups.v1"
     static let inspectorPresented = "aster.inspector.presented.v1"
     static let inspectorSection = "aster.inspector.section.v1"
     static let inspectorGitEditor = "aster.inspector.git-editor.v1"

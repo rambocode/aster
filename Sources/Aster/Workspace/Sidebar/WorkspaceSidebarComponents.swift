@@ -4,6 +4,25 @@ import Combine
 
 /// 左侧 Panel 内的标签、分组和操作控件。
 
+/// 分组头的点击宿主：整行命中，单击切换该分组的折叠状态（对齐 Otty 分组折叠）。
+/// 用 mouseDown 立即派发的原因与 TabRowButton 相同——折叠会触发侧栏整树重建，
+/// 等 mouseUp 时视图可能已被销毁导致点击丢失。
+@MainActor
+final class SidebarGroupHeaderView: NSView {
+  private let onToggle: () -> Void
+
+  init(onToggle: @escaping () -> Void) {
+    self.onToggle = onToggle
+    super.init(frame: .zero)
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func mouseDown(with event: NSEvent) {
+    onToggle()
+  }
+}
+
 @MainActor
 final class SidebarOptionsButton: NSButton {
   private let menuProvider: () -> NSMenu
@@ -42,10 +61,9 @@ final class SidebarOptionsButton: NSButton {
 /// 都不经过跨框架的 Material/Shape 二次混色。
 @MainActor
 final class TabRowButton: NSButton {
-  /// 视觉底卡两侧留白；按钮本身仍保持整行命中宽度。
-  private static let sidebarRowInset: CGFloat = 6
-  /// 底卡/胶囊圆角下限。多数 Otty 主题按「整行铺满」给的是 0，内缩之后必须圆角化。
-  private static let rowCornerRadius: CGFloat = 8
+  /// 视觉底卡两侧留白 = Otty `[sidebar].padding`（默认 8pt）；April 等主题写 0
+  /// 实现整行铺满。按钮本身仍保持整行命中宽度。
+  private let sidebarRowInset: CGFloat
   private let tab: TerminalTabItem
   private let selected: Bool
   private let horizontal: Bool
@@ -107,6 +125,7 @@ final class TabRowButton: NSButton {
     self.showsAwaitingInput = showsAwaitingInput
     let resolvedStyle = horizontal ? (theme.style.horizontalTab ?? theme.style.tab) : theme.style.tab
     style = resolvedStyle
+    sidebarRowInset = CGFloat(theme.style.sidebarPadding ?? 8)
     resolvedForeground = NSColor(
       resolvedStyle.foreground
         ?? theme.resolvedColor(forSlot: "tab.foreground") ?? theme.palette.secondaryForeground
@@ -140,8 +159,9 @@ final class TabRowButton: NSButton {
     self.action = #selector(invoke)
     identifier = NSUserInterfaceItemIdentifier("workspace-tab-row-\(tab.id.uuidString)")
     translatesAutoresizingMaskIntoConstraints = false
+    // 纵向行总高 = 胶囊高（Otty `[tab].height`，原生默认 36pt）+ 上下各 1pt 行距。
     heightAnchor.constraint(
-      equalToConstant: horizontal ? (rowHeight ?? 40) : (style.height ?? 47)
+      equalToConstant: horizontal ? (rowHeight ?? 36) : ((style.height ?? 36) + 2)
     ).isActive = true
 
     // 纵横两个方向共用「整行命中 + 内缩圆角底」结构：纵向是左右内缩的行卡，
@@ -154,32 +174,34 @@ final class TabRowButton: NSButton {
     rowBackground.translatesAutoresizingMaskIntoConstraints = false
     addSubview(rowBackground)
     if horizontal {
+      // 横向胶囊高度 = Otty `[tab-bar.tab].height`（原生默认 28），在标签条内垂直居中，
+      // 不再用固定上下内缩推算——主题自定义条高时胶囊高度不该跟着变。
       NSLayoutConstraint.activate([
         rowBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
         rowBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
-        rowBackground.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-        rowBackground.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+        rowBackground.centerYAnchor.constraint(equalTo: centerYAnchor),
+        rowBackground.heightAnchor.constraint(equalToConstant: style.height ?? 28),
       ])
     } else {
       NSLayoutConstraint.activate([
         rowBackground.leadingAnchor.constraint(
-          equalTo: leadingAnchor, constant: Self.sidebarRowInset),
+          equalTo: leadingAnchor, constant: sidebarRowInset),
         rowBackground.trailingAnchor.constraint(
-          equalTo: trailingAnchor, constant: -Self.sidebarRowInset),
-        rowBackground.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-        rowBackground.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+          equalTo: trailingAnchor, constant: -sidebarRowInset),
+        rowBackground.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+        rowBackground.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
       ])
     }
     self.rowBackground = rowBackground
 
     // 选中与未选中显示同一份展示名（Agent 会话标题优先，其次目录稳定显示名），
     // 切换标签时行文案不再在「完整路径 / 短名」之间跳变。
+    // 纵向标签字号对齐 Otty `[tab].font-size` 原生默认 13；选中字重跟随主题
+    // `tab.active.font-weight`，不再固定 semibold。
     let primary = makeLabel(
       tab.displayTitle,
-      size: horizontal ? 12 : (selected ? 11.5 : 11),
-      weight: selected
-        ? (horizontal ? NSFont.Weight(cssWeight: style.activeFontWeight) : .semibold)
-        : .regular,
+      size: horizontal ? 12 : 13,
+      weight: selected ? NSFont.Weight(cssWeight: style.activeFontWeight) : .regular,
       color: selected ? resolvedActiveForeground : resolvedForeground
     )
     addSubview(primary)
@@ -431,9 +453,9 @@ final class TabRowButton: NSButton {
     layer?.backgroundColor = NSColor.clear.cgColor
     layer?.borderWidth = 0
     layer?.shadowOpacity = 0
-    // 主题给的是「整行铺满」语义下的圆角（多数为 0）。内缩成卡片/胶囊后必须有
-    // 可见圆角，取一个下限；主题本来就更圆时沿用主题值。
-    decoration?.cornerRadius = max(style.radius, Self.rowCornerRadius)
+    // 圆角忠实取主题 `[tab].radius`（原生默认 8）：April 声明 0 + padding 0 时
+    // 就是 Otty 的整行铺满直角样式，不再强加圆角下限。
+    decoration?.cornerRadius = style.radius
     let background: NSColor
     if selected {
       background = resolvedActiveBackground

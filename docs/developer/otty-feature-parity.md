@@ -63,7 +63,7 @@ Aster 以 Otty 用户文档为功能规格，目标范围是 `user-interface`、
 
 ### Workflows（6）
 
-- 完成：[Recipes](https://docs.otty.sh/workflows/recipes) — `.ottyrecipe` 的 scope/content/layout/commands、TOML 导入导出、路径可移植化、内容哈希信任和空闲 Prompt 串行重放均已实现。
+- 完成：[Recipes](https://docs.otty.sh/workflows/recipes) — `.asterrecipe` 的 scope/content/layout/commands、TOML 导入导出、路径可移植化、内容哈希信任和空闲 Prompt 串行重放均已实现。
 - 部分：[Session Recovery](https://docs.otty.sh/workflows/session-recovery) — Pane/Tab/Window LIFO、正常/崩溃/更新决策、附加窗口恢复和 crash-loop 已交付；tmux、Agent session 与普通进程的安全 Planner 已实现，但 snapshot 尚不持久化对应 session ID/命令，因此不会自动重启外部进程。
 - 完成：[Frequent Folders](https://docs.otty.sh/workflows/frequent-folders) — OSC 7 自动学习、粘性忽略、时间衰减、100 项容量、Open Quickly 和 CLI `jump/learn/ignore` 已闭环。
 - 完成：[Using the CLI in your Shell](https://docs.otty.sh/workflows/cli-usage) — `open/view/edit/watch/jump/learn/ignore`、Pane send/run/exec/capture、`--new-window`、同步 stdout/stderr/exit code、深链和 shell wrapper 均已实现；鉴权与 IPC 授权独立。

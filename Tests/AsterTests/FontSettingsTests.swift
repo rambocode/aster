@@ -76,7 +76,7 @@ func ottyThemeParsesStyleFontKeys() throws {
     background = "#101010"
     foreground = "#f0f0f0"
     """
-  let theme = try OttyThemeParser.parse(data: Data(toml.utf8), sourceName: "probe.ottytheme")
+  let theme = try ThemeFileParser.parse(data: Data(toml.utf8), sourceName: "probe.astertheme")
   #expect(theme.style.fontFamilies == ["JetBrains Mono", "monospace"])
   #expect(theme.style.fontFamilyBold == "Menlo-Bold")
   #expect(theme.style.fontFamilyItalic == "Menlo-Italic")

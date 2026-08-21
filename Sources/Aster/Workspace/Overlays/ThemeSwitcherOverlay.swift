@@ -133,6 +133,8 @@ final class ThemeSwitcherViewController: NSViewController, NSSearchFieldDelegate
     icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
 
     search.placeholderString = "搜索主题…"
+    // 左侧已有自绘放大镜；藏掉 NSSearchField 内建的那颗，避免双图标（与其它 overlay 一致）。
+    (search.cell as? NSSearchFieldCell)?.searchButtonCell = nil
     search.isBordered = false
     search.drawsBackground = false
     search.focusRingType = .none

@@ -25,7 +25,7 @@ enum BundledFontRegistry {
 
   /// 与 Otty 1.3.1 应用资源保持一致的完整字体集合。文件名是打包及启动注册契约，
   /// 增删时必须同步字体资源、第三方声明和注册回归测试。
-  static let ottyFontFileNames = [
+  static let bundledFontFileNames = [
     "JetBrainsMono.ttf",
     "JetBrainsMono-Italic.ttf",
     "OfficeCodePro-Regular.ttf",
@@ -41,7 +41,7 @@ enum BundledFontRegistry {
     let fontsDirectory = resourcesDirectory.appendingPathComponent("fonts", isDirectory: true)
     // Aster 重命名的 Symbols fallback 先注册，确保某个可选正文字体损坏时图标链
     // 仍可用；其余文件逐一尝试，最后统一报告失败，不能因单个文件中断整个集合。
-    let fileNames = ["AsterNerdSymbols-Regular.ttf"] + ottyFontFileNames
+    let fileNames = ["AsterNerdSymbols-Regular.ttf"] + bundledFontFileNames
     var failures: [String] = []
     for fileName in fileNames {
       do {

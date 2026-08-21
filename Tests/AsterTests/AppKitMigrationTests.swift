@@ -1143,12 +1143,12 @@ func themeColorOverridesPersistToOttyThemeFile() throws {
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
   defer { try? FileManager.default.removeItem(at: directory) }
 
-  let sourceURL = directory.appendingPathComponent("ayu-light.ottytheme")
+  let sourceURL = directory.appendingPathComponent("ayu-light.astertheme")
   let original = "[meta]\nname = \"Ayu Light\"\n\n[terminal]\nbackground = \"#FCFCFC\"\n"
   try original.write(to: sourceURL, atomically: true, encoding: .utf8)
 
   let defaults = isolatedDefaults()
-  let preferences = AppPreferences(defaults: defaults, ottyThemesDirectoryURL: directory)
+  let preferences = AppPreferences(defaults: defaults, themesDirectoryURL: directory)
   let theme = try #require(TerminalThemeCatalog.theme(named: "Ayu Light"))
   preferences.setThemeColor(
     try #require(HexColor("#123456")), slotID: "sidebar.background", themeID: theme.id)
@@ -1159,7 +1159,7 @@ func themeColorOverridesPersistToOttyThemeFile() throws {
   let personalized = try String(contentsOf: sourceURL, encoding: .utf8)
   #expect(personalized.hasPrefix(original.trimmingCharacters(in: .newlines)))
   #expect(personalized.contains(ThemeOverrideFileWriter.marker))
-  #expect(personalized.contains("# otty-added: sidebar.background"))
+  #expect(personalized.contains("# aster-added: sidebar.background"))
   #expect(personalized.contains("background = \"#123456\""))
 
   preferences.clearThemeOverrides(themeID: theme.id)
@@ -1656,7 +1656,7 @@ func appearanceThemeDetailRendersFullColorSlotBoard() throws {
   for slot in expected {
     let swatch = try #require(
       swatches.first { $0.identifier?.rawValue == "theme-slot-\(slot.id)" })
-    // hover 提示带 token 名与色值，用户能照着改 .ottytheme 文件。
+    // hover 提示带 token 名与色值，用户能照着改 .astertheme 文件。
     #expect(swatch.toolTip == slot.tooltip)
     #expect(swatch.toolTip?.contains(slot.id) == true)
   }

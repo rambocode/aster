@@ -1,0 +1,20 @@
+[meta]
+name = "Ayu Dark"
+mode = "dark"
+
+[terminal]
+foreground = "#B3B1AD"
+background = "#0A0E14"
+palette = [
+    "#01060E", "#EA6C73", "#91B362", "#F9AF4F",
+    "#53BDFA", "#FAE994", "#90E1C6", "#C7C7C7",
+    "#686868", "#F07178", "#C2D94C", "#FFB454",
+    "#59C2FF", "#FFEE99", "#95E6CB", "#FFFFFF",
+]
+
+[sidebar]
+material = "vibrancy-thin"
+
+[token]
+secondary = "#c0c0c0"
+tertiary = "#9f9f9f"

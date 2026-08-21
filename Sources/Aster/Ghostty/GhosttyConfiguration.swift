@@ -81,7 +81,7 @@ enum GhosttyConfiguration {
       "shell-integration = \(shell.shellIntegration ? "detect" : "none")",
       "window-padding-x = 0",
       "window-padding-y = 0",
-      "unfocused-split-opacity = 1",
+      "unfocused-split-opacity = \(format(appearance.resolvedUnfocusedSplitOpacity))",
       "confirm-close-surface = false",
     ]
     for (index, color) in theme.ansiColors.enumerated() {

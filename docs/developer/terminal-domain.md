@@ -10,7 +10,7 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 - **Tab**：一棵可恢复的 `PaneLayout` 分屏树。
 - **Pane**：终端、文件浏览器、编辑器或预览四种叶节点之一。
 - **Runtime**：PTY、编辑缓冲区等不可序列化的资源，与 `PaneDescriptor` 分离。
-- **Recipe**：`.ottyrecipe` TOML 格式的可移植工作区描述，可包含作用域、内容级别、标签、分屏、目录、文件和可选命令；旧 `.asterrecipe` JSON 仅作兼容读取。
+- **Recipe**：`.asterrecipe` TOML 格式的可移植工作区描述，可包含作用域、内容级别、标签、分屏、目录、文件和可选命令。只有这一种后缀与格式。
 - **Snapshot**：只保存可重建状态的会话恢复记录，不保存 PID、描述符和临时焦点。
 - **Configuration**：通用、Shell、控制、编辑器、智能体、外观、Recipes、快捷键和高级九个设置域。
 - **TerminalTitleState**：分离 OSC 1 图标名与 OSC 2 窗口标题，OSC 0 同时更新两者；固定名称和动态前缀独立覆盖并进入快照。
@@ -162,7 +162,7 @@ SwiftTerm 的 Core Graphics/Metal 测试与本地 target 仅作为迁移期对�
 
 文件浏览器只读取用户明确打开的目录，双击文件会在相邻编辑器 Pane 打开；Markdown/文本可在预览 Pane 查看。`DocumentBuffer` 使用 UTF-8 和原子保存，显式跟踪 dirty 状态。
 
-`WorkflowRecipeTOML` 是 `.ottyrecipe` 的主编解码入口；`RecipeStore` 保留旧 `.asterrecipe` JSON 兼容。外部 Recipe 会先确认自身是 2 MiB 以内的普通、非符号链接文件，再在创建任何运行态前限制标签数、Pane 数、树深度和命令数量，并验证 Pane UUID 唯一、split ratio 合法。编辑器只读取 10 MiB 以内的普通文件，单个 Recipe 引用的现有编辑资源累计不得超过 32 MiB；设备文件和 FIFO 会在读取前被拒绝。
+`WorkflowRecipeTOML` 是 Recipe 唯一的编解码入口，读写都只接受 `.asterrecipe`。外部 Recipe 会先确认自身是 2 MiB 以内的普通、非符号链接文件，再在创建任何运行态前限制标签数、Pane 数、树深度和命令数量，并验证 Pane UUID 唯一、split ratio 合法。编辑器只读取 10 MiB 以内的普通文件，单个 Recipe 引用的现有编辑资源累计不得超过 32 MiB；设备文件和 FIFO 会在读取前被拒绝。
 
 命令重放由 `WorkflowRecipeOpenPlanner` 合并来源、用户策略和 `WorkflowRecipeTrustStore` 的 SHA-256 内容摘要。默认先显示有界预览；“从不”只恢复布局，“信任”也会在文件字节变化后失效。获准命令不会交给独立 Shell 批量执行：`AppModel` 只在目标 Pane 已启用 Shell Integration 且处于空闲 Prompt 时发送第一条，之后由 OSC 133 完成事件逐条推进。
 

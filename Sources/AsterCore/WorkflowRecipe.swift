@@ -1,6 +1,6 @@
 import Foundation
 
-/// Recipe 保存范围。取值与 `.ottyrecipe` 的 `recipe.scope` 保持一致。
+/// Recipe 保存范围。取值与 Recipe 文件的 `recipe.scope` 保持一致。
 public enum WorkflowRecipeScope: String, Codable, Equatable, Sendable {
   case tab
   case window
@@ -214,7 +214,7 @@ public enum WorkflowRecipeTOMLError: Error, Equatable {
   case valueTooLong(String)
 }
 
-/// `.ottyrecipe` 的有界 TOML 编解码入口。
+/// Recipe 文件（`.asterrecipe`）的有界 TOML 编解码入口。
 ///
 /// 这里有意只接受官方 Recipe 文档公开的表和标量类型，不把它做成宽松的通用 TOML
 /// 解析器。拒绝未知结构可以避免拼写错误被静默忽略，也让外部文件在创建任何运行态前
@@ -230,9 +230,12 @@ public enum WorkflowRecipeTOML {
   public static let maximumLayoutBytes = 256 * 1_024
   public static let maximumLayoutDepth = 16
 
-  /// 从普通 `.ottyrecipe` 文件导入，并将信任摘要绑定到实际读取的精确字节。
+  /// Recipe 文件唯一的后缀。读写共用它，目录里不会出现第二种格式。
+  public static let fileExtension = "asterrecipe"
+
+  /// 从普通 Recipe 文件导入，并将信任摘要绑定到实际读取的精确字节。
   public static func load(from fileURL: URL) throws -> WorkflowRecipeEnvelope {
-    guard fileURL.pathExtension.lowercased() == "ottyrecipe" else {
+    guard fileURL.pathExtension.lowercased() == fileExtension else {
       throw WorkflowRecipeTOMLError.invalidFileExtension
     }
     let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
@@ -247,7 +250,7 @@ public enum WorkflowRecipeTOML {
 
   /// 以原子替换写出稳定 TOML，避免中断后留下可被误信任的半文件。
   public static func save(_ recipe: WorkflowRecipe, to fileURL: URL) throws {
-    guard fileURL.pathExtension.lowercased() == "ottyrecipe" else {
+    guard fileURL.pathExtension.lowercased() == fileExtension else {
       throw WorkflowRecipeTOMLError.invalidFileExtension
     }
     try encode(recipe).write(to: fileURL, options: .atomic)

@@ -411,3 +411,18 @@ func appearanceConfigurationResolvesTabBarVisibility() {
   appearance.showTabBar = false
   #expect(!appearance.showsTabBar(tabCount: 2))
 }
+
+/// 「在 Aster 中打开」这一档的原始值统一为 `aster`，不再受理早期的 `otty`。
+@Test("打开方式枚举只接受当前原始值")
+func openDestinationsRejectLegacyRawValue() throws {
+  #expect(LinkOpenDestination(rawValue: "aster") == .aster)
+  #expect(FileOpenDestination(rawValue: "aster") == .aster)
+  #expect(FolderOpenDestination(rawValue: "aster") == .aster)
+  #expect(LinkOpenDestination(rawValue: "browser") == .browser)
+  #expect(FileOpenDestination(rawValue: "default-app") == .defaultApplication)
+  #expect(FolderOpenDestination(rawValue: "default-app") == .finder)
+  #expect(LinkOpenDestination(rawValue: "otty") == nil)
+  #expect(FileOpenDestination(rawValue: "otty") == nil)
+  #expect(FolderOpenDestination(rawValue: "otty") == nil)
+  #expect(LinkOpenDestination.aster.rawValue == "aster")
+}

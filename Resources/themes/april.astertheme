@@ -1,0 +1,67 @@
+[meta]
+name        = "April"
+author      = "Otty"
+mode        = "light"
+description = "Light botanical theme with moss green accents"
+
+[terminal]
+foreground = "#17703f"
+background = "#ffffff"
+palette = [
+    "#1A1F1C", "#B23B3B", "#5DA802", "#B88A3A",
+    "#3D87C8", "#9B5AAB", "#3F9B85", "#8cbaa5",
+    "#3D4B44", "#D04A3D", "#7CB342", "#D89B47",
+    "#5AA3D6", "#A67ABF", "#5BB8A0", "#2A332E",
+]
+
+[token]
+foreground = "#2A332E"
+secondary  = "#6B7A73"
+tertiary   = "#9AA8A1"
+accent    = "#5DA802"
+radius    = 4
+font-ui   = ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"]
+font-mono = ["JetBrains Mono", "Menlo", "monospace"]
+font-size = 13
+
+[panel]
+background = "#F4F6F4"
+surface = "#FFFFFF"
+border = "#E0E6E2"
+
+[sidebar]
+background = "#F4F6F4"
+border-right = "1px solid #e0e6e2"
+padding = 0.0
+
+[tab]
+radius = 0.0
+foreground  = "#6B7A73"
+font-weight = 400
+height = 32.0
+
+[tab.active]
+background = "#14934b2f"
+foreground  = "#2A332E"
+shadow      = "0 1px 3px rgba(0,0,0,0.06)"
+font-weight = 500
+
+[tab.hover]
+background = "rgba(0,0,0,0.04)"
+
+[container]
+radius = 0.0
+
+[window]
+background = "#ffffff"
+
+[titlebar]
+foreground = "#698678"
+background = "#f4f6f4"
+
+[tab-bar]
+background = "#f4f6f4"
+height = 44.0
+
+[tab-bar.tab]
+padding = 12.0

@@ -6,7 +6,8 @@
     shell: "<rect x='2.2' y='3' width='11.6' height='10' rx='2'/><path d='m4.8 6 2 2-2 2M8.5 10h2.8'/>",
     controls: "<path d='m4 2.5 8 6-4.1.8L6.5 13z'/>",
     editor: "<path d='M4 2.5h5l3 3v8H4z'/><path d='M9 2.5v3h3M6 8h4M6 10.5h4'/>",
-    agents: "<path d='m8 2 .8 2.6L11.5 6 9 7.2 8 10 7 7.2 4.5 6l2.7-1.4z'/><path d='m12.5 10 .4 1.2 1.1.5-1.1.6-.4 1.2-.5-1.2-1.1-.6 1.1-.5z'/>",
+    // 插头线条图标（lucide plug 风格，对齐 Otty 的「智能体」侧栏图标）。
+    agents: "<path d='M6 1.8v3M10 1.8v3M4.6 4.8h6.8v3.4a3.4 3.4 0 0 1-3.4 3.4 3.4 3.4 0 0 1-3.4-3.4zM8 11.6v2.6'/>",
     appearance: "<path d='M8 2.2a5.8 5.8 0 1 0 0 11.6c1 0 1.6-.5 1.6-1.2 0-.5-.3-.8-.3-1.2 0-.7.6-1.2 1.3-1.2h1.1c1.3 0 2.1-1 2.1-2.2A5.8 5.8 0 0 0 8 2.2z'/><circle cx='5.2' cy='6' r='.5'/><circle cx='8' cy='4.7' r='.5'/><circle cx='10.8' cy='6.1' r='.5'/>",
     recipes: "<rect x='2.5' y='2.5' width='4.5' height='4.5' rx='1'/><rect x='9' y='2.5' width='4.5' height='4.5' rx='1'/><rect x='2.5' y='9' width='4.5' height='4.5' rx='1'/><rect x='9' y='9' width='4.5' height='4.5' rx='1'/>",
     shortcuts: "<path d='m9.3 2.3-5 6h3.6l-1.2 5.4 5-6H8.1z'/>",
@@ -21,9 +22,9 @@
     optionMeta: [["false", "关闭（输入重音）"], ["true", "左右 Option"], ["left", "仅左 Option"], ["right", "仅右 Option"]],
     rightClick: [["context-menu", "上下文菜单"], ["copy", "复制"], ["paste", "粘贴"], ["copy-or-paste", "已选则复制，否则粘贴"], ["ignore", "忽略"]],
     bypassMouse: [["none", "无"], ["shift", "Shift"], ["ctrl", "Control"], ["alt", "Option"], ["ctrl+shift", "Control + Shift"], ["super", "Command"]],
-    openLink: [["browser", "系统浏览器"], ["otty", "在 Aster 中打开"]],
-    openFile: [["default-app", "系统默认应用"], ["otty", "在 Aster 中打开"]],
-    openFolder: [["default-app", "访达"], ["otty", "在 Aster 中打开"]],
+    openLink: [["browser", "系统浏览器"], ["aster", "在 Aster 中打开"]],
+    openFile: [["default-app", "系统默认应用"], ["aster", "在 Aster 中打开"]],
+    openFolder: [["default-app", "访达"], ["aster", "在 Aster 中打开"]],
     foreground: [["off", "关闭（系统默认）"], ["banner", "仅当来源标签未聚焦时"], ["always", "始终显示"]],
     restoreProcesses: [["none", "不重启"], ["whitelist", "仅白名单内"], ["all", "所有运行中的进程"]],
     term: [["auto", "Auto (xterm-ghostty)"], ["xterm-ghostty", "xterm-ghostty (内置)"], ["aster", "aster (内置)"], ["xterm-256color", "xterm-256color"], ["tmux-256color", "tmux-256color"], ["custom", "自定义…"]],
@@ -272,9 +273,9 @@
     { id: "appearance", title: "外观", description: "主题、字体、光标、布局和窗口。", special: "appearance", groups: [
       { title: "主题", rows: [
         row("appearance.appearance", "界面外观", "跟随系统或固定明暗模式", "select", { options: [["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]] }),
-        row("appearance.useSeparateDarkTheme", "深色模式使用独立主题", "分别选择浅色和深色终端主题"),
-        action("importTheme", "导入主题", "支持 Aster、Otty、iTerm、Kitty、Alacritty 与 Ghostty", "导入主题…"),
-        action("openThemesFolder", "主题文件夹", "查看自定义主题和 managed 覆盖", "打开"),
+        row("appearance.useSeparateDarkTheme", "深色模式使用独立主题", "跟随系统配色方案：浅色模式使用上方主题，深色模式使用下方深色主题。"),
+        action("importTheme", "导入主题", "选择 .astertheme 文件加入主题库", "导入主题…"),
+        action("openThemesFolder", "主题文件夹", "打开 ~/.config/aster/themes，直接编辑主题文件", "打开"),
       ]},
       { title: "字体", rows: [
         row("appearance.autoMatchFontStyles", "自动匹配粗细与样式", "开启时由普通字体自动派生粗体、斜体和粗斜体"),
@@ -306,8 +307,9 @@
       ]},
       { title: "光标", rows: [
         row("appearance.cursorStyle", "光标样式", "块状、竖线、下划线或空心块", "select", { options: options.cursorStyle }),
-        row("appearance.cursorBlinkMode", "光标闪烁", "默认项允许终端程序覆盖", "select", { options: options.cursorBlink }),
-        row("appearance.cursorAnimation", "光标动画", "同一行移动时平滑插值", "select", { options: options.cursorAnimation }),
+        // 长文案对齐 Otty；\e 需要写成 \\e 才能原样显示转义序列。
+        row("appearance.cursorBlinkMode", "光标闪烁方式", "「默认」项设定初始闪烁状态，但允许程序覆盖（DECSCUSR \\e[5 q / \\e[2 q、DEC mode 12）；「始终」项则固定光标、忽略程序控制。", "select", { options: options.cursorBlink }),
+        row("appearance.cursorAnimation", "光标动画", "「平滑」会让光标在同一行内移动时插值滑动，并在点击 / 聚焦时弹一下。", "select", { options: options.cursorAnimation }),
         row("appearance.cursorOpacity", "光标不透明度", "光标颜色的 Alpha", "range", { min: .1, max: 1, step: .05 }),
         row("appearance.cursorColor", "光标颜色", "留空时跟随主题", "color"),
         row("appearance.cursorTextColor", "光标下文字颜色", "留空时跟随主题", "color"),
@@ -326,15 +328,17 @@
         row("appearance.windowRows", "行数", "网格尺寸模式下的终端行数", "number", { min: 12, max: 200, step: 1 }),
         row("appearance.windowWidth", "窗口宽度", "像素尺寸模式下的内容宽度", "number", { min: 820, max: 3840, step: 10 }),
         row("appearance.windowHeight", "窗口高度", "像素尺寸模式下的内容高度", "number", { min: 520, max: 2160, step: 10 }),
-        row("appearance.animateDockIconOnProgress", "任务进行时旋转 Dock 图标", "持续重绘会增加 CPU 和电量消耗"),
-        row("appearance.redDockIconOnError", "出错时 Dock 图标变红", "点击图标跳转到出错标签"),
-        row("shell.bounceDockIcon", "通知时弹跳 Dock 图标", "应用不活跃时请求用户注意"),
+        row("appearance.unfocusedSplitOpacity", "非焦点分屏不透明度", "未获得焦点的分屏窗格淡化到什么程度。设为 1.00 则所有窗格都保持完全清晰。", "range", { min: 0.15, max: 1, step: 0.05, valueFirst: true, format: value => Number(value).toFixed(2) }),
+        // Dock 三行文案对齐 Otty；warning 是描述下方的橙色耗电提示行。
+        row("appearance.animateDockIconOnProgress", "任务进行时旋转", "会话运行时，右眼持续旋转", "toggle", { warning: "会话运行时会增加 CPU 和电量消耗" }),
+        row("appearance.redDockIconOnError", "出错时变红", "任务出错时图标变红；点击 Dock 图标可跳转到出错的标签"),
+        row("shell.bounceDockIcon", "收到通知时跳动", "Aster 不在前台时，收到通知则让 Dock 图标跳动"),
       ]},
     ]},
     { id: "recipes", title: "Recipes", description: "保存并重放标签页、分屏、命令和文本片段。", special: "recipes", groups: [
       { title: "命令重放", rows: [
         row("recipes.savedReplayMode", "已保存的 Recipe", "打开 Aster 内保存的 Recipe 时如何运行命令", "select", { options: options.replay }),
-        row("recipes.fileReplayMode", "外部 Recipe 文件", "打开外部 .ottyrecipe 时如何运行命令", "select", { options: options.replay }),
+        row("recipes.fileReplayMode", "外部 Recipe 文件", "打开外部 .asterrecipe 时如何运行命令", "select", { options: options.replay }),
       ]},
     ]},
     { id: "shortcuts", title: "快捷键", description: "为菜单、工作区、Pane、Recipe 和文本序列绑定按键。", special: "shortcuts", groups: [] },
@@ -412,7 +416,9 @@
     for (const menu of document.querySelectorAll(".multiselect-menu")) menu.hidden = true;
   });
   let pendingRequest = 0;
-  const appearanceUIState = { fontScope: "computed", themeEditorOpen: false };
+  // lineHeightChoice 记录行高 segmented 最近一次点击（「默认」与「紧凑 (1.0)」
+  // 写入同一组值，只能靠它消歧选中态）。
+  const appearanceUIState = { fontScope: "computed", themeEditorOpen: false, lineHeightChoice: null };
   // 编程智能体卡片的展开状态：快照推送会整页重渲染，用模块级 Set 记住哪些行展开。
   const agentUIState = { expanded: new Set() };
 
@@ -577,11 +583,18 @@
       input.disabled = !supported;
       const output = document.createElement("span");
       output.className = "range-value";
-      const updateOutput = () => { output.textContent = `${input.value}${item.suffix ?? ""}`; };
+      // format 允许行自定义数值显示（如非焦点分屏不透明度固定两位小数）。
+      const updateOutput = () => { output.textContent = item.format ? item.format(input.value) : `${input.value}${item.suffix ?? ""}`; };
       updateOutput();
       input.addEventListener("input", updateOutput);
       input.addEventListener("change", () => commit(Number(input.value)));
-      wrap.append(input, output);
+      // valueFirst 把数值放到滑杆左侧（Otty 的分屏不透明度布局）。
+      if (item.valueFirst) {
+        wrap.classList.add("value-first");
+        wrap.append(output, input);
+      } else {
+        wrap.append(input, output);
+      }
       return wrap;
     }
     if (item.type === "color") {
@@ -719,6 +732,13 @@
       ? (item.unsupportedDetail ?? `${item.detail}（当前平台不可用）`)
       : (isDisabled(item) ? (item.disabledDetail ?? item.detail) : item.detail);
     copy.append(label, detail);
+    // 橙色警告行（如 Dock 旋转的耗电提示）排在描述之后，对齐 Otty。
+    if (item.warning) {
+      const warning = document.createElement("span");
+      warning.className = "setting-warning";
+      warning.textContent = `⚠ ${item.warning}`;
+      copy.appendChild(warning);
+    }
     // statusKey 行（如通知系统权限）用彩色圆点 + 状态文本替代静态描述，状态由原生侧
     // 随快照下发；statusStateKey 决定圆点颜色。
     if (item.statusKey && settingValue(item.statusKey)) {
@@ -910,21 +930,24 @@
 
   function makeThemeTerminalPreview(editor) {
     const preview = document.createElement("div");
-    preview.className = "otty-terminal-preview";
+    preview.className = "terminal-preview";
     const foreground = editor?.slots?.find(slot => slot.id === "terminal.foreground")?.resolved ?? "#e8e8e6";
     const background = editor?.slots?.find(slot => slot.id === "terminal.background")?.resolved ?? "#171817";
+    // 首行行尾的闪烁光标用主题 cursor 色渲染（Otty 如此），缺失时回退前景色。
+    const cursorColor = editor?.slots?.find(slot => slot.id === "cursor.background")?.resolved ?? foreground;
     const ansi = editor?.ansi ?? [];
     preview.style.setProperty("--terminal-fg", foreground);
     preview.style.setProperty("--terminal-bg", background);
+    preview.style.setProperty("--terminal-cursor", cursorColor);
     preview.innerHTML = [
-      `<div><span class="ansi-2">otty</span><span class="ansi-5">@macbook</span>:~ $ open readme.md -a Typora</div>`,
-      `<div><span class="ansi-2">otty</span><span class="ansi-5">@macbook</span>:~ $ eza -la --color=always --icons --git</div>`,
+      `<div><span class="ansi-2">aster</span><span class="ansi-5">@macbook</span>:~ $ open <span class="terminal-inverse">readme.md</span> -a Typora<i class="terminal-cursor"></i></div>`,
+      `<div><span class="ansi-2">aster</span><span class="ansi-5">@macbook</span>:~ $ eza -la --color=always --icons --git</div>`,
       `<div class="terminal-heading">Permissions   Size User    Date Modified  Git Name</div>`,
-      `<div><span class="ansi-2">.drwxr-xr-x</span>      - otty    22 Aug 13:42    --    .cache</div>`,
-      `<div><span class="ansi-2">.drwxr-xr-x</span>      - otty    20 Aug 09:15    -M    .config</div>`,
-      `<div><span class="ansi-6">.lrwxrwxrwx</span>      9 otty     9 Feb 20:32    --  → etc → /etc</div>`,
-      `<div><span class="ansi-3">.-rwxr-xr-x</span>    12k otty    15 Jun 10:45    --    build.sh</div>`,
-      `<div><span class="ansi-1">.-rw-r--r--</span>   856k otty     3 Apr 09:11    -N    banner.png</div>`,
+      `<div><span class="ansi-2">.drwxr-xr-x</span>      - aster   22 Aug 13:42    --    .cache</div>`,
+      `<div><span class="ansi-2">.drwxr-xr-x</span>      - aster   20 Aug 09:15    -M    .config</div>`,
+      `<div><span class="ansi-6">.lrwxrwxrwx</span>      9 aster    9 Feb 20:32    --  → etc → /etc</div>`,
+      `<div><span class="ansi-3">.-rwxr-xr-x</span>    12k aster   15 Jun 10:45    --    build.sh</div>`,
+      `<div><span class="ansi-1">.-rw-r--r--</span>   856k aster    3 Apr 09:11    -N    banner.png</div>`,
     ].join("");
     ansi.forEach((color, index) => preview.style.setProperty(`--ansi-${index}`, color));
     return preview;
@@ -970,24 +993,37 @@
     });
   }
 
+  // UI 元素 pill 条按 Otty 顺序显式映射 slot（去掉 Terminal 组：前景/背景已有大色板）；
+  // 英文标签硬编码、光标/选区用中文，与 Otty 一致。
   function makeThemeTokenPills(editor) {
     const pills = document.createElement("div");
     pills.className = "theme-token-pills";
-    const grouped = new Map();
-    for (const slot of editor?.slots ?? []) {
-      if (!grouped.has(slot.group)) grouped.set(slot.group, []);
-      grouped.get(slot.group).push(slot);
-    }
-    for (const [group, slots] of grouped) {
+    const slotByID = new Map((editor?.slots ?? []).map(slot => [slot.id, slot]));
+    const groups = [
+      ["Window", ["interface.window"]],
+      ["Container", ["container.background", "container.border"]],
+      ["Panel", ["panel.background", "panel.surface", "panel.border"]],
+      ["Sidebar", ["sidebar.background", "sidebar.foreground", "sidebar.border"]],
+      ["Titlebar", ["titlebar.background", "titlebar.foreground"]],
+      ["Tabbar", ["tabbar.background", "tabbar.border"]],
+      ["Tab", ["tab.foreground", "tab.hoverBackground", "tab.activeBackground", "tab.activeForeground", "tab.activeBorderColor"]],
+      ["Accents", ["interface.accent", "interface.foreground", "interface.secondaryForeground", "interface.tertiaryForeground", "interface.border"]],
+      ["光标", ["cursor.background", "cursor.foreground"]],
+      ["选区", ["selection.background", "selection.foreground"]],
+    ];
+    for (const [label, ids] of groups) {
+      const slots = ids.map(id => slotByID.get(id)).filter(Boolean);
+      if (!slots.length) continue;
       const button = document.createElement("button");
       button.type = "button";
       button.className = "theme-token-pill";
-      const label = document.createElement("span");
-      label.textContent = group;
-      button.appendChild(label);
-      for (const slot of slots.slice(0, 5)) {
+      const caption = document.createElement("span");
+      caption.textContent = label;
+      button.appendChild(caption);
+      for (const slot of slots) {
         const dot = document.createElement("i");
         dot.style.backgroundColor = slot.resolved;
+        dot.title = slot.title;
         button.appendChild(dot);
       }
       button.addEventListener("click", () => openThemeToken(editor, slots[0].id));
@@ -1058,59 +1094,96 @@
     return editorCard;
   }
 
-  function makeOttyThemeGroup(rowMap) {
+  // Otty 画法的主题预览卡：4:3 外框底=终端背景，左 20% 侧栏三根圆头横线，右侧
+  // 内容面板底=surface（圆点 + 三根 2px 横线模拟文本），卡下 10px 主题名。
+  function makeThemePreviewCard(theme) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `theme-card${theme.focused ? " selected" : ""}${theme.selected ? " configured" : ""}`;
+    button.style.setProperty("--theme-background", theme.background);
+    button.style.setProperty("--theme-foreground", theme.foreground);
+    button.style.setProperty("--theme-accent", theme.accent);
+    button.style.setProperty("--theme-surface", theme.surface ?? theme.background);
+    button.innerHTML = `<span class="theme-thumb"><span class="theme-thumb-side"><i></i><i></i><i></i></span><span class="theme-thumb-panel"><span class="theme-thumb-lead"><i class="theme-thumb-dot"></i><i class="theme-thumb-line"></i></span><i class="theme-thumb-line"></i><i class="theme-thumb-line"></i></span></span><span class="theme-name"></span>`;
+    button.querySelector(".theme-name").textContent = theme.name;
+    button.addEventListener("click", () => send("action", { action: "selectTheme", payload: { id: theme.id } }));
+    return button;
+  }
+
+  // 主题选择器：全部主题常开显示——浅色组在前、深色组在后，各一个 4 列 grid，
+  // 无组标题文字（用户确认不要折叠态）。
+  function makeThemePicker() {
+    const picker = document.createElement("div");
+    picker.className = "theme-picker";
+    const themes = snapshot?.themes ?? [];
+    for (const mode of ["light", "dark"]) {
+      const grid = document.createElement("div");
+      grid.className = "theme-grid";
+      grid.dataset.themeMode = mode;
+      for (const theme of themes.filter(item => item.mode === mode)) grid.appendChild(makeThemePreviewCard(theme));
+      picker.appendChild(grid);
+    }
+    return picker;
+  }
+
+  // 操作按钮区（Otty 两行结构）；当前主题有用户覆盖色时上方多一行「恢复主题预设」。
+  function makeThemeActions(editor) {
+    const host = document.createElement("div");
+    host.className = "theme-actions-area";
+    const rowFor = buttons => {
+      const line = document.createElement("div");
+      line.className = "theme-actions";
+      for (const [label, handler] of buttons) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "action-button";
+        button.textContent = label;
+        button.addEventListener("click", handler);
+        line.appendChild(button);
+      }
+      return line;
+    };
+    if (editor?.hasOverrides) {
+      host.appendChild(rowFor([
+        ["恢复主题预设", () => send("action", { action: "resetThemeColors", payload: { themeID: editor.id } })],
+      ]));
+    }
+    host.appendChild(rowFor([
+      ["复制", () => send("action", { action: "duplicateTheme", payload: { id: editor.id } })],
+      ["编辑当前主题", () => { appearanceUIState.themeEditorOpen = !appearanceUIState.themeEditorOpen; renderContent(); }],
+    ]));
+    host.appendChild(rowFor([
+      ["打开主题文件夹", () => send("action", { action: "openThemesFolder", payload: {} })],
+      ["导入主题…", () => send("action", { action: "importTheme", payload: {} })],
+    ]));
+    return host;
+  }
+
+  // 单张「主题」卡（Otty 结构）：选择器、详情（终端预览 + 色板 + pill 条）、按钮区
+  // 三段共用一张卡、divider 分隔；内联 token 编辑器与「深色独立主题」行跟在卡后。
+  function makeThemeGroup(rowMap) {
     const editor = snapshot?.themeEditor;
     const shell = document.createElement("div");
     shell.className = "appearance-theme-shell";
-    const modes = [["light", "明亮主题"], ["dark", "黑暗主题"]];
-    for (const [mode, title] of modes) {
-      const section = document.createElement("section");
-      section.className = "theme-mode-section";
-      const heading = document.createElement("div");
-      heading.className = "appearance-subtitle theme-mode-title";
-      heading.textContent = title;
-      const grid = document.createElement("div");
-      grid.className = "card theme-grid";
-      grid.dataset.themeMode = mode;
-      for (const theme of (snapshot?.themes ?? []).filter(item => item.mode === mode)) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = `theme-card${theme.focused ? " selected" : ""}${theme.selected ? " configured" : ""}`;
-        button.style.setProperty("--theme-background", theme.background);
-        button.style.setProperty("--theme-foreground", theme.foreground);
-        button.style.setProperty("--theme-accent", theme.accent);
-        button.innerHTML = `<span class="theme-preview"><span class="theme-lines"></span><span class="theme-lines"></span></span><span class="theme-name"></span>`;
-        button.querySelector(".theme-name").textContent = theme.name;
-        button.addEventListener("click", () => send("action", { action: "selectTheme", payload: { id: theme.id } }));
-        grid.appendChild(button);
-      }
-      section.append(heading, grid);
-      shell.appendChild(section);
-    }
-    const detailLabel = document.createElement("div");
-    detailLabel.className = "appearance-subtitle";
-    detailLabel.textContent = "详情";
+    const card = document.createElement("div");
+    card.className = "card theme-shell-card";
+    const divider = () => {
+      const line = document.createElement("div");
+      line.className = "theme-divider";
+      return line;
+    };
+    card.appendChild(makeThemePicker());
+    card.appendChild(divider());
     const detail = document.createElement("div");
-    detail.className = "card theme-detail-card";
-    detail.append(makeThemeTerminalPreview(editor), makeThemePalette(editor), makeThemeTokenPills(editor));
-    const actions = document.createElement("div");
-    actions.className = "theme-actions";
-    const buttons = [
-      ["复制", () => send("action", { action: "duplicateTheme", payload: { id: editor.id } })],
-      ["编辑所选主题", () => { appearanceUIState.themeEditorOpen = !appearanceUIState.themeEditorOpen; renderContent(); }],
-      ["打开主题文件夹", () => send("action", { action: "openThemesFolder", payload: {} })],
-      ["导入主题…", () => send("action", { action: "importTheme", payload: {} })],
-    ];
-    for (const [label, handler] of buttons) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "action-button";
-      button.textContent = label;
-      button.addEventListener("click", handler);
-      actions.appendChild(button);
-    }
-    detail.appendChild(actions);
-    shell.append(detailLabel, detail, makeThemeEditor(editor));
+    detail.className = "theme-detail";
+    const detailTitle = document.createElement("h3");
+    detailTitle.className = "theme-detail-title";
+    detailTitle.textContent = "详情";
+    detail.append(detailTitle, makeThemeTerminalPreview(editor), makeThemePalette(editor), makeThemeTokenPills(editor));
+    card.appendChild(detail);
+    card.appendChild(divider());
+    card.appendChild(makeThemeActions(editor));
+    shell.append(card, makeThemeEditor(editor));
     const separate = rowMap.get("appearance.useSeparateDarkTheme");
     if (separate) shell.appendChild(cardForRows(rowMap, [separate.key], "separate-theme-card"));
     return makeAppearanceGroup("主题", shell, "theme-group");
@@ -1144,6 +1217,57 @@
       value: settingValue("appearance.blinkRendering") === "blink",
       onCommit: enabled => commitValue(item, enabled ? "blink" : "steady"),
     });
+  }
+
+  // 行高 segmented 的选中态推导。Aster 语义 1.0=字体默认行高，因此「默认」和
+  // 「紧凑 (1.0)」写入同一组值（1.0 + 0px），只能靠 appearanceUIState.lineHeightChoice
+  // 记住用户最近一次点击来消歧；任何其它组合（含历史默认 1.08）归为「自定义」。
+  function lineHeightMode() {
+    if (appearanceUIState.lineHeightChoice === "custom") return "custom";
+    const height = Number(settingValue("appearance.lineHeight"));
+    const adjust = Number(settingValue("appearance.adjustCellHeight") ?? 0);
+    if (adjust !== 0) return "custom";
+    if (Math.abs(height - 1) < 0.001) return appearanceUIState.lineHeightChoice === "compact" ? "compact" : "default";
+    if (Math.abs(height - 1.2) < 0.001) return "relaxed";
+    return "custom";
+  }
+
+  // 「行高」四段 segmented（默认/紧凑/宽松/自定义），对齐 Otty；只做 UI 映射，
+  // 不改 Swift 侧 lineHeight/adjustCellHeight 的语义。
+  function makeLineHeightRow() {
+    const mode = lineHeightMode();
+    const rowHost = makeRow({ key: "appearance.lineHeight", label: "行高", detail: "终端每行高度的预设或自定义组合", type: "readonly", value: "" });
+    const control = rowHost.querySelector(".setting-control");
+    control.replaceChildren();
+    const segmented = document.createElement("div");
+    segmented.className = "segmented";
+    for (const [id, label] of [["default", "默认"], ["compact", "紧凑 (1.0)"], ["relaxed", "宽松 (1.2)"], ["custom", "自定义"]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = mode === id ? "active" : "";
+      button.textContent = label;
+      button.addEventListener("click", () => {
+        appearanceUIState.lineHeightChoice = id;
+        // 「自定义」只展开数字行，不动当前值；预设项一次提交两个键，避免中间态重渲染。
+        if (id === "custom") { renderContent(); return; }
+        send("set", { changes: [
+          { key: "appearance.lineHeight", value: id === "relaxed" ? 1.2 : 1 },
+          { key: "appearance.adjustCellHeight", value: 0 },
+        ] });
+      });
+      segmented.appendChild(button);
+    }
+    control.appendChild(segmented);
+    return rowHost;
+  }
+
+  // 「自定义」档展开的两行：行高倍数写 appearance.lineHeight，逐像素调整写现有
+  // appearance.adjustCellHeight 兼容键。
+  function makeLineHeightCustomRows() {
+    return [
+      makeRow({ key: "appearance.lineHeight", label: "自定义行高", detail: "字体默认行高的缩放倍数", type: "number", min: 0.8, max: 2, step: 0.1 }),
+      makeRow({ key: "appearance.adjustCellHeight", label: "调整单元格高度", detail: "在计算行高后增加或减少像素（px）", type: "number", min: -8, max: 16, step: 1 }),
+    ];
   }
 
   function makeFontFamilyCard(rowMap) {
@@ -1213,13 +1337,30 @@
       "appearance.cursorColor", "appearance.cursorTextColor", "appearance.cursorOpacity",
       "appearance.cursorStyle", "appearance.cursorBlinkMode", "appearance.cursorAnimation",
     ], "cursor-card");
+    // 实时预览随当前设置联动（Otty 行为）：底色/前景取主题终端色，光标颜色留空时
+    // 回退主题 cursor 色；样式（块/竖线/下划线/空心块）与不透明度取当前值；是否闪烁
+    // 跟随「光标闪烁方式」（默认开启/始终开启才闪）。CSP 禁内联脚本，闪烁由 CSS
+    // @keyframes + blinking class 驱动。
+    const editor = snapshot?.themeEditor;
+    const slotColor = id => editor?.slots?.find(slot => slot.id === id)?.resolved;
     const preview = document.createElement("div");
     preview.className = "cursor-preview";
-    preview.style.setProperty("--cursor-color", settingValue("appearance.cursorColor") || "#e8e8e6");
-    preview.style.setProperty("--cursor-text", settingValue("appearance.cursorTextColor") || "#171817");
+    preview.style.setProperty("--terminal-fg", slotColor("terminal.foreground") ?? "#e8e8e6");
+    preview.style.setProperty("--terminal-bg", slotColor("terminal.background") ?? "#171817");
+    preview.style.setProperty("--cursor-color", settingValue("appearance.cursorColor") || slotColor("cursor.background") || "#e8e8e6");
+    preview.style.setProperty("--cursor-text", settingValue("appearance.cursorTextColor") || slotColor("cursor.foreground") || "#171817");
     preview.style.setProperty("--cursor-opacity", settingValue("appearance.cursorOpacity") ?? 1);
-    preview.innerHTML = `<span class="ansi-2">abner</span><span class="ansi-5">@macbook</span>$ git commit -am <b>“</b>`;
-    card.prepend(preview);
+    preview.innerHTML = `<span class="ansi-2">abner</span><span class="ansi-5">@macbook</span>$ git commit -am "<i class="cursor-demo"></i>`;
+    const cursorDemo = preview.querySelector(".cursor-demo");
+    const cursorStyle = String(settingValue("appearance.cursorStyle") || "block");
+    cursorDemo.classList.add(`cursor-style-${cursorStyle}`);
+    const blinkMode = String(settingValue("appearance.cursorBlinkMode") || "defaultOn");
+    if (blinkMode === "defaultOn" || blinkMode === "alwaysOn") cursorDemo.classList.add("blinking");
+    // 卡顶部先放描述再放实时预览（Otty 结构）。
+    const description = document.createElement("p");
+    description.className = "cursor-card-desc";
+    description.textContent = "实时预览光标的颜色、样式、不透明度与闪烁行为。";
+    card.prepend(description, preview);
     host.appendChild(card);
     return makeAppearanceGroup("光标", host, "cursor-group");
   }
@@ -1248,25 +1389,35 @@
     const rows = appearanceRows(section);
     const fragment = document.createDocumentFragment();
     fragment.appendChild(makeLayoutChooser());
-    fragment.appendChild(makeAppearanceGroup("标签页", cardForRows(rows, [
-      "appearance.newTabPosition", "appearance.showTabBar", "appearance.tabBarVisibility",
-      "appearance.tabsPanelVisibility", "appearance.sidebarWidth", "appearance.inspectorWidth",
-    ])));
+    // 「标签栏」行按当前布局显隐（Otty 行为）：垂直布局没有横向标签栏的自动隐藏，
+    // 横向布局没有标签面板及其宽度。
+    const layout = settingValue("tabBarLayout");
+    const tabKeys = ["appearance.newTabPosition", "appearance.showTabBar"];
+    if (layout !== "vertical") tabKeys.push("appearance.tabBarVisibility");
+    if (layout === "vertical") tabKeys.push("appearance.tabsPanelVisibility", "appearance.sidebarWidth");
+    tabKeys.push("appearance.inspectorWidth");
+    fragment.appendChild(makeAppearanceGroup("标签栏", cardForRows(rows, tabKeys)));
     const windowKeys = ["appearance.windowSizeMode"];
     const sizeMode = settingValue("appearance.windowSizeMode");
     if (sizeMode === "grid") windowKeys.push("appearance.windowColumns", "appearance.windowRows");
     if (sizeMode === "frame") windowKeys.push("appearance.windowWidth", "appearance.windowHeight");
+    windowKeys.push("appearance.unfocusedSplitOpacity");
     fragment.appendChild(makeAppearanceGroup("窗口", cardForRows(rows, windowKeys)));
-    fragment.appendChild(makeOttyThemeGroup(rows));
+    fragment.appendChild(makeThemeGroup(rows));
     const textCard = cardForRows(rows, [
       "appearance.boldRendering", "appearance.italicRendering", "appearance.underlineRendering",
-      "appearance.ligatureLevel", "appearance.fontBlending", "appearance.lineHeight",
-      "appearance.adjustCellHeight", "appearance.fontSmoothing", "appearance.fontThicken",
+      "appearance.ligatureLevel", "appearance.fontBlending",
+      "appearance.fontSmoothing", "appearance.fontThicken",
       "appearance.bidirectionalText", "appearance.ligatureAlphabet", "appearance.windowsTextRendering",
     ], "text-card");
     textCard.prepend(makeFontStepper(rows));
     const underlineRow = textCard.querySelector('[data-setting-key="appearance.underlineRendering"]');
     underlineRow?.after(makeBlinkRow(rows));
+    // 行高 segmented 插在「字体混合」之后；选「自定义」时展开两行数字输入。
+    const blendingRow = textCard.querySelector('[data-setting-key="appearance.fontBlending"]');
+    const lineHeightRows = [makeLineHeightRow()];
+    if (lineHeightMode() === "custom") lineHeightRows.push(...makeLineHeightCustomRows());
+    blendingRow?.after(...lineHeightRows);
     fragment.appendChild(makeAppearanceGroup("文本", textCard));
     fragment.appendChild(makeFontFamilyCard(rows));
     fragment.appendChild(makeCursorGroup(rows));

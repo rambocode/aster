@@ -2528,7 +2528,7 @@ final class AppModel: ObservableObject {
   func saveRecipe() {
     guard let tab = selectedTab else { return }
     let panel = NSSavePanel()
-    panel.nameFieldStringValue = "\(tab.title).ottyrecipe"
+    panel.nameFieldStringValue = "\(tab.title).\(WorkflowRecipeTOML.fileExtension)"
     let scope = NSPopUpButton()
     scope.addItems(withTitles: ["当前标签", "当前窗口", "仅命令"])
     let content = NSPopUpButton()
@@ -2544,8 +2544,8 @@ final class AppModel: ObservableObject {
     accessory.widthAnchor.constraint(equalToConstant: 320).isActive = true
     panel.accessoryView = accessory
     guard panel.runModal() == .OK, var url = panel.url else { return }
-    if url.pathExtension.lowercased() != "ottyrecipe" {
-      url.appendPathExtension("ottyrecipe")
+    if url.pathExtension.lowercased() != WorkflowRecipeTOML.fileExtension {
+      url.appendPathExtension(WorkflowRecipeTOML.fileExtension)
     }
     do {
       let selectedScope: WorkflowRecipeScope = switch scope.indexOfSelectedItem {
@@ -2576,13 +2576,13 @@ final class AppModel: ObservableObject {
     openRecipe(from: url)
   }
 
-  /// 统一的外部打开入口：ssh、聚焦深链、目录与两代 Recipe 文件。
+  /// 统一的外部打开入口：ssh、聚焦深链、目录与 Recipe 文件。
   func handleOpenURL(_ url: URL) {
     if url.scheme?.lowercased() == "ssh" {
       openSSHURL(url)
       return
     }
-    if url.scheme?.lowercased() == "otty" {
+    if url.scheme?.lowercased() == WorkflowDeepLink.scheme {
       handleWorkflowDeepLink(url)
       return
     }
@@ -2598,7 +2598,7 @@ final class AppModel: ObservableObject {
       newTab(workingDirectory: url.path, hasContent: true)
       return
     }
-    guard ["asterrecipe", "ottyrecipe"].contains(url.pathExtension.lowercased()) else {
+    guard url.pathExtension.lowercased() == WorkflowRecipeTOML.fileExtension else {
       notice = "Aster 暂不支持打开该类型文件。"
       return
     }
@@ -2698,28 +2698,7 @@ final class AppModel: ObservableObject {
   }
 
   func openRecipe(from url: URL) {
-    if url.pathExtension.lowercased() == "ottyrecipe" {
-      openWorkflowRecipe(from: url)
-      return
-    }
-    do {
-      let recipe = try RecipeStore.load(from: url)
-      for recipeTab in recipe.tabs {
-        let directory =
-          recipeTab.layout.allPanes.first?.workingDirectory
-          ?? FileManager.default.homeDirectoryForCurrentUser.path
-        let tab = TerminalTabItem(
-          title: recipeTab.title,
-          workingDirectory: directory,
-          layout: recipeTab.layout
-        )
-        insertTab(tab, hasContent: true)
-      }
-      persistWorkspace()
-      notice = "已打开 \(recipe.name)"
-    } catch {
-      notice = "Recipe 打开失败：\(error.localizedDescription)"
-    }
+    openWorkflowRecipe(from: url)
   }
 
   private func makeRecipeAccessoryRow(title: String, control: NSView) -> NSView {

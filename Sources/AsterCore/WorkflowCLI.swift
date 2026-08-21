@@ -214,7 +214,8 @@ public struct WorkflowCLIParser: Sendable {
   public func parse(_ rawArguments: [String]) throws -> WorkflowCLIAction {
     try validateArguments(rawArguments)
     var arguments = rawArguments
-    if arguments.first == "otty" { arguments.removeFirst() }
+    // 允许命令行以程序名开头（`aster open .`）。
+    if arguments.first == WorkflowDeepLink.scheme { arguments.removeFirst() }
     var globalFormat = WorkflowCLIOutputFormat.text
     var globalQuiet = false
     while let first = arguments.first {

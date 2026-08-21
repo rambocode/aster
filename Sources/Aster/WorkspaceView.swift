@@ -1203,8 +1203,10 @@ final class WorkspaceViewController: NSViewController {
     header.addSubview(title)
     header.addSubview(menu)
     NSLayoutConstraint.activate([
-      // 与标签行文案左对齐（行底卡内缩 6 + 卡内边距 10）。
-      title.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 16),
+      // 与标签行文案左对齐（行底卡内缩 sidebarPadding[默认 8] + 卡内边距 10）。
+      title.leadingAnchor.constraint(
+        equalTo: header.leadingAnchor,
+        constant: CGFloat(theme.style.sidebarPadding ?? 8) + 10),
       title.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -12),
       menu.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -6),
       menu.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -5),
@@ -1247,11 +1249,15 @@ final class WorkspaceViewController: NSViewController {
     rows.alignment = .width
     rows.spacing = 0
     for section in sidebarTabSections() {
+      var sectionCollapsed = false
       if let title = section.title {
-        let header = makeSidebarGroupHeader(title)
+        sectionCollapsed = preferences.isSidebarGroupCollapsed(title: title)
+        let header = makeSidebarGroupHeader(title, collapsed: sectionCollapsed)
         rows.addArrangedSubview(header)
         header.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
       }
+      // 折叠的分组只留组头；标签行整组不进视图树（对齐 Otty 的分组折叠）。
+      if sectionCollapsed { continue }
       for tab in section.tabs {
         let button = TabRowButton(
           tab: tab,
@@ -1354,8 +1360,17 @@ final class WorkspaceViewController: NSViewController {
   /// 项目/日期分组的组头行：展开箭头 + 文件夹图标 + 完整标题，对齐 Otty 的 TABS
   /// 分组样式。路径可能超出侧栏宽度，中间截断保住 `~/` 前缀与末段目录名，完整
   /// 路径进 tooltip。
-  private func makeSidebarGroupHeader(_ title: String) -> NSView {
-    let host = NSView()
+  private func makeSidebarGroupHeader(_ title: String, collapsed: Bool = false) -> NSView {
+    let host = SidebarGroupHeaderView { [weak self] in
+      guard let self else { return }
+      self.preferences.toggleSidebarGroupCollapsed(title: title)
+      // 折叠是工作区上的直接操作，必须立即重排；不能依赖偏好观察器——设置窗口
+      // 打开期间它会把结构刷新合并推迟到关窗。scheduleRefresh 自带去重，
+      // 与观察器各自调度也只会重建一次。
+      self.scheduleRefresh()
+    }
+    host.setAccessibilityRole(.button)
+    host.setAccessibilityLabel("\(collapsed ? "展开" : "折叠")分组 \(title)")
     host.translatesAutoresizingMaskIntoConstraints = false
     host.heightAnchor.constraint(equalToConstant: 30).isActive = true
 
@@ -1363,7 +1378,7 @@ final class WorkspaceViewController: NSViewController {
     row.orientation = .horizontal
     row.spacing = 5
     row.alignment = .centerY
-    for symbol in ["chevron.down", "folder"] {
+    for symbol in [collapsed ? "chevron.right" : "chevron.down", "folder"] {
       let icon = NSImageView()
       icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
         .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
@@ -1382,8 +1397,10 @@ final class WorkspaceViewController: NSViewController {
     host.addSubview(row)
     row.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      // 分组标题同样对齐标签行文案的左缘。
-      row.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 16),
+      // 分组标题同样对齐标签行文案的左缘（sidebarPadding[默认 8] + 10）。
+      row.leadingAnchor.constraint(
+        equalTo: host.leadingAnchor,
+        constant: CGFloat(preferences.activeTheme.style.sidebarPadding ?? 8) + 10),
       row.trailingAnchor.constraint(lessThanOrEqualTo: host.trailingAnchor, constant: -12),
       row.centerYAnchor.constraint(equalTo: host.centerYAnchor),
     ])
@@ -1472,7 +1489,8 @@ final class WorkspaceViewController: NSViewController {
         ?? theme.style.horizontalTabBarBackground ?? theme.style.sidebarBackground
           ?? theme.palette.panelBackground
     )
-    let rowHeight = theme.style.horizontalTabBarHeight ?? 40
+    // Otty `[tab-bar].height` 原生默认 36。
+    let rowHeight = theme.style.horizontalTabBarHeight ?? 36
     // 顶部布局在标签行上方叠一条 28pt 标题带（与交通灯同一行，承载中央目录胶囊）；
     // 标签行整体落在系统标题栏命中区之下，标签左上角不会被窗口拖拽区吃掉点击。
     let titleBandHeight: CGFloat = 28

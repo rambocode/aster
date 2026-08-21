@@ -1,0 +1,57 @@
+[meta]
+name        = "Pink"
+author      = "Otty"
+mode        = "light"
+description = "Warm cream paper with dusty pink accents — editorial light theme."
+
+[terminal]
+foreground           = "#2A2422"
+background           = "#F5F0F0"
+cursor               = "#CC8595"
+cursor-text          = "#F5F0F0"
+selection-foreground = "#2A2422"
+selection-background = "#EDC4BE"
+palette = [
+    "#2A2422", "#B85951", "#6B8442", "#B8862E",
+    "#4D72A0", "#B16078", "#4F8587", "#9A938E",
+    "#6B6360", "#D87169", "#8AA254", "#D5A445",
+    "#6B8FBE", "#CC8595", "#6FA4A6", "#1A1412",
+]
+
+[token]
+foreground = "#2A2422"
+secondary  = "#7A6E6A"
+tertiary   = "#B8ADA8"
+accent     = "#CC8595"
+radius     = 6
+shadow     = "0 1px 2px rgba(0,0,0,0.04)"
+font-size  = 13
+
+[panel]
+background = "#F0EAEA"
+surface    = "#FBF7F6"
+border     = "#E5DCDA"
+
+[sidebar]
+background   = "#F0EAEA"
+border-right = "1px solid #E5DCDA"
+material     = "none"
+
+[tab]
+radius      = 6
+foreground  = "#7A6E6A"
+font-weight = 400
+
+[tab.active]
+background  = "#EDC4BE"
+foreground  = "#2A2422"
+font-weight = 600
+
+[tab.hover]
+background = "rgba(204,133,149,0.10)"
+
+[tab-bar]
+border-bottom = "1px solid auto"
+
+[titlebar]
+background = "#F0EAEA"

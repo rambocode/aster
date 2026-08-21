@@ -64,19 +64,19 @@ func clearingSingleSlotDropsEmptyEntry() {
   #expect(library.overridesByThemeID[base.id] == nil)
 }
 
-@Test("覆盖序列化成带 otty-added 注释的追加段")
+@Test("覆盖序列化成带 aster-added 注释的追加段")
 func overridesSerializeToOttySection() throws {
   var overrides = ThemeColorOverrides()
   overrides.set(HexColor("#FFFFFFFF")!, for: "interface.window")
   overrides.set(HexColor("#FFFFFFFF")!, for: "titlebar.background")
 
-  let section = makeBaseTheme().ottyOverrideSection(overrides)
+  let section = makeBaseTheme().themeOverrideSection(overrides)
 
   #expect(section.contains("[window]"))
-  #expect(section.contains("# otty-added: window.background"))
+  #expect(section.contains("# aster-added: window.background"))
   #expect(section.contains("background = \"#ffffff\""))
   #expect(section.contains("[titlebar]"))
-  #expect(section.contains("# otty-added: titlebar.background"))
+  #expect(section.contains("# aster-added: titlebar.background"))
   // 同一 section 的多个键合并在一个段落里，不重复写段头。
   #expect(section.components(separatedBy: "[titlebar]").count == 2)
 }
@@ -86,9 +86,9 @@ func interfaceOnlyTokensAreNotSerialized() {
   var overrides = ThemeColorOverrides()
   overrides.set(HexColor("#123456FF")!, for: "interface.tertiaryForeground")
   // Otty 没有这个键，写进去只会让它解析出未知键；覆盖仍然保留在应用内。
-  #expect(makeBaseTheme().ottyOverrideSection(overrides).isEmpty)
-  #expect(OttyThemeKeyMap.entry(for: "interface.tertiaryForeground") == nil)
-  #expect(OttyThemeKeyMap.entry(for: "interface.window")?.section == "window")
+  #expect(makeBaseTheme().themeOverrideSection(overrides).isEmpty)
+  #expect(ThemeFileKeyMap.entry(for: "interface.tertiaryForeground") == nil)
+  #expect(ThemeFileKeyMap.entry(for: "interface.window")?.section == "window")
 }
 
 @Test("重写覆盖段时先剥掉上一轮内容，不会越堆越多")
@@ -140,10 +140,10 @@ func ansiAndFontsOverrideOriginalThemeIdentity() throws {
   #expect(base.palette.ansiColors[3] == HexColor("#000000FF")!)
   #expect(base.style.fontFamilies == nil)
 
-  let section = base.ottyOverrideSection(overrides)
-  #expect(section.contains("# otty-added: terminal.palette"))
+  let section = base.themeOverrideSection(overrides)
+  #expect(section.contains("# aster-added: terminal.palette"))
   #expect(section.contains("#123456"))
-  #expect(section.contains("# otty-added: token.font-mono"))
+  #expect(section.contains("# aster-added: token.font-mono"))
   #expect(section.contains("font-mono = [\"JetBrains Mono\", \"Menlo\"]"))
   #expect(section.contains("font-mono-bold = [\"JetBrains Mono Bold\"]"))
 }
@@ -170,10 +170,10 @@ func managedParametersRoundTripThroughOttyParser() throws {
     font-mono-bold = ["Old Bold"]
 
     \(ThemeOverrideFileWriter.marker)
-    \(base.ottyOverrideSection(overrides))
+    \(base.themeOverrideSection(overrides))
     """
 
-  let parsed = try OttyThemeParser.parse(data: Data(source.utf8), sourceName: "round-trip")
+  let parsed = try ThemeFileParser.parse(data: Data(source.utf8), sourceName: "round-trip")
 
   #expect(parsed.palette.ansiColors[3] == HexColor("#123456FF")!)
   #expect(parsed.style.fontFamilies == ["JetBrains Mono", "Menlo"])

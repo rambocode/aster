@@ -5,25 +5,30 @@ import Foundation
 /// 主题格式只需要 section、`key = value`、字符串、数字和数组；刻意不实现完整 TOML，
 /// 避免为导入主题引入解析器依赖。未知键会保留向前兼容，已知键若类型不合法则回退到
 /// 安全默认值，最终仍由 `TerminalThemeStore.validate` 校验名称、身份和 ANSI 16 色。
-enum OttyThemeParser {
+enum ThemeFileParser {
   static func parse(data: Data, sourceName: String) throws -> TerminalTheme {
     guard let source = String(data: data, encoding: .utf8) else {
       throw TerminalThemeStoreError.invalidFormat("主题文件不是有效的 UTF-8。")
     }
-    let document = try OttyThemeDocument(source: source)
+    let document = try ThemeFileDocument(source: source)
     let name = document.string("meta.name")?.trimmingCharacters(in: .whitespacesAndNewlines)
       ?? sourceName
     let foreground = document.color("terminal.foreground") ?? HexColor("#D0D0D0")!
     let background = document.color("terminal.background") ?? HexColor("#101010")!
     let ansi = document.colors("terminal.palette")
-    let panel = document.color("panel.background") ?? background
-    let surface = document.color("panel.surface") ?? panel
+    let declaredPanel = document.color("panel.background")
+    let declaredSurface = document.color("panel.surface")
+    // 模式推断必须先于 panel 回退：panel 缺省时用的原生 chrome 色本身依赖明暗模式。
     let mode = try resolvedMode(
       document.string("meta.mode"),
-      visualBackground: background.alpha == 0 ? surface : background)
+      visualBackground: background.alpha == 0
+        ? (declaredSurface ?? declaredPanel ?? background) : background)
+    // Otty 语义：未声明 [panel] 时 chrome 用原生 token 色，而不是沿用终端背景；
+    // surface 保留 nil，选中标签的级联才能区分「主题声明的表面色」和「原生叠加色」。
+    let panel = declaredPanel ?? mode.nativeChromeBackground
     let container = document.color("container.background") ?? background
     let interfaceForeground = document.color("token.foreground") ?? foreground
-    let secondary = document.color("token.secondary") ?? interfaceForeground
+    let secondary = document.color("token.secondary") ?? mode.nativeSecondaryForeground
     let accent = document.color("token.accent") ?? ansi.dropFirst(4).first ?? foreground
     let material = document.material("window.material")
     let cursor = document.color("terminal.cursor") ?? foreground
@@ -33,7 +38,7 @@ enum OttyThemeParser {
     let selectionForeground = document.color("terminal.selection-foreground") ?? background
 
     let theme = TerminalTheme(
-      id: "otty-\(slug(sourceName))-\(stableIdentifier(data))",
+      id: "aster-\(slug(sourceName))-\(stableIdentifier(data))",
       name: name,
       mode: mode,
       palette: TerminalThemePalette(
@@ -49,7 +54,7 @@ enum OttyThemeParser {
         interfaceWindowBackground: document.color("window.background"),
         interfaceForeground: interfaceForeground,
         tertiaryForeground: document.color("token.tertiary"),
-        panelSurface: surface,
+        panelSurface: declaredSurface,
         interfaceBorder: document.color("panel.border"),
         cursorText: cursorText,
         selectionForeground: selectionForeground,
@@ -61,13 +66,14 @@ enum OttyThemeParser {
     return theme
   }
 
-  private static func makeStyle(_ document: OttyThemeDocument) -> TerminalThemeStyle {
+  private static func makeStyle(_ document: ThemeFileDocument) -> TerminalThemeStyle {
     let sidebarBorder = document.border("sidebar.border-right")
     let activeBorder = document.border("tab.active.border")
     let containerBorder = document.border("container.border")
     let tabBarBorder = document.border("tab-bar.border-bottom")
     let tab = TerminalTabStyle(
-      radius: document.number("tab.radius", in: 0...128) ?? 6,
+      // Otty 原生标签胶囊圆角实测 8pt；主题（如 April 的 0）可显式覆盖。
+      radius: document.number("tab.radius", in: 0...128) ?? 8,
       height: document.number("tab.height", in: 0...256),
       foreground: document.color("tab.foreground"),
       hoverBackground: document.color("tab.hover.background"),
@@ -89,6 +95,7 @@ enum OttyThemeParser {
       sidebarBorderColor: sidebarBorder.color,
       sidebarBorderWidth: sidebarBorder.width,
       sidebarMaterial: document.material("sidebar.material"),
+      sidebarPadding: document.number("sidebar.padding", in: 0...64),
       titlebarBackground: document.color("titlebar.background"),
       titlebarForeground: document.color("titlebar.foreground"),
       titlebarMaterial: document.material("titlebar.material"),
@@ -112,7 +119,7 @@ enum OttyThemeParser {
   }
 
   private static func horizontalTabStyle(
-    _ document: OttyThemeDocument,
+    _ document: ThemeFileDocument,
     inheriting base: TerminalTabStyle
   ) -> TerminalTabStyle? {
     let prefix = "tab-bar.tab"
@@ -177,7 +184,7 @@ enum OttyThemeParser {
   }
 }
 
-private struct OttyThemeDocument {
+private struct ThemeFileDocument {
   private let values: [String: String]
 
   init(source: String) throws {

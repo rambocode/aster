@@ -1,0 +1,13 @@
+[meta]
+name = "Rosé Pine"
+mode = "dark"
+
+[terminal]
+foreground = "#E0DEF4"
+background = "#191724"
+palette = [
+    "#26233A", "#EB6F92", "#31748F", "#F6C177",
+    "#9CCFD8", "#C4A7E7", "#EBBCBA", "#E0DEF4",
+    "#6E6A86", "#EB6F92", "#31748F", "#F6C177",
+    "#9CCFD8", "#C4A7E7", "#EBBCBA", "#E0DEF4",
+]

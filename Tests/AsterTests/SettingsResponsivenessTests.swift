@@ -159,8 +159,9 @@ func settingsWebAssetsAreBundledAndSelfContained() throws {
   }
   #expect(style.contains("grid-template-columns: 200px minmax(0, 1fr)"))
   #expect(script.contains("window.webkit?.messageHandlers?.asterSettings"))
-  #expect(script.contains("[\"light\", \"明亮主题\"]"))
-  #expect(script.contains("[\"dark\", \"黑暗主题\"]"))
+  // 主题选择器对齐 Otty：单卡内浅色/深色两个 4 列网格，无「明亮/黑暗主题」组标题。
+  #expect(script.contains("makeThemePicker"))
+  #expect(!script.contains("明亮主题"))
   #expect(script.contains("filter(item => item.mode === mode)"))
 }
 
@@ -243,14 +244,14 @@ func settingsThemeActionsUseOverridesForDarkTheme() throws {
 
   let preferences = AppPreferences(
     defaults: defaults,
-    ottyThemesDirectoryURL: themesDirectory
+    themesDirectoryURL: themesDirectory
   )
   preferences.appearance = .light
   preferences.configuration.appearance.useSeparateDarkTheme = false
   let darkTheme = try #require(TerminalThemeCatalog.theme(named: "Ayu Dark"))
   let themeFile = themesDirectory
     .appendingPathComponent(darkTheme.id)
-    .appendingPathExtension("ottytheme")
+    .appendingPathExtension("astertheme")
   try "[meta]\nname = \"Ayu Dark\"\n".write(to: themeFile, atomically: true, encoding: .utf8)
 
   let controller = SettingsViewController(preferences: preferences)
@@ -278,7 +279,7 @@ func settingsThemeActionsUseOverridesForDarkTheme() throws {
 
   let reloaded = AppPreferences(
     defaults: defaults,
-    ottyThemesDirectoryURL: themesDirectory
+    themesDirectoryURL: themesDirectory
   )
   #expect(reloaded.darkTheme.id == darkTheme.id)
   #expect(reloaded.darkTheme.palette.ansiColors[3] == HexColor("#123456"))
@@ -286,8 +287,8 @@ func settingsThemeActionsUseOverridesForDarkTheme() throws {
 
   let persisted = try String(contentsOf: themeFile, encoding: .utf8)
   #expect(persisted.contains(ThemeOverrideFileWriter.marker))
-  #expect(persisted.contains("# otty-added: terminal.palette"))
-  #expect(persisted.contains("# otty-added: token.font-mono"))
+  #expect(persisted.contains("# aster-added: terminal.palette"))
+  #expect(persisted.contains("# aster-added: token.font-mono"))
 }
 
 @Test("网页桥写入强类型字段并持久化扩展字段")

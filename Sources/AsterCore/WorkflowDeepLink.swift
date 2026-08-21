@@ -18,7 +18,7 @@ public enum WorkflowPaneSelector: Equatable, Sendable {
   case sessionIdentifier(String)
 }
 
-/// `otty://` URL 唯一允许描述的动作集合。没有运行命令、打开文件或修改状态的 case。
+/// 深链 URL 唯一允许描述的动作集合。没有运行命令、打开文件或修改状态的 case。
 public enum WorkflowDeepLinkAction: Equatable, Sendable, CustomStringConvertible {
   case focusWindow(WorkflowWindowSelector)
   case focusTab(WorkflowTabSelector)
@@ -44,14 +44,19 @@ public enum WorkflowDeepLinkError: Error, Equatable {
   case unexpectedURLComponent
 }
 
-/// Otty 深链解析器。未知或过期 selector 是否命中由运行层决定；本层只确保 URL 形状
+/// 深链解析器。未知或过期 selector 是否命中由运行层决定；本层只确保 URL 形状
 /// 对应一个有界的聚焦动作，查询参数不能偷偷携带命令或文件操作。
 public enum WorkflowDeepLink {
+  /// Aster 唯一的深链 scheme，与 Info.plist 注册值一致。
+  public static let scheme = "aster"
+
   public static func parse(_ rawURL: String) throws -> WorkflowDeepLinkAction {
     guard rawURL.utf8.count <= 1_024, let url = URL(string: rawURL) else {
       throw WorkflowDeepLinkError.invalidURL
     }
-    guard url.scheme?.lowercased() == "otty" else { throw WorkflowDeepLinkError.invalidScheme }
+    guard url.scheme?.lowercased() == scheme else {
+      throw WorkflowDeepLinkError.invalidScheme
+    }
     guard url.user == nil, url.password == nil, url.port == nil,
       url.query == nil, url.fragment == nil
     else { throw WorkflowDeepLinkError.unexpectedURLComponent }

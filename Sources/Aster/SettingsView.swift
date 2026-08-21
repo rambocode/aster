@@ -778,7 +778,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.shell.notifyOnError = value
         },
         toggleRow(
-          "Watch 完成时通知", "otty/aster watch 包装的命令结束后发送系统通知",
+          "Watch 完成时通知", "aster watch 包装的命令结束后发送系统通知",
           value: preferences.configuration.shell.resolvedNotifyOnWatchFinish
         ) { [weak self] value in
           self?.preferences.configuration.shell.notifyOnWatchFinish = value
@@ -1472,7 +1472,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       ]),
       sectionTitle("格式"),
       card([
-        infoRow("Recipe 包含", "标签页、分屏方向、目录、文件和可选命令", ".ottyrecipe"),
+        infoRow("Recipe 包含", "标签页、分屏方向、目录、文件和可选命令", ".asterrecipe"),
         infoRow("安全边界", "不会保存 PID、文件描述符、令牌或临时焦点", "可移植"),
       ]),
     ]
@@ -2273,7 +2273,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   }
 
   /// 取色器关闭后再把色板重建一次，让斜线底（派生态）与 tooltip 跟上新值，
-  /// 同时把覆盖写进主题文件夹里的 `.ottytheme` 追加段。
+  /// 同时把覆盖写进主题目录里那份主题文件的追加段。
   private func finishColorPick() {
     guard isPickingThemeColor else { return }
     isPickingThemeColor = false
@@ -2408,9 +2408,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let panel = NSOpenPanel()
     panel.canChooseDirectories = false
     panel.canChooseFiles = true
-    panel.allowedContentTypes = ["astertheme", "ottytheme"].compactMap {
-      UTType(filenameExtension: $0)
-    }
+    panel.allowedContentTypes = [UTType(filenameExtension: TerminalThemeStore.fileExtension)]
+      .compactMap { $0 }
     guard panel.runModal() == .OK, let url = panel.url else { return }
     do {
       let theme = try preferences.importTheme(from: url)
@@ -3013,6 +3012,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "appearance.inspectorWidth": panelLayoutBinding.state?.inspectorWidth ?? WorkspacePanelLayoutState.default.inspectorWidth,
       "appearance.windowWidth": configuration.appearance.windowWidth,
       "appearance.windowHeight": configuration.appearance.windowHeight,
+      "appearance.unfocusedSplitOpacity": configuration.appearance.resolvedUnfocusedSplitOpacity,
       "appearance.animateDockIconOnProgress": configuration.appearance.resolvedAnimateDockIconOnProgress,
       "appearance.redDockIconOnError": configuration.appearance.resolvedRedDockIconOnError,
       "advanced.autoProgressCommands": configuration.shell.resolvedAutoProgressCommands.joined(separator: ", "),
@@ -3086,6 +3086,8 @@ extension SettingsViewController: WKNavigationDelegate {
         "background": theme.palette.renderedTerminalBackground.stringValue,
         "foreground": theme.palette.foreground.stringValue,
         "accent": theme.palette.accent.stringValue,
+        // 预览卡右侧内容面板底色：对齐 Otty 用主题 surface，缺失回退面板底色。
+        "surface": (theme.palette.panelSurface ?? theme.palette.panelBackground).stringValue,
         "selected": selected,
         "focused": theme.id == focusedTheme.id,
       ]
@@ -3100,6 +3102,9 @@ extension SettingsViewController: WKNavigationDelegate {
     return [
       "id": theme.id,
       "name": theme.name,
+      // 网页据此决定是否显示「恢复主题预设」；slot.value 表示主题显式声明，
+      // 内置主题也会有，不能用它判断“用户改过”。
+      "hasOverrides": !preferences.themeOverrides(for: theme.id).isEmpty,
       "ansi": theme.palette.ansiColors.map(\.displayString),
       "fonts": [
         "regular": style.fontFamilies?.first ?? "",
@@ -3177,13 +3182,13 @@ extension SettingsViewController: WKNavigationDelegate {
       includingPropertiesForKeys: [.isRegularFileKey],
       options: [.skipsHiddenFiles]
     ) else { return [] }
-    return urls.filter { ["ottyrecipe", "asterrecipe"].contains($0.pathExtension.lowercased()) }
+    return urls.filter { $0.pathExtension.lowercased() == WorkflowRecipeTOML.fileExtension }
       .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
       .map { url in
         [
           "id": url.path,
           "name": url.deletingPathExtension().lastPathComponent,
-          "summary": url.pathExtension.lowercased() == "ottyrecipe" ? "Otty Recipe 文件" : "Aster Recipe 文件",
+          "summary": "Aster Recipe 文件",
           "shortcut": "查看",
         ]
       }
@@ -3505,6 +3510,7 @@ extension SettingsViewController: WKNavigationDelegate {
     case "appearance.inspectorWidth": panelLayoutBinding.setPreferredWidth(try number(), for: .inspector)
     case "appearance.windowWidth": preferences.configuration.appearance.windowWidth = min(max(try number(), 820), 3_840)
     case "appearance.windowHeight": preferences.configuration.appearance.windowHeight = min(max(try number(), 520), 2_160)
+    case "appearance.unfocusedSplitOpacity": preferences.configuration.appearance.unfocusedSplitOpacity = min(max(try number(), 0.15), 1)
     case "appearance.animateDockIconOnProgress": preferences.configuration.appearance.animateDockIconOnProgress = try bool()
     case "appearance.redDockIconOnError": preferences.configuration.appearance.redDockIconOnError = try bool()
     case "advanced.autoProgressCommands":
@@ -3848,7 +3854,7 @@ extension SettingsViewController: WKNavigationDelegate {
         _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
         message = "已更新主题“\(theme.name)”的颜色。"
       } catch {
-        message = "颜色已应用；Otty 主题文件同步失败：\(error.localizedDescription)"
+        message = "颜色已应用；主题文件同步失败：\(error.localizedDescription)"
       }
       refresh()
     case "resetThemeColors":
@@ -3863,7 +3869,7 @@ extension SettingsViewController: WKNavigationDelegate {
         _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
         message = "已恢复主题“\(theme.name)”的原始参数。"
       } catch {
-        message = "已恢复原始参数；Otty 主题文件同步失败：\(error.localizedDescription)"
+        message = "已恢复原始参数；主题文件同步失败：\(error.localizedDescription)"
       }
       refresh()
     case "importTheme": importTheme()
@@ -4409,7 +4415,7 @@ extension SettingsViewController: WKNavigationDelegate {
   private func createTextSnippetRecipe() {
     let nameAlert = NSAlert()
     nameAlert.messageText = "新建文本片段"
-    nameAlert.informativeText = "片段将保存为命令型 .ottyrecipe；打开时仍遵循 Recipe 重放确认策略。"
+    nameAlert.informativeText = "片段将保存为命令型 .asterrecipe；打开时仍遵循 Recipe 重放确认策略。"
     nameAlert.addButton(withTitle: "下一步")
     nameAlert.addButton(withTitle: "取消")
     let nameField = NSTextField(string: "Text Snippet")
@@ -4443,7 +4449,8 @@ extension SettingsViewController: WKNavigationDelegate {
         with: "-",
         options: .regularExpression
       )
-      let url = directory.appendingPathComponent(safeName).appendingPathExtension("ottyrecipe")
+      let url = directory.appendingPathComponent(safeName)
+        .appendingPathExtension(WorkflowRecipeTOML.fileExtension)
       let recipe = WorkflowRecipe(
         name: name,
         scope: .commands,
@@ -5601,10 +5608,10 @@ private final class TerminalSampleView: NSView {
     NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
     let font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
     let lines = [
-      "otty@macbook:~  $ eza -la --icons --git",
+      "aster@macbook:~  $ eza -la --icons --git",
       "Permissions   Size  User   Date Modified   Name",
-      "drwxr-xr-x    12k  otty   22 Aug 13:42   build.sh",
-      "-rw-r--r--   4.2k  otty   18 Jul 14:22   main.rs",
+      "drwxr-xr-x    12k  aster  22 Aug 13:42   build.sh",
+      "-rw-r--r--   4.2k  aster  18 Jul 14:22   main.rs",
     ]
     for (index, line) in lines.enumerated() {
       line.draw(

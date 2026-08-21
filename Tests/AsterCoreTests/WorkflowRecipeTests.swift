@@ -485,7 +485,7 @@ func workflowRecipeExportDropsInternalScrollback() throws {
   #expect(!String(decoding: data, as: UTF8.self).contains("machine-local output"))
 }
 
-@Test("TOML 文件入口只读写有界的普通 .ottyrecipe 文件")
+@Test("TOML 文件入口只读写有界的普通 Recipe 文件")
 func workflowRecipeFileStoreValidatesExtensionAndFileKind() throws {
   let directory = FileManager.default.temporaryDirectory
     .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -502,16 +502,20 @@ func workflowRecipeFileStoreValidatesExtensionAndFileKind() throws {
       )
     ]
   )
-  let file = directory.appendingPathComponent("shell.ottyrecipe")
+  let file = directory.appendingPathComponent("shell.asterrecipe")
 
   try WorkflowRecipeTOML.save(recipe, to: file)
   let restored = try WorkflowRecipeTOML.load(from: file)
 
   #expect(restored.recipe == recipe)
+  // 旧后缀不再受理：Recipe 只有一种格式与一种后缀。
+  #expect(throws: WorkflowRecipeTOMLError.invalidFileExtension) {
+    try WorkflowRecipeTOML.save(recipe, to: directory.appendingPathComponent("shell.ottyrecipe"))
+  }
   #expect(throws: WorkflowRecipeTOMLError.invalidFileExtension) {
     try WorkflowRecipeTOML.save(recipe, to: directory.appendingPathComponent("shell.toml"))
   }
-  let directoryRecipe = directory.appendingPathComponent("folder.ottyrecipe", isDirectory: true)
+  let directoryRecipe = directory.appendingPathComponent("folder.asterrecipe", isDirectory: true)
   try FileManager.default.createDirectory(at: directoryRecipe, withIntermediateDirectories: true)
   #expect(throws: WorkflowRecipeTOMLError.notRegularFile) {
     try WorkflowRecipeTOML.load(from: directoryRecipe)

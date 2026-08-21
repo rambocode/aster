@@ -1,0 +1,62 @@
+[meta]
+name        = "Glass Dark"
+author      = "Otty"
+mode        = "dark"
+description = "Liquid Glass dark theme with smoky blue chrome and translucent side panels."
+
+[terminal]
+foreground           = "#F7F8FF"
+background           = "none"
+palette = ["#252A35", "#FF8A8A", "#A8D46F", "#E8C778", "#8DB7FF", "#D1A3FF", "#7FD6C2", "#E3E6F0", "#747B8E", "#FFB0A8", "#C8EA90", "#F2DA9A", "#B2CCFF", "#E0C2FF", "#A3E6D8", "#FFFFFF"]
+cursor               = "#F7F8FF"
+selection-background = "#bbc9ed"
+
+[token]
+foreground = "#F7F8FF"
+secondary  = "#C9CEDB"
+tertiary   = "#8E95A8"
+accent = "#b4d979"
+radius    = 12
+shadow    = "0 22px 60px rgba(0,0,0,0.34)"
+font-ui   = ["-apple-system", "BlinkMacSystemFont", "SF Pro", "sans-serif"]
+font-mono = ["JetBrains Mono", "Menlo", "monospace"]
+font-size = 13
+
+[panel]
+background = "#444445"
+surface = "#40434b"
+border     = "#6B7286"
+
+[window]
+material   = "vibrancy-regular"
+
+[sidebar]
+background   = "#2528325d"
+border-right = "none"
+
+[details-panel]
+background   = "rgba(53,58,73,0.0)"
+border-right = "none"
+
+[titlebar]
+foreground = "#DCE0EA"
+
+[tab]
+radius      = 8
+foreground  = "#C9CEDB"
+font-weight = 400
+
+[tab.active]
+background  = "rgba(255,255,255,0.16)"
+foreground  = "#FFFFFF"
+border      = "1px solid rgba(255,255,255,0.18)"
+font-weight = 500
+
+[tab.hover]
+background = "rgba(255,255,255,0.10)"
+
+[container]
+radius     = 0
+shadow     = "none"
+margin     = 0
+padding    = 8
