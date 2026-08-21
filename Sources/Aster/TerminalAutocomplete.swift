@@ -470,7 +470,8 @@ final class TerminalAutocompleteController {
       // 自定义主题未来仍可能提供透明原生画布；候选浮层没有窗口材质，遇到透明色时
       // 必须回退到主题 surface，避免候选文字直接压在终端内容上。
       background: terminalView.autocompleteBackgroundColor.alphaComponent > 0.01
-        ? terminalView.autocompleteBackgroundColor : AsterTheme.panel
+        ? terminalView.autocompleteBackgroundColor : AsterTheme.panel,
+      accent: AsterTheme.accent
     )
   }
 }
@@ -478,10 +479,17 @@ final class TerminalAutocompleteController {
 /// 轻量 AppKit overlay：ghost label 不接收鼠标，候选面板最多显示 8 行并允许点击。
 /// 布局以终端 adapter 的 caretFrame 为锚点，优先显示在光标下方，空间不足时翻到上方。
 @MainActor
-private final class TerminalAutocompleteOverlayView: NSView {
+final class TerminalAutocompleteOverlayView: NSView {
+  /// 面板宽度的兜底区间。下限保证短候选不至于窄成一条，上限避免长路径把浮层
+  /// 拉到整屏宽——超出的部分由行内文本截断处理。
+  static let minimumPanelWidth: CGFloat = 220
+  static let maximumPanelWidth: CGFloat = 560
+
   var onCandidateSelected: ((Int) -> Void)?
   private let ghostLabel = NSTextField(labelWithString: "")
-  private let panel = NSStackView()
+  /// 候选面板容器。internal 而不是 private：布局验收要读它的 frame 与行视图，
+  /// 靠截图人眼比对既不稳定也无法在 CI 上跑。
+  let panel = NSStackView()
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -514,7 +522,8 @@ private final class TerminalAutocompleteOverlayView: NSView {
     caretFrame: NSRect,
     font: NSFont,
     foreground: NSColor,
-    background: NSColor
+    background: NSColor,
+    accent: NSColor
   ) {
     ghostLabel.font = font
     ghostLabel.textColor = foreground.withAlphaComponent(0.42)
@@ -547,21 +556,44 @@ private final class TerminalAutocompleteOverlayView: NSView {
     }
 
     let visible = Array(result.candidates.prefix(8))
-    let panelWidth = min(480, max(280, bounds.width - 24))
+    // 宽度贴合最长的一行，而不是写死一个几乎总是撑满终端的值：候选浮层压在终端
+    // 内容上，多占的每一像素都是遮挡。上下限只用来兜住极短和极长的候选。
+    let contentWidth = visible.reduce(CGFloat(0)) { widest, candidate in
+      max(widest, AutocompleteCandidateRow.contentWidth(for: candidate))
+    }
+    // 向上取整到整点：小数宽度会被 Auto Layout 各自对齐到设备像素，行宽和面板宽
+    // 因此差出零点几个点，边框内侧露出一条毛边。
+    let panelWidth = min(max(contentWidth, Self.minimumPanelWidth), Self.maximumPanelWidth)
+      .rounded(.up)
     for (index, candidate) in visible.enumerated() {
       let row = AutocompleteCandidateRow(
         candidate: candidate,
         selected: index == selectedIndex,
         foreground: foreground,
-        background: background
+        background: background,
+        accent: accent
       ) { [weak self] in self?.onCandidateSelected?(index) }
       row.translatesAutoresizingMaskIntoConstraints = false
-      row.heightAnchor.constraint(equalToConstant: 30).isActive = true
+      // 行宽必须显式钉到面板宽度：竖向 NSStackView 的 `.width` 对齐只保证各行彼此
+      // 等宽，不保证等于面板宽度，剩下的空间会被摆到一侧——那正是候选内容整体
+      // 靠右、图标位置逐行漂移的直接原因。
+      NSLayoutConstraint.activate([
+        row.heightAnchor.constraint(equalToConstant: AutocompleteCandidateRow.height),
+        row.widthAnchor.constraint(equalToConstant: panelWidth),
+      ])
       panel.addArrangedSubview(row)
     }
     panel.layer?.backgroundColor = background.withAlphaComponent(0.97).cgColor
     panel.layer?.borderColor = foreground.withAlphaComponent(0.18).cgColor
-    let panelHeight = CGFloat(visible.count) * 30
+    // 浮层浮在终端文字之上，只靠 1px 描边分不出层次；投影让它明确「盖住」而不是
+    // 「混进」终端内容。阴影色跟随前景色，深浅主题下都不会变成灰雾。
+    panel.shadow = NSShadow()
+    panel.layer?.shadowColor = foreground.withAlphaComponent(0.35).cgColor
+    panel.layer?.shadowOpacity = 1
+    panel.layer?.shadowRadius = 12
+    panel.layer?.shadowOffset = CGSize(width: 0, height: -2)
+    panel.layer?.masksToBounds = false
+    let panelHeight = CGFloat(visible.count) * AutocompleteCandidateRow.height
     let belowY = caretFrame.minY - panelHeight - 4
     let originY = belowY >= bounds.minY + 4 ? belowY : min(bounds.maxY - panelHeight - 4, caretFrame.maxY + 4)
     panel.frame = NSRect(
@@ -575,7 +607,14 @@ private final class TerminalAutocompleteOverlayView: NSView {
 }
 
 @MainActor
-private final class AutocompleteCandidateRow: NSButton {
+final class AutocompleteCandidateRow: NSButton {
+  static let height: CGFloat = 26
+  private static let iconWidth: CGFloat = 16
+  private static let horizontalInset: CGFloat = 10
+  private static let spacing: CGFloat = 8
+  private static let nameFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+  private static let descriptionFont = NSFont.systemFont(ofSize: 11)
+
   private let actionClosure: () -> Void
 
   init(
@@ -583,6 +622,7 @@ private final class AutocompleteCandidateRow: NSButton {
     selected: Bool,
     foreground: NSColor,
     background: NSColor,
+    accent: NSColor,
     action: @escaping () -> Void
   ) {
     actionClosure = action
@@ -590,53 +630,95 @@ private final class AutocompleteCandidateRow: NSButton {
     title = ""
     isBordered = false
     wantsLayer = true
-    layer?.backgroundColor = selected
-      ? foreground.withAlphaComponent(0.12).cgColor : background.withAlphaComponent(0.01).cgColor
+    // 选中态只改文字色，不铺底色块：候选行本身很矮，整行反白会在终端上糊成一条
+    // 亮带，反而看不清选中的是哪条命令。
+    layer?.backgroundColor = background.withAlphaComponent(0.01).cgColor
     target = self
     self.action = #selector(activate)
 
-    let kind = NSTextField(labelWithString: Self.label(for: candidate.kind))
-    kind.font = .systemFont(ofSize: 10, weight: .medium)
-    kind.textColor = foreground.withAlphaComponent(0.5)
-    kind.alignment = .center
-    kind.translatesAutoresizingMaskIntoConstraints = false
-    kind.widthAnchor.constraint(equalToConstant: 62).isActive = true
+    let icon = NSImageView()
+    icon.image = Self.icon(for: candidate.kind)
+    icon.contentTintColor = selected ? accent : foreground.withAlphaComponent(0.55)
+    icon.imageScaling = .scaleProportionallyDown
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    icon.widthAnchor.constraint(equalToConstant: Self.iconWidth).isActive = true
+    icon.setContentHuggingPriority(.required, for: .horizontal)
+
     let name = NSTextField(labelWithString: candidate.displayText)
-    name.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
-    name.textColor = foreground
-    name.lineBreakMode = .byTruncatingTail
+    name.font = Self.nameFont
+    name.textColor = selected ? accent : foreground
+    name.lineBreakMode = .byTruncatingMiddle
+    name.alignment = .left
+    name.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+    name.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+
     let description = NSTextField(labelWithString: candidate.description)
-    description.font = .systemFont(ofSize: 11)
-    description.textColor = foreground.withAlphaComponent(0.58)
-    description.alignment = .right
+    description.font = Self.descriptionFont
+    description.textColor = foreground.withAlphaComponent(selected ? 0.75 : 0.5)
     description.lineBreakMode = .byTruncatingTail
-    description.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    let stack = NSStackView(views: [kind, name, NSView(), description])
-    stack.orientation = .horizontal
-    stack.alignment = .centerY
-    stack.spacing = 8
-    stack.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 4, right: 8)
-    addSubview(stack)
-    stack.pinEdges(to: self)
+    description.alignment = .left
+    // 描述吸收整行的剩余宽度，前面的图标和命令因此始终顶在左边；没有描述时它
+    // 退化成一块空白，行内元素位置依旧不变——这正是旧实现用空 NSView 撑不出来的
+    // 效果，那里每行都按自身内容宽度重新排，标签位置逐行漂移。
+    description.setContentHuggingPriority(.init(1), for: .horizontal)
+    description.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+
+    // 不用 NSStackView：它的分布策略会把整组元素按内容宽度推向一侧，正是旧实现里
+    // 「类别标签逐行漂移」的来源。这里逐条钉死约束，图标和命令永远从左边同一个
+    // x 开始，描述吃掉剩余宽度并在不够时自己截断。
+    for view in [icon, name, description] as [NSView] {
+      view.translatesAutoresizingMaskIntoConstraints = false
+      addSubview(view)
+    }
+    let inset = Self.horizontalInset
+    let spacing = Self.spacing
+    let descriptionLeading = description.leadingAnchor.constraint(
+      equalTo: name.trailingAnchor, constant: spacing)
+    descriptionLeading.priority = .defaultHigh
+    NSLayoutConstraint.activate([
+      icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+      icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+      name.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: spacing),
+      name.centerYAnchor.constraint(equalTo: centerYAnchor),
+      name.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset),
+      descriptionLeading,
+      description.centerYAnchor.constraint(equalTo: centerYAnchor),
+      description.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset),
+    ])
   }
 
   required init?(coder: NSCoder) { nil }
 
   @objc private func activate() { actionClosure() }
 
-  private static func label(for kind: AutocompleteCandidateKind) -> String {
-    switch kind {
-    case .command: "命令"
-    case .subcommand: "子命令"
-    case .option: "选项"
-    case .argument: "参数"
-    case .file: "文件"
-    case .folder: "文件夹"
-    case .alias: "别名"
-    case .snippet: "固定"
-    case .learnedCommand: "历史"
-    case .readmeCommand: "README"
-    case .correction: "修正"
+  /// 单行在不截断时需要的宽度，供面板计算自适应宽度。
+  static func contentWidth(for candidate: AutocompleteCandidate) -> CGFloat {
+    let name = (candidate.displayText as NSString)
+      .size(withAttributes: [.font: nameFont]).width
+    let description = candidate.description.isEmpty
+      ? 0
+      : (candidate.description as NSString)
+        .size(withAttributes: [.font: descriptionFont]).width + spacing
+    return horizontalInset * 2 + iconWidth + spacing + name + description
+  }
+
+  /// 候选类别用图标表达，不再占一列中文标签：图标一眼可辨，也把宽度还给命令本身。
+  private static func icon(for kind: AutocompleteCandidateKind) -> NSImage? {
+    let symbol = switch kind {
+    case .command: "terminal"
+    case .subcommand: "chevron.forward"
+    case .option: "switch.2"
+    case .argument: "textformat"
+    case .file: "doc"
+    case .folder: "folder"
+    case .alias: "link"
+    case .snippet: "pin"
+    case .learnedCommand: "clock.arrow.circlepath"
+    case .readmeCommand: "book"
+    case .correction: "wand.and.stars"
     }
+    let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+    return image?.withSymbolConfiguration(
+      NSImage.SymbolConfiguration(pointSize: 11, weight: .regular))
   }
 }
