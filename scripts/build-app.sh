@@ -96,6 +96,47 @@ if [[ ! -d "$GHOSTTY_BUNDLE" ]]; then
 fi
 cp -R "$GHOSTTY_BUNDLE" "$RESOURCES_DIR/AsterTerminal_Aster.bundle"
 
+# Sparkle 以 dynamic XCFramework 分发。SwiftPM 在非 Xcode 构建下只在链接期提供
+# -F/-framework，既不会把 framework 嵌进 .app，也不会写 LC_RPATH（rpath 由
+# Package.swift 的 linkerSettings 手写）。产物落点由 SwiftPM 的 artifacts 布局
+# （artifacts/<package-identity>/<target>/）决定，该布局历史上变过一次，因此显式
+# 探测而不写死路径；找不到即失败，绝不能打出一个"没有更新器"的分发包。
+SPARKLE_XCFRAMEWORK=$(/usr/bin/find "$BUILD_DIR/artifacts" -maxdepth 3 -type d -name "Sparkle.xcframework" -print -quit)
+if [[ -z "$SPARKLE_XCFRAMEWORK" ]]; then
+  echo "Missing Sparkle XCFramework under $BUILD_DIR/artifacts (run 'swift build' so SwiftPM resolves the binary artifact)" >&2
+  exit 1
+fi
+
+# Sparkle 的 XCFramework 只含一个 macOS slice。命中 0 个或多个都说明上游布局变了
+# （例如拆出 Catalyst slice），与其猜一个不如显式失败，避免把错误架构打进签名 Bundle。
+SPARKLE_SLICES=("${(@f)$(/usr/bin/find "$SPARKLE_XCFRAMEWORK" -mindepth 2 -maxdepth 2 -type d -name "Sparkle.framework")}")
+if (( ${#SPARKLE_SLICES} != 1 )) || [[ -z "${SPARKLE_SLICES[1]}" ]]; then
+  echo "Expected exactly one Sparkle.framework slice in $SPARKLE_XCFRAMEWORK, found ${#SPARKLE_SLICES}" >&2
+  exit 1
+fi
+SPARKLE_FRAMEWORK="${SPARKLE_SLICES[1]}"
+
+# 逐层签名按固定相对路径寻址 Versions/B 下的 helper。结构不符即失败，而不是签一个
+# 空壳、等到用户机器上更新失败才发现。
+for REQUIRED in \
+  "Versions/B/Sparkle" \
+  "Versions/B/Autoupdate" \
+  "Versions/B/Updater.app" \
+  "Versions/B/XPCServices/Installer.xpc" \
+  "Versions/B/XPCServices/Downloader.xpc"; do
+  if [[ ! -e "$SPARKLE_FRAMEWORK/$REQUIRED" ]]; then
+    echo "Sparkle framework layout changed, missing: $REQUIRED (in $SPARKLE_FRAMEWORK)" >&2
+    exit 1
+  fi
+done
+
+# framework 内含符号链接（Versions/Current 以及顶层 Sparkle/Resources/XPCServices），
+# codesign 对 framework 的密封依赖这套标准 Versions 布局。ditto 是 Apple 明确背书用于
+# 复制签名 bundle 的工具，会连同扩展属性与权限位一并保留；build-dmg.sh 也在用它。
+SPARKLE_IN_APP="$CONTENTS_DIR/Frameworks/Sparkle.framework"
+mkdir -p "$CONTENTS_DIR/Frameworks"
+ditto "$SPARKLE_FRAMEWORK" "$SPARKLE_IN_APP"
+
 # Quick Look 能稳定地把项目内的矢量源渲染成 1024px PNG；后续尺寸均由同一母版生成，
 # 避免图标在不同缩放档位出现构图漂移。
 qlmanage -t -s 1024 -o "$ICON_PREVIEW_DIR" "$PROJECT_DIR/Resources/AsterIcon.svg" >/dev/null 2>&1
@@ -120,9 +161,49 @@ done
 iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/AsterIcon.icns"
 SIGN_IDENTITY="${ASTER_SIGN_IDENTITY:--}"
 if [[ "$SIGN_IDENTITY" == "-" ]]; then
-  codesign --force --deep --sign - --timestamp=none "$APP_DIR"
+  # ad-hoc 分支刻意不加 --options runtime。开启 hardened runtime 等同开启 Library
+  # Validation，而 ad-hoc 签名没有 Team ID，dyld 会拒绝加载同为 ad-hoc 的
+  # Sparkle.framework，App 在启动时就崩。这条性质必须刻意维持，不要"顺手统一"两个分支。
+  SIGN=(codesign --force --sign - --timestamp=none)
+  SIGN_KEEP_ENTITLEMENTS=("${SIGN[@]}")
 else
-  codesign --force --deep --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
+  # 公证要求每一个嵌套可执行文件都带 Developer ID + hardened runtime + 安全时间戳。
+  SIGN=(codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY")
+  # Downloader.xpc 自带 entitlements（沙箱形态下使用），重签必须原样保留。参数与其它
+  # 目标不同，这正是不能用 --deep 一把梭的直接原因。
+  SIGN_KEEP_ENTITLEMENTS=(codesign --force --options runtime --timestamp \
+    --preserve-metadata=entitlements --sign "$SIGN_IDENTITY")
+fi
+
+# 由内向外逐层签名，顺序不可颠倒：codesign 把子项的 CDHash 密封进父层签名，先签外层
+# 会在签完内层的瞬间失效。顺序与 Sparkle 官方文档一致。
+#
+# 这里不能用 --deep：Sparkle 出厂时 XPC services / Autoupdate / Updater.app 都是
+# ad-hoc 签名，必须重签才能过公证；而 --deep 会用同一套参数覆盖所有嵌套项，吃掉
+# Downloader.xpc 的 entitlements（Sparkle 文档点名这是常见错误源）。
+"${SIGN[@]}"                   "$SPARKLE_IN_APP/Versions/B/XPCServices/Installer.xpc"
+"${SIGN_KEEP_ENTITLEMENTS[@]}" "$SPARKLE_IN_APP/Versions/B/XPCServices/Downloader.xpc"
+"${SIGN[@]}"                   "$SPARKLE_IN_APP/Versions/B/Autoupdate"
+"${SIGN[@]}"                   "$SPARKLE_IN_APP/Versions/B/Updater.app"
+"${SIGN[@]}"                   "$SPARKLE_IN_APP"
+
+# Contents/MacOS 在 codesign 的默认封存规则（CodeResources rules2）里是 nested 目录，
+# 主可执行文件之外的二进制不会被外层签名覆盖。aster-memory-mcp 此前是靠 --deep 顺带
+# 签上的，去掉 --deep 后必须显式补签，否则 --verify --deep --strict 与公证都会失败。
+"${SIGN[@]}" "$CONTENTS_DIR/MacOS/aster-memory-mcp"
+
+# 最后签外层 App：Frameworks/ 与 MacOS/ 下已签好的嵌套代码在这一步被密封进 CodeResources。
+"${SIGN[@]}" "$APP_DIR"
+
+# 分层签名漏掉任何一层都要在打 DMG 之前暴露，而不是等到公证被拒。
+# --deep 用于「校验」是正确用法，只有用于「签名」才有问题。
+codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+
+# rpath 写错或 framework 没拷进来只会在运行时崩，静态检查看不出来；这里显式断言，
+# 与下面的 --verify-packaged-resources 一起构成更新器的链接冒烟测试。
+if ! /usr/bin/otool -l "$CONTENTS_DIR/MacOS/Aster" | grep -q "@executable_path/../Frameworks"; then
+  echo "Aster executable is missing the @executable_path/../Frameworks rpath; Sparkle will fail to load" >&2
+  exit 1
 fi
 
 # 必须执行最终 App 内的真实资源加载代码。只检查目录存在或 codesign 无法发现

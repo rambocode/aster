@@ -84,6 +84,16 @@
     <true/>
     <key>NSCameraUsageDescription</key>
     <string>Aster 使用 iPhone 或 iPad 拍摄照片或扫描文稿，并将文件路径插入终端。</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUFeedURL</key>
+    <string>https://raw.githubusercontent.com/rambocode/aster/master/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>QTtemSPOAqw+DCeU1TRsO6AUDuTgvJu0FxFANJQxLaU=</string>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+    <key>SUVerifyUpdateBeforeExtraction</key>
+    <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
 </dict>

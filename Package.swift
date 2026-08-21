@@ -20,6 +20,11 @@ let package = Package(
     .package(path: "Vendor/HighlighterSwift"),
     // Markdown 解析器继续锁定精确版本，避免语法和 Swift 工具链要求静默漂移。
     .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.8.0"),
+    // Sparkle 的 SPM 包本体就是一个 remote binaryTarget，每个 tag 都会重写清单里的
+    // url + checksum，SwiftPM 会对下载的 XCFramework 做 SHA256 校验，供应链风险已被
+    // checksum 覆盖。这里用 `from:` 而不是其它依赖惯用的 `exact:`：更新器的安装与
+    // 校验修复走 patch 版本，锁死会拿不到安全修复；可复现性由 Package.resolved 保证。
+    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.6"),
   ],
   targets: [
     // libghostty 目前只发布 internal C header，仓库因此锁定上游 revision 并在本地
@@ -68,6 +73,7 @@ let package = Package(
         "GhosttyKit",
         "SwiftTerm",
         .product(name: "Highlighter", package: "HighlighterSwift"),
+        .product(name: "Sparkle", package: "Sparkle"),
       ],
       resources: [
         // libghostty 运行时从 GHOSTTY_RESOURCES_DIR 寻找 shell integration，并从
@@ -87,6 +93,13 @@ let package = Package(
         .linkedFramework("MetalKit"),
         .linkedFramework("QuartzCore"),
         .linkedLibrary("c++"),
+        // Sparkle 是动态 framework，install name 为
+        // @rpath/Sparkle.framework/Versions/B/Sparkle。Xcode 会自动写
+        // LD_RUNPATH_SEARCH_PATHS，SwiftPM 不会，必须手写，否则打好的 .app 在 dyld
+        // 阶段就崩，连 build-app.sh 末尾的 --verify-packaged-resources 都跑不起来。
+        // 代价：xctest 宿主不在 .app 布局里，测试须经 scripts/test.sh 注入
+        // DYLD_FRAMEWORK_PATH（SwiftPM 对动态 binaryTarget 的已知缺口）。
+        .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
       ]
     ),
     .testTarget(
