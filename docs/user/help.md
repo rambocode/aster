@@ -172,6 +172,9 @@ Autocomplete 使用 Ghostty 的原始 PTY observer，继续显示 inline suggest
 inline suggestion 会使用当前终端字体并与输入文字保持同一行、同一基线，不覆盖 prompt 或已经
 回显的命令。接受候选、隐私过滤、本机学习与目录上下文规则保持不变。
 
+**输入行为空时不会出现任何候选**：没有输入就没有意图，把整个命令库和全部历史列出来只是噪音，
+而且面板一旦弹出就会吃掉回车。至少敲一个字符后才会出现 ghost 和候选面板。
+
 Tab（或设置中的其他接受键）只接受**屏幕上正在显示**的 Aster inline suggestion；suggestion
 未显示时按键原样交给 Shell。如果你在 Shell 里启用了 zsh-autosuggestions、fish autosuggestion
 等插件，输入行尾的灰色建议由 Shell 绘制，Aster 的 inline suggestion 会自动保持隐藏避免重叠；

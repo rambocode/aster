@@ -27,8 +27,9 @@ func autocompleteServicePersistsSecretSafeLearning() throws {
     baseDirectory: directory,
     bundledSpecURL: repositoryAutocompleteSpecURL
   )
+  // 空 prompt 不再返回任何候选，用命令前缀查询学习库。
   let result = reloaded.suggestions(
-    line: "",
+    line: "curl",
     directory: "/project",
     sessionIdentifier: "session-a",
     controls: ControlConfiguration()
@@ -39,7 +40,7 @@ func autocompleteServicePersistsSecretSafeLearning() throws {
   try reloaded.clearLearning()
   #expect(
     reloaded.suggestions(
-      line: "", directory: "/project", sessionIdentifier: "session-a",
+      line: "curl", directory: "/project", sessionIdentifier: "session-a",
       controls: ControlConfiguration()
     ).candidates.allSatisfy { $0.kind != .learnedCommand && $0.kind != .snippet }
   )
@@ -64,8 +65,9 @@ func autocompleteServiceDisablesAllLocalLearningSources() throws {
   var controls = ControlConfiguration()
   controls.autocompleteOnDeviceLearning = false
 
+  // 用 "git" 而不是空 prompt：空行不再产生任何候选，规格候选也要靠前缀才出现。
   let result = service.suggestions(
-    line: "", directory: project.path, sessionIdentifier: "session-a", controls: controls)
+    line: "git", directory: project.path, sessionIdentifier: "session-a", controls: controls)
 
   #expect(result.candidates.contains { $0.kind == .command })
   #expect(!result.candidates.contains { $0.insertText == "git status" })
@@ -128,7 +130,7 @@ func autocompleteServiceManualUpdatePreservesLocalSpecs() throws {
   )
   #expect(
     service.suggestions(
-      line: "", directory: "/project", sessionIdentifier: "session-a",
+      line: "acme", directory: "/project", sessionIdentifier: "session-a",
       controls: ControlConfiguration()
     ).candidates.contains { $0.insertText == "acme deploy" }
   )
@@ -211,7 +213,7 @@ func autocompleteServiceAuthenticatesLearnURL() throws {
   #expect(service.handleLearnURL(valid) == .learned)
   #expect(
     service.suggestions(
-      line: "", directory: "/project", sessionIdentifier: "session",
+      line: "npm", directory: "/project", sessionIdentifier: "session",
       controls: ControlConfiguration()
     ).candidates.first?.insertText == "npm run deploy"
   )

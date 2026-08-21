@@ -39,6 +39,7 @@
 
 ## Autocomplete / Inline Suggest 检查清单
 
+- [ ] 空 prompt 完全安静：刚开新标签或刚执行完命令、输入行没有任何内容（含只有空格）时，既不显示 ghost，也不弹候选面板，回车直接提交给 Shell。
 - [ ] zsh、Bash 和 fish 的提示符停顿后显示 ghost；Backspace 和 Escape 立即清除旧候选。
 - [ ] 默认第一次 Escape 关闭 ghost，第二次打开面板；上下键、Return、Tab 和点击均只接受候选、不自动执行命令。
 - [ ] 候选面板跟随光标并在上下空间不足时翻转，最多显示 8 项，长描述不撑破 Pane。
