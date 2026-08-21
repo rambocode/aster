@@ -44,13 +44,19 @@ enum AgentSetupServiceError: Error, Equatable, LocalizedError {
 /// 写入；Codex 的 hook 文件和 `[features].hooks` 因而必须同时满足才算安装完成。
 struct AgentSetupStatus: Equatable {
   let provider: AgentProvider
-  let executableAvailable: Bool
+  /// 按与 shell 一致的候选目录优先级找到的 CLI 绝对路径。保留探测到的入口路径，
+  /// 不解析 symlink，设置页才能显示用户实际通过 Homebrew、nvm 等安装的位置。
+  let executablePath: String?
   let managedIntegrationInstalled: Bool
   let requiredFeatureEnabled: Bool?
   let plan: AgentSetupPlan
 
+  var executableAvailable: Bool { executablePath != nil }
+
+  /// 集成文件状态与 CLI 路径是两条独立证据。用户切换 Node 版本或 GUI 暂时拿不到
+  /// PATH 时，已经写入的受管 hook 不能因此被误报为“未安装”。
   var integrationInstalled: Bool {
-    executableAvailable && plan.blocker == nil && plan.steps.isEmpty
+    managedIntegrationInstalled && requiredFeatureEnabled != false
   }
 }
 
@@ -84,7 +90,7 @@ struct AgentSetupService {
   }
 
   let homeDirectory: URL
-  let executableSearchDirectories: [URL]
+  private let executableLocator: AgentExecutableLocator
   private let fileManager: FileManager
   private let integrationScriptURL: URL?
 
@@ -92,7 +98,8 @@ struct AgentSetupService {
     homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
     executableSearchDirectories: [URL]? = nil,
     integrationScriptURL: URL? = nil,
-    fileManager: FileManager = .default
+    fileManager: FileManager = .default,
+    environment: [String: String] = ProcessInfo.processInfo.environment
   ) {
     self.homeDirectory = homeDirectory.standardizedFileURL
     self.fileManager = fileManager
@@ -100,30 +107,30 @@ struct AgentSetupService {
       ?? AsterResourceLocations.resourcesDirectory(bundle: .main, fileManager: fileManager)?
         .appendingPathComponent("agent-integration/aster-agent-hook.sh")
     if let executableSearchDirectories {
-      self.executableSearchDirectories = executableSearchDirectories.map(\.standardizedFileURL)
+      self.executableLocator = AgentExecutableLocator(searchDirectories: executableSearchDirectories)
     } else {
-      let path = ProcessInfo.processInfo.environment["PATH"]
-        ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-      self.executableSearchDirectories = path.split(separator: ":").map {
-        URL(fileURLWithPath: String($0), isDirectory: true).standardizedFileURL
-      }
+      self.executableLocator = AgentExecutableLocator(
+        homeDirectory: self.homeDirectory,
+        environment: environment,
+        fileManager: fileManager
+      )
     }
   }
 
   /// 只读检测既不创建目录，也不“仅凭文件存在”判定安装完成。受管 JSON/TOML
   /// 内容和独立 artifact 都必须带精确 Aster 标识；伪造的同名用户内容不会被接管。
   func status(for provider: AgentProvider) throws -> AgentSetupStatus {
-    let executableAvailable = executableExists(named: provider.commandName)
+    let executablePath = executableLocator.path(for: provider.commandName)
     let managedIntegrationInstalled = try detectsManagedIntegration(for: provider)
     let requiredFeatureEnabled = try detectsRequiredFeature(for: provider)
     let evidence = AgentSetupEvidence(
-      executableAvailable: executableAvailable,
+      executableAvailable: executablePath != nil,
       managedIntegrationInstalled: managedIntegrationInstalled,
       requiredFeatureEnabled: requiredFeatureEnabled
     )
     return AgentSetupStatus(
       provider: provider,
-      executableAvailable: executableAvailable,
+      executablePath: executablePath,
       managedIntegrationInstalled: managedIntegrationInstalled,
       requiredFeatureEnabled: requiredFeatureEnabled,
       plan: AgentSetupPlanner.plan(for: provider, evidence: evidence)
@@ -255,18 +262,6 @@ struct AgentSetupService {
       throw AgentSetupServiceError.configurationChanged(target.path)
     }
     try fileManager.removeItem(at: target)
-  }
-
-  private func executableExists(named name: String) -> Bool {
-    executableSearchDirectories.contains { directory in
-      let candidate = directory.appendingPathComponent(name, isDirectory: false)
-      var info = stat()
-      // PATH 中的同名目录也可能通过 FileManager 的“可执行”检查（目录搜索权限），
-      // 因而必须同时确认解析后的目标是普通文件。命令 symlink 仍按正常 PATH 语义允许。
-      return stat(candidate.path, &info) == 0
-        && info.st_mode & S_IFMT == S_IFREG
-        && access(candidate.path, X_OK) == 0
-    }
   }
 
   private func detectsManagedIntegration(for provider: AgentProvider) throws -> Bool {

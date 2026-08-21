@@ -57,6 +57,12 @@ flowchart LR
 
 `AgentSetupService` 对所有目标先做祖先 symlink、文件类型、大小、格式和竞争变化检查，再原子写入；失败按相反顺序回滚。`Resources/agent-integration/aster-agent-hook.sh` 与生成的 plugin/extension 只上报生命周期，以及 provider 明确提供时由 ASCII 白名单和 128 字节上限约束的 `SessionID`；Codex/Claude command hook 的 stdin JSON 最多读取 256 KiB，只通过系统 `plutil` 提取顶层 `session_id`，prompt、tool 参数和输出不会进入 OSC。`AgentHistoryDiscoveryService` 有界读取已知 provider 路径；Resume/Fork 由 `AgentSessionCommandPlanner` 保留 provider、model 和 system prompt 元数据。`FocusedAgentSessionContext` 冻结菜单动作所需的 provider、session ID 和 CWD，菜单载荷同时保留展开菜单时的工作区模型，防止菜单跟踪期间 key window 变化后把 Fork 路由到其它窗口；`AgentContinuationPlacement` 把 Fork 明确路由到当前新窗口 Pane、新标签或指定方向分屏，新 PTY 就绪后才发送 provider 原生命令。
 
+设置页的 CLI 探测不假设 GUI 进程继承登录 shell 的 `PATH`。它先保留现有 PATH
+顺序，再有界补查 `~/.local/bin`、Homebrew、nvm/fnm、asdf、mise、Volta、Bun 与
+pnpm 的常见 bin 目录；不会启动登录 shell 或执行用户 rc 文件。快照下发探测到的
+绝对入口路径，且 CLI 路径与 Aster managed lifecycle 集成状态分别呈现：切换 Node
+版本造成 CLI 暂不可见时，已经存在的受管集成不会被误报为未安装。
+
 内置 `AsterNerdSymbols-Regular.ttf` 以进程级 CoreText 注册，并作为终端基础字体 cascade fallback；来源和许可证见 `THIRD-PARTY-NOTICES.md`。
 
 ### Project Memory MCP
