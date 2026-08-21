@@ -256,7 +256,7 @@ func autocompleteEngineCombinesSourcesAndRanksKinds() {
   #expect(result.replacementStart == 4)
 
   let folderFirst = engine.suggestions(
-    for: AutocompleteQuery(line: "", directory: "/project"),
+    for: AutocompleteQuery(line: "n", directory: "/project"),
     learned: [AutocompleteLearnedSuggestion(command: "git status", score: 100)],
     pinned: [AutocompleteLearnedSuggestion(command: "npm run deploy", score: 1_000)],
     readmeCommands: ["swift test"]
@@ -264,12 +264,18 @@ func autocompleteEngineCombinesSourcesAndRanksKinds() {
   #expect(folderFirst.candidates.first?.kind == .snippet)
   #expect(folderFirst.candidates.first?.insertText == "npm run deploy")
 
-  let genericEmptyPrompt = engine.suggestions(
-    for: AutocompleteQuery(line: "", directory: "/project"),
-    learned: [], pinned: [], readmeCommands: []
-  )
-  #expect(!genericEmptyPrompt.candidates.isEmpty)
-  #expect(genericEmptyPrompt.ghostText == nil)
+  // 空 prompt 必须完全安静：面板一弹出就会吞掉回车，用户会以为终端卡住了。
+  // 历史、固定命令和 README 都不能在没有任何输入时冒出来。
+  for blankLine in ["", " ", "   "] {
+    let blank = engine.suggestions(
+      for: AutocompleteQuery(line: blankLine, directory: "/project"),
+      learned: [AutocompleteLearnedSuggestion(command: "git status", score: 100)],
+      pinned: [AutocompleteLearnedSuggestion(command: "npm run deploy", score: 1_000)],
+      readmeCommands: ["swift test"]
+    )
+    #expect(blank.candidates.isEmpty)
+    #expect(blank.ghostText == nil)
+  }
 
   let aliases = engine.suggestions(
     for: AutocompleteQuery(line: "gs", directory: "/project"),

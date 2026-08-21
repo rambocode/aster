@@ -253,6 +253,8 @@ func terminalAutocompleteLearnsOnlyCompletedCommands() throws {
   controller.receive(.commandFinished(exitStatus: 0))
   controller.receive(.promptStart)
   controller.receive(.inputStart)
+  // 空 prompt 不再产生候选，必须先敲一个前缀才能看到学习到的命令。
+  controller.receiveInput(Array("curl".utf8)[...])
   controller.refreshNow()
 
   #expect(

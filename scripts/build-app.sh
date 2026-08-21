@@ -140,10 +140,65 @@ SPARKLE_IN_APP="$CONTENTS_DIR/Frameworks/Sparkle.framework"
 mkdir -p "$CONTENTS_DIR/Frameworks"
 ditto "$SPARKLE_FRAMEWORK" "$SPARKLE_IN_APP"
 
-# Quick Look 能稳定地把项目内的矢量源渲染成 1024px PNG；后续尺寸均由同一母版生成，
-# 避免图标在不同缩放档位出现构图漂移。
-qlmanage -t -s 1024 -o "$ICON_PREVIEW_DIR" "$PROJECT_DIR/Resources/AsterIcon.svg" >/dev/null 2>&1
-MASTER_ICON="$ICON_PREVIEW_DIR/AsterIcon.svg.png"
+# 母版必须由真正保留 alpha 的矢量渲染器生成；后续尺寸均由同一母版派生，避免
+# 图标在不同缩放档位出现构图漂移。
+# 这里刻意不用 qlmanage -t：Quick Look 缩略图管线会把 SVG 合成到不透明白页上，
+# 生成的 icns 四角是白色而不是透明；macOS 26 再给 Dock 图标套圆角遮罩，就会露出
+# 一圈白框。缺少渲染器时必须硬失败，绝不静默回退成白底。
+if ! command -v rsvg-convert >/dev/null 2>&1; then
+  echo "缺少 rsvg-convert（应用图标母版渲染器）。请先执行：brew install librsvg" >&2
+  exit 1
+fi
+MASTER_ICON="$ICON_PREVIEW_DIR/AsterIcon.png"
+rsvg-convert -w 1024 -h 1024 -b none \
+  "$PROJECT_DIR/Resources/AsterIcon.svg" -o "$MASTER_ICON"
+
+# 白底回归是静默的（图标照常生成，只是多了一圈白），所以在这里直接验四角 alpha。
+python3 - "$MASTER_ICON" <<'PYICON'
+import struct, sys, zlib
+
+path = sys.argv[1]
+data = open(path, 'rb').read()
+pos, idat, width, channels = 8, b'', 0, 4
+while pos < len(data):
+    length = struct.unpack('>I', data[pos:pos + 4])[0]
+    kind = data[pos + 4:pos + 8]
+    chunk = data[pos + 8:pos + 8 + length]
+    if kind == b'IHDR':
+        width, _, _, color = struct.unpack('>IIBB', chunk[:10])
+        if color != 6:
+            sys.exit('图标母版不是 RGBA，无法验证透明度：%s' % path)
+    elif kind == b'IDAT':
+        idat += chunk
+    pos += 12 + length
+raw = zlib.decompress(idat)
+stride = width * channels
+# 只需要第 3 行，逐行反 filter 到该行即可（Paeth 依赖上一行，不能跳过）。
+prev, row = bytearray(stride), bytearray(stride)
+offset = 0
+for _ in range(3):
+    filt = raw[offset]
+    offset += 1
+    row = bytearray(raw[offset:offset + stride])
+    offset += stride
+    for i in range(stride):
+        a = row[i - channels] if i >= channels else 0
+        b = prev[i]
+        c = prev[i - channels] if i >= channels else 0
+        if filt == 1:
+            row[i] = (row[i] + a) & 255
+        elif filt == 2:
+            row[i] = (row[i] + b) & 255
+        elif filt == 3:
+            row[i] = (row[i] + (a + b) // 2) & 255
+        elif filt == 4:
+            p = a + b - c
+            pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+            row[i] = (row[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+    prev = row
+if row[2 * channels + 3] != 0:
+    sys.exit('图标母版左上角不透明（alpha=%d），圆角外应为全透明：%s' % (row[2 * channels + 3], path))
+PYICON
 
 for SPEC in \
   "16 icon_16x16.png" \

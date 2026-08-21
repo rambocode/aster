@@ -16,12 +16,16 @@ final class DockActivityCoordinator {
   private var animationTimer: Timer?
   private var agentSleepActivity: NSObjectProtocol?
   private var animationPhase = 0
+  /// Working 动画的离散帧数；同时决定每帧的旋转步进（360 / 帧数）。
+  private static let animationFrameCount = 12
   private let imageView = NSImageView()
   /// Working 动画只有 12 个离散角度。按需缓存已经出现的帧，避免每 220ms 重复把同一
   /// NSImage 栅格化；短任务只生成实际展示过的帧，长任务完成一圈后完全复用缓存。
-  private var cachedApplicationIcon: NSImage?
   private var cachedWorkingFrames: [Int: NSImage] = [:]
   private var cachedErrorIcon: NSImage?
+  /// 上一次生成帧所用的 Dock tile 尺寸。用户改 Dock 大小后尺寸会变，旧帧必须作废，
+  /// 否则会被拉伸成糊图。
+  private var cachedTileSize: NSSize = .zero
   /// 最近一次已应用的聚合状态。它同时作为幂等诊断真值和自动化验收 seam；不包含
   /// 标签、命令或终端内容，也不参与持久化。
   private(set) var currentState = DockActivityState.idle
@@ -155,11 +159,13 @@ final class DockActivityCoordinator {
       NSApp.dockTile.display()
     case .error:
       imageView.image = errorIcon()
+      prepareImageView()
       NSApp.dockTile.contentView = imageView
       NSApp.dockTile.badgeLabel = "!"
       NSApp.dockTile.display()
     case .working:
       NSApp.dockTile.badgeLabel = nil
+      prepareImageView()
       NSApp.dockTile.contentView = imageView
       advanceAnimation()
       animationTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: true) {
@@ -170,58 +176,55 @@ final class DockActivityCoordinator {
   }
 
   private func advanceAnimation() {
-    animationPhase = (animationPhase + 1) % 12
+    animationPhase = (animationPhase + 1) % Self.animationFrameCount
     imageView.image = workingIcon(for: animationPhase)
     NSApp.dockTile.display()
   }
 
+  /// NSDockTile 不保证给 contentView 排版；frame 留在零尺寸时整块 tile 什么都画不出来。
+  private func prepareImageView() {
+    imageView.imageScaling = .scaleProportionallyUpOrDown
+    imageView.frame = NSRect(origin: .zero, size: tileSize())
+  }
+
+  /// Dock 尺寸随用户设置变化；尺寸变了就作废所有派生帧，避免拉伸旧帧。
+  private func tileSize() -> NSSize {
+    let reported = NSApp.dockTile.size
+    let size = reported.width > 0 && reported.height > 0
+      ? reported
+      : NSSize(width: 128, height: 128)
+    if size != cachedTileSize {
+      cachedTileSize = size
+      cachedWorkingFrames.removeAll(keepingCapacity: true)
+      cachedErrorIcon = nil
+    }
+    return size
+  }
+
+  /// 12 帧 × 30° 正好走满一圈，动画首尾无缝衔接；只有中央星芒在转。
   private func workingIcon(for phase: Int) -> NSImage {
-    let source = applicationIcon()
+    let size = tileSize()
     if let cached = cachedWorkingFrames[phase] { return cached }
-    let image = renderedIcon(
-      source: source,
-      angle: CGFloat(phase) * 2.5,
-      errorTint: false
+    renderedIconCount += 1
+    let image = DockIconArtwork.image(
+      size: size,
+      sparkleAngle: CGFloat(phase) * (360 / CGFloat(Self.animationFrameCount)),
+      plate: DockIconArtwork.plateColor
     )
     cachedWorkingFrames[phase] = image
     return image
   }
 
   private func errorIcon() -> NSImage {
-    let source = applicationIcon()
+    let size = tileSize()
     if let cachedErrorIcon { return cachedErrorIcon }
-    let image = renderedIcon(source: source, angle: 0, errorTint: true)
+    renderedIconCount += 1
+    let image = DockIconArtwork.image(
+      size: size,
+      sparkleAngle: 0,
+      plate: DockIconArtwork.errorPlateColor
+    )
     cachedErrorIcon = image
     return image
-  }
-
-  /// 应用图标在运行时被替换时清空派生帧，保证 Dock 始终展示当前品牌资源。
-  private func applicationIcon() -> NSImage {
-    let source = NSApp.applicationIconImage ?? NSImage(size: NSSize(width: 128, height: 128))
-    if cachedApplicationIcon !== source {
-      cachedApplicationIcon = source
-      cachedWorkingFrames.removeAll(keepingCapacity: true)
-      cachedErrorIcon = nil
-    }
-    return source
-  }
-
-  private func renderedIcon(source: NSImage, angle: CGFloat, errorTint: Bool) -> NSImage {
-    renderedIconCount += 1
-    let size = source.size.width > 0 ? source.size : NSSize(width: 128, height: 128)
-    let result = NSImage(size: size)
-    result.lockFocus()
-    let transform = NSAffineTransform()
-    transform.translateX(by: size.width / 2, yBy: size.height / 2)
-    transform.rotate(byDegrees: angle)
-    transform.translateX(by: -size.width / 2, yBy: -size.height / 2)
-    transform.concat()
-    source.draw(in: NSRect(origin: .zero, size: size))
-    if errorTint {
-      NSColor.systemRed.withAlphaComponent(0.48).setFill()
-      NSRect(origin: .zero, size: size).fill(using: .sourceAtop)
-    }
-    result.unlockFocus()
-    return result
   }
 }

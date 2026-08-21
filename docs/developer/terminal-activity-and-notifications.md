@@ -34,7 +34,9 @@ flowchart LR
 
 SwiftTerm 的 `registerOscObserver` 是非消费 seam：Aster 可观察 OSC 9/99/777，而内建 `OSC 9;4` 顶部进度条继续执行。`TerminalOSCStreamLimiter` 在 parser 前对通知序列施加约 8 KiB 独立上限；领域解析器在完整 payload 上再次复验。Kitty capability response 直接写 PTY，不进入用户输入、Autocomplete 或学习路径。
 
-等待输入只在任务运行时检测输出末行的 password、`[y/n]`、yes/no 与 Press Enter 提示，并要求 1.5 秒静默；任何键盘输入立即清除。Dock 聚合不持久化，点击应用图标选择一个失败标签并确认当前错误，新错误仍会再次标红。Working 旋转动画按需缓存 12 个离散角度，完成一圈后 timer 只切换已有 `NSImage`；应用图标身份变化会清空缓存，避免继续展示旧资源。
+等待输入只在任务运行时检测输出末行的 password、`[y/n]`、yes/no 与 Press Enter 提示，并要求 1.5 秒静默；任何键盘输入立即清除。Dock 聚合不持久化，点击应用图标选择一个失败标签并确认当前错误，新错误仍会再次标红。Dock 图标由 `DockIconArtwork` 按 `Resources/AsterIcon.svg` 的几何分图层重画，而不是给 `NSApp.applicationIconImage` 这张拍平位图加滤镜——只有分图层才能让**中央星芒单独旋转**、**底板整块换成红色**。Working 旋转动画按需缓存 12 个离散角度、每帧 30°，正好走满一圈，首尾无缝衔接；完成一圈后 timer 只切换已有 `NSImage`。Dock tile 尺寸变化会清空缓存，避免把旧帧拉伸成糊图。出错态刻意用不透明红底板而不是叠半透明红：珊瑚品牌色本身偏红，叠色混出来仍然是橙的，用户看不出状态变了。
+
+Dock 提醒用 `NSApp.requestUserAttention(.criticalRequest)`，图标会一直跳到应用被激活；`applicationDidBecomeActive` 显式调用 `cancelDockAttention()` 收尾，多条通知叠加也不会残留请求。`.informationalRequest` 只弹一下，用户切走跑长任务时基本看不到，因此不用。
 
 `TerminalTabItem.onActivityBadgeChanged` 把 Session 的普通进度、Agent lifecycle 和完成未读
 归并到 `AppModel.tabActivityChanged`。`WorkspaceViewController` 只原地替换对应 `TabRowButton`

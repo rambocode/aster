@@ -857,6 +857,12 @@ public struct AutocompleteEngine: Sendable {
     aliases: [String] = [],
     language: AutocompleteDescriptionLanguage = .system
   ) -> AutocompleteResult {
+    // 空 prompt 不产生任何候选。没有输入就没有用户意图，把整个命令库和全部历史列出来
+    // 只是噪音，而且面板一旦弹出就会吞掉回车，让用户以为终端卡住了。只有空白字符的
+    // 行同样按空处理；`git ` 这种尾随空格的行 trim 后仍非空，不受影响。
+    guard !query.line.trimmingCharacters(in: .whitespaces).isEmpty else {
+      return AutocompleteResult(candidates: [], ghostText: nil, replacementStart: 0)
+    }
     let parsed = ShellCommandTokenizer.tokenize(query.line)
     var candidates: [AutocompleteCandidate] = []
     // 固定、历史与 README 候选均保存完整命令行，任何输入阶段都可按完整前缀参与；
@@ -877,16 +883,9 @@ public struct AutocompleteEngine: Sendable {
       }
     }
 
-    if parsed.tokens.isEmpty || query.line.last?.isWhitespace == true && parsed.tokens.count == 0 {
-      candidates += specDatabase.commands.map {
-        AutocompleteCandidate(
-          insertText: $0.name,
-          description: $0.description.text(for: language),
-          kind: .command,
-          score: 100_000
-        )
-      }
-    } else if parsed.tokens.count <= 1, !query.line.contains(where: \.isWhitespace) {
+    // 上面的空行 guard 已经排除了 tokens 为空的情况，这里只处理“正在输入命令名”和
+    // “已经有命令名、在补子命令/选项/参数”两种真实输入状态。
+    if parsed.tokens.count <= 1, !query.line.contains(where: \.isWhitespace) {
       candidates += specDatabase.commands
         .filter { $0.name.hasPrefix(parsed.currentToken) && $0.name != parsed.currentToken }
         .map {
@@ -938,11 +937,6 @@ public struct AutocompleteEngine: Sendable {
       firstCandidateUsesFullLine = false
     }
     let ghostText = unique.first.flatMap { candidate -> String? in
-      // 空 prompt 下的通用命令清单没有体现用户意图，不能把字母序第一项直接显示为
-      // inline suggestion；固定、历史和 README 候选具有本地上下文，仍可作为 clear winner。
-      if query.line.isEmpty, candidate.kind == .command || candidate.kind == .alias {
-        return nil
-      }
       if firstCandidateUsesFullLine {
         return String(candidate.insertText.dropFirst(query.line.count))
       }
