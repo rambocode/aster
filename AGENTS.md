@@ -14,10 +14,13 @@ The project requires macOS 14+, Swift 6.2, Zig 0.15.2, and the Xcode Metal Toolc
 
 - `./scripts/setup-ghostty.sh` builds the pinned Ghostty XCFramework and resources; `build-app.sh` also runs it.
 - `swift build` creates a debug build.
-- `swift test --no-parallel` runs the full suite safely; PTY lifecycle tests are concurrency-sensitive.
-- `swift test --filter <name>` runs a focused `@Test` function.
+- `./scripts/test.sh --no-parallel` runs the full suite safely; PTY lifecycle tests are concurrency-sensitive.
+  Use this wrapper instead of bare `swift test`: the xctest host lives outside the `.app` layout, so it needs
+  `DYLD_FRAMEWORK_PATH` injected to load the Sparkle framework.
+- `./scripts/test.sh --filter <name>` runs a focused `@Test` function.
 - `./scripts/build-app.sh` assembles and signs `dist/Aster.app`.
 - `./scripts/build-dmg.sh` creates and verifies the DMG.
+- `./scripts/release.sh --short <version> --bundle <int>` cuts a full release (version bump, notarized DMG, GitHub release, appcast). See `docs/developer/software-update.md`.
 - `open dist/Aster.app` launches the packaged application for manual checks.
 
 ## Coding Style & Naming Conventions
@@ -34,4 +37,4 @@ Use Conventional Commits as seen in history, for example `feat(workspace): add t
 
 ## Security & Configuration Tips
 
-Keep signing identities and notarization profiles in `ASTER_SIGN_IDENTITY` and `ASTER_NOTARY_PROFILE`; never commit credentials. Build outputs such as `.build/`, `dist/`, generated Ghostty resources, and `Vendor/GhosttyKit.xcframework` remain untracked. For architecture, input-validation, or release changes, consult `CLAUDE.md` and the matching `docs/developer/` domain guide before editing.
+Keep signing identities and notarization profiles in `ASTER_SIGN_IDENTITY` and `ASTER_NOTARY_PROFILE`; never commit credentials. The Sparkle EdDSA private key lives in the login keychain and must never be exported into the repository; `CFBundleVersion` must increase monotonically on every release because Sparkle uses it to compare versions and published values cannot be recalled. Build outputs such as `.build/`, `dist/`, generated Ghostty resources, and `Vendor/GhosttyKit.xcframework` remain untracked. For architecture, input-validation, or release changes, consult `CLAUDE.md` and the matching `docs/developer/` domain guide before editing.

@@ -20,6 +20,19 @@ Aster 是一个完全使用 AppKit 构建的原生 macOS 终端工作区，采�
 - 与 Otty 1.3.1 对齐的 24 个内置主题、实时终端预览、自定义复制/编辑及安全 `.astertheme` 导入
 - 主窗口、设置、菜单、分屏、主题预览和全部交互控件均为原生 AppKit，无 SwiftUI/Hosting 桥接层
 - 独立应用图标、签名 `.app` 与 DMG 构建
+- 基于 Sparkle 2 的应用内更新：后台检查、可选静默安装、预览通道
+
+## 安装
+
+从[发布页](https://github.com/rambocode/aster/releases)下载已签名并公证的 DMG，打开后把
+`Aster.app` 拖进 `/Applications`。
+
+此后 Aster 会自己更新：每天在后台检查一次新版本，也可以让它自动下载并安装。相关开关在
+**设置 → 通用 → 更新**，**Aster → 检查更新…** 可随时手动触发。更新只从官方更新源获取，
+且必须同时通过 EdDSA 签名校验与 macOS 公证校验才会安装，全程不发送任何使用数据。
+
+> 从 0.4.1 或更早版本升级：那些版本不含更新组件，无法自动更新，需要手动下载一次 DMG。
+> 此后即可自动更新。
 
 ## 构建
 
@@ -27,7 +40,7 @@ Aster 是一个完全使用 AppKit 构建的原生 macOS 终端工作区，采�
 brew install zig@0.15
 xcodebuild -downloadComponent MetalToolchain
 ./scripts/setup-ghostty.sh
-swift test
+./scripts/test.sh
 ./scripts/build-app.sh
 ./scripts/build-dmg.sh
 open dist/Aster.app
@@ -38,8 +51,12 @@ open dist/Aster.app
 `build-app.sh` 会自动调用它。来源、ABI 风险与更新流程见 `Vendor/Ghostty/README.md`。
 SwiftTerm 仍以本地 target 保留，仅用于迁移期旧适配器回归测试，不进入产品终端视图树。
 默认构建使用本机 ad-hoc 签名，适合本机安装；正式分发时通过
-`ASTER_SIGN_IDENTITY="Developer ID Application: ..."` 提供 Developer ID，并在产物外部完成
-notarization/stapling。
+`ASTER_SIGN_IDENTITY="Developer ID Application: ..."` 提供 Developer ID、通过
+`ASTER_NOTARY_PROFILE` 提供公证 profile，然后用 `./scripts/release.sh` 发布。
+测试请走 `./scripts/test.sh` 而不是裸 `swift test`：测试宿主不在 `.app` 布局里，
+需要 `DYLD_FRAMEWORK_PATH` 才能加载 Sparkle。
+ad-hoc 构建不启用自动更新，设置页的「更新」一组会整体置灰。
+签名、appcast 与发版细节见 `docs/developer/software-update.md`。
 
 ## 快捷键
 

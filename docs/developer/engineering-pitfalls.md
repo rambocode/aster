@@ -58,6 +58,14 @@ OSC 标题(每秒多次)、命令开始/结束(`hasRunningCommand`)、Agent prov
 
 `NSWindow(contentRect:)` 里给的尺寸在 `window.contentViewController = vc` 之后会被收缩回控制器视图自己的默认尺寸。恢复记忆尺寸必须写在赋值**之后**(`setContentSize`),否则测试里表现为「值存对了、读对了,窗口却还是默认高度」。
 
+### 10. `codesign --deep` 与嵌套 framework 不兼容
+
+`--deep` 会用同一套参数覆盖所有嵌套项，因此吃掉 Sparkle `Downloader.xpc` 自带的 entitlements(Sparkle 官方文档点名这是常见错误源)。签名必须由内向外逐层执行,顺序不可颠倒——codesign 把子项的 CDHash 密封进父层签名,先签外层会在签完内层的瞬间失效。另外 Sparkle 出厂时 XPC services、`Autoupdate`、`Updater.app` 都是 ad-hoc 签名,不重签过不了公证;而 hardened runtime 会开启 Library Validation,ad-hoc 的 framework 会在**启动时**被 dyld 拒绝加载。同理,本机 ad-hoc 构建分支必须**不加** `--options runtime`,否则同样被 Library Validation 拦住。`--deep` 用于 `--verify` 是正确用法,只有用于签名才有问题。详见 `software-update.md`。
+
+### 11. 去掉 `--deep` 后 `Contents/MacOS/` 下的第二个可执行文件会失去签名
+
+`Contents/MacOS/` 在 codesign 的默认封存规则(`CodeResources` 的 `rules2`)里是 **nested** 目录,主可执行文件之外的二进制不会被外层签名覆盖。`aster-memory-mcp` 此前是靠 `--deep` 顺带签上的,改逐层签名后必须显式补签,否则 `codesign --verify --deep --strict` 与公证都会失败。凡是往 `Contents/MacOS/` 再放一个可执行文件,都要同步加一行签名。
+
 ## 诊断方法论(harness 绿、真机红时)
 
 1. 每个可复现症状先写「红回路」测试(断言打在用户的确切症状上),修复后转绿留作回归。

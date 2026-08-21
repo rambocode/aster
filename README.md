@@ -23,6 +23,24 @@ scratch; it contains no Otty brand assets or proprietary code.
 - 24 built-in themes aligned with Otty 1.3.1, live terminal preview, custom copy/edit, and safe `.astertheme` import
 - Main window, settings, menus, splits, theme previews, and every interactive control are native AppKit — no SwiftUI/Hosting bridge layer
 - Standalone app icon, signed `.app`, and DMG build
+- Built-in software updates via Sparkle 2: background checks, optional silent install, and a preview channel
+
+## Install
+
+Download the latest signed and notarized DMG from the
+[releases page](https://github.com/rambocode/aster/releases), open it, and drag
+`Aster.app` into `/Applications`.
+
+Aster updates itself from then on: it checks for a new version once a day in the
+background and can download and install it for you. Everything is configurable under
+**Settings → General → Update**, and **Aster → Check for Updates…** triggers a check on
+demand. Updates are fetched only from the official appcast and must pass both an EdDSA
+signature check and macOS notarization before they are installed; no usage data is ever
+sent.
+
+> Upgrading from 0.4.1 or earlier: those builds shipped without the updater, so they
+> cannot update themselves. Download the DMG once by hand — after that updates are
+> automatic.
 
 ## Build
 
@@ -30,7 +48,7 @@ scratch; it contains no Otty brand assets or proprietary code.
 brew install zig@0.15
 xcodebuild -downloadComponent MetalToolchain
 ./scripts/setup-ghostty.sh
-swift test
+./scripts/test.sh
 ./scripts/build-app.sh
 ./scripts/build-dmg.sh
 open dist/Aster.app
@@ -44,8 +62,12 @@ SwiftTerm remains as a local target only for legacy-adapter regression tests dur
 migration; it is not part of the product terminal view tree.
 The default build uses local ad-hoc signing, suitable for installing on your own
 machine; for distribution, provide a Developer ID via
-`ASTER_SIGN_IDENTITY="Developer ID Application: ..."` and complete
-notarization/stapling outside the build artifacts.
+`ASTER_SIGN_IDENTITY="Developer ID Application: ..."` and a notarization profile via
+`ASTER_NOTARY_PROFILE`, then cut a release with `./scripts/release.sh`.
+Run tests through `./scripts/test.sh`, not bare `swift test`: the test host lives
+outside the `.app` layout and needs `DYLD_FRAMEWORK_PATH` to load Sparkle.
+Ad-hoc builds have automatic updates disabled — the Update settings appear greyed out.
+See `docs/developer/software-update.md` for the signing, appcast, and release details.
 
 ## Shortcuts
 

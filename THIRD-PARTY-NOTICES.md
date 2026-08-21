@@ -15,6 +15,20 @@ under the BSD 2-Clause License.
 
 Source: https://github.com/swiftlang/swift-markdown
 
+## Sparkle
+
+Copyright (c) 2006-2013 Andy Matuschak, 2009-2013 Elgato Systems GmbH, 2011-2014 Kornel Lesinski,
+2015-2017 Mayur Pawashe, and contributors.
+
+Sparkle is distributed under the MIT License. It bundles bsdiff (BSD 2-Clause) and Ed25519
+(public domain / MIT). The full license is available in the upstream repository at
+<https://github.com/sparkle-project/Sparkle/blob/master/LICENSE>.
+
+Aster uses Sparkle to deliver in-app software updates. The framework is embedded in
+`Aster.app/Contents/Frameworks` and signed as part of the Aster distribution.
+
+Source: https://github.com/sparkle-project/Sparkle
+
 ## SwiftTerm
 
 Copyright (c) 2020 Miguel de Icaza
