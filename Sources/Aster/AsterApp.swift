@@ -239,18 +239,25 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   private var cancellables: Set<AnyCancellable> = []
   private lazy var dockActivityCoordinator = DockActivityCoordinator(
     model: model, preferences: preferences)
+  /// 生产环境是 SoftwareUpdateService.shared；开发构建与菜单测试为 nil / stub。
+  private let softwareUpdateController: (any SoftwareUpdateControlling)?
 
   override init() {
     model = AppModel()
     preferences = AppPreferences()
+    softwareUpdateController = SoftwareUpdateService.shared
     super.init()
   }
 
   /// 菜单与窗口路由测试使用隔离 defaults 注入真实模型，避免为了验证聚焦 Pane 而写入
   /// 用户的标准工作区快照。生产入口继续走无参数初始化器。
-  init(model: AppModel, preferences: AppPreferences) {
+  init(
+    model: AppModel, preferences: AppPreferences,
+    softwareUpdateController: (any SoftwareUpdateControlling)? = nil
+  ) {
     self.model = model
     self.preferences = preferences
+    self.softwareUpdateController = softwareUpdateController
     super.init()
   }
 
@@ -311,6 +318,11 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         }
       }
       .store(in: &cancellables)
+    // 更新器最后启动：Sparkle 起来后会按排班安排一次后台检查，首次检查可能立刻弹出
+    // 更新窗口。必须排在 showMainWindow() 与 restoreAdditionalWorkspaceWindows()
+    // 之后，否则更新窗口会抢在工作区恢复完成前成为 key window，用户开机看到的第一眼
+    // 是更新框而不是终端。开发构建里 controller 为 nil，这里整段是 no-op。
+    softwareUpdateController?.start()
     NSApp.activate(ignoringOtherApps: true)
   }
 
@@ -603,6 +615,18 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     window.delegate = self
     settingsWindowController = controller
     controller.present(sender)
+  }
+
+  /// Sparkle 的 `SPUStandardUpdaterController.checkForUpdates(_:)` 本身就能直接挂菜单，
+  /// 但不把它设为 target：这样 AsterApp 不必 import Sparkle，更新能力缺失时也能给出
+  /// 可读的去处，而不是一个静默置灰的菜单项。
+  @objc func checkForUpdates(_ sender: Any?) {
+    guard let softwareUpdateController else {
+      // 没有更新器时把用户带到能看到原因的地方（设置页会显示置灰说明）。
+      showSettings(section: .general)
+      return
+    }
+    softwareUpdateController.checkForUpdates()
   }
 
   /// 帮助菜单中的用户主动反馈入口。无可见工作区时先恢复主窗口，保证 sheet 有稳定宿主。
@@ -1008,7 +1032,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       .controller.window
   }
 
-  private func makeMainMenu() -> NSMenu {
+  /// 测试 seam：菜单结构（顺序、selector、target）是用户可见契约，需要能在不启动
+  /// 应用的前提下断言，因此不设为 private。
+  func makeMainMenu() -> NSMenu {
     let menu = NSMenu()
     menu.addItem(appMenuItem())
     menu.addItem(fileMenuItem())
@@ -1024,6 +1050,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     let item = NSMenuItem()
     let submenu = NSMenu(title: "Aster")
     submenu.addItem(withTitle: "关于 Aster", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+    // macOS 标准位：紧跟「关于」。动作留在 AppDelegate 而不是直接指向 Sparkle 的
+    // updater controller —— 开发构建里 updater 为 nil，target 为 nil 的菜单项会沿
+    // responder chain 找不到实现而永远置灰，用户分不清是「没配置」还是「坏了」。
+    submenu.addItem(menuItem("检查更新…", #selector(checkForUpdates(_:)), "", modifiers: []))
     submenu.addItem(.separator())
     let settings = NSMenuItem(title: "设置…", action: #selector(showSettings(_:)), keyEquivalent: ",")
     settings.target = self
@@ -1560,6 +1590,12 @@ extension AsterAppDelegate: NSMenuItemValidation {
 
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     guard let action = menuItem.action else { return true }
+    if action == #selector(checkForUpdates(_:)) {
+      // Sparkle 在一次更新会话进行中时 canCheckForUpdates 为假；保持可点会让 Sparkle
+      // 直接忽略这次调用，看起来像卡住。开发构建（updater 为 nil）保持可点，
+      // 点击后跳设置页说明原因。
+      return softwareUpdateController.map(\.canCheckForUpdates) ?? true
+    }
     if action == #selector(toggleSecureKeyboardEntry(_:)) {
       menuItem.state = SecureInputCoordinator.shared.isManualRequestActive ? .on : .off
       return true

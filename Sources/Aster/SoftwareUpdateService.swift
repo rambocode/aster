@@ -25,6 +25,8 @@ protocol SoftwareUpdateControlling: AnyObject {
   var lastCheckDate: Date? { get }
   func checkForUpdates()
   func channelDidChange(to channel: UpdateChannel)
+  /// 由 `applicationDidFinishLaunching` 在窗口恢复完成后调用；实现必须幂等。
+  func start()
 }
 
 /// Sparkle 2 与 Aster 之间的唯一边界：持有 updater controller、充当它的两个 delegate，

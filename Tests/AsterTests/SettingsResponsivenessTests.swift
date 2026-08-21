@@ -384,6 +384,9 @@ private final class StubSoftwareUpdateController: SoftwareUpdateControlling {
   var lastCheckDate: Date?
   private(set) var checkCount = 0
   private(set) var channelChanges: [UpdateChannel] = []
+  private(set) var startCount = 0
+
+  func start() { startCount += 1 }
 
   func checkForUpdates() {
     checkCount += 1
