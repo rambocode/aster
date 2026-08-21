@@ -1621,19 +1621,19 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     views.append(sectionTitle("Dock"))
     views.append(card([
       toggleRow(
-        "任务运行时动画", "任一标签报告进度时让 Dock 图标显示活动状态",
+        "任务进行时旋转", "会话运行时，图标中间的星芒持续旋转",
         value: preferences.configuration.appearance.resolvedAnimateDockIconOnProgress
       ) { [weak self] value in
         self?.preferences.configuration.appearance.animateDockIconOnProgress = value
       },
       toggleRow(
-        "任务出错时标红", "任一标签失败时将 Dock 图标标红；点击图标跳转到错误标签",
+        "出错时变红", "任一标签失败时 Dock 图标变红；点击图标跳转到出错的标签",
         value: preferences.configuration.appearance.resolvedRedDockIconOnError
       ) { [weak self] value in
         self?.preferences.configuration.appearance.redDockIconOnError = value
       },
       toggleRow(
-        "收到通知时跳动", "Aster 不在前台且收到终端通知时请求 Dock 提醒",
+        "收到通知时跳动", "Aster 不在前台时，收到通知则让 Dock 图标持续跳动",
         value: preferences.configuration.shell.resolvedBounceDockIcon
       ) { [weak self] value in
         self?.preferences.configuration.shell.bounceDockIcon = value

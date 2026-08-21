@@ -30,6 +30,8 @@ final class TerminalNotificationService: TerminalNotificationPosting {
   private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
   /// 横幅（alert）样式是否可用；已授权但横幅被设为“无”时设置页要给出琥珀色警示。
   private(set) var alertSetting: UNNotificationSetting = .notSupported
+  /// 当前未取消的 Dock 提醒请求 ID；nil 表示图标没有在跳。
+  private(set) var dockAttentionRequestID: Int?
 
   init(center: UNUserNotificationCenter? = nil) {
     injectedCenter = center
@@ -89,6 +91,21 @@ final class TerminalNotificationService: TerminalNotificationPosting {
     }
   }
 
+  /// 请求 Dock 提醒。用 criticalRequest 而不是 informationalRequest：后者只跳一下，
+  /// 用户切走跑长任务时基本看不到。请求 ID 留下来，应用被激活时显式取消。
+  func requestDockAttention() {
+    if let dockAttentionRequestID { NSApp.cancelUserAttentionRequest(dockAttentionRequestID) }
+    dockAttentionRequestID = NSApp.requestUserAttention(.criticalRequest)
+  }
+
+  /// 应用回到前台时停止跳动。macOS 通常会自动结束请求，但显式取消才能保证多条通知
+  /// 叠加后不残留；同时给测试一个不触碰真实 Dock 的断言点。
+  func cancelDockAttention() {
+    guard let dockAttentionRequestID else { return }
+    NSApp.cancelUserAttentionRequest(dockAttentionRequestID)
+    self.dockAttentionRequestID = nil
+  }
+
   func openSystemSettings() {
     guard let url = URL(
       string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
@@ -114,9 +131,7 @@ final class TerminalNotificationService: TerminalNotificationPosting {
       sourceTabIsFocused: sourceTabIsFocused
     ) else { return }
 
-    if decision.bouncesDockIcon {
-      NSApp.requestUserAttention(.informationalRequest)
-    }
+    if decision.bouncesDockIcon { requestDockAttention() }
     deliver(notification, playsSound: decision.playsSound)
   }
 

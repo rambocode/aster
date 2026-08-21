@@ -18,7 +18,10 @@ The project requires macOS 14+, Swift 6.2, Zig 0.15.2, and the Xcode Metal Toolc
   Use this wrapper instead of bare `swift test`: the xctest host lives outside the `.app` layout, so it needs
   `DYLD_FRAMEWORK_PATH` injected to load the Sparkle framework.
 - `./scripts/test.sh --filter <name>` runs a focused `@Test` function.
-- `./scripts/build-app.sh` assembles and signs `dist/Aster.app`.
+- `./scripts/build-app.sh` assembles and signs `dist/Aster.app`. Requires `rsvg-convert`
+  (`brew install librsvg`) to rasterize `Resources/AsterIcon.svg` into the icon master with a real
+  alpha channel; the script fails hard when it is missing rather than falling back to an opaque
+  Quick Look thumbnail, which would bake a white square behind the icon.
 - `./scripts/build-dmg.sh` creates and verifies the DMG.
 - `./scripts/release.sh --short <version> --bundle <int>` cuts a full release (version bump, notarized DMG, GitHub release, appcast). See `docs/developer/software-update.md`.
 - `open dist/Aster.app` launches the packaged application for manual checks.

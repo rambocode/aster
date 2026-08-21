@@ -156,7 +156,7 @@
             ["shell.notificationSound.commandFinish", "命令完成时"],
             ["shell.notificationSound.application", "应用通知"],
           ] }),
-          row("shell.bounceDockIcon", "Dock 图标跳动", "Aster 不在前台时，收到通知则让 Dock 图标跳动"),
+          row("shell.bounceDockIcon", "Dock 图标跳动", "Aster 不在前台时，收到通知则让 Dock 图标持续跳动，切回 Aster 即停"),
         ]},
         { title: "标签徽章", rows: [
           row("shell.badgeCommandFinish", "命令完成徽章", "成功退出后显示圆点"),
@@ -330,9 +330,9 @@
         row("appearance.windowHeight", "窗口高度", "像素尺寸模式下的内容高度", "number", { min: 520, max: 2160, step: 10 }),
         row("appearance.unfocusedSplitOpacity", "非焦点分屏不透明度", "未获得焦点的分屏窗格淡化到什么程度。设为 1.00 则所有窗格都保持完全清晰。", "range", { min: 0.15, max: 1, step: 0.05, valueFirst: true, format: value => Number(value).toFixed(2) }),
         // Dock 三行文案对齐 Otty；warning 是描述下方的橙色耗电提示行。
-        row("appearance.animateDockIconOnProgress", "任务进行时旋转", "会话运行时，右眼持续旋转", "toggle", { warning: "会话运行时会增加 CPU 和电量消耗" }),
+        row("appearance.animateDockIconOnProgress", "任务进行时旋转", "会话运行时，图标中间的星芒持续旋转", "toggle", { warning: "会话运行时会增加 CPU 和电量消耗" }),
         row("appearance.redDockIconOnError", "出错时变红", "任务出错时图标变红；点击 Dock 图标可跳转到出错的标签"),
-        row("shell.bounceDockIcon", "收到通知时跳动", "Aster 不在前台时，收到通知则让 Dock 图标跳动"),
+        row("shell.bounceDockIcon", "收到通知时跳动", "Aster 不在前台时，收到通知则让 Dock 图标持续跳动，切回 Aster 即停"),
       ]},
     ]},
     { id: "recipes", title: "Recipes", description: "保存并重放标签页、分屏、命令和文本片段。", special: "recipes", groups: [
@@ -1374,12 +1374,10 @@
     const icon = document.createElement("div");
     icon.className = "dock-icon-preview";
     icon.innerHTML = `<svg viewBox="0 0 1024 1024" aria-hidden="true">
-      <rect x="100" y="100" width="824" height="824" rx="185" fill="#EA6D49"/>
-      <g transform="translate(512 512) scale(0.805) translate(-512 -512)">
-        <path d="M156 260 278 356 156 452" fill="none" stroke="#FFFFFF" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M684 676 C754 586 794 488 768 398 C731 272 597 231 474 286 C349 342 284 466 307 592 C331 724 445 797 572 800 C670 802 756 779 860 748 L860 610" fill="none" stroke="#FFFFFF" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M548 405 C558 480 599 520 674 530 C599 540 558 580 548 655 C538 580 497 540 422 530 C497 520 538 480 548 405Z" fill="#FFFFFF"/>
-      </g>
+      <rect x="0" y="0" width="1024" height="1024" rx="230" fill="#EA6D49"/>
+      <path d="M156 260 278 356 156 452" fill="none" stroke="#FFFFFF" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M684 676 C754 586 794 488 768 398 C731 272 597 231 474 286 C349 342 284 466 307 592 C331 724 445 797 572 800 C670 802 756 779 860 748 L860 610" fill="none" stroke="#FFFFFF" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M548 405 C558 480 599 520 674 530 C599 540 558 580 548 655 C538 580 497 540 422 530 C497 520 538 480 548 405Z" fill="#FFFFFF"/>
     </svg>`;
     card.prepend(icon);
     return makeAppearanceGroup("Dock 图标", card, "dock-group");

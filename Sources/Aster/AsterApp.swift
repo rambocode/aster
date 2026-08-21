@@ -331,6 +331,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   func applicationDidBecomeActive(_ notification: Notification) {
     SecureInputCoordinator.shared.setApplicationActive(true)
     TerminalNotificationService.shared.refreshAuthorizationStatus()
+    // 通知用 criticalRequest 让 Dock 一直跳；用户已经切回来了，提醒到此为止。
+    TerminalNotificationService.shared.cancelDockAttention()
     // 用户可能刚在 Otty 里改过共享主题文件；回到前台时按目录指纹轻量刷新。
     preferences.reloadDiskThemes()
   }
