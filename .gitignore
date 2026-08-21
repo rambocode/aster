@@ -33,3 +33,7 @@ docs/plan/
 # Sparkle 的 EdDSA 私钥导出文件等价于私钥本身，绝不能进仓库。
 *.sparkle.key
 *-sparkle-private.key
+
+# 本机密钥（公证用的 app-specific password 等），绝不入库
+.env
+.env.*
