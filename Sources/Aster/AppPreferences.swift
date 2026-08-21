@@ -223,6 +223,30 @@ final class AppPreferences: ObservableObject {
     )
   }
 
+  // MARK: - 软件更新
+
+  /// 更新通道。Sparkle 只在每次检查时向 delegate 询问允许的 channel，自身不持久化
+  /// 通道，因此这里是唯一真值。
+  ///
+  /// 刻意不进 `AsterConfiguration`：通道属于「这台机器上的这次安装」，不应随导出的
+  /// settings.json 把别人也拉上预览分支（与 Session Memory 同样的隔离理由）。两个自动
+  /// 更新开关反过来完全归 Sparkle（SUEnableAutomaticChecks / SUAutomaticallyUpdate），
+  /// Aster 不留副本，避免用户在 Sparkle 自带对话框里改动后两边漂移。
+  var updateChannel: UpdateChannel {
+    get {
+      defaults.string(forKey: Keys.updateChannel)
+        .flatMap(UpdateChannel.init(rawValue:)) ?? .stable
+    }
+    set { defaults.set(newValue.rawValue, forKey: Keys.updateChannel) }
+  }
+
+  /// 从任意 `UserDefaults` 读取更新通道。`SPUUpdaterDelegate` 是进程级对象，不持有
+  /// 窗口级 `AppPreferences`；与 `memoryRecordingPolicy(from:)` 同一模式。
+  static func updateChannel(from defaults: UserDefaults) -> UpdateChannel {
+    defaults.string(forKey: Keys.updateChannel)
+      .flatMap(UpdateChannel.init(rawValue:)) ?? .stable
+  }
+
   /// Git 页「在编辑器中打开」记住的目标 bundle ID。只是一个偏好指针：真正可用的编辑器
   /// 每次由 `WorkspaceEditorLocator` 重新探测，卸载后会自动回落到第一个已安装项。
   var inspectorGitEditorBundleIdentifier: String? {
@@ -858,5 +882,6 @@ final class AppPreferences: ObservableObject {
     static let memoryExtractionEnabled = "aster.memory.extraction-enabled.v1"
     static let memoryExtractionProvider = "aster.memory.extraction-provider.v1"
     static let memoryExtractionAcknowledged = "aster.memory.extraction-acknowledged.v1"
+    static let updateChannel = "aster.update.channel.v1"
   }
 }
