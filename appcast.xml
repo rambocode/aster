@@ -1,0 +1,56 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Aster</title>
+        <item>
+            <title>0.4.2</title>
+            <pubDate>Sat, 22 Aug 2026 01:57:55 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>7</sparkle:version>
+            <sparkle:shortVersionString>0.4.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 自动更新
+
+Aster 现在可以自己升级。「Aster → 检查更新…」会检查新版本，「设置 → 通用 → 更新」
+可以开关自动检查，并选择跟随正式版还是预览版通道。
+
+## Dock 图标
+
+「设置 → 外观 → Dock 图标」三个开关现在都有明确可见的效果：
+
+- **任务进行时旋转**：会话运行时，图标中间的星芒匀速自转，圆角底板和 `>` 保持不动。
+- **出错时变红**：任一标签失败时整块底板变成红色，点击 Dock 图标跳到出错的那个标签。
+- **收到通知时跳动**：Aster 不在前台时收到通知，图标会一直跳到你切回 Aster。
+
+应用图标本身也重做了：去掉了外面那圈白色方块，并改成满幅尺寸，在 macOS 26 的 Dock
+里与其他应用等大。
+
+## 自动补全
+
+- 输入行为空时不再弹出候选面板。以前刚开标签或刚跑完命令就会冒出一大片历史，还会
+  把回车吃掉；现在至少敲一个字符才会出现候选和 inline suggestion。
+- 修复候选面板在行内布局与整行布局之间切换时的漂移。
+
+## 主题
+
+主题的存放位置迁到 `~/.config/aster/themes`，不再读写 Otty 的目录。首次启动会把仓库
+内置的主题基线复制过去，你自己改过的主题不会被覆盖。
+
+## 智能体
+
+- 新增 Grok Build 智能体支持。
+- 「设置 → 智能体」页重做，修复 CLI 安装检测与状态显示不准的问题；恢复会话时能重新
+  接上之前的智能体会话。
+
+## 终端
+
+- `TERM` 设为 `auto` 时优先使用随应用编译的 `xterm-ghostty`，能力与终端引擎一致。
+- 「设置 → Shell」页补全了此前缺失的功能项。
+- 空闲时不再产生多余的唤醒，笔记本上更省电。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.2/Aster-0.4.2.dmg" length="19832579" type="application/octet-stream" sparkle:edSignature="BCo7xDz+NyQl9H6+COuxu7WwsOAtdBRD08DNQujIy1+ZcwO7X91JX7znBqeFXFJFOFGYXccPyIluvN1ZkofNDA=="/>
+        </item>
+    </channel>
+</rss>
