@@ -1274,8 +1274,8 @@
     return fragment;
   }
 
-  /// 编程智能体卡片，对齐 Otty settings-ui 的结构：折叠行（名称 + CLI 检测、集成
-  /// 状态、启用开关、展开箭头），展开后才显示集成说明、启动命令与安装/卸载按钮。
+  /// 编程智能体卡片，对齐 Otty settings-ui 的结构：折叠行（图标、名称 + CLI 路径、集成
+  /// 状态、集成开关、展开箭头），展开后显示集成说明、快速启动开关与启动命令。
   function makeAgentGroup() {
     const group = document.createElement("section");
     group.className = "group";
@@ -1303,29 +1303,45 @@
       main.type = "button";
       main.className = "agent-head-main";
       main.addEventListener("click", toggleExpanded);
+      // 图标只从后端固定 token 映射到本地字形，不接受快照注入任意 HTML/SVG。
+      const iconMarks = {
+        claude: "✳",
+        codex: "⌬",
+        opencode: "▣",
+        cursor: "◆",
+        kimi: "K",
+        pi: "Pı",
+        omp: "T",
+      };
+      const iconName = Object.hasOwn(iconMarks, agent.icon) ? agent.icon : "default";
+      const icon = document.createElement("span");
+      icon.className = `agent-icon agent-icon-${iconName}`;
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = iconMarks[iconName] ?? "›_";
       const copy = document.createElement("div");
       copy.className = "agent-copy";
       const name = document.createElement("span");
       name.className = "agent-name";
       name.textContent = agent.name;
       const cli = document.createElement("span");
-      cli.className = agent.cliDetected ? "agent-cli detected" : "agent-cli";
-      cli.textContent = agent.cliDetected ? "已检测到 CLI" : "未检测到 CLI";
+      cli.className = agent.executablePath ? "agent-cli detected" : "agent-cli";
+      cli.textContent = agent.executablePath || "未安装";
+      if (agent.executablePath) cli.title = agent.executablePath;
       copy.append(name, cli);
-      main.appendChild(copy);
+      main.append(icon, copy);
       const state = document.createElement("span");
       state.className = agent.integrated ? "agent-state installed" : "agent-state";
-      state.textContent = agent.integrated ? "已安装" : "未安装";
+      state.textContent = agent.integrated ? "已安装" : "关闭";
       const enabled = document.createElement("label");
       enabled.className = "toggle";
       const enabledInput = document.createElement("input");
       enabledInput.type = "checkbox";
-      enabledInput.checked = agent.enabled;
-      enabledInput.setAttribute("aria-label", `启用 ${agent.name}`);
-      enabledInput.addEventListener("change", () => commitValue(
-        { key: `agents.enabled.${agent.id}` },
-        enabledInput.checked
-      ));
+      enabledInput.checked = agent.integrated;
+      enabledInput.setAttribute("aria-label", `${agent.integrated ? "卸载" : "安装"} ${agent.name} 集成`);
+      enabledInput.addEventListener("change", () => send("action", {
+        action: agent.integrated ? "uninstallAgent" : "installAgent",
+        payload: { provider: agent.id },
+      }));
       const enabledTrack = document.createElement("span");
       enabledTrack.className = "toggle-track";
       enabled.append(enabledInput, enabledTrack);
@@ -1345,6 +1361,24 @@
         const hookDetail = document.createElement("p");
         hookDetail.className = "agent-hook-detail";
         hookDetail.textContent = agent.hookDetail;
+        const providerEnabled = document.createElement("label");
+        providerEnabled.className = "agent-provider-enabled";
+        const providerEnabledCopy = document.createElement("span");
+        providerEnabledCopy.textContent = "在快速启动中启用";
+        const providerToggle = document.createElement("span");
+        providerToggle.className = "toggle";
+        const providerInput = document.createElement("input");
+        providerInput.type = "checkbox";
+        providerInput.checked = agent.enabled;
+        providerInput.setAttribute("aria-label", `在快速启动中启用 ${agent.name}`);
+        providerInput.addEventListener("change", () => commitValue(
+          { key: `agents.enabled.${agent.id}` },
+          providerInput.checked
+        ));
+        const providerTrack = document.createElement("span");
+        providerTrack.className = "toggle-track";
+        providerToggle.append(providerInput, providerTrack);
+        providerEnabled.append(providerEnabledCopy, providerToggle);
         const commandField = document.createElement("label");
         commandField.className = "agent-command-field";
         const commandLabel = document.createElement("span");
@@ -1363,15 +1397,7 @@
         commandHint.className = "agent-command-hint";
         commandHint.textContent = "可选的可执行文件、wrapper 与全局参数；Aster 会自动追加原生 resume / fork 参数，留空恢复默认。";
         commandField.append(commandLabel, commandInput, commandHint);
-        const actions = document.createElement("div");
-        actions.className = "agent-detail-actions";
-        const setup = document.createElement("button");
-        setup.type = "button";
-        setup.className = agent.integrated ? "action-button danger" : "action-button";
-        setup.textContent = agent.integrated ? "卸载集成" : "安装集成";
-        setup.addEventListener("click", () => send("action", { action: agent.integrated ? "uninstallAgent" : "installAgent", payload: { provider: agent.id } }));
-        actions.appendChild(setup);
-        detail.append(hookDetail, commandField, actions);
+        detail.append(hookDetail, providerEnabled, commandField);
         row.appendChild(detail);
       }
       card.appendChild(row);

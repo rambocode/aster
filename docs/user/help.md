@@ -262,7 +262,7 @@ aster pane exec --format json -- git status --short
 
 ## Working with Agents
 
-Aster 支持 Claude Code、Codex、OpenCode、Cursor CLI、Kimi Code、Pi 和 omp。在“设置 → 智能体”可启用 provider、安装/卸载受管 lifecycle 集成，并为 wrapper、环境配置或自定义可执行文件设置结构化启动命令。安装和卸载只改动带 Aster 标识的 hook/plugin；用户自己的配置保持不变，变更后应重启对应 Agent。
+Aster 支持 Claude Code、Codex、OpenCode、Cursor CLI、Kimi Code、Pi 和 omp。在“设置 → 智能体”中，每个 provider 会显示图标与检测到的 CLI 绝对路径；从 Finder 或 Dock 启动 Aster 时，也会识别 `~/.local/bin`、Homebrew 及常见 Node 版本管理器里的安装。右侧“已安装 / 关闭”和开关专指 Aster 受管 lifecycle 集成，与 CLI 路径是独立状态；展开一行后可另行控制它是否出现在快速启动入口，并为 wrapper、环境配置或自定义可执行文件设置结构化启动命令。安装和卸载只改动带 Aster 标识的 hook/plugin；用户自己的配置保持不变，变更后应重启对应 Agent。
 
 - lifecycle hook 把 `processing / idle / awaiting-input` 归一到所属 PTY，驱动标签徽章、完成/等待通知和“处理期间阻止睡眠”。不会读取或保存 prompt 正文。
 - “Shell”菜单对齐 Otty 的完整结构：顶部是“重命名标签页…”“设置标签页前缀…”（共用同一原生对话框，后者预选动态前缀模式）与“清屏”（`⌘K`）；随后是围绕当前工作目录的“拷贝路径”“在访达中显示”“打开方式”（无可靠 CWD 时置灰）；中段保留 Vi/Mark/Hint、只读模式与 Composer；底部是“Git”子菜单（图形客户端入口 + Commit/Push/Pull/Fetch/Merge…/Rebase…，全部只预填命令到终端，由你回车执行）与“通知与权限…”（跳到设置的 Shell 分类）。“打开方式”与“Git”和窗口标题胶囊弹层显示完全相同的条目。

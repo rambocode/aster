@@ -372,6 +372,55 @@ func agentSetupRequiresRegularExecutable() throws {
   #expect(status.plan.blocker == .executableUnavailable(command: "codex"))
 }
 
+@Test("GUI 精简 PATH 仍能发现用户目录与 nvm 中的 Agent CLI")
+func agentSetupDiscoversCommonGUIInstallLocations() throws {
+  let root = try agentSetupTemporaryDirectory(named: "aster-agent-setup-gui-path")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let home = root.appendingPathComponent("home", isDirectory: true)
+  let localBin = home.appendingPathComponent(".local/bin", isDirectory: true)
+  let nvmBin = home.appendingPathComponent(
+    ".nvm/versions/node/v20.19.5/bin",
+    isDirectory: true
+  )
+  try FileManager.default.createDirectory(at: localBin, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: nvmBin, withIntermediateDirectories: true)
+  try makeExecutable(named: AgentProvider.claudeCode.commandName, in: localBin)
+  try makeExecutable(named: AgentProvider.openCode.commandName, in: nvmBin)
+  let service = AgentSetupService(
+    homeDirectory: home,
+    environment: ["PATH": "/usr/bin:/bin"]
+  )
+
+  let claude = try service.status(for: .claudeCode)
+  let openCode = try service.status(for: .openCode)
+  #expect(claude.executablePath == localBin.appendingPathComponent("claude").path)
+  #expect(openCode.executablePath == nvmBin.appendingPathComponent("opencode").path)
+}
+
+@Test("集成状态不因 CLI 暂时不可检测而丢失")
+func agentSetupKeepsManagedIntegrationStatusWithoutExecutable() throws {
+  let root = try agentSetupTemporaryDirectory(named: "aster-agent-setup-independent-status")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let home = root.appendingPathComponent("home", isDirectory: true)
+  let bin = root.appendingPathComponent("bin", isDirectory: true)
+  try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+  let executable = bin.appendingPathComponent(AgentProvider.claudeCode.commandName)
+  try makeExecutable(named: AgentProvider.claudeCode.commandName, in: bin)
+  let service = AgentSetupService(
+    homeDirectory: home,
+    executableSearchDirectories: [bin]
+  )
+  #expect(try service.install(.claudeCode).integrationInstalled)
+
+  try FileManager.default.removeItem(at: executable)
+
+  let status = try service.status(for: .claudeCode)
+  #expect(status.executablePath == nil)
+  #expect(status.managedIntegrationInstalled)
+  #expect(status.integrationInstalled)
+}
+
 @Test("旧 Aster TOML 区块原位升级且不移动后续用户配置")
 func agentSetupReplacesManagedTOMLBlockInPlace() throws {
   let root = try agentSetupTemporaryDirectory(named: "aster-agent-setup-toml-upgrade")

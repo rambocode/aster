@@ -193,6 +193,45 @@ func settingsSnapshotContainsRuntimeValuesAndCapabilities() throws {
   #expect(computedFonts.values.allSatisfy { !$0.isEmpty })
 }
 
+@Test("智能体快照下发 Otty 风格图标、CLI 绝对路径与独立集成状态")
+@MainActor
+func settingsAgentSnapshotContainsDetectionEvidence() throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "AsterSettingsAgentSnapshot-\(UUID().uuidString)",
+    isDirectory: true
+  )
+  defer { try? FileManager.default.removeItem(at: root) }
+  let home = root.appendingPathComponent("home", isDirectory: true)
+  let bin = root.appendingPathComponent("bin", isDirectory: true)
+  try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+  let codexPath = bin.appendingPathComponent(AgentProvider.codex.commandName)
+  try "#!/bin/sh\nexit 0\n".write(to: codexPath, atomically: true, encoding: .utf8)
+  try FileManager.default.setAttributes(
+    [.posixPermissions: NSNumber(value: 0o755)],
+    ofItemAtPath: codexPath.path
+  )
+  let controller = SettingsViewController(
+    preferences: AppPreferences(defaults: isolatedSettingsDefaults()),
+    agentSetupService: AgentSetupService(
+      homeDirectory: home,
+      executableSearchDirectories: [bin]
+    )
+  )
+  controller.loadViewIfNeeded()
+
+  let snapshot = controller.settingsSnapshotForTesting()
+  let agents = try #require(snapshot["agents"] as? [[String: Any]])
+  let codex = try #require(agents.first { $0["id"] as? String == AgentProvider.codex.rawValue })
+  let cursor = try #require(agents.first { $0["id"] as? String == AgentProvider.cursorCLI.rawValue })
+  let omp = try #require(agents.first { $0["id"] as? String == AgentProvider.omp.rawValue })
+  #expect(codex["executablePath"] as? String == codexPath.path)
+  #expect(codex["icon"] as? String == "codex")
+  #expect(codex["integrated"] as? Bool == false)
+  #expect(cursor["name"] as? String == "Cursor CLI")
+  #expect(omp["name"] as? String == "omp")
+}
+
 @Test("网页主题编辑把黑暗主题参数追加到原配置而不创建副本")
 @MainActor
 func settingsThemeActionsUseOverridesForDarkTheme() throws {

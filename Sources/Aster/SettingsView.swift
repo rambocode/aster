@@ -3135,8 +3135,8 @@ extension SettingsViewController: WKNavigationDelegate {
     ]
   }
 
-  /// 编程智能体卡片的数据源（Otty 风格折叠行）：CLI 检测与集成状态拆成独立布尔值，
-  /// 启动命令只下发用户自定义部分，默认命令交给输入框 placeholder 展示。
+  /// 编程智能体卡片的数据源（Otty 风格折叠行）：CLI 绝对路径与集成状态是两条
+  /// 独立证据。启动命令只下发用户自定义部分，默认命令交给输入框 placeholder 展示。
   private func makeWebAgents() -> [[String: Any]] {
     AgentProvider.allCases.map { provider in
       let status = try? agentSetupService.status(for: provider)
@@ -3144,8 +3144,10 @@ extension SettingsViewController: WKNavigationDelegate {
       return [
         "id": provider.rawValue,
         "name": agentDisplayName(provider),
+        "icon": agentIconName(provider),
         "defaultCommand": provider.commandName,
         "customCommand": custom.map { WorkflowShellCommandEncoder.encode($0) } ?? "",
+        "executablePath": status?.executablePath ?? "",
         "cliDetected": status?.executableAvailable == true,
         "enabled": preferences.configuration.agents.enabledAgents.contains(provider.commandName),
         "integrated": status?.integrationInstalled == true,
@@ -4599,10 +4601,24 @@ extension SettingsViewController: WKNavigationDelegate {
     case .claudeCode: "Claude Code"
     case .codex: "Codex"
     case .openCode: "OpenCode"
-    case .cursorCLI: "Cursor Agent"
+    case .cursorCLI: "Cursor CLI"
     case .kimiCode: "Kimi Code"
     case .pi: "Pi"
-    case .omp: "OMP"
+    case .omp: "omp"
+    }
+  }
+
+  /// 网页资源只接受这组固定 token，再映射为 Aster 自绘的本地 provider 图标；不下发
+  /// 文件路径或任意 SVG，避免设置快照扩大 WebView 的资源与脚本边界。
+  private func agentIconName(_ provider: AgentProvider) -> String {
+    switch provider {
+    case .claudeCode: "claude"
+    case .codex: "codex"
+    case .openCode: "opencode"
+    case .cursorCLI: "cursor"
+    case .kimiCode: "kimi"
+    case .pi: "pi"
+    case .omp: "omp"
     }
   }
 
