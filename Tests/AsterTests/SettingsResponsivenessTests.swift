@@ -371,3 +371,150 @@ func settingsBridgeUpdatesBoundPanelWidths() throws {
   #expect(store.state.sidebarWidth == 310)
   #expect(store.state.inspectorWidth == 420)
 }
+
+// MARK: - 软件更新
+
+/// 替身更新器，让「更新」四行的全部接线在不联网、不打包成 .app 的前提下可测。
+@MainActor
+private final class StubSoftwareUpdateController: SoftwareUpdateControlling {
+  var automaticallyChecksForUpdates = false
+  var automaticallyDownloadsUpdates = false
+  var canCheckForUpdates = true
+  var status: SoftwareUpdateStatus = .idle
+  var lastCheckDate: Date?
+  private(set) var checkCount = 0
+  private(set) var channelChanges: [UpdateChannel] = []
+
+  func checkForUpdates() {
+    checkCount += 1
+    status = .checking
+  }
+
+  func channelDidChange(to channel: UpdateChannel) {
+    channelChanges.append(channel)
+  }
+}
+
+/// 锁死真值归属：两个自动开关只进 Sparkle，通道只进 AppPreferences 的独立键。
+/// 任何一天有人把它们「顺手」搬进 AsterConfiguration 或兼容字段，这条会红。
+@Test("更新开关写进 Sparkle 控制面，通道写进偏好并跨启动保留")
+@MainActor
+func settingsBridgeRoutesUpdateSettingsToUpdaterAndPreferences() throws {
+  let defaults = isolatedSettingsDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let stub = StubSoftwareUpdateController()
+  let controller = SettingsViewController(preferences: preferences, updateController: stub)
+  controller.loadViewIfNeeded()
+
+  try controller.applySettingForTesting(key: "update.automaticallyChecks", value: true)
+  try controller.applySettingForTesting(key: "update.automaticallyDownloads", value: true)
+  #expect(stub.automaticallyChecksForUpdates)
+  #expect(stub.automaticallyDownloadsUpdates)
+  // 不进强类型配置，也不进 Otty 兼容字段。
+  #expect(preferences.configuration == AsterConfiguration.default)
+  #expect(preferences.settingsCompatibility["update.automaticallyChecks"] == nil)
+  #expect(preferences.settingsCompatibility["update.automaticallyDownloads"] == nil)
+  #expect(preferences.settingsCompatibility["update.channel"] == nil)
+
+  try controller.applySettingForTesting(key: "update.channel", value: "preview")
+  #expect(preferences.updateChannel == .preview)
+  #expect(stub.channelChanges == [.preview])
+  #expect(AppPreferences(defaults: defaults).updateChannel == .preview)
+  #expect(AppPreferences.updateChannel(from: defaults) == .preview)
+
+  #expect(throws: (any Error).self) {
+    try controller.applySettingForTesting(key: "update.channel", value: "nightly")
+  }
+  #expect(throws: (any Error).self) {
+    try controller.applySettingForTesting(key: "update.automaticallyChecks", value: "true")
+  }
+}
+
+/// 状态点、取反派生键与 capability 都是网页渲染的输入，错了不会报错、只会静默失真。
+@Test("更新快照下发状态点、派生禁用键与 capability")
+@MainActor
+func settingsSnapshotExposesUpdateStatusAndCapability() throws {
+  let defaults = isolatedSettingsDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let stub = StubSoftwareUpdateController()
+  let controller = SettingsViewController(preferences: preferences, updateController: stub)
+  controller.loadViewIfNeeded()
+
+  stub.status = .available(version: "9.9.9")
+  var snapshot = controller.settingsSnapshotForTesting()
+  var values = try #require(snapshot["values"] as? [String: Any])
+  #expect((values["update.statusText"] as? String)?.contains("9.9.9") == true)
+  #expect(values["update.statusState"] as? String == "updateAvailable")
+  #expect(values["update.channel"] as? String == "stable")
+  // 自动检查关闭 → 派生禁用键为真，网页据此把「自动下载并安装」置灰。
+  #expect(values["update.automaticChecksDisabled"] as? Bool == true)
+  let capabilities = try #require(snapshot["capabilities"] as? [String: Bool])
+  #expect(capabilities["softwareUpdate"] == true)
+
+  stub.automaticallyChecksForUpdates = true
+  snapshot = controller.settingsSnapshotForTesting()
+  values = try #require(snapshot["values"] as? [String: Any])
+  #expect(values["update.automaticallyChecks"] as? Bool == true)
+  #expect(values["update.automaticChecksDisabled"] as? Bool == false)
+
+  // 开发构建：没有 updater，整组置灰并说明原因。
+  let bare = SettingsViewController(preferences: preferences, updateController: nil)
+  bare.loadViewIfNeeded()
+  let bareSnapshot = bare.settingsSnapshotForTesting()
+  let bareCapabilities = try #require(bareSnapshot["capabilities"] as? [String: Bool])
+  #expect(bareCapabilities["softwareUpdate"] == false)
+  let bareValues = try #require(bareSnapshot["values"] as? [String: Any])
+  #expect(bareValues["update.statusText"] as? String == SoftwareUpdateStatus.unavailable.statusText)
+}
+
+@Test("现在检查按钮走 action allowlist 且检查进行中不重入")
+@MainActor
+func settingsUpdateActionTriggersCheck() throws {
+  let preferences = AppPreferences(defaults: isolatedSettingsDefaults())
+  let stub = StubSoftwareUpdateController()
+  let controller = SettingsViewController(preferences: preferences, updateController: stub)
+  controller.loadViewIfNeeded()
+
+  controller.applyThemeActionForTesting("checkForUpdates", payload: [:])
+  #expect(stub.checkCount == 1)
+
+  // Sparkle 在一次更新会话进行中时 canCheckForUpdates 为假；此时再点不应重复发起。
+  stub.canCheckForUpdates = false
+  controller.applyThemeActionForTesting("checkForUpdates", payload: [:])
+  #expect(stub.checkCount == 1)
+}
+
+/// 网页清单与 Swift 桥是两份手写清单，只能靠文本断言保持一致。
+@Test("更新分区的清单键与 Swift 桥一一对应且排在关于之前")
+func settingsUpdateSectionMatchesBridge() throws {
+  let script = try String(
+    contentsOf: URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+      .appendingPathComponent("Resources/settings-ui/settings.js"),
+    encoding: .utf8)
+
+  #expect(script.contains("{ title: \"更新\", rows: ["))
+  #expect(script.contains("action(\"checkForUpdates\""))
+  #expect(script.contains("update.automaticallyChecks"))
+  #expect(script.contains("update.automaticallyDownloads"))
+  #expect(script.contains("update.channel"))
+  #expect(script.contains("options.updateChannel"))
+  #expect(script.contains("statusKey: \"update.statusText\""))
+  #expect(script.contains("statusStateKey: \"update.statusState\""))
+  #expect(script.contains("disabledWhen: \"update.automaticChecksDisabled\""))
+  #expect(script.contains("capability: \"softwareUpdate\""))
+
+  let updateGroup = try #require(script.range(of: "{ title: \"更新\", rows: ["))
+  let aboutGroup = try #require(script.range(of: "{ title: \"关于\", rows: ["))
+  #expect(updateGroup.lowerBound < aboutGroup.lowerBound)
+
+  // 状态键加了但颜色规则漏了的话，状态点会静默变成中性灰而不会报错。
+  let style = try String(
+    contentsOf: URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+      .appendingPathComponent("Resources/settings-ui/settings.css"),
+    encoding: .utf8)
+  #expect(style.contains("[data-state=\"upToDate\"]"))
+  #expect(style.contains("[data-state=\"updateAvailable\"]"))
+  #expect(style.contains("[data-state=\"failed\"]"))
+}

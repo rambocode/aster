@@ -44,6 +44,7 @@
     fontBlending: [["srgbOver", "sRGB Over"], ["macOSLike", "macOS 原生"], ["linear", "线性"], ["perceptual", "感知"]],
     windowsText: [["natural", "自然"], ["naturalSymmetric", "自然对称"], ["gdi", "GDI 经典"], ["clearType", "ClearType"], ["aliased", "无抗锯齿"]],
     recordingMode: [["off", "关闭"], ["on", "记录中"], ["incognito", "隐身"]],
+    updateChannel: [["stable", "稳定版"], ["preview", "预览版"]],
     memoryExtractionProvider: [["claudeCode", "Claude Code"], ["codex", "Codex"], ["openCode", "OpenCode"], ["cursorCLI", "Cursor Agent"], ["kimiCode", "Kimi Code"], ["pi", "Pi"], ["omp", "OMP"]],
   };
 
@@ -74,6 +75,30 @@
           action("configureExternalApps", "为常用应用设为默认终端", "配置 VS Code、Cursor、Windsurf、VSCodium、Trae 和 Sublime Text", "配置…"),
           action("openFinderSettings", "Finder 集成", "配置 Finder 服务快捷键", "打开系统设置"),
           action("openFullDiskAccess", "完全磁盘访问权限", "仅在命令需要受保护目录时开启", "打开系统设置"),
+        ]},
+        { title: "更新", rows: [
+          // 状态点挂在动作行上（与「通知 → 系统权限」同构）：statusKey 是替换该行 detail 的，
+          // 挂组首读作「软件更新：已是最新版本 [现在检查]」。
+          action("checkForUpdates", "软件更新", "从 Aster 官方更新源检查是否有新版本", "现在检查", {
+            capability: "softwareUpdate",
+            unsupportedDetail: "此构建未启用自动更新（开发构建或未配置更新源）",
+            statusKey: "update.statusText",
+            statusStateKey: "update.statusState",
+          }),
+          row("update.automaticallyChecks", "自动检查更新", "每天在后台查询一次新版本", "toggle", {
+            capability: "softwareUpdate",
+          }),
+          // disabledWhen 只认真值不认取反，因此依赖原生侧下发的派生键 update.automaticChecksDisabled。
+          // 用 disabledWhen 而不是 visibleWhen：关掉自动检查时该行应变灰但可见，让用户知道能力存在。
+          row("update.automaticallyDownloads", "自动下载并安装", "后台静默下载，退出 Aster 后自动完成安装", "toggle", {
+            capability: "softwareUpdate",
+            disabledWhen: "update.automaticChecksDisabled",
+            disabledDetail: "需要先开启“自动检查更新”",
+          }),
+          row("update.channel", "更新通道", "稳定版只接收正式发布；预览版会更早收到测试构建，也更可能遇到问题", "select", {
+            capability: "softwareUpdate",
+            options: options.updateChannel,
+          }),
         ]},
         { title: "关于", rows: [
           row("about.version", "Aster", "当前应用版本", "readonly"),
@@ -688,8 +713,10 @@
     }
     const detail = document.createElement("span");
     detail.className = "setting-detail";
+    // capability 缺失的原因不总是「平台不支持」——例如开发构建没有更新器，
+    // 因此允许行自带 unsupportedDetail 说明真实原因。
     detail.textContent = !isSupported(item)
-      ? `${item.detail}（当前平台不可用）`
+      ? (item.unsupportedDetail ?? `${item.detail}（当前平台不可用）`)
       : (isDisabled(item) ? (item.disabledDetail ?? item.detail) : item.detail);
     copy.append(label, detail);
     // statusKey 行（如通知系统权限）用彩色圆点 + 状态文本替代静态描述，状态由原生侧

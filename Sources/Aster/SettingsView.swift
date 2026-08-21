@@ -83,6 +83,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private let preferences: AppPreferences
   private let panelLayoutBinding: WorkspacePanelSettingsBinding
   private let agentSetupService: AgentSetupService
+  /// 生产环境是 SoftwareUpdateService.shared；开发构建与测试为 nil / stub。
+  private let updateController: (any SoftwareUpdateControlling)?
   private var selection: Section = .general
   private var searchText = ""
   private var focusedThemeID: String?
@@ -187,11 +189,13 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   init(
     preferences: AppPreferences,
     panelLayoutBinding: WorkspacePanelSettingsBinding = WorkspacePanelSettingsBinding(),
-    agentSetupService: AgentSetupService = AgentSetupService()
+    agentSetupService: AgentSetupService = AgentSetupService(),
+    updateController: (any SoftwareUpdateControlling)? = SoftwareUpdateService.shared
   ) {
     self.preferences = preferences
     self.panelLayoutBinding = panelLayoutBinding
     self.agentSetupService = agentSetupService
+    self.updateController = updateController
     super.init(nibName: nil, bundle: nil)
   }
 
@@ -251,6 +255,15 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       .store(in: &cancellables)
     NotificationCenter.default.publisher(for: .terminalNotificationAuthorizationDidChange)
       .sink { [weak self] _ in self?.scheduleRefresh() }
+      .store(in: &cancellables)
+    // Sparkle 的检查是异步的、且可能跨越数分钟的用户交互，结果只能经通知回流。
+    NotificationCenter.default.publisher(for: .softwareUpdateStatusDidChange)
+      .sink { [weak self] _ in
+        guard let self else { return }
+        // 检查已出结论时收掉顶部的「正在检查更新…」横幅，结果改由状态点承载。
+        if self.updateController?.status.isTerminal == true { self.message = nil }
+        self.scheduleRefresh()
+      }
       .store(in: &cancellables)
     TerminalNotificationService.shared.refreshAuthorizationStatus()
     refreshMemoryStoreSize()
@@ -398,7 +411,11 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
     let spacer = NSView()
     column.addArrangedSubview(spacer)
-    let version = makeLabel("Aster 0.4.1", size: 9, color: SettingsTheme.tertiaryInk, monospaced: true)
+    // 版本号读 Info.plist 而不是写死：接入自动更新后，「当前版本」必须只有一个真值，
+    // 否则用户会看到侧栏与「关于」两处不一致。
+    let version = makeLabel(
+      "Aster \(AsterResourceLocations.productVersion())", size: 9,
+      color: SettingsTheme.tertiaryInk, monospaced: true)
     version.alignment = .center
     column.addArrangedSubview(version)
 
@@ -1096,6 +1113,38 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         },
       ]),
     ]
+  }
+
+  /// 与 `updateAutocompleteSpecs()` 同构的「设置页按钮发起异步网络操作」：先把进行中
+  /// 状态写进 message 并推快照，结果经 `.softwareUpdateStatusDidChange` 回流。
+  ///
+  /// 刻意不 await：Sparkle 的更新会话包含用户交互（查看发行说明、确认安装、重启），
+  /// 可能持续数分钟，设置页不能挂在上面。
+  private func checkForUpdatesNow() {
+    guard let updateController else {
+      message = "此构建未启用自动更新。请从项目发布页下载最新版本。"
+      refresh()
+      return
+    }
+    guard updateController.canCheckForUpdates else {
+      message = "已有一次更新检查正在进行中。"
+      refresh()
+      return
+    }
+    message = "正在检查更新…"
+    refresh()
+    updateController.checkForUpdates()
+  }
+
+  /// 状态点文案 = 领域状态文案 + 可选的「上次检查」后缀。时间格式化留在 UI 层，
+  /// 不进 AsterCore：那会把 RelativeDateTimeFormatter 的本地化行为带进纯逻辑测试。
+  private func updateStatusText() -> String {
+    let status = updateController?.status ?? .unavailable
+    guard status == .upToDate || status == .idle, let date = updateController?.lastCheckDate
+    else { return status.statusText }
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .short
+    return "\(status.statusText) · 上次检查 \(formatter.localizedString(for: date, relativeTo: Date()))"
   }
 
   private func updateAutocompleteSpecs() {
@@ -2983,6 +3032,18 @@ extension SettingsViewController: WKNavigationDelegate {
       // 网页侧的 `disabledWhen` 只看真值，因此提供一个取反后的派生键，
       // 而不是让 JS 自己推断「关闭时禁用 provider 选择器」。
       "memory.extractionDisabled": !preferences.memoryExtractionEnabled,
+    ], [
+      // 软件更新。两个布尔的真值在 Sparkle 自己的 UserDefaults 里
+      // （SUEnableAutomaticChecks / SUAutomaticallyUpdate），这里只读取，Aster 不保存
+      // 副本——用户在 Sparkle 自带对话框里改动后不会出现两个真值。通道 Sparkle 不
+      // 持久化，真值在 AppPreferences。
+      "update.automaticallyChecks": updateController?.automaticallyChecksForUpdates ?? false,
+      "update.automaticallyDownloads": updateController?.automaticallyDownloadsUpdates ?? false,
+      // 同 memory.extractionDisabled：网页的 disabledWhen 只看真值，因此下发取反派生键。
+      "update.automaticChecksDisabled": !(updateController?.automaticallyChecksForUpdates ?? false),
+      "update.channel": preferences.updateChannel.rawValue,
+      "update.statusText": updateStatusText(),
+      "update.statusState": (updateController?.status ?? .unavailable).statusState,
     ]]
     for group in valueGroups {
       values.merge(group, uniquingKeysWith: { _, new in new })
@@ -2997,7 +3058,11 @@ extension SettingsViewController: WKNavigationDelegate {
       "section": selection.webIdentifier,
       "message": message ?? "",
       "values": values,
-      "capabilities": ["windowsTextRendering": false],
+      "capabilities": [
+        "windowsTextRendering": false,
+        // 开发构建与未配置更新源的构建没有 updater，「更新」四行整体置灰而不是假装可用。
+        "softwareUpdate": updateController != nil,
+      ],
       "themes": makeWebThemes(),
       "themeEditor": makeWebThemeEditor(),
       "computedFonts": makeWebComputedFonts(),
@@ -3465,6 +3530,20 @@ extension SettingsViewController: WKNavigationDelegate {
       }
       preferences.memoryExtractionProvider = provider.rawValue
       reinstallMemoryExtractionProvider()
+    case "update.automaticallyChecks":
+      // 直接写进 Sparkle，Aster 不留副本。没有 updater 时拒绝而不是静默丢弃：
+      // 网页在 capability=false 下本来就不该发出这条 set。
+      guard let updateController else { throw SettingsWebBridgeError.unknownKey }
+      updateController.automaticallyChecksForUpdates = try bool()
+    case "update.automaticallyDownloads":
+      guard let updateController else { throw SettingsWebBridgeError.unknownKey }
+      updateController.automaticallyDownloadsUpdates = try bool()
+    case "update.channel":
+      guard let channel = UpdateChannel(rawValue: try string()) else {
+        throw SettingsWebBridgeError.invalidValue
+      }
+      preferences.updateChannel = channel
+      updateController?.channelDidChange(to: channel)
     default:
       if key.hasPrefix("agents.enabled."),
         let provider = AgentProvider(rawValue: String(key.dropFirst("agents.enabled.".count)))
@@ -3701,6 +3780,7 @@ extension SettingsViewController: WKNavigationDelegate {
       message = "已清除链接安全授权。"
       refresh()
     case "updateAutocomplete": updateAutocompleteSpecs()
+    case "checkForUpdates": checkForUpdatesNow()
     case "clearAutocomplete": clearAutocompleteLearning()
     case "installAgent", "uninstallAgent":
       guard let id = payload["provider"] as? String, let provider = AgentProvider(rawValue: id) else {

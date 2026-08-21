@@ -265,6 +265,11 @@ input.control[type="text"]:focus, input.control[type="number"]:focus { border-co
 .setting-status-dot[data-state="authorized"] { background: #22c55e; }
 .setting-status-dot[data-state="bannerDisabled"] { background: #f59e0b; }
 .setting-status-dot[data-state="denied"] { background: #e5484d; }
+/* 软件更新状态点。刻意复用上面三档的同一组色值，避免同一页面出现第二种绿/黄/红。
+   未检查、检查中与不可用不设规则，落到 .setting-status-dot 的中性默认色。 */
+.setting-status-dot[data-state="upToDate"] { background: #22c55e; }
+.setting-status-dot[data-state="updateAvailable"] { background: #f59e0b; }
+.setting-status-dot[data-state="failed"] { background: #e5484d; }
 
 .toggle { position: relative; width: 38px; height: 22px; flex: 0 0 38px; }
 .toggle input { position: absolute; width: 1px; height: 1px; opacity: 0; }
