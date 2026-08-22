@@ -2184,7 +2184,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @Published private(set) var lastCommandExitStatus: Int?
   /// 是否有前台命令正在运行且近期有输出（区别于 `isRunning` 的 shell 存活）。
   /// 由 PTY 前台进程组 + 终端缓冲活跃度轮询驱动，只在状态翻转时发布，
-  /// 是侧栏运行中 spinner 的唯一业务状态源。
+  /// 是普通命令侧栏 spinner 的业务状态源。Agent 另以 lifecycle hook 或有界
+  /// 输入/输出活动判定 processing，避免长寿命 TUI 空闲时一直旋转。
   @Published private(set) var hasRunningCommand = false
   /// OSC 9;4 与 shell 自动进度的统一状态，供标签和 Dock 聚合，不持久化运行态。
   @Published private(set) var progressState = TerminalProgressState.clear
@@ -2216,6 +2217,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var agentLifecycleIsAuthoritative = false
   private var agentLifecycleSequence: UInt64 = 0
   private var agentStateReducer = AgentTaskStateReducer()
+  /// 未安装 lifecycle hook 时，长寿命 Agent TUI 的前台进程不能等同于正在
+  /// 生成。只在命令启动、用户输入或 PTY 输出后保持短暂 processing；连续静默
+  /// 后回到 idle。一旦 hook 到达，权威 lifecycle 始终优先且不受超时影响。
+  private var fallbackAgentActivityIsProcessing = false
+  private var fallbackAgentIdleTask: Task<Void, Never>?
 
   private var foregroundPollTask: Task<Void, Never>?
   /// 诊断 seam：true 仅表示尚未取得权威 Shell Integration、仍需周期探测前台进程。
@@ -2245,6 +2251,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   var hasPendingRestoredAgentResume: Bool { pendingRestoredAgentResume != nil }
   private var completedFlashTask: Task<Void, Never>?
   private var progressExpiryTask: Task<Void, Never>?
+  /// 生产固定使用 5 秒静默窗口；构造参数让回归测试可用虚拟的短窗口
+  /// 验证完整 PTY 链路，而不在测试套件中真实等待数秒。
+  private let fallbackAgentIdleDelay: Duration
   /// 通知交付属于应用基础设施边界；默认使用真实系统服务，测试可注入记录器验证
   /// lifecycle 到通知请求的转换，而不申请权限或写入用户通知中心。
   private let notificationPoster: any TerminalNotificationPosting
@@ -2378,6 +2387,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   init(
     workingDirectory: String,
+    fallbackAgentIdleDelay: Duration = .seconds(5),
     notificationPoster: any TerminalNotificationPosting = TerminalNotificationService.shared,
     diagnostics: DiagnosticsCenter = .shared,
     sshEndpointResolver: @escaping @Sendable (SSHCommandInvocation) async -> SSHResolvedEndpoint? = {
@@ -2386,6 +2396,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   ) {
     self.workingDirectory = workingDirectory
     currentWorkingDirectory = workingDirectory
+    self.fallbackAgentIdleDelay = fallbackAgentIdleDelay
     self.notificationPoster = notificationPoster
     self.diagnostics = diagnostics
     self.sshEndpointResolver = sshEndpointResolver
@@ -2994,6 +3005,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     activeAgentProvider = nil
     activeAgentSessionID = nil
     agentTaskState = .idle
+    clearFallbackAgentActivity()
     foregroundPollTask?.cancel()
     foregroundPollTask = nil
     awaitingInputTask?.cancel()
@@ -3682,6 +3694,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       isRunning = false
       foregroundPollTask?.cancel()
       foregroundPollTask = nil
+      clearFallbackAgentActivity()
       awaitingInputTask?.cancel()
       completedFlashTask?.cancel()
       progressExpiryTask?.cancel()
@@ -3709,6 +3722,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     isRunning = false
     foregroundPollTask?.cancel()
     foregroundPollTask = nil
+    clearFallbackAgentActivity()
     awaitingInputTask?.cancel()
     completedFlashTask?.cancel()
     progressExpiryTask?.cancel()
@@ -3742,6 +3756,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     agentTaskState = .idle
     agentTaskCompletionUnread = false
     agentLifecycleIsAuthoritative = false
+    clearFallbackAgentActivity()
     agentLifecycleSequence = 0
     agentStateReducer = AgentTaskStateReducer()
     submittedCommand = nil
@@ -4004,7 +4019,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       activeAgentSessionID = nil
       agentLifecycleSequence = 0
       agentStateReducer = AgentTaskStateReducer()
-      updateAgentTaskState()
+      clearFallbackAgentActivity()
+      if activeAgentProvider != nil {
+        markFallbackAgentActivity()
+      } else {
+        updateAgentTaskState()
+      }
       guard let command = submittedCommand,
         let shell = preferences?.configuration.shell,
         AutomaticProgressMatcher(prefixes: shell.resolvedAutoProgressCommands).matches(command)
@@ -4026,6 +4046,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       activeAgentSessionID = nil
       agentTaskCompletionUnread = false
       agentLifecycleIsAuthoritative = false
+      clearFallbackAgentActivity()
       agentLifecycleSequence = 0
       agentStateReducer = AgentTaskStateReducer()
       if let command = submittedCommand, !command.isEmpty,
@@ -4128,6 +4149,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   private func receiveActivityOutput(_ visibleCursorLine: String) {
     activityOutputTail = String(visibleCursorLine.suffix(4_096))
+    markFallbackAgentActivity()
     awaitingInputTask?.cancel()
     awaitingInputTask = Task { @MainActor [weak self] in
       try? await Task.sleep(for: .milliseconds(1_500))
@@ -4159,6 +4181,39 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       consumeAgentTaskStateSignal(.inputSubmitted)
     }
     clearAwaitingInput()
+    markFallbackAgentActivity()
+  }
+
+  /// 无 hook 时以输入/输出活动作为「正在处理」的有界回退证据。
+  /// 5 秒与旧 SwiftTerm 可见缓冲静默窗口保持一致；权威 hook 在此期间
+  /// 到达时会取消任务，防止真正的静默推理被误报 idle。
+  private func markFallbackAgentActivity() {
+    guard activeAgentProvider != nil, !agentLifecycleIsAuthoritative else { return }
+    fallbackAgentIdleTask?.cancel()
+    if !fallbackAgentActivityIsProcessing {
+      fallbackAgentActivityIsProcessing = true
+      updateAgentTaskState()
+    }
+    let idleDelay = fallbackAgentIdleDelay
+    fallbackAgentIdleTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: idleDelay)
+      guard !Task.isCancelled, let self,
+        self.activeAgentProvider != nil,
+        !self.agentLifecycleIsAuthoritative,
+        self.hasRunningCommand
+      else { return }
+      self.fallbackAgentActivityIsProcessing = false
+      self.fallbackAgentIdleTask = nil
+      self.updateAgentTaskState()
+    }
+  }
+
+  /// 清理只属于非权威回退的活动状态；调用方负责在终止、换代或
+  /// hook 接管后发布它自身的最终 lifecycle，避免这个 helper 产生中间态通知。
+  private func clearFallbackAgentActivity() {
+    fallbackAgentIdleTask?.cancel()
+    fallbackAgentIdleTask = nil
+    fallbackAgentActivityIsProcessing = false
   }
 
   /// Hook 指令与本地用户提交共享同一单调序列，避免其中任一路径绕过 reducer 的乱序
@@ -4179,7 +4234,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       next = agentStateReducer.state
     } else {
       next = AgentTaskState.fold(
-        processing: hasRunningCommand || progressState.isWorking,
+        processing: fallbackAgentActivityIsProcessing || progressState.isWorking,
         awaitingInput: awaitingInput
       )
     }
@@ -4245,6 +4300,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     activeAgentProvider = directive.provider
     if let sessionID = directive.sessionID { activeAgentSessionID = sessionID }
     agentLifecycleIsAuthoritative = true
+    clearFallbackAgentActivity()
     eventRecorder?.agentChanged(
       id: id,
       provider: directive.provider.rawValue,
@@ -4427,6 +4483,7 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
       self.activeAgentProvider = nil
       self.activeAgentSessionID = nil
       self.agentTaskState = .idle
+      self.clearFallbackAgentActivity()
       self.clearSSHRemoteEndpoint()
       self.foregroundPollTask?.cancel()
       self.foregroundPollTask = nil

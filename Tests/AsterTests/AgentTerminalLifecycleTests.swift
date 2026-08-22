@@ -81,6 +81,66 @@ func agentLifecycleRequestsAwaitingAndCompletionNotificationsOnce() throws {
   #expect(recorder.records.allSatisfy { $0.notification.body.contains("codex") })
 }
 
+@Test("无输出 Agent CLI 停留在输入界面后不再显示运行中徽章")
+@MainActor
+func silentAgentCLIStopsShowingProcessingBadge() async throws {
+  let (suiteName, defaults) = try agentLifecycleDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.agents.badgeProcessing = true
+
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "aster-silent-agent-\(UUID().uuidString)",
+    isDirectory: true
+  )
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let executable = directory.appendingPathComponent("codex", isDirectory: false)
+  try Data("#!/bin/sh\n/bin/sleep 2\n".utf8).write(to: executable, options: .atomic)
+  try FileManager.default.setAttributes(
+    [.posixPermissions: 0o700],
+    ofItemAtPath: executable.path
+  )
+
+  let session = TerminalSession(
+    workingDirectory: directory.path,
+    fallbackAgentIdleDelay: .milliseconds(100)
+  )
+  let terminalView = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  defer { session.stop(immediately: true) }
+  session.send(executable.path)
+
+  let startDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+  while session.agentTaskState != .processing, ContinuousClock.now < startDeadline {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(session.activeAgentProvider == .codex)
+  #expect(session.agentTaskState == .processing)
+  #expect(session.agentActivityBadge == .running(percent: nil))
+  #expect(!session.hasAuthoritativeAgentLifecycle)
+  #expect(session.progressState == .clear)
+
+  // CLI 进程仍在前台，但连续无输出表示已停在输入界面；不应因
+  // 为长寿命 TUI 进程未退出，让侧栏 tab 的 spinner 永久运行。
+  try await Task.sleep(for: .milliseconds(250))
+  #expect(session.hasRunningCommand)
+  #expect(session.agentTaskState == .idle)
+  #expect(session.agentActivityBadge == TerminalBadgeState.none)
+
+  // 后续 PTY 输出会重新进入回退 processing；若同时收到权威 hook，
+  // 超时任务必须取消，不得把真实的静默推理误清为 idle。
+  terminalView.onTerminalOutputActivity?("thinking")
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .codex, signal: .processing)
+  )
+  try await Task.sleep(for: .milliseconds(250))
+  #expect(session.hasAuthoritativeAgentLifecycle)
+  #expect(session.agentTaskState == .processing)
+  #expect(session.agentActivityBadge == .running(percent: nil))
+}
+
 @Test("Agent 与显式错误状态驱动 Dock icon 聚合变化")
 @MainActor
 func dockIconStateTracksAgentLifecycleAndExplicitError() async throws {
