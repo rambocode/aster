@@ -18,6 +18,12 @@ final class DockActivityCoordinator {
   private var animationPhase = 0
   /// Working 动画的离散帧数；同时决定每帧的旋转步进（360 / 帧数）。
   private static let animationFrameCount = 12
+  /// 系统默认 Dock 图标会在 tile 内保留视觉边距，自定义 contentView 不会。824/1024
+  /// 沿用 Aster 旧图稿的系统缩入比例，让 working/error 与空闲图标保持同一外轮廓尺寸。
+  private static let activityIconScale: CGFloat = 824.0 / 1024.0
+  /// `NSDockTile.contentView` 始终占满 tile；真正的图标作为居中子视图缩入。若直接把
+  /// `imageView` 设为 contentView，Dock 会把矢量帧铺满整个 tile，看起来像任务开始时放大。
+  private let dockContentView = NSView()
   private let imageView = NSImageView()
   /// Working 动画只有 12 个离散角度。按需缓存已经出现的帧，避免每 220ms 重复把同一
   /// NSImage 栅格化；短任务只生成实际展示过的帧，长任务完成一圈后完全复用缓存。
@@ -160,13 +166,13 @@ final class DockActivityCoordinator {
     case .error:
       imageView.image = errorIcon()
       prepareImageView()
-      NSApp.dockTile.contentView = imageView
+      NSApp.dockTile.contentView = dockContentView
       NSApp.dockTile.badgeLabel = "!"
       NSApp.dockTile.display()
     case .working:
       NSApp.dockTile.badgeLabel = nil
       prepareImageView()
-      NSApp.dockTile.contentView = imageView
+      NSApp.dockTile.contentView = dockContentView
       advanceAnimation()
       animationTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: true) {
         [weak self] _ in
@@ -181,10 +187,20 @@ final class DockActivityCoordinator {
     NSApp.dockTile.display()
   }
 
-  /// NSDockTile 不保证给 contentView 排版；frame 留在零尺寸时整块 tile 什么都画不出来。
+  /// 自定义 Dock 内容需要自己负责两层 frame：透明根视图铺满 tile，图标子视图按系统
+  /// 视觉比例居中缩入。这样动画只改变星芒角度，不会在 idle → working 时改变图标大小。
   private func prepareImageView() {
+    let tile = tileSize()
+    dockContentView.frame = NSRect(origin: .zero, size: tile)
+    if imageView.superview !== dockContentView { dockContentView.addSubview(imageView) }
     imageView.imageScaling = .scaleProportionallyUpOrDown
-    imageView.frame = NSRect(origin: .zero, size: tileSize())
+    let side = min(tile.width, tile.height) * Self.activityIconScale
+    imageView.frame = NSRect(
+      x: (tile.width - side) / 2,
+      y: (tile.height - side) / 2,
+      width: side,
+      height: side
+    )
   }
 
   /// Dock 尺寸随用户设置变化；尺寸变了就作废所有派生帧，避免拉伸旧帧。

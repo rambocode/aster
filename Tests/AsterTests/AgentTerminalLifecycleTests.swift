@@ -170,7 +170,12 @@ func dockIconStateTracksAgentLifecycleAndExplicitError() async throws {
   )
   try await Task.sleep(for: .milliseconds(50))
   #expect(coordinator.currentState == .working)
-  #expect(NSApp.dockTile.contentView != nil)
+  let dockContentView = try #require(NSApp.dockTile.contentView)
+  let animatedIconView = try #require(dockContentView.subviews.first as? NSImageView)
+  #expect(animatedIconView.frame.width < dockContentView.bounds.width)
+  #expect(animatedIconView.frame.height < dockContentView.bounds.height)
+  #expect(abs(animatedIconView.frame.midX - dockContentView.bounds.midX) < 0.01)
+  #expect(abs(animatedIconView.frame.midY - dockContentView.bounds.midY) < 0.01)
   #expect(NSApp.dockTile.badgeLabel == nil)
   // 一圈最多生成 12 个离散角度；完成一圈后继续动画只能复用缓存帧。
   try await Task.sleep(for: .seconds(3))

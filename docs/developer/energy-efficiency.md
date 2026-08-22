@@ -67,6 +67,8 @@ CLI 与 File Pane 共享监听机制，但分别持有安全校验和内容重�
 `errno` 的错误，不把用户路径写入诊断。`TerminalSession.handleShellIntegrationTimeline` 只在
 Ghostty 引擎取消 poll，避免破坏 SwiftTerm Secure Input fallback。`DockActivityCoordinator`
 按当前 `NSApp.applicationIconImage` 身份维护 working/error 缓存，图标替换后不会展示旧帧。
+自定义 Dock 内容用满 tile 的透明根视图承载按 `824/1024` 居中的图标子视图，补回系统默认
+图标的视觉边距；working 只旋转中央星芒，不改变 idle → working 的整块图标尺寸。
 `Vendor/Ghostty/patches/0001-aster-extension-abi.patch` 在 pinned renderer 中提供按需 vsync：
 更新先请求下一次同步帧，display callback 消费后保留一个合并窗口，无后续请求即停止；
 自定义 shader 动画跳过停止逻辑。空闲判定只投递独立 `vsync_stop` async，等当前
