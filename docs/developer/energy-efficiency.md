@@ -34,7 +34,8 @@ Aster 会长期承载多个终端、文件 Pane、Agent 状态和本机 CLI。�
    缓存只保存应用图标派生帧，不保存终端或用户内容。
 7. Ghostty display link 只能在有待呈现帧时运行。持续输出在刷新间重新置位以保持屏幕节奏；
    禁止用 `window-vsync=false` 换取空闲低 wakeup，因为它会引入撕裂、重负载功耗和 macOS
-   外接显示器风险。
+   外接显示器风险。空闲停止必须等 `draw_now` completion 返回并重新 armed 后执行，不能在
+   `drawNowCallback` 内同步调用 `CVDisplayLinkStop`。
 
 ## 业务流程
 
@@ -52,7 +53,9 @@ flowchart LR
   P --> Q[Present latest frame]
   Q --> R{New frame requested?}
   R -->|Yes| Q
-  R -->|No| S[Stop display link]
+  R -->|No| S[Queue deferred stop]
+  S --> T[Rearm draw_now]
+  T --> U[Stop display link]
   L[Dock working state] --> M[12-frame lazy cache]
   M --> N[NSDockTile display]
 ```
@@ -66,7 +69,9 @@ Ghostty 引擎取消 poll，避免破坏 SwiftTerm Secure Input fallback。`Dock
 按当前 `NSApp.applicationIconImage` 身份维护 working/error 缓存，图标替换后不会展示旧帧。
 `Vendor/Ghostty/patches/0001-aster-extension-abi.patch` 在 pinned renderer 中提供按需 vsync：
 更新先请求下一次同步帧，display callback 消费后保留一个合并窗口，无后续请求即停止；
-自定义 shader 动画跳过停止逻辑。
+自定义 shader 动画跳过停止逻辑。空闲判定只投递独立 `vsync_stop` async，等当前
+`draw_now` completion 返回 `.rearm` 后才停止 display link；执行前再次检查请求位，既避免
+CVDisplayLink callback 与 renderer 互等，也不会吞掉并发到达的新帧。
 
 ## 2026-08-19 验证基线
 

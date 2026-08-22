@@ -54,8 +54,10 @@ git -C "$build_dir" fetch -q --depth 1 origin "$ghostty_revision"
 git -C "$build_dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
 
 echo "Applying Aster extension ABI patch $patch_digest"
-git -C "$build_dir" apply --check "$patch_file"
-git -C "$build_dir" apply "$patch_file"
+# Renderer 的若干新增 hunk 使用最小上下文，避免 vendor patch 的空白 context 被 Git 当成
+# 源文件尾随空格；revision 与 patch digest 已共同锁定输入，仍会严格校验已有上下文。
+git -C "$build_dir" apply --check --unidiff-zero "$patch_file"
+git -C "$build_dir" apply --unidiff-zero "$patch_file"
 
 echo "Building GhosttyKit.xcframework"
 (

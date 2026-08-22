@@ -98,6 +98,10 @@ OSC 133/6974。Wakeup 合并为最多一个待执行 tick，避免输出风暴�
 Pinned renderer patch 保留 `window-vsync=true`，但把无自定义 shader 的 display link 改为
 按需运行：`updateFrame` 置位并启动，display callback 消费最新帧，下一轮没有新请求就停止；
 持续输出在相邻刷新间重新置位，因此仍按屏幕刷新率合并，不退化为无 vsync 的即时绘制。
+空闲轮只投递独立的 `vsync_stop` async；`draw_now` completion 返回并重新 armed 后才调用
+`CVDisplayLinkStop`，且停止前重查请求位。不能从 `drawNowCallback` 直接停止：display link
+callback 正在同步通知同一个 completion 时会形成互等，随后窗口失焦的 focus 消息会把主线程
+也拖进死锁，表现为 Dock 再激活无响应。
 
 ### Aster extension ABI v1
 

@@ -23,7 +23,10 @@ Aster 的嵌入式 renderer 额外把 focused display link 改为按需运行：
 光标或尺寸变化时启动，完成最新帧并再确认一轮没有新请求后停止；持续输出会在相邻刷新间
 重新置位请求，因此仍按屏幕节奏合并呈现。只有启用自定义 shader 动画时保持连续 vsync。
 这不等于 `window-vsync=false`：每个真实帧仍由 display link 对齐，避免撕裂、外接显示器
-性能问题和上游文档警告的 macOS 风险。
+性能问题和上游文档警告的 macOS 风险。停止动作必须通过独立的 renderer async completion
+延后一轮：CVDisplayLink callback 会同步通知 `draw_now`，如果 `drawNowCallback` 尚未返回
+`.rearm` 就调用 `CVDisplayLinkStop`，两条线程会互相等待，并在窗口失焦同步 surface focus 时
+进一步锁住 AppKit 主线程。
 
 Pinned patch 还把 dcimgui 的 `ext.cpp` 重命名为唯一的 `dcimgui_ext.cpp`。上游静态库同时
 链接 `pkg/macos/text/ext.c`，两个源文件原本都会生成名为 `ext.o` 的 archive member；Mach-O
