@@ -122,7 +122,10 @@ RELEASE_SHA=$(git rev-parse HEAD)
 # ---------------------------------------- 阶段 2：构建 + 分层签名 + 公证 + 全套验证
 # build-dmg.sh 已经串起 build-app（含 Sparkle 逐层签名）→ 签 DMG → notarytool →
 # stapler → hdiutil/spctl 验证，这里不重复其中任何一步。
-DMG_PATH=$("$PROJECT_DIR/scripts/build-dmg.sh")
+# build-dmg 会把 notarytool、stapler、hdiutil 和 Gatekeeper 的验收日志写到 stdout，
+# 最后一行才是产物路径。直接用整个 stdout 做 DMG_PATH 会在公证全部成功后仍误报
+# “did not produce a DMG”。日志继续实时转发到 stderr，只把最后一行收进变量。
+DMG_PATH=$("$PROJECT_DIR/scripts/build-dmg.sh" | tee /dev/stderr | tail -n 1)
 [[ -f "$DMG_PATH" ]] || die "build-dmg.sh did not produce a DMG"
 
 # -------------------------------------------------------- 阶段 3：先发布 Release 资产
