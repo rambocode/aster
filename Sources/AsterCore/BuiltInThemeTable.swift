@@ -202,6 +202,7 @@ enum BuiltInThemeTable {
     radius: 8,
     sidebarBackground: color("#FFFFFF00"),
     sidebarMaterial: .glass,
+    sidebarPaddingTrailing: 0,
     titlebarForeground: color("#52525B"),
     tab: TerminalTabStyle(
       radius: 6,
@@ -447,10 +448,9 @@ enum BuiltInThemeTable {
     let terminalForeground = color(foreground)
     let terminalBackground = color(background)
     let ansiColors = ansi.split(separator: " ").map { color(String($0)) }
-    // Otty 语义：未声明 panel/surface 的主题（Dracula、One Dark 等终端-only 主题）
-    // chrome 用原生 token 色，而不是沿用终端背景；surface 保留 nil，选中标签才能
-    // 落到原生叠加色而不是与侧栏同色。
-    let resolvedPanel = panel.map(color) ?? mode.nativeChromeBackground
+    // 未声明 panel/surface 的暗色主题在终端底色上叠加 5% 白色，保留 Dracula、
+    // Tokyo Night 等各自色相；surface 保留 nil，选中标签继续落到原生叠加色。
+    let resolvedPanel = panel.map(color) ?? mode.nativeChromeBackground(over: terminalBackground)
     let resolvedSurface = surface.map(color)
     let resolvedInterfaceWindow = color(interfaceWindow ?? panel ?? normalized(background))
     let resolvedInterfaceForeground = color(interfaceForeground ?? foreground)

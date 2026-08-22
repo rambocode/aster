@@ -1,10 +1,11 @@
 import Foundation
 
-/// 把主题序列化成 Otty `.ottytheme` TOML 子集。
+/// 把主题序列化成 Aster `.astertheme` TOML 子集。字段语法参考 Otty，但输出只属于
+/// Aster 的主题目录，不与 Otty 共享文件或覆盖段。
 ///
 /// 用途：把 Aster 内置主题物化到主题目录（`~/.config/aster/themes`），作为安装包
 /// 自带种子文件缺失时的兜底（`swift run`、单测）。输出的每个键都必须能被
-/// `ThemeFileParser` 无损读回；已存在的文件（Otty 落盘或用户自定义）绝不覆盖，
+/// `ThemeFileParser` 无损读回；已存在的 Aster 文件或用户自定义文件绝不覆盖，
 /// 覆盖策略由调用方保证。
 public enum ThemeFileSerializer {
   public static func serialize(_ theme: TerminalTheme) -> String {
@@ -103,6 +104,8 @@ public enum ThemeFileSerializer {
     write("border-right", border: style.sidebarBorderWidth, style.sidebarBorderColor)
     write("material", material: style.sidebarMaterial)
     write("padding", number: style.sidebarPadding)
+    write("padding-left", number: style.sidebarPaddingLeading)
+    write("padding-right", number: style.sidebarPaddingTrailing)
 
     if style.titlebarBackground != nil || style.titlebarForeground != nil
       || style.titlebarMaterial != nil

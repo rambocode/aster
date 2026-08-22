@@ -17,6 +17,21 @@ extension TerminalThemeMode {
       : HexColor(red: 0x1C, green: 0x1C, blue: 0x1C)
   }
 
+  /// 终端-only 暗色主题的 chrome 保留当前终端底色的色相，并叠加 5% 白色形成层级。
+  /// Otty 的 Tokyo Night、Dracula 实机分别呈现为约 #252630、#33353F；固定 #1C1C1C
+  /// 会把所有暗色主题压成同一种黑灰。浅色主题继续使用既有原生 #F7F7F7 回退。
+  public func nativeChromeBackground(over terminalBackground: HexColor) -> HexColor {
+    guard self == .dark, terminalBackground.alpha > 0 else { return nativeChromeBackground }
+    func lifted(_ component: UInt8) -> UInt8 {
+      UInt8((Double(component) * 0.95 + 255 * 0.05).rounded())
+    }
+    return HexColor(
+      red: lifted(terminalBackground.red),
+      green: lifted(terminalBackground.green),
+      blue: lifted(terminalBackground.blue)
+    )
+  }
+
   /// 标签悬停底色默认值（浅色黑 4% / 深色白 5% 叠加）。
   public var nativeTabHoverBackground: HexColor {
     self == .light
@@ -171,6 +186,11 @@ public struct TerminalThemeStyle: Codable, Equatable, Sendable {
   /// Otty `[sidebar].padding`：标签列表两侧留白。nil = Otty 原生默认 8pt；
   /// April 等主题显式写 0 实现「整行铺满」的旧式布局。
   public var sidebarPadding: Double?
+  /// Otty 允许左右方向单独覆盖 Sidebar 行 padding。单边值只覆盖对应方向，未声明的
+  /// 水平方向继续继承 `sidebarPadding` 或原生 8pt；例如 Floating Card 只把右侧设为 0，
+  /// 让选中标签贴到容器卡片边缘，同时保留左侧 8pt 呼吸空间。
+  public var sidebarPaddingLeading: Double?
+  public var sidebarPaddingTrailing: Double?
   public var titlebarBackground: HexColor?
   public var titlebarForeground: HexColor?
   public var titlebarMaterial: TerminalThemeMaterial?
@@ -193,6 +213,8 @@ public struct TerminalThemeStyle: Codable, Equatable, Sendable {
     sidebarBorderWidth: Double = 0,
     sidebarMaterial: TerminalThemeMaterial? = nil,
     sidebarPadding: Double? = nil,
+    sidebarPaddingLeading: Double? = nil,
+    sidebarPaddingTrailing: Double? = nil,
     titlebarBackground: HexColor? = nil,
     titlebarForeground: HexColor? = nil,
     titlebarMaterial: TerminalThemeMaterial? = nil,
@@ -214,6 +236,8 @@ public struct TerminalThemeStyle: Codable, Equatable, Sendable {
     self.sidebarBorderWidth = sidebarBorderWidth
     self.sidebarMaterial = sidebarMaterial
     self.sidebarPadding = sidebarPadding
+    self.sidebarPaddingLeading = sidebarPaddingLeading
+    self.sidebarPaddingTrailing = sidebarPaddingTrailing
     self.titlebarBackground = titlebarBackground
     self.titlebarForeground = titlebarForeground
     self.titlebarMaterial = titlebarMaterial
@@ -224,6 +248,18 @@ public struct TerminalThemeStyle: Codable, Equatable, Sendable {
     self.horizontalTabBarBorderColor = horizontalTabBarBorderColor
     self.horizontalTabBarHeight = horizontalTabBarHeight
     self.container = container
+  }
+
+  /// Sidebar 最终几何真值。单边覆盖不能被压成一个标量，否则 Floating Card 的
+  /// `padding-right = 0` 会在 Aster 中静默退回 8pt，导致同一主题两边标签宽度不同。
+  public var resolvedSidebarPadding: ThemeInsets {
+    let fallback = sidebarPadding ?? 8
+    return ThemeInsets(
+      top: 0,
+      leading: sidebarPaddingLeading ?? fallback,
+      bottom: 0,
+      trailing: sidebarPaddingTrailing ?? fallback
+    )
   }
 }
 

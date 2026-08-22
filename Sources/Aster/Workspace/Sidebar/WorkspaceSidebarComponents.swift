@@ -35,6 +35,9 @@ final class SidebarOptionsButton: NSButton {
     imagePosition = .imageOnly
     toolTip = "整理标签"
     isBordered = false
+    // Otty 的整理按钮与 TABS eyebrow 同属三级 chrome，不跟随系统默认 control tint；
+    // 否则 Floating Card 等主题切换后图标会突然变成主文字色。
+    contentTintColor = AsterTheme.tertiaryInk
     wantsLayer = true
     layer?.cornerRadius = 6
     layer?.cornerCurve = .continuous
@@ -63,7 +66,7 @@ final class SidebarOptionsButton: NSButton {
 final class TabRowButton: NSButton {
   /// 视觉底卡两侧留白 = Otty `[sidebar].padding`（默认 8pt）；April 等主题写 0
   /// 实现整行铺满。按钮本身仍保持整行命中宽度。
-  private let sidebarRowInset: CGFloat
+  private let sidebarRowInsets: ThemeInsets
   private let tab: TerminalTabItem
   /// group by project 可覆盖纵向行文案；闭包保证后续局部标题刷新仍遵守当前投影，
   /// 不会被 OSC 标题重新改回完整路径。
@@ -133,7 +136,7 @@ final class TabRowButton: NSButton {
     self.showsAwaitingInput = showsAwaitingInput
     let resolvedStyle = horizontal ? (theme.style.horizontalTab ?? theme.style.tab) : theme.style.tab
     style = resolvedStyle
-    sidebarRowInset = CGFloat(theme.style.sidebarPadding ?? 8)
+    sidebarRowInsets = theme.style.resolvedSidebarPadding
     resolvedForeground = NSColor(
       resolvedStyle.foreground
         ?? theme.resolvedColor(forSlot: "tab.foreground") ?? theme.palette.secondaryForeground
@@ -193,9 +196,9 @@ final class TabRowButton: NSButton {
     } else {
       NSLayoutConstraint.activate([
         rowBackground.leadingAnchor.constraint(
-          equalTo: leadingAnchor, constant: sidebarRowInset),
+          equalTo: leadingAnchor, constant: CGFloat(sidebarRowInsets.leading)),
         rowBackground.trailingAnchor.constraint(
-          equalTo: trailingAnchor, constant: -sidebarRowInset),
+          equalTo: trailingAnchor, constant: -CGFloat(sidebarRowInsets.trailing)),
         rowBackground.topAnchor.constraint(equalTo: topAnchor, constant: 1),
         rowBackground.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
       ])
@@ -238,7 +241,7 @@ final class TabRowButton: NSButton {
         onClose?()
       }
       close.isBordered = false
-      close.contentTintColor = AsterTheme.secondaryInk
+      close.contentTintColor = selected ? resolvedActiveForeground : resolvedForeground
     }
     close.identifier = NSUserInterfaceItemIdentifier("sidebar-tab-close-\(tab.id.uuidString)")
     close.toolTip = "关闭标签页"

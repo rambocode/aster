@@ -242,6 +242,28 @@ private final class ThemeTintOverlayView: NSView {
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
+/// 不创建独立 macOS material 的主题表面。它用于已经位于 Window/Container 材质
+/// 内部的 Pane：只应用主题 RGBA，透明色继续透出唯一的外层材质，避免 Inspector 再
+/// 叠一层 Sidebar vibrancy 后与同一张容器卡片里的终端产生色差。
+final class ThemeSurfaceView: NSView {
+  private(set) var appliedThemeTint: HexColor?
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    wantsLayer = true
+  }
+
+  required init?(coder: NSCoder) {
+    super.init(coder: coder)
+    wantsLayer = true
+  }
+
+  func apply(tint: HexColor) {
+    appliedThemeTint = tint
+    layer?.backgroundColor = NSColor(tint).cgColor
+  }
+}
+
 extension NSColor {
   convenience init(_ color: HexColor) {
     self.init(

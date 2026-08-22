@@ -1,6 +1,7 @@
 import Foundation
 
-/// Otty `.ottytheme` 的受限 TOML 读取器。
+/// Aster `.astertheme` 的受限 TOML 读取器。语法参考 Otty 主题，但文件、目录和运行时
+/// 均由 Aster 独立管理，不读取或写入 Otty 的主题文件。
 ///
 /// 主题格式只需要 section、`key = value`、字符串、数字和数组；刻意不实现完整 TOML，
 /// 避免为导入主题引入解析器依赖。未知键会保留向前兼容，已知键若类型不合法则回退到
@@ -23,9 +24,9 @@ enum ThemeFileParser {
       document.string("meta.mode"),
       visualBackground: background.alpha == 0
         ? (declaredSurface ?? declaredPanel ?? background) : background)
-    // Otty 语义：未声明 [panel] 时 chrome 用原生 token 色，而不是沿用终端背景；
+    // 未声明 [panel] 时，暗色 chrome 在终端底色上叠加 5% 白色以保留主题色相；
     // surface 保留 nil，选中标签的级联才能区分「主题声明的表面色」和「原生叠加色」。
-    let panel = declaredPanel ?? mode.nativeChromeBackground
+    let panel = declaredPanel ?? mode.nativeChromeBackground(over: background)
     let container = document.color("container.background") ?? background
     let interfaceForeground = document.color("token.foreground") ?? foreground
     let secondary = document.color("token.secondary") ?? mode.nativeSecondaryForeground
@@ -96,6 +97,8 @@ enum ThemeFileParser {
       sidebarBorderWidth: sidebarBorder.width,
       sidebarMaterial: document.material("sidebar.material"),
       sidebarPadding: document.number("sidebar.padding", in: 0...64),
+      sidebarPaddingLeading: document.number("sidebar.padding-left", in: 0...64),
+      sidebarPaddingTrailing: document.number("sidebar.padding-right", in: 0...64),
       titlebarBackground: document.color("titlebar.background"),
       titlebarForeground: document.color("titlebar.foreground"),
       titlebarMaterial: document.material("titlebar.material"),

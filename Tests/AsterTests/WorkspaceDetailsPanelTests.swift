@@ -148,8 +148,7 @@ func inspectorPresentationAnimatesWithoutRelayoutingTerminalEachFrame() async th
   model.toggleInspector()
   window.contentView?.layoutSubtreeIfNeeded()
 
-  let split = try #require(
-    controller.view.allDescendants.compactMap { $0 as? WorkspacePanelSplitView }.first)
+  let split = try #require(inspectorSplit(in: controller.view))
   let panel = try #require(split.panelView(for: .inspector))
   let expectedWidth = controller.panelLayoutStore.state.inspectorWidth
   // 模型 frame 在动画开始时就进入终态，Core Animation 只插值 Panel Host 的显示层；
@@ -253,8 +252,7 @@ func inspectorRemovalDoesNotAnimateTerminalViewTree() throws {
   window.contentViewController = controller
   window.contentView?.layoutSubtreeIfNeeded()
 
-  let split = try #require(
-    controller.view.allDescendants.compactMap { $0 as? WorkspacePanelSplitView }.first)
+  let split = try #require(inspectorSplit(in: controller.view))
   let content = try #require(split.panelView(for: .content))
   let terminal = try #require(
     content.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
@@ -361,8 +359,7 @@ func inspectorToggleDoesNotFlashDuringPanelCollapse() async throws {
   let toggle = try #require(
     controller.view.allDescendants.compactMap { $0 as? NSButton }
       .first { $0.identifier?.rawValue == "workspace-inspector-toggle" })
-  let currentSplit = try #require(
-    controller.view.allDescendants.compactMap { $0 as? WorkspacePanelSplitView }.first)
+  let currentSplit = try #require(inspectorSplit(in: controller.view))
   #expect(toggle.isHidden == false)
   let frameBeforeCollapse = toggle.convert(toggle.bounds, to: nil)
 
@@ -501,8 +498,7 @@ func togglingInspectorDoesNotRebuildWorkspaceViews() async throws {
   model.toggleInspector()
   model.toggleInspector()
   window.contentView?.layoutSubtreeIfNeeded()
-  let split = try #require(
-    controller.view.allDescendants.compactMap { $0 as? WorkspacePanelSplitView }.first)
+  let split = try #require(inspectorSplit(in: controller.view))
   let inspector = try #require(split.panelContentView(for: .inspector))
 
   #expect(controller.view.allDescendants.contains { $0 === terminal })
@@ -514,8 +510,7 @@ func togglingInspectorDoesNotRebuildWorkspaceViews() async throws {
   // 没有延迟移除刚重新展开的同一视图。终端启动事件可能在等待期间触发一次正常
   // 工作区刷新，因此以当前 split 验证所有权，同时要求 Inspector 内容身份保持不变。
   try await Task.sleep(for: .milliseconds(300))
-  let currentSplit = try #require(
-    controller.view.allDescendants.compactMap { $0 as? WorkspacePanelSplitView }.first)
+  let currentSplit = try #require(inspectorSplit(in: controller.view))
   #expect(currentSplit.panelContentView(for: .inspector) === inspector)
   #expect(inspector.superview === currentSplit.panelView(for: .inspector))
   #expect(inspector.alphaValue == 1)
@@ -2361,4 +2356,14 @@ extension NSView {
     }
     return false
   }
+}
+
+/// Inspector 现在属于主题 Container 内层 Pane split；不能再按遍历顺序取第一个
+/// WorkspacePanelSplitView，因为第一个是只负责 Sidebar ↔ Content 的外层边界。
+@MainActor
+private func inspectorSplit(in root: NSView) -> WorkspacePanelSplitView? {
+  guard let container = root.allDescendants.first(where: {
+    $0.identifier?.rawValue == "workspace-container"
+  }) else { return nil }
+  return container.allDescendants.compactMap { $0 as? WorkspacePanelSplitView }.first
 }

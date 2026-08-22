@@ -844,6 +844,8 @@ func verticalSidebarRowsUseInsetRoundedCard() throws {
   let defaults = isolatedDefaults()
   let model = AppModel(defaults: defaults)
   let preferences = AppPreferences(defaults: defaults)
+  let theme = try #require(TerminalThemeCatalog.theme(named: "One Light"))
+  preferences.selectTheme(theme)
   model.ensureInitialTab()
   let controller = WorkspaceViewController(model: model, preferences: preferences)
   let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
@@ -855,11 +857,110 @@ func verticalSidebarRowsUseInsetRoundedCard() throws {
     })
   // 底卡是行内唯一带圆角 layer 的子视图；行本体保持透明并维持整行命中宽度。
   let card = try #require(row.subviews.first { ($0.layer?.cornerRadius ?? 0) > 0 })
-  #expect(card.frame.minX == 6)
-  #expect(card.frame.maxX == row.bounds.width - 6)
+  #expect(card.frame.minX == 8)
+  #expect(card.frame.maxX == row.bounds.width - 8)
   #expect(card.frame.height < row.bounds.height)
   #expect((card.layer?.cornerRadius ?? 0) >= 8)
   #expect(row.layer?.backgroundColor?.alpha == 0)
+}
+
+@Test("Floating Card 的 Inspector 与终端共用容器，Sidebar 保留单边 padding")
+@MainActor
+func floatingCardKeepsInspectorInsideContainerAndUsesAsymmetricSidebarPadding() throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let theme = try #require(TerminalThemeCatalog.theme(named: "Floating Card"))
+  preferences.selectTheme(theme)
+  preferences.tabBarLayout = .vertical
+  preferences.sidebarTabGrouping = .project
+  preferences.inspectorPresented = true
+  let model = try makeNonTerminalTestModel(
+    defaults: defaults,
+    directories: ["/tmp/floating-card"]
+  )
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let container = try #require(
+    controller.view.descendants.first {
+      $0.identifier?.rawValue == "workspace-container"
+    })
+  let details = try #require(
+    controller.view.descendants.first {
+      $0.identifier?.rawValue == "workspace-details-panel"
+    } as? ThemeSurfaceView)
+  #expect(details.isDescendant(of: container))
+  #expect(details.appliedThemeTint == theme.resolvedColor(forSlot: "container.background"))
+  let outerSplit = try #require(
+    controller.view.descendants.compactMap { $0 as? WorkspacePanelSplitView }
+      .first { $0.panelRoles.contains(.sidebar) })
+  #expect(outerSplit.themeDividerColor.alphaComponent == 0)
+
+  let row = try #require(controller.view.descendants.compactMap { $0 as? TabRowButton }.first)
+  let decoration = try #require(row.descendants.first {
+    $0.identifier?.rawValue.hasPrefix("workspace-tab-background-") == true
+  })
+  #expect(abs(decoration.frame.minX - 8) < 0.5)
+  #expect(abs(decoration.frame.maxX - row.bounds.maxX) < 0.5)
+
+  let group = try #require(
+    controller.view.descendants.first {
+      $0.identifier?.rawValue == "sidebar-group-header"
+    } as? NSTextField)
+  #expect(
+    HexColor(nsColor: group.textColor ?? .clear)
+      == theme.resolvedColor(forSlot: "tab.foreground")
+  )
+}
+
+@Test("暗色主题的 File Pane 工具栏使用 Container 表面")
+@MainActor
+func darkThemeFilePaneChromeUsesContainerSurface() throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let theme = try #require(TerminalThemeCatalog.theme(named: "Tokyo Night"))
+  preferences.selectTheme(theme)
+  let model = try makeNonTerminalTestModel(
+    defaults: defaults,
+    directories: ["/tmp/dark-file-pane"]
+  )
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let toolbar = try #require(controller.view.descendants.first {
+    $0.identifier?.rawValue == "file-pane-toolbar"
+  })
+  let rendered = toolbar.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)).map {
+    HexColor(nsColor: $0)
+  }
+  #expect(rendered == theme.resolvedColor(forSlot: "container.background"))
+}
+
+@Test("暗色工作区在自身 appearance 下解析 Pane layer 动态色")
+@MainActor
+func darkWorkspaceResolvesPaneLayerColorsInItsOwnAppearance() throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let theme = try #require(TerminalThemeCatalog.theme(named: "Tokyo Night"))
+  preferences.selectTheme(theme)
+  let model = try makeNonTerminalTestModel(
+    defaults: defaults,
+    directories: ["/tmp/dark-findbar"]
+  )
+  model.isFindPresented = true
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+
+  let findBar = try #require(controller.view.descendants.first {
+    $0.identifier?.rawValue == "workspace-findbar"
+  })
+  let rendered = findBar.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)).map {
+    HexColor(nsColor: $0)
+  }
+  #expect(rendered == theme.resolvedColor(forSlot: "panel.surface"))
 }
 
 @Test("左侧标签悬停显示关闭按钮且可直接关闭后台标签")
@@ -2125,29 +2226,35 @@ struct AllThemeRenderParityTests {
     #expect(root.appliedThemeTint == windowColor, "\(theme.name) Window")
 
     let sidebar = try themedView("workspace-sidebar", in: controller)
-    // 详情控制器在生产中由可动画的 Panel host 延迟接入 split；单独加载其稳定根视图，
-    // 可以直接验证主题而不把显隐转场时序引入颜色测试。
+    // 详情控制器位于 Container 内层 split；单独加载其稳定根视图，可以直接验证
+    // Pane surface 的主题归属而不把显隐转场时序引入颜色测试。
     let detailsController = DetailsPanelViewController(model: model, preferences: preferences)
     detailsController.loadViewIfNeeded()
-    let details = try #require(detailsController.view as? ThemeVisualEffectView)
+    let details = try #require(detailsController.view as? ThemeSurfaceView)
     let sidebarColor = try slot("sidebar.background", in: activeTheme)
     #expect(sidebar.appliedThemeTint == sidebarColor, "\(theme.name) Sidebar")
-    #expect(details.appliedThemeTint == sidebarColor, "\(theme.name) Details Sidebar")
+    let detailsColor = try slot("container.background", in: activeTheme)
+    #expect(details.appliedThemeTint == detailsColor, "\(theme.name) Details Pane")
     #expect(sidebar.appliedThemeMaterial == activeTheme.style.sidebarMaterial ?? activeTheme.palette.material)
-    #expect(details.appliedThemeMaterial == activeTheme.style.sidebarMaterial ?? activeTheme.palette.material)
-    let sidebarForeground = try slot("sidebar.foreground", in: activeTheme)
+    let sidebarEyebrow = try slot("interface.tertiaryForeground", in: activeTheme)
     let sidebarTitle = try #require(
       identifiedView("workspace-sidebar-foreground", in: controller) as? NSTextField
     )
-    #expect(HexColor(nsColor: sidebarTitle.textColor ?? .clear) == sidebarForeground)
+    #expect(HexColor(nsColor: sidebarTitle.textColor ?? .clear) == sidebarEyebrow)
     let split = try #require(
       controller.view.descendants.compactMap { $0 as? WorkspacePanelSplitView }.first
     )
     let sidebarBorder = try slot("sidebar.border", in: activeTheme)
-    #expect(
-      HexColor(nsColor: split.themeDividerColor) == sidebarBorder,
-      "\(theme.name) Sidebar border"
-    )
+    if activeTheme.style.sidebarBorderWidth == 0,
+      activeTheme.style.sidebarBackground?.alpha == 0
+    {
+      #expect(split.themeDividerColor.alphaComponent == 0, "\(theme.name) Sidebar no border")
+    } else {
+      #expect(
+        HexColor(nsColor: split.themeDividerColor) == sidebarBorder,
+        "\(theme.name) Sidebar border"
+      )
+    }
 
     let titlebar = try identifiedView("workspace-titlebar", in: controller)
     // 中央标题只浮在统一 workspace surface 上，不再重复创建一层 Window material。

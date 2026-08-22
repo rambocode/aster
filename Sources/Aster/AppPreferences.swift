@@ -616,7 +616,7 @@ final class AppPreferences: ObservableObject {
   }
   var ansiColors: [HexColor] { activeTheme.palette.ansiColors }
 
-  /// 参与名称解析的非内置主题：Aster 自有库优先，其次共享目录（Otty 真值），
+  /// 参与名称解析的非内置主题：Aster 自有库优先，其次 Aster 磁盘主题目录，
   /// 最后才轮到内置表。resolve 按数组顺序取第一个命中项。
   private var overlayThemes: [TerminalTheme] {
     themeLibrary.customThemes + diskThemes
@@ -655,7 +655,7 @@ final class AppPreferences: ObservableObject {
   }
 
   func themes(for mode: TerminalThemeMode) -> [TerminalTheme] {
-    // 遮蔽规则与 resolve 一致：自有库 > 共享目录 > 内置表；同 id 或同名只保留
+    // 遮蔽规则与 resolve 一致：自有库 > Aster 磁盘目录 > 内置表；同 id 或同名只保留
     // 优先级最高的一份，主题网格才不会出现两个「One Light」。
     var seenIDs: Set<String> = []
     var seenNames: Set<String> = []
@@ -810,7 +810,7 @@ final class AppPreferences: ObservableObject {
   ///
   /// 追加而不是重写：文件里原主题的内容一字不动，用户覆盖以 `# aster-added:` 注释
   /// 标出；清空覆盖时删除整段。找不到源文件会明确失败，避免创建只有覆盖键、无法被
-  /// Otty 独立解析的残缺主题。
+  /// Aster 自己也无法独立解析的残缺主题。
   @discardableResult
   func writeThemeOverridesToLibraryFolder(themeID: String) throws -> URL? {
     let overrides = themeOverrides.overrides(for: themeID)
@@ -825,7 +825,7 @@ final class AppPreferences: ObservableObject {
     let base = ThemeOverrideFileWriter.strippingPreviousOverrides(from: existing)
     let normalizedBase = base.trimmingCharacters(in: .newlines)
     // 清空覆盖时也必须重写文件，移除上一轮 managed 段；提前返回会让设置页显示已
-    // 恢复，而 Otty 下次启动仍继续读到旧的个性化参数。
+    // 恢复，而 Aster 下次启动仍继续读到旧的个性化参数。
     let content = if section.isEmpty {
       normalizedBase.isEmpty ? "" : normalizedBase + "\n"
     } else {

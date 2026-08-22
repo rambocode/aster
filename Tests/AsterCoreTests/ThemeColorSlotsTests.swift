@@ -174,7 +174,7 @@ func tabSlotsFallBackToNativeChromeOverlays() throws {
   #expect(active.resolved == HexColor("#E8E8E8FF")!)
 }
 
-@Test("Otty 解析器对终端-only 主题使用原生 chrome 而不是终端背景")
+@Test("终端-only 暗色主题从终端背景派生带主题色调的 chrome")
 func parserDerivesNativeChromeForTerminalOnlyThemes() throws {
   let source = """
   [meta]
@@ -193,7 +193,8 @@ func parserDerivesNativeChromeForTerminalOnlyThemes() throws {
   """
   let theme = try ThemeFileParser.parse(
     data: Data(source.utf8), sourceName: "terminal-only")
-  #expect(theme.palette.panelBackground == TerminalThemeMode.dark.nativeChromeBackground)
+  // Otty 的暗色 chrome 是终端背景叠加 5% 白色，不是所有主题共用 #1C1C1C。
+  #expect(theme.palette.panelBackground == HexColor("#333540FF")!)
   #expect(theme.palette.panelSurface == nil)
   #expect(theme.palette.secondaryForeground == TerminalThemeMode.dark.nativeSecondaryForeground)
   #expect(theme.style.sidebarPadding == nil)
@@ -218,6 +219,7 @@ func parserReadsSidebarPaddingAndTabHeight() throws {
 
   [sidebar]
   padding = 0.0
+  padding-right = 12.0
 
   [tab]
   height = 32.0
@@ -225,6 +227,9 @@ func parserReadsSidebarPaddingAndTabHeight() throws {
   """
   let theme = try ThemeFileParser.parse(data: Data(source.utf8), sourceName: "padded")
   #expect(theme.style.sidebarPadding == 0)
+  #expect(theme.style.sidebarPaddingTrailing == 12)
+  #expect(theme.style.resolvedSidebarPadding == ThemeInsets(
+    top: 0, leading: 0, bottom: 0, trailing: 12))
   #expect(theme.style.tab.height == 32)
   #expect(theme.style.tab.radius == 0)
 }

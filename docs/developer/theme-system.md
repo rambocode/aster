@@ -72,7 +72,9 @@ flowchart LR
 
 `ThemeSwitcherPanelController` 在工作区窗口上方展示独立、可聚焦的主题 Panel；`ThemeSwitcherViewController` 把 9 套明亮和 15 套黑暗主题放进同一搜索列表，负责方向键、悬停和色点预览。`AppPreferences.previewTheme(_:)` 只更新内存中的临时主题与 `ThemeRuntime`，不修改配置 JSON；`commitThemePreview()` 保存选择并把当前外观切换到主题自身的模式，`cancelThemePreview()` 恢复持久化选择。菜单跟踪结束后的下一轮 run loop 才让 Panel 成为 key，避免菜单收起时主窗口抢回焦点并误触取消。
 
-`TerminalThemeStyle` 逐项保留 Otty 的 sidebar/titlebar/tab/horizontal-tab/container 数据。AppKit 工作区让窗口根层消费 `window`，中央卡片消费 `container`，左右两栏（含各自顶部）共同消费 `sidebar`；中央标题是 workspace surface 上的透明内容层，不再创建第二个材质或独立底色，因而和下面 Pane 连成一个背景面。常驻工作目录胶囊只在主题显式声明时消费 `titlebar.background`，文字消费 `titlebar.foreground`。这种分层让 April 保持白色连续中央区，也让 Glass Light 不会在 28pt 标题边界重复合成材质形成横向接缝。横向标签栏及其下沿消费 `tabbar`，标签行消费 `tab`；标签高度、活动前景和背景、顶部选中线、容器圆角、边框、阴影及不同标签方向下的外边距也直接取自主题。`tab-bar.tab` 未声明的颜色、边框、字重和阴影按 Otty 规则逐字段继承基础 `[tab]`，不再用固定卡片样式或 AppKit 近似色替代。
+`TerminalThemeStyle` 逐项保留参考主题的 sidebar/titlebar/tab/horizontal-tab/container 数据。AppKit 工作区让窗口根层消费 `window`，左侧标签栏消费 `sidebar`，中央终端与右侧 Inspector 共同位于同一个 `container` 卡片和内层 Pane split；Inspector 不再错误叠加第二层 Sidebar material。中央标题是 workspace surface 上的透明内容层，不再创建第二个材质或独立底色。常驻工作目录胶囊只在主题显式声明时消费 `titlebar.background`，文字消费 `titlebar.foreground`。横向标签栏及其下沿消费 `tabbar`，标签行消费 `tab`；标签高度、活动前景和背景、容器圆角、边框、阴影及不同标签方向下的外边距也直接取自主题。Sidebar 的 `padding` 与 `padding-left` / `padding-right` 分别进入最终标签行几何，未声明的一侧回退 8pt。`tab-bar.tab` 未声明的颜色、边框、字重和阴影按参考规则逐字段继承基础 `[tab]`。
+
+终端-only 暗色主题未声明 `[panel]` 时，Sidebar/Panel chrome 不使用固定黑灰，而是在该主题的 `terminal.background` 上叠加 5% 白色；Tokyo Night、Dracula 等因此保留各自蓝紫色调。工作区构建发生在根视图的 `effectiveAppearance` 上下文内：动态 `NSColor` 转成 `CALayer.cgColor` 时不会在挂入暗色窗口前误按 Aqua 冻结成白色。File Pane 工具栏直接消费 `container.background` / `container.border`，与同一 Pane 的正文表面保持连续。
 
 容器背景的解析遵循「与终端画布连续」：主题未显式声明 `container` 时回退到终端背景本身（透明 `none` 保持透明以透出玻璃材质），**不借用 panel** —— panel 是侧栏等面板的底色，借用它会让 April 这类「panel 灰绿 + 终端纯白」的主题在右侧内容区套上一层 panel 色，与终端画布视觉割裂。
 
@@ -104,5 +106,5 @@ flowchart LR
 - 主题选择的自定义优先与同模式回退。
 - 菜单选择器覆盖 9 套浅色主题，验证方向键预览不落盘、取消恢复和确认后新实例可读取。
 - 透明主题会同步清理所有 Pane 的旧 backing layer；非活动 Pane 不叠加改写背景的遮罩，分屏主题切换后每个存活及可见终端使用同一套 RGBA 与 ANSI 色。
-- 详情修改颜色、ANSI 或主题字体都写入同一 Otty 文件的 managed 段且不创建副本，“恢复主题原始参数”删除该段且不留下旧个性化配置。
+- 详情修改颜色、ANSI 或主题字体只写入 `~/.config/aster/themes/*.astertheme` 的 managed 段且不创建副本；`~/.config/otty/themes/*.ottytheme` 始终不读不写。“恢复主题原始参数”删除 Aster 文件中的该段且不留下旧个性化配置。
 - 单标签自动隐藏与多标签恢复标签栏。

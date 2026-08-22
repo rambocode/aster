@@ -251,8 +251,8 @@ final class WorkspaceViewController: NSViewController {
     return details
   }
 
-  /// 把详情面板作为 trailing Panel 接入统一 split。`refresh()` 初次构建直接传入三栏，
-  /// 只有用户主动开关时才从这里做局部插入动画。
+  /// 把详情面板作为 Container 内的 trailing Pane 接入内层 split。`refresh()` 初次构建
+  /// 直接传入 Content + Inspector，只有用户主动开关时才从这里做局部插入动画。
   private func attachDetailsPanelIfNeeded(animated: Bool = false) {
     guard let split = workspacePanelSplitView else { return }
     let details = detailsControllerForSelectedTab()
@@ -774,7 +774,14 @@ final class WorkspaceViewController: NSViewController {
       )
     }
 
-    let layout = makeWorkspaceLayout()
+    // Pane/overlay 中仍有一批动态 NSColor 需要落到 CALayer.cgColor。CGColor 只在赋值
+    // 当下解析，依据是 NSAppearance.current 而不是未来挂载窗口的 appearance；若直接
+    // 构建，暗色工作区会把 Find Bar、Pane Toolbar 等冻结成白色。所有主布局对象必须
+    // 在根视图的实际外观上下文中创建，主题切换后的整树刷新也会重新解析一次。
+    var layout: NSView!
+    view.effectiveAppearance.performAsCurrentDrawingAppearance { [self] in
+      layout = makeWorkspaceLayout()
+    }
     view.addSubview(layout)
     layout.pinEdges(to: view)
     installInspectorToggleOverlay()
@@ -1138,25 +1145,28 @@ final class WorkspaceViewController: NSViewController {
       content = stack
     }
 
+    // Otty 的 Inspector 是 Container 卡片内部的 trailing Pane，不是与左侧 Tabs 对称的
+    // 第二个 Sidebar。外层 split 因此只负责 Sidebar ↔ Content；详情 Pane 的宽度、
+    // 动画和分隔线在 makeTerminalWorkspace 创建的内层 split 中处理。
     panels.append(WorkspacePanel(role: .content, contentView: content))
-    if model.isInspectorPresented {
-      let details = detailsControllerForSelectedTab()
-      let resumesCachedController = details.isViewLoaded
-      if details.parent !== self { addChild(details) }
-      details.synchronizeAppearanceIfNeeded()
-      if resumesCachedController { details.setPresentationActive(true) }
-      panels.append(WorkspacePanel(role: .inspector, contentView: details.view))
-    }
     let theme = preferences.activeTheme
-    let split = WorkspacePanelSplitView(
-      panels: panels,
-      layoutStore: panelLayoutStore,
-      dividerColor: NSColor(
+    let sidebarDividerColor: NSColor = if theme.style.sidebarBorderWidth == 0,
+      theme.style.sidebarBackground?.alpha == 0
+    {
+      // Floating/Glass 用透明 Sidebar + `border-right = none` 让 Window material 连成
+      // 一片。NSSplitView 仍保留 1pt 拖动几何，但静止态不能把 fallback border 画回来。
+      .clear
+    } else {
+      NSColor(
         theme.resolvedColor(forSlot: "sidebar.border")
           ?? theme.palette.interfaceBorder ?? theme.palette.panelBackground
       )
+    }
+    let split = WorkspacePanelSplitView(
+      panels: panels,
+      layoutStore: panelLayoutStore,
+      dividerColor: sidebarDividerColor
     )
-    workspacePanelSplitView = split
     return split
   }
 
@@ -1206,9 +1216,11 @@ final class WorkspaceViewController: NSViewController {
       "TABS",
       size: 10,
       weight: .semibold,
+      // Otty 把 section eyebrow 画成 tertiary chrome；Sidebar foreground 是正文层级，
+      // 用在这里会让 Floating Card 的 TABS 与活动标签一样黑。
       color: NSColor(
-        theme.resolvedColor(forSlot: "sidebar.foreground")
-          ?? theme.palette.interfaceForeground ?? theme.palette.foreground
+        theme.resolvedColor(forSlot: "interface.tertiaryForeground")
+          ?? theme.palette.tertiaryForeground ?? theme.palette.secondaryForeground
       )
     )
     title.identifier = NSUserInterfaceItemIdentifier("workspace-sidebar-foreground")
@@ -1219,10 +1231,11 @@ final class WorkspaceViewController: NSViewController {
     header.addSubview(title)
     header.addSubview(menu)
     NSLayoutConstraint.activate([
-      // 与标签行文案左对齐（行底卡内缩 sidebarPadding[默认 8] + 卡内边距 10）。
+      // 与标签行文案左对齐（行底卡左内缩 + 卡内边距 10）。右侧可由主题独立覆盖，
+      // 不能拿 trailing padding 反推左侧位置。
       title.leadingAnchor.constraint(
         equalTo: header.leadingAnchor,
-        constant: CGFloat(theme.style.sidebarPadding ?? 8) + 10),
+        constant: CGFloat(theme.style.resolvedSidebarPadding.leading) + 10),
       title.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -12),
       menu.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -6),
       menu.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -5),
@@ -1423,6 +1436,13 @@ final class WorkspaceViewController: NSViewController {
     kind: SidebarSectionKind,
     collapsed: Bool = false
   ) -> NSView {
+    let theme = preferences.activeTheme
+    // 分组属于标签列表正文，Otty 使用普通 tab foreground，而不是更淡的 tertiary。
+    // 这在 Floating Card 中分别对应 #52525B 与 #A1A1AA，层级差异很明显。
+    let groupForeground = NSColor(
+      theme.resolvedColor(forSlot: "tab.foreground")
+        ?? theme.style.tab.foreground ?? theme.palette.secondaryForeground
+    )
     let host = SidebarGroupHeaderView { [weak self] in
       guard let self else { return }
       self.preferences.toggleSidebarGroupCollapsed(title: identifier)
@@ -1445,12 +1465,12 @@ final class WorkspaceViewController: NSViewController {
       let icon = NSImageView()
       icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
         .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
-      icon.contentTintColor = AsterTheme.tertiaryInk
+      icon.contentTintColor = groupForeground
       icon.setContentHuggingPriority(.required, for: .horizontal)
       icon.setContentCompressionResistancePriority(.required, for: .horizontal)
       row.addArrangedSubview(icon)
     }
-    let label = makeLabel(title, size: 10.5, weight: .semibold, color: AsterTheme.tertiaryInk)
+    let label = makeLabel(title, size: 10.5, weight: .semibold, color: groupForeground)
     label.identifier = NSUserInterfaceItemIdentifier("sidebar-group-header")
     label.lineBreakMode = .byTruncatingMiddle
     label.toolTip = toolTip
@@ -1460,10 +1480,10 @@ final class WorkspaceViewController: NSViewController {
     host.addSubview(row)
     row.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      // 分组标题同样对齐标签行文案的左缘（sidebarPadding[默认 8] + 10）。
+      // 分组标题同样对齐标签行文案的左缘；单边 padding 必须只影响自己的方向。
       row.leadingAnchor.constraint(
         equalTo: host.leadingAnchor,
-        constant: CGFloat(preferences.activeTheme.style.sidebarPadding ?? 8) + 10),
+        constant: CGFloat(theme.style.resolvedSidebarPadding.leading) + 10),
       row.trailingAnchor.constraint(lessThanOrEqualTo: host.trailingAnchor, constant: -12),
       row.centerYAnchor.constraint(equalTo: host.centerYAnchor),
     ])
@@ -1724,23 +1744,54 @@ final class WorkspaceViewController: NSViewController {
     wrapper.addSubview(container)
     container.pinEdges(to: wrapper, insets: NSEdgeInsets(margin))
 
-    let inner = NSStackView()
-    inner.orientation = .vertical
+    let center = NSStackView()
+    center.orientation = .vertical
     // Pane 容器没有固有宽度；显式按 stack 宽度拉伸，避免递归 NSSplitView 被压成 1 pt。
-    inner.alignment = .width
-    inner.spacing = 0
-    container.addSubview(inner)
-    inner.pinEdges(to: container)
+    center.alignment = .width
+    center.spacing = 0
 
     let paneHost = NSView()
     let paneTree = makePaneContent(tab)
     paneHost.addSubview(paneTree)
     paneTree.pinEdges(to: paneHost, insets: NSEdgeInsets(style.padding))
-    inner.addArrangedSubview(paneHost)
+    center.addArrangedSubview(paneHost)
     let composer = model.isComposerPresented
       && model.composerState(for: tab.activePaneID).presentation == .docked
       ? makeAgentComposer(tab) : nil
-    if let composer { inner.addArrangedSubview(composer) }
+    if let composer { center.addArrangedSubview(composer) }
+
+    var bodyPanels = [WorkspacePanel(role: .content, contentView: center)]
+    if model.isInspectorPresented {
+      let details = detailsControllerForSelectedTab()
+      let resumesCachedController = details.isViewLoaded
+      if details.parent !== self { addChild(details) }
+      details.synchronizeAppearanceIfNeeded()
+      if resumesCachedController { details.setPresentationActive(true) }
+      bodyPanels.append(WorkspacePanel(role: .inspector, contentView: details.view))
+    }
+    let theme = preferences.activeTheme
+    let bodySplit = WorkspacePanelSplitView(
+      panels: bodyPanels,
+      layoutStore: panelLayoutStore,
+      dividerColor: NSColor(
+        theme.resolvedColor(forSlot: "container.border")
+          ?? style.borderColor ?? theme.palette.interfaceBorder ?? theme.palette.panelBackground
+      )
+    )
+    workspacePanelSplitView = bodySplit
+
+    // 阴影留在外层 container；单独的裁剪层只负责把终端与 Inspector 收进主题圆角。
+    // 直接给 container.masksToBounds 会连同 Floating Card 的外投影一起裁掉。
+    let clip = NSView()
+    clip.wantsLayer = true
+    clip.layer?.cornerRadius = style.radius
+    clip.layer?.cornerCurve = .continuous
+    clip.layer?.masksToBounds = style.radius > 0
+    container.addSubview(clip)
+    clip.pinEdges(to: container)
+    clip.addSubview(bodySplit)
+    bodySplit.pinEdges(to: clip)
+
     stack.addArrangedSubview(wrapper)
     // 这些内容容器没有 intrinsicContentSize；两个方向都必须显式绑定，否则 NSStackView
     // 会退回「固有尺寸」布局。上下分屏尤其致命：NSSplitView 给每个面板加了
@@ -1750,14 +1801,14 @@ final class WorkspaceViewController: NSViewController {
     var constraints: [NSLayoutConstraint] = [
       wrapper.widthAnchor.constraint(equalTo: stack.widthAnchor),
       wrapper.bottomAnchor.constraint(equalTo: stack.bottomAnchor),
-      paneHost.widthAnchor.constraint(equalTo: inner.widthAnchor),
-      paneHost.topAnchor.constraint(equalTo: inner.topAnchor),
+      paneHost.widthAnchor.constraint(equalTo: center.widthAnchor),
+      paneHost.topAnchor.constraint(equalTo: center.topAnchor),
     ]
     if let composer {
       constraints.append(paneHost.bottomAnchor.constraint(equalTo: composer.topAnchor))
-      constraints.append(composer.bottomAnchor.constraint(equalTo: inner.bottomAnchor))
+      constraints.append(composer.bottomAnchor.constraint(equalTo: center.bottomAnchor))
     } else {
-      constraints.append(paneHost.bottomAnchor.constraint(equalTo: inner.bottomAnchor))
+      constraints.append(paneHost.bottomAnchor.constraint(equalTo: center.bottomAnchor))
     }
     NSLayoutConstraint.activate(constraints)
     return stack
@@ -1886,6 +1937,7 @@ final class WorkspaceViewController: NSViewController {
 
   private func makeFindBar(_ tab: TerminalTabItem) -> NSView {
     let bar = NSView()
+    bar.identifier = NSUserInterfaceItemIdentifier("workspace-findbar")
     bar.wantsLayer = true
     bar.layer?.backgroundColor = AsterTheme.panel.cgColor
     bar.translatesAutoresizingMaskIntoConstraints = false

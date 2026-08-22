@@ -246,7 +246,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   override init() {
     model = AppModel()
     preferences = AppPreferences()
-    // 共享主题目录（Otty 真值）在窗口构建前先就位，避免启动时先按内置表渲染再闪一次。
+    // Aster 自有主题目录在窗口构建前先就位，避免启动时先按内置表渲染再闪一次。
     preferences.reloadDiskThemes()
     softwareUpdateController = SoftwareUpdateService.shared
     super.init()
@@ -334,7 +334,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     TerminalNotificationService.shared.refreshAuthorizationStatus()
     // 通知用 criticalRequest 让 Dock 一直跳；用户已经切回来了，提醒到此为止。
     TerminalNotificationService.shared.cancelDockAttention()
-    // 用户可能刚在 Otty 里改过共享主题文件；回到前台时按目录指纹轻量刷新。
+    // 用户可能刚在编辑器里改过 Aster 主题文件；回到前台时按目录指纹轻量刷新。
     preferences.reloadDiskThemes()
   }
 

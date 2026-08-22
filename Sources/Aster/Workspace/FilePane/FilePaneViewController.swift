@@ -119,10 +119,22 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
   }
 
   private func makeToolbar() -> NSView {
+    let theme = preferences.activeTheme
     let bar = NSView()
+    bar.identifier = NSUserInterfaceItemIdentifier("file-pane-toolbar")
     bar.wantsLayer = true
-    bar.layer?.backgroundColor = AsterTheme.panel.cgColor
-    bar.addBottomBorder(color: AsterTheme.hairline)
+    // 动态 NSColor 直接取 cgColor 会在视图接入暗色窗口之前按 Aqua 解析并永久冻结成
+    // 白色。File Pane 随工作区主题重建，因此这里直接消费当前主题的 Container token；
+    // Tokyo Night / Glass Dark 等暗色主题的工具栏与 Pane 表面会保持同一色域。
+    bar.layer?.backgroundColor = NSColor(
+      theme.resolvedColor(forSlot: "container.background")
+        ?? theme.style.container.background ?? theme.palette.containerBackground
+    ).cgColor
+    bar.addBottomBorder(color: NSColor(
+      theme.resolvedColor(forSlot: "container.border")
+        ?? theme.style.container.borderColor ?? theme.palette.interfaceBorder
+          ?? theme.palette.panelBackground
+    ))
     bar.translatesAutoresizingMaskIntoConstraints = false
     bar.heightAnchor.constraint(equalToConstant: 42).isActive = true
 

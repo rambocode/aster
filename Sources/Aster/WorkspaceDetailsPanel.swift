@@ -203,12 +203,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   override func loadView() {
     let theme = preferences.activeTheme
     renderedTheme = theme
-    let background = ThemeVisualEffectView()
+    let background = ThemeSurfaceView()
     background.identifier = NSUserInterfaceItemIdentifier("workspace-details-panel")
     background.apply(
-      material: theme.style.sidebarMaterial ?? theme.palette.material,
-      tint: theme.resolvedColor(forSlot: "sidebar.background")
-        ?? theme.style.sidebarBackground ?? theme.palette.panelBackground
+      tint: theme.resolvedColor(forSlot: "container.background")
+        ?? theme.style.container.background ?? theme.palette.containerBackground
     )
     let column = NSStackView()
     column.orientation = .vertical
@@ -248,11 +247,10 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     let theme = preferences.activeTheme
     guard renderedTheme != theme else { return }
     renderedTheme = theme
-    if let background = view as? ThemeVisualEffectView {
+    if let background = view as? ThemeSurfaceView {
       background.apply(
-        material: theme.style.sidebarMaterial ?? theme.palette.material,
-        tint: theme.resolvedColor(forSlot: "sidebar.background")
-          ?? theme.style.sidebarBackground ?? theme.palette.panelBackground
+        tint: theme.resolvedColor(forSlot: "container.background")
+          ?? theme.style.container.background ?? theme.palette.containerBackground
       )
     }
     paneRefreshOverlay.synchronizeAppearance()

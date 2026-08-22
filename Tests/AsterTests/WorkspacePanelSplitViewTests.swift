@@ -265,7 +265,7 @@ func workspacePanelSplitViewRemovalDoesNotDetachAReparentedPanel() async throws 
   #expect(inspector.alphaValue == 1)
 }
 
-@Test("主窗口把侧栏工作区和详情统一挂载为 Panel")
+@Test("主窗口外层分隔 Sidebar，Container 内层分隔工作区和详情 Pane")
 @MainActor
 func workspaceViewControllerUsesPanelLayoutForAllThreeColumns() throws {
   let suite = "WorkspacePanelRootTests.\(UUID().uuidString)"
@@ -292,21 +292,22 @@ func workspaceViewControllerUsesPanelLayoutForAllThreeColumns() throws {
   window.contentViewController = controller
   window.contentView?.layoutSubtreeIfNeeded()
 
-  let split = try #require(
-    controller.view.panelDescendants.compactMap { $0 as? WorkspacePanelSplitView }.first
-  )
-  #expect(split.panelRoles == [.sidebar, .content, .inspector])
-  #expect(abs((split.panelView(for: .sidebar)?.frame.width ?? 0) - 300) < 0.5)
-  #expect(abs((split.panelView(for: .inspector)?.frame.width ?? 0) - 400) < 0.5)
+  let splits = controller.view.panelDescendants.compactMap { $0 as? WorkspacePanelSplitView }
+  let outer = try #require(splits.first { $0.panelRoles.contains(.sidebar) })
+  let inner = try #require(splits.first { $0.panelRoles.contains(.inspector) })
+  #expect(outer.panelRoles == [.sidebar, .content])
+  #expect(inner.panelRoles == [.content, .inspector])
+  #expect(abs((outer.panelView(for: .sidebar)?.frame.width ?? 0) - 300) < 0.5)
+  #expect(abs((inner.panelView(for: .inspector)?.frame.width ?? 0) - 400) < 0.5)
 
-  let terminal = try #require(
-    controller.view.panelDescendants.compactMap { $0 as? AsterTerminalView }.first
+  let paneHost = try #require(
+    controller.view.panelDescendants.compactMap { $0 as? ActivePaneHostView }.first
   )
   model.toggleInspector()
   model.toggleInspector()
   window.contentView?.layoutSubtreeIfNeeded()
-  #expect(split.panelView(for: .inspector) != nil)
-  #expect(controller.view.panelDescendants.contains { $0 === terminal })
+  #expect(inner.panelView(for: .inspector) != nil)
+  #expect(controller.view.panelDescendants.contains { $0 === paneHost })
 }
 
 @Test("顶部标签布局不创建左 Panel 但右 Panel 仍可调宽")
@@ -328,11 +329,12 @@ func workspaceViewControllerOmitsSidebarPanelForHorizontalTabs() throws {
   )
   controller.loadViewIfNeeded()
 
-  let split = try #require(
-    controller.view.panelDescendants.compactMap { $0 as? WorkspacePanelSplitView }.first
-  )
-  #expect(split.panelRoles == [.content, .inspector])
-  #expect(split.panelRole(forDividerAt: 0) == .inspector)
+  let splits = controller.view.panelDescendants.compactMap { $0 as? WorkspacePanelSplitView }
+  let outer = try #require(splits.first { $0.panelRoles == [.content] })
+  let inner = try #require(splits.first { $0.panelRoles.contains(.inspector) })
+  #expect(outer.panelRoles == [.content])
+  #expect(inner.panelRoles == [.content, .inspector])
+  #expect(inner.panelRole(forDividerAt: 0) == .inspector)
 }
 
 extension NSView {
