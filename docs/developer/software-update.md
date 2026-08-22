@@ -119,6 +119,11 @@ SPARKLE_BIN="$PWD/.build/artifacts/sparkle/Sparkle/bin"
 ```zsh
 ASTER_SIGN_IDENTITY="Developer ID Application: …" ASTER_NOTARY_PROFILE=aster-notary \
   ./scripts/release.sh --short 0.5.0 --bundle 10
+# 非交互环境无法写入钥匙串 profile 时，改用 App Store Connect API Key：
+ASTER_SIGN_IDENTITY="Developer ID Application: …" \
+  ASTER_NOTARY_KEY="$HOME/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8" \
+  ASTER_NOTARY_KEY_ID=XXXXXXXXXX ASTER_NOTARY_ISSUER=<issuer-uuid> \
+  ./scripts/release.sh --short 0.5.0 --bundle 10
 # 预览版：
   ./scripts/release.sh --short 0.5.0-preview.1 --bundle 8 --preview
 ```

@@ -9,10 +9,25 @@ DMG_PATH="${1:-$PROJECT_DIR/dist/Aster-$VERSION.dmg}"
 # build-app.sh——整条 DMG 流程必须带它，缺变量重跑会把已签好的 App 重签回 ad-hoc。
 SIGN_IDENTITY="${ASTER_SIGN_IDENTITY:--}"
 NOTARY_PROFILE="${ASTER_NOTARY_PROFILE:-}"
+NOTARY_KEY="${ASTER_NOTARY_KEY:-}"
+NOTARY_KEY_ID="${ASTER_NOTARY_KEY_ID:-}"
+NOTARY_ISSUER="${ASTER_NOTARY_ISSUER:-}"
+NOTARY_ARGS=()
+if [[ -n "$NOTARY_PROFILE" ]]; then
+  NOTARY_ARGS=(--keychain-profile "$NOTARY_PROFILE")
+elif [[ -n "$NOTARY_KEY" && -n "$NOTARY_KEY_ID" && -n "$NOTARY_ISSUER" ]]; then
+  [[ -f "$NOTARY_KEY" ]] || {
+    echo "ASTER_NOTARY_KEY does not exist" >&2
+    exit 1
+  }
+  NOTARY_ARGS=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
+fi
+NOTARIZATION_ENABLED=0
+(( ${#NOTARY_ARGS[@]} > 0 )) && NOTARIZATION_ENABLED=1
 
 # 公证以 Developer ID 签名为前提；ad-hoc 构建提交公证必被 Apple 拒绝，提前拦截。
-if [[ -n "$NOTARY_PROFILE" && "$SIGN_IDENTITY" == "-" ]]; then
-  echo "ASTER_NOTARY_PROFILE requires ASTER_SIGN_IDENTITY (Developer ID); ad-hoc builds cannot be notarized" >&2
+if (( NOTARIZATION_ENABLED )) && [[ "$SIGN_IDENTITY" == "-" ]]; then
+  echo "Apple notarization requires ASTER_SIGN_IDENTITY (Developer ID); ad-hoc builds cannot be notarized" >&2
   exit 1
 fi
 
@@ -40,15 +55,15 @@ hdiutil create -volname "Aster $VERSION" -srcfolder "$STAGING_DIR" -format UDZO 
 if [[ "$SIGN_IDENTITY" != "-" ]]; then
   codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH"
 fi
-if [[ -n "$NOTARY_PROFILE" ]]; then
+if (( NOTARIZATION_ENABLED )); then
   # notarytool 各版本在 Invalid 状态下的退出码不一致，按输出文本判定结果。
   # `set -e` 会让赋值语句在命令失败时当场退出，输出还没 echo 就没了——凭据丢失、
   # 网络不通这类错误因此会变成一句无来由的非零退出码。用 `|| true` 接住，先把
   # 原始输出打出来，再由下面的文本判定给出结论。
-  NOTARY_OUTPUT=$(xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1 || true)
+  NOTARY_OUTPUT=$(xcrun notarytool submit "$DMG_PATH" "${NOTARY_ARGS[@]}" --wait 2>&1 || true)
   echo "$NOTARY_OUTPUT"
   if [[ "$NOTARY_OUTPUT" != *"status: Accepted"* ]]; then
-    echo "Notarization not accepted; inspect: xcrun notarytool log <submission-id> --keychain-profile $NOTARY_PROFILE" >&2
+    echo "Notarization not accepted; inspect the submission with the same notary credentials" >&2
     exit 1
   fi
   xcrun stapler staple "$DMG_PATH"
@@ -61,7 +76,7 @@ codesign --verify --deep --strict --verbose=2 "$MOUNT_DIR/Aster.app"
 "$MOUNT_DIR/Aster.app/Contents/MacOS/Aster" --verify-packaged-resources
 
 # 公证产物按用户下载后的真实路径做 Gatekeeper 终验，两项都必须是 Notarized Developer ID。
-if [[ -n "$NOTARY_PROFILE" ]]; then
+if (( NOTARIZATION_ENABLED )); then
   spctl -a -t open --context context:primary-signature -v "$DMG_PATH"
   spctl -a -t exec -v "$APP_DIR"
 fi

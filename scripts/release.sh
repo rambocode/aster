@@ -54,8 +54,23 @@ CHANNEL=""
   || die "ASTER_SIGN_IDENTITY must be a Developer ID; ad-hoc builds cannot be notarized"
 # 预览版同样必须公证：Sparkle 的 SUUpdateValidator 会拒绝「旧包已签名、新包未签名」，
 # 且未公证的包过不了 Gatekeeper，用户根本装不上。
-[[ -n "${ASTER_NOTARY_PROFILE:-}" ]] \
-  || die "ASTER_NOTARY_PROFILE is required; pre-releases are notarized too"
+# 公证凭据优先使用可复用的钥匙串 profile；CI / 非交互 Agent 无法弹钥匙串授权框时，
+# 允许直接注入 App Store Connect API Key 三元组。两条路径最终都只形成 notarytool
+# 参数，不把私钥内容写入仓库、日志或命令产物。
+NOTARY_ARGS=()
+if [[ -n "${ASTER_NOTARY_PROFILE:-}" ]]; then
+  NOTARY_ARGS=(--keychain-profile "$ASTER_NOTARY_PROFILE")
+elif [[ -n "${ASTER_NOTARY_KEY:-}" && -n "${ASTER_NOTARY_KEY_ID:-}" \
+  && -n "${ASTER_NOTARY_ISSUER:-}" ]]; then
+  [[ -f "$ASTER_NOTARY_KEY" ]] || die "ASTER_NOTARY_KEY does not exist"
+  NOTARY_ARGS=(
+    --key "$ASTER_NOTARY_KEY"
+    --key-id "$ASTER_NOTARY_KEY_ID"
+    --issuer "$ASTER_NOTARY_ISSUER"
+  )
+else
+  die "set ASTER_NOTARY_PROFILE or ASTER_NOTARY_KEY + ASTER_NOTARY_KEY_ID + ASTER_NOTARY_ISSUER"
+fi
 
 cd "$PROJECT_DIR"
 [[ -z "$(git status --porcelain)" ]] || die "working tree is not clean"
