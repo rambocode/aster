@@ -202,25 +202,51 @@ func tabLayoutsMatchReference() {
   #expect(TabBarLayout.allCases == [.vertical, .top, .bottom])
 }
 
-// 项目分组组头的显示真值：完整路径（home 缩写为 ~）+ 尾部斜杠，同名目录不合并。
-@Test("项目分组标题显示完整目录并把 home 缩写为 ~")
-func projectGroupTitleShowsFullDirectory() {
+// 显示名与分组身份分离：UI 只显示末段，完整路径仍保证同名目录不合并。
+@Test("项目分组只显示目录名并用完整路径保持身份唯一")
+func projectGroupTitleShowsDirectoryNameWithStableIdentity() {
   func title(_ directory: String, fallback: String = "shell") -> String {
     SidebarTabGrouping.projectGroupTitle(
       forDirectory: directory, homeDirectory: "/Users/mike", fallback: fallback)
   }
+  func identifier(_ directory: String, fallback: String = "shell") -> String {
+    SidebarTabGrouping.projectGroupIdentifier(
+      forDirectory: directory, homeDirectory: "/Users/mike", fallback: fallback)
+  }
 
-  #expect(title("/Users/mike/source/project/aster") == "~/source/project/aster/")
-  // 尾部斜杠先归一化再拼接，不产生双斜杠。
-  #expect(title("/Users/mike/source/ai/raglite/") == "~/source/ai/raglite/")
-  #expect(title("/Users/mike") == "~/")
-  // home 之外的目录保持绝对路径。
-  #expect(title("/opt/homebrew/bin") == "/opt/homebrew/bin/")
-  // 前缀相似但不是 home 子目录的路径不得被缩写。
-  #expect(title("/Users/mike2/repo") == "/Users/mike2/repo/")
+  #expect(title("/Users/mike/source/project/aster") == "aster")
+  #expect(title("/Users/mike/source/ai/raglite/") == "raglite")
+  #expect(title("/Users/mike") == "~")
+  #expect(title("/opt/homebrew/bin") == "bin")
   #expect(title("/") == "/")
-  // 目录缺失时回退标签标题，不产生空组头。
   #expect(title("", fallback: "zsh") == "zsh")
-  // 同名目录因完整路径不同而分属不同组。
-  #expect(title("/Users/mike/a/src") != title("/Users/mike/b/src"))
+  #expect(title("/Users/mike/a/src") == title("/Users/mike/b/src"))
+  #expect(identifier("/Users/mike/a/src") != identifier("/Users/mike/b/src"))
+  #expect(identifier("/Users/mike/source/project/aster/") == "~/source/project/aster/")
+}
+
+@Test("同一来源目录的本地与 SSH 标签属于两种独立 project 类型")
+func localAndSSHProjectsHaveDistinctTypesAndIdentities() {
+  let endpoint = SSHResolvedEndpoint(
+    hostName: "127.0.0.1", user: "root@ubuntu", port: 32222)
+  #expect(endpoint != nil)
+  guard let endpoint else { return }
+  let local = SidebarProjectGroup.resolve(
+    directory: "/Users/mike/source/project/cortex-work",
+    homeDirectory: "/Users/mike",
+    fallback: "cortex-work",
+    sshEndpoint: nil
+  )
+  let remote = SidebarProjectGroup.resolve(
+    directory: "/Users/mike/source/project/cortex-work",
+    homeDirectory: "/Users/mike",
+    fallback: "cortex-work",
+    sshEndpoint: endpoint
+  )
+
+  #expect(local.kind == .local)
+  #expect(remote.kind == .ssh)
+  #expect(local.identifier != remote.identifier)
+  #expect(local.title == "cortex-work")
+  #expect(remote.title == "127.0.0.1")
 }

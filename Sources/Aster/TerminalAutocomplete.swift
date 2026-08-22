@@ -115,6 +115,10 @@ final class TerminalAutocompleteController {
   private(set) var selectedIndex = 0
   private(set) var promptActive = false
   private(set) var lastSubmittedCommand: String?
+  /// Ghostty 的 OSC 与 PTY write 来自不同 callback，C marker 可能抢在最后一个回车的
+  /// 主线程投递前到达。仅在“commandStart 已到、但本轮命令尚未提交”时保持一次有界
+  /// 接收窗口；拿到换行后立即关闭，运行中的 TUI 按键不会进入 Shell 命令跟踪器。
+  private var acceptsLateSubmittedInput = false
   /// 命令文本只在当前 Pane 内存中用于自动进度匹配，不进入工作区快照或日志。
   var onCommandSubmitted: ((String) -> Void)?
 
@@ -169,19 +173,26 @@ final class TerminalAutocompleteController {
       tracker.beginPrompt()
       inlineDismissed = false
       awaitingInputEcho = false
+      acceptsLateSubmittedInput = false
     case .inputStart:
       // B 明确表示光标已进入可编辑区。A 缺失时仍可从此处开始安全跟踪。
       if !promptActive {
         promptActive = true
         tracker.beginPrompt()
       }
+      lastSubmittedCommand = nil
+      acceptsLateSubmittedInput = true
       awaitingInputEcho = false
       scheduleRefresh()
     case .commandStart:
       promptActive = false
       runningCommand = lastSubmittedCommand
+      // 正常顺序下提交回调已经给出命令，无需继续接收；只有 nil 才表示 PTY write
+      // 仍排在主线程队列中，允许它补齐到第一个换行。
+      acceptsLateSubmittedInput = lastSubmittedCommand == nil
       dismiss()
     case .commandFinished(let exitStatus):
+      acceptsLateSubmittedInput = false
       finishCommand(exitStatus: exitStatus)
       runningCommand = nil
       completedCommandOutput = nil
@@ -190,15 +201,22 @@ final class TerminalAutocompleteController {
   }
 
   func receiveInput(_ bytes: ArraySlice<UInt8>) {
-    guard promptActive else { return }
+    guard promptActive || acceptsLateSubmittedInput else { return }
     let submitted = tracker.receive(Array(bytes))
     if let command = submitted.last {
       lastSubmittedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
-      if let lastSubmittedCommand { onCommandSubmitted?(lastSubmittedCommand) }
+      if let lastSubmittedCommand {
+        // commandStart 已抢先时补回 runningCommand，后续完成学习仍消费同一条真值。
+        if runningCommand == nil { runningCommand = lastSubmittedCommand }
+        onCommandSubmitted?(lastSubmittedCommand)
+      }
       promptActive = false
+      acceptsLateSubmittedInput = false
       dismiss()
       return
     }
+    // commandStart 之后只负责吃完已排队的本轮输入；不再显示候选或启动 help probe。
+    guard promptActive else { return }
     guard tracker.isReliable else {
       dismiss()
       return

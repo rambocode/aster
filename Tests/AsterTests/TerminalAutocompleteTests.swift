@@ -265,6 +265,32 @@ func terminalAutocompleteLearnsOnlyCompletedCommands() throws {
   #expect(!controller.currentResult.candidates.contains { $0.insertText.contains("private") })
 }
 
+@Test("Ghostty commandStart 先到时仍接收排队中的回车并发布完整命令")
+@MainActor
+func terminalAutocompleteAcceptsQueuedSubmitAfterCommandStart() throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let controller = TerminalAutocompleteController(
+    service: fixture.service,
+    sessionIdentifier: "session",
+    controls: { fixture.controls.value },
+    currentDirectory: { "/project" }
+  )
+  var submitted: [String] = []
+  controller.onCommandSubmitted = { submitted.append($0) }
+
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("ssh root@ubuntu@orb".utf8)[...])
+  // Ghostty 的 OSC observer 与 PTY write 原来走两条主线程队列；快速命令会让 C
+  // marker 抢在最后一个回车 callback 前到达。
+  controller.receive(.commandStart)
+  controller.receiveInput([0x0D][...])
+
+  #expect(submitted == ["ssh root@ubuntu@orb"])
+  #expect(controller.lastSubmittedCommand == "ssh root@ubuntu@orb")
+}
+
 private final class MutableAutocompleteControls {
   var value = ControlConfiguration()
 }

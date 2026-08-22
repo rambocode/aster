@@ -980,7 +980,10 @@ final class TerminalTabItem: ObservableObject, Identifiable {
         session.$lifecycleState.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$isRunning.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$exitCode.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
-        session.$startupError.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+        session.$startupError.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        // SSH 端点改变 project 分组归属，属于侧栏结构变化；只在提交/退出连接时发生，
+        // 不进入高频标题或进度通道。
+        session.$sshRemoteEndpoint.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
       )
       .sink { [weak self] _ in self?.objectWillChange.send() }
       .store(in: &cancellables)

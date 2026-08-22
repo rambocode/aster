@@ -335,6 +335,132 @@ public struct SSHHost: Equatable, Sendable {
   public var destination: String { user.map { "\($0)@\(hostName)" } ?? hostName }
 }
 
+/// 一条会建立交互会话的 `ssh` 命令。解析只使用现有 Shell tokenizer，不执行展开、
+/// 命令替换或 glob；`configurationArguments` 截止到 destination，供上层以 argv 调用
+/// `/usr/bin/ssh -G`，不会把远端命令误传给本地解析进程。
+public struct SSHCommandInvocation: Equatable, Sendable {
+  public let destination: String
+  public let configurationArguments: [String]
+  public let fallbackHostName: String
+  public let explicitUser: String?
+
+  public static func parse(_ command: String) -> SSHCommandInvocation? {
+    guard command.utf8.count <= 16 * 1_024 else { return nil }
+    let tokens = ShellCommandTokenizer.tokenize(command).tokens
+    guard let executable = tokens.first,
+      URL(fileURLWithPath: executable).lastPathComponent == "ssh"
+    else { return nil }
+
+    // OpenSSH 单字母选项中，下列参数会消费紧随其后的一个 argv。附着写法（如 -p22）
+    // 已在同一 token 内完成，不再跳过下一项。-G/-Q/-V 只查询信息，不建立会话。
+    let optionsWithValue = Set("BbCcDEeFIiJLlmOoPpQRSWw")
+    var index = 1
+    while index < tokens.count {
+      let token = tokens[index]
+      if token == "--" {
+        index += 1
+        break
+      }
+      guard token.hasPrefix("-"), token != "-" else { break }
+      guard token.count >= 2 else { return nil }
+      let body = token.dropFirst()
+      var consumesNextToken = false
+      for optionIndex in body.indices {
+        let option = body[optionIndex]
+        if option == "G" || option == "Q" || option == "V" { return nil }
+        guard optionsWithValue.contains(option) else { continue }
+        // getopt 语义：取值选项后面仍有字符时，那些字符就是附着参数；只有选项
+        // 恰好落在 token 末尾时才消费下一项。遇到取值选项后不再解释其参数字符。
+        consumesNextToken = body.index(after: optionIndex) == body.endIndex
+        break
+      }
+      index += consumesNextToken ? 2 : 1
+    }
+
+    guard index < tokens.count else { return nil }
+    let destination = tokens[index]
+    guard let parts = destinationParts(destination) else { return nil }
+    return SSHCommandInvocation(
+      destination: destination,
+      configurationArguments: Array(tokens[1...index]),
+      fallbackHostName: parts.host,
+      explicitUser: parts.user
+    )
+  }
+
+  private static func destinationParts(_ destination: String) -> (user: String?, host: String)? {
+    guard !destination.isEmpty, destination.utf8.count <= 1_024,
+      !destination.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+    else { return nil }
+
+    if destination.lowercased().hasPrefix("ssh://"),
+      let components = URLComponents(string: destination),
+      let host = components.host, isValidHostName(host)
+    {
+      return (components.user?.removingPercentEncoding, host)
+    }
+
+    let separator = destination.lastIndex(of: "@")
+    let rawHost = separator.map { String(destination[destination.index(after: $0)...]) } ?? destination
+    let user = separator.map { String(destination[..<$0]) }.flatMap { $0.isEmpty ? nil : $0 }
+    let host: String
+    if rawHost.hasPrefix("["), rawHost.hasSuffix("]"), rawHost.count > 2 {
+      host = String(rawHost.dropFirst().dropLast())
+    } else {
+      host = rawHost
+    }
+    guard isValidHostName(host) else { return nil }
+    return (user, host)
+  }
+
+  private static func isValidHostName(_ value: String) -> Bool {
+    guard !value.isEmpty, value.utf8.count <= 255 else { return false }
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._:-%"))
+    return value.unicodeScalars.allSatisfy(allowed.contains)
+  }
+}
+
+/// `ssh -G` 的有界解析结果。分组只消费最终 `hostName`；user/port 一并保留，便于
+/// 后续扩展远端详情而无需重新解释命令行。无效或超限输出返回 nil，不污染 UI 状态。
+public struct SSHResolvedEndpoint: Equatable, Sendable {
+  public let hostName: String
+  public let user: String?
+  public let port: Int?
+
+  public init?(hostName: String, user: String? = nil, port: Int? = nil) {
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._:-%"))
+    guard !hostName.isEmpty, hostName.utf8.count <= 255,
+      hostName.unicodeScalars.allSatisfy(allowed.contains),
+      user.map({ !$0.isEmpty && $0.utf8.count <= 255 }) ?? true,
+      port.map({ (1...65_535).contains($0) }) ?? true
+    else { return nil }
+    self.hostName = hostName
+    self.user = user
+    self.port = port
+  }
+
+  public init?(configurationOutput output: String) {
+    guard output.utf8.count <= 128 * 1_024 else { return nil }
+    var hostName: String?
+    var user: String?
+    var port: Int?
+    for line in output.split(separator: "\n", omittingEmptySubsequences: true).prefix(4_096) {
+      let fields = line.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })
+      guard fields.count == 2 else { continue }
+      switch fields[0].lowercased() {
+      case "hostname": hostName = String(fields[1])
+      case "user": user = String(fields[1])
+      case "port": port = Int(fields[1])
+      default: break
+      }
+    }
+    guard let hostName,
+      let value = SSHResolvedEndpoint(hostName: hostName, user: user, port: port)
+    else { return nil }
+    self = value
+  }
+}
+
 public enum SSHConfigParser {
   public static func parse(_ text: String) -> [SSHHost] {
     guard text.utf8.count <= 1_024 * 1_024 else { return [] }

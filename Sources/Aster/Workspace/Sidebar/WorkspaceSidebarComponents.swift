@@ -65,6 +65,10 @@ final class TabRowButton: NSButton {
   /// 实现整行铺满。按钮本身仍保持整行命中宽度。
   private let sidebarRowInset: CGFloat
   private let tab: TerminalTabItem
+  /// group by project 可覆盖纵向行文案；闭包保证后续局部标题刷新仍遵守当前投影，
+  /// 不会被 OSC 标题重新改回完整路径。
+  private let displayTitleProvider: () -> String
+  private let displayTitleToolTip: String?
   private let selected: Bool
   private let horizontal: Bool
   private let showsExitStatus: Bool
@@ -112,11 +116,15 @@ final class TabRowButton: NSButton {
     showsFinished: Bool,
     showsFailure: Bool,
     showsAwaitingInput: Bool,
+    displayTitleProvider: (() -> String)? = nil,
+    displayTitleToolTip: String? = nil,
     onClose: (() -> Void)?,
     action: @escaping () -> Void,
     onDragEnd: @escaping (NSPoint) -> Void
   ) {
     self.tab = tab
+    self.displayTitleProvider = displayTitleProvider ?? { tab.displayTitle }
+    self.displayTitleToolTip = displayTitleToolTip
     self.selected = selected
     self.horizontal = horizontal
     self.showsExitStatus = showsExitStatus
@@ -199,7 +207,7 @@ final class TabRowButton: NSButton {
     // 纵向标签字号对齐 Otty `[tab].font-size` 原生默认 13；选中字重跟随主题
     // `tab.active.font-weight`，不再固定 semibold。
     let primary = makeLabel(
-      tab.displayTitle,
+      self.displayTitleProvider(),
       size: horizontal ? 12 : 13,
       weight: selected ? NSFont.Weight(cssWeight: style.activeFontWeight) : .regular,
       color: selected ? resolvedActiveForeground : resolvedForeground
@@ -207,6 +215,7 @@ final class TabRowButton: NSButton {
     addSubview(primary)
     primary.translatesAutoresizingMaskIntoConstraints = false
     titleLabel = primary
+    primary.toolTip = displayTitleToolTip
 
     // 状态附件与关闭按钮共用固定槽位（纵向 28pt / 横向胶囊内 16pt），悬停切换时
     // 标题不会水平抖动。关闭动作直接针对该 tab，不先选中后台标签。
@@ -233,7 +242,7 @@ final class TabRowButton: NSButton {
     }
     close.identifier = NSUserInterfaceItemIdentifier("sidebar-tab-close-\(tab.id.uuidString)")
     close.toolTip = "关闭标签页"
-    close.setAccessibilityLabel("关闭标签页 \(tab.displayTitle)")
+    close.setAccessibilityLabel("关闭标签页 \(self.displayTitleProvider())")
     close.translatesAutoresizingMaskIntoConstraints = false
     accessorySlot.addSubview(close)
     closeButton = close
@@ -329,8 +338,10 @@ final class TabRowButton: NSButton {
 
   /// 程序标题（OSC 0/1/2）变化时就地更新行文案；不重建行、不触碰附件与终端视图。
   func refreshTitle() {
-    titleLabel?.stringValue = tab.displayTitle
-    closeButton?.setAccessibilityLabel("关闭标签页 \(tab.displayTitle)")
+    let value = displayTitleProvider()
+    titleLabel?.stringValue = value
+    titleLabel?.toolTip = displayTitleToolTip
+    closeButton?.setAccessibilityLabel("关闭标签页 \(value)")
   }
 
   /// 只替换标签的状态附件，不重建 Sidebar、Pane 或长期存活的终端视图。Agent hook
@@ -372,7 +383,7 @@ final class TabRowButton: NSButton {
     case .completed where showsFinished && showsExitStatus:
       return "completed"
     default:
-      return "idle"
+      return !horizontal && tab.activeSession?.sshRemoteEndpoint != nil ? "ssh-remote" : "idle"
     }
   }
 
@@ -412,16 +423,27 @@ final class TabRowButton: NSButton {
       stateName = "completed"
       accessibilityLabel = "刚刚完成"
     default:
-      // 横向胶囊里放不下 shell 名，idle 只留空槽占位；纵向沿用选中行显示 shell 名。
-      accessory = makeLabel(
-        !horizontal && selected
-          ? URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
-            .lastPathComponent
-          : "",
-        size: 10, color: AsterTheme.tertiaryInk, monospaced: true
-      )
-      stateName = "idle"
-      accessibilityLabel = "空闲"
+      if !horizontal, tab.activeSession?.sshRemoteEndpoint != nil {
+        let icon = NSImageView()
+        icon.image = NSImage(
+          systemSymbolName: "desktopcomputer", accessibilityDescription: "SSH 远端")?
+          .withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
+        icon.contentTintColor = AsterTheme.tertiaryInk
+        accessory = icon
+        stateName = "ssh-remote"
+        accessibilityLabel = "SSH 远端"
+      } else {
+        // 横向胶囊里放不下 shell 名，idle 只留空槽占位；纵向沿用选中行显示 shell 名。
+        accessory = makeLabel(
+          !horizontal && selected
+            ? URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
+              .lastPathComponent
+            : "",
+          size: 10, color: AsterTheme.tertiaryInk, monospaced: true
+        )
+        stateName = "idle"
+        accessibilityLabel = "空闲"
+      }
     }
     accessory.identifier = NSUserInterfaceItemIdentifier(
       "sidebar-tab-status-\(tab.id.uuidString)-\(stateName)")

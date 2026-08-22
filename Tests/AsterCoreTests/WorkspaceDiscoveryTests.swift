@@ -98,6 +98,36 @@ func sshConfigParserExtractsConnectableHosts() {
   #expect(hosts.first?.port == 2222)
 }
 
+@Test("SSH 命令解析最后一个 at 作为主机分隔并保留配置参数")
+func sshCommandInvocationExtractsDestinationWithoutExecutingShellSyntax() throws {
+  let invocation = try #require(SSHCommandInvocation.parse("ssh -vv -p 32222 root@ubuntu@orb"))
+  #expect(invocation.destination == "root@ubuntu@orb")
+  #expect(invocation.fallbackHostName == "orb")
+  #expect(invocation.explicitUser == "root@ubuntu")
+  #expect(invocation.configurationArguments == ["-vv", "-p", "32222", "root@ubuntu@orb"])
+
+  let combined = try #require(SSHCommandInvocation.parse("ssh -vp 32222 orb"))
+  #expect(combined.configurationArguments == ["-vp", "32222", "orb"])
+
+  #expect(SSHCommandInvocation.parse("ssh -G orb") == nil)
+  #expect(SSHCommandInvocation.parse("echo ssh orb") == nil)
+  #expect(SSHCommandInvocation.parse("ssh") == nil)
+}
+
+@Test("SSH 配置输出提取最终服务器地址用户与端口")
+func sshResolvedEndpointParsesConfigurationOutput() throws {
+  let endpoint = try #require(
+    SSHResolvedEndpoint(
+      configurationOutput: """
+        user root@ubuntu
+        hostname 127.0.0.1
+        port 32222
+        canonicalizehostname false
+        """))
+  #expect(endpoint == SSHResolvedEndpoint(hostName: "127.0.0.1", user: "root@ubuntu", port: 32222))
+  #expect(SSHResolvedEndpoint(configurationOutput: "hostname bad host\n") == nil)
+}
+
 @Test("Git porcelain v2 解析变更、分支和 rename 且拒绝超限输入")
 func gitStatusParserProducesBoundedSummary() {
   let status = """

@@ -370,3 +370,94 @@ func backspaceDeletesSafePromptSelection() throws {
   #expect(Array(sent.suffix(3)) == [127, 127, 127])
   #expect(!view.selectionActive)
 }
+
+@Test("提交 SSH 命令解析远端分组并在 Pane 停止时清除")
+@MainActor
+func terminalSessionProjectsSubmittedSSHCommandIntoRemoteEndpoint() async throws {
+  let expected = try #require(
+    SSHResolvedEndpoint(hostName: "127.0.0.1", user: "root@ubuntu", port: 32222))
+  let session = TerminalSession(
+    workingDirectory: "/tmp",
+    sshEndpointResolver: { _ in expected }
+  )
+
+  session.send("ssh root@ubuntu@orb")
+  for _ in 0..<20 where session.sshRemoteEndpoint == nil {
+    await Task.yield()
+  }
+
+  #expect(session.sshRemoteEndpoint == expected)
+  let project = SidebarProjectGroup.resolve(
+    directory: "/tmp/cortex-work",
+    homeDirectory: "/Users/mike",
+    fallback: "cortex-work",
+    sshEndpoint: session.sshRemoteEndpoint
+  )
+  #expect(project.kind == .ssh)
+  #expect(project.identifier == "ssh:127.0.0.1")
+  session.stop()
+  #expect(session.sshRemoteEndpoint == nil)
+}
+
+@Test("真实 Ghostty 键盘输入 SSH 命令会创建独立远端 project")
+@MainActor
+func ghosttyUserInputCreatesSSHProjectWithoutProgrammaticSend() async throws {
+  let suite = "TerminalShellIntegrationTests.\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suite))
+  defaults.removePersistentDomain(forName: suite)
+  defer { defaults.removePersistentDomain(forName: suite) }
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.sidebarTabGrouping = .project
+  let model = AppModel(defaults: defaults)
+  model.newTab(workingDirectory: "/tmp")
+  defer { model.tabs.forEach { $0.stop(immediately: true) } }
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_000, height: 700),
+    styleMask: [.titled, .closable, .resizable],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  window.makeKeyAndOrderFront(nil)
+  window.layoutIfNeeded()
+  defer { window.orderOut(nil) }
+
+  let session = try #require(model.selectedTab?.activeSession)
+  func findGhosttyView(in root: NSView) -> GhosttySurfaceView? {
+    if let view = root as? GhosttySurfaceView { return view }
+    return root.subviews.lazy.compactMap { findGhosttyView(in: $0) }.first
+  }
+  let view = try #require(findGhosttyView(in: controller.view))
+
+  for _ in 0..<150 where !view.isProcessRunning || !session.shellIntegrationDetected {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(view.isProcessRunning)
+  #expect(session.shellIntegrationDetected)
+
+  // 用 Shell function 替代真实 ssh，覆盖完整键盘/PTY/OSC 顺序但不建立网络连接。
+  #expect(view.typeText("function ssh(){ sleep 2; }; printf '__SSH_STUB_READY__\\n'\n"))
+  for _ in 0..<100
+  where view.readText(includeScrollback: true)?.contains("__SSH_STUB_READY__") != true {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(view.readText(includeScrollback: true)?.contains("__SSH_STUB_READY__") == true)
+  // sentinel 在命令末尾打印；再留一个短窗口让 Shell 写出下一轮 A/B prompt marker。
+  try await Task.sleep(for: .milliseconds(250))
+
+  #expect(view.typeText("ssh -F /dev/null 127.0.0.1\n"))
+  for _ in 0..<100 where session.sshRemoteEndpoint == nil {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+
+  #expect(session.sshRemoteEndpoint?.hostName == "127.0.0.1")
+  let project = SidebarProjectGroup.resolve(
+    directory: "/tmp",
+    homeDirectory: NSHomeDirectory(),
+    fallback: "tmp",
+    sshEndpoint: session.sshRemoteEndpoint
+  )
+  #expect(project.kind == .ssh)
+  #expect(project.title == "127.0.0.1")
+}

@@ -2170,6 +2170,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @Published private(set) var currentWorkingDirectory: String
   /// false 表示最近 OSC 7 指向其它主机；相对文件不能继续复用旧本机 CWD。
   @Published private(set) var currentWorkingDirectoryIsLocal = true
+  /// 当前 Pane 由已提交 SSH 命令解析出的最终服务器端点。它只属于运行态，不进入
+  /// Workspace 快照；连接失败、返回本地 Shell 或 Pane 结束时立即清除。
+  @Published private(set) var sshRemoteEndpoint: SSHResolvedEndpoint?
   @Published private(set) var terminalTitle = "Shell"
   @Published private(set) var terminalIconTitle = ""
   @Published private(set) var lifecycleState = TerminalSessionLifecycleState.notStarted
@@ -2229,6 +2232,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var submittedCommand: String?
   private var submittedCommandOrigin = WorkflowRecipeCommandOrigin.shellIntegration
   private var pendingCommandOrigin: WorkflowRecipeCommandOrigin?
+  /// `ssh -G` 在后台解析；generation 阻止超时/取消前启动的旧结果覆盖更新会话。
+  private var sshResolutionTask: Task<Void, Never>?
+  private var sshResolutionGeneration: UInt64 = 0
   private(set) var recipeCommandCandidates: [WorkflowRecipeCommandCandidate] = []
   private var activityOutputTail = ""
   private var awaitingInputTask: Task<Void, Never>?
@@ -2245,6 +2251,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 结构化诊断只记录 Session UUID、进程代次、结束类型和数值状态。命令、输出、路径、
   /// 环境与本地化错误均不进入日志；测试可注入独立目录验证真实生命周期事件。
   private let diagnostics: DiagnosticsCenter
+  /// OpenSSH 配置解析边界。生产使用有界后台进程；测试注入纯闭包验证提交链路，
+  /// 不读取开发机的 ~/.ssh/config。
+  private let sshEndpointResolver: @Sendable (SSHCommandInvocation) async -> SSHResolvedEndpoint?
 
   private var terminalView: AsterTerminalView?
   /// 产品主引擎。与上面的 SwiftTerm 回归实例互斥；生产入口不会创建旧实例。
@@ -2370,12 +2379,16 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   init(
     workingDirectory: String,
     notificationPoster: any TerminalNotificationPosting = TerminalNotificationService.shared,
-    diagnostics: DiagnosticsCenter = .shared
+    diagnostics: DiagnosticsCenter = .shared,
+    sshEndpointResolver: @escaping @Sendable (SSHCommandInvocation) async -> SSHResolvedEndpoint? = {
+      await SSHHostResolutionService.resolve($0)
+    }
   ) {
     self.workingDirectory = workingDirectory
     currentWorkingDirectory = workingDirectory
     self.notificationPoster = notificationPoster
     self.diagnostics = diagnostics
+    self.sshEndpointResolver = sshEndpointResolver
     super.init()
   }
 
@@ -2499,10 +2512,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       )
       autocomplete.attach(to: view)
       autocomplete.onCommandSubmitted = { [weak self] command in
-        guard let self else { return }
-        self.submittedCommand = command
-        self.submittedCommandOrigin = self.pendingCommandOrigin ?? .shellIntegration
-        self.pendingCommandOrigin = nil
+        self?.recordSubmittedCommand(command)
       }
       view.onAutocompleteInput = { [weak autocomplete] in autocomplete?.receiveInput($0) }
       view.onAutocompleteOutput = { [weak autocomplete] in autocomplete?.receiveOutput($0) }
@@ -2716,14 +2726,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // action 会把 0/2 合并成窗口标题，不能作为 Aster 标签/图标标题的精确来源。
     view.onTitleChange = nil
     view.onWorkingDirectoryChange = { [weak self] reported in
-      guard let self else { return }
-      let normalized = Self.normalizeReportedWorkingDirectory(reported)
-      guard !normalized.isEmpty else {
-        self.currentWorkingDirectoryIsLocal = false
-        return
-      }
-      self.currentWorkingDirectoryIsLocal = true
-      if self.currentWorkingDirectory != normalized { self.currentWorkingDirectory = normalized }
+      self?.applyReportedWorkingDirectory(reported)
     }
     view.onProcessExit = { [weak self, weak view] code in
       guard let self, let view, view === self.ghosttyView else { return }
@@ -2846,10 +2849,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       )
       autocomplete.attach(to: view)
       autocomplete.onCommandSubmitted = { [weak self] command in
-        guard let self else { return }
-        self.submittedCommand = command
-        self.submittedCommandOrigin = self.pendingCommandOrigin ?? .shellIntegration
-        self.pendingCommandOrigin = nil
+        self?.recordSubmittedCommand(command)
       }
       view.onAutocompleteKeyDown = { [weak autocomplete] event in
         autocomplete?.handleKeyDown(event) ?? false
@@ -2983,6 +2983,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   private func handleGhosttyProcessExit(code: Int32?) {
+    clearSSHRemoteEndpoint()
     eventRecorder?.sessionEnded(id: id, exitCode: code)
     let termination = TerminalProcessTermination(rawWaitStatus: code.map { $0 << 8 })
     lifecycleState = .ended(termination)
@@ -3174,10 +3175,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   /// 将命令直接写入活动 PTY，供 Recipe、命令面板和自动化入口使用。
   func send(_ command: String) {
+    recordSubmittedCommand(command)
     if let ghosttyView {
-      submittedCommand = command
-      submittedCommandOrigin = pendingCommandOrigin ?? .shellIntegration
-      pendingCommandOrigin = nil
       _ = ghosttyView.typeText(command + "\n")
       return
     }
@@ -3550,6 +3549,49 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     currentWorkingDirectory
   }
 
+  /// 统一登记用户已经提交的命令。SSH 分组解析与 Agent/Recipe 生命周期消费同一份
+  /// 本地输入真值，不扫描终端输出，也不会把远端提示文字误判成连接命令。
+  private func recordSubmittedCommand(_ command: String) {
+    submittedCommand = command
+    submittedCommandOrigin = pendingCommandOrigin ?? .shellIntegration
+    pendingCommandOrigin = nil
+    guard let invocation = SSHCommandInvocation.parse(command) else { return }
+
+    sshResolutionGeneration &+= 1
+    let generation = sshResolutionGeneration
+    let resolver = sshEndpointResolver
+    sshResolutionTask?.cancel()
+    sshResolutionTask = Task { @MainActor [weak self] in
+      let endpoint = await resolver(invocation)
+      guard !Task.isCancelled, let self, self.sshResolutionGeneration == generation else { return }
+      self.sshRemoteEndpoint = endpoint
+      self.sshResolutionTask = nil
+    }
+  }
+
+  /// 清除远端投影并使所有在途解析结果失效。分组变化由 `@Published` 定向触发侧栏
+  /// 重建，不改变终端标题、PTY 或持久化 Workspace。
+  private func clearSSHRemoteEndpoint() {
+    sshResolutionGeneration &+= 1
+    sshResolutionTask?.cancel()
+    sshResolutionTask = nil
+    if sshRemoteEndpoint != nil { sshRemoteEndpoint = nil }
+  }
+
+  /// 统一处理 Ghostty/SwiftTerm 的 OSC 7。远端 URL 无法转成本地路径时只切换来源标记；
+  /// 之后第一次重新收到可信本地目录，说明 SSH 已返回本地 Shell，应撤销远端分组。
+  private func applyReportedWorkingDirectory(_ reportedValue: String) {
+    let normalized = Self.normalizeReportedWorkingDirectory(reportedValue)
+    guard !normalized.isEmpty else {
+      currentWorkingDirectoryIsLocal = false
+      return
+    }
+    let returnedFromRemote = !currentWorkingDirectoryIsLocal
+    currentWorkingDirectoryIsLocal = true
+    if returnedFromRemote { clearSSHRemoteEndpoint() }
+    if currentWorkingDirectory != normalized { currentWorkingDirectory = normalized }
+  }
+
   /// 将 SwiftTerm 的 OSC 7 目录值转换为本地绝对路径。Shell 通常上报
   /// `file://localhost/path`，也允许直接上报路径；返回空串表示值不可用。
   static func normalizeReportedWorkingDirectory(_ reportedValue: String) -> String {
@@ -3616,6 +3658,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 停止当前 Shell。关闭 Pane 时先给予 750ms 正常退出窗口；应用即将终止时必须
   /// 立即结束进程组，因为主事件循环不会继续存活到延迟升级任务执行。
   func stop(immediately: Bool = false) {
+    clearSSHRemoteEndpoint()
     // 用户关闭 Pane/标签不会经过 GHOSTTY 的 child-exited 回调（destroySurface 直接
     // 释放并清空回调）。必须在拆 surface 前显式闭合记录会话，否则 sessions 行永远
     // 停在 active，挂在会话结束链上的 Memory 提炼永远不会发生。记录层按 id 幂等，
@@ -3680,6 +3723,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 新进程不能继承上一代 Shell/TUI 的瞬态状态。Pane 的稳定身份、只读开关、回调和
   /// 最近可靠目录保留；进程、命令、Agent、搜索与通知状态全部重新初始化。
   private func prepareForProcessLaunch() {
+    clearSSHRemoteEndpoint()
     lifecycleState = .starting
     isRunning = false
     exitCode = nil
@@ -3970,7 +4014,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       // 必须在本分支尾部把 submittedCommand 置 nil 之前上报。
       eventRecorder?.commandFinished(
         id: id, command: submittedCommand, exitStatus: exitStatus)
-      defer { onCommandFinished?() }
+      defer {
+        // 顶层 SSH 失败或退出时仍处于本地目录；远端 Shell 的嵌套命令完成时 OSC 7
+        // 已把来源标为远端，不得把同一连接的服务器分组清掉。
+        if currentWorkingDirectoryIsLocal { clearSSHRemoteEndpoint() }
+        onCommandFinished?()
+      }
       clearAwaitingInput()
       agentTaskState = .idle
       activeAgentProvider = nil
@@ -4333,15 +4382,7 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
   nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
     guard let directory, !directory.isEmpty else { return }
     Task { @MainActor [weak self] in
-      let normalized = Self.normalizeReportedWorkingDirectory(directory)
-      guard let self else { return }
-      guard !normalized.isEmpty else {
-        self.currentWorkingDirectoryIsLocal = false
-        return
-      }
-      self.currentWorkingDirectoryIsLocal = true
-      guard self.currentWorkingDirectory != normalized else { return }
-      self.currentWorkingDirectory = normalized
+      self?.applyReportedWorkingDirectory(directory)
     }
   }
 
@@ -4386,6 +4427,7 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
       self.activeAgentProvider = nil
       self.activeAgentSessionID = nil
       self.agentTaskState = .idle
+      self.clearSSHRemoteEndpoint()
       self.foregroundPollTask?.cancel()
       self.foregroundPollTask = nil
       self.awaitingInputTask?.cancel()

@@ -128,13 +128,28 @@ final class AppPreferences: ObservableObject {
   }
 
   func isSidebarGroupCollapsed(title: String) -> Bool {
-    sidebarCollapsedGroups.contains(sidebarGroupKey(forTitle: title))
+    let key = sidebarGroupKey(forTitle: title)
+    if sidebarCollapsedGroups.contains(key) { return true }
+    // 旧版 local project 直接用完整路径作 title；新 identity 加入 `local:` 类型前缀。
+    // 只读兼容旧 key，升级后用户原有折叠状态不会突然全部展开。
+    guard sidebarTabGrouping == .project, title.hasPrefix("local:") else { return false }
+    let legacyTitle = String(title.dropFirst("local:".count))
+    return sidebarCollapsedGroups.contains(sidebarGroupKey(forTitle: legacyTitle))
   }
 
   func toggleSidebarGroupCollapsed(title: String) {
     let key = sidebarGroupKey(forTitle: title)
     if sidebarCollapsedGroups.contains(key) {
       sidebarCollapsedGroups.remove(key)
+    } else if sidebarTabGrouping == .project, title.hasPrefix("local:") {
+      let legacyTitle = String(title.dropFirst("local:".count))
+      let legacyKey = sidebarGroupKey(forTitle: legacyTitle)
+      if sidebarCollapsedGroups.contains(legacyKey) {
+        // 第一次交互顺便消费旧 key；当前动作语义是从折叠切到展开。
+        sidebarCollapsedGroups.remove(legacyKey)
+      } else {
+        sidebarCollapsedGroups.insert(key)
+      }
     } else {
       sidebarCollapsedGroups.insert(key)
     }

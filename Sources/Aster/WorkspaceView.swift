@@ -6,6 +6,22 @@ import Combine
 /// `TerminalSession` 长期持有，标签切换或布局刷新不会重启 PTY、清空滚动历史或 TUI。
 @MainActor
 final class WorkspaceViewController: NSViewController {
+  private enum SidebarSectionKind: Equatable {
+    case ungrouped
+    case project(SidebarProjectKind)
+    case date
+  }
+
+  /// 分组身份与可见标题分离：本地同名目录仍按完整路径区分，侧栏只画末级目录名；
+  /// SSH 则按 OpenSSH 最终 hostname 合并，并使用远端专属图标。
+  private struct SidebarTabSection {
+    let identifier: String?
+    let title: String?
+    let toolTip: String?
+    let kind: SidebarSectionKind
+    var tabs: [TerminalTabItem]
+  }
+
   let model: AppModel
   private let preferences: AppPreferences
   /// 安全输入是进程级能力，生产窗口共享单例；测试可注入无副作用实现，避免调用全局
@@ -1250,9 +1266,15 @@ final class WorkspaceViewController: NSViewController {
     rows.spacing = 0
     for section in sidebarTabSections() {
       var sectionCollapsed = false
-      if let title = section.title {
-        sectionCollapsed = preferences.isSidebarGroupCollapsed(title: title)
-        let header = makeSidebarGroupHeader(title, collapsed: sectionCollapsed)
+      if let identifier = section.identifier, let title = section.title {
+        sectionCollapsed = preferences.isSidebarGroupCollapsed(title: identifier)
+        let header = makeSidebarGroupHeader(
+          identifier: identifier,
+          title: title,
+          toolTip: section.toolTip,
+          kind: section.kind,
+          collapsed: sectionCollapsed
+        )
         rows.addArrangedSubview(header)
         header.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
       }
@@ -1268,6 +1290,17 @@ final class WorkspaceViewController: NSViewController {
           showsFinished: preferences.configuration.shell.resolvedBadgeCommandFinish,
           showsFailure: preferences.configuration.shell.resolvedBadgeCommandFailure,
           showsAwaitingInput: preferences.configuration.shell.badgeAwaitingInput,
+          displayTitleProvider: section.kind == .project(.local)
+            ? { [weak tab] in
+              guard let tab else { return "" }
+              return SidebarTabGrouping.projectGroupTitle(
+                forDirectory: tab.workingDirectory,
+                homeDirectory: NSHomeDirectory(),
+                fallback: tab.displayTitle
+              )
+            }
+            : nil,
+          displayTitleToolTip: section.kind == .project(.local) ? tab.workingDirectory : nil,
           onClose: { [weak self, weak tab] in
             guard let tab else { return }
             self?.model.closeTab(id: tab.id)
@@ -1311,7 +1344,7 @@ final class WorkspaceViewController: NSViewController {
 
   /// 排序先于分组执行，使每个分组内部与未分组列表使用同一时间顺序；相同时间使用
   /// UUID 作为稳定兜底，避免 AppKit 刷新时标签随机跳动。
-  private func sidebarTabSections() -> [(title: String?, tabs: [TerminalTabItem])] {
+  private func sidebarTabSections() -> [SidebarTabSection] {
     let sorted = model.tabs.sorted { lhs, rhs in
       let lhsDate = preferences.sidebarTabOrder == .createdTime ? lhs.createdAt : lhs.updatedAt
       let rhsDate = preferences.sidebarTabOrder == .createdTime ? rhs.createdAt : rhs.updatedAt
@@ -1319,31 +1352,55 @@ final class WorkspaceViewController: NSViewController {
       return lhs.id.uuidString < rhs.id.uuidString
     }
     guard preferences.sidebarTabGrouping != .none else {
-      return [(nil, sorted)]
+      return [SidebarTabSection(
+        identifier: nil,
+        title: nil,
+        toolTip: nil,
+        kind: .ungrouped,
+        tabs: sorted
+      )]
     }
 
     var sectionOrder: [String] = []
-    var grouped: [String: [TerminalTabItem]] = [:]
+    var grouped: [String: SidebarTabSection] = [:]
     for tab in sorted {
-      let key: String
+      let section: SidebarTabSection
       switch preferences.sidebarTabGrouping {
       case .none:
-        key = ""
+        section = SidebarTabSection(
+          identifier: nil, title: nil, toolTip: nil, kind: .ungrouped, tabs: [])
       case .project:
-        // 组头即完整项目路径（~ 缩写、尾斜杠），真值在 AsterCore；同名目录因
-        // 完整路径不同而分属不同组。
-        key = SidebarTabGrouping.projectGroupTitle(
-          forDirectory: tab.workingDirectory,
+        let project = SidebarProjectGroup.resolve(
+          directory: tab.workingDirectory,
           homeDirectory: NSHomeDirectory(),
-          fallback: tab.title
+          fallback: tab.title,
+          sshEndpoint: tab.activeSession?.sshRemoteEndpoint
+        )
+        section = SidebarTabSection(
+          identifier: project.identifier,
+          title: project.title,
+          toolTip: project.toolTip,
+          kind: .project(project.kind),
+          tabs: []
         )
       case .date:
-        key = sidebarDateGroupTitle(for: tab.createdAt)
+        let title = sidebarDateGroupTitle(for: tab.createdAt)
+        section = SidebarTabSection(
+          identifier: title,
+          title: title,
+          toolTip: title,
+          kind: .date,
+          tabs: []
+        )
       }
-      if grouped[key] == nil { sectionOrder.append(key) }
-      grouped[key, default: []].append(tab)
+      guard let identifier = section.identifier else { continue }
+      if grouped[identifier] == nil {
+        sectionOrder.append(identifier)
+        grouped[identifier] = section
+      }
+      grouped[identifier]?.tabs.append(tab)
     }
-    return sectionOrder.map { ($0, grouped[$0] ?? []) }
+    return sectionOrder.compactMap { grouped[$0] }
   }
 
   private func sidebarDateGroupTitle(for date: Date) -> String {
@@ -1357,13 +1414,18 @@ final class WorkspaceViewController: NSViewController {
     return formatter.string(from: date)
   }
 
-  /// 项目/日期分组的组头行：展开箭头 + 文件夹图标 + 完整标题，对齐 Otty 的 TABS
-  /// 分组样式。路径可能超出侧栏宽度，中间截断保住 `~/` 前缀与末段目录名，完整
-  /// 路径进 tooltip。
-  private func makeSidebarGroupHeader(_ title: String, collapsed: Bool = false) -> NSView {
+  /// 项目/日期分组的组头行：本地目录使用文件夹，SSH hostname 使用电脑图标。
+  /// 折叠状态按稳定 identifier 保存，短标题不会把同名目录的状态串在一起。
+  private func makeSidebarGroupHeader(
+    identifier: String,
+    title: String,
+    toolTip: String?,
+    kind: SidebarSectionKind,
+    collapsed: Bool = false
+  ) -> NSView {
     let host = SidebarGroupHeaderView { [weak self] in
       guard let self else { return }
-      self.preferences.toggleSidebarGroupCollapsed(title: title)
+      self.preferences.toggleSidebarGroupCollapsed(title: identifier)
       // 折叠是工作区上的直接操作，必须立即重排；不能依赖偏好观察器——设置窗口
       // 打开期间它会把结构刷新合并推迟到关窗。scheduleRefresh 自带去重，
       // 与观察器各自调度也只会重建一次。
@@ -1378,7 +1440,8 @@ final class WorkspaceViewController: NSViewController {
     row.orientation = .horizontal
     row.spacing = 5
     row.alignment = .centerY
-    for symbol in [collapsed ? "chevron.right" : "chevron.down", "folder"] {
+    let groupSymbol = kind == .project(.ssh) ? "desktopcomputer" : "folder"
+    for symbol in [collapsed ? "chevron.right" : "chevron.down", groupSymbol] {
       let icon = NSImageView()
       icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
         .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
@@ -1390,7 +1453,7 @@ final class WorkspaceViewController: NSViewController {
     let label = makeLabel(title, size: 10.5, weight: .semibold, color: AsterTheme.tertiaryInk)
     label.identifier = NSUserInterfaceItemIdentifier("sidebar-group-header")
     label.lineBreakMode = .byTruncatingMiddle
-    label.toolTip = title
+    label.toolTip = toolTip
     label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     row.addArrangedSubview(label)
 

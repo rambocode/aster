@@ -1398,8 +1398,9 @@ func sidebarOrganizerAppliesGroupingAndOrdering() throws {
   let groupHeaders = controller.view.descendants.compactMap { ($0 as? NSTextField) }.filter {
     $0.identifier?.rawValue == "sidebar-group-header"
   }.map(\.stringValue)
-  // 项目分组组头显示完整目录路径（home 缩写为 ~，保留尾斜杠），不再是末段目录名。
-  #expect(Set(groupHeaders) == Set(["~/", "/tmp/"]))
+  // 项目分组只显示末级目录名；完整路径仍作为不可见 identity 防止同名目录并组。
+  #expect(Set(groupHeaders) == Set(["~", "tmp"]))
+  #expect(Set(primaryTabLabels(in: controller)) == Set(["~", "tmp"]))
 }
 
 /// 复现真机链路：点击整理菜单项后，同一个窗口（不重建控制器）必须经

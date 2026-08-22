@@ -15,11 +15,9 @@ public enum SidebarTabGrouping: String, CaseIterable, Codable, Equatable, Sendab
 }
 
 extension SidebarTabGrouping {
-  /// 项目分组的组头标题真值：显示完整目录路径（home 缩写为 `~`）并保留尾部斜杠，
-  /// 对齐 Otty 的 TABS 分组样式；目录为空时回退 `fallback`（标签标题）。
-  /// 标题同时充当分组 key：用完整路径而不是最后一段目录名，两个同名目录
-  /// （如不同仓库各自的 `src`）才不会被误并进同一组。
-  public static func projectGroupTitle(
+  /// 项目分组的稳定身份：使用规范化完整目录（home 缩写为 `~`）并保留尾部斜杠。
+  /// UI 不直接显示本值；它只负责保证不同父目录下的同名项目不会被误并进同一组。
+  public static func projectGroupIdentifier(
     forDirectory directory: String,
     homeDirectory: String,
     fallback: String
@@ -40,6 +38,73 @@ extension SidebarTabGrouping {
       }
     }
     return normalized == "/" ? "/" : normalized + "/"
+  }
+
+  /// 项目分组的紧凑显示名：主目录显示 `~`，根目录显示 `/`，其它目录只显示末段。
+  /// 完整路径由 `projectGroupIdentifier` 保留，避免为了短标题牺牲分组正确性。
+  public static func projectGroupTitle(
+    forDirectory directory: String,
+    homeDirectory: String,
+    fallback: String
+  ) -> String {
+    var normalized = directory
+    while normalized.count > 1, normalized.hasSuffix("/") { normalized.removeLast() }
+    guard !normalized.isEmpty else { return fallback }
+
+    var home = homeDirectory
+    while home.count > 1, home.hasSuffix("/") { home.removeLast() }
+    if normalized == home { return "~" }
+    if normalized == "/" { return "/" }
+
+    let name = URL(fileURLWithPath: normalized).lastPathComponent
+    return name.isEmpty ? fallback : name
+  }
+}
+
+/// Sidebar 的两种 project 类型。类型参与分组身份和图标选择，不能只靠标题字符串
+/// 推断；本地目录名与 SSH hostname 即使恰好相同，也必须保持为两个独立分组。
+public enum SidebarProjectKind: String, Codable, Equatable, Sendable {
+  case local
+  case ssh
+}
+
+/// 一个 tab 在 group by project 下的领域投影。完整 identity 与紧凑标题分离：
+/// 本地使用规范化完整路径，SSH 使用最终 hostname，并在 identity 中加入类型前缀。
+public struct SidebarProjectGroup: Equatable, Sendable {
+  public let kind: SidebarProjectKind
+  public let identifier: String
+  public let title: String
+  public let toolTip: String
+
+  public static func resolve(
+    directory: String,
+    homeDirectory: String,
+    fallback: String,
+    sshEndpoint: SSHResolvedEndpoint?
+  ) -> SidebarProjectGroup {
+    if let sshEndpoint {
+      return SidebarProjectGroup(
+        kind: .ssh,
+        identifier: "ssh:\(sshEndpoint.hostName.lowercased())",
+        title: sshEndpoint.hostName,
+        toolTip: sshEndpoint.hostName
+      )
+    }
+    let pathIdentity = SidebarTabGrouping.projectGroupIdentifier(
+      forDirectory: directory,
+      homeDirectory: homeDirectory,
+      fallback: fallback
+    )
+    return SidebarProjectGroup(
+      kind: .local,
+      identifier: "local:\(pathIdentity)",
+      title: SidebarTabGrouping.projectGroupTitle(
+        forDirectory: directory,
+        homeDirectory: homeDirectory,
+        fallback: fallback
+      ),
+      toolTip: pathIdentity
+    )
   }
 }
 
