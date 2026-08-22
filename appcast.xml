@@ -3,6 +3,40 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.4.3</title>
+            <pubDate>Sat, 22 Aug 2026 11:59:55 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>8</sparkle:version>
+            <sparkle:shortVersionString>0.4.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 主题界面
+
+- 主题切换现在会一致更新窗口、Pane、Tabs Sidebar、活动标签和右侧 Inspector。
+- Floating Card 的 Inspector 与中央 Pane 共用同一张圆角 Container 卡片，透明 Sidebar
+  不再出现多余分隔线或重复玻璃材质。
+- 修复暗色主题下 File Pane、查找栏等 Pane 工具栏残留白色的问题。
+- Tokyo Night、Dracula 等终端-only 暗色主题会保留各自背景色调，不再统一显示成同一种
+  黑灰 Sidebar。
+- Aster 继续只读写 `~/.config/aster/themes/*.astertheme`，不会改动 Otty 的主题目录。
+
+## 标签与工作区
+
+- 项目分组现在会区分本地目录和 SSH 主机，同名本地项目与远端主机不会再混进同一组。
+- SSH 标签使用解析后的远端主机身份与专属图标，恢复工作区后仍保持正确分组。
+- 修正主题自定义的 Sidebar 左右 padding、标签前景色、活动边框和 Container 分隔线。
+
+## 稳定性
+
+- 主题预览和明暗切换会在工作区实际外观上下文中解析颜色，避免动态颜色提前冻结成错误的
+  浅色值。
+- 24 套内置主题均经过 Window、Container、Sidebar、Tabbar、Tab、Pane 和 Inspector
+  的 AppKit 呈现矩阵验证。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.3/Aster-0.4.3.dmg" length="19890524" type="application/octet-stream" sparkle:edSignature="2VOd3pNB5O6yol6etG+2W8POl+6G2LlsiuS7oBk2xtqQpA3QizEUHbb0VoSPEAW3YHDkpq6NLVrqZt+LqVRvDg=="/>
+        </item>
+        <item>
             <title>0.4.2</title>
             <pubDate>Sat, 22 Aug 2026 01:57:55 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
