@@ -83,6 +83,8 @@ public enum ShellCommandTokenizer {
 
 // MARK: - Completion specifications
 
+/// 命令描述的双语文本。JSON 里既接受纯字符串(仅英文)也接受 `{english, chinese}` 对象;
+/// 编码时中文为空则只写字符串,让 700 多个命令的嵌套规格文件保持紧凑。
 public struct LocalizedAutocompleteDescription: Codable, Equatable, Sendable {
   public var english: String
   public var chinese: String
@@ -90,6 +92,30 @@ public struct LocalizedAutocompleteDescription: Codable, Equatable, Sendable {
   public init(english: String = "", chinese: String = "") {
     self.english = english
     self.chinese = chinese
+  }
+
+  private enum CodingKeys: String, CodingKey { case english, chinese }
+
+  public init(from decoder: Decoder) throws {
+    if let single = try? decoder.singleValueContainer(), let text = try? single.decode(String.self) {
+      english = text
+      chinese = ""
+      return
+    }
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    english = try container.decodeIfPresent(String.self, forKey: .english) ?? ""
+    chinese = try container.decodeIfPresent(String.self, forKey: .chinese) ?? ""
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    if chinese.isEmpty {
+      var single = encoder.singleValueContainer()
+      try single.encode(english)
+      return
+    }
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(english, forKey: .english)
+    try container.encode(chinese, forKey: .chinese)
   }
 
   public func text(for language: AutocompleteDescriptionLanguage) -> String {
@@ -102,6 +128,7 @@ public struct LocalizedAutocompleteDescription: Codable, Equatable, Sendable {
   }
 }
 
+/// 最简单的“名称 + 描述”条目,用于参数的静态候选值。
 public struct AutocompleteSpecItem: Codable, Equatable, Sendable {
   public var name: String
   public var description: String
@@ -110,43 +137,234 @@ public struct AutocompleteSpecItem: Codable, Equatable, Sendable {
     self.name = name
     self.description = description
   }
+
+  private enum CodingKeys: String, CodingKey { case name, description }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    name = try container.decode(String.self, forKey: .name)
+    description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(name, forKey: .name)
+    if !description.isEmpty { try container.encode(description, forKey: .description) }
+  }
 }
 
+/// 位置参数或选项参数。`template` 指示文件/目录补全,`suggestions` 是静态候选,
+/// `generatorScripts` 保留 Fig 里的静态脚本(如 `git branch`)供后续动态候选使用。
+public struct AutocompleteArgumentSpec: Codable, Equatable, Sendable {
+  public var name: String
+  public var description: String
+  public var template: [String]
+  public var suggestions: [AutocompleteSpecItem]
+  public var generatorScripts: [[String]]
+  public var isOptional: Bool
+  public var isVariadic: Bool
+
+  public init(
+    name: String,
+    description: String = "",
+    template: [String] = [],
+    suggestions: [AutocompleteSpecItem] = [],
+    generatorScripts: [[String]] = [],
+    isOptional: Bool = false,
+    isVariadic: Bool = false
+  ) {
+    self.name = name
+    self.description = description
+    self.template = template
+    self.suggestions = suggestions
+    self.generatorScripts = generatorScripts
+    self.isOptional = isOptional
+    self.isVariadic = isVariadic
+  }
+
+  /// 是否期望文件路径(目录模板也接受文件系统候选)。
+  public var wantsFilesystemCandidates: Bool { !template.isEmpty }
+  public var wantsFoldersOnly: Bool { template == ["folders"] }
+
+  private enum CodingKeys: String, CodingKey {
+    case name, description, template, suggestions, generatorScripts, isOptional, isVariadic
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    name = try container.decode(String.self, forKey: .name)
+    description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
+    template = try container.decodeIfPresent([String].self, forKey: .template) ?? []
+    suggestions = try container.decodeIfPresent([AutocompleteSpecItem].self, forKey: .suggestions) ?? []
+    generatorScripts = try container.decodeIfPresent([[String]].self, forKey: .generatorScripts) ?? []
+    isOptional = try container.decodeIfPresent(Bool.self, forKey: .isOptional) ?? false
+    isVariadic = try container.decodeIfPresent(Bool.self, forKey: .isVariadic) ?? false
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(name, forKey: .name)
+    if !description.isEmpty { try container.encode(description, forKey: .description) }
+    if !template.isEmpty { try container.encode(template, forKey: .template) }
+    if !suggestions.isEmpty { try container.encode(suggestions, forKey: .suggestions) }
+    if !generatorScripts.isEmpty { try container.encode(generatorScripts, forKey: .generatorScripts) }
+    if isOptional { try container.encode(true, forKey: .isOptional) }
+    if isVariadic { try container.encode(true, forKey: .isVariadic) }
+  }
+}
+
+/// 一个选项及其全部别名(如 `-p` / `--paginate`);`args` 非空表示选项后跟参数。
+public struct AutocompleteOptionSpec: Codable, Equatable, Sendable {
+  public var names: [String]
+  public var description: String
+  public var args: [AutocompleteArgumentSpec]
+  public var isRequired: Bool
+  public var isRepeatable: Bool
+  public var hidden: Bool
+
+  public init(
+    names: [String],
+    description: String = "",
+    args: [AutocompleteArgumentSpec] = [],
+    isRequired: Bool = false,
+    isRepeatable: Bool = false,
+    hidden: Bool = false
+  ) {
+    self.names = names
+    self.description = description
+    self.args = args
+    self.isRequired = isRequired
+    self.isRepeatable = isRepeatable
+    self.hidden = hidden
+  }
+
+  public init(name: String, description: String = "") {
+    self.init(names: [name], description: description)
+  }
+
+  /// 主名称:优先长选项,便于面板展示和学习库比对。
+  public var name: String { names.first(where: { $0.hasPrefix("--") }) ?? names.first ?? "" }
+
+  private enum CodingKeys: String, CodingKey {
+    case names, description, args, isRequired, isRepeatable, hidden
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    names = try container.decode([String].self, forKey: .names)
+    description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
+    args = try container.decodeIfPresent([AutocompleteArgumentSpec].self, forKey: .args) ?? []
+    isRequired = try container.decodeIfPresent(Bool.self, forKey: .isRequired) ?? false
+    isRepeatable = try container.decodeIfPresent(Bool.self, forKey: .isRepeatable) ?? false
+    hidden = try container.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(names, forKey: .names)
+    if !description.isEmpty { try container.encode(description, forKey: .description) }
+    if !args.isEmpty { try container.encode(args, forKey: .args) }
+    if isRequired { try container.encode(true, forKey: .isRequired) }
+    if isRepeatable { try container.encode(true, forKey: .isRepeatable) }
+    if hidden { try container.encode(true, forKey: .hidden) }
+  }
+}
+
+/// 命令或子命令规格。子命令递归嵌套,与 Fig 规格树同构;`aliases` 是同一子命令的别名。
 public struct AutocompleteCommandSpec: Codable, Equatable, Sendable {
   public var name: String
   public var description: LocalizedAutocompleteDescription
-  public var subcommands: [AutocompleteSpecItem]
-  public var options: [AutocompleteSpecItem]
-  public var arguments: [AutocompleteSpecItem]
+  public var aliases: [String]
+  public var hidden: Bool
+  public var subcommands: [AutocompleteCommandSpec]
+  public var options: [AutocompleteOptionSpec]
+  public var arguments: [AutocompleteArgumentSpec]
 
   public init(
     name: String,
     description: LocalizedAutocompleteDescription = .init(),
-    subcommands: [AutocompleteSpecItem] = [],
-    options: [AutocompleteSpecItem] = [],
-    arguments: [AutocompleteSpecItem] = []
+    aliases: [String] = [],
+    hidden: Bool = false,
+    subcommands: [AutocompleteCommandSpec] = [],
+    options: [AutocompleteOptionSpec] = [],
+    arguments: [AutocompleteArgumentSpec] = []
   ) {
     self.name = name
     self.description = description
+    self.aliases = aliases
+    self.hidden = hidden
     self.subcommands = subcommands
     self.options = options
     self.arguments = arguments
   }
+
+  /// 按名称或别名查找直接子命令。
+  public func subcommand(named token: String) -> AutocompleteCommandSpec? {
+    subcommands.first { $0.name == token || $0.aliases.contains(token) }
+  }
+
+  /// 按任一名称查找选项。
+  public func option(named token: String) -> AutocompleteOptionSpec? {
+    options.first { $0.names.contains(token) }
+  }
+
+  /// 是否存在任何可补全的子项;仅有名称的占位规格返回 false。
+  public var hasDetails: Bool { !subcommands.isEmpty || !options.isEmpty || !arguments.isEmpty }
+
+  private enum CodingKeys: String, CodingKey {
+    case name, description, aliases, hidden, subcommands, options, arguments
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    name = try container.decode(String.self, forKey: .name)
+    description = try container.decodeIfPresent(LocalizedAutocompleteDescription.self, forKey: .description)
+      ?? .init()
+    aliases = try container.decodeIfPresent([String].self, forKey: .aliases) ?? []
+    hidden = try container.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+    subcommands = try container.decodeIfPresent([AutocompleteCommandSpec].self, forKey: .subcommands) ?? []
+    options = try container.decodeIfPresent([AutocompleteOptionSpec].self, forKey: .options) ?? []
+    arguments = try container.decodeIfPresent([AutocompleteArgumentSpec].self, forKey: .arguments) ?? []
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(name, forKey: .name)
+    if !description.english.isEmpty || !description.chinese.isEmpty {
+      try container.encode(description, forKey: .description)
+    }
+    if !aliases.isEmpty { try container.encode(aliases, forKey: .aliases) }
+    if hidden { try container.encode(true, forKey: .hidden) }
+    if !subcommands.isEmpty { try container.encode(subcommands, forKey: .subcommands) }
+    if !options.isEmpty { try container.encode(options, forKey: .options) }
+    if !arguments.isEmpty { try container.encode(arguments, forKey: .arguments) }
+  }
 }
 
+/// 整个规格库。`sourceRevision` 是上游版本标识,`sourceDate` 是上游发布日期(设置页展示)。
 public struct AutocompleteSpecDatabase: Codable, Equatable, Sendable {
+  public static let currentSchemaVersion = 2
+
   public var schemaVersion: Int
   public var sourceRevision: String
+  public var sourceDate: String?
   public var commands: [AutocompleteCommandSpec]
 
   public init(
-    schemaVersion: Int = 1,
+    schemaVersion: Int = AutocompleteSpecDatabase.currentSchemaVersion,
     sourceRevision: String,
+    sourceDate: String? = nil,
     commands: [AutocompleteCommandSpec]
   ) {
     self.schemaVersion = schemaVersion
     self.sourceRevision = sourceRevision
+    self.sourceDate = sourceDate
     self.commands = commands
+  }
+
+  /// 顶层命令查找(含别名)。
+  public func command(named token: String) -> AutocompleteCommandSpec? {
+    commands.first { $0.name == token || $0.aliases.contains(token) }
   }
 }
 
@@ -156,23 +374,31 @@ public enum AutocompleteStoreError: Error, Equatable {
   case invalidData
 }
 
-/// 规格文件的唯一解码边界。先限制编码大小，再校验数量和字段长度，避免导入文件
-/// 通过巨大数组或字符串放大内存占用。
+/// 规格文件的唯一解码边界。先限制编码大小,再递归校验节点数量和字段长度,避免导入文件
+/// 通过巨大数组、深层嵌套或超长字符串放大内存占用。
 public enum AutocompleteSpecStore {
-  public static let maximumEncodedBytes = 2 * 1_024 * 1_024
+  public static let maximumEncodedBytes = 32 * 1_024 * 1_024
   public static let maximumCommands = 5_000
+  /// 单个顶层命令(含全部嵌套子命令/选项/参数)允许的节点总数。
+  public static let maximumNodesPerCommand = 20_000
+  public static let maximumChildrenPerNode = 2_000
+  public static let maximumDepth = 16
 
   public static func decode(_ data: Data) throws -> AutocompleteSpecDatabase {
     guard data.count <= maximumEncodedBytes else { throw AutocompleteStoreError.fileTooLarge }
     guard let database = try? JSONDecoder().decode(AutocompleteSpecDatabase.self, from: data)
     else { throw AutocompleteStoreError.invalidData }
-    guard database.schemaVersion == 1 else { throw AutocompleteStoreError.unsupportedSchema }
+    guard database.schemaVersion == AutocompleteSpecDatabase.currentSchemaVersion else {
+      throw AutocompleteStoreError.unsupportedSchema
+    }
     guard !database.sourceRevision.isEmpty,
       database.sourceRevision.utf8.count <= 128,
       !containsControlCharacters(database.sourceRevision),
+      (database.sourceDate ?? "").utf8.count <= 32,
+      !containsControlCharacters(database.sourceDate ?? ""),
       database.commands.count <= maximumCommands,
       Set(database.commands.map(\.name)).count == database.commands.count,
-      database.commands.allSatisfy(isValid)
+      database.commands.allSatisfy({ validCommandName($0.name) && isValid($0) })
     else { throw AutocompleteStoreError.invalidData }
     return database
   }
@@ -186,26 +412,60 @@ public enum AutocompleteSpecStore {
     return data
   }
 
+  /// 顶层入口:为每个命令单独计数节点,任何一层超限都拒绝整个文件。
   private static func isValid(_ command: AutocompleteCommandSpec) -> Bool {
-    validCommandName(command.name)
-      && command.description.english.utf8.count <= 1_024
-      && command.description.chinese.utf8.count <= 1_024
-      && !containsControlCharacters(command.description.english)
-      && !containsControlCharacters(command.description.chinese)
-      && command.subcommands.count <= 2_000
-      && command.options.count <= 2_000
-      && command.arguments.count <= 2_000
-      && (command.subcommands + command.options + command.arguments).allSatisfy {
-        validItemName($0.name) && $0.description.utf8.count <= 1_024
-          && !containsControlCharacters($0.description)
+    var budget = maximumNodesPerCommand
+    return isValid(command, depth: 0, budget: &budget)
+  }
+
+  private static func isValid(_ command: AutocompleteCommandSpec, depth: Int, budget: inout Int) -> Bool {
+    budget -= 1
+    guard budget >= 0, depth <= maximumDepth,
+      validItemName(command.name),
+      validText(command.description.english), validText(command.description.chinese),
+      command.aliases.count <= 32, command.aliases.allSatisfy(validItemName),
+      command.subcommands.count <= maximumChildrenPerNode,
+      command.options.count <= maximumChildrenPerNode,
+      command.arguments.count <= maximumChildrenPerNode
+    else { return false }
+    for option in command.options {
+      budget -= 1
+      guard budget >= 0, !option.names.isEmpty, option.names.count <= 32,
+        option.names.allSatisfy(validItemName), validText(option.description),
+        option.args.count <= 64, option.args.allSatisfy(isValid)
+      else { return false }
+    }
+    guard command.arguments.allSatisfy(isValid) else { return false }
+    for subcommand in command.subcommands {
+      guard isValid(subcommand, depth: depth + 1, budget: &budget) else { return false }
+    }
+    return true
+  }
+
+  /// 参数名只是展示文本,允许空格和尖括号;静态候选会被插入命令行,必须是合法 token。
+  private static func isValid(_ argument: AutocompleteArgumentSpec) -> Bool {
+    !argument.name.isEmpty && argument.name.utf8.count <= 512 && validText(argument.name)
+      && validText(argument.description)
+      && argument.template.count <= 4
+      && argument.template.allSatisfy { $0 == "filepaths" || $0 == "folders" }
+      && argument.suggestions.count <= maximumChildrenPerNode
+      && argument.suggestions.allSatisfy { validItemName($0.name) && validText($0.description) }
+      && argument.generatorScripts.count <= 8
+      && argument.generatorScripts.allSatisfy { script in
+        !script.isEmpty && script.count <= 32
+          && script.allSatisfy { $0.utf8.count <= 512 && !containsControlCharacters($0) }
       }
+  }
+
+  private static func validText(_ value: String) -> Bool {
+    value.utf8.count <= 1_024 && !containsControlCharacters(value)
   }
 
   fileprivate static func validCommandName(_ value: String) -> Bool {
     validShellToken(
       value,
       maximumBytes: 128,
-      punctuation: CharacterSet(charactersIn: "._+-")
+      punctuation: CharacterSet(charactersIn: "._+@-")
     )
   }
 
@@ -233,53 +493,28 @@ public enum AutocompleteSpecStore {
   }
 }
 
-/// Fig Git tree API 的纯解析边界。只接受 `src/<command>.ts` 直接文件，嵌套的共享
-/// helper、generator 与仓库其它 TypeScript 不会被误当作命令规格。
+/// 手动更新的解析边界。远端文件就是 `scripts/build-fig-specs.mjs` 生成的同一份 schema v2
+/// JSON;这里只做完整解码校验、最小命令数保护,并保留现有中文描述(远端缺失时)。
 public enum FigAutocompleteUpdateParser {
-  private struct TreeResponse: Decodable {
-    struct Entry: Decodable {
-      let path: String
-      let type: String
-    }
-
-    let sha: String
-    let truncated: Bool
-    let tree: [Entry]
-  }
-
   public static func database(
     from data: Data,
     preserving existing: AutocompleteSpecDatabase,
     minimumCommandCount: Int = 100
   ) throws -> AutocompleteSpecDatabase {
-    guard data.count <= AutocompleteSpecStore.maximumEncodedBytes else {
-      throw AutocompleteStoreError.fileTooLarge
+    var updated = try AutocompleteSpecStore.decode(data)
+    guard updated.commands.count >= max(1, minimumCommandCount) else {
+      throw AutocompleteStoreError.invalidData
     }
-    guard let response = try? JSONDecoder().decode(TreeResponse.self, from: data),
-      !response.truncated,
-      !response.sha.isEmpty,
-      response.sha.utf8.count <= 128
-    else { throw AutocompleteStoreError.invalidData }
-
-    let names = Set(response.tree.compactMap { entry -> String? in
-      guard entry.type == "blob", entry.path.hasPrefix("src/"), entry.path.hasSuffix(".ts") else {
-        return nil
-      }
-      let parts = entry.path.split(separator: "/", omittingEmptySubsequences: false)
-      guard parts.count == 2 else { return nil }
-      let name = String(parts[1].dropLast(3))
-      guard AutocompleteSpecStore.validCommandName(name) else { return nil }
-      return name
-    }).sorted()
-    guard names.count >= max(1, minimumCommandCount),
-      names.count <= AutocompleteSpecStore.maximumCommands
-    else { throw AutocompleteStoreError.invalidData }
-
-    let existingByName = Dictionary(uniqueKeysWithValues: existing.commands.map { ($0.name, $0) })
-    return AutocompleteSpecDatabase(
-      sourceRevision: response.sha,
-      commands: names.map { existingByName[$0] ?? AutocompleteCommandSpec(name: $0) }
-    )
+    let existingByName = Dictionary(existing.commands.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+    updated.commands = updated.commands.map { command in
+      guard command.description.chinese.isEmpty,
+        let previous = existingByName[command.name], !previous.description.chinese.isEmpty
+      else { return command }
+      var merged = command
+      merged.description.chinese = previous.description.chinese
+      return merged
+    }
+    return updated
   }
 }
 
@@ -295,8 +530,8 @@ public enum HelpAutocompleteSpecParser {
     else { return nil }
 
     var section = Section.none
-    var subcommands: [AutocompleteSpecItem] = []
-    var options: [AutocompleteSpecItem] = []
+    var subcommands: [AutocompleteCommandSpec] = []
+    var options: [AutocompleteOptionSpec] = []
     for sourceLine in output.split(separator: "\n", omittingEmptySubsequences: false) {
       let line = sourceLine.trimmingCharacters(in: .whitespacesAndNewlines)
       let header = line.lowercased()
@@ -317,7 +552,9 @@ public enum HelpAutocompleteSpecParser {
           isValidItemName(name), !name.hasPrefix("-")
         else { continue }
         if !subcommands.contains(where: { $0.name == name }) {
-          subcommands.append(AutocompleteSpecItem(name: name, description: description))
+          subcommands.append(
+            AutocompleteCommandSpec(
+              name: name, description: LocalizedAutocompleteDescription(english: description)))
         }
       case .options where options.count < 1_000:
         let names = signature.split { $0.isWhitespace || $0 == "," }.map(String.init)
@@ -325,8 +562,8 @@ public enum HelpAutocompleteSpecParser {
           ?? names.first(where: { $0.hasPrefix("-") }),
           isValidItemName(name)
         else { continue }
-        if !options.contains(where: { $0.name == name }) {
-          options.append(AutocompleteSpecItem(name: name, description: description))
+        if !options.contains(where: { $0.names.contains(name) }) {
+          options.append(AutocompleteOptionSpec(name: name, description: description))
         }
       default:
         continue
@@ -897,25 +1134,14 @@ public struct AutocompleteEngine: Sendable {
           )
         }
     } else if let commandName = parsed.tokens.first,
-      let command = specDatabase.commands.first(where: { $0.name == commandName })
+      let root = specDatabase.command(named: commandName)
     {
-      let items: [(AutocompleteSpecItem, AutocompleteCandidateKind)]
-      if parsed.currentToken.hasPrefix("-") {
-        items = command.options.map { ($0, .option) }
-      } else {
-        items = command.subcommands.map { ($0, .subcommand) }
-          + command.arguments.map { ($0, .argument) }
-      }
-      candidates += items
-        .filter { $0.0.name.hasPrefix(parsed.currentToken) && $0.0.name != parsed.currentToken }
-        .map {
-          AutocompleteCandidate(
-            insertText: $0.0.name,
-            description: $0.0.description,
-            kind: $0.1,
-            score: 100_000
-          )
-        }
+      // 已完成的 token 不含正在输入的那个:行尾有空格时 currentToken 为空,全部 token
+      // 都算完成;否则最后一个 token 就是正在输入的前缀,要从路径推进中排除。
+      let completed = parsed.currentToken.isEmpty
+        ? Array(parsed.tokens.dropFirst()) : Array(parsed.tokens.dropFirst().dropLast())
+      candidates += Self.specCandidates(
+        root: root, completed: completed, current: parsed.currentToken, language: language)
     }
 
     var seen: Set<String> = []
@@ -950,6 +1176,89 @@ public struct AutocompleteEngine: Sendable {
       ghostText: ghostText,
       replacementStart: firstCandidateUsesFullLine ? 0 : parsed.currentTokenStart
     )
+  }
+}
+
+extension AutocompleteEngine {
+  /// 沿着已完成的 token 在规格树上前进:子命令下钻、带参数的选项吞掉下一个 token、
+  /// 其余当作位置参数;最后按“正在输入什么”决定给出选项、子命令还是参数候选。
+  fileprivate static func specCandidates(
+    root: AutocompleteCommandSpec,
+    completed: [String],
+    current: String,
+    language: AutocompleteDescriptionLanguage
+  ) -> [AutocompleteCandidate] {
+    var command = root
+    var pendingOptionArguments: [AutocompleteArgumentSpec] = []
+    var positionalIndex = 0
+    for token in completed {
+      if !pendingOptionArguments.isEmpty {
+        pendingOptionArguments.removeFirst()
+        continue
+      }
+      if token.hasPrefix("-"), token.count > 1 {
+        // `--key=value` 已经自带参数;其它带参选项让后续 token 成为它的参数。
+        if let option = command.option(named: token), !token.contains("=") {
+          pendingOptionArguments = option.args
+        }
+        continue
+      }
+      if positionalIndex == 0, let subcommand = command.subcommand(named: token) {
+        command = subcommand
+        continue
+      }
+      positionalIndex += 1
+    }
+
+    var result: [AutocompleteCandidate] = []
+    func addArgument(_ argument: AutocompleteArgumentSpec) {
+      result += argument.suggestions
+        .filter { $0.name.hasPrefix(current) && $0.name != current }
+        .map {
+          AutocompleteCandidate(
+            insertText: $0.name, description: $0.description, kind: .argument, score: 100_000)
+        }
+    }
+    if let argument = pendingOptionArguments.first {
+      addArgument(argument)
+      return result
+    }
+    if current.hasPrefix("-") {
+      for option in command.options where !option.hidden {
+        guard let insert = option.names.first(where: { $0.hasPrefix(current) && $0 != current })
+        else { continue }
+        result.append(
+          AutocompleteCandidate(
+            insertText: insert,
+            displayText: option.names.joined(separator: ", "),
+            description: option.description,
+            kind: .option,
+            score: 100_000
+          ))
+      }
+      return result
+    }
+    if positionalIndex == 0 {
+      result += command.subcommands
+        .filter { !$0.hidden && $0.name.hasPrefix(current) && $0.name != current }
+        .map {
+          AutocompleteCandidate(
+            insertText: $0.name,
+            description: $0.description.text(for: language),
+            kind: .subcommand,
+            score: 100_000
+          )
+        }
+    }
+    // 位置参数:超出声明数量时,最后一个 variadic 参数继续接收。
+    if !command.arguments.isEmpty {
+      let index = min(positionalIndex, command.arguments.count - 1)
+      let argument = command.arguments[index]
+      if positionalIndex < command.arguments.count || argument.isVariadic {
+        addArgument(argument)
+      }
+    }
+    return result
   }
 }
 

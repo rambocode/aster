@@ -411,8 +411,9 @@ final class AutocompleteService {
     static let pinnedCommands = Self(rawValue: 1 << 1)
   }
   static let maximumReadmeBytes = 2 * 1_024 * 1_024
-  static let figTreeURL = URL(
-    string: "https://api.github.com/repos/withfig/autocomplete/git/trees/master?recursive=1")!
+  /// 手动更新只拉取仓库里由 `scripts/build-fig-specs.mjs` 生成的同一份规格文件。
+  static let figSpecsURL = URL(
+    string: "https://raw.githubusercontent.com/rambocode/aster/master/Resources/autocomplete/fig-specs.json")!
 
   private let baseDirectory: URL
   private let fileManager: FileManager
@@ -631,16 +632,13 @@ final class AutocompleteService {
   }
 
   func knownOptions(for command: String) -> Set<String> {
-    Set(specDatabase.commands.first(where: { $0.name == command })?.options.map(\.name) ?? [])
+    Set(specDatabase.command(named: command)?.options.flatMap(\.names) ?? [])
   }
 
   /// 名称清单只能完成可执行文件本身；至少存在一种子项才算详细规格，否则允许
   /// 本地 help 探测补足 subcommand、option 或 argument。
   func containsDetailedSpec(for command: String) -> Bool {
-    guard let spec = specDatabase.commands.first(where: { $0.name == command }) else {
-      return false
-    }
-    return !spec.subcommands.isEmpty || !spec.options.isEmpty || !spec.arguments.isEmpty
+    specDatabase.command(named: command)?.hasDetails ?? false
   }
 
   /// `aster learn` 的本机 URL 入口。识别到 aster://learn 后无论成功与否都不再交给
@@ -687,7 +685,7 @@ final class AutocompleteService {
     specDatabase = Self.merged(base: baseSpecDatabase, local: localSpecDatabase)
   }
 
-  /// 应用用户显式触发的 Fig tree 更新。该入口不接触本地规格和命令学习文件。
+  /// 应用用户显式触发的规格文件更新。该入口不接触本地规格和命令学习文件。
   func applyFigUpdatePayload(_ data: Data, minimumCommandCount: Int = 100) throws {
     let updated = try FigAutocompleteUpdateParser.database(
       from: data,
@@ -703,9 +701,9 @@ final class AutocompleteService {
   /// 唯一联网入口，由设置页“立即更新”按钮调用。下载先落到 URLSession 临时文件，
   /// 检查 HTTP 状态和大小后才读入内存，避免 chunked 响应绕过 Content-Length。
   func updateNow(session: URLSession = .shared) async throws -> String {
-    var request = URLRequest(url: Self.figTreeURL)
-    request.timeoutInterval = 30
-    request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+    var request = URLRequest(url: Self.figSpecsURL)
+    request.timeoutInterval = 60
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
     request.setValue("AsterTerminal", forHTTPHeaderField: "User-Agent")
     let (downloadURL, response) = try await session.download(for: request)
     guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
@@ -795,6 +793,7 @@ final class AutocompleteService {
     let localNames = Set(local.commands.map(\.name))
     return AutocompleteSpecDatabase(
       sourceRevision: base.sourceRevision,
+      sourceDate: base.sourceDate,
       commands: (base.commands.filter { !localNames.contains($0.name) } + local.commands)
         .sorted { $0.name < $1.name }
     )

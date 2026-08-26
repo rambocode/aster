@@ -17,7 +17,7 @@ scratch; it contains no Otty brand assets or proprietary code.
 - `.asterrecipe` workspace import/export and session restore on launch
 - Independent OSC 1/2/0 titles, pinned names / dynamic prefixes, and `⇧⌘T` to reopen recently closed tabs
 - zsh/Bash/fish shell integration, command anchor navigation, exit status, and safe selection deletion at the prompt
-- Local autocomplete / inline suggestions: a 715-command inventory, file and alias candidates, privacy-aware learning, and `aster learn`
+- Local autocomplete / inline suggestions: 714 full Fig command specs (nested subcommands, options, arguments), file and alias candidates, privacy-aware learning, and `aster learn`
 - `TERM=auto`/terminfo safe fallback, Aster environment identification, and DA1/DA2/XTVERSION/DSR replies
 - Nine settings categories: General, Shell, Controls, Editor, Agents, Appearance, Recipes, Shortcuts, and Advanced
 - 24 built-in themes aligned with Otty 1.3.1, live terminal preview, custom copy/edit, and safe `.astertheme` import

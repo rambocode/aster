@@ -11,7 +11,7 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 - **Pane**：终端、文件浏览器、编辑器或预览四种叶节点之一。
 - **Runtime**：PTY、编辑缓冲区等不可序列化的资源，与 `PaneDescriptor` 分离。
 - **Recipe**：`.asterrecipe` TOML 格式的可移植工作区描述，可包含作用域、内容级别、标签、分屏、目录、文件和可选命令。只有这一种后缀与格式。
-- **Snapshot**：只保存可重建状态的会话恢复记录，不保存 PID、描述符和临时焦点。
+- **Snapshot**：只保存可重建状态的会话恢复记录，不保存 PID、描述符和临时焦点。附带每个 Pane 的 `WorkspacePaneRestoreCommand`（复用器附着 / OSC 88 声明 / 前台命令文本，见 `SessionRestorePlanner`），恢复时由 `TerminalSession` 在首个 prompt 按当时设置决定是否发送。
 - **Configuration**：通用、Shell、控制、编辑器、智能体、外观、Recipes、快捷键和高级九个设置域。
 - **TerminalTitleState**：分离 OSC 1 图标名与 OSC 2 窗口标题，OSC 0 同时更新两者；固定名称和动态前缀独立覆盖并进入快照。
 - **RecentlyClosedTabs**：只保存可重建标签快照的 LIFO 历史，供 `⇧⌘T` 跨重启恢复。
@@ -236,7 +236,7 @@ flowchart LR
 
 `AutocompleteEngine` 是不依赖 AppKit 的候选合并与排序边界，输入为当前命令行、Fig/本地规格、目录级学习、固定命令、README 和 Shell alias，输出为候选、ghost 后缀及替换起点。`PromptInputTracker` 只重建能够由用户输入字节确定的编辑状态；遇到 Up/Down 等依赖 Shell 内部历史的操作即标记不可靠，直到下一次 OSC 133 A/B。`TerminalAutocompleteController` 每次新输入会立即清除上一轮 ghost，只在当前终端 surface 的可见行已包含完整 tracker 输入且新候选完成重算后显示；PTY 的 OSC、CSI 等非回显输出不能提前解锁，避免候选锚定旧光标或覆盖随后回显。`ghostty_surface_ime_point` 的 x/y/height 已移除 content scale，x 是 cursor 单元格中点，y 是以左上角为原点的单元格底边；inline suggestion 使用 `textCursorFrameInViewCoordinates` 留在当前网格行，系统 IME 候选窗才额外向下偏移一个 cell height。两条路径都不得再除以 Retina backing scale。Inline label 通过 `ghostty_surface_quicklook_font` 使用 Metal 网格当前的 CoreText face 与字号，并把字体自然行高在 cursor cell 内垂直居中、将 baseline 对齐到设备像素，跟随 `adjust-cell-height` 的上下留白。`ShellCommandOutputCapture` 按 C/D 标记截取最多 128 KiB 的瞬时输出，只供失败纠错，不持久化。
 
-`AutocompleteService` 组合签名 Bundle 的 715 命令索引、用户手动 Fig tree 更新、本地 help 规格、README 普通文件读取、文件系统候选和脱敏学习库。状态文件先做 2 MiB 上限和结构校验，再以 0600 权限原子写入；符号链接和特殊文件不会被读取或覆盖。更新只从固定 GitHub API 端点发起，绝不后台联网。控制页展示当前规格数与 revision；清理动作可分别移除普通历史、固定命令和工作区目录频率数据，且不删除内置、更新或本地 help 规格。没有详细结构的命令只执行 PATH 中普通可执行文件的固定 `--help`、`-h` 或 `help` 参数，使用 `sandbox-exec` 拒绝网络与文件写入，并施加 2.5 秒超时、128 KiB 输出上限和最小环境 allowlist；远程会话完全跳过本机目录读取与 help 探测。
+`AutocompleteService` 组合签名 Bundle 的 714 条完整 Fig 规格（schema v2，嵌套子命令/选项/参数，由 `scripts/build-fig-specs.mjs` 生成）、用户手动规格文件更新、本地 help 规格、README 普通文件读取、文件系统候选和脱敏学习库。规格文件先做 32 MiB 上限与递归结构校验（每命令 20000 节点、每层 2000 子项、深度 16），学习文件 2 MiB 上限，再以 0600 权限原子写入；符号链接和特殊文件不会被读取或覆盖。更新只从固定的 Aster 仓库 raw 地址拉取生成好的规格文件，绝不后台联网。控制页展示 `v<上游日期> · N 条命令`；清理动作可分别移除普通历史、固定命令和工作区目录频率数据，且不删除内置、更新或本地 help 规格。没有详细结构的命令只执行 PATH 中普通可执行文件的固定 `--help`、`-h` 或 `help` 参数，使用 `sandbox-exec` 拒绝网络与文件写入，并施加 2.5 秒超时、128 KiB 输出上限和最小环境 allowlist；远程会话完全跳过本机目录读取与 help 探测。
 
 ```mermaid
 flowchart LR

@@ -109,15 +109,15 @@ func autocompleteServiceManualUpdatePreservesLocalSpecs() throws {
   )
   try service.installLocalSpec(
     AutocompleteCommandSpec(
-      name: "acme", subcommands: [AutocompleteSpecItem(name: "deploy")]))
+      name: "acme", subcommands: [AutocompleteCommandSpec(name: "deploy")]))
   _ = service.record(
     command: "acme deploy", directory: "/project", exitStatus: 0,
     ignorePatterns: [], knownOptions: [], sessionIdentifier: "session-a")
   let payload = Data(
     """
-    {"sha":"manual-revision","truncated":false,"tree":[
-      {"path":"src/git.ts","type":"blob"},
-      {"path":"src/new-cli.ts","type":"blob"}
+    {"schemaVersion":2,"sourceRevision":"manual-revision","commands":[
+      {"name":"git","subcommands":[{"name":"status"}]},
+      {"name":"new-cli"}
     ]}
     """.utf8)
 
@@ -188,7 +188,7 @@ func autocompleteHelpProbeParsesSandboxedExecutable() async throws {
   )
 
   #expect(spec?.subcommands.map(\.name) == ["deploy"])
-  #expect(spec?.subcommands.first?.description == "safe")
+  #expect(spec?.subcommands.first?.description.english == "safe")
   #expect(spec?.options.map(\.name) == ["--help"])
   #expect(!FileManager.default.fileExists(atPath: sideEffect.path))
 }
@@ -248,7 +248,7 @@ func asterCLIScriptIsSyntacticallyValid() throws {
   #expect(AsterCLIScript.contents.contains("/usr/bin/xxd -p"))
   #expect(AsterCLIScript.contents.contains("9;4;5;%s;watch"))
   #expect(AsterCLIScript.contents.contains("6974;Badge=%s"))
-  #expect(AutocompleteService.figTreeURL.absoluteString.contains("/trees/master?recursive=1"))
+  #expect(AutocompleteService.figSpecsURL.absoluteString.hasSuffix("/Resources/autocomplete/fig-specs.json"))
 }
 
 @Test("aster watch 保留命令退出码并发送开始与完成状态")

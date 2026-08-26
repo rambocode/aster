@@ -177,8 +177,8 @@
           row("controls.autocompleteCandidatePanel", "候选面板", "自动显示或使用快捷键打开", "select", { options: options.candidatePanel }),
           row("controls.autocompleteInlineSuggestion", "Inline suggestion", "在终端光标后显示候选后缀"),
           row("controls.autocompleteOnDeviceLearning", "本机学习", "只保存脱敏后的本机历史"),
-          row("controls.autocompleteDatabaseStatus", "补全数据库状态", "已安装的命令规格数量与当前版本", "readonly"),
-          action("updateAutocomplete", "补全数据库", "检查当前规格状态并从官方源更新", "立即更新"),
+          row("controls.autocompleteDatabaseStatus", "补全数据库", "上游 Fig 规格版本与已安装的命令数量", "readonly"),
+          action("updateAutocomplete", "更新补全数据库", "从 Aster 仓库拉取最新的命令规格文件", "立即更新"),
           action("clearAutocomplete", "清除补全数据", "选择清除历史、固定命令或目录频率数据", "清除…", { danger: true }),
         ]},
         { title: "选择", rows: [

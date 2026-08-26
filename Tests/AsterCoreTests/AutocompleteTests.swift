@@ -234,10 +234,22 @@ func autocompleteEngineCombinesSourcesAndRanksKinds() {
         description: LocalizedAutocompleteDescription(
           english: "Distributed version control", chinese: "分布式版本控制"),
         subcommands: [
-          AutocompleteSpecItem(name: "checkout", description: "切换分支"),
-          AutocompleteSpecItem(name: "cherry-pick", description: "应用提交"),
+          AutocompleteCommandSpec(
+            name: "checkout", description: LocalizedAutocompleteDescription(english: "切换分支"),
+            aliases: ["co"],
+            options: [
+              AutocompleteOptionSpec(
+                names: ["-b"], description: "新建分支",
+                args: [AutocompleteArgumentSpec(name: "branch")])
+            ],
+            arguments: [
+              AutocompleteArgumentSpec(
+                name: "branch", suggestions: [AutocompleteSpecItem(name: "main")])
+            ]),
+          AutocompleteCommandSpec(
+            name: "cherry-pick", description: LocalizedAutocompleteDescription(english: "应用提交")),
         ],
-        options: [AutocompleteSpecItem(name: "--help", description: "显示帮助")]
+        options: [AutocompleteOptionSpec(names: ["-h", "--help"], description: "显示帮助")]
       )
     ]
   )
@@ -254,6 +266,27 @@ func autocompleteEngineCombinesSourcesAndRanksKinds() {
   #expect(result.candidates.allSatisfy { $0.kind == .subcommand })
   #expect(result.ghostText == "eckout")
   #expect(result.replacementStart == 4)
+
+  // 嵌套规格:子命令(含别名)下钻后给出该层的选项、位置参数候选;带参选项吞掉下一个 token。
+  let nestedOption = engine.suggestions(
+    for: AutocompleteQuery(line: "git co -", directory: "/project"),
+    learned: [], pinned: [], readmeCommands: [])
+  #expect(nestedOption.candidates.map(\.insertText) == ["-b"])
+  #expect(nestedOption.candidates.first?.kind == .option)
+  let rootOption = engine.suggestions(
+    for: AutocompleteQuery(line: "git --", directory: "/project"),
+    learned: [], pinned: [], readmeCommands: [])
+  #expect(rootOption.candidates.map(\.insertText) == ["--help"])
+  #expect(rootOption.candidates.first?.displayText == "-h, --help")
+  let positional = engine.suggestions(
+    for: AutocompleteQuery(line: "git checkout m", directory: "/project"),
+    learned: [], pinned: [], readmeCommands: [])
+  #expect(positional.candidates.map(\.insertText) == ["main"])
+  #expect(positional.candidates.first?.kind == .argument)
+  let afterOptionArgument = engine.suggestions(
+    for: AutocompleteQuery(line: "git checkout -b ", directory: "/project"),
+    learned: [], pinned: [], readmeCommands: [])
+  #expect(afterOptionArgument.candidates.isEmpty)
 
   let folderFirst = engine.suggestions(
     for: AutocompleteQuery(line: "n", directory: "/project"),
@@ -304,7 +337,7 @@ func promptInputTrackerModelsEditableCommandLine() {
   #expect(!tracker.isReliable)
 }
 
-@Test("内置 Fig 清单固定为 715 个直接命令规格")
+@Test("内置 Fig 规格库包含完整的嵌套子命令、选项与参数")
 func bundledFigCommandDatabaseContainsExpectedCoverage() throws {
   let root = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
@@ -314,7 +347,15 @@ func bundledFigCommandDatabaseContainsExpectedCoverage() throws {
     contentsOf: root.appendingPathComponent("Resources/autocomplete/fig-specs.json"))
   let database = try AutocompleteSpecStore.decode(data)
 
-  #expect(database.commands.count == 715)
+  #expect(database.schemaVersion == 2)
+  #expect(database.sourceDate?.isEmpty == false)
+  #expect(database.commands.count >= 700)
+  let git = try #require(database.command(named: "git"))
+  #expect(git.subcommands.count >= 30)
+  let commit = try #require(git.subcommand(named: "commit"))
+  #expect(!commit.description.english.isEmpty)
+  #expect(commit.options.contains { $0.names.contains("--amend") })
+  #expect(git.options.contains { $0.names.contains("--no-pager") })
   #expect(database.commands.contains { $0.name == "git" })
   #expect(database.commands.contains { $0.name == "npm" })
   #expect(database.commands.contains { $0.name == "kubectl" })
@@ -329,29 +370,28 @@ func autocompleteStoresRejectOversizedData() {
   #expect(throws: AutocompleteStoreError.fileTooLarge) {
     try AutocompleteLearningStore.decode(oversized)
   }
+  let oversizedSpec = Data(repeating: 0x41, count: AutocompleteSpecStore.maximumEncodedBytes + 1)
   #expect(throws: AutocompleteStoreError.fileTooLarge) {
-    try AutocompleteSpecStore.decode(oversized)
+    try AutocompleteSpecStore.decode(oversizedSpec)
   }
 
-  let unsupported = Data("{\"schemaVersion\":2,\"sourceRevision\":\"test\",\"commands\":[]}".utf8)
+  let unsupported = Data("{\"schemaVersion\":1,\"sourceRevision\":\"test\",\"commands\":[]}".utf8)
   #expect(throws: AutocompleteStoreError.unsupportedSchema) {
     try AutocompleteSpecStore.decode(unsupported)
   }
 }
 
-@Test("Fig tree 更新只接受 src 根目录下的直接命令并保留已有规格")
-func figAutocompleteUpdateParserFiltersAndMergesCommands() throws {
+@Test("规格文件更新只接受完整的 schema v2 文件并保留已有中文描述")
+func figAutocompleteUpdateParserValidatesAndMergesChinese() throws {
   let payload = Data(
     """
     {
-      "sha": "new-revision",
-      "truncated": false,
-      "tree": [
-        {"path":"src/git.ts","type":"blob"},
-        {"path":"src/new-cli.ts","type":"blob"},
-        {"path":"src/$inject.ts","type":"blob"},
-        {"path":"src/shared/ignored.ts","type":"blob"},
-        {"path":"README.md","type":"blob"}
+      "schemaVersion": 2,
+      "sourceRevision": "npm-9.9.9",
+      "sourceDate": "2026-08-26",
+      "commands": [
+        {"name":"git","description":"Distributed version control","subcommands":[{"name":"status"}]},
+        {"name":"new-cli","description":{"english":"New","chinese":"新工具"}}
       ]
     }
     """.utf8)
@@ -360,7 +400,7 @@ func figAutocompleteUpdateParserFiltersAndMergesCommands() throws {
     commands: [
       AutocompleteCommandSpec(
         name: "git",
-        subcommands: [AutocompleteSpecItem(name: "status")]
+        description: LocalizedAutocompleteDescription(english: "old", chinese: "分布式版本控制")
       )
     ])
 
@@ -370,9 +410,27 @@ func figAutocompleteUpdateParserFiltersAndMergesCommands() throws {
     minimumCommandCount: 2
   )
 
-  #expect(updated.sourceRevision == "new-revision")
+  #expect(updated.sourceRevision == "npm-9.9.9")
+  #expect(updated.sourceDate == "2026-08-26")
   #expect(updated.commands.map(\.name) == ["git", "new-cli"])
   #expect(updated.commands.first?.subcommands.map(\.name) == ["status"])
+  #expect(updated.commands.first?.description.chinese == "分布式版本控制")
+  #expect(updated.commands.last?.description.chinese == "新工具")
+
+  // 只有名称清单(旧的 GitHub tree 响应)不再是合法更新载荷。
+  let tree = Data("{\"sha\":\"x\",\"truncated\":false,\"tree\":[]}".utf8)
+  #expect(throws: AutocompleteStoreError.self) {
+    try FigAutocompleteUpdateParser.database(from: tree, preserving: existing, minimumCommandCount: 1)
+  }
+  // 编码后再解码保持等价;空描述/空子项不写入,纯英文描述编码为字符串而非对象。
+  let encoded = try AutocompleteSpecStore.encode(updated)
+  #expect(try AutocompleteSpecStore.decode(encoded) == updated)
+  #expect(String(decoding: encoded, as: UTF8.self).contains("{\"name\":\"status\"}"))
+  let englishOnly = try AutocompleteSpecStore.encode(
+    AutocompleteSpecDatabase(
+      sourceRevision: "x",
+      commands: [AutocompleteCommandSpec(name: "ls", description: .init(english: "List"))]))
+  #expect(String(decoding: englishOnly, as: UTF8.self).contains("\"description\":\"List\""))
 }
 
 @Test("help 输出可生成有界的本地子命令与选项规格")
@@ -393,7 +451,7 @@ func helpOutputParserBuildsLocalCommandSpec() {
 
   #expect(spec?.subcommands.map(\.name) == ["deploy", "status"])
   #expect(spec?.options.map(\.name) == ["--help", "--profile"])
-  #expect(spec?.subcommands.first?.description == "Deploy the current project")
+  #expect(spec?.subcommands.first?.description.english == "Deploy the current project")
 
   let unsafe = HelpAutocompleteSpecParser.parse(
     command: "acme",
