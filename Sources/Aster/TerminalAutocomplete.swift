@@ -49,7 +49,9 @@ extension GhosttySurfaceView: TerminalAutocompleteHost {
     // 由 ARC 接管所有权，并使用与 Metal 网格相同的 face/size，保证相邻字形基线一致。
     return Unmanaged<NSFont>.fromOpaque(fontPointer).takeRetainedValue()
   }
-  var autocompleteForegroundColor: NSColor { .textColor }
+  /// 候选文字必须与面板底色(主题 surface)配对,而不是跟随系统 `.textColor`:深色终端
+  /// 主题下 surface 可能是浅色,系统文字色却解析成白色,导致白字压在浅底上看不清。
+  var autocompleteForegroundColor: NSColor { AsterTheme.ink }
   var autocompleteBackgroundColor: NSColor { AsterTheme.panel }
 
   func sendAutocompleteBytes(_ bytes: ArraySlice<UInt8>) -> Bool {
