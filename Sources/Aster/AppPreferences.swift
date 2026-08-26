@@ -743,6 +743,13 @@ final class AppPreferences: ObservableObject {
     themeOverrides = library
   }
 
+  /// 撤销某个 ANSI 色位的覆盖，回到原主题的色值。
+  func clearThemeANSIColor(index: Int, themeID: String) {
+    var library = themeOverrides
+    library.clearANSIColor(index: index, themeID: themeID)
+    themeOverrides = library
+  }
+
   /// 撤销整套主题的全部覆盖。
   func clearThemeOverrides(themeID: String) {
     var library = themeOverrides

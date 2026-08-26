@@ -370,22 +370,68 @@ input.control[type="text"]:focus, input.control[type="number"]:focus { border-co
 
 .appearance-theme-shell { display: grid; gap: 12px; }
 .terminal-preview, .cursor-preview { overflow: hidden; color: var(--terminal-fg, #e8e8e6); background: var(--terminal-bg, #171817); border: 1px solid var(--border-subtle); border-radius: 6px; font: 10.5px/1.48 "SF Mono", Menlo, monospace; white-space: nowrap; }
-.terminal-preview { min-height: 154px; padding: 10px 12px; }
+.terminal-preview { min-height: 154px; padding: 12px 14px; font-size: 11px; line-height: 1.55; }
 .terminal-heading { color: var(--terminal-fg); font-weight: 700; }
+/* eza 样例按 grid 对列：列宽由内容决定，列间距固定，换字体也不会错位。 */
+.tp-line { white-space: pre; }
+.tp-table { display: grid; grid-template-columns: repeat(5, max-content) minmax(0, 1fr); column-gap: 2.2ch; white-space: pre; }
+.tp-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tp-heading { font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
+.tp-right { text-align: right; }
+.tp-b { font-weight: 700; }
+.tp-dim { opacity: .45; }
+.terminal-preview .ansi-0 { color: var(--ansi-0); }
 .terminal-preview .ansi-1 { color: var(--ansi-1, #ff6b6b); }
 .terminal-preview .ansi-2, .cursor-preview .ansi-2 { color: var(--ansi-2, #7bd88f); }
 .terminal-preview .ansi-3 { color: var(--ansi-3, #f5c451); }
+.terminal-preview .ansi-4 { color: var(--ansi-4, #6fa8ff); }
 .terminal-preview .ansi-5, .cursor-preview .ansi-5 { color: var(--ansi-5, #c792ea); }
 .terminal-preview .ansi-6 { color: var(--ansi-6, #70d6d0); }
+.terminal-preview .ansi-7 { color: var(--ansi-7); }
+.terminal-preview .ansi-8 { color: var(--ansi-8); }
+.terminal-preview .ansi-9 { color: var(--ansi-9, var(--ansi-1)); }
+.terminal-preview .ansi-10 { color: var(--ansi-10, var(--ansi-2)); }
+.terminal-preview .ansi-11 { color: var(--ansi-11, var(--ansi-3)); }
+.terminal-preview .ansi-12 { color: var(--ansi-12, var(--ansi-4)); }
+.terminal-preview .ansi-13 { color: var(--ansi-13, var(--ansi-5)); }
+.terminal-preview .ansi-14 { color: var(--ansi-14, var(--ansi-6)); }
+.terminal-preview .ansi-15 { color: var(--ansi-15); }
 .theme-palette { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 16px; margin-top: 11px; }
 .theme-primary-swatches { display: grid; gap: 6px; }
 .theme-primary-swatch { width: 38px; height: 22px; padding: 0; border: 1px solid var(--border-subtle); border-radius: 5px; }
 .theme-ansi-grid { display: grid; grid-template-columns: repeat(8, 20px); gap: 6px; }
 .theme-ansi-dot { width: 18px; height: 18px; padding: 0; border: 1px solid var(--border-subtle); border-radius: 50%; }
 .theme-token-pills { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
-.theme-token-pill { display: inline-flex; min-height: 25px; align-items: center; gap: 4px; padding: 0 8px; color: var(--text-secondary); background: var(--bg-element); border: 1px solid var(--border-subtle); border-radius: 999px; font-size: 10px; }
+.theme-token-pill { display: inline-flex; min-height: 27px; align-items: center; gap: 5px; padding: 0 8px 0 10px; color: var(--text-secondary); background: var(--bg-element); border: 1px solid var(--border-subtle); border-radius: 999px; font-size: 10.5px; }
 .theme-token-pill:hover { color: var(--text-primary); border-color: var(--border-active); }
-.theme-token-pill i { width: 9px; height: 9px; border: 1px solid var(--border-subtle); border-radius: 3px; }
+.theme-token-pill > span { margin-right: 3px; }
+.theme-token-dot { width: 14px; height: 14px; padding: 0; background: var(--token-color); border: 1px solid var(--border-subtle); border-radius: 3px; cursor: pointer; }
+.theme-token-dot:hover { border-color: var(--border-active); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+/* 派生 token（主题未显式声明）：淡底 + 斜线，与显式实心块区分。 */
+.theme-token-dot.derived { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--text-secondary) 55%, transparent) 0 1px, transparent 1px 4px), color-mix(in srgb, var(--token-color) 45%, transparent); }
+.theme-primary-swatch, .theme-ansi-dot { cursor: pointer; }
+.theme-primary-swatch:hover, .theme-ansi-dot:hover { border-color: var(--border-active); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+
+/* 主题 token 取色弹层（Otty 样式）。 */
+.token-popover { position: fixed; z-index: 60; width: 236px; padding: 12px; color: var(--text-primary); background: var(--bg-card); border: 1px solid var(--border-active); border-radius: 10px; box-shadow: 0 14px 40px rgb(0 0 0 / 35%); user-select: none; }
+.token-popover-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; font-size: 12px; font-weight: 600; }
+.token-popover-close { width: 20px; height: 20px; padding: 0; color: var(--text-secondary); background: transparent; border: 0; border-radius: 4px; font-size: 15px; line-height: 1; }
+.token-popover-close:hover { color: var(--text-primary); background: var(--bg-hover); }
+.token-popover-tabs { display: grid; grid-template-columns: 1fr 1fr; margin-bottom: 10px; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); }
+.token-popover-tabs button { min-height: 26px; padding: 0; color: var(--text-secondary); background: var(--bg-element); border: 0; border-right: 1px solid var(--border-subtle); border-radius: 0; font-size: 11.5px; }
+.token-popover-tabs button:last-child { border-right: 0; }
+.token-popover-tabs button.active { color: var(--text-primary); background: var(--nav-selected); font-weight: 600; }
+.token-popover-pane[hidden] { display: none; }
+.token-pane-default { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: start; gap: 10px; padding: 2px 0; }
+.token-pane-default .setting-detail { margin-top: 3px; }
+.token-popover-swatch { display: block; width: 34px; height: 34px; border: 1px solid var(--border-subtle); border-radius: 7px; }
+.token-pane-custom { display: grid; gap: 10px; }
+.token-sv-field { position: relative; height: 150px; border-radius: 6px; background: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, var(--token-hue, #f00)); cursor: crosshair; touch-action: none; }
+.token-hue-bar { position: relative; height: 12px; border-radius: 999px; background: linear-gradient(to right, #f00 0%, #ff0 16.7%, #0f0 33.3%, #0ff 50%, #00f 66.7%, #f0f 83.3%, #f00 100%); cursor: pointer; touch-action: none; }
+.token-sv-field i, .token-hue-bar i { position: absolute; width: 12px; height: 12px; transform: translate(-50%, -50%); border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px rgb(0 0 0 / 35%); pointer-events: none; }
+.token-hue-bar i { top: 50%; }
+.token-hex-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 10px; }
+.token-hex-input { width: 100%; min-height: 30px; font: 11.5px "SF Mono", Menlo, monospace; text-align: left; user-select: text; }
 .theme-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .font-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
 .separate-theme-card { margin-top: 3px; }

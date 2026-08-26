@@ -1821,7 +1821,7 @@ final class WorkspaceViewController: NSViewController {
     // 视图统一承载实色或 material；标题若再建 NSVisualEffectView，会让透明主题重复
     // 合成一次玻璃并在 28pt 边界形成横向接缝。普通透明层同时保留标题的布局和命中区。
     background.wantsLayer = true
-    background.layer?.backgroundColor = NSColor.clear.cgColor
+    background.layer?.backgroundColor = workspaceHeaderBackgroundColor(theme).cgColor
     background.translatesAutoresizingMaskIntoConstraints = false
     background.identifier = NSUserInterfaceItemIdentifier("workspace-titlebar")
     background.heightAnchor.constraint(equalToConstant: 28).isActive = true
@@ -1869,6 +1869,27 @@ final class WorkspaceViewController: NSViewController {
       secureInput.centerYAnchor.constraint(equalTo: background.centerYAnchor),
     ])
     return background
+  }
+
+  /// 内容列标题带的底色（对齐 Otty）。
+  ///
+  /// Otty 的深色主题里，标题带不是一块独立的 chrome：容器贴边铺满时（margin 全 0，
+  /// 如 Solarized Dark / Nord），标题带直接延续容器（终端）底色，与下方 pane 连成一片；
+  /// 只有 Floating Card 这类带外边距的主题，标题带才露出 window 底。主题显式声明
+  /// `titlebar.background` 的（April / Ayu Light 等浅色主题）继续由窗口根视图承载
+  /// 实色或 material，这里保持透明，避免在 vibrancy 上再压一层不透明色。透明主题的
+  /// 容器色本身是透明 RGBA，画上去等价于不画，因此不需要单独分支。
+  private func workspaceHeaderBackgroundColor(_ theme: TerminalTheme) -> NSColor {
+    guard theme.style.titlebarBackground == nil else { return .clear }
+    let container = theme.style.container
+    let margin = preferences.tabBarLayout == .vertical
+      ? container.margin : (container.horizontalLayoutMargin ?? container.margin)
+    let edgeToEdge = margin.top == 0 && margin.leading == 0 && margin.trailing == 0
+    guard edgeToEdge else { return .clear }
+    return NSColor(
+      theme.resolvedColor(forSlot: "container.background")
+        ?? container.background ?? theme.palette.containerBackground
+    )
   }
 
   /// 协调器已经把请求、应用激活状态和 Carbon API 结果收敛成真实状态；这里仅做局部

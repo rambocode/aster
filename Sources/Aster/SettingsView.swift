@@ -3100,13 +3100,21 @@ extension SettingsViewController: WKNavigationDelegate {
   private func makeWebThemeEditor() -> [String: Any] {
     let theme = focusedTheme
     let style = theme.style
+    let overrides = preferences.themeOverrides(for: theme.id)
+    // 未叠加用户覆盖的原主题：取色器「Default」页要展示的就是它解析出来的颜色，
+    // 用户点 Default 即回到这个值。
+    let base = allThemes.first(where: { $0.id == theme.id }) ?? theme
+    let baseSlots = Dictionary(
+      base.colorSlots.map { ($0.id, $0.resolved.displayString) }, uniquingKeysWith: { first, _ in first })
     return [
       "id": theme.id,
       "name": theme.name,
       // 网页据此决定是否显示「恢复主题预设」；slot.value 表示主题显式声明，
       // 内置主题也会有，不能用它判断“用户改过”。
-      "hasOverrides": !preferences.themeOverrides(for: theme.id).isEmpty,
+      "hasOverrides": !overrides.isEmpty,
       "ansi": theme.palette.ansiColors.map(\.displayString),
+      "ansiBase": base.palette.ansiColors.map(\.displayString),
+      "ansiOverridden": (0..<16).map { overrides.ansiColors[$0] != nil },
       "fonts": [
         "regular": style.fontFamilies?.first ?? "",
         "bold": style.fontFamilyBold ?? "",
@@ -3120,6 +3128,8 @@ extension SettingsViewController: WKNavigationDelegate {
           "group": slot.group.title,
           "resolved": slot.resolved.displayString,
           "derived": slot.isDerived,
+          "base": baseSlots[slot.id] ?? slot.resolved.displayString,
+          "overridden": overrides.colors[slot.id] != nil,
         ]
         if let value = slot.value { result["value"] = value.displayString }
         return result
@@ -3857,6 +3867,42 @@ extension SettingsViewController: WKNavigationDelegate {
         message = "已更新主题“\(theme.name)”的颜色。"
       } catch {
         message = "颜色已应用；主题文件同步失败：\(error.localizedDescription)"
+      }
+      refresh()
+    case "clearThemeColor":
+      // 取色器「Default」页：撤销该 token 的用户覆盖，回到原主题值或其派生值。
+      guard let themeID = payload["themeID"] as? String,
+        let theme = allThemes.first(where: { $0.id == themeID }),
+        let slotID = payload["slotID"] as? String,
+        theme.colorSlots.contains(where: { $0.id == slotID })
+      else {
+        sendWebToast("主题颜色无效", level: "error")
+        return
+      }
+      preferences.clearThemeColor(slotID: slotID, themeID: themeID)
+      do {
+        _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
+        message = "已恢复主题“\(theme.name)”的默认颜色。"
+      } catch {
+        message = "颜色已恢复；主题文件同步失败：\(error.localizedDescription)"
+      }
+      refresh()
+    case "clearThemeANSIColor":
+      // 同上，针对 ANSI 色位。
+      guard let themeID = payload["themeID"] as? String,
+        let theme = allThemes.first(where: { $0.id == themeID }),
+        let index = (payload["index"] as? NSNumber)?.intValue,
+        theme.palette.ansiColors.indices.contains(index)
+      else {
+        sendWebToast("ANSI 色位不存在", level: "error")
+        return
+      }
+      preferences.clearThemeANSIColor(index: index, themeID: themeID)
+      do {
+        _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
+        message = "已恢复主题“\(theme.name)”的 ANSI 默认色。"
+      } catch {
+        message = "颜色已恢复；主题文件同步失败：\(error.localizedDescription)"
       }
       refresh()
     case "resetThemeColors":

@@ -928,6 +928,9 @@
     return makeAppearanceGroup("布局", card, "layout-group");
   }
 
+  // 详情区终端样例（对齐 Otty）：eza 输出按列渲染成 grid，权限逐字符着色、尺寸 /
+  // 用户 / 日期 / Git 各自沿用 eza 的 ANSI 配色，表头下划线。之前用空格对齐的做法在
+  // 不同等宽字体下会错位，这里让 grid 保证列对齐。
   function makeThemeTerminalPreview(editor) {
     const preview = document.createElement("div");
     preview.className = "terminal-preview";
@@ -939,19 +942,359 @@
     preview.style.setProperty("--terminal-fg", foreground);
     preview.style.setProperty("--terminal-bg", background);
     preview.style.setProperty("--terminal-cursor", cursorColor);
-    preview.innerHTML = [
-      `<div><span class="ansi-2">aster</span><span class="ansi-5">@macbook</span>:~ $ open <span class="terminal-inverse">readme.md</span> -a Typora<i class="terminal-cursor"></i></div>`,
-      `<div><span class="ansi-2">aster</span><span class="ansi-5">@macbook</span>:~ $ eza -la --color=always --icons --git</div>`,
-      `<div class="terminal-heading">Permissions   Size User    Date Modified  Git Name</div>`,
-      `<div><span class="ansi-2">.drwxr-xr-x</span>      - aster   22 Aug 13:42    --    .cache</div>`,
-      `<div><span class="ansi-2">.drwxr-xr-x</span>      - aster   20 Aug 09:15    -M    .config</div>`,
-      `<div><span class="ansi-6">.lrwxrwxrwx</span>      9 aster    9 Feb 20:32    --  → etc → /etc</div>`,
-      `<div><span class="ansi-3">.-rwxr-xr-x</span>    12k aster   15 Jun 10:45    --    build.sh</div>`,
-      `<div><span class="ansi-1">.-rw-r--r--</span>   856k aster    3 Apr 09:11    -N    banner.png</div>`,
-    ].join("");
     ansi.forEach((color, index) => preview.style.setProperty(`--ansi-${index}`, color));
+
+    const span = (text, className = "") => {
+      const node = document.createElement("span");
+      if (className) node.className = className;
+      node.textContent = text;
+      return node;
+    };
+    const line = (...nodes) => {
+      const row = document.createElement("div");
+      row.className = "tp-line";
+      row.append(...nodes);
+      return row;
+    };
+    const prompt = () => [
+      span("aster"), span("@macbook", "tp-b"), span(":"), span("~", "ansi-6"), span("  "), span("$", "ansi-5"), span(" "),
+    ];
+    // eza 的权限着色：类型位加粗蓝，r 黄、w 红、x 绿，`-` 弱化。
+    const permissions = text => {
+      const cell = document.createElement("span");
+      cell.className = "tp-cell";
+      [...text].forEach((char, index) => {
+        if (index === 0) cell.appendChild(span(char, "tp-dim"));
+        else if (index === 1) cell.appendChild(span(char, char === "-" ? "tp-dim" : "ansi-4 tp-b"));
+        else if (char === "r") cell.appendChild(span(char, "ansi-3"));
+        else if (char === "w") cell.appendChild(span(char, "ansi-1"));
+        else if (char === "x") cell.appendChild(span(char, "ansi-2"));
+        else cell.appendChild(span(char, "tp-dim"));
+      });
+      return cell;
+    };
+    const sizeClass = size => (size === "-" ? "tp-dim" : /k$/.test(size) ? "ansi-2" : /M$/.test(size) && parseFloat(size) >= 2 ? "ansi-1" : "ansi-3");
+    const gitClass = flag => ({ "-M": "ansi-3", "-N": "ansi-2", "-D": "ansi-1" }[flag] ?? "");
+    const rows = [
+      [".drwxr-xr-x", "-", "22 Aug 13:42", "", [span(".cache")]],
+      [".drwxr-xr-x", "-", "20 Aug 09:15", "-M", [span(".config")]],
+      [".lrwxrwxrwx", "-", "9 Feb 20:32", "", [span("etc", "ansi-6 tp-b"), span(" → ", "tp-dim"), span("/etc", "ansi-2")]],
+      [".-rwxr-xr-x", "12k", "15 Jun 10:45", "", [span("build.sh", "ansi-2 tp-b")]],
+      [".-rw-r--r--", "4.2k", "18 Jul 14:22", "-M", [span("main.rs")]],
+      [".-rw-r--r--", "856k", "3 Apr 09:11", "-N", [span("banner.png", "ansi-5")]],
+      [".-rw-r--r--", "3.1M", "1 Jan 12:00", "", [span("song.mp3", "ansi-13")]],
+      [".-rw-r--r--", "2.5M", "10 Oct 16:30", "-D", [span("backup.tar.gz", "ansi-1")]],
+    ];
+    const table = document.createElement("div");
+    table.className = "tp-table";
+    for (const heading of ["Permissions", "Size", "User", "Date Modified", "Git", "Name"]) {
+      table.appendChild(span(heading, `tp-cell tp-heading${heading === "Size" ? " tp-right" : ""}`));
+    }
+    for (const [perms, size, date, git, name] of rows) {
+      const nameCell = document.createElement("span");
+      nameCell.className = "tp-cell";
+      nameCell.append(...name);
+      table.append(
+        permissions(perms),
+        span(size, `tp-cell tp-right ${sizeClass(size)}`),
+        span("aster", "tp-cell ansi-3"),
+        span(date, "tp-cell ansi-4"),
+        span(git, `tp-cell ${gitClass(git)}`),
+        nameCell,
+      );
+    }
+    const cursor = document.createElement("i");
+    cursor.className = "terminal-cursor";
+    preview.append(
+      line(...prompt(), span("open", "ansi-2"), span(" "), span("readme.md", "terminal-inverse"), span(" "), span("-a", "ansi-2"), span(" Typora"), cursor),
+      line(...prompt(), span("eza", "ansi-2"), span(" "), span("-la", "ansi-2"), span(" "), span("--color=always", "ansi-2"), span(" "), span("--icons", "ansi-2"), span(" "), span("--git", "ansi-2")),
+      table,
+    );
     return preview;
   }
+
+  // 主题 token 取色弹层（对齐 Otty）：任意色点点击后就地弹出，Default / Custom 两页。
+  // 弹层挂在 body 上而不是内容区里：快照推送会整页重建内容区，弹层若在里面会在用户
+  // 拖动色域的过程中被销毁；这里只在重渲染后重新定位锚点、同步默认色。
+  const themeTokenPopover = { element: null, target: null, editorID: null, tab: null, hsv: null, sendTimer: 0 };
+
+  function tokenTargetForSlot(editor, slot) {
+    return {
+      key: `slot:${slot.id}`, kind: "slot", id: slot.id, title: slot.title,
+      resolved: slot.resolved, base: slot.base ?? slot.resolved, overridden: Boolean(slot.overridden), derived: Boolean(slot.derived),
+    };
+  }
+
+  function tokenTargetForANSI(editor, index) {
+    const names = ["黑", "红", "绿", "黄", "蓝", "品红", "青", "白", "亮黑", "亮红", "亮绿", "亮黄", "亮蓝", "亮品红", "亮青", "亮白"];
+    return {
+      key: `ansi:${index}`, kind: "ansi", index, title: `ANSI ${index} · ${names[index] ?? ""}`,
+      resolved: editor?.ansi?.[index] ?? "#000000", base: editor?.ansiBase?.[index] ?? editor?.ansi?.[index] ?? "#000000",
+      overridden: Boolean(editor?.ansiOverridden?.[index]), derived: false,
+    };
+  }
+
+  // 根据当前快照重新求一次弹层目标，快照推送后目标对象里的 resolved / overridden 才是新值。
+  function resolveTokenTarget(editor, key) {
+    if (!editor || !key) return null;
+    const [kind, value] = key.split(":");
+    if (kind === "ansi") return tokenTargetForANSI(editor, Number(value));
+    const slot = editor.slots?.find(item => item.id === value);
+    return slot ? tokenTargetForSlot(editor, slot) : null;
+  }
+
+  function hexToHSV(hex) {
+    const match = /^#?([0-9a-f]{6})/i.exec(hex ?? "");
+    if (!match) return { h: 0, s: 0, v: 0 };
+    const value = parseInt(match[1], 16);
+    const r = ((value >> 16) & 255) / 255;
+    const g = ((value >> 8) & 255) / 255;
+    const b = (value & 255) / 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const delta = max - min;
+    let h = 0;
+    if (delta > 0) {
+      if (max === r) h = ((g - b) / delta) % 6;
+      else if (max === g) h = (b - r) / delta + 2;
+      else h = (r - g) / delta + 4;
+      h = (h * 60 + 360) % 360;
+    }
+    return { h, s: max === 0 ? 0 : delta / max, v: max };
+  }
+
+  function hsvToHex({ h, s, v }) {
+    const c = v * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = v - c;
+    const sector = Math.floor(h / 60) % 6;
+    const [r, g, b] = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][sector];
+    return `#${[r, g, b].map(part => Math.round((part + m) * 255).toString(16).padStart(2, "0")).join("")}`;
+  }
+
+  function closeThemeTokenPopover() {
+    window.clearTimeout(themeTokenPopover.sendTimer);
+    themeTokenPopover.element?.remove();
+    themeTokenPopover.element = null;
+    themeTokenPopover.target = null;
+    themeTokenPopover.tab = null;
+    themeTokenPopover.hsv = null;
+  }
+
+  function positionThemeTokenPopover() {
+    const { element, target } = themeTokenPopover;
+    if (!element || !target) return;
+    const anchor = content.querySelector(`[data-token-anchor="${CSS.escape(target.key)}"]`);
+    if (!anchor) { closeThemeTokenPopover(); return; }
+    const rect = anchor.getBoundingClientRect();
+    const width = element.offsetWidth || 240;
+    const height = element.offsetHeight || 260;
+    let left = rect.left + rect.width / 2 - width / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+    // 优先弹在色点上方（Otty 如此）；顶部放不下再翻到下方。
+    let top = rect.top - height - 8;
+    if (top < 8) top = Math.min(rect.bottom + 8, window.innerHeight - height - 8);
+    element.style.left = `${Math.round(left)}px`;
+    element.style.top = `${Math.round(top)}px`;
+  }
+
+  // 把取色结果推给原生层。拖动过程中节流，避免每个 pointermove 都触发整页快照重建。
+  function commitThemeTokenColor(hex, { immediate = false } = {}) {
+    const { target, editorID } = themeTokenPopover;
+    if (!target || !editorID) return;
+    const dispatch = () => {
+      if (target.kind === "ansi") {
+        send("action", { action: "setThemeANSIColor", payload: { themeID: editorID, index: target.index, color: hex } });
+      } else {
+        send("action", { action: "setThemeColor", payload: { themeID: editorID, slotID: target.id, color: hex } });
+      }
+    };
+    window.clearTimeout(themeTokenPopover.sendTimer);
+    if (immediate) dispatch();
+    else themeTokenPopover.sendTimer = window.setTimeout(dispatch, 140);
+  }
+
+  function restoreThemeTokenDefault() {
+    const { target, editorID } = themeTokenPopover;
+    if (!target || !editorID || !target.overridden) return;
+    if (target.kind === "ansi") {
+      send("action", { action: "clearThemeANSIColor", payload: { themeID: editorID, index: target.index } });
+    } else {
+      send("action", { action: "clearThemeColor", payload: { themeID: editorID, slotID: target.id } });
+    }
+  }
+
+  function openThemeTokenPopover(editor, target) {
+    if (themeTokenPopover.target?.key === target.key && themeTokenPopover.element) { closeThemeTokenPopover(); return; }
+    closeThemeTokenPopover();
+    themeTokenPopover.target = target;
+    themeTokenPopover.editorID = editor.id;
+    themeTokenPopover.tab = target.overridden ? "custom" : "default";
+    themeTokenPopover.hsv = hexToHSV(target.resolved);
+
+    const popover = document.createElement("div");
+    popover.className = "token-popover";
+    popover.setAttribute("role", "dialog");
+    popover.addEventListener("pointerdown", event => event.stopPropagation());
+
+    const header = document.createElement("div");
+    header.className = "token-popover-header";
+    const title = document.createElement("span");
+    title.textContent = target.title;
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "token-popover-close";
+    close.setAttribute("aria-label", "关闭取色器");
+    close.textContent = "×";
+    close.addEventListener("click", closeThemeTokenPopover);
+    header.append(title, close);
+
+    const tabs = document.createElement("div");
+    tabs.className = "token-popover-tabs";
+    const tabButtons = {};
+    for (const [key, label] of [["default", "Default"], ["custom", "Custom"]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      button.addEventListener("click", () => {
+        themeTokenPopover.tab = key;
+        if (key === "default") restoreThemeTokenDefault();
+        syncThemeTokenPopoverTabs();
+      });
+      tabButtons[key] = button;
+      tabs.appendChild(button);
+    }
+
+    // Default 页：展示原主题解析出的颜色。
+    const defaultPane = document.createElement("div");
+    defaultPane.className = "token-popover-pane token-pane-default";
+    const defaultSwatch = document.createElement("span");
+    defaultSwatch.className = "token-popover-swatch";
+    const defaultCopy = document.createElement("div");
+    defaultCopy.innerHTML = `<span class="setting-label">默认颜色</span><span class="setting-detail">由主题解析器计算——通常派生自终端背景或父级 token。</span>`;
+    defaultPane.append(defaultSwatch, defaultCopy);
+
+    // Custom 页：饱和度/明度色域 + 色相条 + 色块 & hex 输入。
+    const customPane = document.createElement("div");
+    customPane.className = "token-popover-pane token-pane-custom";
+    const field = document.createElement("div");
+    field.className = "token-sv-field";
+    const fieldKnob = document.createElement("i");
+    field.appendChild(fieldKnob);
+    const hueBar = document.createElement("div");
+    hueBar.className = "token-hue-bar";
+    const hueKnob = document.createElement("i");
+    hueBar.appendChild(hueKnob);
+    const hexRow = document.createElement("div");
+    hexRow.className = "token-hex-row";
+    const customSwatch = document.createElement("span");
+    customSwatch.className = "token-popover-swatch";
+    const hexInput = document.createElement("input");
+    hexInput.className = "control token-hex-input";
+    hexInput.type = "text";
+    hexInput.spellcheck = false;
+    hexInput.autocomplete = "off";
+    hexRow.append(customSwatch, hexInput);
+    customPane.append(field, hueBar, hexRow);
+
+    const paint = ({ updateInput = true } = {}) => {
+      const hsv = themeTokenPopover.hsv;
+      const hex = hsvToHex(hsv);
+      field.style.setProperty("--token-hue", hsvToHex({ h: hsv.h, s: 1, v: 1 }));
+      fieldKnob.style.left = `${hsv.s * 100}%`;
+      fieldKnob.style.top = `${(1 - hsv.v) * 100}%`;
+      fieldKnob.style.background = hex;
+      hueKnob.style.left = `${(hsv.h / 360) * 100}%`;
+      hueKnob.style.background = hsvToHex({ h: hsv.h, s: 1, v: 1 });
+      customSwatch.style.background = hex;
+      if (updateInput) hexInput.value = hex;
+      return hex;
+    };
+    // 拖动色域 / 色相条：pointer capture 让指针离开控件仍继续跟踪。
+    const drag = (element, update) => {
+      const track = event => {
+        const rect = element.getBoundingClientRect();
+        const x = Math.min(Math.max((event.clientX - rect.left) / Math.max(rect.width, 1), 0), 1);
+        const y = Math.min(Math.max((event.clientY - rect.top) / Math.max(rect.height, 1), 0), 1);
+        update(x, y);
+        commitThemeTokenColor(paint(), { immediate: event.type === "pointerup" });
+      };
+      element.addEventListener("pointerdown", event => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        element.setPointerCapture(event.pointerId);
+        hexInput.blur();
+        track(event);
+        const move = moveEvent => track(moveEvent);
+        const up = upEvent => {
+          element.removeEventListener("pointermove", move);
+          element.removeEventListener("pointerup", up);
+          element.releasePointerCapture(upEvent.pointerId);
+          track(upEvent);
+        };
+        element.addEventListener("pointermove", move);
+        element.addEventListener("pointerup", up);
+      });
+    };
+    drag(field, (x, y) => { themeTokenPopover.hsv.s = x; themeTokenPopover.hsv.v = 1 - y; });
+    drag(hueBar, x => { themeTokenPopover.hsv.h = Math.min(x * 360, 359.999); });
+    const applyHex = () => {
+      const raw = hexInput.value.trim();
+      const normalized = raw.startsWith("#") ? raw : `#${raw}`;
+      if (!/^#[0-9a-f]{6}$/i.test(normalized)) { paint(); return; }
+      const hsv = hexToHSV(normalized);
+      // 灰阶色的 hue 无意义，保留原色相，避免色相条跳回红色。
+      if (hsv.s > 0) themeTokenPopover.hsv.h = hsv.h;
+      themeTokenPopover.hsv.s = hsv.s;
+      themeTokenPopover.hsv.v = hsv.v;
+      commitThemeTokenColor(paint({ updateInput: false }), { immediate: true });
+    };
+    hexInput.addEventListener("change", applyHex);
+    hexInput.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); applyHex(); } });
+
+    const syncThemeTokenPopoverTabs = () => {
+      const current = themeTokenPopover.tab;
+      for (const [key, button] of Object.entries(tabButtons)) button.classList.toggle("active", key === current);
+      defaultPane.hidden = current !== "default";
+      customPane.hidden = current !== "custom";
+      positionThemeTokenPopover();
+    };
+    popover.append(header, tabs, defaultPane, customPane);
+    popover.sync = nextTarget => {
+      themeTokenPopover.target = nextTarget;
+      defaultSwatch.style.background = nextTarget.base;
+      // 用户没在拖动时才用快照里的颜色回填，否则会把拖到一半的颜色打回去。
+      if (themeTokenPopover.tab === "default") {
+        themeTokenPopover.hsv = hexToHSV(nextTarget.resolved);
+        paint();
+      }
+      syncThemeTokenPopoverTabs();
+    };
+    document.body.appendChild(popover);
+    themeTokenPopover.element = popover;
+    popover.sync(target);
+    paint();
+  }
+
+  // 快照重渲染后：锚点被重建，重新定位并同步默认色；目标不存在则收起。
+  function syncThemeTokenPopover(editor) {
+    if (!themeTokenPopover.element) return;
+    if (editor?.id !== themeTokenPopover.editorID) { closeThemeTokenPopover(); return; }
+    const target = resolveTokenTarget(editor, themeTokenPopover.target?.key);
+    if (!target) { closeThemeTokenPopover(); return; }
+    themeTokenPopover.element.sync(target);
+  }
+
+  document.addEventListener("pointerdown", event => {
+    if (!themeTokenPopover.element) return;
+    if (event.target.closest?.("[data-token-anchor]")) return;
+    closeThemeTokenPopover();
+  });
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && themeTokenPopover.element) closeThemeTokenPopover();
+  });
+  window.addEventListener("resize", positionThemeTokenPopover);
+  content.addEventListener("scroll", positionThemeTokenPopover, { passive: true });
 
   function makeThemePalette(editor) {
     const palette = document.createElement("div");
@@ -965,7 +1308,10 @@
       swatch.className = "theme-primary-swatch";
       swatch.style.backgroundColor = slot?.resolved ?? "transparent";
       swatch.title = slot?.title ?? id;
-      swatch.addEventListener("click", () => openThemeToken(editor, id));
+      if (slot) {
+        swatch.dataset.tokenAnchor = `slot:${slot.id}`;
+        swatch.addEventListener("click", () => openThemeTokenPopover(editor, tokenTargetForSlot(editor, slot)));
+      }
       primary.appendChild(swatch);
     }
     const ansi = document.createElement("div");
@@ -976,25 +1322,17 @@
       dot.className = "theme-ansi-dot";
       dot.style.backgroundColor = color;
       dot.title = `ANSI ${index}`;
-      dot.addEventListener("click", () => openThemeToken(editor, `ansi.${index}`));
+      dot.dataset.tokenAnchor = `ansi:${index}`;
+      dot.addEventListener("click", () => openThemeTokenPopover(editor, tokenTargetForANSI(editor, index)));
       ansi.appendChild(dot);
     }
     palette.append(primary, ansi);
     return palette;
   }
 
-  function openThemeToken(editor, slotID) {
-    appearanceUIState.themeEditorOpen = true;
-    renderContent();
-    window.requestAnimationFrame(() => {
-      const input = content.querySelector(`[data-theme-slot="${CSS.escape(slotID)}"] input`);
-      input?.focus();
-      input?.select();
-    });
-  }
-
   // UI 元素 pill 条按 Otty 顺序显式映射 slot（去掉 Terminal 组：前景/背景已有大色板）；
-  // 英文标签硬编码、光标/选区用中文，与 Otty 一致。
+  // 英文标签硬编码、光标/选区用中文，与 Otty 一致。每个色点单独可点，弹出取色弹层；
+  // 派生（主题未显式声明）的 token 画成斜线底，与显式值区分。
   function makeThemeTokenPills(editor) {
     const pills = document.createElement("div");
     pills.className = "theme-token-pills";
@@ -1014,20 +1352,22 @@
     for (const [label, ids] of groups) {
       const slots = ids.map(id => slotByID.get(id)).filter(Boolean);
       if (!slots.length) continue;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "theme-token-pill";
+      const pill = document.createElement("span");
+      pill.className = "theme-token-pill";
       const caption = document.createElement("span");
       caption.textContent = label;
-      button.appendChild(caption);
+      pill.appendChild(caption);
       for (const slot of slots) {
-        const dot = document.createElement("i");
-        dot.style.backgroundColor = slot.resolved;
-        dot.title = slot.title;
-        button.appendChild(dot);
+        const dot = document.createElement("button");
+        dot.type = "button";
+        dot.className = `theme-token-dot${slot.derived ? " derived" : ""}${slot.overridden ? " overridden" : ""}`;
+        dot.style.setProperty("--token-color", slot.resolved);
+        dot.title = `${slot.title} · ${slot.id} = ${slot.resolved}${slot.derived ? "（未设置，跟随派生）" : ""}`;
+        dot.dataset.tokenAnchor = `slot:${slot.id}`;
+        dot.addEventListener("click", () => openThemeTokenPopover(editor, tokenTargetForSlot(editor, slot)));
+        pill.appendChild(dot);
       }
-      button.addEventListener("click", () => openThemeToken(editor, slots[0].id));
-      pills.appendChild(button);
+      pills.appendChild(pill);
     }
     return pills;
   }
@@ -1180,6 +1520,8 @@
     detailTitle.className = "theme-detail-title";
     detailTitle.textContent = "详情";
     detail.append(detailTitle, makeThemeTerminalPreview(editor), makeThemePalette(editor), makeThemeTokenPills(editor));
+    // 内容区已被整体重建，下一帧再让取色弹层重新贴到新锚点上。
+    window.requestAnimationFrame(() => syncThemeTokenPopover(editor));
     card.appendChild(detail);
     card.appendChild(divider());
     card.appendChild(makeThemeActions(editor));
@@ -1780,6 +2122,8 @@
     // MCP 卡片排在记录与提炼之后：先决定记不记、怎么提炼，才轮到交给谁用。
     if (section.special === "agents") page.appendChild(makeMemoryMCPGroup());
     content.replaceChildren(page);
+    // 切到别的分区 / 搜索结果后锚点不存在，取色弹层随之收起。
+    if (themeTokenPopover.element && !content.querySelector("[data-token-anchor]")) closeThemeTokenPopover();
   }
 
   function render() {
