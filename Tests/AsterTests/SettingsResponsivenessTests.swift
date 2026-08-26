@@ -369,12 +369,16 @@ func settingsBridgeHandlesShellDerivedKeys() throws {
   let controller = SettingsViewController(preferences: preferences)
   controller.loadViewIfNeeded()
 
-  // 恢复进程：三档下拉映射 restoreProcesses 布尔 + scope 兼容字段。
+  // 恢复进程：三档下拉映射 restoreProcesses 布尔 + 配置里的 scope 字段（引擎直接消费）。
   try controller.applySettingForTesting(key: "shell.restoreProcessesMode", value: "all")
   #expect(preferences.configuration.shell.restoreProcesses)
-  #expect(preferences.settingsCompatibility["shell.restoreProcessesScope"]?.jsonValue as? String == "all")
+  #expect(preferences.configuration.shell.resolvedRestoreProcessesScope == .all)
   try controller.applySettingForTesting(key: "shell.restoreProcessesMode", value: "whitelist")
-  #expect(preferences.settingsCompatibility["shell.restoreProcessesScope"]?.jsonValue as? String == "whitelist")
+  #expect(preferences.configuration.shell.resolvedRestoreProcessesScope == .whitelist)
+  try controller.applySettingForTesting(key: "shell.restoreProcessAllowlist", value: "npm run, cargo watch")
+  #expect(preferences.configuration.shell.resolvedRestoreProcessAllowlist == ["npm run", "cargo watch"])
+  try controller.applySettingForTesting(key: "shell.terminalResumeProtocol", value: true)
+  #expect(preferences.configuration.shell.resolvedTerminalResumeProtocol)
   try controller.applySettingForTesting(key: "shell.restoreProcessesMode", value: "none")
   #expect(!preferences.configuration.shell.restoreProcesses)
   #expect(throws: (any Error).self) {

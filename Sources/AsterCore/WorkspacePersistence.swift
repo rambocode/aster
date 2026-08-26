@@ -184,6 +184,8 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
   public var updatedAt: Date?
   /// 快照时各终端 Pane 绑定的 Agent 会话；可选字段保证旧快照无损解码。
   public var agentSessions: [WorkspacePaneAgentSession]?
+  /// 快照时各终端 Pane 的恢复命令(复用器附着 / OSC 88 声明 / 前台进程);可选兼容旧快照。
+  public var restoreCommands: [WorkspacePaneRestoreCommand]?
 
   public init(
     id: UUID,
@@ -192,7 +194,8 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
     titleState: TerminalTitleState? = nil,
     createdAt: Date? = nil,
     updatedAt: Date? = nil,
-    agentSessions: [WorkspacePaneAgentSession]? = nil
+    agentSessions: [WorkspacePaneAgentSession]? = nil,
+    restoreCommands: [WorkspacePaneRestoreCommand]? = nil
   ) {
     self.id = id
     self.title = title
@@ -201,6 +204,7 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
     self.createdAt = createdAt
     self.updatedAt = updatedAt
     self.agentSessions = agentSessions
+    self.restoreCommands = restoreCommands
   }
 }
 

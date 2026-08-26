@@ -686,6 +686,25 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     refresh()
   }
 
+  /// 列出已安装的编辑器,确认后把 Aster 写进它们的「外部终端」设置。
+  private func configureExternalTerminalApps() {
+    let installed = ExternalTerminalIntegration.installedEditors()
+    guard !installed.isEmpty else {
+      message = "未检测到 VS Code、Cursor、Windsurf、VSCodium、Trae 或 Sublime Text"
+      refresh()
+      return
+    }
+    let alert = NSAlert()
+    alert.messageText = "为常用应用设为默认终端"
+    alert.informativeText = "将把 Aster 写入以下应用的外部终端设置（terminal.external.osxExec）：\n"
+      + installed.map(\.name).joined(separator: "、")
+    alert.addButton(withTitle: "配置")
+    alert.addButton(withTitle: "取消")
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+    message = ExternalTerminalIntegration.summary(ExternalTerminalIntegration.configure(installed))
+    refresh()
+  }
+
   /// 打开系统设置的指定面板（服务快捷键 / 完全磁盘访问）。
   private func openSystemSettingsPane(_ urlString: String) {
     guard let url = URL(string: urlString) else { return }
@@ -941,11 +960,11 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.controls.autocompleteDescriptionLanguage = value
         },
         infoRow(
-          "Fig 规格版本", "内置 715 个直接命令规格；只在手动操作时联网",
-          AutocompleteService.shared?.specDatabase.sourceRevision.prefix(12).description ?? "不可用"
+          "补全数据库", "内置 Fig 命令规格（含子命令、选项与参数）；只在手动操作时联网",
+          AutocompleteService.shared.map(Self.autocompleteDatabaseStatus) ?? "不可用"
         ),
         actionRow(
-          "更新命令规格", "从 Fig 官方 GitHub tree 手动刷新；不会覆盖本地 help 规格",
+          "更新命令规格", "从 Aster 仓库拉取最新规格文件；不会覆盖本地 help 规格",
           title: "立即更新"
         ) { [weak self] in self?.updateAutocompleteSpecs() },
         actionRow(
@@ -1147,18 +1166,25 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     return "\(status.statusText) · 上次检查 \(formatter.localizedString(for: date, relativeTo: Date()))"
   }
 
+  /// 与 Otty 对齐的状态文案:`v<上游日期> · N 条命令`;没有日期时退回版本标识。
+  static func autocompleteDatabaseStatus(_ service: AutocompleteService) -> String {
+    let database = service.specDatabase
+    let version = database.sourceDate ?? String(database.sourceRevision.prefix(12))
+    return "v\(version) · \(database.commands.count) 条命令"
+  }
+
   private func updateAutocompleteSpecs() {
     guard let service = AutocompleteService.shared else {
       message = "Autocomplete 规格服务不可用。"
       refresh()
       return
     }
-    message = "正在手动更新 Fig 命令规格…"
+    message = "正在更新补全数据库…"
     refresh()
     Task { @MainActor [weak self, service] in
       do {
-        let revision = try await service.updateNow()
-        self?.message = "命令规格已更新到 \(revision.prefix(12))。"
+        _ = try await service.updateNow()
+        self?.message = "补全数据库已更新：\(Self.autocompleteDatabaseStatus(service))。"
       } catch {
         self?.message = "命令规格更新失败：\(error.localizedDescription)"
       }
@@ -2874,9 +2900,7 @@ extension SettingsViewController: WKNavigationDelegate {
     var values = SettingsWebBridge.compatibilityDefaults.mapValues(\.jsonValue)
     for (key, value) in preferences.settingsCompatibility { values[key] = value.jsonValue }
     let configuration = preferences.configuration
-    let autocompleteDatabaseStatus = AutocompleteService.shared.map { service in
-      "\(service.specDatabase.commands.count) 个规格 · \(service.specDatabase.sourceRevision.prefix(12))"
-    } ?? "不可用"
+    let autocompleteDatabaseStatus = AutocompleteService.shared.map(Self.autocompleteDatabaseStatus) ?? "不可用"
     let valueGroups: [[String: Any]] = [[
       "general.language": configuration.general.language,
       "launchBehavior": configuration.launchBehavior.rawValue,
@@ -2897,6 +2921,8 @@ extension SettingsViewController: WKNavigationDelegate {
       "shell.sshIntegration": configuration.shell.sshIntegration,
       "shell.frecencyAutoRecord": configuration.shell.resolvedFrecencyAutoRecord,
       "shell.restoreMultiplexerSessions": configuration.shell.restoreMultiplexerSessions,
+      "shell.terminalResumeProtocol": configuration.shell.resolvedTerminalResumeProtocol,
+      "shell.restoreProcessAllowlist": configuration.shell.restoreProcessAllowlist ?? "",
       "shell.restoreAgentSessions": configuration.shell.restoreAgentSessions,
       "shell.restoreProcesses": configuration.shell.restoreProcesses,
       "shell.notifyOnFinish": configuration.shell.notifyOnFinish,
@@ -3311,12 +3337,15 @@ extension SettingsViewController: WKNavigationDelegate {
       case "none": preferences.configuration.shell.restoreProcesses = false
       case "whitelist":
         preferences.configuration.shell.restoreProcesses = true
-        preferences.setCompatibilityValue(.string("whitelist"), forKey: "shell.restoreProcessesScope")
+        preferences.configuration.shell.restoreProcessesScope = .whitelist
       case "all":
         preferences.configuration.shell.restoreProcesses = true
-        preferences.setCompatibilityValue(.string("all"), forKey: "shell.restoreProcessesScope")
+        preferences.configuration.shell.restoreProcessesScope = .all
       default: throw SettingsWebBridgeError.invalidValue
       }
+    case "shell.terminalResumeProtocol": preferences.configuration.shell.terminalResumeProtocol = try bool()
+    case "shell.restoreProcessAllowlist":
+      preferences.configuration.shell.restoreProcessAllowlist = try string()
     case "shell.shellIntegration": setShellIntegrationEnabled(try bool())
     case "shell.sshIntegration": preferences.configuration.shell.sshIntegration = try bool()
     case "shell.frecencyAutoRecord": preferences.configuration.shell.frecencyAutoRecord = try bool()
@@ -3779,12 +3808,7 @@ extension SettingsViewController: WKNavigationDelegate {
         title: "自定义 CLI 别名",
         detail: "使用逗号分隔 alias=subcommand，例如 e=edit, v=view。"
       )
-    case "configureExternalApps":
-      editCompatibilityText(
-        key: "general.externalTerminalApps",
-        title: "常用应用终端集成",
-        detail: "输入需要由 Aster 打开的应用 bundle ID，以逗号分隔。"
-      )
+    case "configureExternalApps": configureExternalTerminalApps()
     case "configureShells":
       editCompatibilityText(
         key: "shell.enabledShells",
@@ -4722,8 +4746,7 @@ extension SettingsViewController: WKNavigationDelegate {
   /// 恢复进程三档：restoreProcesses 关闭即“不重启”；开启时按兼容字段区分白名单/全部。
   private func webRestoreProcessesMode() -> String {
     guard preferences.configuration.shell.restoreProcesses else { return "none" }
-    let scope = preferences.settingsCompatibility["shell.restoreProcessesScope"]?.jsonValue as? String
-    return scope == "all" ? "all" : "whitelist"
+    return preferences.configuration.shell.resolvedRestoreProcessesScope.rawValue
   }
   private func webScrollPastLast(_ value: TerminalScrollPastLastLine) -> String {
     switch value { case .disabled: "disabled"; case .lastLineWithContent: "lastContentAtTop"; case .lastLineInMiddle: "lastLineInMiddle"; case .cursorLine: "cursorLineAtTop" }

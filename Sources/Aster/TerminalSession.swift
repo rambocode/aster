@@ -185,6 +185,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
   var onTerminalUserInput: (() -> Void)?
   var onShellIntegrationEvent: ((ShellIntegrationEvent) -> Void)?
   var onShellAliases: (([String]) -> Void)?
+  var onResumeProtocol: ((String) -> Void)?
   var onAutocompleteKeyDown: ((NSEvent) -> Bool)?
   /// 进度与通知观察器只镜像状态，不覆盖 SwiftTerm 自己的 OSC 9;4 顶部进度条。
   var onTerminalProgress: ((TerminalProgressState) -> Void)?
@@ -1400,6 +1401,11 @@ final class AsterTerminalView: LocalProcessTerminalView {
       else { return }
       self?.onShellAliases?(report.names)
     }
+    // OSC 88 终端恢复协议:载荷原样交给 Session 解析(query/restart=/clear)。
+    getTerminal().registerOscHandler(code: 88) { [weak self] bytes in
+      guard bytes.count <= TerminalResumeProtocol.maximumPayloadBytes else { return }
+      self?.onResumeProtocol?(String(decoding: bytes, as: UTF8.self))
+    }
   }
 
   /// 以非消费 observer 接收通知和进度 OSC，保留 SwiftTerm 已有的进度条渲染。
@@ -2236,6 +2242,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var automaticSecureInputEnabled = true
   private weak var preferences: AppPreferences?
   private var submittedCommand: String?
+  /// 程序通过 OSC 88 声明的重启命令;Shell 退出时清空。
+  private var resumeProtocolCommand: String?
+  private var pendingRestoredCommand: WorkspacePaneRestoreCommand?
+  /// OSC 133 缺席时的兜底投递任务(用户 zsh 集成只在 tmux 注入,普通会话收不到 promptStart)。
+  private var restoreFallbackTask: Task<Void, Never>?
   private var submittedCommandOrigin = WorkflowRecipeCommandOrigin.shellIntegration
   private var pendingCommandOrigin: WorkflowRecipeCommandOrigin?
   /// `ssh -G` 在后台解析；generation 阻止超时/取消前启动的旧结果覆盖更新会话。
@@ -2249,6 +2260,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var pendingRestoredAgentResume: (provider: AgentProvider, sessionID: String)?
   /// 诊断 seam：恢复重连是否仍在等待首个 prompt。仅供测试观察，UI 不消费。
   var hasPendingRestoredAgentResume: Bool { pendingRestoredAgentResume != nil }
+  var hasPendingRestoredCommand: Bool { pendingRestoredCommand != nil }
   private var completedFlashTask: Task<Void, Never>?
   private var progressExpiryTask: Task<Void, Never>?
   /// 生产固定使用 5 秒静默窗口；构造参数让回归测试可用虚拟的短窗口
@@ -2336,6 +2348,20 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 但分屏恢复期间回调与视图挂载顺序可能让缓存短暂过期，状态栏必须读取真实值。
   var statusIsRunning: Bool {
     ghosttyView?.isProcessRunning ?? terminalView?.process.running ?? isRunning
+  }
+
+  /// 关闭确认用的即时判断:PTY 前台进程组不是登录 Shell 本身,就视为有命令在运行。
+  /// 不复用 `hasRunningCommand`——那是给 spinner 用的,带 5 秒静默降级,`sleep` 这类无输出
+  /// 命令会被判成空闲。
+  var hasForegroundCommand: Bool {
+    if let ghosttyView {
+      guard ghosttyView.isProcessRunning, let foreground = ghosttyView.foregroundProcessIdentifier
+      else { return false }
+      return foreground != (ghosttyShellProcessIdentifier ?? foreground)
+    }
+    guard let process = terminalView?.process, process.running, process.childfd >= 0 else { return false }
+    let foreground = tcgetpgrp(process.childfd)
+    return foreground > 0 && foreground != process.shellPid
   }
 
   var canRestart: Bool {
@@ -2532,6 +2558,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         autocomplete?.receive(event)
       }
       view.onShellAliases = { [weak autocomplete] in autocomplete?.receiveAliases($0) }
+      view.onResumeProtocol = { [weak self] in self?.handleResumeProtocol(payload: $0) }
       view.onAutocompleteKeyDown = { [weak autocomplete] in autocomplete?.handleKeyDown($0) ?? false }
       autocompleteController = autocomplete
     } else {
@@ -2653,7 +2680,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         attributes: processDiagnosticAttributes(launch: processGeneration == 1 ? "initial" : "restart")
       )
     }
-    if isRunning { startForegroundPolling() }
+    if isRunning {
+      startForegroundPolling()
+      scheduleRestoreFallbackIfNeeded()
+    }
     return view
   }
 
@@ -2889,6 +2919,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
               launch: self.processGeneration == 1 ? "initial" : "restart")
           )
           self.startForegroundPolling()
+          self.scheduleRestoreFallbackIfNeeded()
         }
       } else {
         self.isRunning = false
@@ -2953,6 +2984,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       autocompleteController?.receive(event)
       handleShellIntegrationEvent(event)
       handleShellIntegrationTimeline(ghosttyShellCommandTimeline)
+    case 88:
+      guard payload.count <= TerminalResumeProtocol.maximumPayloadBytes else { return }
+      handleResumeProtocol(payload: String(decoding: payload, as: UTF8.self))
     case 6_973:
       guard payload.count <= 8_192,
         let value = String(bytes: payload, encoding: .ascii),
@@ -3760,6 +3794,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     agentLifecycleSequence = 0
     agentStateReducer = AgentTaskStateReducer()
     submittedCommand = nil
+    resumeProtocolCommand = nil
     pendingCommandOrigin = nil
     recipeCommandCandidates.removeAll(keepingCapacity: true)
     activityOutputTail = ""
@@ -4248,18 +4283,91 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 开关检查延后到发送时刻，设置变化因此总是取最新值。
   func scheduleRestoredAgentResume(provider: AgentProvider, sessionID: String) {
     pendingRestoredAgentResume = (provider, sessionID)
+    scheduleRestoreFallbackIfNeeded()
+  }
+
+  /// 登记快照里的恢复命令(复用器附着 / OSC 88 声明 / 前台进程)。是否发送在首个
+  /// prompt 时按当时的设置决定。
+  func scheduleRestoredCommand(_ record: WorkspacePaneRestoreCommand) {
+    pendingRestoredCommand = record
+    scheduleRestoreFallbackIfNeeded()
+  }
+
+  /// 快照阶段挑出本 Pane 的恢复命令:有 OSC 88 声明优先;否则看前台命令是否是复用器或
+  /// 普通进程。没有前台命令(Shell 空闲)时什么都不记。
+  func restoreCommandForSnapshot(paneID: UUID) -> WorkspacePaneRestoreCommand? {
+    SessionRestorePlanner.snapshotCommand(
+      paneID: paneID,
+      foregroundCommand: hasForegroundCommand ? submittedCommand : nil,
+      resumeProtocolCommand: resumeProtocolCommand
+    )
+  }
+
+  /// 处理 OSC 88:query 立即回包;声明/清除只改内存状态,由快照持久化。
+  private func handleResumeProtocol(payload: String) {
+    guard let directive = TerminalResumeProtocol.parse(payload) else { return }
+    switch directive {
+    case .query: sendProtocolResponse(TerminalResumeProtocol.supportedResponse)
+    case .declare(let command): resumeProtocolCommand = command
+    case .clear: resumeProtocolCommand = nil
+    }
+  }
+
+  /// 把协议应答原样写回 PTY(不经过用户输入路径,不记录为提交命令)。
+  private func sendProtocolResponse(_ text: String) {
+    if let ghosttyView {
+      _ = ghosttyView.sendProtocolBytes(Array(text.utf8))
+    } else {
+      terminalView?.send(txt: text)
+    }
+  }
+
+  /// 首个 prompt 处发送恢复命令。Agent 原生 resume 优先;两者都消费 pending,只发一次。
+  private func deliverRestoredCommandIfNeeded() {
+    guard let record = pendingRestoredCommand else { return }
+    pendingRestoredCommand = nil
+    guard let shell = preferences?.configuration.shell,
+      SessionRestorePlanner.shouldRestore(record, shell: shell)
+    else { return }
+    send(record.command)
   }
 
   /// 用户在 prompt 出现前接管终端（输入任何内容）时放弃自动重连。
   func cancelRestoredAgentResume() {
     pendingRestoredAgentResume = nil
+    pendingRestoredCommand = nil
+    restoreFallbackTask?.cancel()
+    restoreFallbackTask = nil
+  }
+
+  /// 进程就绪后启动兜底计时。tmux 内会先收到 OSC 133 promptStart 精确投递,把 pending
+  /// 清空,兜底自然空转;普通 zsh(集成未注入)收不到标记,靠这里在固定延时后投递。
+  /// 延时期间用户输入会经 `cancelRestoredAgentResume` 取消本任务。
+  private func scheduleRestoreFallbackIfNeeded() {
+    guard pendingRestoredCommand != nil || pendingRestoredAgentResume != nil,
+      restoreFallbackTask == nil
+    else { return }
+    restoreFallbackTask = Task { @MainActor [weak self] in
+      // 等首个 prompt 落地。用户 zsh 集成只在 tmux 注入,普通会话收不到 OSC 133 promptStart;
+      // 即便有集成,首个 prompt 也可能早于恢复命令登记(竞态),promptStart 消费时 pending 还没设。
+      // 两种情况都靠这里在固定延时后补发;promptStart 若已消费,pending 为空,兜底自然空转。
+      try? await Task.sleep(for: .milliseconds(1_500))
+      guard let self, !Task.isCancelled else { return }
+      self.restoreFallbackTask = nil
+      guard self.pendingRestoredCommand != nil || self.pendingRestoredAgentResume != nil else { return }
+      self.deliverRestoredAgentResumeIfNeeded()
+    }
   }
 
   /// 由 shell 首个 prompt 触发：检查「恢复时重连会话」开关后把原生 resume 命令写入
   /// PTY。无论是否发送，pending 都会被消费——后续 prompt 不能再触发第二次。
   private func deliverRestoredAgentResumeIfNeeded() {
-    guard let pending = pendingRestoredAgentResume else { return }
+    guard let pending = pendingRestoredAgentResume else {
+      deliverRestoredCommandIfNeeded()
+      return
+    }
     pendingRestoredAgentResume = nil
+    pendingRestoredCommand = nil
     guard let agents = preferences?.configuration.agents, agents.resumeSessions,
       let command = Self.restoredAgentResumeCommand(
         provider: pending.provider,

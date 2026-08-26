@@ -586,10 +586,13 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   }
 
   func windowShouldClose(_ sender: NSWindow) -> Bool {
-    guard !isTerminating,
-      let record = additionalWorkspaceWindows[ObjectIdentifier(sender)]
-    else { return true }
-    return record.model.confirmTermination()
+    guard !isTerminating else { return true }
+    // 主窗口和附加窗口都先走「关闭窗口」确认设置;主窗口关闭不销毁模型,因此不再做退出确认。
+    if sender === mainWindowController?.window {
+      return model.confirmWindowClose()
+    }
+    guard let record = additionalWorkspaceWindows[ObjectIdentifier(sender)] else { return true }
+    return record.model.confirmWindowClose() && record.model.confirmTermination()
   }
 
   /// 设置页的“恢复默认尺寸”立即作用于主窗口，同时让后续启动使用相同尺寸。
@@ -796,6 +799,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 把 AppKit 窗口动作注入每个模型；附加窗口与主窗口因此拥有完全相同的命令面板
   /// 和 CLI 路由，而模型测试无需构造 NSWindow。
   private func configureWorkspaceModel(_ workspaceModel: AppModel) {
+    workspaceModel.closeConfirmationProvider = { [weak self] in
+      self?.preferences.configuration.general ?? AsterConfiguration().general
+    }
     workspaceModel.onRequestNewWindow = { [weak self] descriptor in
       self?.createWorkspaceWindow(initialPane: descriptor, sender: nil) ?? false
     }

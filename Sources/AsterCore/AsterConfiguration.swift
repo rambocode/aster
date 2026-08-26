@@ -48,6 +48,17 @@ public enum CloseConfirmation: String, CaseIterable, Codable, Equatable, Sendabl
   case runningProcess
   case multipleTabs
   case never
+
+  /// 关闭标签页/窗口/Pane 前是否需要询问。`multipleTabs` 只看标签数量,
+  /// `runningProcess` 只看是否有前台命令在跑;两者都不看未保存文档(那由保存确认单独处理)。
+  public func requiresConfirmation(hasRunningProcess: Bool, tabCount: Int) -> Bool {
+    switch self {
+    case .always: true
+    case .runningProcess: hasRunningProcess
+    case .multipleTabs: tabCount > 1
+    case .never: false
+    }
+  }
 }
 
 public enum CursorStyle: String, CaseIterable, Codable, Equatable, Sendable {
@@ -311,6 +322,19 @@ public struct ShellConfiguration: Codable, Equatable, Sendable {
 
   public var resolvedFrecencyAutoRecord: Bool {
     frecencyAutoRecord ?? true
+  }
+
+  /// 「会话恢复」的可选字段:终端恢复协议(OSC 88)、进程恢复范围与白名单。
+  /// 可选以兼容旧配置;默认值与 Otty 一致(协议关、范围 whitelist、白名单空)。
+  public var terminalResumeProtocol: Bool? = false
+  public var restoreProcessesScope: RestoreProcessesScope? = .whitelist
+  public var restoreProcessAllowlist: String? = ""
+
+  public var resolvedTerminalResumeProtocol: Bool { terminalResumeProtocol ?? false }
+  public var resolvedRestoreProcessesScope: RestoreProcessesScope { restoreProcessesScope ?? .whitelist }
+  public var resolvedRestoreProcessAllowlist: [String] {
+    (restoreProcessAllowlist ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+      .filter { !$0.isEmpty }
   }
 
   public var resolvedNotifyOnWatchFinish: Bool { notifyOnWatchFinish ?? true }

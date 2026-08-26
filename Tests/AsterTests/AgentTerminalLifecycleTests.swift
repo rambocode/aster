@@ -331,3 +331,35 @@ func restoredAgentResumeWritesCommandIntoLiveShell() async throws {
   #expect(joined.contains("--resume"))
   #expect(joined.contains("test-1"))
 }
+
+@Test("恢复命令在缺少 OSC 133 时由启动兜底投递,用户输入则取消")
+@MainActor
+func restoredCommandDeliversViaFallbackAndCancelsOnInput() async throws {
+  let suiteName = "AgentTerminalLifecycleTests.\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suiteName))
+  defaults.removePersistentDomain(forName: suiteName)
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.shell.restoreProcesses = true
+  preferences.configuration.shell.restoreProcessesScope = .all
+
+  // 场景一：进程就绪后,普通会话没有 promptStart,兜底在延时后把命令写入 PTY。
+  let session = TerminalSession(workingDirectory: "/tmp")
+  let view = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+  session.scheduleRestoredCommand(
+    .init(paneID: UUID(), command: "echo FALLBACK_OK", source: .process))
+  #expect(session.hasPendingRestoredCommand)
+  try await Task.sleep(for: .milliseconds(1_900))
+  #expect(!session.hasPendingRestoredCommand)  // 已被兜底消费
+
+  // 场景二：用户在兜底触发前输入,取消恢复投递。
+  let interrupted = TerminalSession(workingDirectory: "/tmp")
+  let interruptedView = try #require(
+    interrupted.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { interrupted.stop(immediately: true) }
+  interrupted.scheduleRestoredCommand(
+    .init(paneID: UUID(), command: "echo SHOULD_NOT_RUN", source: .process))
+  interruptedView.onTerminalUserInput?()
+  #expect(!interrupted.hasPendingRestoredCommand)
+}

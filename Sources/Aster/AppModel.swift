@@ -913,6 +913,16 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     return true
   }
 
+  /// 标签内任一终端 Pane 是否有前台命令(即时检查 PTY 前台进程组,不走 spinner 启发式)。
+  var hasForegroundCommand: Bool {
+    runtimes.values.contains { $0.terminalSession?.hasForegroundCommand == true }
+  }
+
+  /// 当前 Pane 是否有前台命令在运行。
+  var activePaneHasForegroundCommand: Bool {
+    runtimes[activePaneID]?.terminalSession?.hasForegroundCommand == true
+  }
+
   /// 快照除布局外还带上各终端 Pane 当前绑定的 Agent 会话身份，供「恢复时重连会话」
   /// 在下次启动时重建原生会话。
   var snapshot: WorkspaceTabSnapshot {
@@ -923,6 +933,14 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       else { return nil }
       return WorkspacePaneAgentSession(paneID: pane.id, provider: provider, sessionID: sessionID)
     }
+    // 恢复命令与 Agent 会话互斥:Agent 有自己的原生 resume,不再重复记录其启动命令。
+    let agentPaneIDs = Set(agentSessions.map(\.paneID))
+    let restoreCommands = layout.allPanes.compactMap { pane -> WorkspacePaneRestoreCommand? in
+      guard !agentPaneIDs.contains(pane.id),
+        let session = runtimes[pane.id]?.terminalSession
+      else { return nil }
+      return session.restoreCommandForSnapshot(paneID: pane.id)
+    }
     return WorkspaceTabSnapshot(
       id: id,
       title: title,
@@ -930,7 +948,8 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       titleState: titleState,
       createdAt: createdAt,
       updatedAt: updatedAt,
-      agentSessions: agentSessions.isEmpty ? nil : agentSessions
+      agentSessions: agentSessions.isEmpty ? nil : agentSessions,
+      restoreCommands: restoreCommands.isEmpty ? nil : restoreCommands
     )
   }
 
@@ -1095,6 +1114,51 @@ final class AppModel: ObservableObject {
   }
 
   @Published private(set) var tabs: [TerminalTabItem] = []
+
+  /// 关闭确认目标。窗口级由 AsterApp 在 `windowShouldClose` 中调用。
+  enum CloseTarget { case tab, window, pane }
+  /// 读取「关闭确认」设置;为 nil(测试、无 AsterApp)时不询问,保持原有行为。
+  var closeConfirmationProvider: (() -> GeneralConfiguration)?
+  /// 显示确认弹窗并返回是否继续关闭;可替换以便测试。默认是 NSAlert。
+  var closeConfirmationPrompt: @MainActor (CloseTarget, Bool) -> Bool = AppModel.presentCloseConfirmation
+
+  /// 按设置决定是否弹窗;只在需要时才调用 prompt,避免测试和「从不」模式触发 UI。
+  func confirmClose(_ target: CloseTarget, hasRunningProcess: Bool) -> Bool {
+    guard let general = closeConfirmationProvider?() else { return true }
+    let setting: CloseConfirmation
+    switch target {
+    case .tab: setting = general.closeTabConfirmation
+    case .window: setting = general.closeWindowConfirmation
+    case .pane: setting = general.closePaneConfirmation
+    }
+    guard setting.requiresConfirmation(hasRunningProcess: hasRunningProcess, tabCount: tabs.count)
+    else { return true }
+    return closeConfirmationPrompt(target, hasRunningProcess)
+  }
+
+  /// 关闭整个窗口前的确认:任一标签有前台命令即视为「有进程运行」。
+  func confirmWindowClose() -> Bool {
+    confirmClose(.window, hasRunningProcess: tabs.contains { $0.hasForegroundCommand })
+  }
+
+  /// 统一的关闭确认弹窗。文案说明运行中的命令会被终止,让用户有依据取消。
+  private static func presentCloseConfirmation(_ target: CloseTarget, hasRunningProcess: Bool) -> Bool {
+    let alert = NSAlert()
+    let noun: String
+    switch target {
+    case .tab: noun = "标签页"
+    case .window: noun = "窗口"
+    case .pane: noun = "分屏"
+    }
+    alert.messageText = "要关闭这个\(noun)吗？"
+    alert.informativeText = hasRunningProcess
+      ? "有命令仍在运行。关闭\(noun)会终止它。"
+      : "关闭后其中的终端会话将结束。"
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "关闭")
+    alert.addButton(withTitle: "取消")
+    return alert.runModal() == .alertFirstButtonReturn
+  }
   @Published var selectedTabID: UUID?
   /// 活动徽章的窗口级局部事件。视图只更新对应 Tab 的附件，Dock 只重新聚合状态；
   /// 该事件不承担布局、持久化或终端内容刷新。
@@ -1313,6 +1377,10 @@ final class AppModel: ObservableObject {
             provider: record.provider,
             sessionID: record.sessionID
           )
+        }
+        // 复用器 / OSC 88 / 前台进程的恢复命令同样在首个 prompt 发送,并在发送时读取设置。
+        for record in tabSnapshot.restoreCommands ?? [] {
+          tab.runtime(for: record.paneID)?.terminalSession?.scheduleRestoredCommand(record)
         }
       }
       dividerAfterTabIDs = Set(snapshot.dividerAfterTabIDs ?? [])
@@ -1575,7 +1643,9 @@ final class AppModel: ObservableObject {
   /// 未保存文档拒绝关闭时不改变任何模型状态。
   func closeTab(id: UUID) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-    guard tabs[index].confirmCloseDocuments() else { return }
+    guard confirmClose(.tab, hasRunningProcess: tabs[index].hasForegroundCommand),
+      tabs[index].confirmCloseDocuments()
+    else { return }
     let wasSelected = selectedTabID == id
     let snapshot = tabs[index].snapshot
     recentlyClosedTabs.record(snapshot)
@@ -1677,6 +1747,7 @@ final class AppModel: ObservableObject {
   private func closePaneAndRecord(in tab: TerminalTabItem) -> Bool {
     guard tab.layout.allPanes.count > 1,
       let descriptor = tab.layout.allPanes.first(where: { $0.id == tab.activePaneID }),
+      confirmClose(.pane, hasRunningProcess: tab.activePaneHasForegroundCommand),
       tab.closeActivePane()
     else { return false }
     recordClosedWorkspaceItem(.init(
