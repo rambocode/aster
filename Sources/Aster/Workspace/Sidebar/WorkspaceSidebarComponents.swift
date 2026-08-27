@@ -78,6 +78,10 @@ final class TabRowButton: NSButton {
   private let showsFinished: Bool
   private let showsFailure: Bool
   private let showsAwaitingInput: Bool
+  /// 规则解析出的标签图标；nil 表示没有规则命中。
+  private let tabIcon: TabRuleIcon?
+  /// 图标与角标的摆放：合并时图标占用状态槽、有状态时让位；分开时图标固定在标题左侧。
+  private let badgePlacement: TabBadgePlacement
   private let style: TerminalTabStyle
   private let resolvedForeground: NSColor
   private let resolvedActiveForeground: NSColor
@@ -119,6 +123,8 @@ final class TabRowButton: NSButton {
     showsFinished: Bool,
     showsFailure: Bool,
     showsAwaitingInput: Bool,
+    tabIcon: TabRuleIcon? = nil,
+    badgePlacement: TabBadgePlacement = .combined,
     displayTitleProvider: (() -> String)? = nil,
     displayTitleToolTip: String? = nil,
     onClose: (() -> Void)?,
@@ -134,6 +140,8 @@ final class TabRowButton: NSButton {
     self.showsFinished = showsFinished
     self.showsFailure = showsFailure
     self.showsAwaitingInput = showsAwaitingInput
+    self.tabIcon = tabIcon
+    self.badgePlacement = badgePlacement
     let resolvedStyle = horizontal ? (theme.style.horizontalTab ?? theme.style.tab) : theme.style.tab
     style = resolvedStyle
     sidebarRowInsets = theme.style.resolvedSidebarPadding
@@ -220,6 +228,17 @@ final class TabRowButton: NSButton {
     titleLabel = primary
     primary.toolTip = displayTitleToolTip
 
+    // 「分开」摆放：图标固定在标题左侧，状态角标仍走右侧槽位。
+    var leadingIcon: NSView?
+    if badgePlacement == .separate, let tabIcon,
+      let iconView = TabIconArtwork.makeView(for: tabIcon, fallbackTint: selected ? resolvedActiveForeground : resolvedForeground)
+    {
+      iconView.translatesAutoresizingMaskIntoConstraints = false
+      iconView.identifier = NSUserInterfaceItemIdentifier("sidebar-tab-icon-\(tab.id.uuidString)")
+      addSubview(iconView)
+      leadingIcon = iconView
+    }
+
     // 状态附件与关闭按钮共用固定槽位（纵向 28pt / 横向胶囊内 16pt），悬停切换时
     // 标题不会水平抖动。关闭动作直接针对该 tab，不先选中后台标签。
     let accessorySlot = NSView()
@@ -256,7 +275,6 @@ final class TabRowButton: NSButton {
       NSLayoutConstraint.activate([
         // 标题按「等式」参与宽度求解：胶囊宽度 = 10 + 标题 + 4 + 槽 + 6，
         // 上限 190pt 之后按尾部截断，长标题不会把标签栏挤爆。
-        primary.leadingAnchor.constraint(equalTo: rowBackground.leadingAnchor, constant: 10),
         primary.centerYAnchor.constraint(equalTo: centerYAnchor),
         primary.trailingAnchor.constraint(equalTo: accessorySlot.leadingAnchor, constant: -4),
         primary.widthAnchor.constraint(lessThanOrEqualToConstant: 190),
@@ -270,10 +288,11 @@ final class TabRowButton: NSButton {
         close.widthAnchor.constraint(equalToConstant: 16),
         close.heightAnchor.constraint(equalToConstant: 16),
       ])
+      activateLeadingConstraints(primary: primary, icon: leadingIcon, background: rowBackground, inset: 10)
     } else {
+      activateLeadingConstraints(primary: primary, icon: leadingIcon, background: rowBackground, inset: 10)
       NSLayoutConstraint.activate([
         // 文案与右侧槽位都按圆角底的内缘对齐，卡片左右各留出 10pt 内边距。
-        primary.leadingAnchor.constraint(equalTo: rowBackground.leadingAnchor, constant: 10),
         primary.centerYAnchor.constraint(equalTo: centerYAnchor),
         primary.trailingAnchor.constraint(
           lessThanOrEqualTo: accessorySlot.leadingAnchor, constant: -8),
@@ -291,6 +310,19 @@ final class TabRowButton: NSButton {
     refreshActivityBadge()
     updateAccessoryVisibility()
     updateStyle()
+  }
+
+  /// 标题的左缘：有前置图标时排在图标之后，否则直接贴卡片内边距。
+  private func activateLeadingConstraints(primary: NSView, icon: NSView?, background: NSView, inset: CGFloat) {
+    if let icon {
+      NSLayoutConstraint.activate([
+        icon.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: inset),
+        icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+        primary.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
+      ])
+    } else {
+      primary.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: inset).isActive = true
+    }
   }
 
   /// 在 mouseDown 立即派发选择，不依赖 mouseUp 的 target/action：终端输出会触发
@@ -386,7 +418,8 @@ final class TabRowButton: NSButton {
     case .completed where showsFinished && showsExitStatus:
       return "completed"
     default:
-      return !horizontal && tab.activeSession?.sshRemoteEndpoint != nil ? "ssh-remote" : "idle"
+      if !horizontal, tab.activeSession?.sshRemoteEndpoint != nil { return "ssh-remote" }
+      return badgePlacement == .combined && tabIcon != nil ? "idle-icon" : "idle"
     }
   }
 
@@ -435,10 +468,18 @@ final class TabRowButton: NSButton {
         accessory = icon
         stateName = "ssh-remote"
         accessibilityLabel = "SSH 远端"
+      } else if badgePlacement == .combined, let tabIcon,
+        let iconView = TabIconArtwork.makeView(for: tabIcon, fallbackTint: selected ? resolvedActiveForeground : resolvedForeground)
+      {
+        // 「合并」摆放：平时状态槽显示用户图标，有状态发生时上面的分支会接管。
+        accessory = iconView
+        stateName = "icon"
+        accessibilityLabel = "空闲"
       } else {
         // 横向胶囊里放不下 shell 名，idle 只留空槽占位；纵向沿用选中行显示 shell 名。
+        // 「分开」摆放按 Otty 约定隐藏 shell 名。
         accessory = makeLabel(
-          !horizontal && selected
+          !horizontal && selected && badgePlacement == .combined
             ? URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
               .lastPathComponent
             : "",

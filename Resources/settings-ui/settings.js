@@ -9,7 +9,8 @@
     // 插头线条图标（lucide plug 风格，对齐 Otty 的「智能体」侧栏图标）。
     agents: "<path d='M6 1.8v3M10 1.8v3M4.6 4.8h6.8v3.4a3.4 3.4 0 0 1-3.4 3.4 3.4 3.4 0 0 1-3.4-3.4zM8 11.6v2.6'/>",
     appearance: "<path d='M8 2.2a5.8 5.8 0 1 0 0 11.6c1 0 1.6-.5 1.6-1.2 0-.5-.3-.8-.3-1.2 0-.7.6-1.2 1.3-1.2h1.1c1.3 0 2.1-1 2.1-2.2A5.8 5.8 0 0 0 8 2.2z'/><circle cx='5.2' cy='6' r='.5'/><circle cx='8' cy='4.7' r='.5'/><circle cx='10.8' cy='6.1' r='.5'/>",
-    recipes: "<rect x='2.5' y='2.5' width='4.5' height='4.5' rx='1'/><rect x='9' y='2.5' width='4.5' height='4.5' rx='1'/><rect x='2.5' y='9' width='4.5' height='4.5' rx='1'/><rect x='9' y='9' width='4.5' height='4.5' rx='1'/>",
+    view: "<rect x='2.5' y='2.5' width='4.5' height='4.5' rx='1'/><rect x='9' y='2.5' width='4.5' height='4.5' rx='1'/><rect x='2.5' y='9' width='4.5' height='4.5' rx='1'/><rect x='9' y='9' width='4.5' height='4.5' rx='1'/>",
+    recipes: "<path d='M8 4.2c-1.2-1-2.8-1.4-5-1.2v9.4c2.2-.2 3.8.2 5 1.2 1.2-1 2.8-1.4 5-1.2V3c-2.2-.2-3.8.2-5 1.2zM8 4.2v9.4'/>",
     shortcuts: "<path d='m9.3 2.3-5 6h3.6l-1.2 5.4 5-6H8.1z'/>",
     advanced: "<path d='M5.6 4.4a3.2 3.2 0 0 0 4 4l3.6 3.6-1.2 1.2-3.6-3.6a3.2 3.2 0 0 1-4-4L6.2 7 7 6.2z'/>",
   };
@@ -158,11 +159,6 @@
           ] }),
           row("shell.bounceDockIcon", "Dock 图标跳动", "Aster 不在前台时，收到通知则让 Dock 图标持续跳动，切回 Aster 即停"),
         ]},
-        { title: "标签徽章", rows: [
-          row("shell.badgeCommandFinish", "命令完成徽章", "成功退出后显示圆点"),
-          row("shell.badgeCommandFailure", "命令失败徽章", "错误退出时显示警告"),
-          row("shell.badgeAwaitingInput", "等待输入徽章", "检测交互提示并显示等待状态"),
-        ]},
         { title: "终端标识", rows: [
           row("appearance.terminalIdentityMode", "TERM", "向子进程声明的“终端类型”。Auto 是安全的默认值，优先使用内置 xterm-ghostty，缺条目回退 xterm-256color", "select", { options: options.term }),
           row("appearance.terminalIdentity", "自定义 TERM", "值必须存在对应 terminfo 条目；无效时回退到 xterm-256color，保证行编辑正常工作", "text", { visibleWhen: ["appearance.terminalIdentityMode", "custom"] }),
@@ -268,6 +264,28 @@
         row("memory.extractionEnabled", "使用 CLI Agent 提炼", "会话结束后调用本机 Agent CLI 生成叙述性 Memory；这会把会话摘要发送到该 Agent 的云端"),
         row("memory.extractionProvider", "提炼使用的 Agent", "承担提炼的本机 Agent CLI", "select", { options: options.memoryExtractionProvider, disabledWhen: "memory.extractionDisabled", disabledDetail: "先开启 CLI Agent 提炼" }),
         action("previewExtractionPayload", "查看将发送的内容", "预览提炼时会离开本机的会话摘要", "查看…"),
+      ]},
+    ]},
+    { id: "view", title: "视图", description: "标签页标题与图标规则、角标、网页窗格和详情面板。", special: "view", groups: [
+      { title: "标签页与标题定制", rows: [
+        row("view.tabRules.alias", "项目别名", "项目的简称，也可以在标题模板中用 ${alias} 引用。", "rules", { field: "alias" }),
+        row("view.tabRules.icon", "图标", "显示在标签页上。可以从图标集里挑或直接输入 emoji，再给它设置颜色。", "rules", { field: "icon" }),
+        row("view.tabRules.title", "标题", "标签页标题模板。点击变量即可插入到光标处。", "rules", { field: "title" }),
+      ]},
+      { title: "标签页图标与角标", rows: [
+        row("view.badgePlacement", "图标与角标", "合并时标签页上只有一个指示位：平时显示你的图标，有状态发生时由角标接管。分开时图标在左、角标在右，并隐藏 shell 名称——分屏标签页仍会显示窗格数。", "select", { options: [["combined", "合并"], ["separate", "分开"]] }),
+        row("shell.badgeCommandFinish", "命令完成时", "命令完成时在标签上显示强调色圆点"),
+        row("shell.badgeCommandFailure", "命令失败时", "命令失败时在标签上显示错误提醒"),
+        row("shell.badgeAwaitingInput", "命令等待输入时", "检测 [y/n]、密码和回车确认提示，并显示等待输入徽标"),
+      ]},
+      { title: "网页窗格", rows: [
+        row("view.webPanePersistData", "保持登录状态", "把 cookie 和站点数据写到磁盘：关掉窗格、重启 Aster 之后仍然是登录态。关闭后改为只在内存里浏览——各个网页窗格之间仍然共用同一份会话，但最后一个网页窗格关掉就没了。只对之后新开的窗格生效。"),
+        action("clearWebPaneData", "浏览数据", "所有网页窗格的 cookie、站点数据、缓存和历史。关掉「保持登录状态」并不会删除已经存下来的东西。", "清除数据", {
+          confirm: { title: "清除浏览数据？", body: "所有网页窗格里已登录的站点都会退出登录，缓存和历史一并清空。此操作无法撤销。", button: "清除数据" },
+        }),
+      ]},
+      { title: "详情面板", description: "详情面板显示哪些标签、按什么顺序。拖动行即可调整顺序。", rows: [
+        row("view.detailsPanelSections", "详情面板标签", "信息、大纲、Git、文件、记忆与自定义视图的显示与顺序", "details"),
       ]},
     ]},
     { id: "appearance", title: "外观", description: "主题、字体、光标、布局和窗口。", special: "appearance", groups: [
@@ -686,6 +704,10 @@
             openApplicationsDialog();
             return;
           }
+          if (item.confirm) {
+            openConfirmDialog(item.confirm, () => send("action", { action: item.action, payload: item.payload ?? {} }));
+            return;
+          }
           send("action", { action: item.action, payload: item.payload ?? {} });
           if (item.confirmDuration) {
             const original = button.textContent;
@@ -752,7 +774,23 @@
     }
     const control = document.createElement("div");
     control.className = "setting-control";
-    control.appendChild(makeControl(item));
+    // 视图页的「配置…」行在按钮左侧显示规则数量，点击走本地对话框而非原生动作。
+    if (item.status) {
+      const status = document.createElement("span");
+      status.className = "setting-detail rule-count";
+      status.textContent = item.status;
+      control.appendChild(status);
+    }
+    if (item.onClick) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "action-button";
+      button.textContent = item.button;
+      button.addEventListener("click", item.onClick);
+      control.appendChild(button);
+    } else {
+      control.appendChild(makeControl(item));
+    }
     host.append(copy, control);
     return host;
   }
@@ -880,6 +918,728 @@
     dialog.append(heading, detail, list, actions);
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
+  }
+
+
+  // MARK: - 视图分类
+
+  const RULE_FIELDS = {
+    alias: { label: "项目别名", short: "别名" },
+    icon: { label: "图标", short: "图标" },
+    title: { label: "标题", short: "标题" },
+  };
+  const MATCH_KINDS = [["path", "路径", "~/Workplace/aster"], ["command", "命令", "ssh *"], ["agent", "Agent", "claude"], ["host", "SSH 主机", "*.prod.internal"], ["file", "文件", "*.md"]];
+  const TITLE_VARS = [
+    ["alias", "为该标签页解析出的项目别名"], ["cwd", "工作目录，主目录缩写为 ~"], ["folder", "工作目录的最后一段路径"],
+    ["user", "SSH 用户名，或本机用户名"], ["host", "SSH 主机名 —— 本地会话为空"], ["agent", "绑定到该窗格的编程 agent"],
+    ["branch", "当前 git 分支"], ["command", "前台命令行"], ["title", "程序自己设置的标题"], ["shell", "Shell 名称，如 zsh"],
+    ["index", "标签页在窗口中的位置"], ["file", "文件名，用于文件 / 文件夹 / URL 面板"],
+  ];
+  const VIEW_VARS = [
+    ["cwd", "当前窗格的工作目录"], ["folder", "该目录的最后一段"], ["file", "当前窗格打开的文件（若有）"], ["pid", "当前窗格的进程 ID"],
+    ["command", "当前窗格正在运行的命令"], ["branch", "当前 git 分支"], ["host", "SSH 主机——本地窗格为空"], ["user", "SSH 用户，或本机用户"],
+    ["agent", "绑定到该窗格的编码 agent（若有）"], ["shell", "Shell 名称，如 zsh"],
+  ];
+  const BUILTIN_DETAILS = {
+    info: { title: "信息", desc: "当前窗格的目录、命令、Shell 与主机", icon: "<circle cx='8' cy='8' r='5.5'/><path d='M8 7.5v4M8 4.5h.01'/>" },
+    outline: { title: "大纲", desc: "在此窗格执行过的命令之间跳转", icon: "<path d='M3 4h7M3 8h5M3 12h7M12.5 6.5v6M10.5 10.5l2 2 2-2'/>" },
+    git: { title: "Git", desc: "窗格所在仓库的分支、状态与改动文件", icon: "<circle cx='4.5' cy='4' r='1.6'/><circle cx='4.5' cy='12' r='1.6'/><circle cx='11.5' cy='6' r='1.6'/><path d='M4.5 5.6v4.8M11.5 7.6c0 2-3 2-7 2.5'/>" },
+    files: { title: "文件", desc: "浏览工作目录，支持拖放", icon: "<path d='M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z'/>" },
+    history: { title: "记忆", desc: "当前项目提炼出的 Session Memory", icon: "<path d='M3 8a5 5 0 1 0 1.5-3.6M3 3v2.5h2.5M8 5.5V8l2 1.2'/>" },
+  };
+
+  function rulesSnapshot() {
+    return (settingValue("view.tabRules") ?? []).map(rule => ({
+      id: rule.id, conditions: [...(rule.conditions ?? [])].map(c => ({ ...c })),
+      alias: rule.alias ?? "", title: rule.title ?? "", icon: rule.icon ? { ...rule.icon } : null,
+    }));
+  }
+
+  function ruleHasField(rule, field) {
+    if (field === "icon") return Boolean(rule.icon && (rule.icon.name || rule.icon.emoji));
+    return Boolean(rule[field]);
+  }
+
+  /// 把本地规则副本回写；空规则（三项都没设、条件也为空）不入库。
+  function commitRules(rules) {
+    const payload = rules
+      .filter(rule => rule.alias || rule.title || (rule.icon && (rule.icon.name || rule.icon.emoji)) || rule.conditions.length)
+      .map(rule => {
+        const out = { id: rule.id, conditions: rule.conditions.filter(c => c.pattern.trim()).map(c => ({ kind: c.kind, pattern: c.pattern.trim() })) };
+        if (rule.alias) out.alias = rule.alias;
+        if (rule.title) out.title = rule.title;
+        if (rule.icon && (rule.icon.name || rule.icon.emoji)) {
+          out.icon = {};
+          if (rule.icon.name) out.icon.name = rule.icon.name;
+          if (rule.icon.emoji) out.icon.emoji = rule.icon.emoji;
+          if (rule.icon.color) out.icon.color = rule.icon.color;
+        }
+        return out;
+      });
+    commitValue({ key: "view.tabRules" }, payload);
+  }
+
+  function newRuleID() {
+    return crypto.randomUUID ? crypto.randomUUID().toUpperCase() : `${Date.now()}-${Math.random()}`;
+  }
+
+  function conditionsSummary(rule) {
+    if (!rule.conditions.length) return "所有标签页";
+    const names = Object.fromEntries(MATCH_KINDS.map(([k, label]) => [k, label]));
+    return rule.conditions.map(c => `${names[c.kind] ?? c.kind}：${c.pattern}`).join(" 且 ");
+  }
+
+  function ruleCountLabel(count) {
+    return count ? `${count} 条规则` : "暂无规则";
+  }
+
+  function makeIconPreview(icon, size = 16) {
+    const host = document.createElement("span");
+    host.className = "tab-icon-preview";
+    host.style.width = host.style.height = `${size}px`;
+    if (icon?.emoji) {
+      host.textContent = icon.emoji;
+    } else if (icon?.name) {
+      // SVG 文本由原生随快照下发（应用自带资源，非用户输入），内联后 currentColor 即可着色。
+      const glyph = document.createElement("i");
+      glyph.className = "tab-icon";
+      glyph.innerHTML = settingValue("view.iconSVGs")?.[icon.name] ?? "";
+      if (icon.color) glyph.style.color = icon.color;
+      host.appendChild(glyph);
+    }
+    return host;
+  }
+
+  function makeViewPage(section) {
+    const page = document.createDocumentFragment();
+    const [rulesGroup, badgeGroup, webGroup, detailsGroup] = section.groups;
+    page.appendChild(makeRulesGroup(rulesGroup));
+    page.appendChild(makeGroup(badgeGroup));
+    page.appendChild(makeGroup(webGroup));
+    page.appendChild(makeDetailsPanelGroup(detailsGroup));
+    return page;
+  }
+
+  /// 「标签页与标题定制」：按项排列显示别名 / 图标 / 标题三行；按项目排列显示项目列表。
+  function makeRulesGroup(group) {
+    const host = document.createElement("section");
+    host.className = "group";
+    const title = document.createElement("h2");
+    title.className = "group-title";
+    title.textContent = group.title;
+    host.appendChild(title);
+    const arrangement = settingValue("view.rulesArrangement") ?? "byItem";
+    const bar = document.createElement("div");
+    bar.className = "rules-arrangement";
+    const caption = document.createElement("span");
+    caption.textContent = "规则排列方式";
+    const segmented = document.createElement("div");
+    segmented.className = "segmented";
+    for (const [value, label] of [["byItem", "按项排列"], ["byProject", "按项目排列"]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      if (arrangement === value) button.classList.add("active");
+      button.addEventListener("click", () => commitValue({ key: "view.rulesArrangement" }, value));
+      segmented.appendChild(button);
+    }
+    bar.append(caption, segmented);
+    host.appendChild(bar);
+    const rules = rulesSnapshot();
+    const card = document.createElement("div");
+    card.className = "card";
+    if (arrangement === "byItem") {
+      for (const item of group.rows) {
+        const count = rules.filter(rule => ruleHasField(rule, item.field)).length;
+        card.appendChild(makeRow({ ...item, type: "action", button: "配置…", value: null, onClick: () => openRulesDialog(item.field), status: ruleCountLabel(count) }));
+      }
+    } else {
+      const description = document.createElement("p");
+      description.className = "card-caption";
+      description.textContent = "每个匹配条件一行。展开后可一并设置它的别名、图标和标题。";
+      card.appendChild(description);
+      if (!rules.length) {
+        const empty = document.createElement("div");
+        empty.className = "setting-row";
+        empty.innerHTML = "<div class='setting-copy'><span class='setting-detail'>还没有规则。</span></div>";
+        card.appendChild(empty);
+      }
+      rules.forEach(rule => {
+        const parts = [];
+        if (rule.alias) parts.push(`别名 ${rule.alias}`);
+        if (ruleHasField(rule, "icon")) parts.push(rule.icon.emoji ? `图标 ${rule.icon.emoji}` : `图标 ${rule.icon.name}`);
+        if (rule.title) parts.push(`标题 ${rule.title}`);
+        card.appendChild(makeRow({
+          key: `view.tabRules.${rule.id}`, label: conditionsSummary(rule), detail: parts.join(" · ") || "尚未设置",
+          type: "action", button: "配置…", onClick: () => openProjectDialog(rule.id),
+        }));
+      });
+      const add = document.createElement("div");
+      add.className = "setting-row rules-add-row";
+      const button = document.createElement("button");
+      button.className = "action-button";
+      button.textContent = "添加项目";
+      button.addEventListener("click", () => {
+        const next = rulesSnapshot();
+        const rule = { id: newRuleID(), conditions: [{ kind: "path", pattern: "" }], alias: "", title: "", icon: null };
+        next.push(rule);
+        openProjectDialog(rule.id, next);
+      });
+      add.appendChild(button);
+      card.appendChild(add);
+    }
+    host.appendChild(card);
+    return host;
+  }
+
+  /// 通用模态框骨架；返回 { overlay, dialog, close }。
+  function makeDialog(titleText, descriptionText, { wide = false } = {}) {
+    const overlay = document.createElement("div");
+    overlay.className = "settings-dialog-overlay";
+    const dialog = document.createElement("div");
+    dialog.className = `settings-dialog${wide ? " wide" : ""}`;
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    const heading = document.createElement("h2");
+    heading.textContent = titleText;
+    dialog.appendChild(heading);
+    if (descriptionText) {
+      const detail = document.createElement("p");
+      detail.textContent = descriptionText;
+      dialog.appendChild(detail);
+    }
+    // Esc 在 document 上监听：对话框内没有焦点元素时 overlay 收不到 keydown。
+    const onKey = event => { if (event.key === "Escape") { event.preventDefault(); close(); } };
+    const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+    overlay.addEventListener("click", event => { if (event.target === overlay) close(); });
+    document.addEventListener("keydown", onKey, true);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    return { overlay, dialog, close };
+  }
+
+  function openConfirmDialog({ title, body, button }, onConfirm) {
+    const { dialog, close } = makeDialog(title, body);
+    const actions = document.createElement("div");
+    actions.className = "settings-dialog-actions";
+    const cancel = document.createElement("button");
+    cancel.className = "action-button";
+    cancel.textContent = "取消";
+    cancel.addEventListener("click", close);
+    const confirm = document.createElement("button");
+    confirm.className = "action-button danger";
+    confirm.textContent = button;
+    confirm.addEventListener("click", () => { onConfirm(); close(); });
+    actions.append(cancel, confirm);
+    dialog.appendChild(actions);
+    confirm.focus();
+  }
+
+  function makeVariableChips(vars, insert) {
+    const chips = document.createElement("div");
+    chips.className = "var-chips";
+    for (const [name, desc] of vars) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "var-chip";
+      chip.textContent = `\${${name}}`;
+      chip.title = desc;
+      chip.addEventListener("click", () => insert(`\${${name}}`));
+      chips.appendChild(chip);
+    }
+    return chips;
+  }
+
+  function insertAtCursor(input, text) {
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    input.value = input.value.slice(0, start) + text + input.value.slice(end);
+    input.selectionStart = input.selectionEnd = start + text.length;
+    input.focus();
+    input.dispatchEvent(new Event("input"));
+    input.dispatchEvent(new Event("change"));
+  }
+
+  function makeConditionsEditor(rule, onChange) {
+    const host = document.createElement("div");
+    host.className = "rule-conditions";
+    const render = () => {
+      host.replaceChildren();
+      if (!rule.conditions.length) {
+        const any = document.createElement("span");
+        any.className = "setting-detail";
+        any.textContent = "所有标签页";
+        host.appendChild(any);
+      }
+      rule.conditions.forEach((condition, index) => {
+        const line = document.createElement("div");
+        line.className = "rule-condition";
+        const when = document.createElement("span");
+        when.textContent = index === 0 ? "当" : "且";
+        const kind = document.createElement("select");
+        kind.className = "control";
+        for (const [value, label] of MATCH_KINDS) {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = label;
+          option.selected = condition.kind === value;
+          kind.appendChild(option);
+        }
+        const pattern = document.createElement("input");
+        pattern.className = "control";
+        pattern.type = "text";
+        pattern.value = condition.pattern;
+        pattern.placeholder = MATCH_KINDS.find(([v]) => v === condition.kind)?.[2] ?? "";
+        kind.addEventListener("change", () => { condition.kind = kind.value; pattern.placeholder = MATCH_KINDS.find(([v]) => v === kind.value)?.[2] ?? ""; onChange(); });
+        pattern.addEventListener("change", () => { condition.pattern = pattern.value; onChange(); });
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "action-button";
+        remove.textContent = "移除条件";
+        remove.addEventListener("click", () => { rule.conditions.splice(index, 1); onChange(); render(); });
+        line.append(when, kind, pattern, remove);
+        host.appendChild(line);
+      });
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "action-button";
+      add.textContent = "添加条件";
+      add.addEventListener("click", () => { rule.conditions.push({ kind: "path", pattern: "" }); render(); });
+      host.appendChild(add);
+    };
+    render();
+    return host;
+  }
+
+  function makeAliasEditor(rule, onChange) {
+    const input = document.createElement("input");
+    input.className = "control rule-value";
+    input.type = "text";
+    input.placeholder = "Aster";
+    input.value = rule.alias;
+    input.addEventListener("change", () => { rule.alias = input.value.trim(); onChange(); });
+    return input;
+  }
+
+  function makeTitleEditor(rule, onChange) {
+    const host = document.createElement("div");
+    host.className = "rule-title-editor";
+    const input = document.createElement("input");
+    input.className = "control rule-value";
+    input.type = "text";
+    input.placeholder = "${alias|folder} ${branch}";
+    input.value = rule.title;
+    input.addEventListener("change", () => { rule.title = input.value.trim(); onChange(); });
+    const hint = document.createElement("span");
+    hint.className = "setting-detail";
+    hint.textContent = "用 | 串联多个变量作为回落：${title|folder|'Shell'} 会取第一个有值的。";
+    host.append(input, makeVariableChips(TITLE_VARS, text => insertAtCursor(input, text)), hint);
+    return host;
+  }
+
+  /// 图标选择：图标集网格 + emoji + 颜色。emoji 与图标集二选一，后写者覆盖。
+  function makeIconEditor(rule, onChange) {
+    const host = document.createElement("div");
+    host.className = "rule-icon-editor";
+    rule.icon = rule.icon ?? { name: "", emoji: "", color: "" };
+    const header = document.createElement("div");
+    header.className = "rule-icon-header";
+    const current = document.createElement("span");
+    current.className = "setting-detail";
+    const preview = makeIconPreview(rule.icon, 20);
+    const refresh = () => {
+      preview.replaceWith(makeIconPreview(rule.icon, 20));
+      current.textContent = rule.icon.emoji ? `当前：${rule.icon.emoji}` : (rule.icon.name ? `当前：${rule.icon.name}` : "当前：未设置");
+      host.querySelectorAll(".icon-grid button").forEach(button => button.classList.toggle("active", button.dataset.name === rule.icon.name && !rule.icon.emoji));
+    };
+    const emoji = document.createElement("input");
+    emoji.className = "control";
+    emoji.type = "text";
+    emoji.placeholder = "Emoji";
+    emoji.maxLength = 4;
+    emoji.value = rule.icon.emoji ?? "";
+    emoji.addEventListener("change", () => { rule.icon.emoji = emoji.value.trim(); if (rule.icon.emoji) rule.icon.name = ""; onChange(); render(); });
+    const color = document.createElement("input");
+    color.type = "color";
+    color.className = "control rule-color";
+    color.title = "颜色";
+    color.value = rule.icon.color || "#888888";
+    color.addEventListener("change", () => { rule.icon.color = color.value; onChange(); render(); });
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "action-button";
+    clear.textContent = "清除图标";
+    clear.addEventListener("click", () => { rule.icon = { name: "", emoji: "", color: "" }; emoji.value = ""; onChange(); render(); });
+    header.append(preview, current, emoji, color, clear);
+    const search = document.createElement("input");
+    search.className = "control";
+    search.type = "search";
+    search.placeholder = "搜索图标";
+    const grid = document.createElement("div");
+    grid.className = "icon-grid";
+    const render = () => {
+      grid.replaceChildren();
+      const query = search.value.trim().toLowerCase();
+      const names = (settingValue("view.iconNames") ?? []).filter(name => name.includes(query));
+      if (!names.length) {
+        const empty = document.createElement("span");
+        empty.className = "setting-detail";
+        empty.textContent = "没有匹配的图标";
+        grid.appendChild(empty);
+      }
+      for (const name of names) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.name = name;
+        button.title = name;
+        button.appendChild(makeIconPreview({ name, color: rule.icon.color }, 18));
+        button.addEventListener("click", () => { rule.icon.name = name; rule.icon.emoji = ""; emoji.value = ""; onChange(); render(); });
+        grid.appendChild(button);
+      }
+      refresh();
+    };
+    search.addEventListener("input", render);
+    host.append(header, search, grid);
+    render();
+    return host;
+  }
+
+  function makeRuleCard(rule, field, { onChange, onMove, onDelete, index, total }) {
+    const card = document.createElement("div");
+    card.className = "rule-card";
+    const head = document.createElement("div");
+    head.className = "rule-card-head";
+    const label = document.createElement("strong");
+    label.textContent = index === 0 ? "最高优先级" : `优先级 ${index + 1}`;
+    const tools = document.createElement("span");
+    tools.className = "rule-card-tools";
+    const up = document.createElement("button");
+    up.type = "button"; up.className = "action-button"; up.textContent = "↑"; up.title = "提高优先级"; up.disabled = index === 0;
+    up.addEventListener("click", () => onMove(-1));
+    const down = document.createElement("button");
+    down.type = "button"; down.className = "action-button"; down.textContent = "↓"; down.title = "降低优先级"; down.disabled = index === total - 1;
+    down.addEventListener("click", () => onMove(1));
+    const del = document.createElement("button");
+    del.type = "button"; del.className = "action-button danger"; del.textContent = "删除规则";
+    del.addEventListener("click", onDelete);
+    tools.append(up, down, del);
+    head.append(label, tools);
+    card.appendChild(head);
+    card.appendChild(makeConditionsEditor(rule, onChange));
+    if (field === "alias" || field === "all") card.appendChild(labeled("别名", makeAliasEditor(rule, onChange)));
+    if (field === "icon" || field === "all") card.appendChild(labeled("图标", makeIconEditor(rule, onChange)));
+    if (field === "title" || field === "all") card.appendChild(labeled("标题", makeTitleEditor(rule, onChange)));
+    return card;
+  }
+
+  function labeled(text, control) {
+    const wrap = document.createElement("div");
+    wrap.className = "rule-field";
+    const label = document.createElement("span");
+    label.className = "rule-field-label";
+    label.textContent = text;
+    wrap.append(label, control);
+    return wrap;
+  }
+
+  /// 按项排列的规则对话框：只列出设置了该项的规则；新规则只带该项。
+  function openRulesDialog(field) {
+    const rules = rulesSnapshot();
+    const meta = RULE_FIELDS[field];
+    const { dialog, close } = makeDialog(meta.label, sectionMap.get("view").groups[0].rows.find(r => r.field === field).detail, { wide: true });
+    const list = document.createElement("div");
+    list.className = "rule-list";
+    const commit = () => commitRules(rules);
+    const render = () => {
+      list.replaceChildren();
+      const subset = rules.filter(rule => ruleHasField(rule, field) || rule._draftField === field);
+      if (!subset.length) {
+        const empty = document.createElement("p");
+        empty.className = "setting-detail";
+        empty.textContent = "还没有规则。";
+        list.appendChild(empty);
+      }
+      subset.forEach((rule, index) => {
+        list.appendChild(makeRuleCard(rule, field, {
+          index, total: subset.length,
+          onChange: () => { delete rule._draftField; commit(); },
+          onMove: delta => {
+            const a = rules.indexOf(rule);
+            const b = rules.indexOf(subset[index + delta]);
+            [rules[a], rules[b]] = [rules[b], rules[a]];
+            commit(); render();
+          },
+          onDelete: () => {
+            if (field === "icon") rule.icon = null; else rule[field] = "";
+            if (!rule.alias && !rule.title && !ruleHasField(rule, "icon")) rules.splice(rules.indexOf(rule), 1);
+            commit(); render();
+          },
+        }));
+      });
+    };
+    render();
+    const actions = document.createElement("div");
+    actions.className = "settings-dialog-actions split";
+    const add = document.createElement("button");
+    add.className = "action-button";
+    add.textContent = "添加规则";
+    add.addEventListener("click", () => {
+      rules.push({ id: newRuleID(), conditions: [{ kind: "path", pattern: "" }], alias: "", title: "", icon: null, _draftField: field });
+      render();
+      list.lastElementChild?.scrollIntoView({ block: "nearest" });
+    });
+    const done = document.createElement("button");
+    done.className = "action-button primary";
+    done.textContent = "完成";
+    done.addEventListener("click", () => { commit(); close(); });
+    actions.append(add, done);
+    dialog.append(list, actions);
+  }
+
+  /// 按项目排列：一个规则的别名、图标、标题一起编辑。
+  function openProjectDialog(ruleID, draftRules = null) {
+    const rules = draftRules ?? rulesSnapshot();
+    const rule = rules.find(r => r.id === ruleID);
+    if (!rule) return;
+    const { dialog, close } = makeDialog("项目", "设置该项目的别名、图标和标题。", { wide: true });
+    const body = document.createElement("div");
+    body.className = "rule-list";
+    const commit = () => commitRules(rules);
+    body.appendChild(makeRuleCard(rule, "all", {
+      index: rules.indexOf(rule), total: rules.length,
+      onChange: commit,
+      onMove: delta => {
+        const a = rules.indexOf(rule);
+        [rules[a], rules[a + delta]] = [rules[a + delta], rules[a]];
+        commit(); close(); openProjectDialog(ruleID);
+      },
+      onDelete: () => { rules.splice(rules.indexOf(rule), 1); commit(); close(); },
+    }));
+    const actions = document.createElement("div");
+    actions.className = "settings-dialog-actions";
+    const done = document.createElement("button");
+    done.className = "action-button primary";
+    done.textContent = "完成";
+    done.addEventListener("click", () => { commit(); close(); });
+    actions.appendChild(done);
+    dialog.append(body, actions);
+  }
+
+  // MARK: 详情面板
+
+  function detailsState() {
+    return {
+      sections: (settingValue("view.detailsPanelSections") ?? []).map(s => ({ ...s })),
+      customViews: (settingValue("view.detailsPanelCustomViews") ?? []).map(v => ({ ...v })),
+      order: [...(settingValue("view.detailsPanelOrder") ?? [])],
+    };
+  }
+
+  function makeDetailsPanelGroup(group) {
+    const host = document.createElement("section");
+    host.className = "group";
+    const title = document.createElement("h2");
+    title.className = "group-title";
+    title.textContent = group.title;
+    const description = document.createElement("p");
+    description.className = "group-description";
+    description.textContent = group.description;
+    host.append(title, description);
+    const card = document.createElement("div");
+    card.className = "card details-list";
+    card.dataset.settingKey = "view.detailsPanelSections";
+    const state = detailsState();
+    let dragging = null;
+    const commitOrder = () => commitValue({ key: "view.detailsPanelOrder" }, [...card.querySelectorAll(".details-row")].map(r => r.dataset.token));
+    for (const token of state.order) {
+      const row = document.createElement("div");
+      row.className = "setting-row details-row";
+      row.dataset.token = token;
+      row.draggable = true;
+      const handle = document.createElement("span");
+      handle.className = "drag-handle";
+      handle.title = "拖动以重新排序";
+      handle.textContent = "⠿";
+      const icon = document.createElement("span");
+      icon.className = "details-row-icon";
+      const copy = document.createElement("div");
+      copy.className = "setting-copy";
+      const label = document.createElement("span");
+      label.className = "setting-label";
+      const detail = document.createElement("span");
+      detail.className = "setting-detail";
+      copy.append(label, detail);
+      const control = document.createElement("div");
+      control.className = "setting-control";
+      let enabled = false;
+      let onToggle = () => {};
+      if (token.startsWith("builtin:")) {
+        const id = token.slice(8);
+        const meta = BUILTIN_DETAILS[id] ?? { title: id, desc: "", icon: "" };
+        icon.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${meta.icon}</svg>`;
+        label.textContent = meta.title;
+        detail.textContent = meta.desc;
+        enabled = state.sections.find(s => s.id === id)?.enabled ?? true;
+        onToggle = value => {
+          const next = state.sections.map(s => s.id === id ? { ...s, enabled: value } : s);
+          commitValue({ key: "view.detailsPanelSections" }, next);
+        };
+      } else {
+        const id = token.slice(7);
+        const view = state.customViews.find(v => v.id === id);
+        if (!view) continue;
+        icon.innerHTML = view.kind === "web"
+          ? "<svg viewBox='0 0 16 16' aria-hidden='true'><circle cx='8' cy='8' r='5.5'/><path d='M2.5 8h11M8 2.5c2 2 2 9 0 11M8 2.5c-2 2-2 9 0 11'/></svg>"
+          : "<svg viewBox='0 0 16 16' aria-hidden='true'><rect x='2.2' y='3' width='11.6' height='10' rx='2'/><path d='m4.8 6 2 2-2 2M8.5 10h2.8'/></svg>";
+        label.textContent = view.name;
+        detail.textContent = view.kind === "web" ? `网页 · ${view.url}` : `终端程序 · ${view.command}`;
+        enabled = view.enabled !== false;
+        onToggle = value => {
+          const next = state.customViews.map(v => v.id === id ? { ...v, enabled: value } : v);
+          commitValue({ key: "view.detailsPanelCustomViews" }, next);
+        };
+        copy.classList.add("clickable");
+        copy.addEventListener("click", () => openCustomViewDialog(view));
+      }
+      const toggle = document.createElement("label");
+      toggle.className = "toggle";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = enabled;
+      input.setAttribute("aria-label", "在详情面板中显示此标签");
+      input.addEventListener("change", () => onToggle(input.checked));
+      const track = document.createElement("span");
+      track.className = "toggle-track";
+      toggle.append(input, track);
+      control.appendChild(toggle);
+      row.append(handle, icon, copy, control);
+      row.addEventListener("dragstart", event => { dragging = row; row.classList.add("dragging"); event.dataTransfer.effectAllowed = "move"; });
+      row.addEventListener("dragend", () => { row.classList.remove("dragging"); dragging = null; });
+      row.addEventListener("dragover", event => {
+        if (!dragging || dragging === row) return;
+        event.preventDefault();
+        const rect = row.getBoundingClientRect();
+        const before = event.clientY < rect.top + rect.height / 2;
+        card.insertBefore(dragging, before ? row : row.nextSibling);
+      });
+      row.addEventListener("drop", event => { event.preventDefault(); commitOrder(); });
+      card.appendChild(row);
+    }
+    card.addEventListener("dragover", event => { if (dragging) event.preventDefault(); });
+    card.addEventListener("drop", event => { event.preventDefault(); if (dragging) commitOrder(); });
+    const addRow = document.createElement("div");
+    addRow.className = "setting-row rules-add-row";
+    const add = document.createElement("button");
+    add.className = "action-button";
+    add.textContent = "添加视图";
+    add.addEventListener("click", () => openCustomViewDialog(null));
+    addRow.appendChild(add);
+    card.appendChild(addRow);
+    host.appendChild(card);
+    return host;
+  }
+
+  /// 自定义视图对话框：终端程序或网页。保存时整体回写自定义视图数组。
+  function openCustomViewDialog(existing) {
+    const draft = existing ? { ...existing } : { id: newRuleID(), kind: "tui", name: "", command: "", url: "", mobile: false, folder: "", enabled: true };
+    const { dialog, close } = makeDialog(existing ? "编辑视图" : "添加视图", "在面板内的终端里运行程序，或在网页视图中加载页面。", { wide: true });
+    const form = document.createElement("div");
+    form.className = "rule-list";
+    const kindField = document.createElement("div");
+    kindField.className = "segmented";
+    const kindButtons = [];
+    for (const [value, label] of [["tui", "终端程序"], ["web", "网页"]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      button.addEventListener("click", () => { draft.kind = value; refreshKind(); });
+      kindButtons.push([value, button]);
+      kindField.appendChild(button);
+    }
+    const name = document.createElement("input");
+    name.className = "control rule-value"; name.type = "text"; name.placeholder = "Docker"; name.value = draft.name;
+    name.addEventListener("change", () => { draft.name = name.value.trim(); });
+    const command = document.createElement("input");
+    command.className = "control rule-value"; command.type = "text"; command.placeholder = "lazydocker -f compose.yml"; command.value = draft.command;
+    command.addEventListener("change", () => { draft.command = command.value; });
+    const commandWrap = document.createElement("div");
+    commandWrap.className = "rule-title-editor";
+    const commandHint = document.createElement("span");
+    commandHint.className = "setting-detail";
+    commandHint.textContent = "按命令行的方式执行，管道、`&&`、`;` 都可用。点击变量插入；值可能含空格时请自行加引号。";
+    commandWrap.append(command, makeVariableChips(VIEW_VARS, text => insertAtCursor(command, text)), commandHint);
+    const url = document.createElement("input");
+    url.className = "control rule-value"; url.type = "text"; url.placeholder = "http://localhost:3000"; url.value = draft.url;
+    url.addEventListener("change", () => { draft.url = url.value.trim(); });
+    const urlWrap = document.createElement("div");
+    urlWrap.className = "rule-title-editor";
+    urlWrap.append(url, makeVariableChips(VIEW_VARS, text => insertAtCursor(url, text)));
+    const mobile = document.createElement("label");
+    mobile.className = "toggle-inline";
+    const mobileInput = document.createElement("input");
+    mobileInput.type = "checkbox"; mobileInput.checked = draft.mobile;
+    mobileInput.addEventListener("change", () => { draft.mobile = mobileInput.checked; });
+    const mobileHint = document.createElement("span");
+    mobileHint.className = "setting-detail";
+    mobileHint.textContent = "以手机浏览器的身份请求页面，站点便会返回为窄栏写的那套布局。关闭则请求桌面版；两种情况下页面都按面板自身的宽度排版。改动后该视图会重新加载。";
+    mobile.append(mobileInput, document.createTextNode(" 移动版页面"));
+    const mobileWrap = document.createElement("div");
+    mobileWrap.className = "rule-title-editor";
+    mobileWrap.append(mobile, mobileHint);
+    const folder = document.createElement("input");
+    folder.className = "control rule-value"; folder.type = "text"; folder.placeholder = "~/.config/aster/views/<名称>"; folder.value = draft.folder;
+    folder.addEventListener("change", () => { draft.folder = folder.value.trim(); });
+    const folderWrap = document.createElement("div");
+    folderWrap.className = "rule-title-editor";
+    const folderHint = document.createElement("span");
+    folderHint.className = "setting-detail";
+    folderHint.textContent = "程序的运行目录。点击变量即可跟随当前聚焦的分屏。留空则为该视图在 ~/.config/aster/views 下单独建一个目录。";
+    folderWrap.append(folder, makeVariableChips(VIEW_VARS.slice(0, 2), text => insertAtCursor(folder, text)), folderHint);
+    const shared = document.createElement("p");
+    shared.className = "setting-detail";
+    shared.textContent = "解析后命令与目录都相同的视图，在所有窗口中共用同一个运行中的程序——所以用了 ${cwd} 的视图每个目录一个。视图内的程序不能新建窗口、标签页、窗格，也不能打开 GUI 应用。";
+    const tuiFields = [labeled("命令", commandWrap), labeled("目录", folderWrap), shared];
+    const webFields = [labeled("网址", urlWrap), mobileWrap];
+    const refreshKind = () => {
+      for (const [value, button] of kindButtons) button.classList.toggle("active", draft.kind === value);
+      for (const field of tuiFields) field.hidden = draft.kind !== "tui";
+      for (const field of webFields) field.hidden = draft.kind !== "web";
+    };
+    form.append(labeled("类型", kindField), labeled("名称", name), ...tuiFields, ...webFields);
+    refreshKind();
+    const actions = document.createElement("div");
+    actions.className = "settings-dialog-actions split";
+    const left = document.createElement("span");
+    if (existing) {
+      const del = document.createElement("button");
+      del.className = "action-button danger";
+      del.textContent = "删除视图";
+      del.addEventListener("click", () => {
+        commitValue({ key: "view.detailsPanelCustomViews" }, detailsState().customViews.filter(v => v.id !== existing.id));
+        close();
+      });
+      left.appendChild(del);
+    }
+    const right = document.createElement("span");
+    const cancel = document.createElement("button");
+    cancel.className = "action-button"; cancel.textContent = "取消"; cancel.addEventListener("click", close);
+    const save = document.createElement("button");
+    save.className = "action-button primary"; save.textContent = "保存";
+    save.addEventListener("click", () => {
+      draft.name = name.value.trim(); draft.command = command.value; draft.url = url.value.trim(); draft.folder = folder.value.trim();
+      if (!draft.name) { showToast("请填写名称", true); name.focus(); return; }
+      if (draft.kind === "tui" && !draft.command.trim()) { showToast("请填写命令", true); command.focus(); return; }
+      if (draft.kind === "web" && !/^https?:\/\//i.test(draft.url)) { showToast("网址必须以 http:// 或 https:// 开头", true); url.focus(); return; }
+      const views = detailsState().customViews;
+      const index = views.findIndex(v => v.id === draft.id);
+      if (index >= 0) views[index] = draft; else views.push(draft);
+      commitValue({ key: "view.detailsPanelCustomViews" }, views);
+      close();
+    });
+    right.append(cancel, save);
+    actions.append(left, right);
+    dialog.append(form, actions);
+    name.focus();
   }
 
   function makeAppearanceGroup(titleText, body, className = "") {
@@ -2116,7 +2876,8 @@
     if (section.special === "appearance") page.appendChild(makeAppearancePage(section));
     if (section.special === "recipes") page.appendChild(makeRecipesGroup());
     if (section.special === "shortcuts") page.appendChild(makeShortcutsGroup());
-    if (section.special !== "appearance") {
+    if (section.special === "view") page.appendChild(makeViewPage(section));
+    if (section.special !== "appearance" && section.special !== "view") {
       for (const group of section.groups) page.appendChild(makeGroup(group));
     }
     // MCP 卡片排在记录与提炼之后：先决定记不记、怎么提炼，才轮到交给谁用。

@@ -42,6 +42,11 @@ final class GhosttySurfaceView: NSView {
 
   private let workingDirectory: String
   private let environment: [String: String]
+  /// 代替登录 Shell 直接运行的命令（libghostty `command`，经 `/bin/sh -c` 语义解释）。
+  /// 详情面板的自定义 TUI 视图用它把 lazydocker 之类程序直接跑在面板里；nil 走默认 Shell。
+  var command: String?
+  /// 命令退出后保持 surface 不销毁，让用户看到程序的最后输出。
+  var waitAfterCommand = false
   private var configurationText: String
   nonisolated(unsafe) private var configStrings: [UnsafeMutablePointer<CChar>] = []
   private var environmentVariables: [ghostty_env_var_s] = []
@@ -328,6 +333,11 @@ final class GhosttySurfaceView: NSView {
     if let pointer = strdup(workingDirectory) {
       configStrings.append(pointer)
       config.working_directory = UnsafePointer(pointer)
+    }
+    if let command, !command.isEmpty, let pointer = strdup(command) {
+      configStrings.append(pointer)
+      config.command = UnsafePointer(pointer)
+      config.wait_after_command = waitAfterCommand
     }
     for (key, value) in environment.sorted(by: { $0.key < $1.key }) {
       guard let keyPointer = strdup(key), let valuePointer = strdup(value) else { continue }

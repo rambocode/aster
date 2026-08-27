@@ -53,6 +53,10 @@ final class WorkspaceViewController: NSViewController {
   private var renderedTheme: TerminalTheme?
   private var renderedAppearance: AppPreferences.Appearance?
   private var renderedTabBarLayout: TabBarLayout?
+  /// 「视图」配置（标签规则 / 角标摆放）与徽章开关的最近渲染值：设置窗口打开期间只有
+  /// 它们变化才重建标签行，避免每次快照都整树刷新。
+  private var renderedViewConfiguration: ViewConfiguration?
+  private var renderedBadgeSettings: [Bool] = []
   /// 当前渲染出来的面板容器。焦点切换只更新这里的状态与 first responder，
   /// 不重建视图树。
   private var paneHosts: [UUID: ActivePaneHostView] = [:]
@@ -240,6 +244,19 @@ final class WorkspaceViewController: NSViewController {
     }
   }
 
+  /// 「视图 → 标签页与标题定制」规则对某个标签的解析结果（别名 / 图标 / 标题模板）。
+  private func tabRuleOutcome(for tab: TerminalTabItem) -> TabTitleRuleService.Outcome {
+    let index = (model.tabs.firstIndex { $0.id == tab.id } ?? 0) + 1
+    return TabTitleRuleService.resolve(
+      tab: tab, index: index, configuration: preferences.configuration.resolvedView)
+  }
+
+  /// 规则标题的优先级：用户手动固定名 > 规则模板 > Agent 会话标题 / 自动标题。
+  private func ruleTitle(for tab: TerminalTabItem) -> String? {
+    if case .name = tab.tabTitleOverride { return nil }
+    return tabRuleOutcome(for: tab).renderedTitle
+  }
+
   private func detailsControllerForSelectedTab() -> DetailsPanelViewController {
     let selectedTabID = model.selectedTabID
     if let cached = detailsPanelController, detailsPanelTabID == selectedTabID {
@@ -259,6 +276,7 @@ final class WorkspaceViewController: NSViewController {
     let resumesCachedController = details.isViewLoaded
     if details.parent !== self { addChild(details) }
     details.synchronizeAppearanceIfNeeded()
+    details.synchronizeSectionsIfNeeded()
     if resumesCachedController { details.setPresentationActive(true) }
     split.insert(
       WorkspacePanel(role: .inspector, contentView: details.view),
@@ -695,16 +713,24 @@ final class WorkspaceViewController: NSViewController {
         self.updateSecureInputIndicator(
           active: self.secureInputCoordinator.isSystemProtectionActive)
         self.applyThemeToVisibleTerminals(in: self.view)
+        self.detailsPanelController?.synchronizeSectionsIfNeeded()
         if self.settingsPresentationActive,
           self.renderedTheme != self.preferences.activeTheme
             || self.renderedAppearance != self.preferences.appearance
             || self.renderedTabBarLayout != self.preferences.tabBarLayout
+            || self.renderedViewConfiguration != self.preferences.configuration.resolvedView
+            || self.renderedBadgeSettings != self.currentBadgeSettings()
         {
           self.refresh()
         }
       }
     }
     if !settingsPresentationActive { scheduleRefresh() }
+  }
+
+  private func currentBadgeSettings() -> [Bool] {
+    let shell = preferences.configuration.shell
+    return [shell.badgeExitStatus, shell.resolvedBadgeCommandFinish, shell.resolvedBadgeCommandFailure, shell.badgeAwaitingInput]
   }
 
   /// AppKit 允许被替换的旧子树存活到当前布局事务结束；递归扫描是为了更新这些真正
@@ -766,6 +792,8 @@ final class WorkspaceViewController: NSViewController {
     renderedTheme = theme
     renderedAppearance = preferences.appearance
     renderedTabBarLayout = preferences.tabBarLayout
+    renderedViewConfiguration = preferences.configuration.resolvedView
+    renderedBadgeSettings = currentBadgeSettings()
     if let background = view as? ThemeVisualEffectView {
       background.apply(
         material: theme.palette.material,
@@ -1294,6 +1322,7 @@ final class WorkspaceViewController: NSViewController {
       // 折叠的分组只留组头；标签行整组不进视图树（对齐 Otty 的分组折叠）。
       if sectionCollapsed { continue }
       for tab in section.tabs {
+        let ruleOutcome = tabRuleOutcome(for: tab)
         let button = TabRowButton(
           tab: tab,
           selected: tab.id == model.selectedTabID,
@@ -1303,16 +1332,18 @@ final class WorkspaceViewController: NSViewController {
           showsFinished: preferences.configuration.shell.resolvedBadgeCommandFinish,
           showsFailure: preferences.configuration.shell.resolvedBadgeCommandFailure,
           showsAwaitingInput: preferences.configuration.shell.badgeAwaitingInput,
-          displayTitleProvider: section.kind == .project(.local)
-            ? { [weak tab] in
-              guard let tab else { return "" }
-              return SidebarTabGrouping.projectGroupTitle(
-                forDirectory: tab.workingDirectory,
-                homeDirectory: NSHomeDirectory(),
-                fallback: tab.displayTitle
-              )
-            }
-            : nil,
+          tabIcon: ruleOutcome.resolution.icon,
+          badgePlacement: preferences.configuration.resolvedView.resolvedBadgePlacement,
+          displayTitleProvider: { [weak self, weak tab] in
+            guard let self, let tab else { return "" }
+            if let ruled = self.ruleTitle(for: tab) { return ruled }
+            guard section.kind == .project(.local) else { return tab.displayTitle }
+            return SidebarTabGrouping.projectGroupTitle(
+              forDirectory: tab.workingDirectory,
+              homeDirectory: NSHomeDirectory(),
+              fallback: tab.displayTitle
+            )
+          },
           displayTitleToolTip: section.kind == .project(.local) ? tab.workingDirectory : nil,
           onClose: { [weak self, weak tab] in
             guard let tab else { return }
@@ -1589,6 +1620,7 @@ final class WorkspaceViewController: NSViewController {
     // 标签行独占自己的一行，左缘从窗口边起排。
     row.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 8)
     for tab in model.tabs {
+      let ruleOutcome = tabRuleOutcome(for: tab)
       let button = TabRowButton(
         tab: tab,
         selected: tab.id == model.selectedTabID,
@@ -1599,6 +1631,12 @@ final class WorkspaceViewController: NSViewController {
         showsFinished: preferences.configuration.shell.resolvedBadgeCommandFinish,
         showsFailure: preferences.configuration.shell.resolvedBadgeCommandFailure,
         showsAwaitingInput: preferences.configuration.shell.badgeAwaitingInput,
+        tabIcon: ruleOutcome.resolution.icon,
+        badgePlacement: preferences.configuration.resolvedView.resolvedBadgePlacement,
+        displayTitleProvider: { [weak self, weak tab] in
+          guard let self, let tab else { return "" }
+          return self.ruleTitle(for: tab) ?? tab.displayTitle
+        },
         onClose: { [weak self, weak tab] in
           guard let tab else { return }
           self?.model.closeTab(id: tab.id)
@@ -2096,7 +2134,9 @@ final class WorkspaceViewController: NSViewController {
       retainedObjects.append(controller)
       content = controller.view
     case .web:
-      let controller = WebPaneViewController(runtime: runtime)
+      let controller = WebPaneViewController(
+        runtime: runtime,
+        persistData: preferences.configuration.resolvedView.resolvedWebPanePersistData)
       addChild(controller)
       retainedObjects.append(controller)
       content = controller.view

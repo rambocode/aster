@@ -20,6 +20,40 @@ enum WebPaneURLPolicy {
   }
 }
 
+/// 网页窗格的站点数据策略。「保持登录状态」开启时用系统持久存储；关闭时所有网页窗格
+/// 共用一份进程内的非持久存储，最后一个窗格关闭后释放（对齐 Otty 的语义）。
+/// 该开关只对之后新建的窗格生效，已打开的窗格保持原来的存储。
+@MainActor
+enum WebPaneDataStorePolicy {
+  /// 非持久存储的共享实例；用弱引用让它随最后一个 WKWebView 的释放一起消失。
+  private static weak var sharedEphemeralStore: WKWebsiteDataStore?
+
+  static func dataStore(persist: Bool) -> WKWebsiteDataStore {
+    if persist { return .default() }
+    if let store = sharedEphemeralStore { return store }
+    let store = WKWebsiteDataStore.nonPersistent()
+    sharedEphemeralStore = store
+    return store
+  }
+
+  /// 清空持久存储与当前内存存储里的所有站点数据（cookie、缓存、本地存储、历史索引）。
+  /// 返回 false 表示某个存储没能完成清理，调用方应提示用户关掉网页窗格后重试。
+  static func clearAllBrowsingData() async -> Bool {
+    let types = WKWebsiteDataStore.allWebsiteDataTypes()
+    var stores = [WKWebsiteDataStore.default()]
+    if let ephemeral = sharedEphemeralStore { stores.append(ephemeral) }
+    var ok = true
+    for store in stores {
+      let records = await store.dataRecords(ofTypes: types)
+      await store.removeData(ofTypes: types, for: records)
+      await store.removeData(ofTypes: types, modifiedSince: .distantPast)
+      let remaining = await store.dataRecords(ofTypes: types)
+      if !remaining.isEmpty { ok = false }
+    }
+    return ok
+  }
+}
+
 /// “链接在 Aster 中打开”的轻量网页 Pane。它只承载 HTTP(S) 导航，不暴露脚本桥接、
 /// 本地文件读取或自定义协议；新窗口导航收敛到当前 Pane，保持工作区分屏模型稳定。
 @MainActor
@@ -30,10 +64,11 @@ final class WebPaneViewController: NSViewController, WKNavigationDelegate, WKUID
   private let backButton = NSButton(title: "‹", target: nil, action: nil)
   private let forwardButton = NSButton(title: "›", target: nil, action: nil)
 
-  init(runtime: WorkspacePaneRuntime) {
+  init(runtime: WorkspacePaneRuntime, persistData: Bool = true) {
     initialURL = runtime.descriptor.resourcePath.flatMap(WebPaneURLPolicy.allowedURL)
     let configuration = WKWebViewConfiguration()
     configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+    configuration.websiteDataStore = WebPaneDataStorePolicy.dataStore(persist: persistData)
     webView = WKWebView(frame: .zero, configuration: configuration)
     super.init(nibName: nil, bundle: nil)
   }

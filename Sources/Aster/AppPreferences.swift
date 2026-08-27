@@ -171,6 +171,15 @@ final class AppPreferences: ObservableObject {
     set { defaults.set(min(max(newValue, 0), 4), forKey: Keys.inspectorSection) }
   }
 
+  /// 详情面板选中的自定义视图 id；nil 表示选中的是内置页（此时读 `inspectorSection`）。
+  var inspectorCustomSection: UUID? {
+    get { defaults.string(forKey: Keys.inspectorCustomSection).flatMap(UUID.init(uuidString:)) }
+    set {
+      if let newValue { defaults.set(newValue.uuidString, forKey: Keys.inspectorCustomSection) }
+      else { defaults.removeObject(forKey: Keys.inspectorCustomSection) }
+    }
+  }
+
   // MARK: - Session Memory（记录与提炼）
 
   /// 记录总开关（PRD §69）。默认关闭：记录会持久化命令与输出摘录，必须用户主动开启。
@@ -1002,6 +1011,7 @@ final class AppPreferences: ObservableObject {
     static let sidebarCollapsedGroups = "aster.sidebar.collapsed-groups.v1"
     static let inspectorPresented = "aster.inspector.presented.v1"
     static let inspectorSection = "aster.inspector.section.v1"
+    static let inspectorCustomSection = "aster.inspector.custom-section.v1"
     static let inspectorGitEditor = "aster.inspector.git-editor.v1"
     static let memoryRecordingMode = "aster.memory.recording-mode.v1"
     static let memoryExcludedPaths = "aster.memory.excluded-paths.v1"

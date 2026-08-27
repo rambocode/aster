@@ -65,3 +65,12 @@ scripts/build-app.sh
 ```
 
 最后打开打包后的 Aster.app，逐类检查搜索、明暗外观、键盘导航、主题、Agent 安装状态、Recipe 列表、快捷键录制和系统面板动作。
+
+## 「视图」分类
+
+- 模型在 `AsterCore/ViewConfiguration.swift`：`ViewConfiguration` 是 `AsterConfiguration.view` 的可选顶层块（缺键的旧文件必须还能解码，否则整份配置会回退默认），字段都带 `resolved*` 读取口，`normalized()` 在导入 / 网页写入边界裁掉控制字符与超量条目。
+- 标签规则由 `TabTitleRuleResolver` 纯函数解析（glob 条件 AND、三个字段各取首个命中、`${a|b|'lit'}` 回落模板）；`Sources/Aster/TabTitleRuleService.swift` 负责把运行态标签投影成 `TabTitleContext`（git 分支只读 `.git/HEAD` 并按目录缓存 2s）。侧栏 / 横向标签行经 `TabRowButton(tabIcon:badgePlacement:)` 渲染图标；`WorkspaceView` 用 `renderedViewConfiguration` 判断设置窗口打开期间是否需要重建标签行。
+- 图标集在 `Resources/settings-ui/tab-icons/*.svg`（Lucide，ISC；另含若干品牌标志）。网页端由原生随快照下发 SVG 文本（`view.iconSVGs`）内联渲染——`file://` 页面下 CSS `mask-image` 会被 CSP 拦下；原生端用 `NSImage(contentsOf:)` 作模板图着色。图标名只接受 `[a-z0-9-]`。
+- 网页窗格：`WebPaneDataStorePolicy` 决定 `WKWebsiteDataStore`（持久 / 进程内共享的非持久），`clearAllBrowsingData()` 清两者；动作 `clearWebPaneData` 经 toast 回报真实结果。
+- 详情面板：`DetailsPanelViewController` 按 `resolvedDetailsPanelEntries` 生成 chip，`synchronizeSectionsIfNeeded()` 在偏好变化后重建；自定义视图由 `DetailsPanelCustomViewController` 承载——TUI 走 `GhosttySurfaceView.command`（libghostty surface `command` 字段，`wait_after_command`），网页走独立 WKWebView（移动版 = 自定义 UA）。选中态用 `inspectorSection` + `inspectorCustomSection` 两个键持久化。
+- 网页键：`view.rulesArrangement`、`view.badgePlacement`、`view.webPanePersistData`、`view.tabRules`（对象数组整体回写）、`view.detailsPanelSections`、`view.detailsPanelCustomViews`、`view.detailsPanelOrder`（`builtin:<id>` / `custom:<uuid>`，快照含隐藏项）。角标三个开关沿用 `shell.badge*` 键，只是从 Shell 分类移到了视图分类。

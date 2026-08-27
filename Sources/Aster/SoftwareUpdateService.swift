@@ -129,9 +129,9 @@ final class SoftwareUpdateService: NSObject, SoftwareUpdateControlling {
   }
 }
 
-// Sparkle 的 updater delegate 回调都发生在主线程，但它的 ObjC 协议没有 actor 标注。
-// 用 @preconcurrency 承接这份既有约定，避免为每个回调手写 nonisolated 再跳回主线程。
-extension SoftwareUpdateService: @preconcurrency SPUUpdaterDelegate {
+// Sparkle 的 updater delegate 回调都发生在主线程；当前工具链已把这份 ObjC 协议按主线程
+// 约定处理，直接以 @MainActor 类型承接即可（再加 @preconcurrency 只会触发“无效”警告）。
+extension SoftwareUpdateService: SPUUpdaterDelegate {
   /// 通道真值在 AppPreferences。Sparkle 每次检查都会重新问一遍，因此这里现读而不缓存。
   func allowedChannels(for updater: SPUUpdater) -> Set<String> {
     AppPreferences.updateChannel(from: defaults).sparkleChannelNames

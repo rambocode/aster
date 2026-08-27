@@ -45,6 +45,22 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       case .history: "details-chip-history"
       }
     }
+
+    /// 配置文件里的稳定 id（`ViewConfiguration.detailsPanelSections`）。
+    var settingsID: String {
+      switch self {
+      case .info: "info"
+      case .outline: "outline"
+      case .git: "git"
+      case .files: "files"
+      case .history: "history"
+      }
+    }
+
+    init?(settingsID: String) {
+      guard let match = Section.allCases.first(where: { $0.settingsID == settingsID }) else { return nil }
+      self = match
+    }
   }
 
   private let model: AppModel
@@ -58,6 +74,14 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   private let paneRefreshOverlay = DetailsPaneRefreshOverlay()
   private var chips: [Section: PanelTabChip] = [:]
   private var selection: Section
+  /// 自定义视图的 chip 与控制器；`customSelection` 非空时内置页全部隐藏。
+  private var customChips: [UUID: PanelTabChip] = [:]
+  private var customControllers: [UUID: DetailsPanelCustomViewController] = [:]
+  private var customSelection: UUID?
+  /// 最近一次渲染 header 时的页签顺序与自定义视图定义；配置变化后据此判断是否重建。
+  private var renderedEntries: [DetailsPanelEntry] = []
+  private var renderedCustomViews: [DetailsPanelCustomView] = []
+  private weak var headerRow: NSStackView?
   /// 隐藏页同样需要记录失效状态。用户在 Pane 切换后才打开某页时，必须先屏蔽旧快照，
   /// 直到该页按当前 Tab/Pane/revision 校验的新结果原子提交。
   private var sectionsAwaitingPaneRefresh: Set<Section> = []
@@ -185,7 +209,9 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     self.editorLocator = editorLocator
     self.editorOpener = editorOpener
     self.selection = Section(rawValue: preferences.inspectorSection) ?? .info
+    self.customSelection = preferences.inspectorCustomSection
     super.init(nibName: nil, bundle: nil)
+    reconcileSelection()
     model.agentHistoriesChanged
       .sink { [weak self] _ in
         guard let self else { return }
@@ -293,29 +319,145 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     row.heightAnchor.constraint(
       equalToConstant: InspectorToggleMetrics.centerYFromTop * 2
     ).isActive = true
-    for section in Section.allCases {
-      let chip = PanelTabChip(title: section.title, symbol: section.symbol) { [weak self] in
-        self?.selectSection(section)
+    headerRow = row
+    populateHeader(row)
+    return row
+  }
+
+  /// 按「视图 → 详情面板」的顺序与显示设置生成 chip；自定义视图与内置页混排。
+  private func populateHeader(_ row: NSStackView) {
+    for view in row.arrangedSubviews { view.removeFromSuperview() }
+    chips.removeAll()
+    customChips.removeAll()
+    let configuration = preferences.configuration.resolvedView
+    renderedEntries = configuration.resolvedDetailsPanelEntries
+    renderedCustomViews = configuration.resolvedCustomViews
+    for entry in renderedEntries {
+      switch entry {
+      case .builtin(let id):
+        guard let section = Section(settingsID: id) else { continue }
+        let chip = PanelTabChip(title: section.title, symbol: section.symbol) { [weak self] in
+          self?.selectSection(section)
+        }
+        chip.identifier = NSUserInterfaceItemIdentifier(section.chipIdentifier)
+        chip.setSelected(customSelection == nil && section == selection, animated: false)
+        chips[section] = chip
+        row.addArrangedSubview(chip)
+      case .custom(let id):
+        guard let definition = renderedCustomViews.first(where: { $0.id == id }) else { continue }
+        let chip = PanelTabChip(
+          title: definition.name,
+          symbol: definition.kind == .web ? "globe" : "terminal"
+        ) { [weak self] in
+          self?.selectCustomView(id)
+        }
+        chip.identifier = NSUserInterfaceItemIdentifier("details-chip-custom-\(id.uuidString)")
+        chip.setSelected(customSelection == id, animated: false)
+        customChips[id] = chip
+        row.addArrangedSubview(chip)
       }
-      chip.identifier = NSUserInterfaceItemIdentifier(section.chipIdentifier)
-      chip.setSelected(section == selection, animated: false)
-      chips[section] = chip
-      row.addArrangedSubview(chip)
     }
     let spacer = NSView()
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
     row.addArrangedSubview(spacer)
-    return row
+  }
+
+  /// 选中项不在可见页签里时回落：优先第一个可见内置页，否则第一个自定义视图。
+  private func reconcileSelection() {
+    let entries = preferences.configuration.resolvedView.resolvedDetailsPanelEntries
+    if let customSelection, entries.contains(.custom(customSelection)) { return }
+    if customSelection == nil, entries.contains(.builtin(selection.settingsID)) { return }
+    customSelection = nil
+    for entry in entries {
+      switch entry {
+      case .builtin(let id):
+        if let section = Section(settingsID: id) {
+          selection = section
+          return
+        }
+      case .custom(let id):
+        customSelection = id
+        return
+      }
+    }
+  }
+
+  /// 「视图」设置变化后同步页签：顺序 / 显示 / 自定义视图定义任一变化都重建 header；
+  /// 被删除或改过定义的自定义视图释放其进程与网页。
+  func synchronizeSectionsIfNeeded() {
+    guard isViewLoaded, let headerRow else { return }
+    let configuration = preferences.configuration.resolvedView
+    let entries = configuration.resolvedDetailsPanelEntries
+    let customViews = configuration.resolvedCustomViews
+    guard entries != renderedEntries || customViews != renderedCustomViews else { return }
+    for (id, controller) in customControllers {
+      let stillSame = customViews.first { $0.id == id } == controller.definition
+      if !stillSame {
+        controller.tearDown()
+        controller.view.removeFromSuperview()
+        controller.removeFromParent()
+        customControllers.removeValue(forKey: id)
+      }
+    }
+    let previousSelection = selection
+    let previousCustom = customSelection
+    reconcileSelection()
+    populateHeader(headerRow)
+    if previousSelection != selection || previousCustom != customSelection {
+      if previousCustom == nil { cancelInspection(for: previousSelection) }
+      preferences.inspectorSection = selection.rawValue
+      preferences.inspectorCustomSection = customSelection
+    }
+    showSelectedContent()
+    prepareSelectedSection()
+  }
+
+  /// 切到自定义视图：内置页停止工作并隐藏，自定义控制器懒创建。
+  private func selectCustomView(_ id: UUID) {
+    guard customSelection != id else { return }
+    if customSelection == nil { cancelInspection(for: selection) }
+    customSelection = id
+    preferences.inspectorCustomSection = id
+    for (key, chip) in chips { chip.setSelected(false, animated: true) ; _ = key }
+    for (key, chip) in customChips { chip.setSelected(key == id, animated: true) }
+    showSelectedContent()
+    prepareSelectedSection()
+  }
+
+  /// 当前聚焦标签的模板上下文；自定义视图解析 `${cwd}` 等变量时调用。
+  private func customViewContext() -> (context: TabTitleContext, pid: Int32?)? {
+    guard let tab = model.selectedTab else { return nil }
+    let index = (model.tabs.firstIndex { $0.id == tab.id } ?? 0) + 1
+    return (TabTitleRuleService.context(for: tab, index: index), tab.activeSession?.processIdentifier)
+  }
+
+  private func customController(for id: UUID) -> DetailsPanelCustomViewController? {
+    if let existing = customControllers[id] { return existing }
+    guard let definition = renderedCustomViews.first(where: { $0.id == id }) else { return nil }
+    let controller = DetailsPanelCustomViewController(
+      definition: definition,
+      preferences: preferences,
+      contextProvider: { [weak self] in self?.customViewContext() }
+    )
+    addChild(controller)
+    controller.view.translatesAutoresizingMaskIntoConstraints = false
+    contentHost.addSubview(controller.view, positioned: .below, relativeTo: paneRefreshOverlay)
+    controller.view.pinEdges(to: contentHost)
+    customControllers[id] = controller
+    return controller
   }
 
   /// chip 切换只更新面板本地内容并持久化选中页；不经过 preferences 广播，避免
   /// 整棵工作区视图树跟着重建。
   private func selectSection(_ section: Section) {
-    guard section != selection else { return }
-    cancelInspection(for: selection)
+    guard section != selection || customSelection != nil else { return }
+    if customSelection == nil { cancelInspection(for: selection) }
+    customSelection = nil
+    preferences.inspectorCustomSection = nil
     selection = section
     preferences.inspectorSection = section.rawValue
     for (key, chip) in chips { chip.setSelected(key == section, animated: true) }
+    for chip in customChips.values { chip.setSelected(false, animated: true) }
     showSelectedContent()
     prepareSelectedSection()
   }
@@ -339,7 +481,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   }
 
   private func updatePaneRefreshOverlay() {
-    let refreshing = isPresentationActive && sectionsAwaitingPaneRefresh.contains(selection)
+    let refreshing = isPresentationActive && customSelection == nil && sectionsAwaitingPaneRefresh.contains(selection)
     cachedContent[selection]?.setAccessibilityHidden(refreshing)
     paneRefreshOverlay.setAccessibilityHidden(!refreshing)
     paneRefreshOverlay.setRefreshing(refreshing, sectionTitle: selection.title)
@@ -408,6 +550,8 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         // Terminal Outline 顶部也显示当前目录；命令条目可复用，但 header 必须同步。
         self.outlineNeedsRefresh = true
         guard self.isPresentationActive else { return }
+        // 自定义视图里 `${cwd}` 之类的变量随目录变化重解析。
+        for controller in self.customControllers.values { controller.refreshContext() }
         if self.selection == .info { self.showSelectedContent() }
         if self.selection == .outline { self.refreshOutline(debounced: false) }
         switch self.selection {
@@ -572,6 +716,10 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
 
   private func prepareSelectedSection() {
     guard isPresentationActive, let directory = model.selectedTab?.workingDirectory else { return }
+    if let customSelection {
+      customControllers[customSelection]?.refreshContext()
+      return
+    }
     switch selection {
     case .info:
       if informationPaneID != model.selectedTab?.activePaneID {
@@ -614,7 +762,16 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       content.pinEdges(to: contentHost)
     }
     for (section, content) in cachedContent {
-      content.isHidden = section != selection
+      content.isHidden = customSelection != nil || section != selection
+      // 兜底：即便曾经横向滚出，显示时也把 clip 的横向偏移归零。
+      if let scroll = content as? NSScrollView, scroll.contentView.bounds.origin.x != 0 {
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: scroll.contentView.bounds.origin.y))
+        scroll.reflectScrolledClipView(scroll.contentView)
+      }
+    }
+    if let customSelection { _ = customController(for: customSelection) }
+    for (id, controller) in customControllers where controller.isViewLoaded {
+      controller.view.isHidden = id != customSelection
     }
     updatePaneRefreshOverlay()
   }
@@ -2337,6 +2494,12 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     scroll.drawsBackground = false
     scroll.hasVerticalScroller = true
     scroll.autohidesScrollers = true
+    // 面板首帧可能很窄：若长标签把 document 撑得比 clip 宽，clip 会横向滚出去，之后面板
+    // 变宽也不会自动回来（表现为整页内容向右错位）。这里禁掉横向滚动，并让 stack 在
+    // 水平方向可压缩，document 永远与 clip 等宽。
+    scroll.hasHorizontalScroller = false
+    scroll.horizontalScrollElasticity = .none
+    stack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     let document = FlippedDocumentView()
     document.addSubview(stack)
     scroll.documentView = document

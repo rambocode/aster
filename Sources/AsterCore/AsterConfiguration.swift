@@ -671,6 +671,9 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
   public var editor = EditorConfiguration()
   public var appearance = AppearanceConfiguration()
   public var agents = AgentConfiguration()
+  /// 「视图」分类（标签规则、角标摆放、网页窗格、详情面板）。可选以兼容缺少该键的旧文件：
+  /// 解码失败会让整份配置回退到默认值，所以新增顶层块必须是可选。
+  public var view: ViewConfiguration?
   public var tabBarLayout = TabBarLayout.vertical
   public var launchBehavior = LaunchBehavior.restoreLastSession
   /// Aster 内保存的 Recipe 默认可信，可自动重放；可选字段兼容旧版单一重放策略。
@@ -682,6 +685,9 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
     savedRecipeReplayMode ?? .automatic
   }
 
+  /// 视图配置的非空读取口；写入请直接对 `view` 赋值。
+  public var resolvedView: ViewConfiguration { view ?? ViewConfiguration() }
+
   public init() {}
 
   public static let `default` = AsterConfiguration()
@@ -690,6 +696,7 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
   /// 破坏应用布局。配置校验成功后才会整体替换当前值。
   public func normalized() -> AsterConfiguration {
     var result = self
+    result.view = (result.view ?? ViewConfiguration()).normalized()
     result.appearance.fontSize = min(max(result.appearance.fontSize, 9), 32)
     result.appearance.sidebarWidth = min(max(result.appearance.sidebarWidth, 180), 360)
     result.appearance.lineHeight = min(max(result.appearance.lineHeight, 0.8), 2)

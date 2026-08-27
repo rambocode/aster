@@ -59,6 +59,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     case controls = "控制"
     case editor = "编辑器"
     case agents = "智能体"
+    case view = "视图"
     case appearance = "外观"
     case recipes = "Recipes"
     case shortcuts = "快捷键"
@@ -71,6 +72,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       case .controls: "cursorarrow.motionlines"
       case .editor: "doc.text"
       case .agents: "sparkles"
+      case .view: "square.grid.2x2"
       case .appearance: "paintpalette"
       case .recipes: "square.grid.2x2"
       case .shortcuts: "bolt"
@@ -557,6 +559,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     case .controls: controlViews()
     case .editor: editorViews()
     case .agents: agentViews()
+    case .view: viewViews()
     case .appearance: appearanceViews()
     case .recipes: recipeViews()
     case .shortcuts: shortcutViews()
@@ -1518,6 +1521,30 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         infoRow("命令面板", "", "⌘ K"),
         infoRow("设置", "", "⌘ ,"),
       ]),
+    ]
+  }
+
+  /// 原生骨架仅在网页设置不可用时显示；「视图」分类的完整编辑器在 settings.js 里。
+  private func viewViews() -> [NSView] {
+    let view = preferences.configuration.resolvedView
+    return [
+      card([
+        enumPopupRow("图标与角标", "合并：图标与状态角标共用一个指示位；分开：图标在左、角标在右", value: view.resolvedBadgePlacement) { [weak self] (value: TabBadgePlacement) in
+          self?.preferences.configuration.view = {
+            var next = self?.preferences.configuration.resolvedView ?? ViewConfiguration()
+            next.badgePlacement = value
+            return next
+          }()
+        },
+        toggleRow("保持登录状态", "把网页窗格的 cookie 和站点数据写到磁盘", value: view.resolvedWebPanePersistData) { [weak self] value in
+          var next = self?.preferences.configuration.resolvedView ?? ViewConfiguration()
+          next.webPanePersistData = value
+          self?.preferences.configuration.view = next
+        },
+        actionRow("浏览数据", "清除所有网页窗格的 cookie、站点数据、缓存和历史", title: "清除数据") { [weak self] in
+          self?.clearWebPaneBrowsingData()
+        },
+      ])
     ]
   }
 
@@ -2939,7 +2966,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "shell.badgeCommandFinish": configuration.shell.resolvedBadgeCommandFinish,
       "shell.badgeCommandFailure": configuration.shell.resolvedBadgeCommandFailure,
       "shell.badgeAwaitingInput": configuration.shell.badgeAwaitingInput,
-    ], [
+    ], makeWebViewValues(configuration.resolvedView), [
       "controls.optionAsMetaMode": configuration.controls.resolvedOptionAsMetaMode.rawValue,
       "controls.vtKeypadAppAllowed": configuration.controls.resolvedVTKeypadAppAllowed,
       "controls.allowMouseReporting": configuration.controls.allowMouseReporting,
@@ -3372,6 +3399,21 @@ extension SettingsViewController: WKNavigationDelegate {
       preferences.configuration.shell.badgeCommandFailure = enabled
       preferences.configuration.shell.badgeExitStatus = enabled
     case "shell.badgeAwaitingInput": preferences.configuration.shell.badgeAwaitingInput = try bool()
+    case "view.rulesArrangement":
+      try updateViewConfiguration { $0.rulesArrangement = try self.enumValue(try string(), as: TabRuleArrangement.self) }
+    case "view.badgePlacement":
+      try updateViewConfiguration { $0.badgePlacement = try self.enumValue(try string(), as: TabBadgePlacement.self) }
+    case "view.webPanePersistData":
+      try updateViewConfiguration { $0.webPanePersistData = try bool() }
+    case "view.tabRules":
+      try updateViewConfiguration { $0.tabRules = try Self.parseWebTabRules(value) }
+    case "view.detailsPanelSections":
+      try updateViewConfiguration { $0.detailsPanelSections = try Self.parseWebDetailsSections(value) }
+    case "view.detailsPanelCustomViews":
+      try updateViewConfiguration { $0.detailsPanelCustomViews = try Self.parseWebCustomViews(value) }
+    case "view.detailsPanelOrder":
+      guard let tokens = value as? [String], tokens.count <= 512 else { throw SettingsWebBridgeError.invalidValue }
+      try updateViewConfiguration { $0.detailsPanelOrder = tokens }
     case "controls.allowMouseReporting": preferences.configuration.controls.allowMouseReporting = try bool()
     case "controls.optionAsMetaMode":
       let mode = try enumValue(string(), as: OptionAsMetaMode.self)
@@ -3971,6 +4013,7 @@ extension SettingsViewController: WKNavigationDelegate {
     case "installMemoryMCP": performMemoryMCPInstall(install: true)
     case "uninstallMemoryMCP": performMemoryMCPInstall(install: false)
     case "copyCodexMCPInstructions": copyCodexMCPInstructions()
+    case "clearWebPaneData": clearWebPaneBrowsingData()
     case "resetAdvanced":
       for key in SettingsWebBridge.compatibilityDefaults.keys where key.hasPrefix("advanced.") {
         if let value = SettingsWebBridge.compatibilityDefaults[key] { preferences.setCompatibilityValue(value, forKey: key) }
@@ -4722,6 +4765,132 @@ extension SettingsViewController: WKNavigationDelegate {
     return color
   }
 
+  /// 「视图」配置统一走 normalized()：网页发来的规则数组、自定义视图都在这里再清一次。
+  private func updateViewConfiguration(_ mutate: (inout ViewConfiguration) throws -> Void) throws {
+    var next = preferences.configuration.resolvedView
+    try mutate(&next)
+    preferences.configuration.view = next.normalized()
+  }
+
+  /// 清除所有网页窗格的站点数据；结果经 toast 回报，失败不伪装成功。
+  private func clearWebPaneBrowsingData() {
+    Task { @MainActor [weak self] in
+      let ok = await WebPaneDataStorePolicy.clearAllBrowsingData()
+      self?.sendWebToast(ok ? "浏览数据已清除。" : "没能全部清除——把网页窗格关掉再试一次。", level: ok ? "info" : "error")
+      self?.message = ok ? "浏览数据已清除。" : "没能全部清除——把网页窗格关掉再试一次。"
+    }
+  }
+
+  /// 视图分类的快照值。规则与自定义视图以 JSON 对象数组下发，网页端整体回写。
+  private func makeWebViewValues(_ view: ViewConfiguration) -> [String: Any] {
+    [
+      "view.rulesArrangement": view.resolvedRulesArrangement.rawValue,
+      "view.badgePlacement": view.resolvedBadgePlacement.rawValue,
+      "view.webPanePersistData": view.resolvedWebPanePersistData,
+      "view.tabRules": view.resolvedTabRules.map { rule -> [String: Any] in
+        var object: [String: Any] = [
+          "id": rule.id.uuidString,
+          "conditions": rule.conditions.map { ["kind": $0.kind.rawValue, "pattern": $0.pattern] },
+        ]
+        if let alias = rule.alias { object["alias"] = alias }
+        if let title = rule.title { object["title"] = title }
+        if let icon = rule.icon {
+          var iconObject: [String: Any] = [:]
+          if let name = icon.name { iconObject["name"] = name }
+          if let emoji = icon.emoji { iconObject["emoji"] = emoji }
+          if let color = icon.color { iconObject["color"] = String(color.stringValue.prefix(7)) }
+          object["icon"] = iconObject
+        }
+        return object
+      },
+      "view.detailsPanelSections": view.resolvedDetailsPanelSections.map { ["id": $0.id, "enabled": $0.enabled] },
+      "view.detailsPanelCustomViews": view.resolvedCustomViews.map { item -> [String: Any] in
+        [
+          "id": item.id.uuidString, "kind": item.kind.rawValue, "name": item.name,
+          "command": item.command, "url": item.url, "mobile": item.mobile,
+          "folder": item.folder, "enabled": item.enabled,
+        ]
+      },
+      "view.detailsPanelOrder": view.allDetailsPanelEntries.map { entry -> String in
+        switch entry {
+        case .builtin(let id): "builtin:\(id)"
+        case .custom(let id): "custom:\(id.uuidString)"
+        }
+      },
+      "view.iconNames": TabIconArtwork.availableIconNames(),
+      "view.iconSVGs": TabIconArtwork.iconSVGTexts(),
+    ]
+  }
+
+  private static func webString(_ raw: Any?, limit: Int) throws -> String {
+    guard let value = raw as? String, value.utf8.count <= limit,
+      !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+    else { throw SettingsWebBridgeError.invalidValue }
+    return value
+  }
+
+  /// 网页端的规则数组 → 模型。字段缺失按空处理；结构错误整体拒绝，避免半截写入。
+  private static func parseWebTabRules(_ value: Any) throws -> [TabTitleRule] {
+    guard let rawRules = value as? [[String: Any]], rawRules.count <= 256 else {
+      throw SettingsWebBridgeError.invalidValue
+    }
+    return try rawRules.map { raw in
+      let id = (raw["id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID()
+      let rawConditions = (raw["conditions"] as? [[String: Any]]) ?? []
+      guard rawConditions.count <= 16 else { throw SettingsWebBridgeError.invalidValue }
+      let conditions = try rawConditions.map { condition -> TabRuleCondition in
+        guard let kind = TabRuleMatchKind(rawValue: try webString(condition["kind"], limit: 16)) else {
+          throw SettingsWebBridgeError.invalidValue
+        }
+        return TabRuleCondition(kind: kind, pattern: try webString(condition["pattern"], limit: 1_024))
+      }
+      var icon: TabRuleIcon?
+      if let rawIcon = raw["icon"] as? [String: Any] {
+        icon = TabRuleIcon(
+          name: rawIcon["name"] == nil ? nil : try webString(rawIcon["name"], limit: 64),
+          emoji: rawIcon["emoji"] == nil ? nil : try webString(rawIcon["emoji"], limit: 32),
+          color: rawIcon["color"] == nil ? nil : HexColor(try webString(rawIcon["color"], limit: 9))
+        )
+      }
+      return TabTitleRule(
+        id: id,
+        conditions: conditions,
+        alias: raw["alias"] == nil ? nil : try webString(raw["alias"], limit: 128),
+        icon: icon,
+        title: raw["title"] == nil ? nil : try webString(raw["title"], limit: 512)
+      )
+    }
+  }
+
+  private static func parseWebDetailsSections(_ value: Any) throws -> [DetailsPanelSectionSetting] {
+    guard let raw = value as? [[String: Any]], raw.count <= 16 else { throw SettingsWebBridgeError.invalidValue }
+    return try raw.map { item in
+      DetailsPanelSectionSetting(
+        id: try webString(item["id"], limit: 32),
+        enabled: (item["enabled"] as? Bool) ?? true
+      )
+    }
+  }
+
+  private static func parseWebCustomViews(_ value: Any) throws -> [DetailsPanelCustomView] {
+    guard let raw = value as? [[String: Any]], raw.count <= 64 else { throw SettingsWebBridgeError.invalidValue }
+    return try raw.map { item in
+      guard let kind = DetailsPanelCustomViewKind(rawValue: try webString(item["kind"], limit: 8)) else {
+        throw SettingsWebBridgeError.invalidValue
+      }
+      return DetailsPanelCustomView(
+        id: (item["id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID(),
+        kind: kind,
+        name: try webString(item["name"], limit: 64),
+        command: try webString(item["command"] ?? "", limit: 2_048),
+        url: try webString(item["url"] ?? "", limit: 4_096),
+        mobile: (item["mobile"] as? Bool) ?? false,
+        folder: try webString(item["folder"] ?? "", limit: 1_024),
+        enabled: (item["enabled"] as? Bool) ?? true
+      )
+    }
+  }
+
   private func enumValue<T: RawRepresentable>(
     _ value: String,
     as type: T.Type
@@ -4895,6 +5064,7 @@ private extension SettingsViewController.Section {
     case .controls: "controls"
     case .editor: "editor"
     case .agents: "agents"
+    case .view: "view"
     case .appearance: "appearance"
     case .recipes: "recipes"
     case .shortcuts: "shortcuts"
@@ -5968,6 +6138,15 @@ extension NotificationForegroundPolicy: SettingsEnumOption {
     case .off: "关闭"
     case .always: "始终显示"
     case .tabUnfocused: "仅来源标签未聚焦时"
+    }
+  }
+}
+
+extension TabBadgePlacement: SettingsEnumOption {
+  fileprivate var settingsLabel: String {
+    switch self {
+    case .combined: "合并"
+    case .separate: "分开"
     }
   }
 }
