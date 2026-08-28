@@ -42,3 +42,6 @@ docs/plan/
 # 文档站产物不入库——site/docs/ 由 `cd site-docs && npm run docs:build` 从
 # docs/user/help.md 重建，带 hash 的资源文件每次构建都变，进仓库只会制造噪音。
 site/docs/
+
+# 本地临时归档，不入库
+_to_delete/
