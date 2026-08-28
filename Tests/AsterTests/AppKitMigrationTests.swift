@@ -2564,3 +2564,51 @@ private func makeTestWindow(content: NSViewController, size: NSSize) -> NSWindow
   window.contentViewController = content
   return window
 }
+
+@Test("分屏里左 codex 右 claude 时，标签行 Agent 图标跟随活动 Pane 切换")
+@MainActor
+func sidebarAgentIconFollowsActivePane() async throws {
+  let defaults = isolatedDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  let leftPaneID = try #require(tab.activePaneID as UUID?)
+  let leftSession = try #require(tab.activeSession)
+  model.splitSelectedTab(.right)
+  let rightPaneID = try #require(tab.activePaneID as UUID?)
+  let rightSession = try #require(tab.activeSession)
+  #expect(leftPaneID != rightPaneID)
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+  let leftView = try #require(
+    leftSession.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  let rightView = try #require(
+    rightSession.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer {
+    leftSession.stop(immediately: true)
+    rightSession.stop(immediately: true)
+  }
+
+  // 左 codex、右 claude，都空闲（idle 信号不带前置 processing，不会产生完成徽章）。
+  leftView.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .idle))
+  rightView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .claudeCode, signal: .idle))
+  try await Task.sleep(for: .milliseconds(80))
+
+  // 当前活动 Pane 是右侧 claude → 图标必须是 claude，而不是字典序先命中的 codex。
+  #expect(
+    (try visibleTabAccessory(for: tab, in: controller)).accessibilityLabel() == "标签图标 claude")
+
+  tab.setActivePane(leftPaneID)
+  try await Task.sleep(for: .milliseconds(80))
+  #expect(
+    (try visibleTabAccessory(for: tab, in: controller)).accessibilityLabel() == "标签图标 openai")
+
+  tab.setActivePane(rightPaneID)
+  try await Task.sleep(for: .milliseconds(80))
+  #expect(
+    (try visibleTabAccessory(for: tab, in: controller)).accessibilityLabel() == "标签图标 claude")
+}

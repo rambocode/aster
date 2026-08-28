@@ -939,6 +939,11 @@ final class WorkspaceViewController: NSViewController {
           guard let self, let tab, tab.id == self.model.selectedTabID else { return }
           self.updatePaneActivationOverlays(in: tab)
           self.focusActivePane(in: tab)
+          // 标签行的 Agent 图标 / 动画与标题胶囊都跟随活动 Pane：左 codex 右 claude 的
+          // 分屏在切换焦点时必须换图标，否则一直显示字典序先命中的那个。
+          self.scheduleTabActivityRefresh(tab.id)
+          self.workspaceTitleButton?.agentSessionTitle = tab.activeAgentSessionTitle
+          self.workspaceTitleButton?.agentProvider = tab.activeSession?.activeAgentProvider
         }
         .store(in: &tabSubscriptions)
       tab.windowTitleChanged

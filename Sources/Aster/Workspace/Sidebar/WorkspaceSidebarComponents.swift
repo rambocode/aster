@@ -468,18 +468,23 @@ final class TabRowButton: NSButton {
     !horizontal && idleTabIcon != nil
   }
 
+  /// 行图标 / 动画所用的 provider：跟随当前活动 Pane；活动 Pane 不是 Agent（普通 shell、
+  /// 编辑器）时才回落到标签里任意一个 Agent 会话，保证「标签里有 Agent」仍然可见。
+  private var preferredAgentProvider: AgentProvider? {
+    tab.activeSession?.activeAgentProvider
+      ?? tab.runtimes.values.compactMap({ $0.terminalSession?.activeAgentProvider }).first
+  }
+
   /// 运行动画样式（对齐 Otty）：Claude Code 半圆 ◑ 旋转；Codex 2×2 点阵循环；
   /// 其它 Agent / 普通命令暂时沿用半圆旋转。
   private var runningAnimationStyle: TabActivitySpinnerView.Style {
-    let provider = tab.runtimes.values.compactMap({ $0.terminalSession?.activeAgentProvider }).first
-    return provider == .codex ? .dots : .spin
+    preferredAgentProvider == .codex ? .dots : .spin
   }
 
-  /// 纵向行静态图标：规则图标优先，其次是当前会话里正在运行的 Agent 图标。
+  /// 纵向行静态图标：规则图标优先，其次是当前活动 Pane 正在运行的 Agent 图标。
   private var idleTabIcon: TabRuleIcon? {
     if let tabIcon { return tabIcon }
-    guard let provider = tab.runtimes.values.compactMap({ $0.terminalSession?.activeAgentProvider }).first
-    else { return nil }
+    guard let provider = preferredAgentProvider else { return nil }
     return TabRuleIcon(name: Self.agentIconName(provider))
   }
 
