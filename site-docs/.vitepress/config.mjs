@@ -29,15 +29,12 @@ export default defineConfig({
 
   head: [
     ["link", { rel: "icon", type: "image/svg+xml", href: "/docs/aster-icon.svg" }],
-    ["link", { rel: "preconnect", href: "https://fonts.googleapis.com" }],
-    ["link", { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" }],
-    [
-      "link",
-      {
-        rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&family=Noto+Serif+SC:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap",
-      },
-    ],
+    // 与落地页共用自托管字体（site/assets/fonts.css），不走 fonts.googleapis.com：
+    // 该域名在中国大陆不可达。这里的路径是部署后的站点根路径，不带 /docs/ 前缀，
+    // 因此只在 serve-site.sh 或线上生效；vitepress dev 下会回退到系统字体。
+    ["link", { rel: "preload", href: "/assets/fonts/newsreader-roman-latin.woff2", as: "font", type: "font/woff2", crossorigin: "" }],
+    ["link", { rel: "preload", href: "/assets/fonts/jetbrains-mono-roman-latin.woff2", as: "font", type: "font/woff2", crossorigin: "" }],
+    ["link", { rel: "stylesheet", href: "/assets/fonts.css" }],
     ["meta", { name: "theme-color", content: "#FCFCFB" }],
   ],
 

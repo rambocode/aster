@@ -25,6 +25,9 @@
   --dark: #202124;
   --dark-fg: #FCFCFB;
 
+  /* Newsreader 与 JetBrains Mono 由 fonts.css 自托管加载；中文不发 webfont，
+     直接吃系统的 PingFang SC / Songti SC——目标用户全是 macOS，一定装得有。
+     "Noto Serif SC" 保留在回退链里：本机装了就用，没装也不会去网上拉。 */
   --font-body: -apple-system, "SF Pro Text", "PingFang SC", "Helvetica Neue", system-ui, sans-serif;
   --font-serif: "Newsreader", "Noto Serif SC", "Songti SC", Georgia, serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;

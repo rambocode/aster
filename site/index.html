@@ -7,9 +7,10 @@
   <meta name="description" content="Aster 是完全以 AppKit 构建的原生 macOS 终端工作区：轻量标签、递归分屏、文件预览与 Agent 会话，落在纸张色画布与克制的苔绿反馈之上。">
   <meta name="theme-color" content="#FCFCFB">
   <link rel="icon" type="image/svg+xml" href="assets/aster-icon.svg">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&amp;family=Noto+Serif+SC:wght@500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+  <!-- 字体自托管，不依赖 fonts.googleapis.com（大陆不可达）。见 scripts/fetch-webfonts.py -->
+  <link rel="preload" href="assets/fonts/newsreader-roman-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/jetbrains-mono-roman-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/fonts.css">
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
