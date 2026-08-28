@@ -116,8 +116,31 @@ extension GhosttySurfaceView: NSMenuItemValidation {
   /// 读取可见区或完整 scrollback 的纯文本。调用方可限制内容行数，空屏返回空字符串，
   /// nil 只表示 surface 尚未创建或 C API 读取失败。
   func readText(includeScrollback: Bool, maximumLines: Int? = nil) -> String? {
+    guard let value = readText(scope: includeScrollback ? .scrollback : .viewport) else {
+      return nil
+    }
+    guard let maximumLines, maximumLines > 0 else { return value }
+    var lines = value.components(separatedBy: "\n")
+    while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true {
+      lines.removeLast()
+    }
+    return lines.suffix(maximumLines).joined(separator: "\n")
+  }
+
+  /// 供 Agent 屏幕检测读取的文本：只取活动屏幕（主屏/备用屏中当前显示的那个），
+  /// 与 herdr 读 tmux/PTY 活动屏幕一致。去掉 `\r`、只剥掉末尾一个换行、保留空行，
+  /// 让清单里按行计数的 region（`bottom_non_empty_lines(N)` 等）看到与 herdr 相同的形状。
+  func readAgentDetectionText() -> String? {
+    guard var value = readText(scope: .activeScreen) else { return nil }
+    if value.contains("\r") { value.removeAll { $0 == "\r" } }
+    if value.hasSuffix("\n") { value.removeLast() }
+    return value
+  }
+
+  /// 按范围读取整块纯文本。空屏返回空字符串；nil 表示 surface 未创建或 C API 失败。
+  private func readText(scope: GhosttyTextScope) -> String? {
     guard let surface else { return nil }
-    let tag = includeScrollback ? GHOSTTY_POINT_SCREEN : GHOSTTY_POINT_VIEWPORT
+    let tag = scope.pointTag
     var selection = ghostty_selection_s()
     selection.top_left = ghostty_point_s(
       tag: tag, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0)
@@ -128,14 +151,8 @@ extension GhosttySurfaceView: NSMenuItemValidation {
     guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
     defer { ghostty_surface_free_text(surface, &text) }
     guard let pointer = text.text, text.text_len > 0 else { return "" }
-    let value = String(
+    return String(
       decoding: UnsafeRawBufferPointer(start: pointer, count: Int(text.text_len)), as: UTF8.self)
-    guard let maximumLines, maximumLines > 0 else { return value }
-    var lines = value.components(separatedBy: "\n")
-    while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true {
-      lines.removeLast()
-    }
-    return lines.suffix(maximumLines).joined(separator: "\n")
   }
 
   @discardableResult
@@ -371,5 +388,21 @@ extension GhosttySurfaceView: NSMenuItemValidation {
     alert.addButton(withTitle: "仍然粘贴")
     alert.addButton(withTitle: "取消")
     return alert.runModal() == .alertFirstButtonReturn
+  }
+}
+
+/// Ghostty 文本读取范围：活动屏幕（Agent 检测）、视口（用户可见区）、完整 scrollback。
+enum GhosttyTextScope {
+  case activeScreen
+  case viewport
+  case scrollback
+
+  /// 对应 libghostty 的 point tag。
+  var pointTag: ghostty_point_tag_e {
+    switch self {
+    case .activeScreen: GHOSTTY_POINT_ACTIVE
+    case .viewport: GHOSTTY_POINT_VIEWPORT
+    case .scrollback: GHOSTTY_POINT_SCREEN
+    }
   }
 }

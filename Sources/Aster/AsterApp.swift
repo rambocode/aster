@@ -15,6 +15,20 @@ extension AgentProvider {
     case .pi: "Pi"
     case .omp: "omp"
     case .grokBuild: "Grok"
+    case .gemini: "Gemini"
+    case .githubCopilot: "Copilot"
+    case .amp: "Amp"
+    case .droid: "Droid"
+    case .devin: "Devin"
+    case .kiro: "Kiro"
+    case .qoder: "Qoder"
+    case .qwen: "Qwen"
+    case .hermes: "Hermes"
+    case .antigravity: "Antigravity"
+    case .maki: "Maki"
+    case .muse: "Muse"
+    case .cline: "Cline"
+    case .kilo: "Kilo"
     }
   }
 }
@@ -231,6 +245,11 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// CLI 使用受保护文件传输而非常驻 socket。正常路径由目录 vnode 事件按需唤醒，
   /// 避免应用空闲时每 100ms 扫描一次；只有文件系统监听无法建立时才启用兼容 timer。
   private var cliRequestWatcher: FileSystemDirectoryWatcher?
+  /// Agent 控制协议（Unix socket）：server 只在本进程抢到 socket 时存在；bridge 缺省表示
+  /// 第二实例，Pane 不注入 ASTER_ENV。
+  private var controlServer: AsterControlServer?
+  private var controlBridge: AsterControlBridge?
+  private var controlDispatcher: AsterControlDispatcher?
   private var cliRequestFallbackTimer: Timer?
   /// 附加窗口各自拥有独立 AppModel/PTY 树；Preferences 仍全局共享。以窗口对象身份
   /// 查找模型，菜单动作始终路由到 key window，不会误操作首个窗口。
@@ -285,6 +304,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     // 提前创建 0600 CLI token，使首次执行 `aster learn` 无需先打开设置页或等待 Pane。
     _ = AutocompleteService.shared
     startCLIRequestConsumer()
+    startControlServer()
     // Bash 与 tmux 子 Shell 需要受管 rc 区块；每次启动都按当前签名 Bundle 路径幂等
     // 刷新，应用移动或升级后不会继续 source 旧位置。失败只禁用集成，不阻塞终端窗口。
     if let installer = AsterResourceLocations.shellIntegrationInstaller() {
@@ -349,6 +369,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     persistAdditionalWorkspaceSuites()
     cliRequestWatcher?.stop()
     cliRequestWatcher = nil
+    controlServer?.stop()
+    controlServer = nil
     cliRequestFallbackTimer?.invalidate()
     cliRequestFallbackTimer = nil
     dockActivityCoordinator.stop()
@@ -398,6 +420,58 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       model.handleOpenURL(url)
     }
     showMainWindow()
+  }
+
+  /// 启动 Agent 控制 socket。抢不到 socket（另一实例活着）或启动失败都只记诊断，不影响终端。
+  private func startControlServer() {
+    guard controlServer == nil else { return }
+    let socketPath = AsterControlServer.defaultSocketPath()
+    let binaryPath = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/aster-cli").path
+    let bridge = AsterControlBridge(
+      socketPath: socketPath,
+      binaryPath: FileManager.default.isExecutableFile(atPath: binaryPath) ? binaryPath : nil)
+    bridge.activeModelProvider = { [weak self] in self?.activeWorkspaceModel }
+    let dispatcher = AsterControlDispatcher(
+      bridge: bridge, version: AsterResourceLocations.productVersion()
+    ) { [weak self] in
+      let controls = self?.preferences.configuration.controls ?? ControlConfiguration()
+      return AsterControlDispatcher.Policy(
+        allowSendKeys: controls.resolvedIPCAllowSendKeys,
+        allowSensitiveSessions: controls.resolvedIPCAllowSensitiveSessions,
+        shell: self?.preferences.configuration.shell ?? AsterConfiguration().shell)
+    }
+    let server = AsterControlServer(
+      socketPath: socketPath,
+      onDisconnect: { [weak bridge] connection in
+        // 订阅连接断开：注销订阅者，避免继续向死连接推事件。
+        let id = connection.id
+        Task { @MainActor in bridge?.hub.unsubscribe(id: id) }
+      }
+    ) { [weak dispatcher] request, connection in
+      guard let dispatcher else { return }
+      connection.track {
+        let response = await dispatcher.handle(request, client: connection)
+        connection.send(response)
+      }
+    }
+    do {
+      switch try server.start() {
+      case .listening:
+        controlServer = server
+        controlBridge = bridge
+        controlDispatcher = dispatcher
+        DiagnosticsCenter.shared.record(
+          "control.server_started", level: .notice, category: .integration,
+          attributes: ["path": socketPath])
+      case .alreadyRunning:
+        DiagnosticsCenter.shared.record(
+          "control.server_already_running", level: .notice, category: .integration,
+          attributes: ["path": socketPath])
+      }
+    } catch {
+      DiagnosticsCenter.shared.record(
+        "control.server_start_failed", level: .warning, category: .integration, error: error)
+    }
   }
 
   /// 优先监听私有请求目录的 vnode 事件。DispatchSource 可能合并多个文件变更，因此
@@ -799,6 +873,12 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 把 AppKit 窗口动作注入每个模型；附加窗口与主窗口因此拥有完全相同的命令面板
   /// 和 CLI 路由，而模型测试无需构造 NSWindow。
   private func configureWorkspaceModel(_ workspaceModel: AppModel) {
+    // 控制协议桥：分配短 ID、注入 ASTER_* 环境、观察状态发事件。主窗口、新建与恢复窗口都经此。
+    controlBridge?.attach(model: workspaceModel)
+    workspaceModel.onRequestWindowFocus = { [weak self, weak workspaceModel] in
+      guard let self, let workspaceModel else { return }
+      self.workspaceWindow(for: workspaceModel)?.makeKeyAndOrderFront(nil)
+    }
     workspaceModel.closeConfirmationProvider = { [weak self] in
       self?.preferences.configuration.general ?? AsterConfiguration().general
     }
@@ -992,6 +1072,69 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     let pane = PaneDescriptor(kind: .terminal, workingDirectory: context.workingDirectory)
     _ = createWorkspaceWindow(initialPane: pane, sender: sender) { model in
       model.continueAgentSession(context, kind: .fork, placement: .currentPane)
+    }
+  }
+
+  /// Agent 子菜单的「解释 Agent 状态检测…」：对菜单打开时捕获的工作区的聚焦 Pane 做一次
+  /// 屏幕检测解释，把命中规则与逐条求值结果以 JSON 展示，并记录一条不含屏幕内容的诊断。
+  @objc private func explainActiveAgentDetection(_ sender: Any?) {
+    guard let actionContext = agentMenuActionContext(from: sender) else { return }
+    let session = actionContext.workspaceModel.selectedTab?.activeSession
+    presentAgentDetectionExplain(session?.explainAgentDetection(), provider: actionContext.session.provider)
+  }
+
+  /// 用只读文本视图弹出 explain JSON；nil 表示该 provider 没有清单或当前引擎不支持读屏。
+  private func presentAgentDetectionExplain(_ explain: AgentDetectionExplain?, provider: AgentProvider) {
+    let alert = NSAlert()
+    alert.messageText = "Agent 状态检测"
+    guard let explain else {
+      alert.informativeText =
+        "\(provider.displayName) 没有可用的屏幕检测结果：该 Agent 没有检测清单，或当前终端不支持读屏。"
+      alert.runModal()
+      return
+    }
+    DiagnosticsCenter.shared.record(
+      "agent.detection.explain",
+      category: .terminal,
+      attributes: [
+        "agent": explain.agentID,
+        "state": explain.state.rawValue,
+        "matched_rule": explain.matchedRule?.id ?? "",
+        "fallback_reason": explain.fallbackReason ?? "",
+        "manifest_source": explain.source ?? "",
+        "manifest_version": explain.manifestVersion ?? "",
+      ]
+    )
+    let json: String
+    if let data = try? JSONSerialization.data(
+      withJSONObject: explain.jsonObject, options: [.prettyPrinted, .sortedKeys])
+    {
+      json = String(decoding: data, as: UTF8.self)
+    } else {
+      json = String(describing: explain)
+    }
+    alert.informativeText =
+      "\(provider.displayName)：\(explain.state.rawValue)"
+      + (explain.matchedRule.map { " · 命中 \($0.id)（优先级 \($0.priority)，区域 \($0.region)）" }
+        ?? " · 未命中任何规则（\(explain.fallbackReason ?? "-")）")
+    let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
+    scrollView.hasVerticalScroller = true
+    scrollView.borderType = .bezelBorder
+    let textView = NSTextView(frame: scrollView.bounds)
+    textView.isEditable = false
+    textView.isSelectable = true
+    textView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    textView.string = json
+    textView.autoresizingMask = [.width]
+    textView.isVerticallyResizable = true
+    textView.textContainer?.widthTracksTextView = true
+    scrollView.documentView = textView
+    alert.accessoryView = scrollView
+    alert.addButton(withTitle: "好")
+    alert.addButton(withTitle: "拷贝 JSON")
+    if alert.runModal() == .alertSecondButtonReturn {
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(json, forType: .string)
     }
   }
 
@@ -1296,6 +1439,16 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       workspaceModel: workspaceModel
     )
     submenu.addItem(sessionHistory)
+    // 调试入口：只对有屏幕检测清单的 provider 显示。
+    if context.provider.capabilities.contains(.screenDetection) {
+      let explain = menuItem(
+        "解释 Agent 状态检测…", #selector(explainActiveAgentDetection(_:)), "", modifiers: [])
+      explain.representedObject = AgentMenuActionContext(
+        session: context,
+        workspaceModel: workspaceModel
+      )
+      submenu.addItem(explain)
+    }
 
     guard context.provider.capabilities.contains(.forkSession) else {
       item.submenu = submenu

@@ -209,7 +209,9 @@ enum AgentTranscriptIngestion {
       homeDirectory.appendingPathComponent(".cursor/projects", isDirectory: true)
     case .kimiCode:
       homeDirectory.appendingPathComponent(".kimi-code/sessions", isDirectory: true)
-    case .pi, .omp, .grokBuild:
+    case .pi, .omp, .grokBuild,
+      .gemini, .githubCopilot, .amp, .droid, .devin, .kiro, .qoder, .qwen, .hermes,
+      .antigravity, .maki, .muse, .cline, .kilo:
       nil
     }
   }

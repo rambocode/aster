@@ -653,6 +653,15 @@ public struct AgentConfiguration: Codable, Equatable, Sendable {
   public var notifyAwaitingInput = true
   public var preventSleepWhileProcessing = false
   public var resumeSessions = true
+  /// 屏幕检测总开关：对有 herdr 清单的 provider 用读屏推断任务状态（替代 5s 静默兜底）。
+  /// Optional 保持旧配置可解码，缺省视为开启。
+  public var screenDetectionEnabled: Bool?
+  /// hook 只覆盖部分生命周期的 provider（claude/codex/cursor/grok），屏幕上的阻塞表单
+  /// 是否可以把 hook 报告的 processing 覆盖为 awaiting-input。缺省开启。
+  public var screenDetectionOverridesHook: Bool?
+
+  public var resolvedScreenDetectionEnabled: Bool { screenDetectionEnabled ?? true }
+  public var resolvedScreenDetectionOverridesHook: Bool { screenDetectionOverridesHook ?? true }
 
   public func launchComponents(for provider: AgentProvider) -> [String] {
     guard let components = customLaunchCommands?[provider.rawValue],

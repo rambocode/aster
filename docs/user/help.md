@@ -270,7 +270,25 @@ aster pane run -- npm test
 aster pane exec --format json -- git status --short
 ```
 
-`open/view/edit/jump/learn/ignore/capture` 是只读或工作区动作；`pane send/run/exec` 必须先在“设置 → 控制 → IPC”开启“允许发送输入”，SSH 或 sudo 等敏感会话还需单独开启“允许敏感会话”。CLI 使用当前用户专属的 `0600` token 和普通文件请求通道，不监听网络端口。应用在异步请求期间意外退出时，新实例会把遗留请求明确结束为失败，而不会让 shell 持续等待完整超时时间。`aster://learn?...` 深链只处理有界目录学习请求；`ssh://` 只预填命令，不自动执行。
+`open/view/edit/jump/learn/ignore/capture` 是只读或工作区动作；`pane send/run/exec` 必须先在“设置 → 控制 → IPC”开启“允许发送输入”，SSH 或 sudo 等敏感会话还需单独开启“允许敏感会话”。`aster://learn?...` 深链只处理有界目录学习请求；`ssh://` 只预填命令，不自动执行。
+
+安装的 `aster` 是指向 Aster.app 内 `aster-cli` 的符号链接：优先放在 `/usr/local/bin`，不可写时放 `~/.local/bin`（请确认它在 PATH 里）。旧版本写入的 sh 脚本会被自动替换；如果那个位置已经有一个不是 Aster 安装的 `aster`，安装会拒绝覆盖并提示。CLI 通过当前用户专属的本地 socket（默认 `~/Library/Application Support/Aster/Control/aster.sock`，仅本人可连；HOME 路径过长时回退到 `$TMPDIR/aster-control.sock`）与应用通信，不监听网络端口。Aster 的终端里会注入 `ASTER_SOCKET_PATH` 指向实际路径；要让应用监听别处，可在启动 Aster 前设置 `ASTER_CONTROL_SOCKET_PATH`（绝对路径），CLI 侧也可用 `--socket <path>` 或 `ASTER_SOCKET_PATH` 显式指定；Aster 没有运行时它会在后台拉起应用并等待最多 5 秒，仍连不上则以退出码 69 结束。运行 `aster --help` 查看完整语法，`aster --version` 查看版本。
+
+在 Aster 的终端里，`aster` 还能查看和控制其它 pane 与 Agent：
+
+```bash
+aster session snapshot                       # 所有窗口 / 标签 / pane
+aster agent list                             # 正在运行的 Agent 及状态
+aster agent read w1:p2 --lines 40            # 读某个 Agent 的屏幕
+aster agent prompt w1:p2 "跑一下测试" --wait  # 提交 prompt 并等它空闲
+aster pane read --current --source recent
+aster pane send-text --pane w1:p3 'npm test' --enter
+aster pane wait-output w1:p3 --match "passed" --timeout 60000
+aster events subscribe --kind pane.agent_status_changed
+aster notification show "构建完成" --body "全部通过"
+```
+
+pane 与 Agent 用短 ID 引用（`w1` 窗口、`w1:t2` 标签、`w1:p5` pane），也可用 Agent 名或 `--current`（当前 pane，来自环境变量 `ASTER_PANE_ID`）。`agent`、`events`、`notification` 命令只在 Aster 自己的终端里可用（环境变量 `ASTER_ENV=1`），在别的终端里需要显式加 `--allow-outside`。写入类命令与 `pane send/run/exec` 受同一套 IPC 开关约束；`--json` 输出原始结果，出错时 stderr 打印 `{"code":"…","message":"…"}` 并以退出码 1 结束。
 
 ## Working with Agents
 
@@ -281,6 +299,7 @@ Aster 支持 Claude Code、Codex、OpenCode、Cursor CLI、Kimi Code、Pi、omp 
 - 打开“Shell”菜单时，Aster 会根据当前聚焦 Pane 显示 `Codex`、`Claude` 等对应的 Agent 子菜单；切换分屏后菜单随焦点更新，不会操作同一标签里的其它 Agent。菜单展开后，Fork 动作会固定作用于当时的工作区，不会因设置页或其它窗口切换到前台而失效或落到别处。在“设置 → 智能体”安装对应 lifecycle 集成并重启 Agent 后，会话会自动关联，可拷贝会话 ID、查看会话历史，或 Fork 到上下左右分屏、新标签页、新窗口。Agent 子菜单的“查看会话历史”只显示当前项目的会话（优先按已关联会话的项目归属判定，尚未关联时按该 Pane 的工作目录）；要浏览全部项目的历史，请使用命令面板（`⇧⌘P`）里的“Agent 历史”。Codex 首次加载新 hook 时还需运行 `/hooks` 审核并信任 Aster 条目；安装器会迁移旧版 Aster 遗留的非法顶层 `hooks` 布尔配置。尚未收到可信会话 ID 时，复制与 Fork 会保持禁用。
 - Agent 历史浮层（Agent 子菜单“查看会话历史”按当前项目打开；命令面板“Agent 历史”显示全部）与 Open Quickly 可搜索已知 provider 的本机会话记录，并使用 provider 原生命令 Resume 或 Fork；不支持 Fork 的 provider 会明确拒绝。在 Agent 历史里按 `↩` 或点“打开”，会像 Otty 一样把该会话作为新标签打开：左侧 TABS 增加一项（标签名即会话标题），右侧只读渲染完整 transcript：你的消息显示为浅色卡片、Agent 回复按 Markdown 渲染，连续的工具调用折叠成一行摘要（如「Claude · 30×Bash, 26×Edit」，点击展开）；页头显示标题、会话文件与项目归属，并提供 Resume / Fork。超长会话按单条与总量上限截断并明确标注；同一会话重复打开只会选中已有标签。
 - Composer 支持多行草稿、普通文件附件、固定/浮动与取消；发送时使用 bracketed paste，仍服从只读和粘贴保护。Prompt Queue 只按 lifecycle hook 的 `idle` 自动派发，`processing` 与 `awaiting-input` 都只排队；未安装 hook 时不自动发送，每一项都由你点击左侧发送图标提交。
+- **让 Agent 自己操作 Aster（skill）**：Aster 附带一份 skill 文档（`aster --skill` 可打印），教 Claude Code / Codex 用 `aster` 命令读旁边 pane 的输出、启动或等待另一个 Agent、发送按键与通知。在“设置 → 智能体”点“安装 Aster skill”会把它复制到 `~/.claude/skills/aster` 或 `~/.codex/skills/aster`，并写入版本标记；Aster 升级后设置页会提示“需要更新”。只会接管带 Aster 标记的目录：你自己写的同名 skill 或符号链接不会被覆盖，卸载也只删 Aster 装的那份。skill 里的写入动作（提交 prompt、发送文本、聚焦）同样需要“设置 → 控制 → IPC 允许发送输入”，没开时 Agent 会收到 `write_not_allowed` 并转而请你手动操作。skill 只在 Aster 的终端里生效（`ASTER_ENV=1`），Agent 在别的终端里不会误用它。
 - Send to Chat 可接收终端选区、当前可见 transcript 或文件上下文。上下文被包在 `untrusted-context` 中，移除终端控制字符、遮盖常见密钥并执行 128 KiB 总预算；Aster 不声称能识别所有业务敏感信息，发送前仍应复核。终端发送面板会以普通键入预填目标 Agent 输入框，最终提交始终由你决定。
 
 ## 项目记忆（Session Memory）

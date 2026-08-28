@@ -13,6 +13,9 @@ let package = Package(
     // 独立 MCP server：Claude Code / Codex 经 stdio 只读查询 Session Memory，
     // 与主应用进程解耦，App 未运行时依然可查历史。
     .executable(name: "aster-memory-mcp", targets: ["AsterMemoryMCP"]),
+    // 独立控制 CLI：经 Unix socket + NDJSON 与运行中的 App 对话（agent/pane/events …），
+    // 旧 `aster open/view/watch` 语法经 workflow.execute 桥接；不依赖 AppKit。
+    .executable(name: "aster-cli", targets: ["AsterCLI"]),
   ],
   dependencies: [
     // HighlighterSwift 3.1.0 需要补充 macOS 发布包的资源定位：上游 `Bundle.module`
@@ -64,6 +67,12 @@ let package = Package(
     .executableTarget(
       name: "AsterMemoryMCP",
       dependencies: ["AsterCore", "AsterMemory"]
+    ),
+    // aster-cli 可执行文件；只依赖 AsterCore 的协议层与参数解析，保持体积小、启动快。
+    .executableTarget(
+      name: "AsterCLI",
+      dependencies: ["AsterCore"],
+      path: "Sources/AsterCLI"
     ),
     .executableTarget(
       name: "Aster",

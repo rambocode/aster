@@ -48,6 +48,43 @@ public struct TerminalProductVersion: Equatable, Sendable {
   }
 }
 
+/// 注入到每个 Pane 子进程环境的控制协议上下文，让 pane 内运行的 agent/CLI 知道自己是谁、
+/// socket 在哪。字段全部是短 ID（`w1` / `w1:t2` / `w1:p5`），不含 UUID。
+public struct TerminalControlContext: Equatable, Sendable {
+  public static let environmentFlagKey = "ASTER_ENV"
+  public static let socketPathKey = "ASTER_SOCKET_PATH"
+  public static let binaryPathKey = "ASTER_BIN_PATH"
+  public static let windowIDKey = "ASTER_WINDOW_ID"
+  public static let tabIDKey = "ASTER_TAB_ID"
+  public static let paneIDKey = "ASTER_PANE_ID"
+
+  public let windowID: String
+  public let tabID: String
+  public let paneID: String
+  public let socketPath: String
+  /// `aster-cli` 二进制路径；开发构建（swift run）可能没有，此时不注入 ASTER_BIN_PATH。
+  public let binaryPath: String?
+
+  public init(windowID: String, tabID: String, paneID: String, socketPath: String, binaryPath: String?) {
+    self.windowID = windowID
+    self.tabID = tabID
+    self.paneID = paneID
+    self.socketPath = socketPath
+    self.binaryPath = binaryPath
+  }
+
+  /// 写入环境字典。`ASTER_PANE_ID` 从 0.4.x 的 UUID 升级为短 ID；`ASTER_SESSION_ID` 保留 UUID
+  /// 供旧脚本使用，两者由服务端 selector 解析同时兼容。
+  public func apply(to environment: inout [String: String]) {
+    environment[Self.environmentFlagKey] = "1"
+    environment[Self.socketPathKey] = socketPath
+    environment[Self.windowIDKey] = windowID
+    environment[Self.tabIDKey] = tabID
+    environment[Self.paneIDKey] = paneID
+    if let binaryPath { environment[Self.binaryPathKey] = binaryPath }
+  }
+}
+
 /// Aster 的 TERM 与进程身份策略。这里保持纯函数边界：系统 terminfo 探测由交付层注入，
 /// 因而配置迁移、回退和环境拼接无需启动外部进程即可完整测试。
 public enum TerminalIdentityPolicy {
@@ -111,7 +148,8 @@ public enum TerminalIdentityPolicy {
     term: String,
     version: String,
     paneIdentifier: String,
-    bundledTerminfoDirectories: [String]
+    bundledTerminfoDirectories: [String],
+    controlContext: TerminalControlContext? = nil
   ) -> [String: String] {
     var result = inherited
     result["TERM"] = term
@@ -122,6 +160,9 @@ public enum TerminalIdentityPolicy {
     result["ASTER_PANE_ID"] = paneIdentifier
     // 0.4.x 已公开 ASTER_SESSION_ID；保留别名避免现有脚本升级后失效。
     result["ASTER_SESSION_ID"] = paneIdentifier
+    // 控制协议上下文最后写入：它会用短 ID 覆盖 ASTER_PANE_ID。第二实例（socket 被占）
+    // 不提供 context，则不注入 ASTER_ENV，CLI 会拒绝 agent.* 调用。
+    controlContext?.apply(to: &result)
 
     var terminfoDirectories: [String] = bundledTerminfoDirectories.filter { !$0.isEmpty }
     if let inheritedDirectories = inherited["TERMINFO_DIRS"] {

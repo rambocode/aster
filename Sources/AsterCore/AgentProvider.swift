@@ -2,6 +2,9 @@ import Foundation
 
 /// Otty 深度集成的代码 Agent。该类型只描述 provider 的静态领域能力，既不查找
 /// 可执行文件，也不读取或改写用户配置。
+///
+/// rawValue 会写入用户配置与 hook 载荷，发布后不可更改；新 case 一律追加在末尾，
+/// 设置页按 `allCases` 顺序展示。
 public enum AgentProvider: String, CaseIterable, Codable, Equatable, Sendable {
   case claudeCode
   case codex
@@ -11,6 +14,21 @@ public enum AgentProvider: String, CaseIterable, Codable, Equatable, Sendable {
   case pi
   case omp
   case grokBuild
+  // 以下 provider 只有屏幕检测清单，没有 Aster hook 集成。
+  case gemini
+  case githubCopilot = "copilot"
+  case amp
+  case droid
+  case devin
+  case kiro = "kiro-cli"
+  case qoder = "qodercli"
+  case qwen
+  case hermes
+  case antigravity = "agy"
+  case maki
+  case muse
+  case cline
+  case kilo
 
   /// provider 的原生 CLI 名称。自定义启动前缀可以在命令规划阶段覆盖此值。
   public var commandName: String {
@@ -23,24 +41,162 @@ public enum AgentProvider: String, CaseIterable, Codable, Equatable, Sendable {
     case .pi: "pi"
     case .omp: "omp"
     case .grokBuild: "grok"
+    case .gemini: "gemini"
+    case .githubCopilot: "copilot"
+    case .amp: "amp"
+    case .droid: "droid"
+    case .devin: "devin"
+    case .kiro: "kiro-cli"
+    case .qoder: "qodercli"
+    case .qwen: "qwen"
+    case .hermes: "hermes"
+    case .antigravity: "agy"
+    case .maki: "maki"
+    case .muse: "muse"
+    case .cline: "cline"
+    case .kilo: "kilo"
     }
   }
 
+  /// 面向用户的产品名；只用于展示，不参与命令拼装或 provider 检测。
+  public var displayName: String {
+    switch self {
+    case .claudeCode: "Claude Code"
+    case .codex: "Codex"
+    case .openCode: "OpenCode"
+    case .cursorCLI: "Cursor CLI"
+    case .kimiCode: "Kimi Code"
+    case .pi: "Pi"
+    case .omp: "omp"
+    case .grokBuild: "Grok Build"
+    case .gemini: "Gemini CLI"
+    case .githubCopilot: "GitHub Copilot CLI"
+    case .amp: "Amp"
+    case .droid: "Droid"
+    case .devin: "Devin CLI"
+    case .kiro: "Kiro CLI"
+    case .qoder: "Qoder CLI"
+    case .qwen: "Qwen Code"
+    case .hermes: "Hermes"
+    case .antigravity: "Antigravity CLI"
+    case .maki: "Maki"
+    case .muse: "Muse"
+    case .cline: "Cline"
+    case .kilo: "Kilo Code"
+    }
+  }
+
+  /// herdr 屏幕检测清单 id；没有清单的 provider（omp）返回 nil。
+  public var detectionManifestID: String? {
+    switch self {
+    case .claudeCode: "claude"
+    case .codex: "codex"
+    case .openCode: "opencode"
+    case .cursorCLI: "cursor"
+    case .kimiCode: "kimi"
+    case .pi: "pi"
+    case .omp: nil
+    case .grokBuild: "grok"
+    case .gemini: "gemini"
+    case .githubCopilot: "copilot"
+    case .amp: "amp"
+    case .droid: "droid"
+    case .devin: "devin"
+    case .kiro: "kiro"
+    case .qoder: "qodercli"
+    case .qwen: "qwen"
+    case .hermes: "hermes"
+    case .antigravity: "agy"
+    case .maki: "maki"
+    case .muse: "muse"
+    case .cline: "cline"
+    case .kilo: "kilo"
+    }
+  }
+
+  /// provider 支持的 Aster 能力集合。有 hook 集成的旧 provider 拥有生命周期、历史与
+  /// 续接能力；仅有屏幕检测清单的 provider 只声明 `.screenDetection`。
   public var capabilities: AgentProviderCapabilities {
-    var capabilities: AgentProviderCapabilities = [
-      .lifecycleMonitoring, .history, .resumeSession,
-    ]
-    if self != .cursorCLI, self != .kimiCode {
-      capabilities.insert(.forkSession)
+    var capabilities: AgentProviderCapabilities = []
+    if supportsManagedIntegration {
+      capabilities.formUnion([.lifecycleMonitoring, .history, .resumeSession])
+      if self != .cursorCLI, self != .kimiCode {
+        capabilities.insert(.forkSession)
+      }
+    }
+    if detectionManifestID != nil {
+      capabilities.insert(.screenDetection)
+    }
+    // 对应 herdr `full_lifecycle_hook_authority`：这些 provider 的 hook 覆盖完整生命周期，
+    // hook 权威后可以停止屏幕轮询。
+    if [.openCode, .pi, .omp, .kimiCode].contains(self) {
+      capabilities.insert(.fullLifecycleHooks)
     }
     return capabilities
   }
 
-  /// 仅按可执行文件最后一个路径分量精确匹配，避免把 `codex-helper` 之类的普通
-  /// 子进程误识别为 Agent。PATH 查找和符号链接解析属于基础设施层职责。
+  /// 是否存在 Aster 受管 hook/plugin/extension 集成；无集成的 provider 只能靠屏幕检测。
+  public var supportsManagedIntegration: Bool {
+    installationStep != nil
+  }
+
+  /// 可执行文件别名表（全部小写），照抄 herdr `lookup_agent`；`detect(executablePath:)`
+  /// 先做规范化再查表，因此这里不列 `.exe`/`.cmd` 之类的后缀变体。
+  ///
+  /// 风险：`pi`、`amp`、`muse`、`droid`、`cline`、`kilo` 等裸词与普通命令可能重名，
+  /// 误判会让普通 pane 被当成 Agent 并启动屏幕检测。它们仍保留，因为就是各 provider
+  /// 的官方 commandName（与 herdr 一致）；但有明确冲突的 `cursor`（Cursor 编辑器启动器，
+  /// `cursor .` 极常见）不收，Cursor agent 只认 `agent`/`cursor-agent`。
+  public var executableAliases: [String] {
+    switch self {
+    case .claudeCode: ["claude", "claude-code"]
+    case .codex: ["codex"]
+    case .openCode: ["opencode", "opencode2", "open-code"]
+    case .cursorCLI: ["agent", "cursor-agent"]
+    case .kimiCode: ["kimi", "kimi-code", "kimi code"]
+    case .pi: ["pi"]
+    case .omp: ["omp"]
+    case .grokBuild: ["grok", "grok-build"]
+    case .gemini: ["gemini"]
+    case .githubCopilot: ["copilot", "github-copilot", "ghcs"]
+    case .amp: ["amp", "amp-local"]
+    case .droid: ["droid"]
+    case .devin: ["devin", "devin-cli", "devin cli"]
+    case .kiro: ["kiro", "kiro-cli"]
+    case .qoder: ["qodercli", "qoderclicn", "qoder", "qodercn"]
+    case .qwen: ["qwen", "qwen-code", "qwen code"]
+    case .hermes: ["hermes", "hermes-agent"]
+    case .antigravity: ["agy", "antigravity", "antigravity-cli"]
+    case .maki: ["maki"]
+    case .muse: ["muse", "muse-code", "muse-cli"]
+    case .cline: ["cline"]
+    case .kilo: ["kilo", "kilo-code", "kilo code"]
+    }
+  }
+
+  /// 按可执行文件最后一个路径分量匹配别名表（大小写不敏感，忽略 `.exe/.cmd/.bat/.ps1/.js`
+  /// 后缀），避免把 `codex-helper` 之类的普通子进程误识别为 Agent。PATH 查找和符号
+  /// 链接解析属于基础设施层职责。
   public static func detect(executablePath: String) -> AgentProvider? {
-    let executable = URL(fileURLWithPath: executablePath).lastPathComponent
-    return allCases.first { $0.commandName == executable }
+    let name = AgentExecutableNameNormalizer.normalizedLookupName(AgentExecutableNameNormalizer.basename(executablePath))
+    guard !name.isEmpty else { return nil }
+    if let provider = allCases.first(where: { $0.executableAliases.contains(name) }) {
+      return provider
+    }
+    return AgentExecutableNameNormalizer.isMuseVersionedBinary(name) ? .muse : nil
+  }
+
+  /// 从完整 argv 识别 Agent。argv[0] 是通用运行时或 shell（node/bun/python/sh/cmd/
+  /// powershell）时按对应运行时的参数规则解包被包裹的脚本；tmux 不穿透；其余情况
+  /// 直接按 argv[0] 识别。
+  public static func detect(commandTokens: [String]) -> AgentProvider? {
+    guard let executable = commandTokens.first else { return nil }
+    let runtime = AgentExecutableNameNormalizer.normalizedLookupName(
+      AgentExecutableNameNormalizer.basename(executable))
+    if AgentExecutableNameNormalizer.isGenericRuntimeOrShell(runtime) {
+      return AgentWrappedCommandDetector.wrappedProvider(runtime: runtime, argv: commandTokens)
+    }
+    return detect(executablePath: executable)
   }
 
   /// 只识别用户主目录下已知 provider 的会话根目录。扩展名相同但位于下载目录或
@@ -116,6 +272,11 @@ public struct AgentProviderCapabilities: OptionSet, Equatable, Sendable {
   public static let history = AgentProviderCapabilities(rawValue: 1 << 1)
   public static let resumeSession = AgentProviderCapabilities(rawValue: 1 << 2)
   public static let forkSession = AgentProviderCapabilities(rawValue: 1 << 3)
+  /// 有 herdr 屏幕检测清单，可通过读屏推断任务状态。
+  public static let screenDetection = AgentProviderCapabilities(rawValue: 1 << 4)
+  /// hook 覆盖完整生命周期（对应 herdr `full_lifecycle_hook_authority`），hook 权威后
+  /// 屏幕检测可以停止。
+  public static let fullLifecycleHooks = AgentProviderCapabilities(rawValue: 1 << 5)
 }
 
 public enum AgentConfigurationFormat: Equatable, Sendable {
@@ -158,6 +319,8 @@ public enum AgentSetupStep: Equatable, Sendable {
 
 public enum AgentSetupBlocker: Equatable, Sendable {
   case executableUnavailable(command: String)
+  /// provider 没有 Aster 受管集成可安装，只能依赖屏幕检测。
+  case integrationUnavailable
 }
 
 public struct AgentSetupPlan: Equatable, Sendable {
@@ -187,9 +350,20 @@ public enum AgentSetupPlanner {
       )
     }
 
+    // 没有 hook 集成的 provider 无步骤可做；用 blocker 说明原因而不是静默返回空计划。
+    guard let installationStep = provider.installationStep else {
+      return AgentSetupPlan(
+        provider: provider,
+        steps: [],
+        blocker: .integrationUnavailable,
+        requiresAgentRestart: false,
+        linksAfterNextLifecycleEvent: false
+      )
+    }
+
     var steps: [AgentSetupStep] = []
     if !evidence.managedIntegrationInstalled {
-      steps.append(provider.installationStep)
+      steps.append(installationStep)
     }
     if provider == .codex, evidence.requiredFeatureEnabled != true {
       steps.append(.enableFeature(path: "~/.codex/config.toml", key: "hooks"))
@@ -206,7 +380,8 @@ public enum AgentSetupPlanner {
 }
 
 extension AgentProvider {
-  fileprivate var installationStep: AgentSetupStep {
+  /// Aster 受管集成的安装步骤；只有屏幕检测清单的 provider 返回 nil。
+  fileprivate var installationStep: AgentSetupStep? {
     switch self {
     case .claudeCode:
       .mergeManagedHooks(path: "~/.claude/settings.json", format: .json)
@@ -225,13 +400,20 @@ extension AgentProvider {
     case .grokBuild:
       // Grok 只把用户级 hook 当作 Claude 兼容层来读，装进 ~/.claude/settings.json。
       .mergeManagedHooks(path: "~/.claude/settings.json", format: .json)
+    case .gemini, .githubCopilot, .amp, .droid, .devin, .kiro, .qoder, .qwen, .hermes,
+      .antigravity, .maki, .muse, .cline, .kilo:
+      nil
     }
   }
 
+  /// plugin/extension provider 要等下一次生命周期事件才把 pane 与 session 关联。
   fileprivate var linksOnLifecycleEvent: Bool {
     switch self {
     case .openCode, .pi, .omp: true
-    case .claudeCode, .codex, .cursorCLI, .kimiCode, .grokBuild: false
+    case .claudeCode, .codex, .cursorCLI, .kimiCode, .grokBuild,
+      .gemini, .githubCopilot, .amp, .droid, .devin, .kiro, .qoder, .qwen, .hermes,
+      .antigravity, .maki, .muse, .cline, .kilo:
+      false
     }
   }
 }
@@ -305,6 +487,8 @@ public struct AgentNativeCommandPlan: Equatable, Sendable {
 
 public enum AgentSessionPlanError: Error, Equatable {
   case forkUnsupported(provider: AgentProvider)
+  /// provider 没有原生 resume 命令（通常是仅屏幕检测的 provider）。
+  case resumeUnsupported(provider: AgentProvider)
   case invalidSessionIdentifier
 }
 
@@ -334,6 +518,9 @@ public enum AgentSessionCommandPlanner {
     launchPrefix: AgentLaunchPrefix? = nil
   ) throws -> AgentNativeCommandPlan {
     let provider = configuration.provider
+    if !provider.capabilities.contains(.resumeSession) {
+      throw AgentSessionPlanError.resumeUnsupported(provider: provider)
+    }
     if continuation == .fork, !provider.capabilities.contains(.forkSession) {
       throw AgentSessionPlanError.forkUnsupported(provider: provider)
     }
@@ -369,6 +556,11 @@ extension AgentProvider {
     case (.pi, .resume), (.omp, .resume): ["--session", sessionID]
     case (.pi, .fork), (.omp, .fork): ["--fork", sessionID]
     case (.cursorCLI, .fork), (.kimiCode, .fork): []
+    // 仅屏幕检测的 provider 没有 resume 能力，Planner 在此之前已经抛出 resumeUnsupported。
+    case (.gemini, _), (.githubCopilot, _), (.amp, _), (.droid, _), (.devin, _), (.kiro, _),
+      (.qoder, _), (.qwen, _), (.hermes, _), (.antigravity, _), (.maki, _), (.muse, _),
+      (.cline, _), (.kilo, _):
+      []
     }
   }
 }

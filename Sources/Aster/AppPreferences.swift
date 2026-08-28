@@ -852,6 +852,20 @@ final class AppPreferences: ObservableObject {
     return url
   }
 
+  /// Agent 屏幕检测清单的本地覆盖目录：`~/.config/aster/agent-detection/<id>.json`。
+  /// 与主题目录同级；用户放一份改过的清单即可覆盖内置规则（解析失败自动回落内置）。
+  nonisolated static var agentDetectionOverrideDirectoryURL: URL {
+    FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".config/aster/agent-detection", isDirectory: true)
+  }
+
+  /// 确保覆盖目录存在后返回，供设置页「打开清单目录」使用。
+  func agentDetectionOverrideDirectory() throws -> URL {
+    let directory = Self.agentDetectionOverrideDirectoryURL
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+  }
+
   /// 主题的唯一磁盘真值目录：`~/.config/aster/themes`。内置主题物化、用户参数
   /// 个性化、导入的主题都落在这里，用户用任意编辑器改文件即可生效。Aster 是独立
   /// 应用，不再读写 Otty 的目录，也不再把主题散落到 App Support。

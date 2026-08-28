@@ -1924,6 +1924,11 @@ func settingsWiredFieldsPersistAcrossRelaunch() throws {
   preferences.configuration.controls.scrollPastFirstLine = .firstLineWithContent
   preferences.configuration.editor.tabSize = 6
   preferences.configuration.agents.enabledAgents = ["claude"]
+  // 屏幕检测两个开关缺省为 nil（解析为开启）；显式关闭后必须能持久化回来。
+  #expect(preferences.configuration.agents.resolvedScreenDetectionEnabled)
+  #expect(preferences.configuration.agents.resolvedScreenDetectionOverridesHook)
+  preferences.configuration.agents.screenDetectionEnabled = false
+  preferences.configuration.agents.screenDetectionOverridesHook = false
   preferences.configuration.appearance.lineHeight = 1.5
   preferences.configuration.recipeReplayMode = .skip
 
@@ -1939,6 +1944,8 @@ func settingsWiredFieldsPersistAcrossRelaunch() throws {
   #expect(reloaded.configuration.controls.resolvedScrollPastFirstLine == .firstLineWithContent)
   #expect(reloaded.configuration.editor.tabSize == 6)
   #expect(reloaded.configuration.agents.enabledAgents == ["claude"])
+  #expect(!reloaded.configuration.agents.resolvedScreenDetectionEnabled)
+  #expect(!reloaded.configuration.agents.resolvedScreenDetectionOverridesHook)
   #expect(reloaded.configuration.appearance.lineHeight == 1.5)
   #expect(reloaded.configuration.recipeReplayMode == .skip)
 

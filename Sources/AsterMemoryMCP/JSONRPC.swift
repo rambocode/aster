@@ -1,3 +1,4 @@
+import AsterCore
 import Foundation
 
 /// JSON-RPC 2.0 请求。MCP stdio 传输为逐行 JSON；id 可能是数字或字符串。
@@ -28,61 +29,6 @@ enum JSONRPCID: Codable, Equatable {
     case .number(let value): try container.encode(value)
     case .string(let value): try container.encode(value)
     }
-  }
-}
-
-/// 极简 JSON 值模型：MCP 参数结构浅，用枚举避免引入依赖或 Any 逃逸。
-enum JSONValue: Codable, Sendable {
-  case null
-  case bool(Bool)
-  case number(Double)
-  case string(String)
-  case array([JSONValue])
-  case object([String: JSONValue])
-
-  init(from decoder: Decoder) throws {
-    let container = try decoder.singleValueContainer()
-    if container.decodeNil() {
-      self = .null
-    } else if let value = try? container.decode(Bool.self) {
-      self = .bool(value)
-    } else if let value = try? container.decode(Double.self) {
-      self = .number(value)
-    } else if let value = try? container.decode(String.self) {
-      self = .string(value)
-    } else if let value = try? container.decode([JSONValue].self) {
-      self = .array(value)
-    } else {
-      self = .object(try container.decode([String: JSONValue].self))
-    }
-  }
-
-  func encode(to encoder: Encoder) throws {
-    var container = encoder.singleValueContainer()
-    switch self {
-    case .null: try container.encodeNil()
-    case .bool(let value): try container.encode(value)
-    case .number(let value): try container.encode(value)
-    case .string(let value): try container.encode(value)
-    case .array(let value): try container.encode(value)
-    case .object(let value): try container.encode(value)
-    }
-  }
-
-  /// 便捷取值：对象成员。
-  subscript(key: String) -> JSONValue? {
-    if case .object(let members) = self { return members[key] }
-    return nil
-  }
-
-  var stringValue: String? {
-    if case .string(let value) = self { return value }
-    return nil
-  }
-
-  var intValue: Int? {
-    if case .number(let value) = self { return Int(value) }
-    return nil
   }
 }
 

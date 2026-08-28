@@ -1,3 +1,4 @@
+import AsterCore
 import Foundation
 
 /// 工具目录：`tools/list` 的真值表。

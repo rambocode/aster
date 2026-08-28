@@ -37,6 +37,9 @@ cp "$BUILD_DIR/release/Aster" "$CONTENTS_DIR/MacOS/Aster"
 # MCPInstallService 按「与主程序同目录」解析 aster-memory-mcp，分发包必须把这个独立可执行文件
 # 一并放进 Contents/MacOS，否则用户在设置页一键安装 MCP 时会报 executableNotFound。
 cp "$BUILD_DIR/release/aster-memory-mcp" "$CONTENTS_DIR/MacOS/aster-memory-mcp"
+# aster-cli 与主程序同目录：CLI 由可执行路径上溯三层推导 bundle 来 `open -gj` 拉起 App，
+# 设置页安装的 /usr/local/bin/aster 也只是指向这里的 symlink。
+cp "$BUILD_DIR/release/aster-cli" "$CONTENTS_DIR/MacOS/aster-cli"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$PROJECT_DIR/THIRD-PARTY-NOTICES.md" "$RESOURCES_DIR/THIRD-PARTY-NOTICES.md"
 cp -R "$PROJECT_DIR/Resources/shell-integration" "$RESOURCES_DIR/shell-integration"
@@ -49,6 +52,8 @@ cp -R "$PROJECT_DIR/Resources/settings-ui" "$RESOURCES_DIR/settings-ui"
 # 24 套内置主题的原始文件。首次启动由 AppPreferences 复制到 ~/.config/aster/themes，
 # 用户机器上装没装 Otty 都不影响初始化；缺了这一步只会回落到代码内真值表。
 cp -R "$PROJECT_DIR/Resources/themes" "$RESOURCES_DIR/themes"
+# Agent skill 文档：`aster --skill` 与设置页「安装 skill」都从 Contents/Resources/skills 读取。
+cp -R "$PROJECT_DIR/Resources/skills" "$RESOURCES_DIR/skills"
 
 # Aster 自有 terminfo 在构建期编译进签名 Bundle。运行时只读取资源，不生成隐藏脚本
 # 或修改系统数据库；TERMINFO_DIRS 会把该目录放在系统条目前面。
@@ -249,6 +254,7 @@ fi
 # 主可执行文件之外的二进制不会被外层签名覆盖。aster-memory-mcp 此前是靠 --deep 顺带
 # 签上的，去掉 --deep 后必须显式补签，否则 --verify --deep --strict 与公证都会失败。
 "${SIGN[@]}" "$CONTENTS_DIR/MacOS/aster-memory-mcp"
+"${SIGN[@]}" "$CONTENTS_DIR/MacOS/aster-cli"
 
 # 最后签外层 App：Frameworks/ 与 MacOS/ 下已签好的嵌套代码在这一步被密封进 CodeResources。
 "${SIGN[@]}" "$APP_DIR"
@@ -267,5 +273,16 @@ fi
 # 必须执行最终 App 内的真实资源加载代码。只检查目录存在或 codesign 无法发现
 # `Bundle.module` 回退到构建机绝对路径这类“本机可开、新电脑崩溃”的发布缺陷。
 "$CONTENTS_DIR/MacOS/Aster" --verify-packaged-resources
+
+# skill 文档与 CLI 不走主程序的资源自检（CLI 不链接 AppKit），在这里单独断言：
+# 缺了任何一个，`aster --skill` / 设置页安装 skill 在用户机器上都会静默失败。
+if [[ ! -f "$RESOURCES_DIR/skills/aster/SKILL.md" ]]; then
+  echo "Missing packaged skill: $RESOURCES_DIR/skills/aster/SKILL.md" >&2
+  exit 1
+fi
+if ! "$CONTENTS_DIR/MacOS/aster-cli" --skill >/dev/null; then
+  echo "aster-cli cannot locate SKILL.md inside the packaged app" >&2
+  exit 1
+fi
 
 echo "$APP_DIR"

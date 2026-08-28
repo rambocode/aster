@@ -316,7 +316,7 @@ func shellMenuFollowsFocusedPaneAgentSession() throws {
   let claudeMenu = try #require(menu.item(withTitle: "Claude")?.submenu)
   #expect(
     claudeMenu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
-      "拷贝会话 ID", "查看会话历史",
+      "拷贝会话 ID", "查看会话历史", "解释 Agent 状态检测…",
       "Fork 到 向右拆分", "Fork 到 向左拆分",
       "Fork 到 向下拆分", "Fork 到 向上拆分",
       "Fork 到 新建标签页", "Fork 到 新建窗口",

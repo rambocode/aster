@@ -167,6 +167,40 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       ]
     }
   }
+  /// CLI symlink 与 skill 安装状态。同 MCP：探测要 lstat/readlink/读标记文件，只缓存后台结果。
+  private var agentControlStatus = AgentControlStatus()
+  private var agentControlTaskRunning = false
+
+  /// Agent 控制（CLI + skill）状态的可跨隔离传递形式，快照键 `agentControl`。
+  struct AgentControlStatus: Sendable {
+    /// 单个安装项（CLI 或某个 provider 的 skill）的展示状态。
+    struct Item: Sendable {
+      var status = "未安装"
+      var detail = ""
+      var installed = false
+      var actionTitle = "安装"
+      var canInstall = true
+
+      var jsonValue: [String: Any] {
+        [
+          "status": status, "detail": detail, "installed": installed,
+          "actionTitle": actionTitle, "canInstall": canInstall,
+        ]
+      }
+    }
+
+    var socketPath = AsterControlServer.defaultSocketPath()
+    var cli = Item()
+    var skills: [String: Item] = [:]
+
+    var jsonValue: [String: Any] {
+      [
+        "socketPath": socketPath,
+        "cliState": cli.jsonValue,
+        "skills": skills.mapValues(\.jsonValue),
+      ]
+    }
+  }
   static let sidebarIdentifier = NSUserInterfaceItemIdentifier("settings-sidebar")
   static let contentIdentifier = NSUserInterfaceItemIdentifier("settings-content")
   static let searchIdentifier = NSUserInterfaceItemIdentifier("settings-search")
@@ -270,6 +304,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     TerminalNotificationService.shared.refreshAuthorizationStatus()
     refreshMemoryStoreSize()
     refreshMemoryMCPState()
+    refreshAgentControlState()
     loadSettingsDocument()
   }
 
@@ -629,7 +664,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           title: "设为默认终端"
         ) { [weak self] in self?.registerAsDefaultTerminal() },
         actionRow(
-          "安装 CLI", "把 `aster` 命令安装到 PATH，可在终端里用它打开目录或 Recipe",
+          "安装 CLI", "把 `aster` 命令安装到 PATH（指向 App 内 aster-cli 的符号链接），可在终端里打开目录、Recipe 或控制 Agent",
           title: "安装 CLI"
         ) { [weak self] in self?.installCLI() },
         actionRow(
@@ -669,24 +704,190 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     }
   }
 
-  /// 安装 `aster` 命令行启动器脚本：优先 /usr/local/bin，不可写时退回 ~/.local/bin。
-  /// `aster learn` 使用 0600 token 鉴权的本机 URL；其它参数继续交给 `open -a`。
+  /// 安装 `aster` 命令：把 /usr/local/bin/aster（不可写时 ~/.local/bin/aster）做成指向 App 内
+  /// aster-cli 的 symlink，覆盖旧版写入的 sh 启动器。文件操作在后台完成，结束后刷新状态。
   private func installCLI() {
-    let fileManager = FileManager.default
-    let localBin = "/usr/local/bin"
-    let fallback = (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin")
-    let targetDir = fileManager.isWritableFile(atPath: localBin) ? localBin : fallback
-    let target = (targetDir as NSString).appendingPathComponent("aster")
-    do {
-      try fileManager.createDirectory(atPath: targetDir, withIntermediateDirectories: true)
-      try AsterCLIScript.contents.write(toFile: target, atomically: true, encoding: .utf8)
-      try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: target)
-      let pathHint = targetDir == fallback ? "；如 PATH 未包含该目录请自行加入" : ""
-      message = "已安装 aster 命令到 \(target)\(pathHint)"
-    } catch {
-      message = "CLI 安装失败：\(error.localizedDescription)"
+    performCLIInstall(install: true)
+  }
+
+  /// 安装 / 卸载 CLI symlink；结果经 message 展示，随后重新探测状态。
+  private func performCLIInstall(install: Bool) {
+    Task { [weak self] in
+      let outcome = await Self.applyCLIInstall(install: install)
+      guard let self else { return }
+      switch outcome {
+      case .success(let path):
+        if install {
+          let inUserBin = path.hasPrefix((NSHomeDirectory() as NSString).appendingPathComponent(".local/bin"))
+          let pathHint = inUserBin ? "；如 PATH 未包含 ~/.local/bin 请自行加入" : ""
+          self.message = "已安装 aster 命令到 \(path)\(pathHint)"
+        } else {
+          self.message = "已移除 aster 命令。"
+        }
+      case .failure(let failure):
+        self.sendWebToast(failure.message, level: "error")
+      }
+      self.refresh()
+      self.refreshAgentControlState()
     }
-    refresh()
+  }
+
+  private nonisolated static func applyCLIInstall(install: Bool) async -> Result<String, StringFailure> {
+    do {
+      if install {
+        return .success(try AsterCLIInstaller.install())
+      }
+      try AsterCLIInstaller.uninstall()
+      return .success("")
+    } catch let error as AsterCLIInstaller.ServiceError {
+      return .failure(StringFailure(message: error.localizedMessage))
+    } catch {
+      return .failure(StringFailure(message: error.localizedDescription))
+    }
+  }
+
+  /// 跨隔离传回的失败文案；`Result` 需要 Error 类型，String 本身不是。
+  struct StringFailure: Error, Sendable {
+    let message: String
+  }
+
+  // MARK: - Agent 控制：CLI 与 skill 状态
+
+  /// 后台探测 CLI symlink 与各 provider 的 skill 安装状态并回填快照。同一时刻只允许一个任务。
+  func refreshAgentControlState() {
+    guard !agentControlTaskRunning else { return }
+    agentControlTaskRunning = true
+    Task { [weak self] in
+      let status = await Self.agentControlStatus()
+      guard let self else { return }
+      self.agentControlTaskRunning = false
+      self.agentControlStatus = status
+      self.refresh()
+    }
+  }
+
+  private nonisolated static func agentControlStatus() async -> AgentControlStatus {
+    var status = AgentControlStatus()
+    let cliAvailable = AsterCLIInstaller.resolveExecutableURL() != nil
+    status.cli.canInstall = cliAvailable
+    switch AsterCLIInstaller.state() {
+    case .notInstalled:
+      status.cli.status = "未安装"
+      status.cli.detail =
+        cliAvailable
+        ? "在 PATH 里放一个指向 Aster 内置 aster-cli 的 aster 命令。"
+        : "找不到 aster-cli 可执行文件，请重新构建 Aster.app。"
+      status.cli.actionTitle = "安装"
+    case .installed(let path):
+      status.cli.status = "已安装"
+      status.cli.detail = path
+      status.cli.installed = true
+      status.cli.actionTitle = "已安装"
+    case .outdated(let path, let expected):
+      status.cli.status = "需要修复"
+      status.cli.detail = "\(path) 指向的可执行文件已失效\n当前应指向：\(expected)"
+      status.cli.installed = true
+      status.cli.actionTitle = "修复"
+    case .legacyScript(let path):
+      status.cli.status = "旧版脚本"
+      status.cli.detail = "\(path) 是旧版 sh 启动器，更新后才能使用 agent/pane 等新命令。"
+      status.cli.installed = true
+      status.cli.actionTitle = "更新"
+    }
+
+    let skillAvailable = AgentSkillInstallService.sourceDirectory() != nil
+    for target in AgentSkillInstallService.Target.allCases {
+      var item = AgentControlStatus.Item()
+      item.canInstall = skillAvailable
+      let destination = AgentSkillInstallService.destination(for: target).path
+      switch AgentSkillInstallService.state(for: target) {
+      case .notInstalled:
+        item.status = "未安装"
+        item.detail = skillAvailable ? "复制到 \(destination)" : "找不到 Aster 附带的 skill 资源，请重新构建 Aster.app。"
+        item.actionTitle = "安装"
+      case .installed(let version):
+        item.status = "已安装 \(version)"
+        item.detail = destination
+        item.installed = true
+        item.actionTitle = "已安装"
+      case .outdated(let installed, let expected):
+        item.status = "需要更新"
+        item.detail = "已安装 \(installed)，当前 Aster 附带 \(expected)。"
+        item.installed = true
+        item.actionTitle = "更新"
+      case .foreign(let path):
+        item.status = "无法接管"
+        item.detail = "\(path) 不是 Aster 安装的目录（或是符号链接），请先手动处理。"
+        item.canInstall = false
+      }
+      status.skills[target.rawValue] = item
+    }
+    return status
+  }
+
+  /// 安装 skill。skill 的核心动作（提交 prompt、发送文本）依赖 IPC「允许发送输入」，
+  /// 关闭时装了也只能读，因此先询问是否一并开启；用户拒绝仍照常安装。
+  private func installAgentSkill(providerRawValue: String?) {
+    guard let target = providerRawValue.flatMap(AgentSkillInstallService.Target.init(rawValue:)) else {
+      sendWebToast("未知的 Agent：\(providerRawValue ?? "")", level: "error")
+      return
+    }
+    if !preferences.configuration.controls.resolvedIPCAllowSendKeys, confirmEnablingIPCSendKeys() {
+      preferences.configuration.controls.ipcAllowSendKeys = true
+    }
+    performAgentSkillInstall(target: target, install: true)
+  }
+
+  private func uninstallAgentSkill(providerRawValue: String?) {
+    guard let target = providerRawValue.flatMap(AgentSkillInstallService.Target.init(rawValue:)) else {
+      sendWebToast("未知的 Agent：\(providerRawValue ?? "")", level: "error")
+      return
+    }
+    performAgentSkillInstall(target: target, install: false)
+  }
+
+  /// 询问是否开启 IPC「允许发送输入」。无窗口（测试 / 未显示）时不弹框，视为拒绝。
+  private func confirmEnablingIPCSendKeys() -> Bool {
+    guard view.window != nil else { return false }
+    let alert = NSAlert()
+    alert.messageText = "同时开启「允许发送输入」？"
+    alert.informativeText =
+      "Aster skill 让 Agent 通过 aster 命令向其它 pane 提交 prompt 或发送文本，这需要「设置 → 控制 → IPC → 允许发送输入」。不开启的话 skill 只能读取屏幕。"
+    alert.addButton(withTitle: "开启并安装")
+    alert.addButton(withTitle: "仅安装")
+    return alert.runModal() == .alertFirstButtonReturn
+  }
+
+  private func performAgentSkillInstall(target: AgentSkillInstallService.Target, install: Bool) {
+    Task { [weak self] in
+      let failure = await Self.applyAgentSkill(target: target, install: install)
+      guard let self else { return }
+      if let failure {
+        self.sendWebToast(failure, level: "error")
+      } else {
+        let destination = AgentSkillInstallService.destination(for: target).path
+        self.message = install ? "已安装 Aster skill 到 \(destination)。" : "已移除 \(destination)。"
+      }
+      self.refresh()
+      self.refreshAgentControlState()
+    }
+  }
+
+  private nonisolated static func applyAgentSkill(
+    target: AgentSkillInstallService.Target, install: Bool
+  ) async -> String? {
+    do {
+      if install {
+        _ = try AgentSkillInstallService.install(for: target)
+      } else {
+        try AgentSkillInstallService.uninstall(for: target)
+      }
+      return nil
+    } catch let error as AgentSkillInstallService.ServiceError {
+      return error.localizedMessage
+    } catch {
+      return error.localizedDescription
+    }
   }
 
   /// 列出已安装的编辑器,确认后把 Aster 写进它们的「外部终端」设置。
@@ -2479,6 +2680,24 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     catch { message = "无法打开主题文件夹：\(error.localizedDescription)"; refresh() }
   }
 
+  /// 打开 `~/.config/aster/agent-detection`；用户把改过的 `<id>.json` 放进去即可覆盖内置清单。
+  private func openAgentDetectionFolder() {
+    do { NSWorkspace.shared.open(try preferences.agentDetectionOverrideDirectory()) }
+    catch { message = "无法打开清单目录：\(error.localizedDescription)"; refresh() }
+  }
+
+  /// 重新读取覆盖目录。已在运行的 Agent 会话继续用旧清单，新识别的会话用新清单。
+  private func reloadAgentDetectionManifests() {
+    AgentDetectionManifestStore.shared.reload()
+    let warnings = AgentDetectionManifestStore.shared.summaries.compactMap { summary in
+      summary.warning.map { "\(summary.id)：\($0)" }
+    }
+    message = warnings.isEmpty
+      ? "已重新加载 Agent 检测清单。"
+      : "已重新加载，但有清单被忽略：" + warnings.joined(separator: "；")
+    refresh()
+  }
+
   // MARK: - Rows and cards
 
   /// 大圆角设置卡片；行间不画分隔线，靠每行自身的内边距形成留白节奏（Otty 风格）。
@@ -3026,6 +3245,8 @@ extension SettingsViewController: WKNavigationDelegate {
       "agents.badgeAwaitingInput": configuration.agents.badgeAwaitingInput,
       "agents.notifyTaskComplete": configuration.agents.notifyTaskComplete,
       "agents.notifyAwaitingInput": configuration.agents.notifyAwaitingInput,
+      "agents.screenDetectionEnabled": configuration.agents.resolvedScreenDetectionEnabled,
+      "agents.screenDetectionOverridesHook": configuration.agents.resolvedScreenDetectionOverridesHook,
       "agents.preventSleepWhileProcessing": configuration.agents.preventSleepWhileProcessing,
       "agents.resumeSessions": configuration.agents.resumeSessions,
       "recipes.savedReplayMode": webRecipeReplay(configuration.resolvedSavedRecipeReplayMode),
@@ -3122,6 +3343,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "computedFonts": makeWebComputedFonts(),
       "agents": makeWebAgents(),
       "memoryMCP": memoryMCPStatus.jsonValue,
+      "agentControl": agentControlStatus.jsonValue,
       "recipes": makeWebRecipes(),
       "shortcuts": makeWebShortcuts(),
     ]
@@ -3237,6 +3459,9 @@ extension SettingsViewController: WKNavigationDelegate {
     case .pi: "把 Aster 扩展写入 ~/.pi/agent/extensions/，实时同步任务状态。"
     case .omp: "把 Aster 扩展写入 ~/.omp/agent/extensions/，实时同步任务状态。"
     case .grokBuild: "把 Aster hooks 写入 ~/.claude/settings.json（Grok 作为 Claude 兼容层读取），与 Claude 条目并排、互不覆盖。"
+    case .gemini, .githubCopilot, .amp, .droid, .devin, .kiro, .qoder, .qwen, .hermes,
+      .antigravity, .maki, .muse, .cline, .kilo:
+      "该 Agent 没有 Aster hook 集成，任务状态依赖屏幕检测，无需写入任何配置。"
     }
   }
 
@@ -3522,6 +3747,8 @@ extension SettingsViewController: WKNavigationDelegate {
     case "agents.badgeAwaitingInput": preferences.configuration.agents.badgeAwaitingInput = try bool()
     case "agents.notifyTaskComplete": preferences.configuration.agents.notifyTaskComplete = try bool()
     case "agents.notifyAwaitingInput": preferences.configuration.agents.notifyAwaitingInput = try bool()
+    case "agents.screenDetectionEnabled": preferences.configuration.agents.screenDetectionEnabled = try bool()
+    case "agents.screenDetectionOverridesHook": preferences.configuration.agents.screenDetectionOverridesHook = try bool()
     case "agents.preventSleepWhileProcessing": preferences.configuration.agents.preventSleepWhileProcessing = try bool()
     case "agents.resumeSessions": preferences.configuration.agents.resumeSessions = try bool()
     case "recipes.savedReplayMode": preferences.configuration.savedRecipeReplayMode = try recipeReplayValue(try string())
@@ -3988,6 +4215,8 @@ extension SettingsViewController: WKNavigationDelegate {
       refresh()
     case "importTheme": importTheme()
     case "openThemesFolder": openThemesFolder()
+    case "openAgentDetectionFolder": openAgentDetectionFolder()
+    case "reloadAgentDetectionManifests": reloadAgentDetectionManifests()
     case "installFont": NSFontManager.shared.orderFrontFontPanel(nil)
     case "openFontsFolder": openFontsFolder()
     case "openRecipesFolder":
@@ -4013,6 +4242,9 @@ extension SettingsViewController: WKNavigationDelegate {
     case "installMemoryMCP": performMemoryMCPInstall(install: true)
     case "uninstallMemoryMCP": performMemoryMCPInstall(install: false)
     case "copyCodexMCPInstructions": copyCodexMCPInstructions()
+    case "uninstallCLI": performCLIInstall(install: false)
+    case "installAgentSkill": installAgentSkill(providerRawValue: payload["provider"] as? String)
+    case "uninstallAgentSkill": uninstallAgentSkill(providerRawValue: payload["provider"] as? String)
     case "clearWebPaneData": clearWebPaneBrowsingData()
     case "resetAdvanced":
       for key in SettingsWebBridge.compatibilityDefaults.keys where key.hasPrefix("advanced.") {
@@ -4718,17 +4950,9 @@ extension SettingsViewController: WKNavigationDelegate {
     preferences.resetCompatibilityValues()
   }
 
+  /// 设置页展示名直接取领域层 `displayName`，避免两处表漂移。
   private func agentDisplayName(_ provider: AgentProvider) -> String {
-    switch provider {
-    case .claudeCode: "Claude Code"
-    case .codex: "Codex"
-    case .openCode: "OpenCode"
-    case .cursorCLI: "Cursor CLI"
-    case .kimiCode: "Kimi Code"
-    case .pi: "Pi"
-    case .omp: "omp"
-    case .grokBuild: "Grok Build"
-    }
+    provider.displayName
   }
 
   /// 网页资源只接受这组固定 token，再映射为 Aster 自绘的本地 provider 图标；不下发
@@ -4743,6 +4967,12 @@ extension SettingsViewController: WKNavigationDelegate {
     case .pi: "pi"
     case .omp: "omp"
     case .grokBuild: "grok"
+    case .gemini: "gemini"
+    case .githubCopilot: "copilot"
+    // 其余新 provider 暂无专属图标，落到通用 AI 终端图标。
+    case .amp, .droid, .devin, .kiro, .qoder, .qwen, .hermes,
+      .antigravity, .maki, .muse, .cline, .kilo:
+      "terminal-ai"
     }
   }
 

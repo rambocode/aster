@@ -20,6 +20,7 @@ enum TerminalLaunchEnvironmentBuilder {
     version: String,
     resourcesDirectory: String?,
     engineTerminfoDirectory: String? = nil,
+    controlContext: TerminalControlContext? = nil,
     terminfoEntryExists: (String, [String: String]) -> Bool
   ) -> TerminalLaunchEnvironmentResult {
     // 主资源 terminfo（build-app.sh 合并生成）优先；引擎 Bundle 的 terminfo 让
@@ -43,7 +44,8 @@ enum TerminalLaunchEnvironmentBuilder {
       term: resolution.term,
       version: version,
       paneIdentifier: paneIdentifier,
-      bundledTerminfoDirectories: terminfoDirectories
+      bundledTerminfoDirectories: terminfoDirectories,
+      controlContext: controlContext
     )
     if let resourcesDirectory,
       let plan = ShellIntegrationLaunchPlan.make(

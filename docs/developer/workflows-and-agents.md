@@ -93,6 +93,79 @@ P0 工具：`search_memory`、`get_project_context`、`get_session`、`get_relat
 > 生产路径本身一致（录制侧用 git toplevel、MCP 侧用 getcwd，都是物理路径），
 > 只有测试构造临时目录时会踩到。
 
+### Agent 控制 API
+
+Aster 运行时在 `~/Library/Application Support/Aster/Control/aster.sock` 监听一个 Unix domain
+socket（目录 `0700`、socket `0600`，`accept` 后用 `getpeereid` 校验对端 uid，不监听网络端口）。
+线格式是 NDJSON：每行一个 JSON 对象，请求 `{"id": 1, "method": "agent.list", "params": {...},
+"protocol": 1}`，响应 `{"id": 1, "result": {...}}` 或 `{"id": 1, "error": {"code": "...",
+"message": "..."}}`；`id` 原样回传，单行上限 1 MiB（超限回 `request_too_large` 并断开）。
+协议定义集中在 `Sources/AsterCore/AsterControlProtocol.swift`（信封、方法、params/result、
+错误码、事件），服务端在 `Sources/Aster/Control/`，CLI 在 `Sources/AsterCLI/`。
+
+| 方法 | 写 | 说明 |
+| --- | --- | --- |
+| `server.ping` | 否 | 协议版本、App 版本、pid |
+| `session.snapshot` | 否 | 窗口 → 标签 → pane 三级树 + 当前事件序列号 |
+| `agent.list` / `agent.get` / `agent.read` | 否 | 正在运行的 agent、单个详情、读其 pane 屏幕 |
+| `agent.prompt` | 是 | 提交 prompt（bracketed paste + 回车）；可带 `wait` 挂起直到状态到达 |
+| `agent.wait` | 否 | 等待 agent 到达 `until` 中任一状态（默认 idle/done/blocked） |
+| `agent.send_keys` / `agent.focus` / `agent.start` | 是 | 按键、聚焦并标记「已看见」、在空闲 shell pane 启动 agent |
+| `pane.read` / `pane.wait_for_output` | 否 | 读任意终端 pane（`visible`/`recent`，≤10 000 行）、轮询等待子串或正则命中 |
+| `pane.send_text` / `pane.send_keys` / `pane.focus` | 是 | 向 pane 写可打印文本 / 逻辑按键、聚焦 |
+| `events.subscribe` / `events.wait` | 否 | 长连接推送 / 阻塞等下一条事件（`after_sequence` 补漏） |
+| `notification.show` | 是 | 系统通知（标题 256 字节、正文 1 KiB，剥离控制字符） |
+| `workflow.execute` | 是 | 旧 `aster open/view/edit/watch/jump/learn/ignore/pane run|exec|capture` 语法桥接到 `WorkflowCLIParser`，返回 `{stdout, stderr, exit_code}` |
+
+**ID 与 selector**：窗口 `w1`、标签 `w1:t2`、pane `w1:p5` 是稳定短 ID，由
+`ControlIdentityRegistry` 分配、只增不复用，标签跨窗口转移后旧 ID 仍作为别名可用。`target`/`pane`
+字段接受短 ID、`p_<UUID>`、UUID、agent 名（`[a-z][a-z0-9_-]{0,31}`）或 `current`（连接携带的
+`ASTER_PANE_ID`，否则焦点 pane）。
+
+**Agent 状态**：`idle` / `working` / `blocked`（等待用户输入）/ `done`（已完成且用户尚未看见，
+对应 `agentTaskCompletionUnread`）/ `unknown`；`detection` 标明来源：`hook`（lifecycle hook，权威）、
+`screen`（屏幕扫描）、`heuristic`（静默启发式，纯启发式的 idle 会降级为 unknown）。
+事件 `pane.created` / `pane.updated` / `pane.closed` / `pane.focused` / `pane.exited` /
+`pane.agent_status_changed` 以 `{"sequence": n, "event": "...", "data": {...}}` 推送，
+`state_change_seq` 随每次状态变化递增。
+
+**环境变量**：每个 pane 子进程注入 `ASTER_ENV=1`、`ASTER_SOCKET_PATH`、`ASTER_BIN_PATH`
+（`aster-cli` 路径，开发构建可能缺省）、`ASTER_WINDOW_ID` / `ASTER_TAB_ID` / `ASTER_PANE_ID`（短 ID），
+并保留 0.4.x 的 `ASTER_SESSION_ID` 别名（见 `TerminalControlContext`）。socket 被另一实例占用时
+第二个实例不注入 `ASTER_ENV`。
+
+**安全门禁**（`AsterControlWriteGate`，与旧 CLI 的 `permitsWorkflowCLIWrite` 同源）：写方法需
+「设置 → 控制 → IPC 允许发送输入」，否则 `write_not_allowed`；SSH/sudo 等敏感会话还需
+「允许敏感会话」，否则 `sensitive_session_not_allowed`；只读模式等阻断返回 `write_rejected`。
+`agent.prompt` 对 `blocked` 的 agent 不写入（`agent_blocked`）；`agent.start` 要求 pane 没有前台
+命令且没有 agent，否则 `pane_busy`；`name` 与某个存活 agent 重名则 `agent_name_taken`（换个名字重试，
+不会启动第二份）。`events.wait` 的 `after_sequence` 早于 512 条回放环的最旧一条时返回 `replay_gap`：
+中间的事件已经丢了，客户端应重新 `session.snapshot` 拿到当前 `sequence` 再继续等，而不是从旧序列号硬追。
+其它错误码：`parse_error`、`invalid_request`、`method_not_found`、`invalid_params`、
+`request_too_large`、`protocol_mismatch`、`not_found`、`pane_not_terminal`、`pane_not_running`、
+`agent_not_found`、`agent_not_ready`、`agent_prompt_stalled`、`agent_not_running`、`timeout`、
+`too_many_waits`（每连接最多 4 个待决等待）、`internal_error`。
+所有 `timeout_ms` 上限 600 000 ms，超出即 clamp。
+
+手测：
+
+```bash
+S="$HOME/Library/Application Support/Aster/Control/aster.sock"
+printf '{"id":1,"method":"server.ping"}\n' | nc -U "$S"
+printf '{"id":2,"method":"pane.read","params":{"pane":"current","lines":20}}\n' | nc -U "$S"
+(printf '{"id":3,"method":"events.subscribe"}\n'; cat) | nc -U "$S"
+```
+
+**CLI 与安装**：`aster-cli`（target `AsterCLI`，只依赖 AsterCore）是阻塞 POSIX socket 客户端：
+`--socket` > `ASTER_SOCKET_PATH` > 默认路径；连不上时 `open -gj <bundle>` 拉起 App 并等 5 s；
+退出码 0 成功 / 1 服务端 error（stderr 打印 error JSON）/ 2 参数错 / 69 不可达。`agent.*`、
+`events.*`、`notification.*` 在 `ASTER_ENV != 1` 时拒绝（`--allow-outside` 例外）；`watch` 与
+`tab badge` 不经 socket，直接向 `/dev/tty` 写 OSC。`AsterCLIInstaller` 把 `/usr/local/bin/aster`
+（不可写则 `~/.local/bin/aster`）做成指向 bundle 内 `aster-cli` 的 symlink（临时链接 + rename），
+识别并覆盖旧版 sh 启动器，拒绝覆盖来历不明的文件。`AgentSkillInstallService` 把
+`Resources/skills/aster/` 复制到 `~/.claude/skills/aster` 或 `~/.codex/skills/aster`，
+写 `.aster-skill-version`（App 版本 + SKILL.md sha256）；只接管带标记的目录，符号链接一律拒绝。
+
 ## 失败语义
 
 - 无法验证 Recipe、CLI token、Agent 配置所有权或文件身份：拒绝操作，不做部分写入。

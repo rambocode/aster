@@ -490,7 +490,12 @@ final class TabRowButton: NSButton {
     case .claudeCode: "claude"
     case .codex: "openai"
     case .grokBuild: "grok"
-    case .openCode, .cursorCLI, .kimiCode, .pi, .omp: "terminal-ai"
+    case .gemini: "gemini"
+    case .githubCopilot: "copilot"
+    case .openCode, .cursorCLI, .kimiCode, .pi, .omp,
+      .amp, .droid, .devin, .kiro, .qoder, .qwen, .hermes,
+      .antigravity, .maki, .muse, .cline, .kilo:
+      "terminal-ai"
     }
   }
 

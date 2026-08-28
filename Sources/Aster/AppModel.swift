@@ -377,6 +377,8 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// 完整分屏，而不是停在某次临时放大的状态。
   @Published private(set) var zoomedPaneID: UUID?
   var onWorkspaceChanged: (() -> Void)?
+  /// 控制协议上下文解析（由 AppModel 转发给 AsterControlBridge）；Session 启动 PTY 时惰性调用。
+  var controlContextResolver: ((_ tabID: UUID, _ paneID: UUID) -> TerminalControlContext?)?
   private(set) var runtimes: [UUID: WorkspacePaneRuntime] = [:]
   /// 每个 Pane 保留自己的程序标题；只有活动 Pane 的状态投影到标签和窗口。
   private var paneTitleStates: [UUID: TerminalTitleState] = [:]
@@ -979,6 +981,10 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     // 会让同一标签的其余 Pane 随任一 Pane 的命令开始/结束被重新安放。
     // OSC 标题与目录继续使用各自专用通道，不进入这两组 publisher。
     if let session = runtime.terminalSession {
+      session.controlContextProvider = { [weak self] in
+        guard let self else { return nil }
+        return self.controlContextResolver?(self.id, descriptor.id)
+      }
       session.onRequestPaneFocus = { [weak self] in self?.setActivePane(descriptor.id) }
       session.onRequestOpenInAster = { [weak self] url, isDirectory in
         guard let self else { return false }
@@ -1239,6 +1245,8 @@ final class AppModel: ObservableObject {
   var onRequestNewWindow: ((PaneDescriptor?) -> Bool)?
   var onRequestToggleWindowPin: (() -> Void)?
   var onRequestPictureInPicture: ((Bool) -> Void)?
+  /// 控制协议 `pane.focus` 需要把本窗口前置；AppKit 窗口由 AppDelegate 持有，模型只发意图。
+  var onRequestWindowFocus: (() -> Void)?
   private let defaults: UserDefaults
   private let snapshotKey = "aster.workspace.snapshot.v1"
   /// 合并窗口内是否已有待执行的快照写入；见 `schedulePersistWorkspace()`。
@@ -1250,7 +1258,13 @@ final class AppModel: ObservableObject {
   private let applicationSessionRunningKey = "aster.session.running.v1"
   private let applicationSessionCrashCountKey = "aster.session.crash-count.v1"
   private let applicationSessionEndReasonKey = "aster.session.end-reason.v1"
-  private let windowID = UUID()
+  /// 窗口身份：关闭记录与控制协议短 ID（`w<n>`）都以它为键；只读公开给 AsterControlBridge。
+  let windowID = UUID()
+  /// 控制协议上下文解析器，由 AsterControlBridge.attach(model:) 注入；未接桥时 Pane 不注入 ASTER_ENV。
+  var controlContextResolver: ((_ tabID: UUID, _ paneID: UUID) -> TerminalControlContext?)?
+  /// 旧 CLI selector 的补充解析（短 ID `w1:p1` / `current`），由 AsterControlBridge 注入；
+  /// 返回 nil 时回退到 `p_<UUID>` / UUID 规则。
+  var workflowCLISelectorResolver: ((String) -> UUID?)?
   private var recentlyClosedTabs: RecentlyClosedTabs
   private var frequentFolders: FrequentFolders
   private var workflowRecipeTrust: WorkflowRecipeTrustStore
@@ -2278,7 +2292,8 @@ final class AppModel: ObservableObject {
     }
   }
 
-  private func launchComponents(for provider: AgentProvider) -> [String] {
+  /// Agent 启动 argv（用户自定义前缀或默认命令名）；控制协议 `agent.start` 也复用它。
+  func launchComponents(for provider: AgentProvider) -> [String] {
     guard let components = agentLaunchCommands[provider.rawValue],
       let executable = components.first,
       (try? AgentLaunchPrefix(
@@ -3214,6 +3229,11 @@ final class AppModel: ObservableObject {
       guard let tab = selectedTab, let runtime = tab.activeRuntime else { return nil }
       return (tab, runtime)
     }
+    if let paneID = workflowCLISelectorResolver?(selector) {
+      for tab in tabs {
+        if let runtime = tab.runtime(for: paneID) { return (tab, runtime) }
+      }
+    }
     let rawIdentifier = selector.hasPrefix("p_") ? String(selector.dropFirst(2)) : selector
     if let paneID = UUID(uuidString: rawIdentifier) {
       for tab in tabs {
@@ -3234,12 +3254,11 @@ final class AppModel: ObservableObject {
     allowSensitiveSessions: Bool,
     completion: (WorkflowCLIExecutionResponse) -> Void
   ) -> Bool {
-    guard allowSendKeys else {
-      completion(.failure("IPC Allow Send Keys 未开启。\n", exitCode: 77))
-      return false
-    }
-    guard !session.isSensitiveAutomationSession || allowSensitiveSessions else {
-      completion(.failure("敏感会话还需要开启 IPC Allow Sensitive Sessions。\n", exitCode: 77))
+    // 门禁逻辑与 socket 控制协议共用（AsterControlWriteGate）；这里只把错误码翻回旧 CLI 的文案与 exit 77。
+    if let blocker = AsterControlWriteGate.blocker(
+      session: session, allowSendKeys: allowSendKeys, allowSensitiveSessions: allowSensitiveSessions)
+    {
+      completion(.failure(blocker.message + "\n", exitCode: 77))
       return false
     }
     return true
@@ -3253,19 +3272,11 @@ final class AppModel: ObservableObject {
     case .text(let value):
       return try WorkflowCLIInputDecoder.decode(value)
     case .keys(let names):
-      return try names.flatMap { name -> [UInt8] in
-        switch name.lowercased() {
-        case "enter", "return": [13]
-        case "tab": [9]
-        case "escape", "esc": [27]
-        case "backspace": [127]
-        case "ctrl-c", "control-c": [3]
-        case "up": Array("\u{1B}[A".utf8)
-        case "down": Array("\u{1B}[B".utf8)
-        case "right": Array("\u{1B}[C".utf8)
-        case "left": Array("\u{1B}[D".utf8)
-        default: throw WorkflowCLIInputDecodeError.invalidEscape
-        }
+      // 键名表与 socket 控制协议共用（AsterControlKeyEncoder），旧键名全部兼容。
+      do {
+        return try AsterControlKeyEncoder.encode(names)
+      } catch {
+        throw WorkflowCLIInputDecodeError.invalidEscape
       }
     case .file(let path):
       let url = URL(fileURLWithPath: path)
@@ -3577,6 +3588,9 @@ final class AppModel: ObservableObject {
 
   private func configurePersistence(for tab: TerminalTabItem) {
     tab.onWorkspaceChanged = { [weak self] in self?.schedulePersistWorkspace() }
+    tab.controlContextResolver = { [weak self] tabID, paneID in
+      self?.controlContextResolver?(tabID, paneID)
+    }
     tab.onActivityBadgeChanged = { [weak self, weak tab] in
       guard let tab else { return }
       self?.tabActivityChanged.send(tab.id)

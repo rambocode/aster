@@ -363,3 +363,470 @@ func restoredCommandDeliversViaFallbackAndCancelsOnInput() async throws {
   interruptedView.onTerminalUserInput?()
   #expect(!interrupted.hasPendingRestoredCommand)
 }
+
+// MARK: - 屏幕检测接线（计划 A6）
+
+/// 假屏幕：测试用它替代 Ghostty 读屏，直接喂检测引擎。
+@MainActor
+private final class FakeAgentScreen {
+  var text = ""
+  var title = ""
+  var progress = ""
+  var sequence: UInt64 = 0
+  var processExited = false
+
+  /// 每次改屏幕都递增序号，否则 idle 时轮询会因序号未变而跳过读屏。
+  func show(_ text: String, title: String? = nil) {
+    self.text = text
+    if let title { self.title = title }
+    sequence &+= 1
+  }
+
+  var source: AgentScreenDetectionMonitor.Source {
+    AgentScreenDetectionMonitor.Source(
+      readScreen: { [unowned self] in self.text },
+      oscTitle: { [unowned self] in self.title },
+      oscProgress: { [unowned self] in self.progress },
+      contentSequence: { [unowned self] in self.sequence },
+      processExited: { [unowned self] in self.processExited }
+    )
+  }
+}
+
+/// 测试用的快节奏：20ms 轮询、60ms 启动宽限。
+private let fastScreenDetectionTiming = AgentScreenDetectionMonitor.Timing(
+  pollInterval: .milliseconds(20),
+  pendingIdleRecheck: .milliseconds(10),
+  startupGrace: .milliseconds(60)
+)
+
+/// 用 OSC 133 A/B/C 让 SwiftTerm 视图进入「有前台命令在跑」；标题补识别只在此状态下生效。
+@MainActor
+private func startForegroundCommand(_ view: AsterTerminalView, _ command: String = "wrapper") {
+  view.dataReceived(
+    slice: Array("\u{1B}]133;A\u{07}\u{1B}]133;B\u{07}\(command)\u{1B}]133;C\u{07}".utf8)[...])
+}
+
+/// 轮询等待条件成立，最多 `timeout`。
+@MainActor
+private func waitUntil(
+  _ timeout: Duration = .seconds(2), _ condition: @MainActor () -> Bool
+) async throws {
+  let deadline = ContinuousClock.now.advanced(by: timeout)
+  while !condition(), ContinuousClock.now < deadline {
+    try await Task.sleep(for: .milliseconds(10))
+  }
+}
+
+@Test("屏幕上的阻塞表单覆盖 partial hook 的 processing，清除后回到 processing")
+@MainActor
+func screenBlockerOverridesPartialHookProcessing() async throws {
+  let (suiteName, defaults) = try agentLifecycleDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.agents.notifyAwaitingInput = true
+  preferences.configuration.agents.notifyTaskComplete = true
+  let recorder = TerminalNotificationRecorder()
+  let screen = FakeAgentScreen()
+  let session = TerminalSession(
+    workingDirectory: "/tmp",
+    notificationPoster: recorder,
+    agentScreenDetectionTiming: fastScreenDetectionTiming
+  )
+  session.agentScreenDetectionSourceOverride = screen.source
+  let terminalView = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  defer { session.stop(immediately: true) }
+
+  // codex 是 partial hook provider：hook 权威后屏幕轮询继续跑。
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .codex, signal: .processing)
+  )
+  #expect(session.hasAuthoritativeAgentLifecycle)
+  #expect(session.isAgentScreenMonitorRunning)
+  #expect(session.agentTaskState == .processing)
+
+  screen.show("› 1. Yes, proceed\nAllow command?\n")
+  try await waitUntil { session.agentTaskState == .awaitingInput }
+  #expect(session.agentTaskState == .awaitingInput)
+  #expect(recorder.records.map(\.notification.title) == ["Agent 等待输入"])
+
+  // 表单消失：hook 仍说 processing，屏幕无阻塞证据 → 回到 processing，不算任务完成。
+  screen.show("• Working (4s • esc to interrupt)\n")
+  try await waitUntil { session.agentTaskState == .processing }
+  #expect(session.agentTaskState == .processing)
+  #expect(!session.agentTaskCompletionUnread)
+  #expect(recorder.records.count == 1)
+
+  // 关闭「屏幕阻塞覆盖 hook」后，同样的表单不再改变 hook 结论。
+  preferences.configuration.agents.screenDetectionOverridesHook = false
+  screen.show("› 1. Yes, proceed\nAllow command?\n")
+  try await Task.sleep(for: .milliseconds(150))
+  #expect(session.agentTaskState == .processing)
+
+  // hook 收尾：processing → idle 仍走原有的完成通知。
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .codex, signal: .idle)
+  )
+  #expect(session.agentTaskState == .idle)
+  #expect(session.agentTaskCompletionUnread)
+  #expect(recorder.records.map(\.notification.title) == ["Agent 等待输入", "Agent 任务已完成"])
+}
+
+@Test("无 hook 的清单 provider 完全由屏幕检测驱动，启动宽限视为处理中")
+@MainActor
+func screenDetectionDrivesHooklessManifestProvider() async throws {
+  let (suiteName, defaults) = try agentLifecycleDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.agents.notifyTaskComplete = true
+  let recorder = TerminalNotificationRecorder()
+  let screen = FakeAgentScreen()
+  let session = TerminalSession(
+    workingDirectory: "/tmp",
+    fallbackAgentIdleDelay: .milliseconds(50),
+    notificationPoster: recorder,
+    agentScreenDetectionTiming: fastScreenDetectionTiming
+  )
+  session.agentScreenDetectionSourceOverride = screen.source
+  let terminalView = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  defer { session.stop(immediately: true) }
+
+  // 经标题补识别 devin（别名前缀匹配），没有任何 hook；必须先有前台命令。
+  screen.show("Devin CLI\n")
+  startForegroundCommand(terminalView)
+  try await waitUntil { session.hasRunningCommand }
+  terminalView.onObservedTitleUpdate?(0, "Devin CLI")
+  // 标题回调经 Task 异步转发到 Session，需要等它落地。
+  try await waitUntil { session.activeAgentProvider != nil }
+  #expect(session.activeAgentProvider == .devin)
+  #expect(!session.hasAuthoritativeAgentLifecycle)
+  #expect(session.isAgentScreenMonitorRunning)
+  // 启动宽限内暂定 processing。
+  #expect(session.agentTaskState == .processing)
+
+  // 宽限结束后屏幕只是一个空闲提示框 → idle，且不能被当作「任务完成」通知。
+  screen.show(
+    "─────────────────────────────────────────────────────\n❭ Ask Devin to build features, fix bugs, or work on\n  your code\n─────────────────────────────────────────────────────\nSWE-1.6               Context: 16k / 200k tokens (7%)"
+  )
+  try await waitUntil { session.agentTaskState == .idle }
+  #expect(session.agentTaskState == .idle)
+  #expect(!session.agentTaskCompletionUnread)
+  #expect(recorder.records.isEmpty)
+
+  // 5 秒静默兜底已被屏幕检测取代：输出活动不再把状态抖成 processing。
+  terminalView.onTerminalOutputActivity?("some output")
+  try await Task.sleep(for: .milliseconds(120))
+  #expect(session.agentTaskState == .idle)
+
+  // 真正开始工作 → processing；随后回到提示框 → idle + 完成通知。
+  screen.show("◔ Reading shell 91b655\n\n⠀⡆ Running tools · 27s (esc to interrupt)\n─────\n❭ Guide Devin while it works")
+  try await waitUntil { session.agentTaskState == .processing }
+  #expect(session.agentTaskState == .processing)
+  screen.show(
+    "Done.\n\n────────────────────────────────────────────────── (bypass permissions on) ─\n❭\n────────────────────────────────────────────────────────────────────────────\nClaude Opus 4.6 Thinking                                    Context: 38k / 200k tokens (18%)"
+  )
+  try await waitUntil { session.agentTaskState == .idle }
+  #expect(session.agentTaskState == .idle)
+  #expect(session.agentTaskCompletionUnread)
+  #expect(recorder.records.map(\.notification.title) == ["Agent 任务已完成"])
+
+  // 屏幕解释可用，且命中 devin 的实时提示框规则。
+  let explain = try #require(session.explainAgentDetection())
+  #expect(explain.agentID == "devin")
+  #expect(explain.matchedRule?.id == "live_prompt_footer")
+}
+
+@Test("完整生命周期 hook 权威后停止屏幕轮询；无清单 provider 保持 5 秒兜底")
+@MainActor
+func fullLifecycleHookStopsMonitorAndManifestlessProviderKeepsFallback() async throws {
+  let (suiteName, defaults) = try agentLifecycleDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+
+  // opencode（fullLifecycleHooks）：先由标题识别启动屏幕轮询，hook 一到就停。
+  // `pi` 别名太通用（`ssh pi`），已从标题识别里排除，因此用 opencode 演示同一路径。
+  let piScreen = FakeAgentScreen()
+  let pi = TerminalSession(
+    workingDirectory: "/tmp", agentScreenDetectionTiming: fastScreenDetectionTiming)
+  pi.agentScreenDetectionSourceOverride = piScreen.source
+  let piView = try #require(pi.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { pi.stop(immediately: true) }
+  startForegroundCommand(piView)
+  try await waitUntil { pi.hasRunningCommand }
+  piView.onObservedTitleUpdate?(0, "opencode — ~/src")
+  try await waitUntil { pi.activeAgentProvider != nil }
+  #expect(pi.activeAgentProvider == .openCode)
+  #expect(pi.isAgentScreenMonitorRunning)
+  piView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .openCode, signal: .processing))
+  #expect(pi.hasAuthoritativeAgentLifecycle)
+  #expect(!pi.isAgentScreenMonitorRunning)
+  #expect(pi.agentTaskState == .processing)
+
+  // omp：没有清单，屏幕来源就绪也不启动轮询，仍走活动探针的短暂 processing → idle。
+  // omp 的别名在标题排除表里，这里走真实 shell 的 commandStart 首 token 识别。
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "aster-omp-fallback-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let executable = directory.appendingPathComponent("omp", isDirectory: false)
+  try Data("#!/bin/sh\n/bin/sleep 2\n".utf8).write(to: executable, options: .atomic)
+  try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+  let ompScreen = FakeAgentScreen()
+  let omp = TerminalSession(
+    workingDirectory: directory.path,
+    fallbackAgentIdleDelay: .milliseconds(80),
+    agentScreenDetectionTiming: fastScreenDetectionTiming
+  )
+  omp.agentScreenDetectionSourceOverride = ompScreen.source
+  _ = try #require(omp.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { omp.stop(immediately: true) }
+  omp.send(executable.path)
+  try await waitUntil { omp.activeAgentProvider != nil }
+  #expect(omp.activeAgentProvider == .omp)
+  #expect(!omp.isAgentScreenMonitorRunning)
+  #expect(omp.agentTaskState == .processing)
+  try await waitUntil { omp.agentTaskState == .idle }
+  #expect(omp.agentTaskState == .idle)
+
+  // 设置关闭屏幕检测：有清单的 provider 也回到旧行为。
+  preferences.configuration.agents.screenDetectionEnabled = false
+  let disabledScreen = FakeAgentScreen()
+  let disabled = TerminalSession(
+    workingDirectory: "/tmp",
+    fallbackAgentIdleDelay: .milliseconds(80),
+    agentScreenDetectionTiming: fastScreenDetectionTiming
+  )
+  disabled.agentScreenDetectionSourceOverride = disabledScreen.source
+  let disabledView = try #require(
+    disabled.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { disabled.stop(immediately: true) }
+  startForegroundCommand(disabledView)
+  try await waitUntil { disabled.hasRunningCommand }
+  disabledView.onObservedTitleUpdate?(0, "✳ Claude Code")
+  try await waitUntil { disabled.activeAgentProvider != nil }
+  #expect(disabled.activeAgentProvider == .claudeCode)
+  #expect(!disabled.isAgentScreenMonitorRunning)
+  try await waitUntil { disabled.agentTaskState == .idle }
+  #expect(disabled.agentTaskState == .idle)
+}
+
+@Test("Shell Controlled 标题关闭时 OSC 标题仍进入检测输入")
+@MainActor
+func oscTitleFeedsDetectionWhenShellControlledTitleIsOff() throws {
+  let (suiteName, defaults) = try agentLifecycleDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.shell.titleShellControlled = false
+  let screen = FakeAgentScreen()
+  let session = TerminalSession(
+    workingDirectory: "/tmp", agentScreenDetectionTiming: fastScreenDetectionTiming)
+  session.agentScreenDetectionSourceOverride = AgentScreenDetectionMonitor.Source(
+    readScreen: { [unowned screen] in screen.text },
+    // 标题来自 Session 自己记录的 OSC 原文，而不是假屏幕。
+    oscTitle: { [unowned session] in session.agentOSCTitle },
+    oscProgress: { [unowned session] in session.agentOSCProgress },
+    contentSequence: { [unowned screen] in screen.sequence },
+    processExited: { false }
+  )
+  let terminalView = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  defer { session.stop(immediately: true) }
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .codex, signal: .processing)
+  )
+
+  // 与 Ghostty 路径一致：OSC 0/2 原文在标题开关之前记录，窗口标题本身不受影响。
+  session.receiveAgentOSCTitle("[ . ] Action Required | llm-proxy")
+  session.receiveAgentOSCProgress("9;4;3;")
+  #expect(session.terminalTitle == "Shell")
+  #expect(session.agentOSCProgress == "4;3;")
+  let explain = try #require(session.explainAgentDetection())
+  #expect(explain.state == .blocked)
+  #expect(explain.matchedRule?.id == "osc_title_blocked")
+  #expect(explain.visibleBlocker)
+
+  session.receiveAgentOSCTitle("llm-proxy")
+  #expect(session.explainAgentDetection()?.matchedRule?.id == "osc_title_idle")
+}
+
+@Test("标题补识别只认别名前缀与 Claude glyph，不吃普通 shell 标题")
+func agentProviderFromTitleMatchesAliasPrefixOnly() {
+  #expect(TerminalSession.agentProvider(fromTitle: "✳ Claude Code") == .claudeCode)
+  #expect(TerminalSession.agentProvider(fromTitle: "⠋ project") == .claudeCode)
+  #expect(TerminalSession.agentProvider(fromTitle: "◐ Initial conversation") == .claudeCode)
+  #expect(TerminalSession.agentProvider(fromTitle: "codex") == .codex)
+  #expect(TerminalSession.agentProvider(fromTitle: "  Codex: ~/src  ") == .codex)
+  #expect(TerminalSession.agentProvider(fromTitle: "Devin CLI") == .devin)
+  #expect(TerminalSession.agentProvider(fromTitle: "kimi code — repo") == .kimiCode)
+  #expect(TerminalSession.agentProvider(fromTitle: "opencode — ~/src") == .openCode)
+  // 普通 shell 标题：路径、命令行、ssh 目标都不能被当成 Agent。
+  for title in [
+    "mike@mac: ~/src/agent", "vim agent.py", "ssh pi", "cd ~/muse", "man amp", "omp",
+    "pip install", "example.com", "codex-helper", "codex.py", "~/codex", "cursor", "droid",
+    "kilo", "cline", "maki", "",
+  ] {
+    #expect(TerminalSession.agentProvider(fromTitle: title) == nil, Comment(rawValue: title))
+  }
+}
+
+@Test("提示符下的标题不识别；弱证据 provider 在标题变化后被撤销")
+@MainActor
+func titleEvidenceProviderRequiresRunningCommandAndIsRevoked() async throws {
+  let (suiteName, defaults) = try agentLifecycleDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  let screen = FakeAgentScreen()
+  let session = TerminalSession(
+    workingDirectory: "/tmp", agentScreenDetectionTiming: fastScreenDetectionTiming)
+  session.agentScreenDetectionSourceOverride = screen.source
+  let terminalView = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+
+  // 纯提示符：即使标题完全匹配也不识别。
+  terminalView.onObservedTitleUpdate?(0, "codex")
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(session.activeAgentProvider == nil)
+  #expect(!session.isAgentScreenMonitorRunning)
+
+  // 前台命令运行中：识别为弱证据 provider 并启动读屏。
+  startForegroundCommand(terminalView)
+  try await waitUntil { session.hasRunningCommand }
+  terminalView.onObservedTitleUpdate?(0, "codex")
+  try await waitUntil { session.activeAgentProvider != nil }
+  #expect(session.activeAgentProvider == .codex)
+  #expect(session.isAgentScreenMonitorRunning)
+
+  // 标题变成普通路径，且屏幕没给过 working/blocked 证据 → 撤销。
+  terminalView.onObservedTitleUpdate?(0, "mike@mac: ~/src/agent")
+  try await waitUntil { session.activeAgentProvider == nil }
+  #expect(session.activeAgentProvider == nil)
+  #expect(!session.isAgentScreenMonitorRunning)
+  #expect(session.agentTaskState == .idle)
+
+  // 再次识别后屏幕出现 working 证据 → 标题变化不再撤销。
+  terminalView.onObservedTitleUpdate?(0, "codex")
+  try await waitUntil { session.activeAgentProvider == .codex }
+  screen.show("• Working (4s • esc to interrupt)\n")
+  try await waitUntil { session.agentTaskState == .processing && session.screenDetectionPublished != nil }
+  terminalView.onObservedTitleUpdate?(0, "mike@mac: ~/src")
+  try await Task.sleep(for: .milliseconds(80))
+  #expect(session.activeAgentProvider == .codex)
+}
+
+@Test("Claude 启动宽限中收到 hook idle 不通知也不置未读")
+@MainActor
+func startupGraceHookIdleDoesNotReportCompletion() async throws {
+  let (suiteName, defaults) = try agentLifecycleDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.agents.notifyTaskComplete = true
+  let recorder = TerminalNotificationRecorder()
+  let screen = FakeAgentScreen()
+  // 宽限放长，确保 hook idle 落在宽限期内（此时状态暂定 processing）。
+  let session = TerminalSession(
+    workingDirectory: "/tmp",
+    notificationPoster: recorder,
+    agentScreenDetectionTiming: .init(
+      pollInterval: .milliseconds(20), pendingIdleRecheck: .milliseconds(10),
+      startupGrace: .seconds(2))
+  )
+  session.agentScreenDetectionSourceOverride = screen.source
+  let terminalView = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+
+  // 由 commandStart 首 token 识别 claude → 进入宽限 → processing。
+  startForegroundCommand(terminalView)
+  try await waitUntil { session.hasRunningCommand }
+  terminalView.onObservedTitleUpdate?(0, "✳ Claude Code")
+  try await waitUntil { session.activeAgentProvider == .claudeCode }
+  #expect(session.agentTaskState == .processing)
+
+  // SessionStart hook 直接报 idle：这不是一轮任务的完成。
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .claudeCode, signal: .idle))
+  #expect(session.agentTaskState == .idle)
+  #expect(!session.agentTaskCompletionUnread)
+  #expect(recorder.records.isEmpty)
+
+  // 真的处理过一轮再 idle 才算完成。
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .claudeCode, signal: .processing))
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .claudeCode, signal: .idle))
+  #expect(session.agentTaskCompletionUnread)
+  #expect(recorder.records.map(\.notification.title) == ["Agent 任务已完成"])
+}
+
+@Test("清单未命中任何规则时，旧的等待输入启发式仍可把兜底 idle 提升为等待输入")
+@MainActor
+func fallbackIdleKeepsAwaitingInputHeuristic() async throws {
+  let (suiteName, defaults) = try agentLifecycleDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+
+  // 真实 shell 里跑一个叫 devin 的脚本：打印 `[y/N]` 提示后停住，光标停在提示行上。
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "aster-fallback-idle-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let executable = directory.appendingPathComponent("devin", isDirectory: false)
+  try Data("#!/bin/sh\nprintf 'Overwrite config.json? [y/N] '\n/bin/sleep 8\n".utf8)
+    .write(to: executable, options: .atomic)
+  try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+
+  let screen = FakeAgentScreen()
+  let session = TerminalSession(
+    workingDirectory: directory.path, agentScreenDetectionTiming: fastScreenDetectionTiming)
+  session.agentScreenDetectionSourceOverride = screen.source
+  _ = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+
+  // devin 清单没有任何规则覆盖这个提示 → 兜底 idle。
+  screen.show("Overwrite config.json? [y/N] ")
+  session.send(executable.path)
+  try await waitUntil { session.activeAgentProvider == .devin }
+  #expect(session.isAgentScreenMonitorRunning)
+  try await waitUntil { session.screenDetectionPublished?.isFallbackIdle == true }
+  #expect(session.explainAgentDetection()?.fallbackReason == AgentDetectionExplain.defaultKnownAgentIdleFallback)
+
+  // 光标行停在 [y/N] 静默 1.5s 后，启发式补位为等待输入。
+  try await waitUntil(.seconds(4)) { session.agentTaskState == .awaitingInput }
+  #expect(session.agentTaskState == .awaitingInput)
+
+  // 规则命中的 idle（devin 提示框）以规则为准，启发式不再抬升。
+  screen.show(
+    "─────────────────────────────────────────────────────\n❭ Ask Devin to build features, fix bugs, or work on\n  your code\n─────────────────────────────────────────────────────\nSWE-1.6               Context: 16k / 200k tokens (7%)")
+  try await waitUntil { session.screenDetectionPublished?.isFallbackIdle == false }
+  #expect(session.screenDetectionPublished?.isFallbackIdle == false)
+  #expect(session.agentTaskState == .idle)
+}
+
+@Test("monitor.stop() 解除回调，不再因闭包保留环泄漏")
+@MainActor
+func monitorStopBreaksRetainCycle() throws {
+  let manifest = try #require(AgentDetectionManifestStore.shared.manifest(for: "codex"))
+  weak var weakMonitor: AgentScreenDetectionMonitor?
+  do {
+    let monitor = AgentScreenDetectionMonitor(
+      manifest: manifest,
+      source: .init(
+        readScreen: { "" }, oscTitle: { "" }, oscProgress: { "" },
+        contentSequence: { 0 }, processExited: { false }),
+      timing: fastScreenDetectionTiming)
+    weakMonitor = monitor
+    // 模拟旧写法：闭包强捕获 monitor 自身。stop() 必须能切断这条环。
+    monitor.onPublish = { _ in _ = monitor }
+    monitor.onStartupGraceEnded = { _ = monitor }
+    monitor.start()
+    monitor.stop()
+  }
+  #expect(weakMonitor == nil)
+}

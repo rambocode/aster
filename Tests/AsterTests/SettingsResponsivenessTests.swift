@@ -236,6 +236,17 @@ func settingsAgentSnapshotContainsDetectionEvidence() throws {
   #expect(grok["icon"] as? String == "grok")
   #expect(grok["defaultCommand"] as? String == "grok")
   #expect(grok["integrated"] as? Bool == false)
+  // 旧 provider 排在前面，新 provider 追加在后，设置页顺序不因扩展而变化。
+  #expect(agents.prefix(8).compactMap { $0["id"] as? String }
+    == ([.claudeCode, .codex, .openCode, .cursorCLI, .kimiCode, .pi, .omp, .grokBuild] as [AgentProvider]).map(\.rawValue))
+  let gemini = try #require(agents.first { $0["id"] as? String == AgentProvider.gemini.rawValue })
+  #expect(gemini["name"] as? String == "Gemini CLI")
+  #expect(gemini["icon"] as? String == "gemini")
+  #expect(gemini["defaultCommand"] as? String == "gemini")
+  #expect(gemini["integrated"] as? Bool == false)
+  let kiro = try #require(agents.first { $0["id"] as? String == AgentProvider.kiro.rawValue })
+  #expect(kiro["icon"] as? String == "terminal-ai")
+  #expect(kiro["defaultCommand"] as? String == "kiro-cli")
 }
 
 @Test("网页主题编辑把黑暗主题参数追加到原配置而不创建副本")
@@ -569,4 +580,41 @@ func settingsUpdateSectionMatchesBridge() throws {
   #expect(style.contains("[data-state=\"upToDate\"]"))
   #expect(style.contains("[data-state=\"updateAvailable\"]"))
   #expect(style.contains("[data-state=\"failed\"]"))
+}
+
+/// Agent 控制卡片（CLI symlink + skill）同样是网页与 Swift 桥两份手写清单：
+/// 动作名与快照键只能靠文本断言对齐，漏一个就是按钮点了没反应。
+@Test("Agent 控制卡片的动作与快照键与 Swift 桥一一对应")
+@MainActor
+func settingsAgentControlCardMatchesBridge() throws {
+  let root = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+  let script = try String(
+    contentsOf: root.appendingPathComponent("Resources/settings-ui/settings.js"), encoding: .utf8)
+  let bridge = try String(
+    contentsOf: root.appendingPathComponent("Sources/Aster/SettingsView.swift"), encoding: .utf8)
+
+  #expect(script.contains("makeAgentControlGroup"))
+  #expect(script.contains("snapshot?.agentControl"))
+  for action in ["installCLI", "uninstallCLI", "installAgentSkill", "uninstallAgentSkill"] {
+    #expect(script.contains("\"\(action)\""), "settings.js 缺少动作 \(action)")
+    #expect(bridge.contains("case \"\(action)\""), "SettingsView 缺少动作 \(action)")
+  }
+  // skill 动作按 provider 分发，网页侧必须带 payload.provider，Swift 侧按 rawValue 解析。
+  #expect(script.contains("payload: { provider }"))
+  #expect(bridge.contains("payload[\"provider\"] as? String"))
+
+  let defaults = isolatedSettingsDefaults()
+  let controller = SettingsViewController(preferences: AppPreferences(defaults: defaults))
+  controller.loadViewIfNeeded()
+  let snapshot = controller.settingsSnapshotForTesting()
+  let agentControl = try #require(snapshot["agentControl"] as? [String: Any])
+  #expect((agentControl["socketPath"] as? String)?.hasSuffix(".sock") == true)
+  let cli = try #require(agentControl["cliState"] as? [String: Any])
+  #expect(cli["actionTitle"] as? String != nil)
+  let skills = try #require(agentControl["skills"] as? [String: Any])
+  // 首次快照来自后台探测前的缺省值，skills 可能为空；但键与形状必须稳定。
+  for (_, value) in skills {
+    #expect((value as? [String: Any])?["status"] as? String != nil)
+  }
 }

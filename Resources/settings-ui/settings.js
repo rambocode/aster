@@ -122,7 +122,7 @@
           row("shell.sshIntegration", "SSH 集成", "包装 SSH 命令以转发环境变量、安装 terminfo，并保持远端目录与标题跟踪"),
         ]},
         { title: "Aster CLI", rows: [
-          action("installCLI", "命令", "将 `aster` 命令安装到 PATH", "安装 CLI"),
+          action("installCLI", "命令", "将 `aster` 命令安装到 PATH（指向 App 内 aster-cli 的符号链接）；安装状态见「智能体 → Agent 控制」", "安装 CLI"),
           row("general.omitAsterPrefix", "省略 `aster` 前缀", "在 Aster 启动的 shell 中直接输入 edit foo.txt，无需写 aster edit foo.txt；自动注入 edit、view、watch、jump、learn 函数"),
           row("general.cliAllowOverwrite", "覆盖已有命令", "启用“省略 aster 前缀”或“自定义别名”时，覆盖你已定义的 edit/view/jump 等 shell 函数，而非保留原定义"),
           action("editCLIAliases", "自定义别名", "为内置命令设置别名（例如 v → view），仅在 Aster 启动的 shell 中生效；编辑后请重新打开 shell", "配置…"),
@@ -248,6 +248,10 @@
         row("agents.badgeAwaitingInput", "等待输入显示角标", "Agent 等待批准或输入时显示状态"),
         row("agents.notifyTaskComplete", "任务完成时通知", "Agent 完成任务后发送系统通知"),
         row("agents.notifyAwaitingInput", "等待输入时通知", "Agent 等待用户时发送系统通知"),
+        row("agents.screenDetectionEnabled", "屏幕检测", "对有检测清单的 Agent 读屏推断运行 / 等待输入 / 空闲；关闭后回到 5 秒静默判定"),
+        row("agents.screenDetectionOverridesHook", "屏幕阻塞覆盖 hook", "Claude / Codex 等 hook 报告处理中时，屏幕上的权限提示可把状态改为等待输入"),
+        action("openAgentDetectionFolder", "检测清单目录", "把改过的 <id>.json 放进 ~/.config/aster/agent-detection 即可覆盖内置清单", "打开"),
+        action("reloadAgentDetectionManifests", "重新加载清单", "修改覆盖清单后重新读取；已运行的 Agent 会话不受影响", "重新加载"),
         row("agents.preventSleepWhileProcessing", "处理期间阻止睡眠", "Agent 工作时保持 macOS 唤醒"),
         row("agents.resumeSessions", "恢复时重连会话", "窗口恢复时继续 Agent 原生会话"),
       ]},
@@ -2564,6 +2568,8 @@
         pi: "Pı",
         omp: "T",
         grok: "X",
+        gemini: "✦",
+        copilot: "◉",
       };
       const iconName = Object.hasOwn(iconMarks, agent.icon) ? agent.icon : "default";
       const icon = document.createElement("span");
@@ -2729,6 +2735,86 @@
     return group;
   }
 
+  /// Agent 控制卡片：`aster` CLI symlink 与各 Agent 的 Aster skill 安装状态。
+  /// 与 MCP 卡片同样由快照 `agentControl` 驱动：按钮文案随状态变化（安装 / 已安装 / 更新 / 修复）。
+  function makeAgentControlGroup() {
+    const state = snapshot?.agentControl ?? {};
+    const group = document.createElement("section");
+    group.className = "group";
+    const title = document.createElement("h2");
+    title.className = "group-title";
+    title.textContent = "Agent 控制";
+    const description = document.createElement("p");
+    description.className = "group-description";
+    description.textContent = "让 Agent 通过 aster 命令读取旁边的 pane、启动或等待另一个 Agent。安装 skill 后 Agent 会自己学会用法。";
+    const card = document.createElement("div");
+    card.className = "card";
+
+    /// 一行「状态 + 移除 + 主动作」；installed 时出现移除按钮，主动作在无事可做时禁用。
+    function makeInstallRow({ key, label, item, installAction, uninstallAction, payload }) {
+      const row = document.createElement("div");
+      row.className = "setting-row";
+      row.dataset.settingKey = key;
+      const copy = document.createElement("div");
+      copy.className = "setting-copy";
+      const rowLabel = document.createElement("span");
+      rowLabel.className = "setting-label";
+      rowLabel.textContent = `${label} — ${item?.status ?? "未知"}`;
+      const detail = document.createElement("span");
+      detail.className = "setting-detail";
+      detail.textContent = item?.detail ?? "";
+      copy.append(rowLabel, detail);
+      const controls = document.createElement("div");
+      controls.className = "setting-control";
+      if (item?.installed) {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "action-button danger";
+        remove.textContent = "移除";
+        remove.addEventListener("click", () => send("action", { action: uninstallAction, payload }));
+        controls.appendChild(remove);
+      }
+      const primary = document.createElement("button");
+      primary.type = "button";
+      primary.className = "action-button";
+      primary.textContent = item?.actionTitle ?? "安装";
+      primary.disabled = item?.canInstall === false || item?.actionTitle === "已安装";
+      primary.addEventListener("click", () => send("action", { action: installAction, payload }));
+      controls.appendChild(primary);
+      row.append(copy, controls);
+      return row;
+    }
+
+    card.appendChild(makeInstallRow({
+      key: "installCLI",
+      label: "aster 命令",
+      item: state.cliState,
+      installAction: "installCLI",
+      uninstallAction: "uninstallCLI",
+      payload: {},
+    }));
+    for (const [provider, label] of [["claudeCode", "Claude Code skill"], ["codex", "Codex skill"]]) {
+      card.appendChild(makeInstallRow({
+        key: `installAgentSkill.${provider}`,
+        label,
+        item: state.skills?.[provider],
+        installAction: "installAgentSkill",
+        uninstallAction: "uninstallAgentSkill",
+        payload: { provider },
+      }));
+    }
+    card.appendChild(makeRow({
+      key: "agentControl.socketPath",
+      label: "控制 socket",
+      detail: "aster 命令与 Agent 通过这个本机 Unix socket 与 Aster 通信，仅当前用户可连",
+      type: "readonly",
+      value: state.socketPath || "—",
+    }));
+
+    group.append(title, description, card);
+    return group;
+  }
+
   function makeRecipesGroup() {
     const group = document.createElement("section");
     group.className = "group";
@@ -2882,6 +2968,8 @@
     }
     // MCP 卡片排在记录与提炼之后：先决定记不记、怎么提炼，才轮到交给谁用。
     if (section.special === "agents") page.appendChild(makeMemoryMCPGroup());
+    // Agent 控制（CLI + skill）排在最后：先接入 Agent、决定记忆，再把控制权交给它。
+    if (section.special === "agents") page.appendChild(makeAgentControlGroup());
     content.replaceChildren(page);
     // 切到别的分区 / 搜索结果后锚点不存在，取色弹层随之收起。
     if (themeTokenPopover.element && !content.querySelector("[data-token-anchor]")) closeThemeTokenPopover();

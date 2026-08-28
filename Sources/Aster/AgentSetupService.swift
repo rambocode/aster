@@ -185,6 +185,10 @@ struct AgentSetupService {
       try uninstallManagedTOMLBlock(for: provider)
     case .openCode, .pi, .omp:
       try uninstallManagedArtifact(for: provider)
+    case .gemini, .githubCopilot, .amp, .droid, .devin, .kiro, .qoder, .qwen, .hermes,
+      .antigravity, .maki, .muse, .cline, .kilo:
+      // 仅屏幕检测的 provider 没有受管集成，卸载无事可做。
+      break
     }
     return try status(for: provider)
   }
@@ -303,6 +307,11 @@ struct AgentSetupService {
       guard let existing = try readExistingRegularFile(at: url) else { return false }
       let text = try utf8String(existing.data, path: url.path)
       return text == generatedArtifact(for: provider)
+
+    case .gemini, .githubCopilot, .amp, .droid, .devin, .kiro, .qoder, .qwen, .hermes,
+      .antigravity, .maki, .muse, .cline, .kilo:
+      // 没有受管集成可检测；状态页据此显示“未集成”，并由 Planner 给出 integrationUnavailable。
+      return false
     }
   }
 
@@ -494,7 +503,9 @@ struct AgentSetupService {
         .init(event: "postToolUse", state: .processing),
         .init(event: "stop", state: .idle),
       ]
-    case .openCode, .kimiCode, .pi, .omp:
+    case .openCode, .kimiCode, .pi, .omp,
+      .gemini, .githubCopilot, .amp, .droid, .devin, .kiro, .qoder, .qwen, .hermes,
+      .antigravity, .maki, .muse, .cline, .kilo:
       []
     }
   }

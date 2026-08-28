@@ -2165,6 +2165,9 @@ private struct GhosttyShellMarkerSignature: Equatable {
 final class TerminalSession: NSObject, ObservableObject, Identifiable {
   let id = UUID()
   let workingDirectory: String
+  /// 控制协议上下文的惰性提供者：由 Tab 在装配 runtime 时注入，PTY 启动时才求值，
+  /// 因此短 ID 分配（AsterControlBridge）可以晚于 Session 创建。
+  var controlContextProvider: (() -> TerminalControlContext?)?
   /// Outline 页只关心命令时间线结构变化；使用专用事件避免把高频终端输出提升为
   /// `objectWillChange`，也让已打开的大纲能在命令完成后局部更新。
   let outlineChanged = PassthroughSubject<Void, Never>()
@@ -2228,6 +2231,34 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 后回到 idle。一旦 hook 到达，权威 lifecycle 始终优先且不受超时影响。
   private var fallbackAgentActivityIsProcessing = false
   private var fallbackAgentIdleTask: Task<Void, Never>?
+
+  // MARK: Agent 屏幕检测（移植 herdr）
+  /// 已编译清单的来源；默认进程单例，测试可注入独立仓库。
+  private let agentDetectionManifestStore: AgentDetectionManifestStore
+  /// 轮询节奏；生产 300ms / 3s 宽限，测试注入短值。
+  private let agentScreenDetectionTiming: AgentScreenDetectionMonitor.Timing
+  /// 有清单 provider 在前台时运行；hook 覆盖完整生命周期（fullLifecycleHooks）后停止。
+  private var agentScreenMonitor: AgentScreenDetectionMonitor?
+  /// 屏幕检测最近发布的状态；nil 表示尚未发布（启动宽限内或未启动）。
+  /// 控制 API 用非 nil 判断 `detection == .screen`。
+  private(set) var screenDetectionPublished: AgentScreenDetectionPublisher.PublishedState?
+  /// 本轮 Agent 是否真的观察到过工作证据：hook 的 processing/awaitingInput，或屏幕
+  /// 检测发布的 working/blocked。启动宽限把状态暂定为 processing 不算证据；没有证据
+  /// 就回到 idle（Claude 启动时 SessionStart hook 直接发 idle、或只是打开了输入框）
+  /// 不能当作「任务完成」置未读或通知。随 provider 生命周期重置。
+  private var agentHasWorkEvidence = false
+  /// 终端标题 / 进度 OSC 的原文，独立于 Shell Controlled 标题开关，只喂给检测引擎。
+  private(set) var agentOSCTitle = ""
+  private(set) var agentOSCProgress = ""
+  /// PTY 每收到一段非空输出就 +1；idle 且序号未变时轮询跳过读屏。
+  private(set) var detectionContentSequence: UInt64 = 0
+  /// 测试 seam：注入假屏幕来源，绕过 Ghostty 读屏。生产恒为 nil。
+  var agentScreenDetectionSourceOverride: AgentScreenDetectionMonitor.Source?
+  /// 诊断 seam：屏幕检测轮询是否在运行。
+  var isAgentScreenMonitorRunning: Bool { agentScreenMonitor?.isRunning == true }
+  /// provider 只由标题补识别得出（弱证据）。命令结束、标题不再匹配且没有 hook /
+  /// 屏幕 working·blocked 证据时要撤销，避免普通 shell 标题把 Pane 永久标成 Agent。
+  private var agentProviderIsTitleEvidenceOnly = false
 
   private var foregroundPollTask: Task<Void, Never>?
   /// 诊断 seam：true 仅表示尚未取得权威 Shell Integration、仍需周期探测前台进程。
@@ -2416,6 +2447,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     fallbackAgentIdleDelay: Duration = .seconds(5),
     notificationPoster: any TerminalNotificationPosting = TerminalNotificationService.shared,
     diagnostics: DiagnosticsCenter = .shared,
+    agentDetectionManifestStore: AgentDetectionManifestStore = .shared,
+    agentScreenDetectionTiming: AgentScreenDetectionMonitor.Timing = .production,
     sshEndpointResolver: @escaping @Sendable (SSHCommandInvocation) async -> SSHResolvedEndpoint? = {
       await SSHHostResolutionService.resolve($0)
     }
@@ -2425,6 +2458,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     self.fallbackAgentIdleDelay = fallbackAgentIdleDelay
     self.notificationPoster = notificationPoster
     self.diagnostics = diagnostics
+    self.agentDetectionManifestStore = agentDetectionManifestStore
+    self.agentScreenDetectionTiming = agentScreenDetectionTiming
     self.sshEndpointResolver = sshEndpointResolver
     super.init()
   }
@@ -2527,7 +2562,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.onPasteIntoComposer = onPasteIntoComposer
     view.onSendSelectionToChat = onSendSelectionToChat
     view.onTerminalIO = { [weak self] in self?.refreshAutomaticSecureInput() }
-    view.onTerminalOutputActivity = { [weak self] line in self?.receiveActivityOutput(line) }
+    view.onTerminalOutputActivity = { [weak self] line in
+      self?.detectionContentSequence &+= 1
+      self?.receiveActivityOutput(line)
+    }
     view.onTerminalUserInput = { [weak self] in self?.handleTerminalUserInput() }
     view.onAgentTerminalDirective = { [weak self] directive in
       self?.handleAgentTerminalDirective(directive)
@@ -2626,6 +2664,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       version: AsterResourceLocations.productVersion(),
       resourcesDirectory: resourcesDirectory,
       engineTerminfoDirectory: AsterResourceLocations.engineTerminfoDirectory()?.path,
+      controlContext: controlContextProvider?(),
       terminfoEntryExists: SystemTerminfoChecker.entryExists
     )
     if let warning = launchEnvironment.resolution.warning {
@@ -2719,6 +2758,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       version: AsterResourceLocations.productVersion(),
       resourcesDirectory: resourcesDirectory,
       engineTerminfoDirectory: AsterResourceLocations.engineTerminfoDirectory()?.path,
+      controlContext: controlContextProvider?(),
       terminfoEntryExists: SystemTerminfoChecker.entryExists
     )
     if let warning = launchEnvironment.resolution.warning { appendStartupWarning(warning) }
@@ -2830,6 +2870,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.onUserInput = { [weak self] in self?.handleTerminalUserInput() }
     view.onPTYRead = { [weak self, weak view] bytes in
       guard let self, let view else { return }
+      if !bytes.isEmpty { self.detectionContentSequence &+= 1 }
       self.autocompleteController?.receiveOutput(bytes)
       // 记录层是 PTY 字节的并列消费者：只做拷贝转发，解析在后台管线完成。
       self.eventRecorder?.receivePTYOutput(id: self.id, bytes: bytes)
@@ -2947,11 +2988,15 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   ) {
     switch code {
     case 0...2:
+      // 检测引擎要的是程序写出的标题原文（Claude 的 ✳/盲文前缀、Codex 的 Action
+      // Required），必须在 Shell Controlled 开关之前记录，开关只管窗口标题的显示。
+      receiveAgentOSCTitle(String(decoding: payload, as: UTF8.self))
       guard preferences?.configuration.shell.resolvedTitleShellControlled == true else { return }
       handleTitleOSC(code: code, text: String(decoding: payload, as: UTF8.self))
     case 9:
       guard payload.count <= TerminalNotificationParser.maximumChunkBytes else { return }
       let value = String(decoding: payload, as: UTF8.self)
+      receiveAgentOSCProgress(value)
       // Ghostty 已处理标准 state 0...4；Aster/Otty 的 state 5 扩展只从 observer 补入。
       if let progress = TerminalProgressParser.parseOSC9(value), case .finished = progress {
         handleTerminalProgress(progress)
@@ -3036,6 +3081,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     isRunning = false
     hasRunningCommand = false
     awaitingInput = false
+    stopAgentScreenMonitor()
     activeAgentProvider = nil
     activeAgentSessionID = nil
     agentTaskState = .idle
@@ -3468,6 +3514,23 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     pendingViSearchDirection = nil
   }
 
+  /// 控制协议 `agent.focus`：用户（或代表用户的 agent）已经看过完成结果，清掉「完成未读」。
+  /// CLI 读屏刻意不调用它——只读操作不应改变徽章。
+  func markAgentCompletionSeen() {
+    if agentTaskCompletionUnread { agentTaskCompletionUnread = false }
+  }
+
+  /// 控制协议读屏：visible 只取当前视口，recent 含回滚；行数上限由调用方裁剪。
+  /// Ghostty 路径直接读引擎；SwiftTerm 回归路径退化为有界快照。
+  func readControlText(includeScrollback: Bool, maximumLines: Int) -> String? {
+    if let ghosttyView {
+      return ghosttyView.readText(includeScrollback: includeScrollback, maximumLines: maximumLines)
+    }
+    guard let terminalView else { return nil }
+    let lines = terminalView.boundedTextSnapshot().lines
+    return lines.suffix(maximumLines).joined(separator: "\n")
+  }
+
   func textSnapshot() -> TerminalTextSnapshot {
     if let text = ghosttyView?.readText(includeScrollback: true, maximumLines: 10_000) {
       return .init(firstAbsoluteRow: 0, lines: text.components(separatedBy: "\n"))
@@ -3728,6 +3791,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       isRunning = false
       foregroundPollTask?.cancel()
       foregroundPollTask = nil
+      stopAgentScreenMonitor()
       clearFallbackAgentActivity()
       awaitingInputTask?.cancel()
       completedFlashTask?.cancel()
@@ -3756,6 +3820,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     isRunning = false
     foregroundPollTask?.cancel()
     foregroundPollTask = nil
+    stopAgentScreenMonitor()
     clearFallbackAgentActivity()
     awaitingInputTask?.cancel()
     completedFlashTask?.cancel()
@@ -3790,6 +3855,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     agentTaskState = .idle
     agentTaskCompletionUnread = false
     agentLifecycleIsAuthoritative = false
+    agentProviderIsTitleEvidenceOnly = false
+    agentHasWorkEvidence = false
+    stopAgentScreenMonitor()
+    agentOSCTitle = ""
+    agentOSCProgress = ""
     clearFallbackAgentActivity()
     agentLifecycleSequence = 0
     agentStateReducer = AgentTaskStateReducer()
@@ -4007,20 +4077,64 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     onTitleUpdate?(code, text)
   }
 
-  /// 从程序输出识别 Agent（不依赖 hook 与命令首词）：Claude Code 把终端标题设为
-  /// 「✳ …」，看到这个前缀就把当前前台进程认定为 Claude Code，之后运行/空闲
-  /// 由输出活动回退探针驱动。已有 provider 时不覆盖。
+  /// 从程序标题补识别 Agent（不依赖 hook 与命令首词，例如经 wrapper 启动时）。
+  /// 只在有前台命令运行且尚无 provider 时补识别；纯提示符下的标题（`mike@mac: ~/src/agent`）
+  /// 绝不识别。标题得到的 provider 是弱证据：标题变得不匹配且没有 hook / 屏幕 working·blocked
+  /// 证据时撤销，命令结束时随 commandFinished 一起清掉。
   private func detectAgentProviderFromTitle(_ title: String) {
-    guard activeAgentProvider == nil else { return }
-    let trimmed = title.trimmingCharacters(in: .whitespaces)
-    if trimmed.hasPrefix("✳") {
-      activeAgentProvider = .claudeCode
-    } else if trimmed.localizedCaseInsensitiveContains("codex") {
-      activeAgentProvider = .codex
-    } else {
+    let detected = Self.agentProvider(fromTitle: title)
+    if let activeAgentProvider {
+      guard agentProviderIsTitleEvidenceOnly, detected != activeAgentProvider,
+        !agentLifecycleIsAuthoritative, !agentHasWorkEvidence
+      else { return }
+      clearTitleEvidenceAgentProvider()
       return
     }
-    markFallbackAgentActivity()
+    guard hasRunningCommand, let detected else { return }
+    activeAgentProvider = detected
+    agentProviderIsTitleEvidenceOnly = true
+    syncAgentScreenMonitor()
+    if agentScreenMonitor == nil { markFallbackAgentActivity() }
+  }
+
+  /// 撤销仅凭标题得出的 provider：停读屏、清回退探针、回到普通命令状态。
+  private func clearTitleEvidenceAgentProvider() {
+    stopAgentScreenMonitor()
+    clearFallbackAgentActivity()
+    activeAgentProvider = nil
+    agentProviderIsTitleEvidenceOnly = false
+    agentHasWorkEvidence = false
+    updateAgentTaskState()
+  }
+
+  /// 标题里过于通用、会撞上普通 shell 标题（`ssh pi`、`man amp`、`cd ~/muse`）的别名；
+  /// 这些 provider 只靠 commandStart 首 token 与 hook 识别。
+  nonisolated private static let titleDetectionExcludedAliases: Set<String> = [
+    "agent", "pi", "amp", "omp", "muse", "maki", "cline", "kilo", "droid", "cursor",
+  ]
+
+  /// 标题 → provider 的纯函数。Claude 的 ✳ / 盲文 / 半圆 spinner 前缀直接判 Claude；
+  /// 其余要求去空白后的小写标题**以别名开头**，且别名之后是结尾、空格、`:` 或 `—`
+  /// （`codex-helper`、`codex.py` 都不算）。
+  nonisolated static func agentProvider(fromTitle title: String) -> AgentProvider? {
+    let trimmed = title.trimmingCharacters(in: .whitespaces)
+    guard let first = trimmed.unicodeScalars.first else { return nil }
+    // ✳ U+2733；盲文 U+2800–U+28FF；半圆 spinner U+25D0–U+25D3（Claude 2.1.228+）。
+    if first.value == 0x2733 || (0x2800...0x28FF).contains(first.value)
+      || (0x25D0...0x25D3).contains(first.value)
+    {
+      return .claudeCode
+    }
+    let lowered = trimmed.lowercased()
+    for provider in AgentProvider.allCases {
+      for alias in provider.executableAliases
+      where !titleDetectionExcludedAliases.contains(alias) && lowered.hasPrefix(alias) {
+        let rest = lowered.dropFirst(alias.count)
+        if rest.isEmpty { return provider }
+        if let next = rest.first, next == " " || next == ":" || next == "—" { return provider }
+      }
+    }
+    return nil
   }
 
   private func handleShellIntegrationTimeline(_ timeline: ShellCommandTimeline) {
@@ -4067,12 +4181,16 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       } else {
         activeAgentProvider = nil
       }
+      agentProviderIsTitleEvidenceOnly = false
+      agentHasWorkEvidence = false
       agentLifecycleIsAuthoritative = false
       activeAgentSessionID = nil
       agentLifecycleSequence = 0
       agentStateReducer = AgentTaskStateReducer()
       clearFallbackAgentActivity()
-      if activeAgentProvider != nil {
+      // 有清单的 provider 优先走屏幕检测；monitor 启动后 5s 静默兜底自动禁用。
+      syncAgentScreenMonitor()
+      if activeAgentProvider != nil, agentScreenMonitor == nil {
         markFallbackAgentActivity()
       } else {
         updateAgentTaskState()
@@ -4093,8 +4211,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         onCommandFinished?()
       }
       clearAwaitingInput()
+      stopAgentScreenMonitor()
       agentTaskState = .idle
       activeAgentProvider = nil
+      agentProviderIsTitleEvidenceOnly = false
+      agentHasWorkEvidence = false
       activeAgentSessionID = nil
       agentTaskCompletionUnread = false
       agentLifecycleIsAuthoritative = false
@@ -4209,8 +4330,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     awaitingInputTask?.cancel()
     awaitingInputTask = Task { @MainActor [weak self] in
       try? await Task.sleep(for: .milliseconds(1_500))
+      // 屏幕检测在跑即说明前台就是 Agent，不再依赖 hasRunningCommand（SwiftTerm 的
+      // 前台轮询在没有真实 OSC 133 时会把它清掉）。
       guard !Task.isCancelled, let self,
-        self.hasRunningCommand || self.progressState.isWorking
+        self.hasRunningCommand || self.progressState.isWorking || self.agentScreenMonitor != nil,
+        // 有清单的 Agent 由屏幕检测判定阻塞表单，通用提示词启发式只在清单未命中
+        // 任何规则（兜底 idle）时补位，避免与规则结论打架。
+        self.agentScreenMonitor == nil || self.screenDetectionPublished?.isFallbackIdle == true
       else { return }
       let detected = AwaitingInputPromptDetector.matches(self.activityOutputTail)
       if self.awaitingInput != detected {
@@ -4244,7 +4370,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 5 秒与旧 SwiftTerm 可见缓冲静默窗口保持一致；权威 hook 在此期间
   /// 到达时会取消任务，防止真正的静默推理被误报 idle。
   private func markFallbackAgentActivity() {
-    guard activeAgentProvider != nil, !agentLifecycleIsAuthoritative else { return }
+    // 屏幕检测在跑时，静默/活动探针不再有发言权：清单能区分「思考中」与「停在输入框」。
+    guard activeAgentProvider != nil, !agentLifecycleIsAuthoritative, agentScreenMonitor == nil
+    else { return }
     fallbackAgentIdleTask?.cancel()
     if !fallbackAgentActivityIsProcessing {
       fallbackAgentActivityIsProcessing = true
@@ -4283,22 +4411,199 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     ))
   }
 
+  /// 任务状态的证据来源。只有 hook 与屏幕检测的结论足以触发通知与未读标记；
+  /// 活动探针只说明屏幕安静了一会儿，据此通知会在每次静默时骚扰用户。
+  private enum AgentTaskStateSource {
+    case hook, screen, heuristic
+  }
+
+  /// 三路证据仲裁（对应计划 A6）：
+  /// 1. hook 权威：以 reducer 为准；partial hook（非 fullLifecycleHooks）时屏幕上的
+  ///    阻塞表单可把 processing 覆盖为 awaiting-input（claude/codex 的权限提示没有 hook）。
+  /// 2. 屏幕检测在跑：启动宽限内视为 processing；之后 working→processing、
+  ///    blocked→awaitingInput、idle→idle、unknown→保持上一状态。
+  /// 3. 其余（无清单 provider、SwiftTerm 回归、开关关闭）：旧的活动探针折叠。
   private func updateAgentTaskState() {
+    let previous = agentTaskState
     let next: AgentTaskState
-    if activeAgentProvider == nil {
-      next = .idle
-    } else if agentLifecycleIsAuthoritative {
-      next = agentStateReducer.state
+    let source: AgentTaskStateSource
+    if let provider = activeAgentProvider {
+      if agentLifecycleIsAuthoritative {
+        var state = agentStateReducer.state
+        let overridesHook =
+          preferences?.configuration.agents.resolvedScreenDetectionOverridesHook ?? true
+        if !provider.capabilities.contains(.fullLifecycleHooks),
+          overridesHook,
+          state != .awaitingInput,
+          screenDetectionPublished?.visibleBlocker == true
+        {
+          state = .awaitingInput
+        }
+        next = state
+        source = .hook
+      } else if let monitor = agentScreenMonitor {
+        source = .screen
+        if monitor.isInStartupGrace {
+          next = .processing
+        } else {
+          switch screenDetectionPublished?.state {
+          case .working: next = .processing
+          case .blocked: next = .awaitingInput
+          case .idle:
+            // 清单没覆盖到的提示（例如某个 `[y/N]`）会落到兜底 idle；这种 idle 允许旧的
+            // 等待输入启发式补位。规则命中的 idle 仍以规则为准。
+            next = (screenDetectionPublished?.isFallbackIdle == true && awaitingInput)
+              ? .awaitingInput : .idle
+          case .unknown, nil: next = previous
+          }
+        }
+      } else {
+        next = AgentTaskState.fold(
+          processing: fallbackAgentActivityIsProcessing || progressState.isWorking,
+          awaitingInput: awaitingInput
+        )
+        source = .heuristic
+      }
     } else {
-      next = AgentTaskState.fold(
-        processing: fallbackAgentActivityIsProcessing || progressState.isWorking,
-        awaitingInput: awaitingInput
-      )
+      next = .idle
+      source = .heuristic
     }
     if agentTaskState != next { agentTaskState = next }
+    if let provider = activeAgentProvider {
+      publishAgentTaskTransition(from: previous, to: next, provider: provider, source: source)
+    }
     // Agent 仍在生成内容时，固定显示不闪烁的用户光标；进入 awaiting-input / idle 后
     // 恢复设置中的 blink 模式。普通 Shell/TUI 不受该领域状态影响。
     terminalView?.setCursorBlinkSuppressed(activeAgentProvider != nil && next == .processing)
+  }
+
+  /// 状态转换的副作用：未读完成标记与系统通知。hook 路径与屏幕路径共用，
+  /// 只在状态真的变化时触发；启发式来源不产生通知。
+  private func publishAgentTaskTransition(
+    from previous: AgentTaskState,
+    to next: AgentTaskState,
+    provider: AgentProvider,
+    source: AgentTaskStateSource
+  ) {
+    guard previous != next else { return }
+    switch next {
+    case .processing:
+      agentTaskCompletionUnread = false
+    case .awaitingInput:
+      guard source != .heuristic,
+        preferences?.configuration.agents.notifyAwaitingInput == true
+      else { return }
+      post(
+        TerminalNotification(
+          title: "Agent 等待输入",
+          body: "\(provider.commandName) 正在等待确认或输入。"
+        ),
+        // Agent lifecycle 是 Aster 自身的任务状态，不应受 Shell Controlled
+        // 对应用 OSC 通知的开关误伤；沿用命令完成分类获得独立的声音/前台策略。
+        category: .commandFinish
+      )
+    case .idle:
+      guard source != .heuristic, previous == .processing || previous == .awaitingInput
+      else { return }
+      guard agentHasWorkEvidence else { return }
+      agentTaskCompletionUnread = true
+      guard preferences?.configuration.agents.notifyTaskComplete == true else { return }
+      post(
+        TerminalNotification(
+          title: "Agent 任务已完成",
+          body: "\(provider.commandName) 已结束当前任务。"
+        ),
+        category: .commandFinish
+      )
+    }
+  }
+
+  // MARK: - 屏幕检测接线
+
+  /// 记录程序写出的标题原文（OSC 0/1/2），供 `osc_title` 区域的规则使用。
+  func receiveAgentOSCTitle(_ title: String) {
+    guard title.utf8.count <= 4_096 else { return }
+    agentOSCTitle = title
+  }
+
+  /// 记录 OSC 9 原文（`9;4;3;…` 之类的进度序列），供 `osc_progress` 区域的规则使用。
+  /// herdr 存的是 `9;` 之后的部分，因此这里去掉可能存在的 `9;` 前缀。
+  func receiveAgentOSCProgress(_ value: String) {
+    guard value.utf8.count <= 256 else { return }
+    agentOSCProgress = value.hasPrefix("9;") ? String(value.dropFirst(2)) : value
+  }
+
+  /// 按当前 provider / hook 权威性 / 设置决定屏幕检测轮询该开、该停还是该换清单。
+  private func syncAgentScreenMonitor() {
+    guard let provider = activeAgentProvider,
+      let manifestID = provider.detectionManifestID,
+      preferences?.configuration.agents.resolvedScreenDetectionEnabled ?? true,
+      // 完整生命周期 hook 权威后读屏没有增量信息，停掉轮询省 CPU。
+      !(agentLifecycleIsAuthoritative && provider.capabilities.contains(.fullLifecycleHooks))
+    else {
+      stopAgentScreenMonitor()
+      return
+    }
+    if let monitor = agentScreenMonitor, monitor.manifest.manifest.id == manifestID { return }
+    stopAgentScreenMonitor()
+    guard let compiled = agentDetectionManifestStore.manifest(for: manifestID),
+      let source = makeAgentScreenDetectionSource()
+    else { return }
+    // 新前台 Agent 不能继承上一进程的 OSC 标题/进度证据。
+    agentOSCTitle = ""
+    agentOSCProgress = ""
+    let monitor = AgentScreenDetectionMonitor(
+      manifest: compiled, source: source, timing: agentScreenDetectionTiming)
+    // 回调存回 monitor 自身，闭包必须弱捕获 monitor，否则形成保留环，每次启动 Agent 漏一个。
+    monitor.onPublish = { [weak self, weak monitor] state in
+      guard let self, let monitor, self.agentScreenMonitor === monitor else { return }
+      self.screenDetectionPublished = state
+      if state.state == .working || state.state == .blocked {
+        self.agentHasWorkEvidence = true
+      }
+      self.updateAgentTaskState()
+    }
+    monitor.onStartupGraceEnded = { [weak self, weak monitor] in
+      guard let self, let monitor, self.agentScreenMonitor === monitor else { return }
+      self.updateAgentTaskState()
+    }
+    agentScreenMonitor = monitor
+    screenDetectionPublished = nil
+    monitor.start()
+    updateAgentTaskState()
+  }
+
+  private func stopAgentScreenMonitor() {
+    agentScreenMonitor?.stop()
+    agentScreenMonitor = nil
+    screenDetectionPublished = nil
+  }
+
+  /// 读屏来源：测试注入优先；生产用 Ghostty 活动屏幕。SwiftTerm 回归路径不支持读屏，
+  /// 返回 nil 让调用方退回旧的活动探针。
+  private func makeAgentScreenDetectionSource() -> AgentScreenDetectionMonitor.Source? {
+    if let override = agentScreenDetectionSourceOverride { return override }
+    guard ghosttyView != nil else { return nil }
+    return AgentScreenDetectionMonitor.Source(
+      readScreen: { [weak self] in self?.ghosttyView?.readAgentDetectionText() },
+      oscTitle: { [weak self] in self?.agentOSCTitle ?? "" },
+      oscProgress: { [weak self] in self?.agentOSCProgress ?? "" },
+      contentSequence: { [weak self] in self?.detectionContentSequence ?? 0 },
+      processExited: { false }
+    )
+  }
+
+  /// 调试入口：对当前屏幕做一次完整解释。没有 provider / 清单 / 可读屏幕时返回 nil。
+  func explainAgentDetection() -> AgentDetectionExplain? {
+    if let monitor = agentScreenMonitor { return monitor.explainNow() }
+    guard let provider = activeAgentProvider,
+      let manifestID = provider.detectionManifestID,
+      let compiled = agentDetectionManifestStore.manifest(for: manifestID),
+      let source = makeAgentScreenDetectionSource(),
+      let screen = source.readScreen()
+    else { return nil }
+    return compiled.explain(
+      AgentDetectionInput(screen: screen, oscTitle: agentOSCTitle, oscProgress: agentOSCProgress))
   }
 
   /// 登记一个待重连的 Agent 会话（来自工作区恢复快照）。这里只记录身份不发送命令；
@@ -4428,6 +4733,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // wrapper 命令无法识别时则允许首个合法 hook 建立关联。
     if let activeAgentProvider, activeAgentProvider != directive.provider { return }
     activeAgentProvider = directive.provider
+    agentProviderIsTitleEvidenceOnly = false
     if let sessionID = directive.sessionID { activeAgentSessionID = sessionID }
     agentLifecycleIsAuthoritative = true
     clearFallbackAgentActivity()
@@ -4436,44 +4742,18 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       provider: directive.provider.rawValue,
       agentSessionID: activeAgentSessionID
     )
-    let previous = agentStateReducer.state
     consumeAgentTaskStateSignal(directive.signal)
+    if directive.signal == .processing || directive.signal == .awaitingInput {
+      agentHasWorkEvidence = true
+    }
     if directive.signal == .awaitingInput {
       awaitingInput = true
     } else if awaitingInput {
       awaitingInput = false
     }
-    switch directive.signal {
-    case .processing, .inputSubmitted:
-      agentTaskCompletionUnread = false
-    case .awaitingInput:
-      if previous != .awaitingInput,
-        preferences?.configuration.agents.notifyAwaitingInput == true
-      {
-        post(
-          TerminalNotification(
-            title: "Agent 等待输入",
-            body: "\(directive.provider.commandName) 正在等待确认或输入。"
-          ),
-          // Agent lifecycle hook 是 Aster 自身的任务状态，不应受 Shell Controlled
-          // 对应用 OSC 通知的开关误伤；沿用命令完成分类获得独立的声音/前台策略。
-          category: .commandFinish
-        )
-      }
-    case .idle:
-      if previous == .processing || previous == .awaitingInput {
-        agentTaskCompletionUnread = true
-        if preferences?.configuration.agents.notifyTaskComplete == true {
-          post(
-            TerminalNotification(
-              title: "Agent 任务已完成",
-              body: "\(directive.provider.commandName) 已结束当前任务。"
-            ),
-            category: .commandFinish
-          )
-        }
-      }
-    }
+    // hook 首达：fullLifecycleHooks provider 停掉读屏；partial provider 继续扫，
+    // 只消费屏幕上的阻塞表单。通知与未读标记统一由 updateAgentTaskState 的转换发布。
+    syncAgentScreenMonitor()
     updateAgentTaskState()
   }
 
@@ -4610,6 +4890,7 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
       self.isRunning = false
       self.hasRunningCommand = false
       self.awaitingInput = false
+      self.stopAgentScreenMonitor()
       self.activeAgentProvider = nil
       self.activeAgentSessionID = nil
       self.agentTaskState = .idle

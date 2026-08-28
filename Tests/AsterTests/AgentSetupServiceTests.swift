@@ -21,7 +21,21 @@ func agentSetupInstallsEveryPlannedProviderIdempotently() throws {
     executableSearchDirectories: [bin]
   )
 
-  for provider in AgentProvider.allCases {
+  // 仅屏幕检测的 provider 没有集成可装：状态为未集成、无步骤、blocker 说明原因，
+  // install/uninstall 都是无操作且幂等。
+  for provider in AgentProvider.allCases where !provider.supportsManagedIntegration {
+    let status = try service.status(for: provider)
+    #expect(status.executableAvailable)
+    #expect(!status.managedIntegrationInstalled)
+    #expect(status.requiredFeatureEnabled == nil)
+    #expect(!status.integrationInstalled)
+    #expect(status.plan.steps.isEmpty)
+    #expect(status.plan.blocker == .integrationUnavailable)
+    #expect(try service.install(provider) == status)
+    #expect(try service.uninstall(provider) == status)
+  }
+
+  for provider in AgentProvider.allCases where provider.supportsManagedIntegration {
     let before = try service.status(for: provider)
     #expect(before.executableAvailable)
     #expect(!before.integrationInstalled)
@@ -65,7 +79,7 @@ func agentSetupUninstallsManagedContentWithoutRemovingUserConfiguration() throws
     executableSearchDirectories: [bin]
   )
 
-  for provider in AgentProvider.allCases {
+  for provider in AgentProvider.allCases where provider.supportsManagedIntegration {
     #expect(try service.install(provider).managedIntegrationInstalled)
     let uninstalled = try service.uninstall(provider)
     #expect(!uninstalled.managedIntegrationInstalled)
