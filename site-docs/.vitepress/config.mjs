@@ -20,6 +20,10 @@ export default defineConfig({
   // guide/ 下的生成页提升到文档站根路径
   rewrites: { "guide/:page": ":page" },
 
+  // Cloudflare Pages 会把 /docs/faq.html 一律 307 到 /docs/faq。不开 cleanUrls
+  // 的话 VitePress 生成的站内链接全带 .html，每次点击都要多走一跳重定向。
+  cleanUrls: true,
+
   // 工程说明不属于文档内容
   srcExclude: ["README.md"],
 
@@ -45,7 +49,7 @@ export default defineConfig({
       // "/../"：浏览器归一化为站点根（site/ 落地页），绕开 VitePress 的 base 前缀
       { text: "首页", link: "/../", target: "_self" },
       { text: "用户指南", link: "/", activeMatch: "/" },
-      { text: "开发者", link: "https://github.com/rambocode/aster/tree/main/docs/developer" },
+      { text: "开发者", link: "https://github.com/rambocode/aster/tree/master/docs/developer" },
       { text: "更新日志", link: "https://github.com/rambocode/aster/releases" },
     ],
 
