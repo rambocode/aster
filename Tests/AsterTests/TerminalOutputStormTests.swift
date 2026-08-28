@@ -192,16 +192,16 @@ func activityBadgeRefreshReusesSpinner() async throws {
   let spinnerRow = try #require(
     rows.first { row in
       row.refreshActivityBadge()
-      return row.descendantViews.contains { $0 is NSProgressIndicator }
+      return row.descendantViews.contains { $0 is TabActivitySpinnerView }
     },
     "侧栏必须存在带 running spinner 的标签行"
   )
   let first = try #require(
-    spinnerRow.descendantViews.compactMap { $0 as? NSProgressIndicator }.first
+    spinnerRow.descendantViews.compactMap { $0 as? TabActivitySpinnerView }.first
   )
   spinnerRow.refreshActivityBadge()
   let second = try #require(
-    spinnerRow.descendantViews.compactMap { $0 as? NSProgressIndicator }.first
+    spinnerRow.descendantViews.compactMap { $0 as? TabActivitySpinnerView }.first
   )
   // 状态未变化时必须复用同一 spinner；重建会不断重启动画，看起来像“转得飞快”。
   #expect(first === second)

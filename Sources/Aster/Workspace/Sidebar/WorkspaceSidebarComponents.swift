@@ -100,6 +100,15 @@ final class TabRowButton: NSButton {
   private var slotWidthConstraint: NSLayoutConstraint?
   /// 纵向行的标题标签；标题经 `titleChanged` 局部刷新，不重建整行。
   private weak var titleLabel: NSTextField?
+  /// 纵向行标题左侧的状态槽（对齐 Otty）：静态时放 Agent / 规则图标，运行时放动画图标。
+  /// 横向胶囊没有这个槽，状态仍走右侧 accessorySlot。
+  private weak var statusSlot: NSView?
+  /// 状态槽宽度：无图标可显示时收紧为 0，标题贴回卡片内边距（Otty 无图标行不留空位）。
+  private var statusSlotWidthConstraint: NSLayoutConstraint?
+  /// 状态槽与标题的间距：槽收起时一并归零。
+  private var titleLeadingGapConstraint: NSLayoutConstraint?
+  /// 纵向行右侧的 shell 名 / Pane 数量标签，悬停时让位给关闭按钮。
+  private weak var trailingLabel: NSTextField?
   /// 最近一次渲染的徽章状态键；状态未变时跳过附件重建，避免 spinner 动画被反复重启。
   private var renderedBadgeKey: String?
   /// 侧栏行的内缩圆角底。整行仍然是全宽命中区，只有这层底色两侧留边并带圆角，
@@ -228,9 +237,10 @@ final class TabRowButton: NSButton {
     titleLabel = primary
     primary.toolTip = displayTitleToolTip
 
-    // 「分开」摆放：图标固定在标题左侧，状态角标仍走右侧槽位。
+    // 横向胶囊的「分开」摆放：图标固定在标题左侧，状态角标仍走右侧槽位。
+    // 纵向行不走这里——图标与状态统一进标题左侧的 statusSlot。
     var leadingIcon: NSView?
-    if badgePlacement == .separate, let tabIcon,
+    if horizontal, badgePlacement == .separate, let tabIcon,
       let iconView = TabIconArtwork.makeView(for: tabIcon, fallbackTint: selected ? resolvedActiveForeground : resolvedForeground)
     {
       iconView.translatesAutoresizingMaskIntoConstraints = false
@@ -290,22 +300,49 @@ final class TabRowButton: NSButton {
       ])
       activateLeadingConstraints(primary: primary, icon: leadingIcon, background: rowBackground, inset: 10)
     } else {
-      activateLeadingConstraints(primary: primary, icon: leadingIcon, background: rowBackground, inset: 10)
+      // 纵向行结构对齐 Otty：[状态/图标槽] 标题 …… [shell 名 | 悬停关闭]。
+      // 状态槽在标题左侧，宽度是状态量（0 或 16），由 refreshActivityBadge 维护。
+      let statusSlot = NSView()
+      statusSlot.identifier = NSUserInterfaceItemIdentifier("sidebar-tab-status-slot-\(tab.id.uuidString)")
+      statusSlot.translatesAutoresizingMaskIntoConstraints = false
+      addSubview(statusSlot)
+      self.statusSlot = statusSlot
+      let statusWidth = statusSlot.widthAnchor.constraint(equalToConstant: 16)
+      statusSlotWidthConstraint = statusWidth
+      let titleGap = primary.leadingAnchor.constraint(equalTo: statusSlot.trailingAnchor, constant: 6)
+      titleLeadingGapConstraint = titleGap
+      // 右侧 shell 名标签：Otty 每一行都显示（不只选中行）；多 Pane 时改显示数量。
+      let trailing = makeLabel("", size: 10, color: AsterTheme.tertiaryInk, monospaced: true)
+      trailing.identifier = NSUserInterfaceItemIdentifier("sidebar-tab-shell-\(tab.id.uuidString)")
+      trailing.translatesAutoresizingMaskIntoConstraints = false
+      trailing.setContentCompressionResistancePriority(.required, for: .horizontal)
+      accessorySlot.addSubview(trailing)
+      trailingLabel = trailing
       NSLayoutConstraint.activate([
-        // 文案与右侧槽位都按圆角底的内缘对齐，卡片左右各留出 10pt 内边距。
+        statusSlot.leadingAnchor.constraint(equalTo: rowBackground.leadingAnchor, constant: 10),
+        statusSlot.centerYAnchor.constraint(equalTo: centerYAnchor),
+        statusSlot.heightAnchor.constraint(equalToConstant: 16),
+        statusWidth,
+        // 槽宽为 0 时标题贴 10pt 内边距；有图标时图标与标题之间留 6pt。
+        titleGap,
         primary.centerYAnchor.constraint(equalTo: centerYAnchor),
         primary.trailingAnchor.constraint(
           lessThanOrEqualTo: accessorySlot.leadingAnchor, constant: -8),
         accessorySlot.trailingAnchor.constraint(
           equalTo: rowBackground.trailingAnchor, constant: -4),
         accessorySlot.centerYAnchor.constraint(equalTo: centerYAnchor),
-        accessorySlot.widthAnchor.constraint(equalToConstant: 28),
+        // 槽位至少 28pt（放得下关闭按钮），shell 名更宽时按内容撑开。
+        accessorySlot.widthAnchor.constraint(greaterThanOrEqualToConstant: 28),
         accessorySlot.heightAnchor.constraint(equalToConstant: 28),
+        trailing.leadingAnchor.constraint(greaterThanOrEqualTo: accessorySlot.leadingAnchor, constant: 2),
+        trailing.trailingAnchor.constraint(equalTo: accessorySlot.trailingAnchor, constant: -6),
+        trailing.centerYAnchor.constraint(equalTo: accessorySlot.centerYAnchor),
         close.centerXAnchor.constraint(equalTo: accessorySlot.centerXAnchor),
         close.centerYAnchor.constraint(equalTo: accessorySlot.centerYAnchor),
         close.widthAnchor.constraint(equalToConstant: 24),
         close.heightAnchor.constraint(equalToConstant: 24),
       ])
+      refreshTrailingLabel()
     }
     refreshActivityBadge()
     updateAccessoryVisibility()
@@ -384,23 +421,77 @@ final class TabRowButton: NSButton {
   /// 不打断 TUI 输入、选择或 Files 当前目录。状态键相同则完全跳过重建：running
   /// spinner 若被销毁重建会不断重启动画，视觉上表现为“转得飞快”。
   func refreshActivityBadge() {
+    refreshTrailingLabel()
     let key = activityBadgeKey()
-    guard let slot = accessorySlot else { return }
-    if key == renderedBadgeKey, accessoryView != nil {
+    // 纵向行的状态附件挂在标题左侧的 statusSlot；横向胶囊仍挂在右侧 accessorySlot。
+    guard let slot = horizontal ? accessorySlot : statusSlot else { return }
+    if key == renderedBadgeKey, accessoryView != nil || key == "idle" {
       updateAccessoryVisibility()
       return
     }
     renderedBadgeKey = key
     accessoryView?.removeFromSuperview()
-    let accessory = makeActivityAccessory()
-    accessory.translatesAutoresizingMaskIntoConstraints = false
-    slot.addSubview(accessory)
-    NSLayoutConstraint.activate([
-      accessory.centerXAnchor.constraint(equalTo: slot.centerXAnchor),
-      accessory.centerYAnchor.constraint(equalTo: slot.centerYAnchor),
-    ])
-    accessoryView = accessory
+    accessoryView = nil
+    if let accessory = makeActivityAccessory() {
+      accessory.translatesAutoresizingMaskIntoConstraints = false
+      slot.addSubview(accessory)
+      NSLayoutConstraint.activate([
+        accessory.centerXAnchor.constraint(equalTo: slot.centerXAnchor),
+        accessory.centerYAnchor.constraint(equalTo: slot.centerYAnchor),
+      ])
+      accessoryView = accessory
+    }
+    // 纵向行没有任何图标可显示时状态槽收紧为 0，标题直接贴卡片内边距。
+    statusSlotWidthConstraint?.constant = accessoryView == nil ? 0 : 16
+    titleLeadingGapConstraint?.constant = accessoryView == nil ? 0 : 6
     updateAccessoryVisibility()
+  }
+
+  /// 右侧标签文案：默认是当前标签的 shell 名；标签内有多个 Pane 时改为显示 Pane 数量。
+  private func refreshTrailingLabel() {
+    guard let trailingLabel else { return }
+    let paneCount = tab.runtimes.count
+    if paneCount > 1 {
+      trailingLabel.stringValue = "\(paneCount)"
+      trailingLabel.toolTip = "此标签页有 \(paneCount) 个 Pane"
+    } else {
+      trailingLabel.stringValue = URL(
+        fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+      ).lastPathComponent
+      trailingLabel.toolTip = nil
+    }
+  }
+
+  /// 对齐 Otty：纵向行有 Agent / 规则图标时，回合结束一律回到静态图标，
+  /// 不显示「已完成 ● / ✓」实心圆；运行中仍由动画接管。
+  private var suppressesReadBadge: Bool {
+    !horizontal && idleTabIcon != nil
+  }
+
+  /// 运行动画样式（对齐 Otty）：Claude Code 半圆 ◑ 旋转；Codex 2×2 点阵循环；
+  /// 其它 Agent / 普通命令暂时沿用半圆旋转。
+  private var runningAnimationStyle: TabActivitySpinnerView.Style {
+    let provider = tab.runtimes.values.compactMap({ $0.terminalSession?.activeAgentProvider }).first
+    return provider == .codex ? .dots : .spin
+  }
+
+  /// 纵向行静态图标：规则图标优先，其次是当前会话里正在运行的 Agent 图标。
+  private var idleTabIcon: TabRuleIcon? {
+    if let tabIcon { return tabIcon }
+    guard let provider = tab.runtimes.values.compactMap({ $0.terminalSession?.activeAgentProvider }).first
+    else { return nil }
+    return TabRuleIcon(name: Self.agentIconName(provider))
+  }
+
+  /// Agent provider → 图标集（`settings-ui/tab-icons`）里的图标名；图标集没有专属图的
+  /// provider 统一落到 `terminal-ai`。
+  static func agentIconName(_ provider: AgentProvider) -> String {
+    switch provider {
+    case .claudeCode: "claude"
+    case .codex: "openai"
+    case .grokBuild: "grok"
+    case .openCode, .cursorCLI, .kimiCode, .pi, .omp: "terminal-ai"
+    }
   }
 
   /// 徽章渲染结果的等价键。与 `makeActivityAccessory` 的分支一一对应；spinner
@@ -408,35 +499,37 @@ final class TabRowButton: NSButton {
   private func activityBadgeKey() -> String {
     switch tab.activityBadge {
     case .running:
-      return "running"
+      return runningAnimationStyle == .dots ? "running-dots" : "running-spin"
     case .awaitingInput where showsAwaitingInput:
       return "awaiting-input"
     case .error where showsFailure && showsExitStatus:
       return "error-\(tab.lastCommandExitStatus.map(String.init) ?? "!")"
-    case .finished where showsFinished && showsExitStatus:
+    case .finished where showsFinished && showsExitStatus && !suppressesReadBadge:
       return "finished"
-    case .completed where showsFinished && showsExitStatus:
+    case .completed where showsFinished && showsExitStatus && !suppressesReadBadge:
       return "completed"
     default:
-      if !horizontal, tab.activeSession?.sshRemoteEndpoint != nil { return "ssh-remote" }
+      if !horizontal {
+        // 纵向行 idle 键要带上图标来源：Agent 启动/退出时图标随之切换。
+        if let icon = idleTabIcon { return "idle-icon-\(icon.emoji ?? icon.name ?? "")" }
+        if tab.activeSession?.sshRemoteEndpoint != nil { return "ssh-remote" }
+        return "idle"
+      }
       return badgePlacement == .combined && tabIcon != nil ? "idle-icon" : "idle"
     }
   }
 
   /// 构建当前活动状态的附件视图；纵横两种方向共用状态分支，只有 idle 内容不同。
-  private func makeActivityAccessory() -> NSView {
+  /// 返回 nil 表示当前没有任何东西可显示（纵向行无图标、无状态）。
+  private func makeActivityAccessory() -> NSView? {
     let accessory: NSView
     let stateName: String
     let accessibilityLabel: String
     switch tab.activityBadge {
     case .running:
-      let spinner = NSProgressIndicator()
-      spinner.style = .spinning
-      spinner.controlSize = .small
-      spinner.isIndeterminate = true
-      spinner.isDisplayedWhenStopped = false
-      spinner.startAnimation(nil)
-      accessory = spinner
+      // 运行动画对齐 Otty，按 Agent 区分（见 runningAnimationStyle）。不再用系统 spinner。
+      let tint = selected ? resolvedActiveForeground : resolvedForeground
+      accessory = TabActivitySpinnerView(tint: tint, style: runningAnimationStyle)
       stateName = "running"
       accessibilityLabel = "正在运行"
     case .awaitingInput where showsAwaitingInput:
@@ -450,16 +543,23 @@ final class TabRowButton: NSButton {
       )
       stateName = "error"
       accessibilityLabel = "执行失败"
-    case .finished where showsFinished && showsExitStatus:
+    case .finished where showsFinished && showsExitStatus && !suppressesReadBadge:
       accessory = makeLabel("●", size: 9, weight: .semibold, color: AsterTheme.accent)
       stateName = "finished"
       accessibilityLabel = "已完成"
-    case .completed where showsFinished && showsExitStatus:
+    case .completed where showsFinished && showsExitStatus && !suppressesReadBadge:
       accessory = makeLabel("✓", size: 11, weight: .semibold, color: AsterTheme.accent)
       stateName = "completed"
       accessibilityLabel = "刚刚完成"
     default:
-      if !horizontal, tab.activeSession?.sshRemoteEndpoint != nil {
+      if !horizontal, let icon = idleTabIcon,
+        let iconView = TabIconArtwork.makeView(for: icon, fallbackTint: selected ? resolvedActiveForeground : resolvedForeground)
+      {
+        // 纵向行静态图标：规则图标或 Agent 图标，有状态发生时上面的分支会接管。
+        accessory = iconView
+        stateName = "icon"
+        accessibilityLabel = icon.name.map { "标签图标 \($0)" } ?? "空闲"
+      } else if !horizontal, tab.activeSession?.sshRemoteEndpoint != nil {
         let icon = NSImageView()
         icon.image = NSImage(
           systemSymbolName: "desktopcomputer", accessibilityDescription: "SSH 远端")?
@@ -475,18 +575,14 @@ final class TabRowButton: NSButton {
         accessory = iconView
         stateName = "icon"
         accessibilityLabel = "空闲"
-      } else {
-        // 横向胶囊里放不下 shell 名，idle 只留空槽占位；纵向沿用选中行显示 shell 名。
-        // 「分开」摆放按 Otty 约定隐藏 shell 名。
-        accessory = makeLabel(
-          !horizontal && selected && badgePlacement == .combined
-            ? URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
-              .lastPathComponent
-            : "",
-          size: 10, color: AsterTheme.tertiaryInk, monospaced: true
-        )
+      } else if horizontal {
+        // 横向胶囊里放不下 shell 名，idle 只留空槽占位。
+        accessory = makeLabel("", size: 10, color: AsterTheme.tertiaryInk, monospaced: true)
         stateName = "idle"
         accessibilityLabel = "空闲"
+      } else {
+        // 纵向行无图标无状态：状态槽整体收起，shell 名由右侧 trailingLabel 常驻显示。
+        return nil
       }
     }
     accessory.identifier = NSUserInterfaceItemIdentifier(
@@ -505,7 +601,8 @@ final class TabRowButton: NSButton {
       // 悬停不改变宽度，标签排布不会抖动。
       slotWidthConstraint?.constant = (selected || activityBadgeKey() != "idle") ? 16 : 0
     } else {
-      accessoryView?.isHidden = hovered
+      // 纵向行：左侧状态图标常驻；右侧 shell 名在悬停时让位给关闭按钮。
+      trailingLabel?.isHidden = hovered
       closeButton?.isHidden = !hovered
     }
   }
@@ -545,6 +642,131 @@ final class TabRowButton: NSButton {
   }
 
   @objc private func invoke() { handler() }
+}
+
+/// 标签行的运行动画（对齐 Otty），图形画在独立 sublayer 上并只动 sublayer：直接动
+/// 视图自己的 layer 时 AppKit 会改写 anchorPoint/position，图标会绕着行内打转。
+@MainActor
+final class TabActivitySpinnerView: NSView {
+  /// `.spin`：半实心圆 ◑ 绕竖轴左右翻转（Claude Code / 默认）；`.dots`：2×2 点阵，
+  /// 三亮一暗，暗点顺时针轮转（Codex）。
+  enum Style: Equatable {
+    case spin
+    case dots
+  }
+
+  private let style: Style
+  private let tint: NSColor
+  private var glyphs: [CALayer] = []
+  /// `.spin` 样式里真正翻转的半圆层；圆环留在 glyphs[0] 上不动。
+  private weak var flipTarget: CALayer?
+
+  init(tint: NSColor, style: Style = .spin) {
+    self.style = style
+    self.tint = tint
+    super.init(frame: NSRect(x: 0, y: 0, width: 14, height: 14))
+    // 显式 layer-hosting：先给 layer 再置 wantsLayer，保证下面 addSublayer 时
+    // layer 一定存在（layer-backed 模式下 layer 可能延迟到入窗才创建，sublayer 会丢）。
+    layer = CALayer()
+    wantsLayer = true
+    translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      widthAnchor.constraint(equalToConstant: 14),
+      heightAnchor.constraint(equalToConstant: 14),
+    ])
+    switch style {
+    case .spin: buildSpinGlyph()
+    case .dots: buildDotGlyphs()
+    }
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  /// 圆环（只描边）+ 左半实心（只填充）分两个路径画在同一个 layer 上：
+  /// 之前把整圆也交给 fillColor，结果是一个实心圆盘，转起来看不出动。
+  private func buildSpinGlyph() {
+    let glyph = CAShapeLayer()
+    let ring = CAShapeLayer()
+    ring.path = CGPath(ellipseIn: CGRect(x: 2, y: 2, width: 10, height: 10), transform: nil)
+    ring.fillColor = nil
+    ring.strokeColor = tint.cgColor
+    ring.lineWidth = 1.2
+    let half = CAShapeLayer()
+    let path = CGMutablePath()
+    path.move(to: CGPoint(x: 7, y: 7))
+    path.addArc(center: CGPoint(x: 7, y: 7), radius: 5, startAngle: .pi / 2, endAngle: 3 * .pi / 2, clockwise: false)
+    path.closeSubpath()
+    half.path = path
+    half.fillColor = tint.cgColor
+    half.strokeColor = nil
+    // 半圆自己的 bounds/anchor 以圆心为轴，翻转时圆环保持不动。
+    half.bounds = CGRect(x: 0, y: 0, width: 14, height: 14)
+    half.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+    half.position = CGPoint(x: 7, y: 7)
+    glyph.addSublayer(ring)
+    glyph.addSublayer(half)
+    glyph.bounds = CGRect(x: 0, y: 0, width: 14, height: 14)
+    glyph.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+    glyph.position = CGPoint(x: 7, y: 7)
+    layer?.addSublayer(glyph)
+    glyphs = [glyph]
+    flipTarget = half
+  }
+
+  /// 四个 2.4pt 圆点，按 左上 → 右上 → 右下 → 左下 顺时针排列，便于轮转暗点。
+  private func buildDotGlyphs() {
+    let centers = [CGPoint(x: 4.5, y: 9.5), CGPoint(x: 9.5, y: 9.5), CGPoint(x: 9.5, y: 4.5), CGPoint(x: 4.5, y: 4.5)]
+    glyphs = centers.map { center in
+      let dot = CAShapeLayer()
+      dot.path = CGPath(ellipseIn: CGRect(x: -1.2, y: -1.2, width: 2.4, height: 2.4), transform: nil)
+      dot.fillColor = tint.cgColor
+      dot.position = center
+      layer?.addSublayer(dot)
+      return dot
+    }
+  }
+
+  /// 进入窗口时启动动画；离开窗口时 CoreAnimation 会丢弃动画，回来必须重新加。
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    guard window != nil else { return }
+    let scale = window?.backingScaleFactor ?? 2
+    glyphs.forEach { glyph in
+      glyph.contentsScale = scale
+      glyph.sublayers?.forEach { $0.contentsScale = scale }
+    }
+    switch style {
+    case .spin:
+      // 对齐 Otty：圆环不动，只有半圆绕竖轴翻转（左半实 → 右半实 → 回来）。
+      let spin = CABasicAnimation(keyPath: "transform.rotation.y")
+      spin.fromValue = 0
+      spin.toValue = 2 * Double.pi
+      spin.duration = 1.6
+      spin.repeatCount = .infinity
+      spin.isRemovedOnCompletion = false
+      flipTarget?.add(spin, forKey: "aster-spin")
+    case .dots:
+      // 每个点在自己的时间片变暗，四个点错开 1/4 周期，效果是暗点顺时针跑。
+      for (index, dot) in glyphs.enumerated() {
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [1, 0.15, 1, 1, 1]
+        fade.keyTimes = [0, 0.001, 0.25, 0.5, 1]
+        fade.calculationMode = .discrete
+        fade.duration = 0.8
+        fade.timeOffset = Double(index) * 0.2
+        fade.repeatCount = .infinity
+        fade.isRemovedOnCompletion = false
+        dot.add(fade, forKey: "aster-dots")
+      }
+    }
+  }
+
+  /// sublayer 始终钉在视图中心（点阵按各自偏移），视图 frame 变化不影响动画中心。
+  override func layout() {
+    super.layout()
+    guard style == .spin else { return }
+    glyphs.first?.position = CGPoint(x: bounds.midX, y: bounds.midY)
+  }
 }
 
 /// 递归分屏使用 `NSSplitView`，拖动结束后的比例写回领域模型以供会话恢复。

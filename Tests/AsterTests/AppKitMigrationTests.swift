@@ -821,7 +821,7 @@ func verticalSidebarUsesFullWidthRows() throws {
   #expect(tabButtons.count == 1)
   #expect((tabButtons.first?.frame.width ?? 0) >= 210)
   #expect(tabButtons.first?.enclosingScrollView == nil)
-  #expect(controller.view.descendants.contains { $0 is NSProgressIndicator } == false)
+  #expect(controller.view.descendants.contains { $0 is TabActivitySpinnerView } == false)
   // 悬停动作区：「+ 新建 / 折叠」按钮放在侧栏顶部右侧，默认隐藏，指针进入对应
   // 感应区才淡入（2026-08 设计变更，替代旧的「标签栏不含按钮」断言）。两个按钮
   // 各自显隐，因此隐藏状态记在按钮自己身上，而不是共享的容器上。
@@ -1006,7 +1006,7 @@ func verticalSidebarHoverCloseClosesTargetTabWithoutSelectingIt() throws {
   #expect(model.selectedTabID == selectedTabID)
 }
 
-@Test("左侧标签行尾覆盖运行、等待、刚完成、未读、错误与空闲状态")
+@Test("左侧标签行首覆盖运行、等待、错误与空闲状态，选中行完成态回落到 Agent 图标")
 @MainActor
 func verticalSidebarActivityAccessoryTracksAllStates() async throws {
   let defaults = isolatedDefaults()
@@ -1030,7 +1030,7 @@ func verticalSidebarActivityAccessoryTracksAllStates() async throws {
     AgentTerminalDirective(provider: .codex, signal: .processing)
   )
   try await Task.sleep(for: .milliseconds(50))
-  #expect(try visibleTabAccessory(for: tab, in: controller) is NSProgressIndicator)
+  #expect(try visibleTabAccessory(for: tab, in: controller) is TabActivitySpinnerView)
   let lifecycleRow = try tabRow(for: tab, in: controller)
 
   terminalView.onAgentTerminalDirective?(
@@ -1044,29 +1044,26 @@ func verticalSidebarActivityAccessoryTracksAllStates() async throws {
 
   terminalView.onTerminalUserInput?()
   try await Task.sleep(for: .milliseconds(50))
-  #expect(try visibleTabAccessory(for: tab, in: controller) is NSProgressIndicator)
+  #expect(try visibleTabAccessory(for: tab, in: controller) is TabActivitySpinnerView)
   #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
 
   terminalView.onAgentTerminalDirective?(
     AgentTerminalDirective(provider: .codex, signal: .idle)
   )
   try await Task.sleep(for: .milliseconds(50))
-  #expect(
-    (try visibleTabAccessory(for: tab, in: controller) as? NSTextField)?.stringValue == "●"
-  )
+  // 选中行正被注视，「未读 ●」让位给 Agent 静态图标（对齐 Otty）。
+  #expect(try visibleTabAccessory(for: tab, in: controller) is NSImageView)
   #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
 
   terminalView.onTerminalUserInput?()
   try await Task.sleep(for: .milliseconds(50))
-  let readAccessory = try #require(visibleTabAccessory(for: tab, in: controller) as? NSTextField)
-  #expect(readAccessory.stringValue != "●")
+  #expect((try visibleTabAccessory(for: tab, in: controller) as? NSTextField)?.stringValue != "●")
   #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
 
   terminalView.onTerminalBadgeDirective?(.set(.completed))
   try await Task.sleep(for: .milliseconds(50))
-  #expect(
-    (try visibleTabAccessory(for: tab, in: controller) as? NSTextField)?.stringValue == "✓"
-  )
+  // 同上：选中行的「刚完成 ✓」也回落到 Agent 图标。
+  #expect(try visibleTabAccessory(for: tab, in: controller) is NSImageView)
   #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
 
   terminalView.onTerminalBadgeDirective?(.set(.error))
@@ -1078,25 +1075,26 @@ func verticalSidebarActivityAccessoryTracksAllStates() async throws {
 
   terminalView.onTerminalBadgeDirective?(.clear)
   try await Task.sleep(for: .milliseconds(50))
-  let idleAccessory = try #require(visibleTabAccessory(for: tab, in: controller) as? NSTextField)
-  #expect(!["✋", "●", "✓", "!"].contains(idleAccessory.stringValue))
+  // idle 时左侧槽显示 Agent 图标（codex → openai），不再是任何状态字符。
+  let idleAccessory = try visibleTabAccessory(for: tab, in: controller)
+  #expect(idleAccessory is NSImageView)
+  #expect(!["✋", "●", "✓", "!"].contains((idleAccessory as? NSTextField)?.stringValue ?? ""))
   #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
 }
 
-/// 状态附件与悬停关闭按钮共享固定槽位；只读取当前可见附件，避免测试依赖具体视图层级
-/// 之外的布局实现，同时仍覆盖用户看到的行尾状态变化。
+/// 状态附件按 `sidebar-tab-status-<id>-<state>` 标识查找（纵向行在标题左侧，横向在右侧），
+/// 只读取当前可见附件，测试不依赖具体槽位布局，同时仍覆盖用户看到的状态变化。
 @MainActor
 private func visibleTabAccessory(
   for tab: TerminalTabItem,
   in controller: WorkspaceViewController
 ) throws -> NSView {
-  let close = try #require(
-    controller.view.descendants.compactMap { $0 as? NSButton }.first {
-      $0.identifier?.rawValue == "sidebar-tab-close-\(tab.id.uuidString)"
+  let prefix = "sidebar-tab-status-\(tab.id.uuidString)-"
+  return try #require(
+    controller.view.descendants.first {
+      ($0.identifier?.rawValue ?? "").hasPrefix(prefix) && !$0.isHidden
     }
   )
-  let slot = try #require(close.superview)
-  return try #require(slot.subviews.first { $0 !== close && !$0.isHidden })
 }
 
 @MainActor

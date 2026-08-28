@@ -958,6 +958,7 @@ final class WorkspaceViewController: NSViewController {
           // Agent 会话标题变化也走本通道；标题栏胶囊只跟随当前选中标签的活动 Pane。
           if tab.id == self.model.selectedTabID {
             self.workspaceTitleButton?.agentSessionTitle = tab.activeAgentSessionTitle
+            self.workspaceTitleButton?.agentProvider = tab.activeSession?.activeAgentProvider
           }
         }
         .store(in: &tabSubscriptions)
@@ -1338,11 +1339,13 @@ final class WorkspaceViewController: NSViewController {
             guard let self, let tab else { return "" }
             if let ruled = self.ruleTitle(for: tab) { return ruled }
             guard section.kind == .project(.local) else { return tab.displayTitle }
-            return SidebarTabGrouping.projectGroupTitle(
-              forDirectory: tab.workingDirectory,
-              homeDirectory: NSHomeDirectory(),
-              fallback: tab.displayTitle
-            )
+            // 对齐 Otty：有 Agent 会话标题时显示它，否则显示 ~ 缩写的完整目录路径
+            // （组头已经是项目名，行里再显示短名就是重复信息）。
+            if let agentTitle = tab.activeAgentSessionTitle { return agentTitle }
+            let directory = tab.workingDirectory
+            return directory.isEmpty
+              ? tab.displayTitle
+              : (directory as NSString).abbreviatingWithTildeInPath
           },
           displayTitleToolTip: section.kind == .project(.local) ? tab.workingDirectory : nil,
           onClose: { [weak self, weak tab] in
@@ -1884,6 +1887,7 @@ final class WorkspaceViewController: NSViewController {
     }
     title.identifier = NSUserInterfaceItemIdentifier("workspace-title-button")
     title.agentSessionTitle = tab.activeAgentSessionTitle
+    title.agentProvider = tab.activeSession?.activeAgentProvider
     workspaceTitleButton = title
     background.addSubview(title)
     title.translatesAutoresizingMaskIntoConstraints = false

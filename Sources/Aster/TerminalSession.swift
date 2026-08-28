@@ -4003,7 +4003,24 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     state.applyOSC(code: code, text: text)
     terminalTitle = state.programWindowTitle.isEmpty ? "Shell" : state.programWindowTitle
     terminalIconTitle = state.programIconName
+    detectAgentProviderFromTitle(text)
     onTitleUpdate?(code, text)
+  }
+
+  /// 从程序输出识别 Agent（不依赖 hook 与命令首词）：Claude Code 把终端标题设为
+  /// 「✳ …」，看到这个前缀就把当前前台进程认定为 Claude Code，之后运行/空闲
+  /// 由输出活动回退探针驱动。已有 provider 时不覆盖。
+  private func detectAgentProviderFromTitle(_ title: String) {
+    guard activeAgentProvider == nil else { return }
+    let trimmed = title.trimmingCharacters(in: .whitespaces)
+    if trimmed.hasPrefix("✳") {
+      activeAgentProvider = .claudeCode
+    } else if trimmed.localizedCaseInsensitiveContains("codex") {
+      activeAgentProvider = .codex
+    } else {
+      return
+    }
+    markFallbackAgentActivity()
   }
 
   private func handleShellIntegrationTimeline(_ timeline: ShellCommandTimeline) {
@@ -4183,8 +4200,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   private func receiveActivityOutput(_ visibleCursorLine: String) {
-    activityOutputTail = String(visibleCursorLine.suffix(4_096))
-    markFallbackAgentActivity()
+    let tail = String(visibleCursorLine.suffix(4_096))
+    // Agent TUI 空闲时也会周期性重绘（光标、提示条），但光标行内容不变；只有内容
+    // 真正变化才算「在处理」，否则回退探针会在 5s 静默与重绘之间来回抖动。
+    let changed = tail != activityOutputTail
+    activityOutputTail = tail
+    if changed { markFallbackAgentActivity() }
     awaitingInputTask?.cancel()
     awaitingInputTask = Task { @MainActor [weak self] in
       try? await Task.sleep(for: .milliseconds(1_500))
@@ -4232,10 +4253,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     let idleDelay = fallbackAgentIdleDelay
     fallbackAgentIdleTask = Task { @MainActor [weak self] in
       try? await Task.sleep(for: idleDelay)
+      // 不再要求 hasRunningCommand：shell 集成没报命令开始时（例如从标题识别出的
+      // Agent），静默 5s 同样应回到 idle，否则动画永远停不下来。
       guard !Task.isCancelled, let self,
         self.activeAgentProvider != nil,
-        !self.agentLifecycleIsAuthoritative,
-        self.hasRunningCommand
+        !self.agentLifecycleIsAuthoritative
       else { return }
       self.fallbackAgentActivityIsProcessing = false
       self.fallbackAgentIdleTask = nil

@@ -106,17 +106,29 @@ enum TabIconArtwork {
     return result
   }
 
+  /// 图标集变体（对齐 Otty 的两套目录）：`tab` 带底色块，用于设置页选择器；
+  /// `view` 是无底色的线稿，用于侧栏行与标题胶囊这种小尺寸场景，不会糊成一团。
+  enum Variant: String {
+    case tab = "tab-icons"
+    case view = "view-icons"
+  }
+
   /// 图标名只允许 `[a-z0-9-]`，杜绝用规则文件拼出目录穿越路径。
-  static func image(named name: String) -> NSImage? {
+  /// `view` 变体缺图时回退到 `tab` 变体，保证任何图标名都有图可用。
+  static func image(named name: String, variant: Variant = .view) -> NSImage? {
     guard !name.isEmpty, name.utf8.count <= 64,
       name.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-")).contains($0) }),
-      let directory = iconsDirectory()
+      let resources = AsterResourceLocations.resourcesDirectory()
     else { return nil }
-    if let cached = imageCache[name] { return cached }
-    guard let image = NSImage(contentsOf: directory.appendingPathComponent("\(name).svg")) else { return nil }
+    let cacheKey = "\(variant.rawValue)/\(name)"
+    if let cached = imageCache[cacheKey] { return cached }
+    let directory = resources.appendingPathComponent("settings-ui/\(variant.rawValue)", isDirectory: true)
+    guard let image = NSImage(contentsOf: directory.appendingPathComponent("\(name).svg")) else {
+      return variant == .view ? image(named: name, variant: .tab) : nil
+    }
     image.isTemplate = true
     image.size = NSSize(width: 14, height: 14)
-    imageCache[name] = image
+    imageCache[cacheKey] = image
     return image
   }
 

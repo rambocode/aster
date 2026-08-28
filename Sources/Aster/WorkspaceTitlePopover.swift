@@ -34,6 +34,13 @@ final class WorkspaceTitleButton: NSButton {
       updatePresentation()
     }
   }
+  /// 活动 Pane 正在运行的 Agent；对齐 Otty，会话标题前缀该 Agent 的图标。
+  var agentProvider: AgentProvider? {
+    didSet {
+      guard agentProvider != oldValue else { return }
+      updatePresentation()
+    }
+  }
 
   private let foregroundColor: NSColor
   /// Otty 的 `[titlebar].background` 只涂目录胶囊，胶囊外的整条标题区继承 Window。
@@ -108,9 +115,14 @@ final class WorkspaceTitleButton: NSButton {
       title = "\(agentSessionTitle) ⋯"
       // 会话标题占据胶囊时，目录定位信息仍要可达：toolTip 保留完整路径。
       toolTip = workingDirectory
+      // 会话标题前放 Agent 图标（与侧栏行同一套图标集），图标集缺图时不放。
+      image = agentProvider.flatMap { TabIconArtwork.image(named: TabRowButton.agentIconName($0)) }
+      imagePosition = image == nil ? .noImage : .imageLeading
     } else {
       title = "\((workingDirectory as NSString).abbreviatingWithTildeInPath) ⋯"
       toolTip = workingDirectory
+      image = nil
+      imagePosition = .noImage
     }
     // 路径始终使用 titlebar.foreground；悬停只能为未显式设置胶囊背景的主题补充
     // 轻量反馈，不能覆盖 April / Ayu / Pink 等主题声明的 titlebar.background。
