@@ -1,0 +1,98 @@
+/* ============================================================
+   Aster 品牌定制 —— 覆盖 VitePress 默认主题变量
+   token 与 site/assets/style.css 保持一致：
+   纸张 #FCFCFB · 墨色 #202124 · 苔绿 #84A957 · 珊瑚 #EA6D49
+   ============================================================ */
+
+:root {
+  /* 品牌色：链接 / 高亮 / 按钮 */
+  --vp-c-brand-1: #6B8F45;
+  --vp-c-brand-2: #78A04A;
+  --vp-c-brand-3: #84A957;
+  --vp-c-brand-soft: rgba(132, 169, 87, 0.14);
+
+  /* 纸张画布 */
+  --vp-c-bg: #FCFCFB;
+  --vp-c-bg-alt: #FAFAF7;
+  --vp-c-bg-soft: #F6F6F2;
+  --vp-c-bg-elv: #FFFFFF;
+
+  --vp-c-text-1: #202124;
+  --vp-c-text-2: #55555A;
+  --vp-c-text-3: #8E8E93;
+
+  --vp-c-divider: #E6E6E2;
+  --vp-c-border: #E0E0DC;
+  --vp-c-gutter: #EFEFEA;
+
+  --vp-sidebar-bg-color: #FAFAF7;
+
+  --vp-font-family-base: -apple-system, "SF Pro Text", "PingFang SC",
+    "Helvetica Neue", system-ui, sans-serif;
+  --vp-font-family-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
+    monospace;
+
+  /* 首页按钮与提示块 */
+  --vp-button-brand-bg: #84A957;
+  --vp-button-brand-hover-bg: #78A04A;
+  --vp-custom-block-tip-bg: #EFF4E7;
+  --vp-custom-block-tip-border: #DCE8C8;
+  --vp-custom-block-tip-text: #3F5227;
+
+  --vp-code-color: #56763A;
+  --vp-code-bg: #F3F3EF;
+}
+
+.dark {
+  --vp-c-brand-1: #9FBF6E;
+  --vp-c-brand-2: #8FB35D;
+  --vp-c-brand-3: #84A957;
+  --vp-c-brand-soft: rgba(132, 169, 87, 0.18);
+
+  --vp-c-bg: #171817;
+  --vp-c-bg-alt: #1C1D1C;
+  --vp-c-bg-soft: #202220;
+  --vp-c-bg-elv: #1F201F;
+
+  --vp-c-text-1: #E8E8E6;
+  --vp-c-text-2: #A9A9AD;
+  --vp-c-text-3: #8E8E93;
+
+  --vp-c-divider: #2A2B2A;
+  --vp-c-border: #333533;
+  --vp-c-gutter: #232423;
+
+  --vp-sidebar-bg-color: #1C1D1C;
+
+  --vp-custom-block-tip-bg: rgba(132, 169, 87, 0.12);
+  --vp-custom-block-tip-border: rgba(132, 169, 87, 0.3);
+  --vp-custom-block-tip-text: #C4D8A4;
+
+  --vp-code-color: #9FBF6E;
+  --vp-code-bg: #222422;
+}
+
+/* 标题用衬线体，呼应落地页「纸」的气质 */
+.vp-doc h1,
+.vp-doc h2,
+.VPNavBarTitle .title {
+  font-family: "Newsreader", "Noto Serif SC", "Songti SC", Georgia, serif;
+  letter-spacing: -0.01em;
+}
+
+.vp-doc h1 { font-weight: 550; }
+.vp-doc h2 { font-weight: 600; border-top: 1px solid var(--vp-c-divider); }
+
+/* 深色代码块统一为墨色底（与落地页 codeblock 一致） */
+:root {
+  --vp-code-block-bg: #202124;
+}
+.dark { --vp-code-block-bg: #111211; }
+
+/* 侧栏当前项使用苔绿胶囊，贴近设计稿 */
+.VPSidebarItem.level-0 .item .link > .text { transition: color 0.15s; }
+.VPSidebarItem .item .link.active > .text,
+.VPSidebarItem.is-active > .item .link > .text {
+  color: var(--vp-c-brand-1);
+  font-weight: 600;
+}

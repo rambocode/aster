@@ -37,3 +37,8 @@ docs/plan/
 # 本机密钥（公证用的 app-specific password 等），绝不入库
 .env
 .env.*
+
+# 官网：落地页（site/index.html、site/assets/）与构建工程（site-docs/）入库，
+# 文档站产物不入库——site/docs/ 由 `cd site-docs && npm run docs:build` 从
+# docs/user/help.md 重建，带 hash 的资源文件每次构建都变，进仓库只会制造噪音。
+site/docs/
