@@ -497,6 +497,43 @@ func terminalAutocompleteScrollsWindowToKeepSelectionVisible() {
       current: 3, selected: 2, count: 5, visibleRows: rows) == 0)
 }
 
+@Test("上一条命令的纠错候选不在空 prompt 上画 ghost")
+@MainActor
+func terminalAutocompleteKeepsCorrectionGhostOffEmptyPrompt() throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let controller = makeController(fixture)
+  controller.attach(to: view)
+
+  // 跑一条失败命令，让它留下 "git stauts" → "git status" 的纠错。
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git stauts\r".utf8)[...])
+  controller.receive(.commandStart)
+  let output = """
+    \u{1B}]133;C\u{07}git: 'stauts' is not a git command. See 'git --help'.
+
+    The most similar command is
+    status
+    \u{1B}]133;D;1\u{07}
+    """
+  controller.receiveOutput(Array(output.utf8)[...])
+  controller.receive(.commandFinished(exitStatus: 1))
+
+  // 新一轮空 prompt：shell 自己会在第 0 列画历史建议（zsh-autosuggestions），
+  // Aster 若在同一锚点画整条纠错命令，两段文字会直接重叠成一团。
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.refreshNow()
+  #expect(controller.currentResult.ghostText == nil)
+
+  // 纠错本身仍然在：用户一开始打字就能看到它。
+  controller.receiveInput(Array("git st".utf8)[...])
+  controller.refreshNow()
+  #expect(controller.currentResult.ghostText == "atus")
+}
+
 @MainActor
 private func makeController(
   _ fixture: (directory: URL, service: AutocompleteService, controls: MutableAutocompleteControls)

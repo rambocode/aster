@@ -425,7 +425,12 @@ final class TerminalAutocompleteController {
       controls: configuration,
       aliases: aliases
     )
+    // 空 prompt 不出候选（`AutocompleteEngine.suggestions` 的第一条守卫）。纠错候选
+    // 必须遵守同一条规则：`hasPrefix("")` 恒真，少了这一句，上一条命令失败后的纠错
+    // 会在**空行**上画出整条命令，锚点是输入区第 0 列——正好压在 shell 自己画在那里
+    // 的东西（zsh-autosuggestions 的历史建议）上，两段文字重叠成一团。
     if configuration.resolvedAutocompleteOnDeviceLearning,
+      !tracker.line.trimmingCharacters(in: .whitespaces).isEmpty,
       let correction = pendingCorrection,
       correction.hasPrefix(tracker.line), correction != tracker.line
     {
