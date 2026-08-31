@@ -506,3 +506,286 @@ func shellAliasReportValidatesNames() {
   #expect(ShellAliasReport(payload: "Aliases=ok\u{7}evil") == nil)
   #expect(ShellAliasReport(payload: String(repeating: "a", count: 8_193)) == nil)
 }
+
+@Test("候选自带替换范围，ghost 与接受后缀来自同一次计算")
+func autocompleteCandidateCarriesOwnReplacementSpan() {
+  let engine = AutocompleteEngine(specDatabase: AutocompleteSpecDatabase(
+    sourceRevision: "test",
+    commands: [
+      AutocompleteCommandSpec(
+        name: "git",
+        subcommands: [AutocompleteCommandSpec(name: "checkout")])
+    ]))
+  let result = engine.suggestions(
+    for: AutocompleteQuery(line: "git ch", directory: "/project"),
+    learned: [], pinned: [], readmeCommands: [])
+  let candidate = result.candidates.first
+  #expect(candidate?.insertText == "checkout")
+  // `git ch` 里 token 从第 4 个字符开始，替换范围必须落在那里。
+  #expect(candidate?.replacement == .currentToken(start: 4))
+  #expect(result.replacementStart == 4)
+  #expect(result.ghostText == "eckout")
+  #expect(candidate?.appendableSuffix(from: "git ch") == "eckout")
+
+  // 整行候选（历史/固定/README/纠错）从行首替换。
+  let learnedResult = engine.suggestions(
+    for: AutocompleteQuery(line: "git ch", directory: "/project"),
+    learned: [AutocompleteLearnedSuggestion(
+      command: "git checkout main", score: 1, frecency: 1, isSessionMatch: true)],
+    pinned: [], readmeCommands: [])
+  let learned = learnedResult.candidates.first
+  #expect(learned?.kind == .learnedCommand)
+  #expect(learned?.replacement == .fullLine)
+  #expect(learnedResult.replacementStart == 0)
+  #expect(learnedResult.ghostText == "eckout main")
+}
+
+@Test("统一相关性让来源交错：热历史压过规格，冷历史输给贴合的子命令")
+func autocompleteRelevanceInterleavesSourcesByFrecency() {
+  let subcommand = AutocompleteRelevance.score(
+    kind: .subcommand, typed: "ch", candidate: "checkout")
+  let coldHistory = AutocompleteRelevance.score(
+    kind: .learnedCommand, typed: "git ch", candidate: "git checkout --force origin",
+    frecency: 0.1)
+  let hotHistory = AutocompleteRelevance.score(
+    kind: .learnedCommand, typed: "git ch", candidate: "git checkout --force origin",
+    frecency: 0.95, sessionBoost: 1)
+  // 这两条正是权重表注释里写死的算术，改动常量前必须重算。
+  #expect(coldHistory < subcommand, "一条冷历史不该压过前缀吻合的子命令")
+  #expect(hotHistory > subcommand, "本会话刚跑过的命令必须排在规格候选之前")
+  // 匹配质量对所有来源共享：打得越准越靠前。
+  #expect(
+    AutocompleteRelevance.matchQuality(typed: "check", candidate: "checkout")
+      > AutocompleteRelevance.matchQuality(typed: "ch", candidate: "checkout"))
+}
+
+@Test("相关性分数有界且同等条件下按来源权重排序")
+func autocompleteRelevanceScoresRemainBounded() {
+  for kind in [
+    AutocompleteCandidateKind.correction, .snippet, .dynamicArgument, .learnedCommand,
+    .subcommand, .argument, .option, .alias, .command, .readmeCommand, .folder, .file,
+  ] {
+    for frecency in [0.0, 1.0] {
+      let score = AutocompleteRelevance.score(
+        kind: kind, matchQuality: 1, frecency: frecency, sessionBoost: frecency, pinBoost: frecency)
+      #expect(score > 0 && score <= 1_000)
+    }
+  }
+  // frecency 全为 0、匹配质量相同时，严格按基础权重排序。
+  let ordered: [AutocompleteCandidateKind] = [
+    .correction, .snippet, .dynamicArgument, .subcommand, .argument,
+    .option, .alias, .learnedCommand, .readmeCommand, .folder, .file,
+  ]
+  let weights = ordered.map { AutocompleteRelevance.baseWeight(for: $0) }
+  #expect(weights == weights.sorted(by: >))
+  // 历史刻意排在子命令之下：赢下来必须靠 frecency，不能靠“它是一条历史”。
+  #expect(
+    AutocompleteRelevance.baseWeight(for: .learnedCommand)
+      < AutocompleteRelevance.baseWeight(for: .subcommand))
+}
+
+@Test("跨来源按补全后的完整命令行去重")
+func autocompleteDeduplicatesByResultingCommandLine() {
+  let engine = AutocompleteEngine(specDatabase: AutocompleteSpecDatabase(
+    sourceRevision: "test",
+    commands: [
+      AutocompleteCommandSpec(
+        name: "git",
+        subcommands: [AutocompleteCommandSpec(name: "checkout", description: .init(english: "Switch branches"))])
+    ]))
+  let result = engine.suggestions(
+    for: AutocompleteQuery(line: "git ch", directory: "/project"),
+    learned: [AutocompleteLearnedSuggestion(
+      command: "git checkout", score: 1, frecency: 0.9, isSessionMatch: true)],
+    pinned: [], readmeCommands: [])
+  // 历史整行 `git checkout` 与 token 候选 `checkout` 补全后是同一条命令行，
+  // 必须合并成一行；旧实现按 insertText 去重完全拦不住。
+  let matching = result.candidates.filter {
+    $0.resultingLine(from: "git ch") == "git checkout"
+  }
+  #expect(matching.count == 1)
+  // 合并保留了规格描述——历史条目本身没有描述。
+  #expect(matching.first?.description == "Switch branches")
+}
+
+@Test("动态候选与历史整行合并成同一条，仍能正确接受")
+func autocompleteMergesDynamicArgumentWithHistoryLine() {
+  let engine = AutocompleteEngine(specDatabase: AutocompleteSpecDatabase(
+    sourceRevision: "test",
+    commands: [
+      AutocompleteCommandSpec(
+        name: "git",
+        subcommands: [
+          AutocompleteCommandSpec(
+            name: "checkout",
+            arguments: [AutocompleteArgumentSpec(
+              name: "branch",
+              generatorScripts: [["git", "branch", "--no-color"]])])
+        ])
+    ]))
+  let result = engine.suggestions(
+    for: AutocompleteQuery(line: "git checkout m", directory: "/project"),
+    learned: [AutocompleteLearnedSuggestion(
+      command: "git checkout main", score: 1, frecency: 0.8)],
+    pinned: [], readmeCommands: [],
+    dynamic: AutocompleteDynamicProvider { source in
+      source == .gitLocalBranches ? [AutocompleteDynamicItem(name: "main")] : []
+    })
+  let matching = result.candidates.filter {
+    $0.resultingLine(from: "git checkout m") == "git checkout main"
+  }
+  #expect(matching.count == 1)
+  #expect(matching.first?.appendableSuffix(from: "git checkout m") == "ain")
+}
+
+@Test("补全后不同的命令行不会被合并")
+func autocompleteKeepsDistinctLinesSeparate() {
+  let engine = AutocompleteEngine(specDatabase: AutocompleteSpecDatabase(
+    sourceRevision: "test", commands: []))
+  let result = engine.suggestions(
+    for: AutocompleteQuery(line: "git checkout ", directory: "/project"),
+    learned: [
+      AutocompleteLearnedSuggestion(command: "git checkout main", score: 1, frecency: 0.9),
+      AutocompleteLearnedSuggestion(command: "git checkout dev", score: 1, frecency: 0.5),
+    ],
+    pinned: [], readmeCommands: [])
+  #expect(result.candidates.count == 2)
+  #expect(result.candidates.first?.insertText == "git checkout main")
+}
+
+@Test("aster learn 目标分类区分目录、PATH 二进制和整行命令")
+func autocompleteLearnTargetClassifierSeparatesFolderBinaryAndCommand() {
+  let directories: Set<String> = ["/tmp/project"]
+  let executables: Set<String> = ["acme"]
+  func classify(_ target: String) -> AutocompleteLearnTarget {
+    AutocompleteLearnTarget.classify(
+      target: target,
+      isDirectory: { directories.contains($0) },
+      resolveExecutable: { executables.contains($0) ? "/usr/local/bin/" + $0 : nil })
+  }
+  #expect(classify("/tmp/project") == .folder("/tmp/project"))
+  #expect(classify("acme") == .binary(name: "acme", executable: "/usr/local/bin/acme"))
+  // 含空格的一律是命令行；否则 `aster learn 'npm run build'` 会被当成可执行文件名。
+  #expect(classify("npm run build") == .command("npm run build"))
+  #expect(classify("rm -rf /") == .command("rm -rf /"))
+  // 含 `/` 就不是 PATH 查找目标。
+  #expect(classify("./tool") == .command("./tool"))
+  // PATH 上找不到的裸词退回整行命令。
+  #expect(classify("nosuchbinary") == .command("nosuchbinary"))
+}
+
+@Test("help 解析器把折行的描述归给上一条，不生成假候选")
+func autocompleteHelpParserIgnoresWrappedDescriptionLines() throws {
+  // 取自 docker --help 的真实形状：过长的描述被折到下一行。旧实现会把续行
+  // `"warn",` 当成一个新选项，Otty 的面板里就能看到这个 bug。
+  let output = """
+    Options:
+      -D, --debug              Enable debug mode
+      -l, --log-level string   Set the logging level ("debug", "info",
+                               "warn", "error", "fatal") (default "info")
+          --tls                Use TLS; implied by --tlsverify
+
+    Management Commands:
+
+    Commands:
+      attach      Attach local standard input, output, and error streams
+                  to a running container
+      build       Build an image from a Dockerfile
+    """
+  let spec = try #require(HelpAutocompleteSpecParser.parse(command: "docker", output: output))
+  let optionNames = spec.options.flatMap(\.names)
+  #expect(optionNames.contains("--debug"))
+  #expect(optionNames.contains("--log-level"))
+  #expect(optionNames.contains("--tls"))
+  #expect(!optionNames.contains { $0.contains("warn") }, "描述续行不得变成选项")
+  #expect(spec.options.count == 3)
+  let subcommandNames = spec.subcommands.map(\.name)
+  #expect(subcommandNames == ["attach", "build"])
+  #expect(!subcommandNames.contains("to"), "描述续行不得变成子命令")
+}
+
+@Test("只有子命令、没有选项的规格不算完整，仍需 help 探测")
+func autocompleteSpecWithoutOptionsIsNotComplete() {
+  // 上游 Fig 规格里 `docker` 就是 58 个子命令 + 0 个选项；旧的宽松判定认为它已经
+  // 够详细，于是顶层 flag 永远补不出来。
+  let subcommandsOnly = AutocompleteCommandSpec(
+    name: "docker", subcommands: [AutocompleteCommandSpec(name: "run")])
+  #expect(subcommandsOnly.hasDetails)
+  #expect(!subcommandsOnly.hasCompleteSpec)
+
+  let complete = AutocompleteCommandSpec(
+    name: "docker",
+    subcommands: [AutocompleteCommandSpec(name: "run")],
+    options: [AutocompleteOptionSpec(names: ["--debug"], description: "")])
+  #expect(complete.hasCompleteSpec)
+
+  // 纯 flag 型命令（无子命令）只要有选项就算完整。
+  let flagsOnly = AutocompleteCommandSpec(
+    name: "ls", options: [AutocompleteOptionSpec(names: ["-l"], description: "")])
+  #expect(flagsOnly.hasCompleteSpec)
+}
+
+@Test("命令名打完还没敲空格时也给出该命令的子命令与选项")
+func autocompleteOffersSubcommandsForFullyTypedCommandName() {
+  let engine = AutocompleteEngine(specDatabase: AutocompleteSpecDatabase(
+    sourceRevision: "test",
+    commands: [
+      AutocompleteCommandSpec(
+        name: "docker",
+        subcommands: [
+          AutocompleteCommandSpec(name: "attach", description: .init(english: "Attach")),
+          AutocompleteCommandSpec(name: "build", description: .init(english: "Build")),
+        ],
+        options: [AutocompleteOptionSpec(names: ["--debug"], description: "Debug")]),
+      AutocompleteCommandSpec(name: "docker-compose"),
+    ]))
+  let result = engine.suggestions(
+    for: AutocompleteQuery(line: "docker", directory: "/project"),
+    learned: [], pinned: [], readmeCommands: [])
+  let texts = result.candidates.map(\.insertText)
+  // 旧实现在这里只剩一条 `docker-compose`——用户按 Tab 想看的是 docker 能做什么。
+  #expect(texts.contains("docker-compose"))
+  #expect(texts.contains(" attach"))
+  #expect(texts.contains(" build"))
+  // 面板里显示的是命令名本身，不带那个用于拼接的前导空格。
+  #expect(result.candidates.contains { $0.displayText == "attach" })
+  // 接受后得到 `docker attach`，空格由候选自己带上。
+  let attach = result.candidates.first { $0.displayText == "attach" }
+  #expect(attach?.resultingLine(from: "docker") == "docker attach")
+  #expect(attach?.appendableSuffix(from: "docker") == " attach")
+}
+
+@Test("unpin 撤销固定但保留真实使用历史")
+func autocompleteLearningUnpinKeepsGenuineHistory() {
+  var database = AutocompleteLearningDatabase()
+  let directory = "/project"
+  // `#expect` 的宏展开会把接收者当成不可变值，mutating 方法必须先取到局部结果。
+  // 只被固定、从未真正跑过的命令：撤销后应该整条消失。
+  database.pin(command: "npm run deploy:staging", directory: directory)
+  #expect(database.isPinned(command: "npm run deploy:staging", directory: directory))
+  let unpinnedStaging = database.unpin(command: "npm run deploy:staging", directory: directory)
+  #expect(unpinnedStaging)
+  #expect(!database.isPinned(command: "npm run deploy:staging", directory: directory))
+  #expect(database.suggestions(prefix: "npm", directory: directory, sessionIdentifier: "s").isEmpty)
+
+  // 既跑过又被固定的命令：撤销只去掉固定，历史留着——用户只是不想再把它钉在最前面，
+  // 不是要抹掉自己确实跑过它这件事。
+  database.complete(
+    command: "npm test", directory: directory, exitStatus: 0,
+    ignorePatterns: [], knownOptions: [], sessionIdentifier: "s")
+  database.pin(command: "npm test", directory: directory)
+  let unpinnedTest = database.unpin(command: "npm test", directory: directory)
+  #expect(unpinnedTest)
+  #expect(!database.isPinned(command: "npm test", directory: directory))
+  #expect(
+    database.suggestions(prefix: "npm", directory: directory, sessionIdentifier: "s")
+      .contains { $0.command == "npm test" })
+
+  // 从没固定过的东西撤销失败，供 CLI 报出准确的错误。
+  let unpinAgain = database.unpin(command: "npm test", directory: directory)
+  let unpinUnknown = database.unpin(command: "never pinned", directory: directory)
+  let unpinOtherDirectory = database.unpin(command: "npm test", directory: "/other")
+  #expect(!unpinAgain)
+  #expect(!unpinUnknown)
+  #expect(!unpinOtherDirectory)
+}

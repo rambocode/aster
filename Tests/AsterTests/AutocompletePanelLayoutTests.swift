@@ -6,11 +6,14 @@ import Testing
 
 /// 候选面板的布局验收。旧实现用一个空 `NSView()` 当 spacer，`NSStackView` 的默认
 /// gravityAreas 分布让每行按各自内容宽度排列，类别标签的位置逐行漂移；面板宽度还
-/// 写死成几乎撑满终端。这里锁住修好后的三件事：行高、宽度自适应、行内左对齐。
+/// 写死成几乎撑满终端。这里锁住修好后的几件事：行高、宽度自适应、行内左对齐、
+/// 滚动视窗、描述侧栏，以及选中态——它从「只改文字色」升级为「accent 淡染 + 前导
+/// 标记条」，但仍然禁止不透明整行反白（26pt 高的行反白会在终端上糊成一条亮带）。
 @MainActor
 private func makeOverlay(
   candidates: [AutocompleteCandidate],
   selectedIndex: Int = 0,
+  firstVisibleIndex: Int = 0,
   bounds: NSRect = NSRect(x: 0, y: 0, width: 1_200, height: 600)
 ) -> TerminalAutocompleteOverlayView {
   let overlay = TerminalAutocompleteOverlayView(frame: bounds)
@@ -19,6 +22,8 @@ private func makeOverlay(
     showInline: false,
     showPanel: true,
     selectedIndex: selectedIndex,
+    showsSelection: true,
+    firstVisibleIndex: firstVisibleIndex,
     caretFrame: NSRect(x: 24, y: 400, width: 8, height: 18),
     font: .monospacedSystemFont(ofSize: 12, weight: .regular),
     foreground: .black,
@@ -81,9 +86,9 @@ func candidateRowsAreCompactAndLeftAligned() throws {
   #expect(Set(leadingEdges.map { ($0 * 100).rounded() }).count == 1)
 }
 
-@Test("选中候选只改文字色，不铺整行底色块")
+@Test("选中候选用 accent 淡染加前导条，不做整行反白")
 @MainActor
-func selectedCandidateUsesAccentTextInsteadOfFilledRow() throws {
+func selectedCandidateUsesAccentWashNotInvertedRow() throws {
   let overlay = makeOverlay(
     candidates: [
       AutocompleteCandidate(insertText: "ls", kind: .learnedCommand),
@@ -92,10 +97,102 @@ func selectedCandidateUsesAccentTextInsteadOfFilledRow() throws {
     selectedIndex: 0
   )
   let rows = overlay.panel.arrangedSubviews.compactMap { $0 as? AutocompleteCandidateRow }
+  #expect(rows.count == 2)
   let selected = try #require(rows.first)
   let name = try #require(selected.subviews.compactMap { $0 as? NSTextField }.first)
   #expect(name.textColor == NSColor.systemBlue)
-  // 底色保持接近全透明：选中靠文字色表达，整行反白会在终端上糊成一条亮带。
-  let alpha = selected.layer?.backgroundColor?.alpha ?? 1
-  #expect(alpha < 0.05)
+  // 有可见底色，但绝不能是不透明反白——26pt 高的行反白会在终端上糊成一条亮带。
+  let selectedAlpha = selected.layer?.backgroundColor?.alpha ?? 0
+  #expect(selectedAlpha > 0.05 && selectedAlpha < 0.25)
+  let unselectedAlpha = rows[1].layer?.backgroundColor?.alpha ?? 1
+  #expect(unselectedAlpha < 0.05)
+  // 前导条只在选中行出现，且必须很窄：宽条等于变相反白。
+  overlay.layoutSubtreeIfNeeded()
+  let bar = try #require(selected.selectionBar)
+  #expect(bar.frame.width <= 3)
+  #expect(rows[1].selectionBar == nil)
+}
+
+@Test("候选超过一屏时只渲染滚动视窗内的行并显示滚动条")
+@MainActor
+func candidatePanelRendersOnlyVisibleWindowRows() throws {
+  let candidates = (0..<20).map {
+    AutocompleteCandidate(insertText: String(format: "cmd%02d", $0), kind: .subcommand)
+  }
+  let overlay = makeOverlay(candidates: candidates, selectedIndex: 12, firstVisibleIndex: 5)
+  let rows = overlay.panel.arrangedSubviews.compactMap { $0 as? AutocompleteCandidateRow }
+  #expect(rows.count == TerminalAutocompleteOverlayView.maximumVisibleRows)
+  overlay.layoutSubtreeIfNeeded()
+  let firstName = try #require(rows.first?.subviews.compactMap { $0 as? NSTextField }.first)
+  #expect(firstName.stringValue == "cmd05")
+  #expect(overlay.scrollThumb.isHidden == false)
+  #expect(overlay.scrollThumb.frame.height < overlay.panel.frame.height)
+}
+
+@Test("描述侧栏显示选中项的完整描述，行内不再重复描述")
+@MainActor
+func candidatePanelShowsDescriptionSidebarForSelection() throws {
+  let long = "Switch branches or restore working tree files from a given commit or branch name"
+  let overlay = makeOverlay(candidates: [
+    AutocompleteCandidate(insertText: "checkout", description: long, kind: .subcommand),
+    AutocompleteCandidate(insertText: "commit", description: "Record changes", kind: .subcommand),
+  ])
+  overlay.layoutSubtreeIfNeeded()
+  #expect(overlay.descriptionSidebar.isHidden == false)
+  #expect(
+    overlay.panelContainer.frame.width
+      == overlay.panel.frame.width + TerminalAutocompleteOverlayView.descriptionSidebarWidth)
+  let body = overlay.descriptionSidebar.subviews.compactMap { $0 as? NSTextField }
+  #expect(body.contains { $0.stringValue == long }, "侧栏必须给出未截断的完整描述")
+  // 行内只剩命令名一个 label，描述交给侧栏承载。
+  let rows = overlay.panel.arrangedSubviews.compactMap { $0 as? AutocompleteCandidateRow }
+  let firstRow = try #require(rows.first)
+  #expect(firstRow.subviews.compactMap { $0 as? NSTextField }.count == 1)
+}
+
+@Test("描述侧栏跟随当前选中行")
+@MainActor
+func candidatePanelSidebarFollowsSelectedRow() {
+  let overlay = makeOverlay(
+    candidates: [
+      AutocompleteCandidate(insertText: "checkout", description: "切换分支", kind: .subcommand),
+      AutocompleteCandidate(insertText: "commit", description: "记录改动", kind: .subcommand),
+    ],
+    selectedIndex: 1
+  )
+  overlay.layoutSubtreeIfNeeded()
+  let labels = overlay.descriptionSidebar.subviews.compactMap { $0 as? NSTextField }
+  #expect(labels.contains { $0.stringValue == "记录改动" })
+  #expect(labels.contains { $0.stringValue == "commit" })
+}
+
+@Test("窄终端里放弃侧栏并退回行内描述")
+@MainActor
+func candidatePanelFallsBackToInlineDescriptionInNarrowTerminal() throws {
+  let overlay = makeOverlay(
+    candidates: [
+      AutocompleteCandidate(insertText: "checkout", description: "切换分支", kind: .subcommand),
+      AutocompleteCandidate(insertText: "commit", description: "记录改动", kind: .subcommand),
+    ],
+    bounds: NSRect(x: 0, y: 0, width: 380, height: 600)
+  )
+  overlay.layoutSubtreeIfNeeded()
+  #expect(overlay.descriptionSidebar.isHidden)
+  #expect(overlay.panelContainer.frame.maxX <= 380 - 8)
+  let rows = overlay.panel.arrangedSubviews.compactMap { $0 as? AutocompleteCandidateRow }
+  let firstRow = try #require(rows.first)
+  let texts = firstRow.subviews.compactMap { ($0 as? NSTextField)?.stringValue }
+  #expect(texts.contains("切换分支"), "没有侧栏时行内描述必须回来")
+}
+
+@Test("全部候选都没有描述时不出现侧栏")
+@MainActor
+func candidatePanelWithoutDescriptionsHasNoSidebar() {
+  let overlay = makeOverlay(candidates: [
+    AutocompleteCandidate(insertText: "ls", kind: .learnedCommand),
+    AutocompleteCandidate(insertText: "cd", kind: .learnedCommand),
+  ])
+  overlay.layoutSubtreeIfNeeded()
+  #expect(overlay.descriptionSidebar.isHidden)
+  #expect(overlay.panelContainer.frame.width == overlay.panel.frame.width)
 }

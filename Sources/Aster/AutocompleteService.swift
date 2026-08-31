@@ -279,38 +279,47 @@ enum AutocompleteHelpProbe {
   private static let sandboxProfile =
     "(version 1)(allow default)(deny network*)(deny file-write*)"
 
+  /// `subcommandPath` 非空时探测的是子命令(`docker compose --help`)。上游 Fig 规格
+  /// 里存在大量“有名字但没内容”的子命令壳子(`docker compose` 就是空的)，只有探测
+  /// 子命令自己的 help 才能把它填起来。
   static func probe(
     command: String,
+    subcommandPath: [String] = [],
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) async -> AutocompleteCommandSpec? {
     await Task.detached(priority: .utility) {
-      probeSynchronously(command: command, environment: environment)
+      probeSynchronously(
+        command: command, subcommandPath: subcommandPath, environment: environment)
     }.value
   }
 
   private static func probeSynchronously(
     command: String,
+    subcommandPath: [String],
     environment: [String: String]
   ) -> AutocompleteCommandSpec? {
-    guard isSafeCommandName(command),
+    // 子命令路径同样走命令名白名单：它会被原样拼进 argv，绝不能带空格或元字符。
+    guard isSafeCommandName(command), subcommandPath.count <= 4,
+      subcommandPath.allSatisfy(isSafeCommandName),
       FileManager.default.isExecutableFile(atPath: "/usr/bin/sandbox-exec"),
       let executable = resolveExecutable(command, path: environment["PATH"] ?? "/usr/bin:/bin")
     else { return nil }
 
-    for arguments in [["--help"], ["-h"], ["help"]] {
+    let leafName = subcommandPath.last ?? command
+    for suffix in [["--help"], ["-h"], ["help"]] {
       guard let output = run(
         executable: executable,
-        arguments: arguments,
+        arguments: subcommandPath + suffix,
         environment: minimalEnvironment(from: environment)
       ) else { continue }
-      if let spec = HelpAutocompleteSpecParser.parse(command: command, output: output) {
+      if let spec = HelpAutocompleteSpecParser.parse(command: leafName, output: output) {
         return spec
       }
     }
     return nil
   }
 
-  private static func resolveExecutable(_ command: String, path: String) -> URL? {
+  static func resolveExecutable(_ command: String, path: String) -> URL? {
     for directory in path.split(separator: ":").prefix(128) {
       let candidate = URL(fileURLWithPath: String(directory), isDirectory: true)
         .appendingPathComponent(command).resolvingSymlinksInPath()
@@ -394,10 +403,157 @@ enum AutocompleteHelpProbe {
     return result
   }
 
-  private static func isSafeCommandName(_ command: String) -> Bool {
+  static func isSafeCommandName(_ command: String) -> Bool {
     guard !command.isEmpty, command.utf8.count <= 128 else { return false }
     let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._+-"))
     return command.unicodeScalars.allSatisfy(allowed.contains)
+  }
+
+  /// 重建一份可用于 PATH 查找的搜索路径。
+  ///
+  /// `aster learn <binary>` 的请求体不携带调用方 shell 的 PATH,而 Finder 启动的 App
+  /// 继承的是系统默认 PATH——通常没有 `/opt/homebrew/bin`,于是用户能在终端里跑的
+  /// 命令在这里一个都找不到。这里按 macOS `path_helper` 的规则从磁盘重建:读
+  /// `/etc/paths` 与 `/etc/paths.d/*`,再并上进程自身的 PATH 与常见的用户 bin 目录。
+  /// 全程只读文件,不 fork 任何进程。
+  static func searchPath(environment: [String: String] = ProcessInfo.processInfo.environment)
+    -> String
+  {
+    var directories: [String] = []
+    var seen: Set<String> = []
+    func add(_ path: String) {
+      guard path.hasPrefix("/"), path.utf8.count <= 4_096, seen.insert(path).inserted,
+        directories.count < 128
+      else { return }
+      directories.append(path)
+    }
+    for value in (environment["PATH"] ?? "").split(separator: ":") { add(String(value)) }
+
+    let fileManager = FileManager.default
+    func appendLines(of url: URL) {
+      guard let values = try? url.resourceValues(forKeys: [
+        .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
+      ]), values.isRegularFile == true, values.isSymbolicLink != true,
+        (values.fileSize ?? 0) <= 4_096, let data = try? Data(contentsOf: url)
+      else { return }
+      for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
+        add(line.trimmingCharacters(in: .whitespaces))
+      }
+    }
+    appendLines(of: URL(fileURLWithPath: "/etc/paths"))
+    if let entries = try? fileManager.contentsOfDirectory(
+      at: URL(fileURLWithPath: "/etc/paths.d"), includingPropertiesForKeys: nil,
+      options: [.skipsSubdirectoryDescendants])
+    {
+      for entry in entries.sorted(by: { $0.path < $1.path }).prefix(64) { appendLines(of: entry) }
+    }
+    if let home = environment["HOME"], home.hasPrefix("/") {
+      add(home + "/.local/bin")
+      add(home + "/bin")
+    }
+    for fallback in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] { add(fallback) }
+    return directories.joined(separator: ":")
+  }
+}
+
+/// 动态候选的按目录缓存。补全跑在主线程的 150ms 防抖窗口里,每次按键都重新枚举
+/// `.git/refs` 或 Homebrew 的 tap 目录是不可接受的。
+///
+/// 失效凭据用「见证文件的 (mtime, size)」组合,**外加一个硬 TTL**。TTL 不是保险丝
+/// 而是必需品:目录的 mtime 不会因为子目录内的文件变化而更新——新建
+/// `refs/heads/feature/x` 只改 `refs/heads/feature` 的 mtime,不改 `refs/heads`,
+/// 单靠 mtime 会漏更新。
+@MainActor
+final class AutocompleteDynamicCache {
+  private struct Entry {
+    let items: [AutocompleteDynamicItem]
+    let witness: [String]
+    let loadedAt: Date
+  }
+
+  private struct Key: Hashable {
+    let source: AutocompleteDynamicSource
+    let directory: String
+  }
+
+  private let reader: any AutocompleteDynamicReader
+  private let capacity = 16
+  private var entries: [Key: Entry] = [:]
+  private var order: [Key] = []
+  /// Homebrew 的 tap 目录可以有上万条,重读很贵而且几乎不变,给它更长的 TTL。
+  private static let defaultTTL: TimeInterval = 5
+  private static let brewTTL: TimeInterval = 60
+
+  init(reader: any AutocompleteDynamicReader) {
+    self.reader = reader
+  }
+
+  func items(
+    for source: AutocompleteDynamicSource, directory: String, now: Date = Date()
+  ) -> [AutocompleteDynamicItem] {
+    let key = Key(source: source, directory: directory)
+    let witness = Self.witness(for: source, directory: directory)
+    let ttl = Self.ttl(for: source)
+    if let entry = entries[key], entry.witness == witness,
+      now.timeIntervalSince(entry.loadedAt) < ttl
+    {
+      touch(key)
+      return entry.items
+    }
+    let items = reader.items(for: source, directory: directory)
+    entries[key] = Entry(items: items, witness: witness, loadedAt: now)
+    touch(key)
+    trim()
+    return items
+  }
+
+  private func touch(_ key: Key) {
+    order.removeAll { $0 == key }
+    order.append(key)
+  }
+
+  private func trim() {
+    while order.count > capacity, let oldest = order.first {
+      order.removeFirst()
+      entries[oldest] = nil
+    }
+  }
+
+  private static func ttl(for source: AutocompleteDynamicSource) -> TimeInterval {
+    switch source {
+    case .brewFormulae, .brewCasks, .brewInstalledFormulae, .brewInstalledCasks, .brewTaps:
+      brewTTL
+    default:
+      defaultTTL
+    }
+  }
+
+  /// 见证文件的 (mtime, size) 指纹。只 stat 少量固定路径,不递归。
+  private static func witness(
+    for source: AutocompleteDynamicSource, directory: String
+  ) -> [String] {
+    let root = URL(fileURLWithPath: directory)
+    let paths: [String]
+    switch source {
+    case .gitLocalBranches, .gitAllBranches, .gitRemoteBranches, .gitTags, .gitRemotes,
+      .gitStashes, .gitAliases:
+      paths = [".git/HEAD", ".git/packed-refs", ".git/refs/heads", ".git/config", ".git/logs/HEAD"]
+    case .npmScripts:
+      paths = ["package.json"]
+    case .makeTargets:
+      paths = ["Makefile", "makefile", "GNUmakefile"]
+    case .brewFormulae, .brewCasks, .brewInstalledFormulae, .brewInstalledCasks, .brewTaps:
+      // Homebrew 不在项目目录下,靠 TTL 兜底即可。
+      paths = []
+    }
+    return paths.map { path in
+      let url = root.appendingPathComponent(path)
+      guard let values = try? url.resourceValues(forKeys: [
+        .contentModificationDateKey, .fileSizeKey,
+      ]) else { return "\(path):-" }
+      let stamp = values.contentModificationDate?.timeIntervalSinceReferenceDate ?? 0
+      return "\(path):\(stamp):\(values.fileSize ?? 0)"
+    }
   }
 }
 
@@ -428,14 +584,20 @@ final class AutocompleteService {
   private(set) var specDatabase: AutocompleteSpecDatabase
   private(set) var cliToken: String
   let cliRequestService: AsterCLIRequestService
+  /// 动态候选(git 分支、npm script、Homebrew formula …)的按目录缓存。
+  let dynamicCache: AutocompleteDynamicCache
 
   init(
     baseDirectory: URL,
     bundledSpecURL: URL,
-    fileManager: FileManager = .default
+    fileManager: FileManager = .default,
+    dynamicReader: (any AutocompleteDynamicReader)? = nil
   ) throws {
     self.baseDirectory = baseDirectory.standardizedFileURL
     self.fileManager = fileManager
+    dynamicCache = AutocompleteDynamicCache(
+      reader: dynamicReader
+        ?? AutocompleteDiskDynamicReader(environment: ProcessInfo.processInfo.environment))
     learningURL = self.baseDirectory.appendingPathComponent("learning.json")
     updatedSpecURL = self.baseDirectory.appendingPathComponent("fig-specs.json")
     localSpecURL = self.baseDirectory.appendingPathComponent("local-specs.json")
@@ -543,27 +705,26 @@ final class AutocompleteService {
       pinned: pinned,
       readmeCommands: readme,
       aliases: aliases,
+      dynamic: dynamicProvider(directory: normalizedDirectory),
       language: descriptionLanguage
     )
     let files = fileCandidates(for: line, directory: directory)
     guard !files.isEmpty else { return base }
-    let existing = Set(base.candidates.map(\.insertText))
-    let candidates = Array((base.candidates + files.filter { !existing.contains($0.insertText) }).prefix(200))
-    guard base.candidates.isEmpty, let first = candidates.first else {
-      return AutocompleteResult(
-        candidates: candidates,
-        ghostText: base.ghostText,
-        replacementStart: base.replacementStart
-      )
+    // 文件候选参与统一重排,而不是无条件追加在规格候选之后。旧实现让文件永远排在
+    // 最后、且只有在没有其它候选时才可能成为 ghost,于是 `cat REA<Tab>` 补不出
+    // README——只要有任何一条别的候选,文件就沉底了。
+    let combined = AutocompleteEngine.rank(base.candidates + files, line: line)
+    return .make(candidates: Array(combined.prefix(200)), line: line)
+  }
+
+  /// 为一次补全查询构造动态候选提供者。引擎只在解析到参数槽位时才回调,因此这里
+  /// 传闭包而不是提前把所有来源都读一遍。
+  private func dynamicProvider(directory: String) -> AutocompleteDynamicProvider {
+    guard directory.hasPrefix("/") else { return .empty }
+    let cache = dynamicCache
+    return AutocompleteDynamicProvider { source in
+      MainActor.assumeIsolated { cache.items(for: source, directory: directory) }
     }
-    let parsed = ShellCommandTokenizer.tokenize(line)
-    let ghost = first.insertText.hasPrefix(parsed.currentToken)
-      ? String(first.insertText.dropFirst(parsed.currentToken.count)) : nil
-    return AutocompleteResult(
-      candidates: candidates,
-      ghostText: ghost,
-      replacementStart: parsed.currentTokenStart
-    )
   }
 
   @discardableResult
@@ -610,6 +771,53 @@ final class AutocompleteService {
     }
   }
 
+  /// 撤销一次 `pin`（`aster ignore '<命令>'`）。写盘失败时回滚内存状态，与 `pin`
+  /// 对称，避免磁盘和内存分叉。
+  @discardableResult
+  func unpin(command: String, directory: String) -> Bool {
+    let previous = learningDatabase
+    guard learningDatabase.unpin(command: command, directory: directory) else { return false }
+    do {
+      try persistLearning()
+      return true
+    } catch {
+      learningDatabase = previous
+      return false
+    }
+  }
+
+  func isPinned(command: String, directory: String) -> Bool {
+    learningDatabase.isPinned(command: command, directory: directory)
+  }
+
+  /// 移除一条本机 `--help` 探测生成的规格（`aster ignore <二进制名>`）。内置 Fig
+  /// 规格不受影响——它不是用户学出来的，删掉只会让补全变差且无法恢复。
+  @discardableResult
+  func removeLocalSpec(named name: String) -> Bool {
+    guard localSpecDatabase.command(named: name) != nil else { return false }
+    let previousLocal = localSpecDatabase
+    let previousMerged = specDatabase
+    let updated = AutocompleteSpecDatabase(
+      sourceRevision: "local",
+      commands: localSpecDatabase.commands.filter { $0.name != name })
+    do {
+      let data = try AutocompleteSpecStore.encode(updated)
+      try Self.writeStateFile(data, to: localSpecURL, fileManager: fileManager)
+      localSpecDatabase = updated
+      specDatabase = Self.merged(base: baseSpecDatabase, local: localSpecDatabase)
+      return true
+    } catch {
+      localSpecDatabase = previousLocal
+      specDatabase = previousMerged
+      return false
+    }
+  }
+
+  /// 本机是否存在该命令的 help 规格。内置规格不算——`ignore` 只撤销用户学到的东西。
+  func hasLocalSpec(named name: String) -> Bool {
+    localSpecDatabase.command(named: name) != nil
+  }
+
   func clearLearning() throws {
     try clearLearning([.history, .pinnedCommands])
   }
@@ -637,8 +845,47 @@ final class AutocompleteService {
 
   /// 名称清单只能完成可执行文件本身；至少存在一种子项才算详细规格，否则允许
   /// 本地 help 探测补足 subcommand、option 或 argument。
+  /// 一次 help 探测的目标：可执行文件加上要探测的子命令路径。
+  struct HelpProbeTarget: Equatable {
+    let command: String
+    let subcommandPath: [String]
+    /// 每会话每目标最多探测一次的去重键。
+    var cacheKey: String { ([command] + subcommandPath).joined(separator: " ") }
+  }
+
+  /// 判断当前命令行需不需要做 `--help` 探测，以及探测哪一层。
+  ///
+  /// 沿已输入的 token 在规格树上下钻，返回**最深的那个内容不完整的层级**。这样
+  /// `docker compose ` 会去探测 `docker compose --help` 而不是 `docker --help`——
+  /// 上游 Fig 规格里 `docker compose` 是个只有名字、没有任何子命令和选项的壳子，
+  /// 只探测顶层永远补不上它。已经完整的层级直接跳过，不产生任何进程。
+  func helpProbeTarget(for line: String) -> HelpProbeTarget? {
+    let parsed = ShellCommandTokenizer.tokenize(line)
+    guard let command = parsed.tokens.first, !command.isEmpty else { return nil }
+    // 正在输入的最后一个 token 还没定型，不参与下钻。
+    let completed = parsed.currentToken.isEmpty
+      ? Array(parsed.tokens.dropFirst()) : Array(parsed.tokens.dropFirst().dropLast())
+
+    guard var node = specDatabase.command(named: command) else {
+      // 完全没有规格的命令：探测顶层。
+      return HelpProbeTarget(command: command, subcommandPath: [])
+    }
+    var path: [String] = []
+    var deepestIncomplete = node.hasCompleteSpec
+      ? nil : HelpProbeTarget(command: command, subcommandPath: [])
+    for token in completed.prefix(4) {
+      guard !token.hasPrefix("-"), let child = node.subcommand(named: token) else { break }
+      node = child
+      path.append(child.name)
+      if !node.hasCompleteSpec {
+        deepestIncomplete = HelpProbeTarget(command: command, subcommandPath: path)
+      }
+    }
+    return deepestIncomplete
+  }
+
   func containsDetailedSpec(for command: String) -> Bool {
-    specDatabase.command(named: command)?.hasDetails ?? false
+    specDatabase.command(named: command)?.hasCompleteSpec ?? false
   }
 
   /// `aster learn` 的本机 URL 入口。识别到 aster://learn 后无论成功与否都不再交给
@@ -673,8 +920,47 @@ final class AutocompleteService {
     return []
   }
 
-  /// 本地 help 规格独立保存并优先于 Fig 名称清单；手动更新远端清单时不会覆盖它。
-  func installLocalSpec(_ spec: AutocompleteCommandSpec) throws {
+  /// 本地 help 规格独立保存并与内置规格按字段合并；手动更新远端清单时不会覆盖它。
+  ///
+  /// `subcommandPath` 非空时,探测结果是某个子命令的规格,要挂到本地规格树的对应位置
+  /// 而不是当成一条顶层命令——否则 `docker compose --help` 会生成一个叫 `compose`
+  /// 的顶层命令。
+  ///
+  /// `command` 是根命令名,`subcommandPath` **不含**它——与
+  /// `AutocompleteHelpProbe.probe(command:subcommandPath:)` 的参数语义严格一致。
+  /// 两者用同一套约定,是因为它们总是成对调用,不一致会静默地把规格挂到错误的位置。
+  func installLocalSpec(
+    _ spec: AutocompleteCommandSpec,
+    command: String? = nil,
+    subcommandPath: [String] = []
+  ) throws {
+    guard let command, !subcommandPath.isEmpty else { return try installTopLevelSpec(spec) }
+    let existing = localSpecDatabase.command(named: command)
+      ?? AutocompleteCommandSpec(name: command)
+    try installTopLevelSpec(Self.attaching(spec, at: subcommandPath, to: existing))
+  }
+
+  /// 沿子命令路径把探测结果挂进规格树,路径上缺失的层级按名字补出空壳。
+  private static func attaching(
+    _ spec: AutocompleteCommandSpec,
+    at path: [String],
+    to parent: AutocompleteCommandSpec
+  ) -> AutocompleteCommandSpec {
+    guard let head = path.first else {
+      return parent.merging(probed: spec)
+    }
+    var subcommands = parent.subcommands
+    let child = subcommands.firstIndex { $0.name == head }
+    let base = child.map { subcommands[$0] } ?? AutocompleteCommandSpec(name: head)
+    let replaced = attaching(spec, at: Array(path.dropFirst()), to: base)
+    if let child { subcommands[child] = replaced } else { subcommands.append(replaced) }
+    return AutocompleteCommandSpec(
+      name: parent.name, description: parent.description, aliases: parent.aliases,
+      hidden: parent.hidden, subcommands: subcommands, options: parent.options,
+      arguments: parent.arguments)
+  }
+
+  private func installTopLevelSpec(_ spec: AutocompleteCommandSpec) throws {
     var commands = localSpecDatabase.commands.filter { $0.name != spec.name }
     commands.append(spec)
     commands.sort { $0.name < $1.name }
@@ -766,11 +1052,14 @@ final class AutocompleteService {
         else { return nil }
         let escapedName = Self.shellEscaped(name)
         let suffix = values.isDirectory == true ? "/" : ""
+        let insert = typedDirectory + escapedName + suffix
+        let kind: AutocompleteCandidateKind = values.isDirectory == true ? .folder : .file
         return AutocompleteCandidate(
-          insertText: typedDirectory + escapedName + suffix,
+          insertText: insert,
           description: values.isDirectory == true ? "目录" : "文件",
-          kind: values.isDirectory == true ? .folder : .file,
-          score: values.isDirectory == true ? 80_000 : 75_000
+          kind: kind,
+          score: AutocompleteRelevance.score(kind: kind, typed: token, candidate: insert),
+          replacement: .currentToken(start: parsed.currentTokenStart)
         )
       }
       .sorted {
@@ -786,16 +1075,23 @@ final class AutocompleteService {
     }.joined()
   }
 
+  /// 本地 help 规格与内置规格按字段并集合并，而不是整条覆盖。覆盖会丢掉内置规格
+  /// 独有的嵌套子命令、参数模板与 generatorScripts（`docker compose` 就是这样丢的）。
   private static func merged(
     base: AutocompleteSpecDatabase,
     local: AutocompleteSpecDatabase
   ) -> AutocompleteSpecDatabase {
-    let localNames = Set(local.commands.map(\.name))
+    var localByName: [String: AutocompleteCommandSpec] = [:]
+    for command in local.commands { localByName[command.name] = command }
+    var commands = base.commands.map { command in
+      localByName.removeValue(forKey: command.name).map { command.merging(probed: $0) } ?? command
+    }
+    // 内置规格里根本没有的命令（用户 `aster learn` 出来的）原样加入。
+    commands += localByName.values
     return AutocompleteSpecDatabase(
       sourceRevision: base.sourceRevision,
       sourceDate: base.sourceDate,
-      commands: (base.commands.filter { !localNames.contains($0.name) } + local.commands)
-        .sorted { $0.name < $1.name }
+      commands: commands.sorted { $0.name < $1.name }
     )
   }
 

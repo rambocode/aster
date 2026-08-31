@@ -3124,25 +3124,91 @@ final class AppModel: ObservableObject {
     case .learn(let request):
       let target = request.target ?? selectedTab?.workingDirectory ?? NSHomeDirectory()
       let expanded = resolveCLIPath(target, relativeTo: selectedTab?.workingDirectory)
-      if isExistingDirectory(expanded) {
+      let workingDirectory = selectedTab?.workingDirectory ?? NSHomeDirectory()
+      // 三分支:目录 → 记为常用目录;PATH 上的裸二进制 → 沙箱内 `--help` 探测并写入
+      // 本地规格;其余 → 当作整行命令钉到当前目录。分类规则在 AsterCore 里,这里只
+      // 负责编排与用户可见文案。
+      let searchPath = AutocompleteHelpProbe.searchPath()
+      switch AutocompleteLearnTarget.classify(
+        target: target,
+        isDirectory: { _ in isExistingDirectory(expanded) },
+        resolveExecutable: { AutocompleteHelpProbe.resolveExecutable($0, path: searchPath)?.path }
+      ) {
+      case .folder:
         completion(learnFolder(expanded) ? .success(expanded + "\n") : .failure("无法学习该目录。\n"))
-      } else if AutocompleteService.shared?.pin(
-        command: target,
-        directory: selectedTab?.workingDirectory ?? NSHomeDirectory()
-      ) == true {
-        completion(.success(target + "\n"))
-      } else {
-        completion(.failure("无法学习该目录或命令。\n"))
+      case .binary(let name, _):
+        guard let service = AutocompleteService.shared else {
+          completion(.failure("Autocomplete 规格服务不可用。\n", exitCode: 69))
+          return
+        }
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/sandbox-exec") else {
+          completion(.failure("本机沙箱不可用，无法安全探测 \(name) --help。\n", exitCode: 69))
+          return
+        }
+        Task { @MainActor in
+          guard let spec = await AutocompleteHelpProbe.probe(command: name) else {
+            // 探测失败回落到 pin,保证 `aster learn ls` 永不比改动前更差。
+            let pinned = service.pin(command: name, directory: workingDirectory)
+            completion(
+              pinned
+                ? .success("未能从 \(name) --help 解析出补全规格，已改为把它固定到当前目录。\n")
+                : .failure("无法学习该目录或命令。\n"))
+            return
+          }
+          do {
+            try service.installLocalSpec(spec)
+            completion(
+              .success("已学习 \(name)：\(spec.subcommands.count) 个子命令、\(spec.options.count) 个选项\n"))
+          } catch {
+            completion(.failure("无法写入本地补全规格。\n", exitCode: 73))
+          }
+        }
+      case .command(let line):
+        if AutocompleteService.shared?.pin(command: line, directory: workingDirectory) == true {
+          completion(.success(line + "\n"))
+        } else {
+          completion(.failure("无法学习该目录或命令。\n"))
+        }
       }
 
     case .ignore(let request):
+      // `ignore` 是 `learn` 的撤销，因此必须和 learn 一样分三种目标：目录、PATH 上的
+      // 二进制（撤销它的本机 help 规格）、整行命令（撤销固定）。旧实现只认目录，
+      // `aster learn 'npm run deploy'` 学进去的东西没有任何 CLI 途径可以撤销。
       let expanded = resolveCLIPath(request.target, relativeTo: selectedTab?.workingDirectory)
-      guard isExistingDirectory(expanded) || frequentFolderMatches().contains(where: { $0.path == expanded })
-      else {
-        completion(.failure("当前只支持忽略 Frequent Folders 中的目录。\n", exitCode: 64))
+      let workingDirectory = selectedTab?.workingDirectory ?? NSHomeDirectory()
+      let isKnownFolder = isExistingDirectory(expanded)
+        || frequentFolderMatches().contains { $0.path == expanded }
+      if isKnownFolder {
+        completion(ignoreFolder(expanded) ? .success() : .failure("该目录已经被忽略。\n"))
         return
       }
-      completion(ignoreFolder(expanded) ? .success() : .failure("该目录已经被忽略。\n"))
+      guard let service = AutocompleteService.shared else {
+        completion(.failure("Autocomplete 规格服务不可用。\n", exitCode: 69))
+        return
+      }
+      // 二进制与固定命令可能重名（`aster learn rg` 与 `aster learn 'rg --files'` 是
+      // 两回事），逐个撤销并汇总，而不是二选一。
+      var removed: [String] = []
+      if service.isPinned(command: request.target, directory: workingDirectory),
+        service.unpin(command: request.target, directory: workingDirectory)
+      {
+        removed.append("固定命令")
+      }
+      if AutocompleteLearnTarget.isBareBinaryName(request.target),
+        service.hasLocalSpec(named: request.target),
+        service.removeLocalSpec(named: request.target)
+      {
+        removed.append("本机补全规格")
+      }
+      guard !removed.isEmpty else {
+        completion(
+          .failure(
+            "没有可撤销的内容：\(request.target) 不是已记录的目录、固定命令或本机规格。\n",
+            exitCode: 64))
+        return
+      }
+      completion(.success("已撤销 \(request.target) 的\(removed.joined(separator: "和"))。\n"))
 
     case .capture(let request):
       guard let (_, runtime) = workflowCLIRuntime(selector: request.selector),
