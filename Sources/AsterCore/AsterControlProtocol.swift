@@ -1133,13 +1133,20 @@ public enum AsterControlSocketLocation {
 public enum AsterControlTitleNormalizer {
   private static let spinnerScalars: Set<Unicode.Scalar> = ["·", "✢", "✳", "✶", "✻", "✽", "◐", "◓", "◑", "◒"]
 
+  /// 标题是否以 agent TUI 的 spinner 字符开头（盲文或 ✳/◐ 系列，且其后是空白或结尾）。
+  /// 侧栏行与标题胶囊据此决定不再叠加自己的 Agent 图标，避免出现两个图标。
+  public static func hasSpinnerPrefix(_ title: String) -> Bool {
+    let scalars = Array(title.unicodeScalars)
+    guard let first = scalars.first else { return false }
+    let isSpinner = (0x2800...0x28FF).contains(first.value) || spinnerScalars.contains(first)
+    guard isSpinner else { return false }
+    return scalars.count == 1 || CharacterSet.whitespaces.contains(scalars[1])
+  }
+
   /// 首字符为盲文（U+2800-28FF）或 spinner 符号，且其后是空白或结尾 → 剥掉该字符与后续空白。
   public static func stripped(_ title: String) -> String {
+    guard hasSpinnerPrefix(title) else { return title }
     let scalars = Array(title.unicodeScalars)
-    guard let first = scalars.first else { return title }
-    let isSpinner = (0x2800...0x28FF).contains(first.value) || spinnerScalars.contains(first)
-    guard isSpinner else { return title }
-    if scalars.count > 1, !CharacterSet.whitespaces.contains(scalars[1]) { return title }
     var index = 1
     while index < scalars.count, CharacterSet.whitespaces.contains(scalars[index]) { index += 1 }
     return String(String.UnicodeScalarView(scalars[index...]))

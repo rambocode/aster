@@ -468,10 +468,17 @@ final class TabRowButton: NSButton {
     !horizontal && idleTabIcon != nil
   }
 
-  /// 行图标 / 动画所用的 provider：跟随当前活动 Pane；活动 Pane 不是 Agent（普通 shell、
-  /// 编辑器）时才回落到标签里任意一个 Agent 会话，保证「标签里有 Agent」仍然可见。
-  private var preferredAgentProvider: AgentProvider? {
+  /// 静态行图标所用的 provider：**严格**跟随当前活动 Pane。不能回落到「标签里任意一个
+  /// Agent」——分屏里左 codex 右普通 shell 时，聚焦右侧仍显示 codex 图标是错的：图标
+  /// 表示的是「你现在看的这个 Pane 是什么」，而不是「这个标签里存在过什么」。
+  private var activePaneAgentProvider: AgentProvider? {
     tab.activeSession?.activeAgentProvider
+  }
+
+  /// 运行动画所用的 provider：徽章 `.running` 是标签级聚合（任一 Pane 在跑），因此这里
+  /// 允许回落到标签里任意一个 Agent 会话，让动画样式匹配真正在跑的那个 Agent。
+  private var preferredAgentProvider: AgentProvider? {
+    activePaneAgentProvider
       ?? tab.runtimes.values.compactMap({ $0.terminalSession?.activeAgentProvider }).first
   }
 
@@ -481,10 +488,17 @@ final class TabRowButton: NSButton {
     preferredAgentProvider == .codex ? .dots : .spin
   }
 
-  /// 纵向行静态图标：规则图标优先，其次是当前活动 Pane 正在运行的 Agent 图标。
+  /// 展示标题本身已带 Agent 的 spinner 字符（Claude 的 ✳/◐ 前缀会自己翻转）时为 true；
+  /// 此时行内不再叠加 Aster 自绘的 Agent 图标 / 运行动画，否则会并排出现两个图标。
+  private var titleCarriesAgentGlyph: Bool {
+    AsterControlTitleNormalizer.hasSpinnerPrefix(displayTitleProvider())
+  }
+
+  /// 纵向行静态图标：规则图标优先，其次是**当前活动 Pane** 正在运行的 Agent 图标；
+  /// 标题自带 spinner 字符时不放 Agent 图标。
   private var idleTabIcon: TabRuleIcon? {
     if let tabIcon { return tabIcon }
-    guard let provider = preferredAgentProvider else { return nil }
+    guard !titleCarriesAgentGlyph, let provider = activePaneAgentProvider else { return nil }
     return TabRuleIcon(name: Self.agentIconName(provider))
   }
 
@@ -508,7 +522,7 @@ final class TabRowButton: NSButton {
   /// 不显示百分比，因此 `.running` 的 percent 变化不进入键值，避免进度刷新重启动画。
   private func activityBadgeKey() -> String {
     switch tab.activityBadge {
-    case .running:
+    case .running where !titleCarriesAgentGlyph:
       return runningAnimationStyle == .dots ? "running-dots" : "running-spin"
     case .awaitingInput where showsAwaitingInput:
       return "awaiting-input"
@@ -536,8 +550,9 @@ final class TabRowButton: NSButton {
     let stateName: String
     let accessibilityLabel: String
     switch tab.activityBadge {
-    case .running:
+    case .running where !titleCarriesAgentGlyph:
       // 运行动画对齐 Otty，按 Agent 区分（见 runningAnimationStyle）。不再用系统 spinner。
+      // 标题自带 spinner 字符时跳过本分支，由标题里的字符承担动画。
       let tint = selected ? resolvedActiveForeground : resolvedForeground
       accessory = TabActivitySpinnerView(tint: tint, style: runningAnimationStyle)
       stateName = "running"

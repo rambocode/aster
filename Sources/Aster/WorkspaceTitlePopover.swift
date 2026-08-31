@@ -115,8 +115,11 @@ final class WorkspaceTitleButton: NSButton {
       title = "\(agentSessionTitle) ⋯"
       // 会话标题占据胶囊时，目录定位信息仍要可达：toolTip 保留完整路径。
       toolTip = workingDirectory
-      // 会话标题前放 Agent 图标（与侧栏行同一套图标集），图标集缺图时不放。
-      image = agentProvider.flatMap { TabIconArtwork.image(named: TabRowButton.agentIconName($0)) }
+      // 会话标题前放 Agent 图标（与侧栏行同一套图标集），图标集缺图时不放；
+      // 标题本身已带 ✳/◐ 等 spinner 前缀时也不放，避免并排两个图标。
+      image = AsterControlTitleNormalizer.hasSpinnerPrefix(agentSessionTitle)
+        ? nil
+        : agentProvider.flatMap { TabIconArtwork.image(named: TabRowButton.agentIconName($0)) }
       imagePosition = image == nil ? .noImage : .imageLeading
     } else {
       title = "\((workingDirectory as NSString).abbreviatingWithTildeInPath) ⋯"
