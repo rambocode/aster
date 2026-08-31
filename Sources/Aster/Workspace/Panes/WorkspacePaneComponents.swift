@@ -430,6 +430,8 @@ final class ActivePaneHostView: NSView {
   private var dragHandle: PaneDragHandleView?
   private var closeButton: PaneCloseButton?
   private var handleTrackingArea: NSTrackingArea?
+  /// 顶条控件当前是否淡入；只由 `updateChromeReveal` 写入。
+  private(set) var chromeRevealed = false
   private var externalDropZone: ExternalPaneDropZone?
   private weak var contentView: NSView?
   private var contentTopConstraint: NSLayoutConstraint?
@@ -577,15 +579,45 @@ final class ActivePaneHostView: NSView {
     )
     addTrackingArea(area)
     handleTrackingArea = area
+    syncChromeReveal()
   }
 
-  override func mouseEntered(with event: NSEvent) {
-    dragHandle?.isRevealed = true
-    closeButton?.isRevealed = true
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    syncChromeReveal()
   }
-  override func mouseExited(with event: NSEvent) {
-    dragHandle?.isRevealed = false
-    closeButton?.isRevealed = false
+
+  override func mouseEntered(with event: NSEvent) { syncChromeReveal() }
+  override func mouseExited(with event: NSEvent) { syncChromeReveal() }
+
+  /// 按指针的**当前位置**重新判定顶条控件（把手 / 关闭按钮）是否淡入。
+  ///
+  /// 不能只靠 `mouseEntered` / `mouseExited` 配对：`updateTrackingAreas` 在每次布局
+  /// 都会把感应带整个拆掉重建，而 AppKit 不为重建补发进入/离开事件。分屏、终端
+  /// resize、窗口失焦只要恰好发生在指针跨越顶边的那一刻，`isRevealed` 就会永久卡在
+  /// true——顶条于是在所有 Pane 上常驻显示，而不是「靠近才出现」。把可见性改成纯几何
+  /// 判定后，任何一次布局都会自动纠正状态。
+  private func syncChromeReveal() {
+    guard let window, window.isKeyWindow else {
+      updateChromeReveal(pointerInView: nil)
+      return
+    }
+    updateChromeReveal(pointerInView: convert(window.mouseLocationOutsideOfEventStream, from: nil))
+  }
+
+  /// 顶条可见性的唯一写入点。传 nil 表示指针不在本窗口内。
+  /// internal 而不是 private：回归测试要在没有真实鼠标的环境里驱动这条路径。
+  func updateChromeReveal(pointerInView point: NSPoint?) {
+    guard dragHandle != nil || closeButton != nil else { return }
+    let strip = handleTrackingArea?.rect
+      ?? NSRect(
+        x: 0, y: max(0, bounds.height - Self.handleRevealHeight),
+        width: bounds.width, height: min(bounds.height, Self.handleRevealHeight))
+    let revealed = point.map(strip.contains) ?? false
+    guard revealed != chromeRevealed else { return }
+    chromeRevealed = revealed
+    dragHandle?.isRevealed = revealed
+    closeButton?.isRevealed = revealed
   }
 
   /// 顶条控件安装后把内容整体下移,让胶囊/按钮与内容之间留出固定间距,
@@ -609,6 +641,7 @@ final class ActivePaneHostView: NSView {
     ])
     dragHandle = handle
     applyChromeContentInset()
+    syncChromeReveal()
   }
 
   /// 安装顶条最右侧的关闭按钮;与把手一样只在多 Pane 时有意义(最后一个 Pane 无处可关)。
@@ -627,6 +660,7 @@ final class ActivePaneHostView: NSView {
     ])
     closeButton = button
     applyChromeContentInset()
+    syncChromeReveal()
   }
 
 }
