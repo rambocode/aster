@@ -168,6 +168,8 @@ Core Graphics 网格路径。
 
 ### Autocomplete 与 Inline Suggestion
 
+候选面板最多同时显示 8 行，超出部分可以用上下键滚动，右侧的侧栏给出当前选中项的完整说明。面板打开后继续输入会按新前缀收窄，而不是关闭。面板设为“自动”时，系统主动弹出的面板在你按过上下键之前不会接管回车——直接按 Enter 仍然执行当前命令；按一次 Esc 可以在本轮提示符内关掉它，再按一次 Esc 又能叫回来。把“Inline suggestion”和“候选面板”同时关闭等于完全停用该功能，内置规格库根本不会被查询。
+
 Autocomplete 使用 Ghostty 的原始 PTY observer，继续显示 inline suggestion 和候选面板；
 inline suggestion 会使用当前终端字体并与输入文字保持同一行、同一基线，不覆盖 prompt 或已经
 回显的命令。接受候选、隐私过滤、本机学习与目录上下文规则保持不变。
@@ -175,19 +177,47 @@ inline suggestion 会使用当前终端字体并与输入文字保持同一行�
 **输入行为空时不会出现任何候选**：没有输入就没有意图，把整个命令库和全部历史列出来只是噪音，
 而且面板一旦弹出就会吃掉回车。至少敲一个字符后才会出现 ghost 和候选面板。
 
-Tab（或设置中的其他接受键）只接受**屏幕上正在显示**的 Aster inline suggestion；suggestion
-未显示时按键原样交给 Shell。如果你在 Shell 里启用了 zsh-autosuggestions、fish autosuggestion
-等插件，输入行尾的灰色建议由 Shell 绘制，Aster 的 inline suggestion 会自动保持隐藏避免重叠；
-此时接受灰色建议请使用插件自己的按键（zsh-autosuggestions 默认是 `→` 或 `End`），Tab 仍执行
-Shell 自身的补全。想改用 Aster 的候选体系，可在 Shell 配置中停用对应插件。
+命令名打完、还没敲空格时（例如 `docker`），候选里除了同前缀的其它命令名，也会直接给出这个
+命令的子命令和选项——按 Tab 想看的是「它能做什么」，而不是「还有哪些可执行文件叫 docker\*」。
 
-候选来自内置命令/子命令/选项、当前目录文件和文件夹、Shell alias、本机历史、固定命令、README shell code block 和失败纠错。文件名会自动按 Shell 规则转义。Aster 不会自动扫描 `package.json`、Makefile 或 justfile；需要固定项目命令时，先在“设置 → Shell → Aster CLI”安装 CLI，然后在目标目录运行：
+Tab（或设置中的其他接受键）**绝不会**插入屏幕上没显示出来的文本。如果你在 Shell 里启用了
+zsh-autosuggestions、fish autosuggestion 等插件，输入行尾的灰色建议由 Shell 绘制，Aster 的
+inline suggestion 会自动保持隐藏避免重叠；此时按 Tab **会打开 Aster 的候选面板**，面板里每
+一行都看得见，再按一次 Tab 或 Return 才真正接受。Aster 没有候选时 Tab 仍原样交给 Shell，
+`_docker` 这类 Shell 自带的补全继续可用。接受插件画出的灰色建议请用插件自己的按键
+（zsh-autosuggestions 默认是 `→` 或 `End`）。
+
+候选来自内置命令/子命令/选项、当前目录文件和文件夹、Shell alias、本机历史、固定命令、README shell code block 和失败纠错。文件名会自动按 Shell 规则转义。
+
+**动态候选**：当内置规格声明某个参数需要活数据时（`git checkout <分支>`、`brew install <formula>`、`npm run <script>`、`make <target>`），Aster 直接读取磁盘上已有的文件——`.git/refs`、`.git/packed-refs`、`.git/config`、`package.json`、Makefile、Homebrew 的 `Formula/` 与 `Cellar/` 目录。**Aster 绝不运行被补全的工具**：补全 `brew install` 不会触发 `brew update`，补全 `git checkout` 不会在你的仓库里执行 git。最近 check out 过的分支会排在更前面（读的是 `.git/logs/HEAD`）。需要真正运行工具才能取到的数据（例如 `git status --short` 的暂存清单）不做动态候选，退回普通文件补全。
+
+Homebrew 4.x 默认走 JSON API：如果你的机器上没有 homebrew-core tap，也没有 API 名称缓存，`brew install` 只会补出已安装的包和第三方 tap 里的 formula。这是“绝不联网、绝不触发 `brew update`”的必然代价。
+
+Aster 不会把 `package.json`、Makefile 或 justfile 里的脚本当成顶层命令主动推给你——上面那些只在规格明确要求该参数槽位时才读取。需要固定项目命令时，先在“设置 → Shell → Aster CLI”安装 CLI，然后在目标目录运行：
 
 ```bash
 aster learn 'npm run deploy'
 ```
 
-“本机学习”默认开启。学习库只保存脱敏后的命令、目录和计数，不保存输出；`--password`、`--token`、`--api-key` 等值会被移除，退出码 127、明显错误的长选项和“历史忽略模式”匹配项不会保留。没有详细内置结构的命令只会以 `--help`、`-h`、`help` 固定参数在禁网且禁止写入文件的沙箱中探测，并限制为 2.5 秒和 128 KiB；远程会话不会读取本机项目文件或运行本机 help 探测。关闭本机学习后，历史、固定命令、README、纠错与 help 探测全部停用，内置规格和文件补全仍可用。
+`aster learn` 的参数如果是 PATH 上的一个裸二进制名，它会改为在禁网、禁写文件的沙箱里运行该工具的 `--help`，解析出子命令与选项写进本机补全库：
+
+```bash
+aster learn ripgrep
+```
+
+这样生成的规格单独保存，点击“立即更新”刷新内置规格时不会被覆盖。重复对同一条命令运行 `aster learn` 会提升它的排序权重。
+
+`aster ignore` 是 `aster learn` 的撤销，三种目标一一对应：
+
+```bash
+aster ignore ./old-project      # 不再把这个目录算进常用目录
+aster ignore 'npm run deploy'   # 取消固定这条命令
+aster ignore ripgrep            # 删掉这个工具的本机 help 规格
+```
+
+撤销固定命令时，如果你确实跑过它，普通使用历史会保留下来——只是不再被钉在最前面。内置 CLI 规格不是你学出来的，`aster ignore` 不会删它。
+
+“本机学习”默认开启。学习库只保存脱敏后的命令、目录和计数，不保存输出；`--password`、`--token`、`--api-key` 等值会被移除，退出码 127、明显错误的长选项和“历史忽略模式”匹配项不会保留。内置结构不完整的命令会以 `--help`、`-h`、`help` 固定参数在禁网且禁止写入文件的沙箱中探测，并限制为 2.5 秒和 128 KiB。判定看的是「有没有选项和参数」而不只是「有没有子命令」——上游规格里 `docker` 就是 58 个子命令配 0 个选项，只看子命令会让它的顶层 flag 永远补不出来。探测会挑**最深的那个不完整层级**：`docker compose` 在上游规格里是个只有名字的空壳，Aster 会去探测 `docker compose --help` 而不是顶层。探测结果与内置规格按字段合并（子命令、选项取并集），不会把内置规格独有的嵌套结构冲掉；远程会话不会读取本机项目文件或运行本机 help 探测。关闭本机学习后，历史、固定命令、README、纠错与 help 探测全部停用，内置规格和文件补全仍可用。
 
 Fig 命令清单不会后台更新。控制页会显示当前规格数量和版本；需要刷新时，在同一设置区域点击“立即更新”，本地 help 规格不会被覆盖。“清除…”可分别删除命令历史、固定命令和目录频率数据，不删除内置、手动更新或 help 规格。
 

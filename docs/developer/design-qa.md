@@ -43,11 +43,23 @@
 - [ ] zsh、Bash 和 fish 的提示符停顿后显示 ghost；Backspace 和 Escape 立即清除旧候选。
 - [ ] 默认第一次 Escape 关闭 ghost，第二次打开面板；上下键、Return、Tab 和点击均只接受候选、不自动执行命令。
 - [ ] 候选面板跟随光标并在上下空间不足时翻转，最多显示 8 项，长描述不撑破 Pane。
+- [ ] 候选超过 8 条时上下键滚动视窗，选中项始终可见；接受的是屏幕上高亮的那一条。
+- [ ] 选中行整行淡染并带左侧标记条；右侧侧栏给出选中项的完整描述，窄 Pane 下侧栏让位、行内描述回来。
+- [ ] 手动打开面板后继续输入，面板保持打开并按新前缀收窄；Escape 关闭后本轮提示符内不再自动弹回，再按 Escape 可重新打开。
+- [ ] 面板设为“自动”时，未按方向键前 Enter 直接提交命令；按过上下键后 Enter 接受候选。
+- [ ] 同时关闭 inline suggestion 与候选面板后，任何输入都不产生 ghost、面板与候选。
+- [ ] `git checkout `、`brew install `、`npm run `、`make ` 给出本机真实的分支/formula/script/target，且过程中不产生任何子进程。
 - [ ] 快速连续输入时，inline ghost 等 Shell 回显更新光标后再出现，不覆盖已输入命令。
 - [ ] Tab、Tab 或 Right、Control-Space、关闭四种接受策略立即作用于已打开 Pane。
 - [ ] 文件、目录、alias、历史、README、纠错与 `aster learn` 候选分别显示正确类型。
 - [ ] 关闭本机学习后不再出现历史/README/纠错，也不启动 help 探测；文件与内置命令仍可补全。
 - [ ] 设置页“立即更新”只在点击后联网；“清除”移除学习和固定命令但保留本地 help 规格。
+- [ ] `aster learn <目录>` / `aster learn '<整行命令>'` / `aster learn <PATH 上的二进制>` 三种形态分别记目录、固定命令、生成本地规格；探测失败时回落为固定命令而不是报错；无参数时记当前 Pane 的工作目录。
+- [ ] `aster ignore` 与 learn 三种形态一一对应地撤销；撤销固定命令保留真实使用历史；内置规格删不掉；没有可撤销内容时报 64 并说明原因。
+- [ ] 启用 zsh-autosuggestions 时，行尾有 Shell 灰色建议的情况下按 Tab 打开 Aster 候选面板且一个字节都不进 PTY；Aster 无候选时 Tab 仍交给 Shell。
+- [ ] 输入 `docker` 不敲空格按 Tab，候选里同时有 `docker-compose` 和 docker 自己的子命令；`docker --t` 能补出 TLS 系列选项。
+- [ ] `docker compose ` 能补出 compose 的子命令（依赖对最深不完整层级的 help 探测），且 `docker com` 仍能补出内置规格里的 `compose`。
+- [ ] help 探测解析出的候选里不出现 `"warn",`、`(default` 这类描述折行残片。
 
 ## Vi / Hint / Read-only 检查清单
 
