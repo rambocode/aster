@@ -89,7 +89,10 @@ extension GhosttySurfaceView {
   }
 
   override func flagsChanged(with event: NSEvent) {
-    // 按下/松开 Command 本身也要刷新路径预览,即使鼠标没有移动。
+    // 按下/松开 Command 本身也要刷新下划线与路径预览,即使鼠标没有移动。
+    if event.keyCode == 54 || event.keyCode == 55 {
+      handleCommandModifierChange(pressed: event.modifierFlags.contains(.command))
+    }
     updateCommandHoverPreview(with: event)
     guard navigationMode == .normal, let surface else { return }
     let action: ghostty_input_action_e =
@@ -105,6 +108,7 @@ extension GhosttySurfaceView {
     guard let surface else { return }
     window?.makeFirstResponder(self)
     guard navigationMode == .normal else { return }
+    beginCommandClickTracking(with: event)
     reportMousePosition(event)
     _ = ghostty_surface_mouse_button(
       surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, modifiers(event))
@@ -120,6 +124,8 @@ extension GhosttySurfaceView {
     reportMousePosition(event)
     _ = ghostty_surface_mouse_button(
       surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, modifiers(event))
+    // 先让 Ghostty 处理 OSC 8 原生打开，再由 Aster 侧识别普通文字目标。
+    finishCommandClick(with: event)
   }
 
   override func rightMouseDown(with event: NSEvent) {
@@ -171,6 +177,7 @@ extension GhosttySurfaceView {
 
   override func mouseMoved(with event: NSEvent) {
     if navigationMode == .normal { reportMousePosition(event) }
+    handleLinkHoverMouseMoved(with: event)
     updateCommandHoverPreview(with: event)
   }
   override func mouseDragged(with event: NSEvent) {
@@ -184,8 +191,9 @@ extension GhosttySurfaceView {
   }
 
   override func mouseExited(with event: NSEvent) {
-    // 指针离开 surface 时,两个来源的预览都必须清除(原生的清除信号只覆盖 URL 场景)。
+    // 指针离开 surface 时,两个来源的预览与下划线都必须清除(原生的清除信号只覆盖 OSC 8)。
     removeLinkPreview()
+    handleLinkHoverMouseExited()
     guard let surface, NSEvent.pressedMouseButtons == 0 else { return }
     ghostty_surface_mouse_pos(surface, -1, -1, modifiers(event))
   }
@@ -206,6 +214,8 @@ extension GhosttySurfaceView {
     if event.hasPreciseScrollingDeltas { scrollModifiers |= 1 }
     ghostty_surface_mouse_scroll(
       surface, event.scrollingDeltaX, event.scrollingDeltaY, scrollModifiers)
+    // 滚动改变视口行，Command 下划线要跟着重扫。
+    scheduleLinkUnderlineRefresh()
   }
 
   private func reportMousePosition(_ event: NSEvent) {

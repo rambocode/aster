@@ -75,7 +75,9 @@ enum GhosttyConfiguration {
       "mouse-shift-capture = \(mouseShiftCapture)",
       "right-click-action = \(controls.resolvedRightClickAction.rawValue)",
       "cursor-click-to-move = \(boolean(controls.resolvedCursorClickToMove))",
-      "link-url = \(boolean(controls.resolvedLinkDetectionEnabled))",
+      // 普通文字 URL 与路径由 Aster 侧统一识别（下划线、预览、Command 点击、scheme 策略），
+      // 关闭 Ghostty 自带的 URL 正则避免双重下划线与绕过 scheme 白名单；OSC 8 不受影响。
+      "link-url = false",
       "title-report = \(boolean(shell.resolvedTitleReport))",
       "scrollback-limit = \(scrollbackBytes)",
       "shell-integration = \(shell.shellIntegration ? "detect" : "none")",

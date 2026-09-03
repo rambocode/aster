@@ -119,4 +119,25 @@ func ghosttyCommandHoverShowsLinkPreview() async throws {
     }
   }
   #expect(view.linkPreviewText == path, "Command 悬停未显示路径预览")
+
+  // 按下 Command（合成 flagsChanged，keyCode 55）应给视口内的 URL 与存在的路径画下划线；
+  // 松开后覆盖层清空。
+  let commandDown = try #require(
+    NSEvent.keyEvent(
+      with: .flagsChanged, location: .zero, modifierFlags: [.command],
+      timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+      context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false,
+      keyCode: 55))
+  view.flagsChanged(with: commandDown)
+  let segments = view.linkUnderlineOverlay?.segments ?? []
+  #expect(segments.count >= 2, "Command 按下后应为 URL 与路径各画一条下划线")
+  #expect(segments.allSatisfy { $0.width > 0 && $0.height > 0 })
+  let commandUp = try #require(
+    NSEvent.keyEvent(
+      with: .flagsChanged, location: .zero, modifierFlags: [],
+      timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+      context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false,
+      keyCode: 55))
+  view.flagsChanged(with: commandUp)
+  #expect(view.linkUnderlineOverlay?.segments.isEmpty == true, "松开 Command 后下划线应清除")
 }

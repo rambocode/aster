@@ -494,6 +494,12 @@ final class TabRowButton: NSButton {
     AsterControlTitleNormalizer.hasSpinnerPrefix(displayTitleProvider())
   }
 
+  /// 运行动画只属于 Agent：普通命令（如 `./start.sh`）跑着时行前不画任何动画，
+  /// 否则用户会误以为标签里有 Agent。标题自带 spinner 字符时同样交给标题承担。
+  private var showsRunningAnimation: Bool {
+    !titleCarriesAgentGlyph && preferredAgentProvider != nil
+  }
+
   /// 纵向行静态图标：规则图标优先，其次是**当前活动 Pane** 正在运行的 Agent 图标；
   /// 标题自带 spinner 字符时不放 Agent 图标。
   private var idleTabIcon: TabRuleIcon? {
@@ -522,7 +528,7 @@ final class TabRowButton: NSButton {
   /// 不显示百分比，因此 `.running` 的 percent 变化不进入键值，避免进度刷新重启动画。
   private func activityBadgeKey() -> String {
     switch tab.activityBadge {
-    case .running where !titleCarriesAgentGlyph:
+    case .running where showsRunningAnimation:
       return runningAnimationStyle == .dots ? "running-dots" : "running-spin"
     case .awaitingInput where showsAwaitingInput:
       return "awaiting-input"
@@ -550,9 +556,9 @@ final class TabRowButton: NSButton {
     let stateName: String
     let accessibilityLabel: String
     switch tab.activityBadge {
-    case .running where !titleCarriesAgentGlyph:
+    case .running where showsRunningAnimation:
       // 运行动画对齐 Otty，按 Agent 区分（见 runningAnimationStyle）。不再用系统 spinner。
-      // 标题自带 spinner 字符时跳过本分支，由标题里的字符承担动画。
+      // 没有 Agent 或标题自带 spinner 字符时跳过本分支（见 showsRunningAnimation）。
       let tint = selected ? resolvedActiveForeground : resolvedForeground
       accessory = TabActivitySpinnerView(tint: tint, style: runningAnimationStyle)
       stateName = "running"

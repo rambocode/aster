@@ -2731,6 +2731,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private func makeGhosttyTerminalView(preferences: AppPreferences) -> GhosttySurfaceView {
     self.preferences = preferences
     if let ghosttyView {
+      applyLinkDetectionSettings(preferences, to: ghosttyView)
       ghosttyView.updateConfiguration(GhosttyConfiguration.make(preferences: preferences))
       return ghosttyView
     }
@@ -2831,10 +2832,19 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     }
     // 链接预览与 SwiftTerm 路径同源：命中检测用 Ghostty 报告的原始链接，展示前经
     // TerminalTargetOpenCoordinator 依据可靠 OSC 7 CWD 展开相对路径。
-    view.linkPreviewEnabled = preferences.configuration.controls.showLinkPreviews
+    applyLinkDetectionSettings(preferences, to: view)
     view.linkPreviewFormatter = { [weak self] rawValue in
       guard let self else { return rawValue }
       return targetOpenCoordinator.previewText(
+        rawValue,
+        currentDirectory: self.currentWorkingDirectoryIsLocal
+          ? self.currentWorkingDirectory : ""
+      )
+    }
+    // 裸相对路径与普通单词无法靠语法区分，按当前可信本地 CWD stat 后才画下划线。
+    view.linkPathValidator = { [weak self] rawValue in
+      guard let self, let coordinator = self.targetOpenCoordinator else { return false }
+      return coordinator.fileTargetExists(
         rawValue,
         currentDirectory: self.currentWorkingDirectoryIsLocal
           ? self.currentWorkingDirectory : ""
@@ -3258,11 +3268,20 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       ghosttyView.focusFollowsMouse = controls.focusFollowsMouse
       ghosttyView.pasteProtectionEnabled = controls.pasteProtection
       ghosttyView.pasteBracketedSafe = controls.resolvedPasteBracketedSafe
-      ghosttyView.linkPreviewEnabled = controls.showLinkPreviews
+      applyLinkDetectionSettings(preferences, to: ghosttyView)
       ghosttyView.updateConfiguration(GhosttyConfiguration.make(preferences: preferences))
       automaticSecureInputEnabled = controls.secureInputAutomatically
     }
     if let terminalView { apply(preferences: preferences, to: terminalView) }
+  }
+
+  /// 把链接识别相关设置（总开关、scheme 策略、预览开关、下划线颜色）同步到 Ghostty 视图。
+  private func applyLinkDetectionSettings(_ preferences: AppPreferences, to view: GhosttySurfaceView) {
+    let controls = preferences.configuration.controls
+    view.linkDetectionEnabled = controls.resolvedLinkDetectionEnabled
+    view.linkSchemePolicy = controls.resolvedLinkSchemePolicy
+    view.linkPreviewEnabled = controls.showLinkPreviews
+    view.linkUnderlineColor = NSColor(preferences.activeTheme.palette.foreground)
   }
 
   /// 将命令直接写入活动 PTY，供 Recipe、命令面板和自动化入口使用。

@@ -1263,39 +1263,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.controls.clipboardReadAccess = value
         },
       ]),
-      sectionTitle("文件与链接"),
-      card([
-        toggleRow(
-          "识别终端目标", "识别本地路径、URL 和 OSC 8 显式链接",
-          value: preferences.configuration.controls.resolvedLinkDetectionEnabled
-        ) { [weak self] value in
-          self?.preferences.configuration.controls.linkDetectionEnabled = value
-        },
-        toggleRow(
-          "识别所有 URL Scheme", "关闭后仅识别 http、https、file、mailto 和自定义列表",
-          value: preferences.configuration.controls.detectAllLinkSchemes ?? true
-        ) { [weak self] value in
-          self?.preferences.configuration.controls.detectAllLinkSchemes = value
-        },
-        textRow(
-          "自定义 Scheme", "用逗号分隔，例如 vscode,codex,ssh",
-          value: preferences.configuration.controls.resolvedCustomLinkSchemes.sorted()
-            .joined(separator: ",")
-        ) { [weak self] value in
-          let schemes = value.split(separator: ",", omittingEmptySubsequences: true)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-            .filter(LinkSchemePolicy.isSyntacticallyValid)
-          self?.preferences.configuration.controls.customLinkSchemes = Set(schemes.prefix(64))
-        },
-        actionRow(
-          "安全警告例外", "清除已记住的网站、非标准 Scheme 和可执行文件授权",
-          title: "重置警告"
-        ) { [weak self] in
-          self?.preferences.configuration.controls.allowedNonStandardLinkSchemes = []
-          self?.preferences.configuration.controls.allowedExternalLinkHosts = []
-          self?.preferences.configuration.controls.allowedExecutableFileSignatures = []
-        },
-      ]),
+      sectionTitle("链接协议"),
+      card(linkSchemeRows()),
       sectionTitle("滚动"),
       card([
         toggleRow(
@@ -1315,15 +1284,6 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           value: preferences.configuration.controls.resolvedScrollPastFirstLine
         ) { [weak self] value in
           self?.preferences.configuration.controls.scrollPastFirstLine = value
-        },
-      ]),
-      sectionTitle("显示"),
-      card([
-        toggleRow(
-          "链接预览", "悬停链接时显示 URL 目标",
-          value: preferences.configuration.controls.showLinkPreviews
-        ) { [weak self] value in
-          self?.preferences.configuration.controls.showLinkPreviews = value
         },
       ]),
       sectionTitle("安全"),
@@ -2703,6 +2663,60 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   /// 大圆角设置卡片；行间不画分隔线，靠每行自身的内边距形成留白节奏（Otty 风格）。
   /// 底色取 `SettingsTheme.card`（浅色固定 #FAFAFA），压在白色画布上形成可见的浅灰
   /// 底块；该色**不跟随终端主题**，改主题不会把设置页染色。
+  /// 「链接协议」卡片：识别范围下拉（全部 / 自定义）、自定义列表（仅自定义时显示）、
+  /// 链接预览开关与安全提示重置。scheme 列表沿用 controls.customLinkSchemes 语义。
+  private func linkSchemeRows() -> [NSView] {
+    let controls = preferences.configuration.controls
+    let detectsAll = controls.detectAllLinkSchemes ?? true
+    var rows: [NSView] = [
+      toggleRow(
+        "识别终端目标", "识别本地路径、URL 和 OSC 8 显式链接；关闭后不再显示下划线、预览，也不响应 Cmd 点击。",
+        value: controls.resolvedLinkDetectionEnabled
+      ) { [weak self] value in
+        self?.preferences.configuration.controls.linkDetectionEnabled = value
+      },
+      popupRow(
+        "自动识别链接协议",
+        "终端输出里哪些 URL 协议在 Cmd 悬停时显示下划线并可点击。http(s)、file、mailto 始终识别；「自定义」可额外添加。",
+        items: ["全部", "自定义"],
+        selected: detectsAll ? 0 : 1
+      ) { [weak self] index in
+        self?.preferences.configuration.controls.detectAllLinkSchemes = index == 0
+      },
+    ]
+    if !detectsAll {
+      rows.append(
+        textRow(
+          "自定义协议", "用逗号分隔，例如 vscode,codex,ssh",
+          value: controls.resolvedCustomLinkSchemes.sorted().joined(separator: ",")
+        ) { [weak self] value in
+          let schemes = value.split(separator: ",", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter(LinkSchemePolicy.isSyntacticallyValid)
+          self?.preferences.configuration.controls.customLinkSchemes = Set(schemes.prefix(64))
+        })
+    }
+    rows.append(
+      toggleRow(
+        "显示链接预览",
+        "按住 Cmd 悬停在链接上时，在底部角落显示该链接的完整路径或 URL。关闭后链接仍可点击，但不再显示预览。",
+        value: controls.showLinkPreviews
+      ) { [weak self] value in
+        self?.preferences.configuration.controls.showLinkPreviews = value
+      })
+    rows.append(
+      actionRow(
+        "重置安全提示",
+        "清除所有「始终允许」记忆，下次打开外部链接、自定义协议或可执行文件时重新弹出确认对话框。",
+        title: "重置"
+      ) { [weak self] in
+        self?.preferences.configuration.controls.allowedNonStandardLinkSchemes = []
+        self?.preferences.configuration.controls.allowedExternalLinkHosts = []
+        self?.preferences.configuration.controls.allowedExecutableFileSignatures = []
+      })
+    return rows
+  }
+
   private func card(_ rows: [NSView]) -> NSView {
     let card = NSStackView()
     card.orientation = .vertical

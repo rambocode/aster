@@ -31,6 +31,8 @@ extension GhosttySurfaceView {
       // reflow 后的每个 grapheme，因此安全退出，不让旧端点静默选中另一段内容。
       leaveGhosttyViMode(clearSelection: true)
     }
+    // 新输出会改变视口内容，Command 按住期间下划线要合并重扫。
+    scheduleLinkUnderlineRefresh()
     onPTYRead?(bytes[...])
   }
 
@@ -411,51 +413,29 @@ extension GhosttySurfaceView {
     )
   }
 
-  /// Command 悬停的 Aster 侧补充预览:Ghostty 原生 mouse_over_link 只覆盖 URL 正则,
-  /// 裸文件路径（`~/`、`./`、`/` 等）由本方法用 hint 模式同一套正则在悬停单元格上识别。
+  /// Command 悬停的 Aster 侧预览:普通文字 URL 与本地路径由 `inlineLinkTarget(at:)` 识别；
+  /// OSC 8 由 Ghostty 原生 mouse_over_link 上报，原生预览存在时不被 Aster 侧覆盖。
   func updateCommandHoverPreview(with event: NSEvent) {
+    lastLinkHoverLocation = convert(event.locationInWindow, from: nil)
+    linkCommandHeld = event.modifierFlags.contains(.command)
+    guard linkCommandHeld else {
+      if !linkPreviewIsNative { removeLinkPreview() }
+      return
+    }
+    refreshCommandHoverPreview()
+  }
+
+  /// 按最近一次指针位置重新计算 Aster 侧预览；原生 OSC 8 预览仍在显示时保持不动。
+  func refreshCommandHoverPreview() {
     guard linkPreviewEnabled, navigationMode == .normal else { return }
-    guard event.modifierFlags.contains(.command),
-      let target = ghosttyHoverTarget(at: convert(event.locationInWindow, from: nil)),
-      // 带 scheme 的 URL 交给 Ghostty 原生通道,避免两个来源交替显示/清除。
-      !target.contains("://")
+    if linkPreviewIsNative, linkPreviewBadge != nil { return }
+    guard linkCommandHeld, let location = lastLinkHoverLocation,
+      let target = inlineLinkTarget(at: location)
     else {
       if !linkPreviewIsNative { removeLinkPreview() }
       return
     }
-    showLinkPreview(target, native: false)
-  }
-
-  /// 把视图坐标换算成 viewport 单元格,并返回覆盖该单元格的目标文本(若有)。
-  private func ghosttyHoverTarget(at local: NSPoint) -> String? {
-    guard bounds.contains(local), let surface, let info = bufferInfo() else { return nil }
-    let size = ghostty_surface_size(surface)
-    guard size.cell_width_px > 0, size.cell_height_px > 0 else { return nil }
-    let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
-    let width = CGFloat(size.cell_width_px) / scale
-    let height = CGFloat(size.cell_height_px) / scale
-    let rowInViewport = Int((bounds.maxY - local.y) / height)
-    let column = Int(local.x / width)
-    guard rowInViewport >= 0, rowInViewport < Int(info.viewport_rows),
-      column >= 0, column < Int(info.columns)
-    else { return nil }
-    let screenRow = Int(clamping: info.viewport_top) + rowInViewport
-    let mapped = ghosttyCellText(row: screenRow, columns: Int(info.columns))
-    guard !mapped.text.isEmpty, let expression = Self.targetExpression else { return nil }
-    let range = NSRange(mapped.text.startIndex..<mapped.text.endIndex, in: mapped.text)
-    for match in expression.matches(in: mapped.text, range: range) {
-      guard let swiftRange = Range(match.range, in: mapped.text) else { continue }
-      let startOffset = mapped.text.distance(
-        from: mapped.text.startIndex, to: swiftRange.lowerBound)
-      let endOffset = mapped.text.distance(from: mapped.text.startIndex, to: swiftRange.upperBound)
-      guard startOffset < mapped.columns.count else { continue }
-      let startColumn = mapped.columns[startOffset]
-      let endColumn = mapped.columns[min(max(endOffset - 1, startOffset), mapped.columns.count - 1)]
-      if column >= startColumn, column <= endColumn {
-        return String(mapped.text[swiftRange])
-      }
-    }
-    return nil
+    showLinkPreview(target.text, native: false)
   }
 
   private func ghosttyFrame(screenRow: Int, column: Int) -> NSRect? {

@@ -74,11 +74,36 @@ final class GhosttySurfaceView: NSView {
   }
   /// 宿主侧预览文本格式化器：命中检测仍用 Ghostty 报告的原始链接，仅展示时展开相对路径。
   var linkPreviewFormatter: ((String) -> String)?
-  private var linkPreviewBadge: GhosttyLinkPreviewBadge?
+  private(set) var linkPreviewBadge: GhosttyLinkPreviewBadge?
   var linkPreviewText: String? { linkPreviewBadge?.textField.stringValue }
-  /// 当前预览来源:true 为 Ghostty 原生 mouse_over_link(URL),false 为 Aster 侧裸路径悬停。
+  /// 当前预览来源:true 为 Ghostty 原生 mouse_over_link(OSC 8),false 为 Aster 侧文字识别。
   /// 原生的清除信号(空 URL)不得抹掉 Aster 侧刚显示的路径预览。
   private(set) var linkPreviewIsNative = false
+  /// 终端目标识别总开关（controls.linkDetectionEnabled）：关闭后不画下划线、不预览、不响应点击。
+  var linkDetectionEnabled = true {
+    didSet { if !linkDetectionEnabled { handleCommandModifierChange(pressed: false) } }
+  }
+  /// 普通文字 URL 的 scheme 识别范围（controls.linkSchemes）。
+  var linkSchemePolicy: LinkSchemePolicy = .all
+  /// 路径候选存在性校验：由 Session 按当前可信 CWD 解析并 stat；nil 时所有路径视为不存在。
+  var linkPathValidator: ((String) -> Bool)?
+  /// Command 下划线颜色，跟随终端主题前景色。
+  var linkUnderlineColor: NSColor = .textColor {
+    didSet { applyLinkUnderlineColor() }
+  }
+  var linkUnderlineOverlay: GhosttyLinkUnderlineOverlay?
+  var linkUnderlinesActive = false
+  /// 最近一次键盘/鼠标事件观测到的 Command 状态；不用全局 `NSEvent.modifierFlags`，
+  /// 以便测试用合成事件驱动，也避免其它窗口的按键状态串入。
+  var linkCommandHeld = false
+  var linkUnderlineRefreshScheduled = false
+  var linkPathExistenceCache: [String: Bool] = [:]
+  var lastLinkHoverLocation: NSPoint?
+  var commandClickOrigin: NSPoint?
+  /// 原生 open_url 每回流一次加一；Aster 侧 Command 点击据此避免对同一次点击重复打开。
+  var nativeOpenURLSequence = 0
+  var lastGhosttyMouseShape = GHOSTTY_MOUSE_SHAPE_TEXT
+  var linkHoverCursorActive = false
 
   var markedTextRange = NSRange(location: NSNotFound, length: 0)
   var selectedTextRange = NSRange(location: NSNotFound, length: 0)
@@ -140,7 +165,10 @@ final class GhosttySurfaceView: NSView {
   }
 
   func applyTitle(_ title: String) { onTitleChange?(title) }
-  func applyWorkingDirectory(_ path: String) { onWorkingDirectoryChange?(path) }
+  func applyWorkingDirectory(_ path: String) {
+    onWorkingDirectoryChange?(path)
+    invalidateLinkTargetCache()
+  }
   func handleCommandFinished(exitCode: Int?) { onCommandFinished?(exitCode) }
   func handleProgress(_ progress: GhosttyProgress) { onProgress?(progress) }
 
@@ -166,13 +194,20 @@ final class GhosttySurfaceView: NSView {
     onSearchStateChange?()
   }
 
-  func handleOpenURL(_ value: String) { onOpenURL?(value) }
+  func handleOpenURL(_ value: String) {
+    nativeOpenURLSequence &+= 1
+    onOpenURL?(value)
+  }
 
-  /// Ghostty 的 mouse_over_link action：按住 Command 悬停链接时携带 URL，空字符串表示离开链接。
+  /// Ghostty 的 mouse_over_link action：按住 Command 悬停 OSC 8 链接时携带 URL，空字符串表示离开链接。
   func handleMouseOverLink(_ url: String) {
     guard linkPreviewEnabled, !url.isEmpty else {
-      // 原生空信号只能清除原生来源的预览，避免与 Aster 侧路径预览互相覆盖。
-      if linkPreviewIsNative { removeLinkPreview() }
+      // 原生空信号只能清除原生来源的预览，避免与 Aster 侧路径预览互相覆盖；
+      // 清除后立刻按最近指针位置补一次 Aster 侧识别，让同一位置的文字目标接管预览。
+      if linkPreviewIsNative {
+        removeLinkPreview()
+        refreshCommandHoverPreview()
+      }
       return
     }
     showLinkPreview(url, native: true)
@@ -419,6 +454,7 @@ final class GhosttySurfaceView: NSView {
     onRequestOpenTarget = nil
     onResolveHintCopyTarget = nil
     linkPreviewFormatter = nil
+    linkPathValidator = nil
   }
 
   override func viewDidMoveToWindow() {
@@ -438,6 +474,7 @@ final class GhosttySurfaceView: NSView {
     super.layout()
     layoutGhosttyModeHUD()
     layoutLinkPreviewBadge()
+    scheduleLinkUnderlineRefresh()
   }
 
   override func viewDidChangeBackingProperties() {
@@ -523,7 +560,11 @@ final class GhosttySurfaceView: NSView {
     trackingAreaToken = area
   }
 
+  /// Ghostty 请求的指针形状。Aster 侧 Command 悬停目标时只记录不应用，避免手形被
+  /// 文本 I-beam 抢回；悬停结束后再恢复这里记录的形状。
   func applyMouseShape(_ shape: ghostty_action_mouse_shape_e) {
+    lastGhosttyMouseShape = shape
+    guard !linkHoverCursorActive else { return }
     switch shape {
     case GHOSTTY_MOUSE_SHAPE_TEXT: NSCursor.iBeam.set()
     case GHOSTTY_MOUSE_SHAPE_POINTER: NSCursor.pointingHand.set()

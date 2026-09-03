@@ -144,6 +144,17 @@ final class TerminalTargetOpenCoordinator {
     return true
   }
 
+  /// 判断一个路径候选在当前目录下是否真实存在，供 Command 下划线与点击命中过滤裸相对
+  /// 路径（`site`、`Makefile`）。只做解析加 stat，不授权也不打开；URL 一律返回 false。
+  func fileTargetExists(_ rawValue: String, currentDirectory: String) -> Bool {
+    guard preferences.configuration.controls.resolvedLinkDetectionEnabled,
+      let target = try? resolver.resolve(
+        rawValue, currentDirectory: currentDirectory, source: .plainText, schemePolicy: .all),
+      case .file(let file) = target
+    else { return false }
+    return FileManager.default.fileExists(atPath: file.path)
+  }
+
   /// 生成与实际打开解析一致的预览文字。相对、`~/`、`file:` 和行列后缀会显示为
   /// 可核对的绝对本地路径；解析失败时保留原文，避免远端 OSC 7 被误装成本机路径。
   /// 该方法只做纯解析，不检查文件、不请求授权，也不会执行打开动作。
