@@ -262,3 +262,46 @@ func builtInThemesRoundTripThroughOttySerializer() throws {
     #expect(inherited(parsed.style) == inherited(builtin.style), "\(builtin.id) style")
   }
 }
+
+/// 回归：One Light（window 与 container 同为纯白、且不声明 panel.border）曾把
+/// `interface.border` 派生成白色，Pane 之间的分隔线在白底上完全看不见。
+@Test("未声明 panel.border 时界面描边派生出与底色有对比的发丝线")
+func interfaceBorderFallsBackToContrastingHairline() throws {
+  var theme = makeSparseTheme()
+  // 复刻 One Light：window.background 显式声明为纯白，容器同色。
+  theme.palette.interfaceWindowBackground = HexColor("#FFFFFFFF")!
+  theme.palette.containerBackground = HexColor("#FFFFFFFF")!
+  theme.palette.interfaceBorder = nil
+
+  let border = try #require(theme.colorSlots.first { $0.id == "interface.border" }).resolved
+  #expect(border.isDerivedHairlineDistinct(from: HexColor("#FFFFFFFF")!))
+  // 与内置 One Light 声明的 #E5E5E5 同量级，不能深到变成一条硬边。
+  #expect(border == TerminalThemeMode.light.nativeBorder(
+    over: HexColor("#FFFFFFFF")!, foreground: HexColor("#2A2B33FF")!))
+
+  // 显式声明的边框仍然原样生效，不被派生值覆盖。
+  theme.palette.interfaceBorder = HexColor("#E0E0E0FF")!
+  #expect(
+    try #require(theme.colorSlots.first { $0.id == "interface.border" }).resolved
+      == HexColor("#E0E0E0FF")!)
+}
+
+/// 透明主题（background = "none"）没有可混合的底色，描边退化为前景的低透明度线。
+@Test("透明底色主题的界面描边使用前景低透明度")
+func interfaceBorderOnTransparentBackground() throws {
+  let base = HexColor("#00000000")!
+  let derived = TerminalThemeMode.dark.nativeBorder(over: base, foreground: HexColor("#E5E5E5FF")!)
+  #expect(derived.alpha == 46)
+  #expect(derived.red == 0xE5)
+}
+
+extension HexColor {
+  /// 测试辅助：判断派生描边与底色之间是否有肉眼可辨的落差（每通道至少 16/255 ≈ 6%）。
+  fileprivate func isDerivedHairlineDistinct(from background: HexColor) -> Bool {
+    let delta = max(
+      abs(Int(red) - Int(background.red)),
+      abs(Int(green) - Int(background.green)),
+      abs(Int(blue) - Int(background.blue)))
+    return delta >= 16
+  }
+}

@@ -46,6 +46,32 @@ extension TerminalThemeMode {
       : HexColor(red: 255, green: 255, blue: 255, alpha: 20)
   }
 
+  /// 界面描边默认值：主题没声明 `panel.border` 时，在窗口底色上朝界面前景混入 14%，
+  /// 得到一条明暗两种模式下都有对比的发丝线。
+  ///
+  /// 不能像其他 chrome 令牌那样直接回退到窗口底色本身：One Light 这类
+  /// 「window = container = #FFFFFF」的主题会得到一条白线画在白底上，Pane 之间的
+  /// 分隔条彻底看不见。14% 是对齐显式声明了边框的主题（Ayu Light #E0E0E0、内置
+  /// One Light #E5E5E5 相对各自底色约 10%~12% 的落差）。
+  public func nativeBorder(over background: HexColor, foreground: HexColor) -> HexColor {
+    let ratio = 0.14
+    func mixed(_ base: UInt8, _ target: UInt8) -> UInt8 {
+      UInt8((Double(base) * (1 - ratio) + Double(target) * ratio).rounded())
+    }
+    // 透明窗口（glass / background = "none"）没有可混合的底色：按比例混合会把描边直接
+    // 混成前景色。这里改用前景的 18% 不透明度，透出桌面内容时同样只是一条淡线。
+    guard background.alpha > 0 else {
+      return HexColor(
+        red: foreground.red, green: foreground.green, blue: foreground.blue, alpha: 46)
+    }
+    return HexColor(
+      red: mixed(background.red, foreground.red),
+      green: mixed(background.green, foreground.green),
+      blue: mixed(background.blue, foreground.blue),
+      alpha: background.alpha
+    )
+  }
+
   /// 界面次要文字默认值（Otty `text-secondary`：浅色 #666666 / 深色 #888888）。
   public var nativeSecondaryForeground: HexColor {
     self == .light

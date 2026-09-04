@@ -106,6 +106,14 @@ extension TerminalTheme {
   /// 「这套主题到底声明了什么」的真值来读。
   public var colorSlots: [ThemeColorSlot] {
     let windowFallback = palette.interfaceWindowBackground ?? palette.panelBackground
+    // `interface.border` 是唯一一个「必须自己有对比度」的描边令牌：Pane 分隔条、卡片和
+    // 输入框描边都取它。跟随窗口底色会在 window 与 container 同色的主题（One Light 的
+    // 纯白）上退化成不可见的同色线，所以这里单独派生一条发丝线；其余 border 令牌保持
+    // Otty `1px solid auto` 的语义（auto = 窗口底色），不受影响。
+    let borderFallback = mode.nativeBorder(
+      over: windowFallback,
+      foreground: palette.interfaceForeground ?? palette.foreground
+    )
     func slot(
       _ id: String,
       _ title: String,
@@ -148,7 +156,7 @@ extension TerminalTheme {
       slot("interface.foreground", "界面文字", .accents, palette.interfaceForeground, derivedFrom: palette.foreground),
       slot("interface.secondaryForeground", "次要文字", .accents, palette.secondaryForeground, derivedFrom: palette.secondaryForeground),
       slot("interface.tertiaryForeground", "三级文字", .accents, palette.tertiaryForeground, derivedFrom: palette.secondaryForeground),
-      slot("interface.border", "界面描边", .accents, palette.interfaceBorder, derivedFrom: windowFallback, kind: .border),
+      slot("interface.border", "界面描边", .accents, palette.interfaceBorder, derivedFrom: borderFallback, kind: .border),
       slot("cursor.background", "光标", .cursor, palette.cursor, derivedFrom: palette.cursor),
       slot("cursor.foreground", "光标下文字", .cursor, palette.cursorText, derivedFrom: palette.renderedTerminalBackground),
       slot("selection.background", "选区", .selection, palette.selection, derivedFrom: palette.selection),
