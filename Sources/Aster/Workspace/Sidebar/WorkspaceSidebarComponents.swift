@@ -482,6 +482,14 @@ final class TabRowButton: NSButton {
       ?? tab.runtimes.values.compactMap({ $0.terminalSession?.activeAgentProvider }).first
   }
 
+  /// 徽章归属：普通命令只显示失败，Agent 与显式徽章才展示等待输入/已完成等其它状态。
+  /// 用户跑 `./start.sh` 之类的普通命令时，行前多出 ● / ✓ / ✋ 只是噪音；但 Agent 的
+  /// 回合状态、以及用户主动通过 OSC `Badge=…` / `aster tab badge` 设的徽章是他们要看的。
+  private var hasBadgeOwner: Bool {
+    preferredAgentProvider != nil
+      || tab.runtimes.values.contains { $0.terminalSession?.explicitBadge != nil }
+  }
+
   /// 运行动画样式（对齐 Otty）：Claude Code 半圆 ◑ 旋转；Codex 2×2 点阵循环；
   /// 其它 Agent / 普通命令暂时沿用半圆旋转。
   private var runningAnimationStyle: TabActivitySpinnerView.Style {
@@ -530,13 +538,15 @@ final class TabRowButton: NSButton {
     switch tab.activityBadge {
     case .running where showsRunningAnimation:
       return runningAnimationStyle == .dots ? "running-dots" : "running-spin"
-    case .awaitingInput where showsAwaitingInput:
+    case .awaitingInput where showsAwaitingInput && hasBadgeOwner:
       return "awaiting-input"
     case .error where showsFailure && showsExitStatus:
       return "error-\(tab.lastCommandExitStatus.map(String.init) ?? "!")"
-    case .finished where showsFinished && showsExitStatus && !suppressesReadBadge:
+    case .finished where showsFinished && showsExitStatus && !suppressesReadBadge
+      && hasBadgeOwner:
       return "finished"
-    case .completed where showsFinished && showsExitStatus && !suppressesReadBadge:
+    case .completed where showsFinished && showsExitStatus && !suppressesReadBadge
+      && hasBadgeOwner:
       return "completed"
     default:
       if !horizontal {
@@ -563,7 +573,7 @@ final class TabRowButton: NSButton {
       accessory = TabActivitySpinnerView(tint: tint, style: runningAnimationStyle)
       stateName = "running"
       accessibilityLabel = "正在运行"
-    case .awaitingInput where showsAwaitingInput:
+    case .awaitingInput where showsAwaitingInput && hasBadgeOwner:
       accessory = makeLabel("✋", size: 11, weight: .semibold, color: AsterTheme.warning)
       stateName = "awaiting-input"
       accessibilityLabel = "等待输入"
@@ -574,11 +584,13 @@ final class TabRowButton: NSButton {
       )
       stateName = "error"
       accessibilityLabel = "执行失败"
-    case .finished where showsFinished && showsExitStatus && !suppressesReadBadge:
+    case .finished where showsFinished && showsExitStatus && !suppressesReadBadge
+      && hasBadgeOwner:
       accessory = makeLabel("●", size: 9, weight: .semibold, color: AsterTheme.accent)
       stateName = "finished"
       accessibilityLabel = "已完成"
-    case .completed where showsFinished && showsExitStatus && !suppressesReadBadge:
+    case .completed where showsFinished && showsExitStatus && !suppressesReadBadge
+      && hasBadgeOwner:
       accessory = makeLabel("✓", size: 11, weight: .semibold, color: AsterTheme.accent)
       stateName = "completed"
       accessibilityLabel = "刚刚完成"

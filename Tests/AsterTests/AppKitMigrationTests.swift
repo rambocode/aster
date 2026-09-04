@@ -1082,6 +1082,68 @@ func verticalSidebarActivityAccessoryTracksAllStates() async throws {
   #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
 }
 
+/// 普通命令（无 Agent、无显式徽章）只在失败时占用状态槽：成功收尾不画 ● / ✓，
+/// 否则每跑一条脚本行前都多一个与用户无关的符号。
+@Test("无 Agent 的普通命令只在失败时显示状态徽章")
+@MainActor
+func ordinaryCommandBadgeShowsOnlyFailure() async throws {
+  let defaults = isolatedDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  let session = try #require(tab.activeSession)
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+  let terminalView = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  defer { session.stop(immediately: true) }
+
+  terminalView.dataReceived(
+    slice: Array(
+      "\u{1B}]133;A\u{7}$ \u{1B}]133;B\u{7}true\r\n\u{1B}]133;C\u{7}\u{1B}]133;D;0\u{7}".utf8)[...])
+  try await Task.sleep(for: .milliseconds(80))
+
+  // 标签级徽章确实进入了完成态；被拦掉的是视图层的渲染，不是聚合逻辑。
+  #expect(session.activeAgentProvider == nil)
+  #expect(session.lastCommandExitStatus == 0)
+  #expect([TerminalBadgeState.completed, .finished].contains(tab.activityBadge))
+  let successStates = visibleTabAccessoryStates(for: tab, in: controller)
+  #expect(!successStates.contains("finished"))
+  #expect(!successStates.contains("completed"))
+  #expect(!successStates.contains("error"))
+  #expect(!successStates.contains("awaiting-input"))
+
+  terminalView.dataReceived(
+    slice: Array(
+      "\u{1B}]133;A\u{7}$ \u{1B}]133;B\u{7}false\r\n\u{1B}]133;C\u{7}\u{1B}]133;D;1\u{7}".utf8)[...])
+  try await Task.sleep(for: .milliseconds(80))
+
+  #expect(tab.activityBadge == .error)
+  #expect(visibleTabAccessoryStates(for: tab, in: controller).contains("error"))
+  #expect(
+    (try visibleTabAccessory(for: tab, in: controller) as? NSTextField)?.stringValue == "1"
+  )
+}
+
+/// 收集当前可见状态槽的 state 名（`sidebar-tab-status-<id>-<state>` 的后缀）。断言
+/// 「某状态不存在」必须看全部匹配视图，否则纵横两条标签栏里任意一条命中都会漏判。
+@MainActor
+private func visibleTabAccessoryStates(
+  for tab: TerminalTabItem,
+  in controller: WorkspaceViewController
+) -> [String] {
+  let prefix = "sidebar-tab-status-\(tab.id.uuidString)-"
+  return controller.view.descendants.compactMap { view in
+    guard let raw = view.identifier?.rawValue, raw.hasPrefix(prefix), !view.isHidden else {
+      return nil
+    }
+    return String(raw.dropFirst(prefix.count))
+  }
+}
+
 /// 状态附件按 `sidebar-tab-status-<id>-<state>` 标识查找（纵向行在标题左侧，横向在右侧），
 /// 只读取当前可见附件，测试不依赖具体槽位布局，同时仍覆盖用户看到的状态变化。
 @MainActor
