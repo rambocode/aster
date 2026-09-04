@@ -4191,6 +4191,15 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         workingDirectory: currentWorkingDirectoryIsLocal ? currentWorkingDirectory : ""
       )
       clearAwaitingInput()
+      // 上一条命令的终态（finished/error）不能带进新命令：否则 commandFinished 里
+      // 「OSC 9;4;5 已报完成」的 guard 会被旧值误触发，progressState 永远停在第一条
+      // 命令的结果，标签会显示「退出码 0 却是红色 error」的矛盾徽章，完成通知与
+      // completed flash 也不再触发。进行中的 determinate/indeterminate 必须保留，
+      // 避免打断 OSC 9;4 已经开始的进度条。
+      switch progressState {
+      case .finished, .error: progressState = .clear
+      case .clear, .determinate, .indeterminate: break
+      }
       completedFlashTask?.cancel()
       showsCompletedFlash = false
       activityOutputTail = ""
@@ -4257,7 +4266,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         submittedCommand = nil
         return
       }
-      // OSC 9;4;5 已携带完成语义时不重复通知；否则由 OSC 133 形成完成状态。
+      // 只可能匹配「本条命令内 OSC 9;4;5 已携带完成语义」：commandStart 已经清掉了
+      // 上一条命令留下的终态，因此这里不重复通知；否则由 OSC 133 形成完成状态。
       if case .finished = progressState {
         submittedCommand = nil
         return
