@@ -1422,17 +1422,20 @@ func openQuicklyAlignsContentAndReusesRows() throws {
   })
   let firstSectionHeader = try #require(
     controller.view.allDescendants.compactMap { $0 as? NSTextField }
-      .first { $0.stringValue == "已打开" })
+      .first { $0.stringValue == "标签页" })
   let originalOverlayWidth = overlay.bounds.width
   #expect(abs(originalOverlayWidth - 700) < 1)
   #expect(backdrop.frame == controller.view.bounds)
   #expect((overlay.layer?.shadowOpacity ?? 0) >= 0.20)
   #expect(search.isBezeled == false)
   #expect(search.focusRingType == .none)
-  #expect(abs(search.bounds.height - 36) < 1)
   let searchRow = try #require(controller.view.allDescendants.first {
     $0.identifier?.rawValue == "open-quickly-search-row"
   })
+  // 行高固定 36pt，但输入控件保持文字固有高度：撑满整行会让无边框
+  // NSSearchFieldCell 把单行文字贴顶画，图标就掉到文字下面。
+  #expect(abs(searchRow.bounds.height - 36) < 1)
+  #expect(search.bounds.height < 30)
   let searchIcon = try #require(controller.view.allDescendants.first {
     $0.identifier?.rawValue == "open-quickly-search-icon"
   })
@@ -1557,6 +1560,98 @@ func openQuicklyAlignsContentAndReusesRows() throws {
   NSApp.sendEvent(outsideClick)
   #expect(model.isOpenQuicklyPresented == false)
   #expect(!controller.view.allDescendants.contains { $0 === overlay })
+}
+
+/// 命令面板搜索行的垂直几何：与 Open Quickly 用同一套约束，放大镜必须和输入文字
+/// 在同一水平线上。行高仍是 36pt，但输入控件不再被撑满整行。
+@Test("命令面板搜索图标与输入文字垂直居中对齐")
+@MainActor
+func commandPaletteAlignsSearchIconWithText() async throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+    styleMask: [.titled, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  model.togglePalette()
+  // 命令面板挂载走 `objectWillChange` → `DispatchQueue.main.async` 的异步重建，
+  // 必须先让出 main actor 才能拿到浮层视图。
+  try await Task.sleep(for: .milliseconds(100))
+  window.contentView?.layoutSubtreeIfNeeded()
+  defer { model.dismissWorkspaceOverlays() }
+
+  let search = try #require(controller.view.allDescendants.compactMap { $0 as? NSSearchField }
+    .first { $0.identifier?.rawValue == "command-palette-search" })
+  let searchRow = try #require(controller.view.allDescendants.first {
+    $0.identifier?.rawValue == "command-palette-search-row"
+  })
+  let searchIcon = try #require(
+    searchRow.subviews.compactMap { $0 as? NSImageView }.first)
+
+  #expect(abs(searchRow.bounds.height - 36) < 1)
+  #expect(search.bounds.height < 30)
+  let iconFrame = searchIcon.convert(searchIcon.bounds, to: searchRow)
+  let fieldAlignmentRect = search.alignmentRect(forFrame: search.frame)
+  #expect(abs(iconFrame.midY - fieldAlignmentRect.midY) < 1)
+}
+
+/// 分组重排与「文件」过滤器都是用户直接看到的结构，用一条端到端用例把
+/// 「窗口小节在最前 + 英文徽章 + 文件 chip 与它的 placeholder」一起钉住。
+@Test("Open Quickly 全部视图以窗口小节开头且提供文件过滤器")
+@MainActor
+func openQuicklyShowsWindowSectionAndFileFilter() throws {
+  _ = NSApplication.shared
+  let defaults = panelTestDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+    styleMask: [.titled, .resizable, .fullSizeContentView],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  model.toggleOpenQuickly()
+  window.contentView?.layoutSubtreeIfNeeded()
+  defer { model.dismissWorkspaceOverlays() }
+
+  let search = try #require(controller.view.allDescendants.compactMap { $0 as? NSSearchField }
+    .first { $0.identifier?.rawValue == "open-quickly-search" })
+  let resultsStack = try #require(controller.view.allDescendants.compactMap { $0 as? NSStackView }
+    .first { $0.identifier?.rawValue == "open-quickly-results" })
+
+  // 「全部」下第一个小节必须是「窗口」，后面才是标签页。
+  let headers = resultsStack.arrangedSubviews
+    .filter { !($0 is OpenQuicklyRowView) }
+    .compactMap { $0.allDescendants.compactMap { ($0 as? NSTextField)?.stringValue }.first }
+  #expect(headers.first == "窗口")
+  #expect(headers.contains("标签页"))
+
+  // 窗口行的徽章统一用英文 `Window`。
+  let windowBadge = try #require(controller.view.allDescendants.first {
+    $0.identifier?.rawValue.hasPrefix("open-quickly-badge-window:") == true
+  })
+  let windowBadgeText = windowBadge.allDescendants.compactMap { ($0 as? NSTextField)?.stringValue }
+  #expect(windowBadgeText.contains("Window"))
+
+  let fileChip = try #require(controller.view.allDescendants.compactMap { $0 as? NSButton }
+    .first { $0.identifier?.rawValue == "open-quickly-chip-file" })
+  #expect(search.placeholderString == "搜索命令、URL、文件…")
+
+  fileChip.performClick(nil)
+  window.contentView?.layoutSubtreeIfNeeded()
+  #expect(search.placeholderString == "搜索当前目录下的文件…")
 }
 
 @Test("Open Quickly 默认聚焦搜索框且内部点击不会关闭")

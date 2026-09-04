@@ -51,6 +51,77 @@ func openQuicklySectionsGroupInSearchOrder() {
   #expect(sections[1].items.map(\.id) == ["pane1", "pane2"])
 }
 
+/// 小节顺序是设计稿直接规定的用户可见契约，用一条断言把整条链钉死，
+/// 避免以后新增 kind 时只改 priority 而漏掉它在「全部」里的落位。
+@Test("Open Quickly 全部视图按设计稿的小节顺序排列且文件垫底")
+func openQuicklyAllFilterFollowsDesignedSectionOrder() {
+  let items = [
+    OpenQuicklyItem(id: "file", kind: .file, title: "a"),
+    OpenQuicklyItem(id: "agent", kind: .agent, title: "a"),
+    OpenQuicklyItem(id: "ssh", kind: .ssh, title: "a"),
+    OpenQuicklyItem(id: "recipe", kind: .recipe, title: "a"),
+    OpenQuicklyItem(id: "prompt", kind: .prompt, title: "a"),
+    OpenQuicklyItem(id: "current", kind: .current, title: "a"),
+    OpenQuicklyItem(id: "folder", kind: .folder, title: "a"),
+    OpenQuicklyItem(id: "recent", kind: .recent, title: "a"),
+    OpenQuicklyItem(id: "opened", kind: .opened, title: "a"),
+    OpenQuicklyItem(id: "window", kind: .window, title: "a"),
+  ]
+  let index = OpenQuicklyIndex(items: items)
+
+  #expect(
+    index.search(query: "", filter: .all).map(\.id) == [
+      "window", "opened", "recent", "folder", "current",
+      "prompt", "recipe", "ssh", "agent", "file",
+    ])
+}
+
+@Test("Open Quickly 的「已打开」过滤器同时返回窗口与标签且窗口在前")
+func openQuicklyOpenedFilterIncludesWindowsBeforeTabs() {
+  let items = [
+    OpenQuicklyItem(id: "tab", kind: .opened, title: "API Server", detail: "~/api"),
+    OpenQuicklyItem(id: "window", kind: .window, title: "API Server", detail: "3 tabs"),
+    OpenQuicklyItem(id: "folder", kind: .folder, title: "api-client", detail: "~/src"),
+  ]
+  let index = OpenQuicklyIndex(items: items)
+
+  #expect(index.search(query: "", filter: .opened).map(\.id) == ["window", "tab"])
+  // 窗口不属于任何其它单类型过滤器。
+  #expect(index.search(query: "", filter: .folder).map(\.id) == ["folder"])
+  #expect(index.search(query: "", filter: .recent).isEmpty)
+}
+
+@Test("Open Quickly 的文件条目只出现在「全部」与「文件」过滤器下")
+func openQuicklyFileItemsOnlyAppearUnderAllAndFileFilters() {
+  let items = [
+    OpenQuicklyItem(id: "tab", kind: .opened, title: "notes"),
+    OpenQuicklyItem(id: "deep", kind: .file, title: "notes.md", detail: "wiki/demo", score: -2),
+    OpenQuicklyItem(id: "shallow", kind: .file, title: "notes.txt", detail: "wiki", score: -1),
+  ]
+  let index = OpenQuicklyIndex(items: items)
+
+  // 文件永远排在其它类型之后；同为文件时按 score 降序，即路径浅的在前。
+  #expect(index.search(query: "", filter: .all).map(\.id) == ["tab", "shallow", "deep"])
+  #expect(index.search(query: "", filter: .file).map(\.id) == ["shallow", "deep"])
+  #expect(index.search(query: "", filter: .opened).map(\.id) == ["tab"])
+  #expect(index.search(query: "", filter: .folder).isEmpty)
+}
+
+@Test("Open Quickly 分组把窗口独立成一节并排在标签页之前")
+func openQuicklySectionsSeparateWindowsFromTabs() {
+  let items = OpenQuicklyIndex(items: [
+    OpenQuicklyItem(id: "tab1", kind: .opened, title: "b"),
+    OpenQuicklyItem(id: "window1", kind: .window, title: "a"),
+    OpenQuicklyItem(id: "window2", kind: .window, title: "b"),
+    OpenQuicklyItem(id: "file1", kind: .file, title: "c"),
+  ]).search(query: "", filter: .all)
+  let sections = OpenQuicklyIndex.sections(for: items)
+
+  #expect(sections.map(\.kind) == [.window, .opened, .file])
+  #expect(sections[0].items.map(\.id) == ["window1", "window2"])
+  #expect(sections.flatMap(\.items).count == 4)
+}
+
 @Test("Outline 从 Markdown、结构化配置、diff 和 transcript 生成有界跳转项")
 func workspaceOutlineParsesSupportedPaneContent() {
   let markdown = WorkspaceOutlineParser.parse(

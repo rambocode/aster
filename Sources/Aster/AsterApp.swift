@@ -1182,6 +1182,24 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     controller.show()
   }
 
+  /// 全部工作区窗口（主窗口 + 附加窗口），按 `NSApp.orderedWindows` 的前后顺序返回。
+  /// Open Quickly 的「窗口」小节需要一个跨窗口的只读入口；这里只交出 window 与 model，
+  /// 不暴露 controller，避免调用方绕过 AppDelegate 直接操作窗口生命周期。
+  var workspaceWindows: [(window: NSWindow, model: AppModel)] {
+    var models: [ObjectIdentifier: AppModel] = [:]
+    if let mainWindow = mainWindowController?.window {
+      models[ObjectIdentifier(mainWindow)] = model
+    }
+    for record in additionalWorkspaceWindows.values {
+      guard let window = record.controller.window else { continue }
+      models[ObjectIdentifier(window)] = record.model
+    }
+    return NSApp.orderedWindows.compactMap { window in
+      guard let workspaceModel = models[ObjectIdentifier(window)] else { return nil }
+      return (window: window, model: workspaceModel)
+    }
+  }
+
   private func workspaceWindow(for workspaceModel: AppModel) -> NSWindow? {
     if workspaceModel === model { return mainWindowController?.window }
     return additionalWorkspaceWindows.values.first(where: { $0.model === workspaceModel })?

@@ -95,6 +95,14 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   private var historyCancellable: AnyCancellable?
   private var targetsNeedRefresh = true
   private var showsCommandHints = false
+  /// 底部主动作文案；「文件」过滤器下从「跳转到 ↩」换成「打开 ↩」。
+  private weak var footerJumpLabel: NSTextField?
+  /// 正在扫描的目录；非 nil 时「文件」页显示「正在索引…」而不是「没有匹配项」。
+  private var fileScanInFlightRoot: String?
+  /// 按目录缓存的文件索引。静态是有意的：浮层控制器会被工作区缓存并反复展示，
+  /// 而同一个工作目录的扫描结果在 30s 内没有必要重做一遍磁盘遍历。
+  private static var fileScanCache: [String: (scannedAt: Date, files: [WorkspaceFileScanner.File])] = [:]
+  private static let fileScanTTL: TimeInterval = 30
   /// 浮层事件监视只在展示期间存活；关闭后立即移除，避免拦截终端的
   /// `⌘W` / `⌘R` 等既有快捷键。`deinit` 是 nonisolated，因此句柄标为 unsafe。
   private nonisolated(unsafe) var overlayEventMonitor: Any?
@@ -144,7 +152,6 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     (search.cell as? NSSearchFieldCell)?.searchButtonCell = nil
     search.font = NSFont.systemFont(ofSize: 15)
     search.translatesAutoresizingMaskIntoConstraints = false
-    search.heightAnchor.constraint(equalToConstant: 36).isActive = true
     search.setContentHuggingPriority(.required, for: .vertical)
     search.setContentCompressionResistancePriority(.required, for: .vertical)
     search.delegate = self
@@ -155,6 +162,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     search.onShowActions = { [weak self] in self?.showActionsMenu() }
     let searchRow = NSView()
     searchRow.identifier = NSUserInterfaceItemIdentifier("open-quickly-search-row")
+    searchRow.translatesAutoresizingMaskIntoConstraints = false
     let searchIcon = NSImageView()
     searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "搜索")
     // 图标本身可能包含不同主题/系统版本的透明留白；显式按 16pt 槽位居中和等比缩放，
@@ -168,14 +176,17 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     searchRow.addSubview(searchIcon)
     searchRow.addSubview(search)
     NSLayoutConstraint.activate([
+      // 行高由 searchRow 固定；search 保持文字自身的固有高度，与 icon 一起对齐 row
+      // 中心，文字才和图标落在同一水平线上。把 search 撑满 36pt 会让无边框
+      // NSSearchFieldCell 把单行文字贴顶绘制，图标就显得比文字低。
+      searchRow.heightAnchor.constraint(equalToConstant: 36),
       searchIcon.leadingAnchor.constraint(equalTo: searchRow.leadingAnchor, constant: 8),
       searchIcon.centerYAnchor.constraint(equalTo: searchRow.centerYAnchor),
       searchIcon.widthAnchor.constraint(equalToConstant: 16),
       searchIcon.heightAnchor.constraint(equalToConstant: 16),
       search.leadingAnchor.constraint(equalTo: searchRow.leadingAnchor, constant: 32),
       search.trailingAnchor.constraint(equalTo: searchRow.trailingAnchor),
-      search.topAnchor.constraint(equalTo: searchRow.topAnchor),
-      search.bottomAnchor.constraint(equalTo: searchRow.bottomAnchor),
+      search.centerYAnchor.constraint(equalTo: searchRow.centerYAnchor),
     ])
     host.searchInputView = searchRow
 
@@ -205,6 +216,11 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   /// 展示边界安装本地事件监视。使用 local monitor 而不是仅覆写搜索框
   /// `keyDown`，因为 AppKit 会在 first responder 之前处理 `⌘W` 等菜单等价键。
   func didPresent() {
+    // 窗口列表与文件索引在浮层缓存期间会失效（新开窗口、切目录），必须在展示边界
+    // 重取；SSH config / Recipes / Agent 历史仍走既有的按需刷新，不在这里重读磁盘。
+    refreshVolatileTargets()
+    ensureFileScan()
+    reload()
     setCommandHintsVisible(NSEvent.modifierFlags.contains(.command))
     if let window = view.window {
       // 浮层打开后立即进入搜索；`initialFirstResponder` 同时覆盖窗口恰在激活过程中的
@@ -267,7 +283,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     else { return event }
     let shortcuts: [String: OpenQuicklyFilter] = [
       "0": .all, "w": .opened, "r": .recent, "z": .folder,
-      "s": .ssh, "g": .agent, "j": .current, "e": .recipe,
+      "s": .ssh, "g": .agent, "j": .current, "e": .recipe, "f": .file,
     ]
     guard let filter = shortcuts[character] else { return event }
     selectFilter(filter)
@@ -295,6 +311,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     guard isViewLoaded else { return }
     search.stringValue = ""
     for (key, chip) in chips { chip.isChipSelected = key == filter }
+    updateFilterChrome()
     if refreshesTargets || targetsNeedRefresh { rebuildTargets() }
     selectedIndex = 0
     reload()
@@ -329,6 +346,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     let titles: [OpenQuicklyFilter: String] = [
       .all: "全部", .opened: "已打开", .recent: "最近", .folder: "文件夹",
       .ssh: "SSH", .agent: "智能体", .current: "当前", .recipe: "Recipes",
+      .file: "文件",
     ]
     for filter in OpenQuicklyFilter.allCases {
       let chip = OpenQuicklyChip(
@@ -359,6 +377,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     case .agent: "⌘G"
     case .current: "⌘J"
     case .recipe: "⌘E"
+    case .file: "⌘F"
     }
   }
 
@@ -416,6 +435,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   private func makeFooter() -> NSView {
     let quickSelect = makeLabel("Quick Select ⌘1–9", size: 10, color: AsterTheme.tertiaryInk)
     let jump = makeLabel("跳转到 ↩", size: 10, color: AsterTheme.tertiaryInk)
+    footerJumpLabel = jump
     let actions = ActionButton(title: "操作 ⌘K", bezelStyle: .inline) { [weak self] in
       self?.showActionsMenu()
     }
@@ -430,8 +450,19 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     guard filter != selectedFilter else { return }
     selectedFilter = filter
     for (key, chip) in chips { chip.isChipSelected = key == filter }
+    updateFilterChrome()
+    // 用户可能一进浮层就点「文件」；此时缓存还没建立，必须现场触发一次扫描。
+    if filter == .file { ensureFileScan() }
     selectedIndex = 0
     reload()
+  }
+
+  /// 「文件」过滤器搜索的是磁盘上的文件而不是内存里的目标，因此 placeholder 与底部
+  /// 主动作文案都要跟着换，否则用户会以为自己还在搜标签。
+  private func updateFilterChrome() {
+    search.placeholderString =
+      selectedFilter == .file ? "搜索当前目录下的文件…" : Self.defaultPlaceholder
+    footerJumpLabel?.stringValue = selectedFilter == .file ? "打开 ↩" : "跳转到 ↩"
   }
 
   func controlTextDidChange(_ obj: Notification) {
@@ -450,14 +481,19 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     visibleTargets = items.compactMap { targetsByID[$0.id] }
     rows.removeAll()
     if visibleTargets.isEmpty {
+      // 文件索引是异步的：扫描还没回来时说「没有匹配项」会让用户误以为目录里真的
+      // 没有文件，因此在扫描期间用「正在索引…」明确区分两种空。
+      let message = selectedFilter == .file && fileScanInFlightRoot != nil
+        ? "正在索引…" : "没有匹配项"
       resultsStack.addArrangedSubview(
-        makeLabel("没有匹配项", size: 11, color: AsterTheme.secondaryInk))
+        makeLabel(message, size: 11, color: AsterTheme.secondaryInk))
       updateResultsHeight()
       return
     }
-    // 多类型视图(.all / .current)按 kind 分组并显示小节标题;单类型过滤器下
-    // 标签条已说明类型,不再重复标题。
+    // 多类型视图(.all / .current / .opened)按 kind 分组并显示小节标题;单类型过滤器
+    // 下标签条已说明类型,不再重复标题。「已打开」同时含窗口与标签,因此也要小节标题。
     let showHeaders = selectedFilter == .all || selectedFilter == .current
+      || selectedFilter == .opened
     for section in OpenQuicklyIndex.sections(for: items) {
       if showHeaders {
         let header = makeLabel(
@@ -466,9 +502,14 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
         header.alignment = .left
         header.translatesAutoresizingMaskIntoConstraints = false
         let wrapper = NSView()
+        wrapper.translatesAutoresizingMaskIntoConstraints = false
         wrapper.addSubview(header)
         header.pinEdges(to: wrapper, insets: NSEdgeInsets(top: 6, left: 4, bottom: 2, right: 4))
         resultsStack.addArrangedSubview(wrapper)
+        // `alignment = .width` 不足以让 arranged subview 真的撑满：没有这条显式约束时
+        // 小节标题会缩到文字固有宽度并被推到行尾，看起来像贴在结果右边缘。结果行走
+        // `attach(to:)` 加同样的约束，这里对标题包装视图补齐。
+        wrapper.widthAnchor.constraint(equalTo: resultsStack.widthAnchor).isActive = true
       }
       for item in section.items {
         guard let target = targetsByID[item.id] else { continue }
@@ -503,17 +544,19 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     updateSelectionAppearance()
   }
 
-  /// 小节标题与徽章文案共用同一套中文映射。
+  /// 小节标题的中文映射；顺序由 `OpenQuicklyIndex.priority` 决定，这里只负责文案。
   private static func sectionTitle(for kind: OpenQuicklyKind) -> String {
     switch kind {
-    case .opened: "已打开"
+    case .window: "窗口"
+    case .opened: "标签页"
     case .current: "当前"
     case .prompt: "提示词"
-    case .recent: "最近"
-    case .folder: "文件夹"
+    case .recent: "最近标签页"
+    case .folder: "最近文件夹"
     case .ssh: "SSH"
     case .agent: "智能体"
     case .recipe: "Recipes"
+    case .file: "文件"
     }
   }
 
@@ -580,14 +623,14 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
 
   /// 构建全部候选目标。每类目标的 symbol/badge/菜单在创建时确定,reload 只做过滤。
   private func makeTargets() -> [Target] {
-    var result: [Target] = []
+    var result: [Target] = makeWindowTargets()
     for tab in model.tabs {
       result.append(
         Target(
           item: .init(
             id: "opened:\(tab.id.uuidString)", kind: .opened, title: tab.title,
-            detail: tab.workingDirectory),
-          symbol: "macwindow", badge: "标签", accented: false, actionTitle: "跳转到标签"
+            detail: Self.abbreviated(tab.workingDirectory)),
+          symbol: "macwindow", badge: "Tab", accented: false, actionTitle: "跳转到标签"
         ) { [weak model, weak tab] in
           guard let tab else { return }
           model?.select(tab)
@@ -639,8 +682,8 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
         Target(
           item: .init(
             id: "recent:\(snapshot.id.uuidString)", kind: .recent, title: snapshot.title,
-            detail: directory),
-          symbol: "clock.arrow.circlepath", badge: "最近", accented: false,
+            detail: Self.abbreviated(directory)),
+          symbol: "clock.arrow.circlepath", badge: "Tab", accented: false,
           actionTitle: "恢复标签"
         ) { [weak model] in _ = model?.reopenClosedTab(id: snapshot.id) })
     }
@@ -650,8 +693,8 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
           item: .init(
             id: "folder:\(match.path)", kind: .folder,
             title: URL(fileURLWithPath: match.path).lastPathComponent,
-            detail: match.path, score: match.score),
-          symbol: "folder", badge: "文件夹", accented: false, actionTitle: "新建标签"
+            detail: Self.abbreviated(match.path), score: match.score),
+          symbol: "folder", badge: "Folder", accented: false, actionTitle: "新建标签"
         ) { [weak model] in model?.newTab(workingDirectory: match.path, hasContent: true) })
       result[result.count - 1].menuActions = [
         (
@@ -694,7 +737,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
             detail: "\(metadata.configuration.provider.commandName) · \(metadata.projectDirectory)",
             timestamp: metadata.updatedAt
           ),
-          symbol: "bubble.left.and.bubble.right", badge: "会话", accented: false,
+          symbol: "bubble.left.and.bubble.right", badge: "Session", accented: false,
           actionTitle: "继续会话"
         ) { [weak model] in model?.continueAgentSession(metadata, kind: .resume) })
       result[result.count - 1].menuActions = [
@@ -724,7 +767,123 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
         )
       ]
     }
+    result.append(contentsOf: makeFileTargets())
     return result
+  }
+
+  /// 默认 placeholder；「文件」过滤器会临时替换掉它。
+  private static let defaultPlaceholder = "搜索命令、URL、文件…"
+
+  /// 主目录下的路径统一显示成 `~/…`，避免每一行都被 `/Users/<name>` 前缀占掉半行宽度。
+  private static func abbreviated(_ path: String) -> String {
+    path.isEmpty ? "" : (path as NSString).abbreviatingWithTildeInPath
+  }
+
+  /// 「窗口」小节：列出全部工作区窗口（含浮层自己所在的这个）。标题取该窗口当前选中
+  /// 标签的标题，detail 是标签数量。
+  private func makeWindowTargets() -> [Target] {
+    let entries: [(window: NSWindow, model: AppModel)]
+    if let delegate = NSApp.delegate as? AsterAppDelegate {
+      entries = delegate.workspaceWindows
+    } else if let window = viewIfLoaded?.window {
+      // 测试与嵌入宿主没有 AsterAppDelegate；至少列出浮层自己所在的窗口，
+      // 「窗口」小节不会凭空消失。
+      entries = [(window, model)]
+    } else {
+      entries = []
+    }
+    return entries.map { entry in
+      let count = entry.model.tabs.count
+      let title = entry.model.selectedTab?.title ?? entry.window.title
+      return Target(
+        item: .init(
+          id: "window:\(entry.window.windowNumber)", kind: .window,
+          title: title.isEmpty ? "工作区" : title,
+          detail: count == 1 ? "1 tab" : "\(count) tabs"),
+        symbol: "macwindow.on.rectangle", badge: "Window", accented: false,
+        actionTitle: "切换到窗口"
+      ) { [weak model, weak window = entry.window] in
+        window?.makeKeyAndOrderFront(nil)
+        model?.isOpenQuicklyPresented = false
+      }
+    }
+  }
+
+  /// 「文件」小节：只读当前标签工作目录的扫描缓存，绝不在这里同步遍历磁盘。
+  /// 缓存缺失时返回空，由 `ensureFileScan` 在后台补上后重新入索引。
+  private func makeFileTargets() -> [Target] {
+    guard let root = fileScanRoot, let cached = Self.fileScanCache[root] else { return [] }
+    return cached.files.map { file in
+      let url = URL(fileURLWithPath: file.path)
+      // 空查询时 score 参与降序排序，取负深度即可让顶层文件排在子目录文件之前。
+      var target = Target(
+        item: .init(
+          id: "file:\(file.path)", kind: .file, title: file.name,
+          detail: file.relativeParent, score: -Double(file.depth)),
+        symbol: "doc", badge: "File", accented: false, actionTitle: "打开文件"
+      ) { [weak model] in
+        // 与 Files 面板走同一条资源路由：它会重新校验类型/符号链接，并按内容决定
+        // 用 viewer 还是 editor 打开，不需要在浮层里再判一遍。
+        model?.openResource(url, mode: .automatic, placement: .split(.right))
+        model?.isOpenQuicklyPresented = false
+      }
+      target.menuActions = [
+        (
+          title: "在 Finder 中显示",
+          handler: { [weak model] in
+            NSWorkspace.shared.selectFile(
+              file.path, inFileViewerRootedAtPath: url.deletingLastPathComponent().path)
+            model?.isOpenQuicklyPresented = false
+          }
+        ),
+        (
+          title: "复制路径",
+          handler: { [weak model] in
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(file.path, forType: .string)
+            model?.isOpenQuicklyPresented = false
+          }
+        ),
+      ]
+      return target
+    }
+  }
+
+  /// 文件索引的根目录：当前选中标签的工作目录。没有标签时为 nil。
+  private var fileScanRoot: String? {
+    guard let root = model.selectedTab?.workingDirectory, !root.isEmpty else { return nil }
+    return root
+  }
+
+  /// 窗口与文件两类目标随时会变（新开窗口、切换目录），在展示边界单独重建它们，
+  /// 而不是整份 `makeTargets()` 重来一遍——后者会重读 SSH config、Recipes 与 Agent 历史。
+  private func refreshVolatileTargets() {
+    targets.removeAll { $0.item.kind == .window || $0.item.kind == .file }
+    targets.insert(contentsOf: makeWindowTargets(), at: 0)
+    targets.append(contentsOf: makeFileTargets())
+    targetsByID = Dictionary(targets.map { ($0.item.id, $0) }, uniquingKeysWith: { first, _ in first })
+    searchIndex = OpenQuicklyIndex(items: targets.map(\.item))
+  }
+
+  /// 缓存过期或缺失时在后台线程扫描工作目录。枚举几千个文件是磁盘 IO，放在 MainActor
+  /// 上会卡住浮层的输入与滚动，因此必须 detached 执行，结果回主线程再入索引。
+  private func ensureFileScan() {
+    guard let root = fileScanRoot, fileScanInFlightRoot != root else { return }
+    if let cached = Self.fileScanCache[root],
+      Date().timeIntervalSince(cached.scannedAt) < Self.fileScanTTL
+    { return }
+    fileScanInFlightRoot = root
+    Task.detached(priority: .utility) {
+      let files = WorkspaceFileScanner.scan(root: root)
+      await MainActor.run { [weak self] in
+        guard let self else { return }
+        Self.fileScanCache[root] = (scannedAt: Date(), files: files)
+        self.fileScanInFlightRoot = nil
+        guard self.isViewLoaded else { return }
+        self.refreshVolatileTargets()
+        self.reload()
+      }
+    }
   }
 
   /// 「当前」页的提示词分组：pane ↔ session 没有可靠映射（metadata 不含 tty/pid）。

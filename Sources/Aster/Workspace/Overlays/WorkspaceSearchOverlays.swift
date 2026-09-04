@@ -499,7 +499,6 @@ final class PaletteOverlayViewController: NSViewController, NSSearchFieldDelegat
     (search.cell as? NSSearchFieldCell)?.searchButtonCell = nil
     search.font = NSFont.systemFont(ofSize: 15)
     search.translatesAutoresizingMaskIntoConstraints = false
-    search.heightAnchor.constraint(equalToConstant: 36).isActive = true
     search.setContentHuggingPriority(.required, for: .vertical)
     search.setContentCompressionResistancePriority(.required, for: .vertical)
     search.delegate = self
@@ -508,6 +507,7 @@ final class PaletteOverlayViewController: NSViewController, NSSearchFieldDelegat
     search.onCancel = { [weak model] in model?.isPalettePresented = false }
     let searchRow = NSView()
     searchRow.identifier = NSUserInterfaceItemIdentifier("command-palette-search-row")
+    searchRow.translatesAutoresizingMaskIntoConstraints = false
     let searchIcon = NSImageView()
     searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "搜索")
     searchIcon.imageAlignment = .alignCenter
@@ -518,17 +518,17 @@ final class PaletteOverlayViewController: NSViewController, NSSearchFieldDelegat
     searchRow.addSubview(searchIcon)
     searchRow.addSubview(search)
     NSLayoutConstraint.activate([
+      // 行高由 searchRow 固定；search 保持文字自身的固有高度，与 icon 一起对齐 row
+      // 中心，文字才和图标落在同一水平线上。把 search 撑满 36pt 会让无边框
+      // NSSearchFieldCell 把单行文字贴顶绘制，图标就显得比文字低。
+      searchRow.heightAnchor.constraint(equalToConstant: 36),
       searchIcon.leadingAnchor.constraint(equalTo: searchRow.leadingAnchor, constant: 8),
-      // NSSearchFieldCell 在比文字行高高得多的 frame 里，文字实际渲染位置比几何中心
-      // 略低（字体度量的固有偏差），图标居中对齐 row 的几何中点会显得比文字高；
-      // 往下挪 1.5pt 让图标光学中心贴合文字光学中心，而不是数学上的行几何中心。
-      searchIcon.centerYAnchor.constraint(equalTo: searchRow.centerYAnchor, constant: -1.5),
+      searchIcon.centerYAnchor.constraint(equalTo: searchRow.centerYAnchor),
       searchIcon.widthAnchor.constraint(equalToConstant: 16),
       searchIcon.heightAnchor.constraint(equalToConstant: 16),
       search.leadingAnchor.constraint(equalTo: searchRow.leadingAnchor, constant: 32),
       search.trailingAnchor.constraint(equalTo: searchRow.trailingAnchor),
-      search.topAnchor.constraint(equalTo: searchRow.topAnchor),
-      search.bottomAnchor.constraint(equalTo: searchRow.bottomAnchor),
+      search.centerYAnchor.constraint(equalTo: searchRow.centerYAnchor),
     ])
     host.searchInputView = searchRow
 

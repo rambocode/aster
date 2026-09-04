@@ -1,6 +1,8 @@
 import Foundation
 
 public enum OpenQuicklyKind: String, CaseIterable, Codable, Sendable {
+  /// 已打开的工作区窗口。与 `.opened`(标签)同属「已打开」过滤器,排在标签之前。
+  case window
   case opened
   case recent
   case folder
@@ -10,6 +12,8 @@ public enum OpenQuicklyKind: String, CaseIterable, Codable, Sendable {
   /// 当前 Pane 所跑 Agent 会话的近期提示词,只出现在「当前」与「全部」过滤器下。
   case prompt
   case recipe
+  /// 当前标签工作目录下递归枚举出的普通文件,数量可达数千,因此排序上永远垫底。
+  case file
 }
 
 public enum OpenQuicklyFilter: String, CaseIterable, Codable, Sendable {
@@ -21,12 +25,16 @@ public enum OpenQuicklyFilter: String, CaseIterable, Codable, Sendable {
   case agent
   case current
   case recipe
+  /// 「文件」排在 chip 条最后:它的数据来自磁盘扫描,和其它内存来源的过滤器不同源。
+  case file
 
-  /// 判断结果类型是否落入该过滤器;「当前」同时包含 pane 条目与提示词条目。
+  /// 判断结果类型是否落入该过滤器;「当前」同时包含 pane 条目与提示词条目,
+  /// 「已打开」同时包含窗口与标签(设计上二者是同一个「现在开着什么」问题)。
   fileprivate func includes(_ kind: OpenQuicklyKind) -> Bool {
     switch self {
     case .all: true
     case .current: kind == .current || kind == .prompt
+    case .opened: kind == .window || kind == .opened
     default: rawValue == kind.rawValue
     }
   }
@@ -106,16 +114,21 @@ public struct OpenQuicklyIndex: Sendable {
     return result
   }
 
+  /// 小节顺序的唯一真值:窗口 → 标签页 → 最近标签页 → 最近文件夹 → 当前 → 提示词
+  /// → Recipes → SSH → 智能体 → 文件。文件必须垫底,否则工作目录里的几千个文件会把
+  /// 其它类型整体挤出 50 条结果上限。
   private static func priority(_ kind: OpenQuicklyKind) -> Int {
     switch kind {
-    case .opened: 0
-    case .folder: 1
-    case .current: 2
-    case .prompt: 3
-    case .recipe: 4
-    case .recent: 5
-    case .ssh: 6
-    case .agent: 7
+    case .window: 0
+    case .opened: 1
+    case .recent: 2
+    case .folder: 3
+    case .current: 4
+    case .prompt: 5
+    case .recipe: 6
+    case .ssh: 7
+    case .agent: 8
+    case .file: 9
     }
   }
 
