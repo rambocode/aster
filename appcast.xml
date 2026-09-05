@@ -3,6 +3,32 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.4.9</title>
+            <pubDate>Sat, 05 Sep 2026 14:19:34 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>14</sparkle:version>
+            <sparkle:shortVersionString>0.4.9</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 画中画
+
+- 使用 macOS 系统画中画镜像终端，支持固定当前 Pane 或跟随活动 Pane。
+- 原终端保留输入、滚动和网格尺寸；暂停只冻结镜像，不暂停运行中的命令。
+- 修复 macOS 26 下画面空白、缩放裁切及模式切换时焦点跳回旧 Pane 的问题。
+
+## 界面与交互
+
+- 右栏页签与窗口标题行对齐，修复右栏分隔线与背景同色而不可见的问题。
+- 修复 One Light 主题下 Pane 分隔线不明显的问题。
+- 鼠标静止在链接上时，按下 Cmd 立即显示手形；松开后恢复原指针。
+- 改进自动补全建议对齐，并保留提示符中的已有输入。
+
+画中画当前支持终端 Pane，非终端 Pane 会提示不可用。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.9/Aster-0.4.9.dmg" length="27886410" type="application/octet-stream" sparkle:edSignature="BEUFWuSCJBC3CdBlSaiGbVPz7DMw3AVxNODTg1yBNKwB1Y7T5tfkfnIrokLo99HVjyaQf5GXlj9FzlYBfH+lBg=="/>
+        </item>
+        <item>
             <title>0.4.8</title>
             <pubDate>Fri, 04 Sep 2026 10:26:36 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -121,55 +147,6 @@
 - Claude Code 启动瞬间不再误报一次「任务已完成」。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.5/Aster-0.4.5.dmg" length="27523379" type="application/octet-stream" sparkle:edSignature="v3gmwuQGVhtsM4F0bjpPJ0BkLtwEUPl7VrMDhymgbINhKi48hLdIYxVi00FG63KicjYPfsyKhu6wZDlKbqEFBA=="/>
-        </item>
-        <item>
-            <title>0.4.4</title>
-            <pubDate>Thu, 27 Aug 2026 11:41:45 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>9</sparkle:version>
-            <sparkle:shortVersionString>0.4.4</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## 视图设置
-
-- 新增「视图」设置分类：标签规则（条件 glob 匹配 + 别名、图标、标题模板）、角标摆放、
-  网页窗格数据策略与详情面板顺序，全部可按项目或按项覆盖。
-- 内置 61 个 Lucide 图标与 emoji 选择器，标签图标可即时预览；角标开关从「Shell」迁到
-  「视图」。
-- 详情面板支持拖动排序、「添加视图」自定义页签（TUI 命令或独立网页视图）。
-- 修复详情面板首次打开时长标签把内容横向撑出、之后不会自动归位的问题。
-
-## 关闭确认、外部终端与会话恢复
-
-- 关闭标签、关闭 Pane、关闭窗口现在都会按设置弹出确认；前台是否有命令在跑改为直读 PTY
-  前台进程组判断，`sleep` 这类无输出命令不再被误判为空闲。
-- 新增外部终端集成：自动检测已安装的 VS Code、Cursor、Windsurf、VSCodium、Trae，并写入
-  各自的 `terminal.external.osxExec`，其它设置项保持不变。
-- 会话恢复正式生效：快照记录 Pane 的恢复命令，重开工作区时按白名单重放。除 OSC 133 /
-  OSC 88 外新增 1.5 秒启动兜底，zsh 集成只在 tmux 注入或首个 prompt 早于登记时也能恢复。
-
-## 命令补全
-
-- 补全数据源换成完整的 Fig 规格：714 条命令带嵌套子命令、选项、参数、静态候选与文件模板，
-  替代此前只有命令名的旧文件。
-- 补全引擎会按 token 下钻子命令，带参选项吞掉后一个 token，并给出位置参数候选。
-- 修复候选面板在深色终端下白字压浅底看不清的问题，文字改用主题 ink 色。
-
-## 主题与外观
-
-- 深色主题下标题带不再透出比终端更亮的窗口底色，未声明 `titlebar.background` 时直接沿用
-  终端底色。
-- 外观详情页的终端样例改为分列渲染并按 eza 配色，换字体不再错位。
-- 主题色点可直接点开取色弹层（色域 + 色相条 + hex），支持一键恢复 Default。
-
-## 稳定性
-
-- Dock 活动图标在工作 / 出错状态下保持与系统空闲图标一致的尺寸，不再忽大忽小。
-- 修复空闲时停止 display link 与渲染线程互等，导致下一次窗口聚焦卡住主线程的问题。
-- 修复 CLI 标签在 Agent 空闲后仍继续转圈的问题。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.4/Aster-0.4.4.dmg" length="23157452" type="application/octet-stream" sparkle:edSignature="jaWPqm6rvXtoUsQve/eYuD1Gh4vxlrlnj8d2grch8DJ+sTxyV1e//xFD5J7hUOJguwNYOUMkTxyWv6nLPOzPAg=="/>
         </item>
     </channel>
 </rss>
