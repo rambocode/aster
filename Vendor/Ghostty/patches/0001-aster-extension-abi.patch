@@ -1128,3 +1128,55 @@ diff --git a/pkg/dcimgui/ext.cpp b/pkg/dcimgui/dcimgui_ext.cpp
 similarity index 100%
 rename from pkg/dcimgui/ext.cpp
 rename to pkg/dcimgui/dcimgui_ext.cpp
+diff --git a/src/renderer/Metal.zig b/src/renderer/Metal.zig
+index 6c7432d21..da0059d5f 100644
+--- a/src/renderer/Metal.zig
++++ b/src/renderer/Metal.zig
+@@ -42,0 +43,5 @@ layer: IOSurfaceLayer,
++/// Optional Aster host callback. Borrowed for the surface lifetime, like the
++/// embedded userdata; renderer teardown drains all GPU completions before the
++/// host view may finish deinitializing. Never retain the view (it owns us).
++aster_frame_host: ?objc.Object = null,
++
+@@ -149,0 +155,5 @@ pub fn init(alloc: Allocator, opts: rendererpkg.Options) !Metal {
++        .aster_frame_host = if (info.view.msgSend(bool, objc.sel("respondsToSelector:"), .{
++            objc.sel("asterWantsPictureInPictureFrame"),
++        }) and info.view.msgSend(bool, objc.sel("respondsToSelector:"), .{
++            objc.sel("asterDidRenderPictureInPictureFrame:"),
++        })) info.view else null,
+@@ -458,0 +469,14 @@ fn queryMaxTextureSize(device: objc.Object) u32 {
++
++/// Called before encoding completes. The host reserves a bounded capture slot;
++/// no allocation, CPU synchronization, or frame copy occurs when disabled.
++pub fn wantsAsterFrame(self: *const Metal) bool {
++    const host = self.aster_frame_host orelse return false;
++    return host.msgSend(bool, objc.sel("asterWantsPictureInPictureFrame"), .{});
++}
++
++/// The host must synchronously copy the IOSurface. Called after GPU completion
++/// and before releasing the swap-chain slot, so the GPU cannot overwrite it.
++pub fn publishAsterFrame(self: *const Metal, target: Target) void {
++    const host = self.aster_frame_host orelse return;
++    host.msgSend(void, objc.sel("asterDidRenderPictureInPictureFrame:"), .{target.surface});
++}
+diff --git a/src/renderer/metal/Frame.zig b/src/renderer/metal/Frame.zig
+index 388b4f9ed..7486b2715 100644
+--- a/src/renderer/metal/Frame.zig
++++ b/src/renderer/metal/Frame.zig
+@@ -50,0 +51 @@ pub fn begin(
++            .captures_aster_frame = false,
+@@ -62,0 +64 @@ const CompletionBlock = objc.Block(struct {
++    captures_aster_frame: bool,
+@@ -81,0 +84 @@ fn bufferCompleted(
++        if (block.captures_aster_frame) block.renderer.api.publishAsterFrame(block.target.*);
+@@ -108,0 +112,10 @@ pub inline fn complete(self: *Self, sync: bool) void {
++    self.block.captures_aster_frame = self.block.renderer.api.wantsAsterFrame();
++    // Discrete Macs use managed textures. Explicitly synchronize the rendered
++    // resource before the completion callback is allowed to read it on the CPU.
++    if (self.block.captures_aster_frame and
++        self.block.renderer.api.default_storage_mode == .managed)
++    {
++        const blit = self.buffer.msgSend(objc.Object, objc.sel("blitCommandEncoder"), .{});
++        blit.msgSend(void, objc.sel("synchronizeResource:"), .{self.block.target.texture.value});
++        blit.msgSend(void, objc.sel("endEncoding"), .{});
++    }

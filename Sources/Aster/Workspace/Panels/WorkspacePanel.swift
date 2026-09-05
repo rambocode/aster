@@ -19,7 +19,7 @@ struct WorkspacePanel {
 final class WorkspacePanelSplitView: NSSplitView, NSSplitViewDelegate {
   private var panels: [MountedWorkspacePanel]
   private let layoutStore: WorkspacePanelLayoutStore
-  /// 左右边栏分隔线直接使用主题详情里的 Sidebar border token。hover 只加深为系统灰
+  /// 分隔线直接使用调用方指定的主题 token（外层 sidebar.border、内层 interface.border）。hover 加深为系统灰
   /// （不切换主题强调色——分隔线是工作区结构控件,保持灰色），静止态不再对该颜色
   /// 二次降透明度，否则色板与最终窗口无法逐项对应。
   private(set) var themeDividerColor: NSColor

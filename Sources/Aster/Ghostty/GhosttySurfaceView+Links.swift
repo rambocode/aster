@@ -28,6 +28,13 @@ extension GhosttySurfaceView {
     linkCommandHeld = pressed
     if pressed {
       activateLinkUnderlines()
+      // 修饰键事件不会产生 mouseMoved；鼠标停在链接上时也必须立即刷新手形。
+      // 首次进入窗口尚未收到移动事件时，从窗口补取当前坐标。
+      if lastLinkHoverLocation == nil, let window {
+        let location = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        if bounds.contains(location) { lastLinkHoverLocation = location }
+      }
+      updateLinkHoverCursor()
     } else {
       deactivateLinkUnderlines()
     }
@@ -259,11 +266,12 @@ extension GhosttySurfaceView {
     } else {
       hovering = false
     }
-    guard hovering != linkHoverCursorActive else { return }
+    let wasHovering = linkHoverCursorActive
     linkHoverCursorActive = hovering
     if hovering {
+      // AppKit 的 cursorUpdate 可在 mouseMoved 之后重设指针，命中状态不变也需重新应用。
       NSCursor.pointingHand.set()
-    } else {
+    } else if wasHovering {
       applyMouseShape(lastGhosttyMouseShape)
     }
   }

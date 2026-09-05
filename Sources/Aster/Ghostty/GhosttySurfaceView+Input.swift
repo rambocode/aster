@@ -180,6 +180,11 @@ extension GhosttySurfaceView {
     handleLinkHoverMouseMoved(with: event)
     updateCommandHoverPreview(with: event)
   }
+
+  override func cursorUpdate(with event: NSEvent) {
+    handleLinkHoverMouseMoved(with: event)
+    if !linkHoverCursorActive { applyMouseShape(lastGhosttyMouseShape) }
+  }
   override func mouseDragged(with event: NSEvent) {
     if navigationMode == .normal { reportMousePosition(event) }
   }

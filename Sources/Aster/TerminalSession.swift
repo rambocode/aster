@@ -2310,6 +2310,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var terminalView: AsterTerminalView?
   /// 产品主引擎。与上面的 SwiftTerm 回归实例互斥；生产入口不会创建旧实例。
   private var ghosttyView: GhosttySurfaceView?
+  /// PiP 只读取已有 surface 的渲染帧，不创建第二个 PTY，也不移动终端宿主。
+  var pictureInPictureSurface: GhosttySurfaceView? { ghosttyView }
   /// Ghostty 的 page anchor 由扩展 ABI 保持稳定；领域 timeline 中的 row 是当前 Session
   /// 分配的不透明 token，只用于排序和查表，不能直接当 retained-screen row 使用。
   private var ghosttyShellCommandTimeline = ShellCommandTimeline()

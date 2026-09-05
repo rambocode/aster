@@ -416,7 +416,11 @@ extension GhosttySurfaceView {
   /// Command 悬停的 Aster 侧预览:普通文字 URL 与本地路径由 `inlineLinkTarget(at:)` 识别；
   /// OSC 8 由 Ghostty 原生 mouse_over_link 上报，原生预览存在时不被 Aster 侧覆盖。
   func updateCommandHoverPreview(with event: NSEvent) {
-    lastLinkHoverLocation = convert(event.locationInWindow, from: nil)
+    // flagsChanged 是键盘事件，locationInWindow 不代表鼠标位置；沿用悬停缓存，
+    // 避免松开 Command 后把有效坐标覆盖成窗口原点。
+    if event.type != .flagsChanged {
+      lastLinkHoverLocation = convert(event.locationInWindow, from: nil)
+    }
     linkCommandHeld = event.modifierFlags.contains(.command)
     guard linkCommandHeld else {
       if !linkPreviewIsNative { removeLinkPreview() }

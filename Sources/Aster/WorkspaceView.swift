@@ -193,12 +193,6 @@ final class WorkspaceViewController: NSViewController {
       .removeDuplicates()
       .sink { [weak self] active in self?.updateSecureInputIndicator(active: active) }
       .store(in: &modelSubscriptions)
-    NotificationCenter.default.publisher(
-      for: .panePictureInPictureOwnershipDidChange,
-      object: model
-    )
-    .sink { [weak self] _ in self?.scheduleRefresh() }
-    .store(in: &modelSubscriptions)
     // 详情面板显隐跟随持久化的偏好值；之后用户的每次切换再写回，重启窗口即恢复。
     model.isInspectorPresented = preferences.inspectorPresented
     model.ensureInitialTab()
@@ -242,6 +236,7 @@ final class WorkspaceViewController: NSViewController {
     } else {
       detachDetailsPanelIfNeeded()
     }
+    updateInspectorToggleVisibility(animated: false)
   }
 
   /// 「视图 → 标签页与标题定制」规则对某个标签的解析结果（别名 / 图标 / 标题模板）。
@@ -1082,14 +1077,6 @@ final class WorkspaceViewController: NSViewController {
   /// 交接失败时记录结构化原因——「Pane 永远无法输入」类问题只能靠这里的现场定位。
   private func focusActivePane(in tab: TerminalTabItem) {
     if let session = tab.activeRuntime?.terminalSession {
-      // PiP 拥有长期终端容器时，主工作区只显示占位；这里也不能跨窗口把
-      // first responder 强行交给 PiP 中的终端。
-      guard !PanePictureInPictureOwnership.isOwnedByPictureInPicture(session) else {
-        DiagnosticsCenter.shared.record(
-          "workspace.focus_pane_skipped", level: .info, category: .workspace,
-          attributes: ["reason": "pip_owned"])
-        return
-      }
       if !session.focus() {
         let responder = view.window?.firstResponder.map { String(describing: type(of: $0)) }
         DiagnosticsCenter.shared.record(
@@ -1759,8 +1746,6 @@ final class WorkspaceViewController: NSViewController {
     // 重复渲染；标题带在 makeHorizontalTabBar 中构建。其余布局保持内容区顶部标题。
     let titleLivesInTabBar = preferences.tabBarLayout == .top
       && preferences.configuration.appearance.showsTabBar(tabCount: model.tabs.count)
-    if !titleLivesInTabBar { stack.addArrangedSubview(makeWorkspaceHeader(tab)) }
-    if model.isFindPresented { stack.addArrangedSubview(makeFindBar(tab)) }
 
     let style = preferences.activeTheme.style.container
     let margin = preferences.tabBarLayout == .vertical
@@ -1795,6 +1780,11 @@ final class WorkspaceViewController: NSViewController {
     // Pane 容器没有固有宽度；显式按 stack 宽度拉伸，避免递归 NSSplitView 被压成 1 pt。
     center.alignment = .width
     center.spacing = 0
+    // 标题和查找只属于 Content；Inspector 必须从同一顶边开始，页签才与标题行齐平。
+    // 放到外层 stack 会把整个右边栏额外向下推一行。
+    if !titleLivesInTabBar { center.addArrangedSubview(makeWorkspaceHeader(tab)) }
+    if model.isFindPresented { center.addArrangedSubview(makeFindBar(tab)) }
+    let contentHeader = center.arrangedSubviews.last
 
     let paneHost = NSView()
     let paneTree = makePaneContent(tab)
@@ -1819,9 +1809,11 @@ final class WorkspaceViewController: NSViewController {
     let bodySplit = WorkspacePanelSplitView(
       panels: bodyPanels,
       layoutStore: panelLayoutStore,
+      // 容器外框允许与背景同色，但 Pane / Inspector 之间的结构分隔必须可见。
+      // interface.border 有明暗主题的对比色回退；container.border 的回退只是背景色。
       dividerColor: NSColor(
-        theme.resolvedColor(forSlot: "container.border")
-          ?? style.borderColor ?? theme.palette.interfaceBorder ?? theme.palette.panelBackground
+        theme.resolvedColor(forSlot: "interface.border")
+          ?? theme.palette.interfaceBorder ?? theme.palette.secondaryForeground
       )
     )
     workspacePanelSplitView = bodySplit
@@ -1848,7 +1840,7 @@ final class WorkspaceViewController: NSViewController {
       wrapper.widthAnchor.constraint(equalTo: stack.widthAnchor),
       wrapper.bottomAnchor.constraint(equalTo: stack.bottomAnchor),
       paneHost.widthAnchor.constraint(equalTo: center.widthAnchor),
-      paneHost.topAnchor.constraint(equalTo: center.topAnchor),
+      paneHost.topAnchor.constraint(equalTo: contentHeader?.bottomAnchor ?? center.topAnchor),
     ]
     if let composer {
       constraints.append(paneHost.bottomAnchor.constraint(equalTo: composer.topAnchor))
@@ -2280,16 +2272,7 @@ final class WorkspaceViewController: NSViewController {
     session.onSendSelectionToChat = { [weak self] in
       self?.model.sendTerminalSelectionToChat()
     }
-    if PanePictureInPictureOwnership.isOwnedByPictureInPicture(session) {
-      let placeholder = makeCenteredMessage(
-        title: "正在 Picture in Picture 中显示",
-        symbol: "pip"
-      )
-      placeholder.identifier = NSUserInterfaceItemIdentifier(
-        "pane-picture-in-picture-placeholder-\(runtime.id.uuidString)"
-      )
-      return placeholder
-    }
+
     let host = session.makeTerminalHost(preferences: preferences)
     // Pane 焦点是工作区领域状态；在新 View 挂入可见树之前同步，保证非活动分屏第一帧
     // 就使用不闪烁的同形状光标，而不是 SwiftTerm 默认的失焦空心方块。

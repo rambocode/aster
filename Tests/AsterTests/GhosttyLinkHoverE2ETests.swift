@@ -140,4 +140,21 @@ func ghosttyCommandHoverShowsLinkPreview() async throws {
       keyCode: 55))
   view.flagsChanged(with: commandUp)
   #expect(view.linkUnderlineOverlay?.segments.isEmpty == true, "松开 Command 后下划线应清除")
+  #expect(!view.linkHoverCursorActive)
+  // 鼠标仍停在同一路径上，重新按下 Command，不能依赖下一次 mouseMoved 才显示手形。
+  view.flagsChanged(with: commandDown)
+  #expect(view.linkHoverCursorActive, "鼠标静止时按下 Command 应立即显示手形")
+  #expect(NSCursor.current == NSCursor.pointingHand)
+  // 模拟 AppKit 在移动后覆盖 cursor，再由实际 cursorUpdate 入口恢复手形。
+  NSCursor.arrow.set()
+  let hoverLocation = try #require(view.lastLinkHoverLocation)
+  let cursorEvent = try #require(NSEvent.enterExitEvent(
+    with: .cursorUpdate,
+    location: view.convert(hoverLocation, to: nil),
+    modifierFlags: [.command], timestamp: ProcessInfo.processInfo.systemUptime,
+    windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+    trackingNumber: 0, userData: nil))
+  view.cursorUpdate(with: cursorEvent)
+  #expect(NSCursor.current == NSCursor.pointingHand)
+  view.flagsChanged(with: commandUp)
 }

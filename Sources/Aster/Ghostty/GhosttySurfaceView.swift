@@ -10,6 +10,7 @@ import os
 /// surface configuration 中的 C 指针由本实例保留到销毁，避免异步 Shell 创建越界读取。
 @MainActor
 final class GhosttySurfaceView: NSView {
+  nonisolated let pictureInPictureFrames = GhosttyPictureInPictureFrames()
   nonisolated(unsafe) private(set) var surface: ghostty_surface_t?
 
   var onTitleChange: ((String) -> Void)?
@@ -555,7 +556,7 @@ final class GhosttySurfaceView: NSView {
     if let trackingAreaToken { removeTrackingArea(trackingAreaToken) }
     let area = NSTrackingArea(
       rect: bounds,
-      options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
+      options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeInKeyWindow, .inVisibleRect],
       owner: self
     )
     addTrackingArea(area)

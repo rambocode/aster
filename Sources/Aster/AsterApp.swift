@@ -1163,6 +1163,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     showPictureInPicture(mode: .followActivePane)
   }
   @objc private func closePictureInPicture(_ sender: Any?) {
+    // 同时取消等待旧系统浮窗关闭后启动另一模式的请求。
+    pictureInPictureController?.onClose = nil
     pictureInPictureController?.close()
     pictureInPictureController = nil
   }
@@ -1175,9 +1177,40 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     model workspaceModel: AppModel,
     mode: PanePictureInPictureController.Mode
   ) {
-    pictureInPictureController?.close()
+    if pictureInPictureController?.matches(model: workspaceModel, mode: mode) == true {
+      closePictureInPicture(nil)
+      return
+    }
+    if let previous = pictureInPictureController, !previous.isClosed {
+      // AVKit 关闭是异步的；等旧浮窗真正消失后再启动，避免两种模式互相抢系统会话。
+      previous.onClose = { [weak self, weak workspaceModel] in
+        guard let self, let workspaceModel else { return }
+        self.pictureInPictureController = nil
+        self.startPictureInPicture(model: workspaceModel, mode: mode)
+      }
+      previous.close()
+      return
+    }
+    startPictureInPicture(model: workspaceModel, mode: mode)
+  }
+
+  private func startPictureInPicture(
+    model workspaceModel: AppModel,
+    mode: PanePictureInPictureController.Mode
+  ) {
     let controller = PanePictureInPictureController(
       model: workspaceModel, preferences: preferences, mode: mode)
+    controller.onFailure = { message in
+      let alert = NSAlert()
+      alert.messageText = "无法打开画中画"
+      alert.informativeText = message
+      alert.runModal()
+    }
+    controller.onClose = { [weak self, weak controller] in
+      if self?.pictureInPictureController === controller {
+        self?.pictureInPictureController = nil
+      }
+    }
     pictureInPictureController = controller
     controller.show()
   }

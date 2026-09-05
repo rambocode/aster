@@ -38,3 +38,10 @@ debug map 只保存 member basename，`dsymutil` 会选错对象并误报 ImGui 
 构建 stamp 同时包含 revision 与 patch SHA-256，因此改动补丁后不会误复用旧二进制。
 更新 revision 时先在干净 clone 中执行 `git apply --check`，解决冲突后重新生成补丁，
 再运行 Zig 定向测试、完整 Swift 测试与 release App 验收，并核对导出的 ABI 版本。
+
+系统 PiP 的帧回调同样由 pinned patch 提供：Metal 通过可选的
+`asterWantsPictureInPictureFrame` / `asterDidRenderPictureInPictureFrame:` host selector
+交付已完成的 IOSurface。只有预留了采样时隙的帧才需要 CPU 同步；独显 managed texture
+在 GPU 完成前编码 synchronizeResource。回调在 swap-chain 槽释放前深复制像素，不允许
+异步借用会被 GPU 重写的源。未实现 selector 的宿主保持原行为，C ABI v1 布局不变。
+线程、生命周期与测试契约见 `docs/developer/picture-in-picture.md`。

@@ -58,6 +58,12 @@ flowchart TD
 
 ## 关键实现
 
+Content 的标题栏与查找栏位于 Content Panel 内部，Inspector 从同一顶边开始。
+右侧页签与窗口右上角切换按钮位于同一标题行，不能把公共标题栏堆在整个横向 split 上方。
+面板显隐只插入/移除 Inspector，保留终端与已加载页；切换按钮的提示同步反映展开/收起状态。
+Content / Inspector 之间绘制 1pt 分隔线，使用 `interface.border`（含明暗主题对比色回退）。
+不能使用 `container.border`：容器外框允许回退到背景色，会让结构分隔线视觉消失。
+
 `DetailsPanelViewController` 持有生命周期、身份校验和缓存；`WorkspaceInspectionService`
 只做有界只读 I/O；`AsterCore` 只解析进程、端口、命令时间线和文档结构。视图不得直接
 读取进程、扫描会话历史或执行 shell。
