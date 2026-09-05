@@ -25,16 +25,16 @@ func terminalAutocompleteAcceptsOnlyCandidateSuffix() async throws {
 
   controller.receive(.promptStart)
   controller.receive(.inputStart)
-  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.receiveInput(Array("git chec".utf8)[...])
   controller.refreshNow()
   // Tab 只接受可见 ghost；必须先让 PTY 回显本次输入，ghost 才会真正显示。
-  view.dataReceived(slice: Array("git ch".utf8)[...])
+  view.dataReceived(slice: Array("git chec".utf8)[...])
   await Task.yield()
 
-  #expect(controller.currentResult.candidates.prefix(2).map(\.insertText) == ["checkout", "cherry-pick"])
-  #expect(controller.currentResult.ghostText == "eckout")
+  #expect(controller.currentResult.candidates.prefix(2).map(\.insertText) == ["checkout"])
+  #expect(controller.currentResult.ghostText == "kout")
   #expect(controller.handle(.tab))
-  #expect(String(decoding: sent, as: UTF8.self) == "eckout")
+  #expect(String(decoding: sent, as: UTF8.self) == "kout")
   #expect(controller.lastSubmittedCommand == nil)
 }
 
@@ -118,7 +118,7 @@ func terminalAutocompleteWaitsForEchoBeforeShowingInlineSuggestion() async throw
 
   controller.receive(.promptStart)
   controller.receive(.inputStart)
-  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.receiveInput(Array("git chec".utf8)[...])
   controller.refreshNow()
 
   let overlay = try #require(
@@ -128,7 +128,7 @@ func terminalAutocompleteWaitsForEchoBeforeShowingInlineSuggestion() async throw
   )
   let ghost = try #require(overlay.subviews.compactMap { $0 as? NSTextField }.first)
   // 本地 tracker 比 PTY 回显更早拿到输入。此窗口期若显示 ghost，它会锚定在旧光标上，
-  // 与 Shell 随后绘制的 `git ch` 发生重叠。
+  // 与 Shell 随后绘制的 `git chec` 发生重叠。
   #expect(ghost.isHidden)
 
   // 终端可能在输入回显之前送达状态控制序列或其他输出；这不能被误判成当前输入
@@ -138,10 +138,10 @@ func terminalAutocompleteWaitsForEchoBeforeShowingInlineSuggestion() async throw
 
   #expect(ghost.isHidden)
 
-  view.dataReceived(slice: Array("git ch".utf8)[...])
+  view.dataReceived(slice: Array("git chec".utf8)[...])
   await Task.yield()
 
-  #expect(ghost.stringValue == "eckout")
+  #expect(ghost.stringValue == "kout")
   #expect(!ghost.isHidden)
   #expect(ghost.frame.minX >= view.caretFrame.maxX - 0.5)
 }
@@ -163,9 +163,9 @@ func terminalAutocompleteHidesStaleGhostBeforeDebouncedRefresh() async throws {
 
   controller.receive(.promptStart)
   controller.receive(.inputStart)
-  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.receiveInput(Array("git chec".utf8)[...])
   controller.refreshNow()
-  view.dataReceived(slice: Array("git ch".utf8)[...])
+  view.dataReceived(slice: Array("git chec".utf8)[...])
   await Task.yield()
 
   let overlay = try #require(
@@ -183,9 +183,9 @@ func terminalAutocompleteHidesStaleGhostBeforeDebouncedRefresh() async throws {
   #expect(ghost.isHidden)
 }
 
-@Test("Escape 先关闭 inline suggestion，再按一次打开候选面板")
+@Test("唯一候选的 Escape 只关闭 inline，不再打开单项面板")
 @MainActor
-func terminalAutocompleteEscapeSeparatesInlineAndPanelActions() async throws {
+func terminalAutocompleteEscapeNeverOpensSingleCandidatePanel() async throws {
   let fixture = try makeTerminalAutocompleteFixture()
   defer { try? FileManager.default.removeItem(at: fixture.directory) }
   let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
@@ -200,19 +200,15 @@ func terminalAutocompleteEscapeSeparatesInlineAndPanelActions() async throws {
 
   controller.receive(.promptStart)
   controller.receive(.inputStart)
-  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.receiveInput(Array("git chec".utf8)[...])
   controller.refreshNow()
   // 第一次 Escape 关闭的是“可见”的 inline suggestion；先回显输入让 ghost 显示。
-  view.dataReceived(slice: Array("git ch".utf8)[...])
+  view.dataReceived(slice: Array("git chec".utf8)[...])
   await Task.yield()
 
   #expect(controller.handle(.escape))
   #expect(!controller.panelVisible)
-  #expect(controller.handle(.escape))
-  #expect(controller.panelVisible)
-  #expect(controller.handle(.down))
-  #expect(controller.selectedIndex == 1)
-  #expect(controller.handle(.escape))
+  #expect(!controller.handle(.escape))
   #expect(!controller.panelVisible)
 }
 
@@ -341,7 +337,6 @@ func terminalAutocompleteKeepsManualPanelOpenWhileTyping() async throws {
   view.dataReceived(slice: Array("git c".utf8)[...])
   await Task.yield()
   #expect(controller.handle(.escape))
-  #expect(controller.handle(.escape))
   #expect(controller.panelVisible)
 
   // Otty:"Keep typing to refine it"。旧实现在 receiveInput 里无条件关面板，
@@ -381,9 +376,9 @@ func terminalAutocompleteEscapeKeepsAutoPanelClosedForRestOfPrompt() throws {
   #expect(controller.panelVisible)
 }
 
-@Test("自动弹出的面板在用户按方向键之前不吞回车")
+@Test("自动面板不抢先选择，方向键选中后 Return 接受")
 @MainActor
-func terminalAutocompleteAutoPanelDefersReturnUntilArrowSelection() throws {
+func terminalAutocompleteAutoPanelWaitsForSelection() throws {
   let fixture = try makeTerminalAutocompleteFixture()
   defer { try? FileManager.default.removeItem(at: fixture.directory) }
   fixture.controls.value.autocompleteCandidatePanel = .automatic
@@ -398,11 +393,8 @@ func terminalAutocompleteAutoPanelDefersReturnUntilArrowSelection() throws {
   controller.receiveInput(Array("git ch".utf8)[...])
   controller.refreshNow()
   #expect(controller.panelVisible)
-  // 系统主动弹出的面板不能吞掉终端里最常用的一个键。
-  #expect(!controller.handle(.enter))
   #expect(!controller.hasUserSelection)
-
-  // 第一次 ↓ 落在第 0 行本身，不是跳到第 1 行。
+  #expect(!controller.handle(.enter))
   #expect(controller.handle(.down))
   #expect(controller.hasUserSelection)
   #expect(controller.selectedIndex == 0)
@@ -429,7 +421,6 @@ func terminalAutocompleteManualPanelAcceptsReturnImmediately() async throws {
   controller.refreshNow()
   view.dataReceived(slice: Array("git ch".utf8)[...])
   await Task.yield()
-  #expect(controller.handle(.escape))
   #expect(controller.handle(.escape))
   #expect(controller.panelVisible)
   #expect(controller.hasUserSelection)
@@ -497,14 +488,16 @@ func terminalAutocompleteScrollsWindowToKeepSelectionVisible() {
       current: 3, selected: 2, count: 5, visibleRows: rows) == 0)
 }
 
-@Test("上一条命令的纠错候选不在空 prompt 上画 ghost")
+@Test("上一条失败命令在下一条空 prompt 推荐纠错")
 @MainActor
-func terminalAutocompleteKeepsCorrectionGhostOffEmptyPrompt() throws {
+func terminalAutocompleteOffersCorrectionOnEmptyPrompt() throws {
   let fixture = try makeTerminalAutocompleteFixture()
   defer { try? FileManager.default.removeItem(at: fixture.directory) }
   let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
   let controller = makeController(fixture)
   controller.attach(to: view)
+  _ = fixture.service.record(command: "git log", directory: "/project", exitStatus: 0,
+    ignorePatterns: [], knownOptions: [], sessionIdentifier: "session")
 
   // 跑一条失败命令，让它留下 "git stauts" → "git status" 的纠错。
   controller.receive(.promptStart)
@@ -521,12 +514,16 @@ func terminalAutocompleteKeepsCorrectionGhostOffEmptyPrompt() throws {
   controller.receiveOutput(Array(output.utf8)[...])
   controller.receive(.commandFinished(exitStatus: 1))
 
-  // 新一轮空 prompt：shell 自己会在第 0 列画历史建议（zsh-autosuggestions），
-  // Aster 若在同一锚点画整条纠错命令，两段文字会直接重叠成一团。
+  // 新一轮空 prompt 提供纠错；Shell 是否占据光标之后的空间由 adapter 实时校验。
   controller.receive(.promptStart)
   controller.receive(.inputStart)
   controller.refreshNow()
-  #expect(controller.currentResult.ghostText == nil)
+  #expect(controller.currentResult.ghostText == "git status")
+  #expect(controller.currentResult.candidates.count > 1)
+  let overlay = try #require(view.subviews.compactMap { $0 as? TerminalAutocompleteOverlayView }.first)
+  let ghost = try #require(overlay.subviews.compactMap { $0 as? NSTextField }.first)
+  #expect(ghost.stringValue == "git status")
+  #expect(!ghost.isHidden)
 
   // 纠错本身仍然在：用户一开始打字就能看到它。
   controller.receiveInput(Array("git st".utf8)[...])
@@ -566,4 +563,196 @@ private func makeTerminalAutocompleteFixture() throws -> (
     bundledSpecURL: repositoryRoot.appendingPathComponent("Resources/autocomplete/fig-specs.json")
   )
   return (directory, service, MutableAutocompleteControls())
+}
+
+@Test("Shell 后续绘制建议或回移光标时立即隐藏 ghost，避免叠字")
+@MainActor
+func terminalAutocompleteRevalidatesGhostAfterEveryOutput() async throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let controller = makeController(fixture)
+  controller.attach(to: view)
+  view.onAutocompleteOutput = { controller.receiveOutput($0) }
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git chec".utf8)[...])
+  controller.refreshNow()
+  view.dataReceived(slice: Array("git chec".utf8)[...])
+  await Task.yield()
+  let overlay = try #require(view.subviews.compactMap { $0 as? TerminalAutocompleteOverlayView }.first)
+  let ghost = try #require(overlay.subviews.compactMap { $0 as? NSTextField }.first)
+  #expect(!ghost.isHidden)
+
+  // Shell 插件可在输入回显后的独立分片绘制建议，再把光标退回真实输入末尾。
+  view.dataReceived(slice: Array("kout\u{1B}[4D".utf8)[...])
+  await Task.yield()
+  #expect(ghost.isHidden)
+
+  view.dataReceived(slice: Array("\u{1B}[K".utf8)[...])
+  await Task.yield()
+  #expect(!ghost.isHidden)
+
+  // 行文本仍以 git chec 结尾，但光标已回到行首，不能继续以旧的回显结论绘制。
+  view.dataReceived(slice: Array("\r".utf8)[...])
+  await Task.yield()
+  controller.refreshNow()
+  #expect(ghost.isHidden)
+}
+
+@Test("Pane 放不下候选面板时 Return 不接受隐藏候选")
+@MainActor
+func terminalAutocompleteDoesNotAcceptClippedPanel() throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  fixture.controls.value.autocompleteCandidatePanel = .automatic
+  fixture.controls.value.autocompleteInlineSuggestion = false
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 180, height: 20))
+  let controller = makeController(fixture)
+  controller.attach(to: view)
+  var sent: [UInt8] = []
+  view.onEncodedInput = { sent.append(contentsOf: $0) }
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.refreshNow()
+  #expect(!controller.currentResult.candidates.isEmpty)
+  #expect(!controller.handle(.enter))
+  #expect(sent.isEmpty)
+}
+
+@Test("多个候选不擅自预览第一条，用户选择后预览对应候选")
+@MainActor
+func terminalAutocompleteContextPreviewsSelectedCandidate() async throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  fixture.controls.value.autocompleteCandidatePanel = .automatic
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let controller = makeController(fixture)
+  controller.attach(to: view)
+  view.onAutocompleteOutput = { controller.receiveOutput($0) }
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.refreshNow()
+  view.dataReceived(slice: Array("git ch".utf8)[...])
+  await Task.yield()
+  let overlay = try #require(view.subviews.compactMap { $0 as? TerminalAutocompleteOverlayView }.first)
+  let ghost = try #require(overlay.subviews.compactMap { $0 as? NSTextField }.first)
+  #expect(ghost.isHidden)
+  #expect(!controller.hasUserSelection)
+  #expect(controller.handle(.down))
+  #expect(controller.handle(.down))
+  #expect(ghost.stringValue == "erry-pick")
+}
+
+@Test("自动面板未选中时 Tab 接受已经可见的首项")
+@MainActor
+func terminalAutocompleteContextTabAcceptsVisibleFirstRow() throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  fixture.controls.value.autocompleteCandidatePanel = .automatic
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let controller = makeController(fixture)
+  controller.attach(to: view)
+  var sent: [UInt8] = []
+  view.onEncodedInput = { sent.append(contentsOf: $0) }
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.refreshNow()
+  #expect(!controller.hasUserSelection)
+  #expect(controller.handle(.tab))
+  #expect(String(decoding: sent, as: UTF8.self) == "eckout")
+}
+
+@Test("Ctrl-C 后立即输入的命令保留到新提示符，不丢前缀")
+@MainActor
+func terminalAutocompleteKeepsTypeaheadAcrossInterrupt() throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let controller = makeController(fixture)
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("old command".utf8)[...])
+  controller.receiveInput([0x03][...])
+  controller.receiveInput(Array("git c".utf8)[...])
+  controller.receive(.promptStart)
+  controller.receiveInput(Array("h".utf8)[...])
+  controller.receive(.inputStart)
+  controller.refreshNow()
+  #expect(controller.currentResult.candidates.map(\.insertText) == ["checkout", "cherry-pick"])
+}
+
+@Test("提示符过渡输入有大小上限，超限停用补全并在下轮恢复")
+@MainActor
+func terminalAutocompleteBoundsPromptTypeahead() throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let controller = makeController(fixture)
+  controller.receive(.promptStart)
+  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.receive(.inputStart)
+  controller.refreshNow()
+  #expect(controller.currentResult.candidates.map(\.insertText) == ["checkout", "cherry-pick"])
+
+  controller.receive(.promptStart)
+  controller.receiveInput(Array(repeating: UInt8(ascii: "x"), count: 4_097)[...])
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.refreshNow()
+  #expect(controller.currentResult.candidates.isEmpty)
+
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.refreshNow()
+  #expect(controller.currentResult.candidates.map(\.insertText) == ["checkout", "cherry-pick"])
+}
+
+@Test("Tab 直接接受 Shell 已显示的建议，不打开面板或触发原生补全")
+@MainActor
+func terminalAutocompleteTabAcceptsVisibleShellSuffix() async throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let controller = makeController(fixture)
+  controller.attach(to: view)
+  var sent: [UInt8] = []
+  view.onEncodedInput = { sent.append(contentsOf: $0) }
+  view.onAutocompleteOutput = { controller.receiveOutput($0) }
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.refreshNow()
+  view.dataReceived(slice: Array("git checkout\u{1B}[6D".utf8)[...])
+  await Task.yield()
+  #expect(controller.handle(.tab))
+  #expect(String(decoding: sent, as: UTF8.self) == "eckout")
+  #expect(!controller.panelVisible)
+}
+
+@Test("手动面板收窄到一个候选后只显示行内建议")
+@MainActor
+func terminalAutocompleteSingleCandidateNeverOpensPanel() async throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let controller = makeController(fixture)
+  controller.attach(to: view)
+  view.onAutocompleteOutput = { controller.receiveOutput($0) }
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git ch".utf8)[...])
+  controller.refreshNow()
+  #expect(controller.handle(.escape))
+  #expect(controller.panelVisible)
+  controller.receiveInput(Array("ec".utf8)[...])
+  view.dataReceived(slice: Array("git chec".utf8)[...])
+  await Task.yield()
+  controller.refreshNow()
+  #expect(!controller.panelVisible)
+  _ = controller.handle(.escape)
+  _ = controller.handle(.escape)
+  #expect(!controller.panelVisible)
 }

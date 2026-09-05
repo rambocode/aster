@@ -709,11 +709,14 @@ final class AutocompleteService {
       language: descriptionLanguage
     )
     let files = fileCandidates(for: line, directory: directory)
-    guard !files.isEmpty else { return base }
+    let learnedArguments = localLearningEnabled ? learningDatabase.argumentCandidates(
+      line: line, directory: normalizedDirectory, sessionIdentifier: sessionIdentifier,
+      specDatabase: specDatabase) : []
+    guard !files.isEmpty || !learnedArguments.isEmpty else { return base }
     // 文件候选参与统一重排,而不是无条件追加在规格候选之后。旧实现让文件永远排在
     // 最后、且只有在没有其它候选时才可能成为 ghost,于是 `cat REA<Tab>` 补不出
     // README——只要有任何一条别的候选,文件就沉底了。
-    let combined = AutocompleteEngine.rank(base.candidates + files, line: line)
+    let combined = AutocompleteEngine.rank(base.candidates + files + learnedArguments, line: line)
     return .make(candidates: Array(combined.prefix(200)), line: line)
   }
 
@@ -1014,10 +1017,28 @@ final class AutocompleteService {
   private func fileCandidates(for line: String, directory: String) -> [AutocompleteCandidate] {
     let parsed = ShellCommandTokenizer.tokenize(line)
     guard parsed.tokens.count >= 2 || line.last?.isWhitespace == true && !parsed.tokens.isEmpty,
-      !parsed.currentToken.hasPrefix("-"), directory.hasPrefix("/")
+      directory.hasPrefix("/")
     else { return [] }
 
-    let token = parsed.currentToken
+    var token = parsed.currentToken
+    var tokenStart = parsed.currentTokenStart
+    let root = parsed.tokens.first.flatMap { specDatabase.command(named: $0) }
+    let completed = token.isEmpty ? Array(parsed.tokens.dropFirst()) : Array(parsed.tokens.dropFirst().dropLast())
+    let context = root.map { AutocompleteArgumentContext(root: $0, completed: completed) }
+    var mode = context?.filesystemMode ?? .filesAndFolders
+    if let context, !context.optionsTerminated, context.pendingArgument == nil,
+      let equal = token.firstIndex(of: "="),
+      let option = context.command.option(named: String(token[..<equal])), let argument = option.args.first
+    {
+      let offset = token.distance(from: token.startIndex, to: equal) + 1
+      token = String(token.dropFirst(offset))
+      tokenStart += offset
+      mode = AutocompleteArgumentContext.filesystemMode(for: argument)
+    } else if token.hasPrefix("-"), context?.optionsTerminated != true, context?.pendingArgument == nil {
+      return []
+    }
+    guard mode != .none else { return [] }
+    let rawToken = String(line.dropFirst(tokenStart))
     let tokenPath = token.replacingOccurrences(of: "\\ ", with: " ")
     let slash = tokenPath.lastIndex(of: "/")
     let typedDirectory = slash.map { String(tokenPath[...$0]) } ?? ""
@@ -1048,31 +1069,30 @@ final class AutocompleteService {
         else { return nil }
         guard let values = try? url.resourceValues(forKeys: [
           .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
-        ]), values.isDirectory == true || values.isRegularFile == true || values.isSymbolicLink == true
+        ]) else { return nil }
+        let isDirectory = values.isDirectory == true
+        let isRegularFile = values.isRegularFile == true
+        let isSymbolicLink = values.isSymbolicLink == true
+        guard isDirectory || isRegularFile || isSymbolicLink else { return nil }
+        if mode == .folders, !isDirectory { return nil }
+        let suffix = isDirectory ? "/" : ""
+        guard let insert = AutocompleteShellInsertion.token(
+          value: typedDirectory + name + suffix, typed: token, raw: rawToken,
+          closeQuote: !isDirectory)
         else { return nil }
-        let escapedName = Self.shellEscaped(name)
-        let suffix = values.isDirectory == true ? "/" : ""
-        let insert = typedDirectory + escapedName + suffix
-        let kind: AutocompleteCandidateKind = values.isDirectory == true ? .folder : .file
+        let kind: AutocompleteCandidateKind = isDirectory ? .folder : .file
         return AutocompleteCandidate(
           insertText: insert,
-          description: values.isDirectory == true ? "目录" : "文件",
+          description: isDirectory ? "目录" : "文件",
           kind: kind,
           score: AutocompleteRelevance.score(kind: kind, typed: token, candidate: insert),
-          replacement: .currentToken(start: parsed.currentTokenStart)
+          replacement: .currentToken(start: tokenStart)
         )
       }
       .sorted {
         if $0.score != $1.score { return $0.score > $1.score }
         return $0.insertText.localizedStandardCompare($1.insertText) == .orderedAscending
       }
-  }
-
-  private static func shellEscaped(_ value: String) -> String {
-    let safe = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-+@%"))
-    return value.unicodeScalars.map { scalar in
-      safe.contains(scalar) ? String(scalar) : "\\" + String(scalar)
-    }.joined()
   }
 
   /// 本地 help 规格与内置规格按字段并集合并，而不是整条覆盖。覆盖会丢掉内置规格

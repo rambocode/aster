@@ -519,3 +519,40 @@ private func makeAutocompleteTemporaryDirectory() throws -> URL {
   try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
   return url
 }
+
+@Test("目录补全不混入普通文件；子命令位置不混入项目文件")
+@MainActor
+func autocompleteContextFiltersFilesystemByArgument() throws {
+  let state = try makeAutocompleteTemporaryDirectory()
+  defer { try? FileManager.default.removeItem(at: state) }
+  let project = state.appendingPathComponent("project")
+  try FileManager.default.createDirectory(at: project.appendingPathComponent("my project"), withIntermediateDirectories: true)
+  try "notes".write(to: project.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
+  let service = try AutocompleteService(baseDirectory: state.appendingPathComponent("state"), bundledSpecURL: repositoryAutocompleteSpecURL)
+  func query(_ line: String) -> AutocompleteResult {
+    service.suggestions(line: line, directory: project.path, sessionIdentifier: "test", controls: .init())
+  }
+  #expect(!query("cd ").candidates.contains { $0.kind == .file })
+  #expect(query("cd ").candidates.contains { $0.kind == .folder })
+  #expect(!query("git ").candidates.contains { $0.kind == .file || $0.kind == .folder })
+  #expect(query("cd 'my ").candidates.contains { $0.appendableSuffix(from: "cd 'my ") == "project/" })
+  #expect(query("cat 'notes").candidates.contains { $0.appendableSuffix(from: "cat 'notes") == ".md'" })
+}
+
+@Test("历史参数按当前参数槽位学习，插入选项后仍推荐常用值")
+@MainActor
+func autocompleteContextReusesLearnedArguments() throws {
+  let state = try makeAutocompleteTemporaryDirectory()
+  defer { try? FileManager.default.removeItem(at: state) }
+  let service = try AutocompleteService(baseDirectory: state, bundledSpecURL: repositoryAutocompleteSpecURL)
+  for _ in 0..<4 {
+    _ = service.record(command: "git checkout feature-smart", directory: "/project", exitStatus: 0,
+      ignorePatterns: [], knownOptions: [], sessionIdentifier: "test")
+  }
+  let result = service.suggestions(line: "git checkout --force fe", directory: "/project", sessionIdentifier: "test", controls: .init())
+  #expect(result.candidates.first?.appendableSuffix(from: "git checkout --force fe") == "ature-smart")
+  var disabled = ControlConfiguration()
+  disabled.autocompleteOnDeviceLearning = false
+  #expect(!service.suggestions(line: "git checkout --force fe", directory: "/project", sessionIdentifier: "test", controls: disabled).candidates.contains { $0.insertText == "feature-smart" })
+  #expect(!service.suggestions(line: "git checkout --force fe", directory: "/other", sessionIdentifier: "test", controls: .init()).candidates.contains { $0.insertText == "feature-smart" })
+}

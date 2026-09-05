@@ -250,6 +250,7 @@ func terminalHostUsesGhosttySurface() throws {
 func ghosttyExtensionCapabilitiesWorkOnRealSurface() async throws {
   _ = NSApplication.shared
   let preferences = AppPreferences(defaults: isolatedDefaults())
+  preferences.configuration.controls.autocompleteOnDeviceLearning = false
   let session = TerminalSession(workingDirectory: "/tmp")
   defer { session.stop(immediately: true) }
   let host = session.makeTerminalHost(preferences: preferences)
@@ -306,7 +307,7 @@ func ghosttyExtensionCapabilitiesWorkOnRealSurface() async throws {
   }
 
   #expect(view.typeText(
-    "printf '__GHOSTTY_UPPER__ __ghostty_upper__ __DIRECTION__ __DIRECTION__ https://example.com\\n'\n"))
+    "ZSH_AUTOSUGGEST_STRATEGY=(); printf '__GHOSTTY_UPPER__ __ghostty_upper__ __DIRECTION__ __DIRECTION__ https://example.com\\n'\n"))
   for _ in 0..<150
   where view.readText(includeScrollback: true)?.contains("https://example.com") != true {
     try await Task.sleep(for: .milliseconds(20))
@@ -381,14 +382,14 @@ func ghosttyExtensionCapabilitiesWorkOnRealSurface() async throws {
   #expect(view.descendants.contains {
     String(describing: type(of: $0)).contains("TerminalAutocompleteOverlayView")
   })
-  #expect(view.typeText("git ch"))
+  #expect(view.typeText("git chec"))
   for _ in 0..<150 where !view.descendants.compactMap({ $0 as? NSTextField }).contains(where: {
-    !$0.isHidden && $0.stringValue == "eckout"
+    !$0.isHidden && $0.stringValue == "kout"
   }) {
     try await Task.sleep(for: .milliseconds(20))
   }
   let autocompleteVisible = view.descendants.compactMap { $0 as? NSTextField }.contains {
-    !$0.isHidden && $0.stringValue == "eckout"
+    !$0.isHidden && $0.stringValue == "kout"
   }
   #expect(autocompleteVisible)
   let autocompleteOverlay = try #require(
@@ -431,13 +432,14 @@ func ghosttyExtensionCapabilitiesWorkOnRealSurface() async throws {
     (centeredBaselineFromBottom * window.backingScaleFactor).rounded()
     / window.backingScaleFactor
   let inlineBaselineY = inlineSuggestion.frame.minY + naturalBaselineFromBottom
-  // 横向坐标直接消费系统 IME 的 point，不能再除 Retina scale；纵向则必须锚定当前
+  // IME x 是 cell 中点；横向减半格后才是建议的起点。纵向必须锚定当前
   // cursor 网格行，不能使用为系统候选窗预留到下一行的 IME y 坐标。文字自身还要在
   // cell 内垂直居中，才能跟随 Ghostty 的 adjust-cell-height 基线调整。
-  #expect(abs(inlineSuggestion.frame.minX - imeLocalFrame.maxX) < 0.75)
+  let cellWidth = CGFloat(surfaceSize.cell_width_px) / window.backingScaleFactor
+  #expect(abs(inlineSuggestion.frame.minX - (imeLocalFrame.minX - cellWidth / 2)) < 0.75)
   #expect(abs(inlineSuggestion.frame.minY - cursorCellMinY) < 0.75)
   #expect(abs(inlineBaselineY - (cursorCellMinY + alignedBaselineFromBottom)) < 0.01)
-  #expect(view.sendBytes([0x15]))  // Ctrl-U：清空未提交的 `git ch`，继续后续 ABI 验收。
+  #expect(view.sendBytes([0x15]))  // Ctrl-U：清空未提交的 `git chec`，继续后续 ABI 验收。
   try await Task.sleep(for: .milliseconds(100))
 
   #expect(view.bufferInfo() != nil)

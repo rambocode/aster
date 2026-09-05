@@ -222,9 +222,11 @@ extension GhosttySurfaceView: NSMenuItemValidation {
 
   /// 从稳定 page anchor 读取其物理行。先解析当前 retained-screen row，再使用公开
   /// read-text API，因而 scrollback 从头裁剪后不会把旧 Outline 锚点映射到另一条命令。
+  /// 列范围包含两端，默认读取到行尾；anchor 失效或引擎读取失败时返回 nil。
   func readLine(
     at anchor: ghostty_aster_buffer_point_s,
-    startingAt column: UInt32
+    startingAt column: UInt32,
+    endingAt lastColumn: UInt32 = .max
   ) -> String? {
     guard let surface, let point = resolveBufferPoint(anchor) else { return nil }
     let row = UInt32(clamping: point.screen_row)
@@ -238,7 +240,7 @@ extension GhosttySurfaceView: NSMenuItemValidation {
     selection.bottom_right = ghostty_point_s(
       tag: GHOSTTY_POINT_SCREEN,
       coord: GHOSTTY_POINT_COORD_EXACT,
-      x: UInt32.max,
+      x: lastColumn,
       y: row
     )
     selection.rectangle = false

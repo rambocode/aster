@@ -270,7 +270,9 @@ final class GhosttySurfaceView: NSView {
   }
 
   nonisolated func enqueuePTYWrite(_ bytes: [UInt8]) {
-    DispatchQueue.main.async { [weak self] in self?.onPTYWrite?(bytes[...]) }
+    // 输入与 OSC 必须共享交付顺序。独立 main.async 会越过等待 RunLoop idle 的
+    // prompt A/B barrier，使先收到的输入随后被 beginPrompt 清空。
+    outputMessageBus.enqueueBarrier { [weak self] in self?.onPTYWrite?(bytes[...]) }
   }
 
   nonisolated func enqueueOSC(

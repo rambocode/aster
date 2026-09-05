@@ -196,3 +196,22 @@ func candidatePanelWithoutDescriptionsHasNoSidebar() {
   #expect(overlay.descriptionSidebar.isHidden)
   #expect(overlay.panelContainer.frame.width == overlay.panel.frame.width)
 }
+
+@Test("狭小 Pane 缩减候选行数，面板不能覆盖输入行或越过右边界")
+@MainActor
+func candidatePanelFitsSmallPaneWithoutCoveringInput() {
+  let bounds = NSRect(x: 0, y: 0, width: 180, height: 130)
+  let caret = NSRect(x: 24, y: 65, width: 0, height: 18)
+  let overlay = TerminalAutocompleteOverlayView(frame: bounds)
+  overlay.render(
+    result: AutocompleteResult(candidates: (0..<10).map {
+      AutocompleteCandidate(insertText: "command-\($0)", kind: .command)
+    }, ghostText: nil, replacementStart: 0),
+    showInline: false, showPanel: true, selectedIndex: 9,
+    caretFrame: caret, font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+    foreground: .black, background: .white, accent: .systemBlue)
+  #expect(!overlay.panelContainer.isHidden)
+  #expect(!overlay.panelContainer.frame.intersects(caret.insetBy(dx: -1, dy: 0)))
+  #expect(bounds.contains(overlay.panelContainer.frame))
+  #expect(overlay.panel.arrangedSubviews.count == 2)
+}

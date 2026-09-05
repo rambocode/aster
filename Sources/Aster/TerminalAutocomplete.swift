@@ -14,6 +14,18 @@ protocol TerminalAutocompleteHost: AnyObject {
   var autocompleteBackgroundColor: NSColor { get }
   func sendAutocompleteBytes(_ bytes: ArraySlice<UInt8>) -> Bool
   func visiblePromptEnds(with text: String) -> Bool
+  func visibleShellSuggestion(after text: String) -> String?
+}
+
+/// 只接受紧接真实光标的可见后缀；长空白后的右侧提示符不属于补全。
+private func shellSuggestionSuffix(prefix: String, typed: String, suffix: String) -> String? {
+  guard !typed.isEmpty, prefix.hasSuffix(typed) else { return nil }
+  let value = suffix.components(separatedBy: "  ").first?
+    .trimmingCharacters(in: .newlines) ?? ""
+  guard !value.trimmingCharacters(in: .whitespaces).isEmpty, value.utf8.count <= 4_096,
+    !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+  else { return nil }
+  return value
 }
 
 extension AsterTerminalView: TerminalAutocompleteHost {
@@ -31,14 +43,39 @@ extension AsterTerminalView: TerminalAutocompleteHost {
   func visiblePromptEnds(with text: String) -> Bool {
     let terminal = getTerminal()
     guard let line = terminal.getLine(row: terminal.buffer.y) else { return false }
-    return line.translateToString(trimRight: true, skipNullCellsFollowingWide: true)
-      .hasSuffix(text)
+    let prefix = line.translateToString(
+      trimRight: false, startCol: 0, endCol: terminal.buffer.x,
+      skipNullCellsFollowingWide: true)
+    let suffix = line.translateToString(
+      trimRight: true, startCol: terminal.buffer.x,
+      skipNullCellsFollowingWide: true)
+    return prefix.hasSuffix(text) && suffix.trimmingCharacters(in: .whitespaces).isEmpty
   }
+  func visibleShellSuggestion(after text: String) -> String? {
+    let terminal = getTerminal()
+    guard let line = terminal.getLine(row: terminal.buffer.y) else { return nil }
+    return shellSuggestionSuffix(
+      prefix: line.translateToString(trimRight: false, startCol: 0, endCol: terminal.buffer.x,
+        skipNullCellsFollowingWide: true),
+      typed: text,
+      suffix: line.translateToString(trimRight: true, startCol: terminal.buffer.x,
+        skipNullCellsFollowingWide: true))
+  }
+
 }
 
 extension GhosttySurfaceView: TerminalAutocompleteHost {
   var autocompleteContainerView: NSView { self }
-  var autocompleteCaretFrame: NSRect { textCursorFrameInViewCoordinates }
+  var autocompleteCaretFrame: NSRect {
+    let frame = textCursorFrameInViewCoordinates
+    guard let surface, bounds.width > 0 else { return .zero }
+    let size = ghostty_surface_size(surface)
+    guard size.width_px > 0 else { return .zero }
+    // IME x 是单元格中点，width 是预编辑宽度（通常为 0），不是 caret 宽度。
+    // 补全应从当前空单元格左缘开始，避免半格错位；IME 自身继续保留原坐标。
+    let cellWidth = CGFloat(size.cell_width_px) * bounds.width / CGFloat(size.width_px)
+    return NSRect(x: frame.minX - cellWidth / 2, y: frame.minY, width: 0, height: frame.height)
+  }
   var autocompleteFont: NSFont {
     guard let surface, let fontPointer = ghostty_surface_quicklook_font(surface) else {
       // Surface 尚未创建或当前字体后端无法导出 CoreText 字体时，补全也不会具备可靠的
@@ -59,9 +96,28 @@ extension GhosttySurfaceView: TerminalAutocompleteHost {
   }
 
   func visiblePromptEnds(with text: String) -> Bool {
-    readText(includeScrollback: false, maximumLines: 1)?
-      .trimmingCharacters(in: .newlines).hasSuffix(text) == true
+    guard let info = bufferInfo(), !info.alternate_screen,
+      info.cursor.screen_row >= info.viewport_top,
+      info.cursor.screen_row < info.viewport_top + UInt64(info.viewport_rows),
+      let suffix = readLine(at: info.cursor, startingAt: info.cursor.column),
+      suffix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else { return false }
+    if info.cursor.column == 0 { return text.isEmpty }
+    guard let prefix = readLine(
+      at: info.cursor, startingAt: 0, endingAt: info.cursor.column - 1)
+    else { return false }
+    return prefix.trimmingCharacters(in: .newlines).hasSuffix(text)
   }
+  func visibleShellSuggestion(after text: String) -> String? {
+    guard let info = bufferInfo(), !info.alternate_screen, info.cursor.column > 0,
+      info.cursor.screen_row >= info.viewport_top,
+      info.cursor.screen_row < info.viewport_top + UInt64(info.viewport_rows),
+      let prefix = readLine(at: info.cursor, startingAt: 0, endingAt: info.cursor.column - 1),
+      let suffix = readLine(at: info.cursor, startingAt: info.cursor.column)
+    else { return nil }
+    return shellSuggestionSuffix(prefix: prefix.trimmingCharacters(in: .newlines), typed: text, suffix: suffix)
+  }
+
 }
 
 /// 终端按键到 Autocomplete 意图的稳定映射。物理 keyCode 用于不受当前键盘布局影响的
@@ -107,8 +163,7 @@ enum TerminalAutocompleteKey: Equatable {
 /// 刷新弹回来。可见性现在只在 `refreshNow` 的迁移 switch 里改写,其它路径一律只读。
 enum AutocompletePanelState: Equatable {
   case hidden
-  /// `origin` 决定 Return 归谁:自动弹出的面板在用户按方向键之前不武装 Return,
-  /// 否则终端里最常用的一个键会被系统主动弹出的浮层吞掉。
+  /// `origin` 决定设置切换时是否关闭面板；自动展开不代表用户已作出选择。
   case open(origin: Origin, userSelected: Bool)
 
   enum Origin: Equatable {
@@ -133,7 +188,7 @@ final class TerminalAutocompleteController {
   private(set) var panelState: AutocompletePanelState = .hidden
   /// 保留旧名字给外部读取与既有测试,语义不变。
   var panelVisible: Bool { panelState != .hidden }
-  /// 用户是否已经用 ↑/↓ 主动选中过某一行(自动弹出的面板据此决定 Return 归属)。
+  /// 面板是否呈现当前选中行。
   var hasUserSelection: Bool {
     if case .open(_, true) = panelState { true } else { false }
   }
@@ -166,6 +221,10 @@ final class TerminalAutocompleteController {
   /// 本地输入会先于 PTY 回显到达。等待回显期间保留候选数据但隐藏 ghost，避免它
   /// 锚定在旧 caretFrame 上并与 Shell 随后绘制的输入文字重叠。
   private var awaitingInputEcho = false
+  /// Ctrl-C 或 prompt A 到 B 的过渡期，Shell 会保留已经写入 PTY 的 typeahead。
+  /// 跟踪器也必须保留它，不能因 prompt 尚未就绪而丢掉命令前缀。
+  private var pendingPromptInput: [UInt8]?
+  private var pendingPromptInputOverflowed = false
 
   init(
     service: AutocompleteService,
@@ -202,11 +261,16 @@ final class TerminalAutocompleteController {
       // A 只表示 prompt 即将开始；必须等 B 确认输入区已出现，避免慢 prompt 绘制期间
       // 把候选锚定到中间输出位置。
       promptActive = false
+      if pendingPromptInput == nil {
+        pendingPromptInput = []
+        pendingPromptInputOverflowed = false
+      }
       tracker.beginPrompt()
       inlineDismissed = false
       awaitingInputEcho = false
       acceptsLateSubmittedInput = false
       panelSuppressedForPrompt = false
+      dismiss()
     case .inputStart:
       // B 明确表示光标已进入可编辑区。A 缺失时仍可从此处开始安全跟踪。
       if !promptActive {
@@ -217,8 +281,20 @@ final class TerminalAutocompleteController {
       acceptsLateSubmittedInput = true
       awaitingInputEcho = false
       panelSuppressedForPrompt = false
-      scheduleRefresh()
+      let buffered = pendingPromptInput ?? []
+      pendingPromptInput = nil
+      if pendingPromptInputOverflowed {
+        tracker.invalidate()
+        dismiss()
+      } else if !buffered.isEmpty {
+        receiveInput(buffered[...])
+      } else {
+        scheduleRefresh()
+      }
+      pendingPromptInputOverflowed = false
     case .commandStart:
+      pendingPromptInput = nil
+      pendingPromptInputOverflowed = false
       promptActive = false
       runningCommand = lastSubmittedCommand
       // 正常顺序下提交回调已经给出命令，无需继续接收；只有 nil 才表示 PTY write
@@ -235,6 +311,22 @@ final class TerminalAutocompleteController {
   }
 
   func receiveInput(_ bytes: ArraySlice<UInt8>) {
+    if promptActive || pendingPromptInput != nil,
+      let interrupt = bytes.lastIndex(of: 0x03)
+    {
+      pendingPromptInput = []
+      pendingPromptInputOverflowed = false
+      promptActive = false
+      acceptsLateSubmittedInput = false
+      tracker.beginPrompt()
+      dismiss()
+      bufferPromptInput(bytes[bytes.index(after: interrupt)...])
+      return
+    }
+    if pendingPromptInput != nil {
+      bufferPromptInput(bytes)
+      return
+    }
     guard promptActive || acceptsLateSubmittedInput else { return }
     let submitted = tracker.receive(Array(bytes))
     if let command = submitted.last {
@@ -259,7 +351,7 @@ final class TerminalAutocompleteController {
     awaitingInputEcho = true
     // 打字**不关闭面板**,只清掉待重算的候选。Otty 的语义是“继续打字来收窄候选”,
     // 旧实现在这里无条件把面板关掉,于是手动打开的面板每敲一个字符就消失一次。
-    // 自动弹出的面板要重新解除 Return 的武装;手动打开的保持在列表导航模式。
+    // 自动面板在新输入后撤销旧选择，等待用户重新选择；手动打开的面板保持导航模式。
     if case .open(.automatic, _) = panelState {
       panelState = .open(origin: .automatic, userSelected: false)
     }
@@ -270,19 +362,30 @@ final class TerminalAutocompleteController {
     scheduleRefresh()
   }
 
+  private func bufferPromptInput(_ bytes: ArraySlice<UInt8>) {
+    guard !pendingPromptInputOverflowed else { return }
+    guard (pendingPromptInput?.count ?? 0) + bytes.count <= 4_096 else {
+      pendingPromptInput = []
+      pendingPromptInputOverflowed = true
+      return
+    }
+    pendingPromptInput?.append(contentsOf: bytes)
+  }
+
   func receiveOutput(_ bytes: ArraySlice<UInt8>) {
     if let completed = outputCapture.consume(bytes).last {
       completedCommandOutput = completed
     }
-    guard promptActive, awaitingInputEcho else { return }
+    guard promptActive else { return }
+    // 输出可能是 Shell 异步建议或重绘。收到分片即撤下旧 ghost，再在网格消费后核验。
+    awaitingInputEcho = true
+    render()
     // 输出捕获需先于同分片内的 OSC 命令完成事件，但 ghost 布局必须等终端 surface
     // 消费完回显并更新 caretFrame。终端的状态报告、光标控制等同样会走 PTY 输出，
     // 因此不能把“收到任意输出”当成回显完成，否则 ghost 会锚定旧光标并覆盖输入。
     Task { @MainActor [weak self] in
-      guard let self, self.promptActive, self.awaitingInputEcho,
-        self.currentPromptIsEchoed()
-      else { return }
-      self.awaitingInputEcho = false
+      guard let self, self.promptActive else { return }
+      self.awaitingInputEcho = !self.currentPromptIsEchoed()
       self.render()
     }
   }
@@ -321,18 +424,17 @@ final class TerminalAutocompleteController {
           selectedIndex = (selectedIndex + delta) % currentResult.candidates.count
         }
         panelState = .open(origin: origin, userSelected: true)
+        inlineDismissed = false
         updateVisibleWindow()
         render()
         return true
       case .enter:
-        // 系统主动弹出、用户还没选过行的面板不吞回车——否则 `auto` 模式下永远无法
-        // 直接提交命令。手动打开的面板(Otty 默认的 escape 模式)则立即接受。
         guard userSelected else { return false }
         return acceptCandidate(at: selectedIndex)
       case .tab:
-        // 未选中态的 Tab 必须掉到下面的 inline 路径,让 `inlineSuggestionDisplayable`
-        // 门控继续生效(zsh-autosuggestions 占据行尾时 Tab 要原样交给 shell)。
-        if userSelected { return acceptCandidate(at: selectedIndex) }
+        // 与 Otty 一致：可见列表中的首项可由 Tab 接受，不要求先画出 inline。
+        // 小 Pane 隐藏面板的情况仍由 acceptCandidate 的实际可见性守卫拒绝。
+        return acceptCandidate(at: selectedIndex)
       case .escape, .optionEscape:
         panelState = .hidden
         panelSuppressedForPrompt = true
@@ -356,7 +458,15 @@ final class TerminalAutocompleteController {
     // shell 端建议占据行尾、导致回显校验一直不通过的场景）候选是不可见的；此时吞掉
     // Tab 会插入用户从未见过的文本，必须把按键放行给 Shell 自己的补全。
     if acceptsInline, currentResult.ghostText != nil, inlineSuggestionDisplayable {
-      return acceptCandidate(at: 0)
+      return acceptCandidate(at: inlineCandidateIndex ?? 0)
+    }
+    // Shell 插件已经画出的后缀也是用户可见的建议。接受它时只发文字，绝不发送 Tab，
+    // 避免落入 zsh 的 “show all possibilities” 分支或再次打开 Aster 面板。
+    if acceptsInline, promptActive, tracker.isReliable, tracker.isCursorAtEnd,
+      let terminalView, let suffix = terminalView.visibleShellSuggestion(after: tracker.line)
+    {
+      dismiss()
+      return terminalView.sendAutocompleteBytes(Array(suffix.utf8)[...])
     }
     // ghost 不可见但确实有候选时，接受键改为**打开候选面板**而不是放行给 Shell。
     //
@@ -366,7 +476,7 @@ final class TerminalAutocompleteController {
     // 展示候选，又不违反“绝不插入用户没看见的文本”——面板里的每一行都是可见凭据，
     // 真正的插入仍然要用户再按一次键。Aster 没有候选时依旧放行，Shell 自己的
     // 补全（`_docker` 之类）继续可用。
-    if acceptsInline, !currentResult.candidates.isEmpty,
+    if acceptsInline, currentResult.candidates.count > 1,
       configuration.resolvedAutocompleteCandidatePanel != .disabled
     {
       panelState = .open(origin: .manual, userSelected: true)
@@ -391,7 +501,7 @@ final class TerminalAutocompleteController {
     case .automatic, .escape: opensPanel = key == .escape
     case .optionEscape: opensPanel = key == .optionEscape || key == .functionFive
     }
-    if opensPanel, !currentResult.candidates.isEmpty {
+    if opensPanel, currentResult.candidates.count > 1 {
       panelState = .open(origin: .manual, userSelected: true)
       panelSuppressedForPrompt = false
       selectedIndex = 0
@@ -425,12 +535,8 @@ final class TerminalAutocompleteController {
       controls: configuration,
       aliases: aliases
     )
-    // 空 prompt 不出候选（`AutocompleteEngine.suggestions` 的第一条守卫）。纠错候选
-    // 必须遵守同一条规则：`hasPrefix("")` 恒真，少了这一句，上一条命令失败后的纠错
-    // 会在**空行**上画出整条命令，锚点是输入区第 0 列——正好压在 shell 自己画在那里
-    // 的东西（zsh-autosuggestions 的历史建议）上，两段文字重叠成一团。
+    // 失败纠错可在下一条空 prompt 推荐；是否能画 ghost 由实时网格校验决定。
     if configuration.resolvedAutocompleteOnDeviceLearning,
-      !tracker.line.trimmingCharacters(in: .whitespaces).isEmpty,
       let correction = pendingCorrection,
       correction.hasPrefix(tracker.line), correction != tracker.line
     {
@@ -452,6 +558,8 @@ final class TerminalAutocompleteController {
     // 面板可见性的唯一迁移点。旧实现在这里无条件重算、又在 receiveInput 里置 false,
     // 两处互相覆写;所有其它路径现在只读 `panelState`。
     switch (panelState, configuration.resolvedAutocompleteCandidatePanel) {
+    case _ where result.candidates.count < 2:
+      panelState = .hidden
     case (_, .disabled):
       panelState = .hidden
     case (.hidden, .automatic):
@@ -533,6 +641,10 @@ final class TerminalAutocompleteController {
   @discardableResult
   private func acceptCandidate(at index: Int) -> Bool {
     guard currentResult.candidates.indices.contains(index), let terminalView else { return false }
+    // Pane 放不下面板时不能接受其中的不可见候选；仅当前真正显示的 inline 首项例外。
+    guard !overlay.panelContainer.isHidden
+      || (index == inlineCandidateIndex && currentResult.ghostText != nil && inlineSuggestionDisplayable)
+    else { return false }
     // 后缀由候选自带的替换范围唯一决定,与 ghost 的计算共用同一实现。过去这里独立
     // 推断一次“整行还是 token”,与引擎的判定可能不一致。
     guard let suffix = currentResult.candidates[index].appendableSuffix(from: tracker.line)
@@ -595,22 +707,39 @@ final class TerminalAutocompleteController {
   /// PTY 会混入 OSC、CSI 等非回显字节；它们可能在用户输入与真实回显之间到达，不能
   /// 以它们为依据提前读取旧 `caretFrame`。
   private func currentPromptIsEchoed() -> Bool {
-    guard !tracker.line.isEmpty, tracker.isCursorAtEnd, let terminalView else { return false }
+    guard tracker.isReliable, tracker.isCursorAtEnd, let terminalView else { return false }
     return terminalView.visiblePromptEnds(with: tracker.line)
+  }
+
+  /// Otty 的预览语义：只有一个候选，或用户已明确选中某条候选时，才画灰色后缀。
+  private var inlineCandidateIndex: Int? {
+    if panelVisible, hasUserSelection, currentResult.candidates.indices.contains(selectedIndex) {
+      return selectedIndex
+    }
+    // 工具明确给出的失败纠错是一个确定建议，不被同时存在的历史候选稀释。
+    if currentResult.candidates.first?.kind == .correction { return 0 }
+    return currentResult.candidates.count == 1 ? 0 : nil
   }
 
   /// Inline ghost 当前是否具备显示条件；接受候选与渲染必须共用同一判定，
   /// 否则会出现“接受了一个不可见 ghost”的错乱（Tab 插入用户没看到的文本）。
   private var inlineSuggestionDisplayable: Bool {
     controls().resolvedAutocompleteInlineSuggestion
+      && inlineCandidateIndex != nil
       && !inlineDismissed
       && !awaitingInputEcho
+      && currentPromptIsEchoed()
   }
 
   private func render() {
     guard let terminalView else { return }
+    let candidate = inlineCandidateIndex.map { currentResult.candidates[$0] }
+    let displayResult = AutocompleteResult(
+      candidates: currentResult.candidates,
+      ghostText: candidate?.appendableSuffix(from: tracker.line),
+      replacementStart: candidate?.replacement.start ?? currentResult.replacementStart)
     overlay.render(
-      result: currentResult,
+      result: displayResult,
       showInline: inlineSuggestionDisplayable,
       showPanel: panelVisible,
       selectedIndex: selectedIndex,
@@ -725,19 +854,28 @@ final class TerminalAutocompleteOverlayView: NSView {
       panel.removeArrangedSubview($0)
       $0.removeFromSuperview()
     }
-    guard showPanel, !result.candidates.isEmpty else {
+    guard showPanel, result.candidates.count > 1 else {
       panelContainer.isHidden = true
       return
     }
 
-    let rows = Self.maximumVisibleRows
+    // 缩小 Pane 时减少可见行数，不能把整块面板钳进输入行造成遮挡。
+    let belowSpace = max(0, caretFrame.minY - bounds.minY - 8)
+    let aboveSpace = max(0, bounds.maxY - caretFrame.maxY - 8)
+    let rows = min(Self.maximumVisibleRows,
+      Int(max(belowSpace, aboveSpace) / AutocompleteCandidateRow.height))
+    guard rows > 0, bounds.width > 16 else {
+      panelContainer.isHidden = true
+      return
+    }
     let total = result.candidates.count
-    let first = min(max(0, firstVisibleIndex), max(0, total - min(total, rows)))
+    let first = TerminalAutocompleteController.clampedFirstVisibleIndex(
+      current: firstVisibleIndex, selected: selectedIndex, count: total, visibleRows: rows)
     let visible = Array(result.candidates[first..<min(total, first + rows)])
 
     // 宽度贴合最长的一行，而不是写死一个几乎总是撑满终端的值：候选浮层压在终端
     // 内容上，多占的每一像素都是遮挡。上下限只用来兜住极短和极长的候选。
-    let hasDescription = visible.contains { !$0.description.isEmpty }
+    let hasDescription = showsSelection && visible.contains { !$0.description.isEmpty }
     let nameWidth = visible.reduce(CGFloat(0)) { widest, candidate in
       max(widest, AutocompleteCandidateRow.contentWidth(for: candidate, includingDescription: false))
     }
@@ -761,10 +899,11 @@ final class TerminalAutocompleteOverlayView: NSView {
     if sidebarWidth == 0 {
       // 向上取整到整点：小数宽度会被 Auto Layout 各自对齐到设备像素，行宽和面板宽
       // 因此差出零点几个点，边框内侧露出一条毛边。
-      listWidth = min(max(inlineWidth, Self.minimumPanelWidth), Self.maximumPanelWidth)
+      listWidth = min(max(showsSelection ? inlineWidth : nameWidth, Self.minimumPanelWidth), Self.maximumPanelWidth)
         .rounded(.up)
     }
-    let showsInlineDescription = sidebarWidth == 0
+    listWidth = min(listWidth, max(0, available - sidebarWidth))
+    let showsInlineDescription = sidebarWidth == 0 && showsSelection
 
     for (offset, candidate) in visible.enumerated() {
       // 点击必须回传**全集索引**：切片内偏移会在滚动后接受错误的候选。

@@ -20,7 +20,8 @@ public enum ShellCommandTokenizer {
 
   public static func tokenize(_ line: String) -> ShellCommandTokenization {
     let tokens = lex(line)
-    let hasTrailingSeparator = line.last?.isWhitespace == true
+    // lex 会把引号/转义内部的空白保留在 raw；只有 token 之后的空白才是分隔符。
+    let hasTrailingSeparator = tokens.last.map { $0.start + $0.raw.count < line.count } ?? true
     return ShellCommandTokenization(
       tokens: tokens.map(\.value),
       currentToken: hasTrailingSeparator ? "" : (tokens.last?.value ?? ""),
@@ -1391,10 +1392,9 @@ public struct AutocompleteEngine: Sendable {
     dynamic: AutocompleteDynamicProvider = .empty,
     language: AutocompleteDescriptionLanguage = .system
   ) -> AutocompleteResult {
-    // 空 prompt 不产生任何候选。没有输入就没有用户意图，把整个命令库和全部历史列出来
-    // 只是噪音，而且面板一旦弹出就会吞掉回车，让用户以为终端卡住了。只有空白字符的
-    // 行同样按空处理；`git ` 这种尾随空格的行 trim 后仍非空，不受影响。
-    guard !query.line.trimmingCharacters(in: .whitespaces).isEmpty else {
+    // 空 prompt 只推荐当前目录学过的命令，不把整个规格库铺到候选面板。
+    // 纯空白仍保留给 Shell 编辑；目录历史、固定命令与 README 使用原有 relevance。
+    guard query.line.isEmpty || !query.line.trimmingCharacters(in: .whitespaces).isEmpty else {
       return .empty
     }
     let parsed = ShellCommandTokenizer.tokenize(query.line)
@@ -1428,7 +1428,7 @@ public struct AutocompleteEngine: Sendable {
         score: AutocompleteRelevance.score(kind: .readmeCommand, typed: line, candidate: $0),
         replacement: .fullLine)
     }
-    if parsed.tokens.count <= 1, !line.contains(where: \.isWhitespace) {
+    if !line.isEmpty, parsed.tokens.count <= 1, !line.contains(where: \.isWhitespace) {
       candidates += aliases.filter { $0.hasPrefix(token) && $0 != token }.map {
         AutocompleteCandidate(
           insertText: $0, description: "Shell 别名", kind: .alias,
@@ -1437,9 +1437,11 @@ public struct AutocompleteEngine: Sendable {
       }
     }
 
-    // 上面的空行 guard 已经排除了 tokens 为空的情况，这里只处理“正在输入命令名”和
-    // “已经有命令名、在补子命令/选项/参数”两种真实输入状态。
-    if parsed.tokens.count <= 1, !line.contains(where: \.isWhitespace) {
+    if line.isEmpty {
+      return .make(candidates: Self.rank(candidates, line: line), line: line)
+    }
+
+    if !line.isEmpty, parsed.tokens.count <= 1, !line.contains(where: \.isWhitespace) {
       candidates += specDatabase.commands
         .filter { $0.name.hasPrefix(token) && $0.name != token }
         .map {
@@ -1473,6 +1475,19 @@ public struct AutocompleteEngine: Sendable {
         span: tokenSpan, dynamic: dynamic)
     }
 
+    // 分词使用逻辑值，发送给 Shell 时仍须保留用户已输入的引号与转义。
+    candidates = candidates.compactMap { candidate in
+      guard case .currentToken(let start) = candidate.replacement else { return candidate }
+      let raw = String(line.dropFirst(start))
+      guard raw.contains("'") || raw.contains("\"") || raw.contains("\\") else { return candidate }
+      let typed = ShellCommandTokenizer.tokenize(raw).currentToken
+      guard let insert = AutocompleteShellInsertion.token(
+        value: candidate.insertText, typed: typed, raw: raw, closeQuote: true)
+      else { return nil }
+      return AutocompleteCandidate(
+        insertText: insert, displayText: candidate.displayText, description: candidate.description,
+        kind: candidate.kind, score: candidate.score, replacement: candidate.replacement)
+    }
     return .make(candidates: Self.rank(candidates, line: line), line: line)
   }
 
@@ -1550,29 +1565,22 @@ extension AutocompleteEngine {
     span: AutocompleteReplacementSpan,
     dynamic: AutocompleteDynamicProvider
   ) -> [AutocompleteCandidate] {
-    var command = root
-    // 命令路径供动态来源的兜底表使用(例如 `make` 根本没有 generatorScript)。
-    var commandPath: [String] = [root.name]
-    var pendingOptionArguments: [AutocompleteArgumentSpec] = []
-    var positionalIndex = 0
-    for token in completed {
-      if !pendingOptionArguments.isEmpty {
-        pendingOptionArguments.removeFirst()
-        continue
-      }
-      if token.hasPrefix("-"), token.count > 1 {
-        // `--key=value` 已经自带参数;其它带参选项让后续 token 成为它的参数。
-        if let option = command.option(named: token), !token.contains("=") {
-          pendingOptionArguments = option.args
-        }
-        continue
-      }
-      if positionalIndex == 0, let subcommand = command.subcommand(named: token) {
-        command = subcommand
-        commandPath.append(subcommand.name)
-        continue
-      }
-      positionalIndex += 1
+    let context = AutocompleteArgumentContext(root: root, completed: completed)
+    let command = context.command
+    let commandPath = context.commandPath
+    let positionalIndex = context.positionalIndex
+    var current = current
+    var span = span
+    var equalsArgument: AutocompleteArgumentSpec?
+    if !context.optionsTerminated, context.pendingArgument == nil,
+      let equal = current.firstIndex(of: "="),
+      let option = command.option(named: String(current[..<equal])),
+      let argument = option.args.first
+    {
+      let offset = current.distance(from: current.startIndex, to: equal) + 1
+      current = String(current.dropFirst(offset))
+      span = .currentToken(start: span.start + offset)
+      equalsArgument = argument
     }
 
     var result: [AutocompleteCandidate] = []
@@ -1600,12 +1608,14 @@ extension AutocompleteEngine {
           }
       }
     }
-    if let argument = pendingOptionArguments.first {
+    if let argument = equalsArgument ?? context.pendingArgument {
       addArgument(argument)
       return result
     }
-    if current.hasPrefix("-") {
-      for option in command.options where !option.hidden {
+    if !context.optionsTerminated, current.isEmpty || current.hasPrefix("-") {
+      for option in command.options where !option.hidden
+        && (option.isRepeatable || context.usedOptionNames.isDisjoint(with: option.names))
+      {
         guard let insert = option.names.first(where: { $0.hasPrefix(current) && $0 != current })
         else { continue }
         result.append(
@@ -1619,9 +1629,9 @@ extension AutocompleteEngine {
             replacement: span
           ))
       }
-      return result
+      if !current.isEmpty { return result }
     }
-    if positionalIndex == 0 {
+    if !context.optionsTerminated, positionalIndex == 0 {
       result += command.subcommands
         .filter { !$0.hidden && $0.name.hasPrefix(current) && $0.name != current }
         .map {
@@ -1709,6 +1719,9 @@ public final class PromptInputTracker {
     suppressNextLineFeed = false
     isReliable = true
   }
+
+  /// 上游检测到输入缺失或超限时停止补全，直到下一个可靠 prompt 重置。
+  public func invalidate() { isReliable = false }
 
   /// 追加键盘字节并返回本轮提交的命令。支持常见 Emacs 编辑键和 CSI 光标操作；
   /// 无法安全重建的控制序列会使当前 prompt 失效，而不会猜测 Shell 状态。
