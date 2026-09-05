@@ -64,6 +64,15 @@
           row("general.newWindowWhenAllClosed", "关闭所有窗口后新建窗口", "点击 Dock 图标时自动创建工作区"),
           row("general.hideDirtyIndicator", "隐藏关闭按钮圆点", "红绿灯不显示运行中或未保存状态"),
         ]},
+        { title: "Quick Terminal", rows: [
+          row("quickTerminal.shortcut", "全局快捷键", "Aster 运行时随时呼出或收起；隐藏后会话继续运行", "select", { options: [["none", "不启用"], ["controlGrave", "Control + `"], ["controlOptionSpace", "Control + Option + Space"]] }),
+          row("quickTerminal.position", "位置", "从屏幕边缘或居中显示", "select", { options: [["top", "顶部"], ["bottom", "底部"], ["left", "左侧"], ["right", "右侧"], ["center", "居中"]] }),
+          row("quickTerminal.screen", "显示器", "选择呼出时使用的屏幕", "select", { options: [["main", "当前键盘所在屏幕"], ["mouse", "鼠标所在屏幕"], ["macos-menu-bar", "主菜单栏屏幕"]] }),
+          row("quickTerminal.size", "尺寸百分比", "边缘窗口主轴占比；居中时同时调整宽高", "number", { min: 10, max: 100, step: 5 }),
+          row("quickTerminal.animationDuration", "动画时长（秒）", "设为 0 关闭动画；尊重系统减弱动态效果", "number", { min: 0, max: 1, step: 0.05 }),
+          row("quickTerminal.autohide", "失焦时隐藏", "切换到其他窗口时收起，不结束任务"),
+          row("quickTerminal.followSpaces", "跟随桌面空间", "在当前桌面及全屏应用上显示"),
+        ]},
         { title: "关闭确认", rows: [
           row("general.closeTabConfirmation", "关闭标签页", "何时在关闭标签页前询问", "select", { options: options.confirm }),
           row("general.closeWindowConfirmation", "关闭窗口", "何时在关闭窗口前询问", "select", { options: options.confirm }),

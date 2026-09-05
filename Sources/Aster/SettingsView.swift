@@ -2995,6 +2995,13 @@ private enum SettingsWebBridge {
   /// 尚未进入强类型运行时配置的 Otty 兼容字段默认值。字段仍会持久化并跨平台往返；
   /// 其中唯一在 macOS 上禁用的是 Windows DirectWrite 渲染模式。
   static let compatibilityDefaults: [String: SettingsCompatibilityValue] = [
+    "quickTerminal.shortcut": .string("none"),
+    "quickTerminal.position": .string("top"),
+    "quickTerminal.screen": .string("main"),
+    "quickTerminal.size": .number(50),
+    "quickTerminal.animationDuration": .number(0.15),
+    "quickTerminal.autohide": .bool(true),
+    "quickTerminal.followSpaces": .bool(true),
     "general.shell": .string(ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"),
     "general.hideDirtyIndicator": .bool(false),
     "general.windowWorkingDirectory": .string("home"),
@@ -3950,6 +3957,8 @@ extension SettingsViewController: WKNavigationDelegate {
       else { throw SettingsWebBridgeError.invalidValue }
       let number = value.doubleValue
       let allowedRange: ClosedRange<Double>? = switch key {
+      case "quickTerminal.size": 10...100
+      case "quickTerminal.animationDuration": 0...1
       case "appearance.adjustCellHeight": -8...16
       case "appearance.fontThicken": 0...4
       case "appearance.windowColumns": 40...400
@@ -3973,6 +3982,9 @@ extension SettingsViewController: WKNavigationDelegate {
         !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
       else { throw SettingsWebBridgeError.invalidValue }
       let choices: [String: Set<String>] = [
+        "quickTerminal.shortcut": ["none", "controlGrave", "controlOptionSpace"],
+        "quickTerminal.position": ["top", "bottom", "left", "right", "center"],
+        "quickTerminal.screen": ["main", "mouse", "macos-menu-bar"],
         "general.windowWorkingDirectory": ["home", "currentSession", "custom"],
         "general.tabWorkingDirectory": ["home", "currentSession", "custom"],
         "general.splitWorkingDirectory": ["home", "currentSession", "custom"],

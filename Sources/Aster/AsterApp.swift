@@ -239,6 +239,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 记录工作区窗口的 key 顺序。当前工作区关闭后，绑定回退到最近使用的仍存活窗口，
   /// 而不是依赖 Dictionary 的不稳定遍历顺序。
   private var activeWorkspaceWindowOrder: [ObjectIdentifier] = []
+  private lazy var quickTerminalController = QuickTerminalController(preferences: preferences)
   private var pictureInPictureController: PanePictureInPictureController?
   /// sheet 必须被应用生命周期强持有，避免系统动画期间控制器提前释放。
   private var feedbackSheetController: FeedbackSheetController?
@@ -329,9 +330,15 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     NSApp.servicesProvider = self
     showMainWindow()
     restoreAdditionalWorkspaceWindows()
+    quickTerminalController.workingDirectory = { [weak self] in
+      self?.activeWorkspaceModel.selectedTab?.workingDirectory
+        ?? FileManager.default.homeDirectoryForCurrentUser.path
+    }
+    quickTerminalController.refresh()
     preferences.objectWillChange
       .sink { [weak self] _ in
         DispatchQueue.main.async {
+          self?.quickTerminalController.refresh()
           self?.applyAppearance()
           self?.synchronizeWorkspaceConfiguration()
           ShortcutOverrideApplier.apply(
@@ -364,6 +371,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
   func applicationWillTerminate(_ notification: Notification) {
     isTerminating = true
+    quickTerminalController.shutdown()
     themeSwitcherPanelController?.dismiss(commit: false)
     themeSwitcherPanelController = nil
     persistAdditionalWorkspaceSuites()
@@ -392,7 +400,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    let models = [model] + additionalWorkspaceWindows.values.map(\.model)
+    let models: [any WorkspaceTerminationParticipant] =
+      [quickTerminalController, model] + additionalWorkspaceWindows.values.map { $0.model }
     guard WorkspaceTerminationTransaction.commit(models) else { return .terminateCancel }
     isTerminating = true
     persistAdditionalWorkspaceSuites()
@@ -962,9 +971,15 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   }
   @objc private func openFile(_ sender: Any?) { activeWorkspaceModel.openFile() }
   @objc private func openFolder(_ sender: Any?) { activeWorkspaceModel.openFolder() }
-  @objc private func closeTab(_ sender: Any?) { activeWorkspaceModel.closeSelectedTab() }
+  @objc private func closeTab(_ sender: Any?) {
+    if quickTerminalController.ownsKeyWindow { quickTerminalController.hide() }
+    else { activeWorkspaceModel.closeSelectedTab() }
+  }
   /// ⌘W：标签内还有分屏时只关闭聚焦面板，最后一个面板才关闭整个标签页。
-  @objc private func closePaneOrTab(_ sender: Any?) { activeWorkspaceModel.closeSelectedPaneOrTab() }
+  @objc private func closePaneOrTab(_ sender: Any?) {
+    if quickTerminalController.ownsKeyWindow { quickTerminalController.hide() }
+    else { activeWorkspaceModel.closeSelectedPaneOrTab() }
+  }
   @objc private func splitRight(_ sender: Any?) { activeWorkspaceModel.splitSelectedTab(.right) }
   @objc private func splitLeft(_ sender: Any?) { activeWorkspaceModel.splitSelectedTab(.left) }
   @objc private func splitDown(_ sender: Any?) { activeWorkspaceModel.splitSelectedTab(.down) }
@@ -1763,9 +1778,15 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     return String(Character(scalar))
   }
 
+  @objc private func toggleQuickTerminal(_ sender: Any?) { quickTerminalController.toggle() }
+  @objc private func restartQuickTerminal(_ sender: Any?) { quickTerminalController.restart() }
+
   private func windowMenuItem() -> NSMenuItem {
     let item = NSMenuItem()
     let submenu = NSMenu(title: "窗口")
+    submenu.addItem(menuItem("Quick Terminal", #selector(toggleQuickTerminal(_:)), "", modifiers: []))
+    submenu.addItem(menuItem("重新启动 Quick Terminal", #selector(restartQuickTerminal(_:)), "", modifiers: []))
+    submenu.addItem(.separator())
     submenu.addItem(menuItem("新建窗口", #selector(newWindow(_:)), "n"))
     submenu.addItem(menuItem("关闭窗口", #selector(closeActiveWindow(_:)), "w", modifiers: [.command, .shift]))
     submenu.addItem(.separator())
@@ -1807,6 +1828,14 @@ extension AsterAppDelegate: NSMenuItemValidation {
 
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     guard let action = menuItem.action else { return true }
+    if action == #selector(restartQuickTerminal(_:)) { return quickTerminalController.canRestart }
+    // 独立终端没有工作区分屏；不能把其菜单操作落到背后的普通工作区。
+    if quickTerminalController.ownsKeyWindow,
+      Self.splitOnlySelectors.contains(action)
+        || [#selector(toggleActivePaneReadOnly(_:)), #selector(clearActivePaneScreen(_:)),
+          #selector(copyActivePanePath(_:)), #selector(revealActivePaneInFinder(_:)),
+          #selector(togglePromptQueue(_:))].contains(action)
+    { return false }
     if action == #selector(checkForUpdates(_:)) {
       // Sparkle 在一次更新会话进行中时 canCheckForUpdates 为假；保持可点会让 Sparkle
       // 直接忽略这次调用，看起来像卡住。开发构建（updater 为 nil）保持可点，
