@@ -3,6 +3,27 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.4.10</title>
+            <pubDate>Sat, 05 Sep 2026 15:13:39 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>15</sparkle:version>
+            <sparkle:shortVersionString>0.4.10</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## Quick Terminal
+
+- 新增独立快速终端，通过“窗口 → Quick Terminal”随时呼出或收起。
+- 在“设置 → 通用 → Quick Terminal”启用全局快捷键：Control + ` 或 Control + Option + Space。
+- 隐藏后保留 Shell、工作目录和滚屏内容；Command + W 只收起快速终端，不会关闭普通工作区标签。
+- 支持顶部、底部、左侧、右侧和居中显示，可调整尺寸、显示器、动画时长、失焦隐藏及跟随桌面空间。
+- 快捷键冲突时显示提示，仍可通过窗口菜单打开；Shell 结束后可从窗口菜单重新启动。
+
+全局快捷键默认关闭，需要 Aster 保持运行。退出应用会结束快速终端会话，下次启动不恢复该临时会话。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.10/Aster-0.4.10.dmg" length="27876400" type="application/octet-stream" sparkle:edSignature="w6RbapsfRei3F23Q9VPBcokRh38MCjiawyRVlQ2PHOAgr8ehmcuaQ179BCI8d0NEJrsf8m5EPKJqSMK35ycYCA=="/>
+        </item>
+        <item>
             <title>0.4.9</title>
             <pubDate>Sat, 05 Sep 2026 14:19:34 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -106,47 +127,6 @@
   它们会永久显示在所有 Pane 上。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.6/Aster-0.4.6.dmg" length="26998062" type="application/octet-stream" sparkle:edSignature="APbaL73EOtQ+1K1u7p38yVlU6dQVVbzQWUjcbi5knmzijjyYTq7o4uswzerxuaM+8NbE15WIOpaypr4rL6XqBg=="/>
-        </item>
-        <item>
-            <title>0.4.5</title>
-            <pubDate>Fri, 28 Aug 2026 20:37:58 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>10</sparkle:version>
-            <sparkle:shortVersionString>0.4.5</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## Agent 状态检测（无需安装 hook）
-
-- 新增屏幕扫描检测引擎：直接识别终端画面，判断 Agent 正在工作、等待你回答还是已完成。
-  即使没有安装 Aster 的 hook 集成，Claude Code、Codex 等也能显示准确状态，尤其是
-  「卡在审批 / 提问界面等人」的场景。
-- 支持的 Agent 从 8 个扩到 22 个：新增 Gemini CLI、GitHub Copilot CLI、Amp、Droid、
-  Devin、Kiro、Qoder、Qwen Code、Hermes、Antigravity、Maki、Muse、Cline、Kilo。
-- 已安装 hook 的 Agent 以 hook 为准；当屏幕上出现明确的审批界面而 hook 尚未上报时，
-  角标会立即切到「等待输入」。
-- 「智能体」设置新增屏幕检测开关；检测规则可用 `~/.config/aster/agent-detection/` 下的
-  JSON 文件覆盖，菜单里的「解释 Agent 状态检测…」可查看当前判定依据，便于排查。
-
-## Agent 控制 CLI 与自动化接口
-
-- 新的 `aster` 命令行工具（设置页一键安装）：`aster agent list / prompt / wait`、
-  `aster pane read / send-text / wait-output`、`aster events subscribe` 等，Agent 或脚本
-  可以读取旁边 Pane 的输出、给另一个 Agent 发任务并等它完成或卡住。
-- 每个 Pane 注入 `ASTER_ENV` 与 `ASTER_PANE_ID` 等环境变量；提供可安装到 Claude Code /
-  Codex 的 Aster skill，让 Agent 自己学会驾驶 Aster。旧的 `aster open / view / pane` 命令
-  全部保持兼容。
-- 接口走本机私有 socket，仅当前用户可连；发送按键 / 文本仍受「IPC 允许发送按键」开关
-  与敏感会话（ssh / sudo）保护。
-
-## 修复
-
-- 左右分屏分别运行两个 Agent 时，侧栏标签图标与标题胶囊现在跟随当前聚焦的 Pane，
-  切换 Pane 即时更新，不再固定显示先启动的那个。
-- 修复普通命令（如 `vim agent.py`、`ssh pi`）的窗口标题被误认成 Agent 的问题。
-- Claude Code 启动瞬间不再误报一次「任务已完成」。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.5/Aster-0.4.5.dmg" length="27523379" type="application/octet-stream" sparkle:edSignature="v3gmwuQGVhtsM4F0bjpPJ0BkLtwEUPl7VrMDhymgbINhKi48hLdIYxVi00FG63KicjYPfsyKhu6wZDlKbqEFBA=="/>
         </item>
     </channel>
 </rss>
