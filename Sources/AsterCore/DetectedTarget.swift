@@ -332,6 +332,57 @@ public enum TargetFileInspector {
   }
 }
 
+/// 判断普通文件是否像文本：只读开头 8 KiB，出现 NUL 字节或非法 UTF-8 就视为二进制。
+/// 用于决定本地文件能否进 Aster 编辑器；读不到内容时按二进制处理，交给系统应用。
+extension TargetFileInspector {
+  public static func isProbablyText(atPath path: String) -> Bool {
+    guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+    defer { try? handle.close() }
+    let data: Data
+    do {
+      // 空文件时 read 返回 nil；空文件当作文本，允许在编辑器里从零开始写。
+      guard let read = try handle.read(upToCount: 8_192), !read.isEmpty else { return true }
+      data = read
+    } catch {
+      return false
+    }
+    guard !data.contains(0) else { return false }
+    // 截断点可能落在多字节序列中间，最多回退 3 字节再验证 UTF-8。
+    var end = data.count
+    for _ in 0..<4 {
+      if String(data: data.prefix(end), encoding: .utf8) != nil { return true }
+      end -= 1
+      guard end > 0 else { break }
+    }
+    return false
+  }
+}
+
+/// Command 点击本地文件时的内部打开路由。可执行文件与 `.app` 只能交给 LaunchServices，
+/// 二进制文件进不了编辑器，缺失文件让系统报错；仅目录和文本文件按用户设置进 Aster。
+public enum TargetInternalOpenRoute: Equatable, Sendable {
+  case fileBrowser
+  case editor
+  case system
+
+  public static func route(
+    fileKind: TargetFileKind?,
+    folderOpensInAster: Bool,
+    fileOpensInAster: Bool,
+    isText: () -> Bool
+  ) -> TargetInternalOpenRoute {
+    switch fileKind {
+    case .directory:
+      return folderOpensInAster ? .fileBrowser : .system
+    case .regular(executable: false):
+      return fileOpensInAster && isText() ? .editor : .system
+    case .regular(executable: true), .applicationBundle, .missing, .namedPipe, .socket, .device,
+      .other, .none:
+      return .system
+    }
+  }
+}
+
 public enum TargetSecurityReason: Equatable, Sendable {
   case externalLink(String)
   case nonStandardScheme(String)

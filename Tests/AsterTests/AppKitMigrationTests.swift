@@ -90,6 +90,79 @@ func targetOpenCoordinatorRoutesWebLinksInternally() {
   #expect(WebPaneURLPolicy.allowedURL(from: "javascript:alert(1)") == nil)
 }
 
+@Test("Command 点击 .app、可执行文件与二进制文件直接走系统打开，目录与文本进 Aster")
+@MainActor
+func targetOpenCoordinatorRoutesLocalFilesByKind() {
+  let preferences = AppPreferences(defaults: isolatedDefaults())
+  preferences.configuration.controls.fileOpenWith = .aster
+  preferences.configuration.controls.folderOpenWith = .aster
+  preferences.configuration.controls.allowedExecutableFileSignatures = ["sig"]
+  let kind = MutableTestValue(TargetFileKind.applicationBundle)
+  let isText = MutableTestValue(true)
+  var systemOpened: [URL] = []
+  var internalOpened: [(URL, Bool)] = []
+  let coordinator = TerminalTargetOpenCoordinator(
+    preferences: preferences,
+    inspectFile: { _ in kind.value },
+    isTextFile: { _ in isText.value },
+    openURL: { systemOpened.append($0); return true },
+    openInAster: { url, isDirectory in internalOpened.append((url, isDirectory)); return true },
+    executableSignature: { _ in "sig" },
+    confirm: { _ in Issue.record("已授权签名不应再确认"); return .cancel },
+    reportError: { message in Issue.record("不应报告错误：\(message)") }
+  )
+
+  // .app bundle：不进右侧 Pane，直接系统打开。
+  #expect(coordinator.open("/tmp/Aster.app", source: .plainText, currentDirectory: "/tmp"))
+  #expect(systemOpened.map(\.path) == ["/tmp/Aster.app"])
+  #expect(internalOpened.isEmpty)
+
+  // 可执行文件同样只走系统。
+  kind.value = .regular(executable: true)
+  #expect(coordinator.open("/tmp/tool", source: .plainText, currentDirectory: "/tmp"))
+  #expect(systemOpened.count == 2)
+  #expect(internalOpened.isEmpty)
+
+  // 二进制普通文件交给系统默认应用。
+  kind.value = .regular(executable: false)
+  isText.value = false
+  #expect(coordinator.open("/tmp/photo.png", source: .plainText, currentDirectory: "/tmp"))
+  #expect(systemOpened.count == 3)
+  #expect(internalOpened.isEmpty)
+
+  // 文本文件进 Aster 编辑器。
+  isText.value = true
+  #expect(coordinator.open("/tmp/notes.md", source: .plainText, currentDirectory: "/tmp"))
+  #expect(systemOpened.count == 3)
+  #expect(internalOpened.map { $0.0.path } == ["/tmp/notes.md"])
+  #expect(internalOpened.last?.1 == false)
+
+  // 目录进 Aster 文件浏览器。
+  kind.value = .directory
+  #expect(coordinator.open("/tmp/src", source: .plainText, currentDirectory: "/tmp"))
+  #expect(internalOpened.last?.0.path == "/tmp/src")
+  #expect(internalOpened.last?.1 == true)
+  #expect(systemOpened.count == 3)
+}
+
+@Test("文本探测按 NUL 字节与 UTF-8 合法性区分文本和二进制")
+func targetFileInspectorDetectsText() throws {
+  let directory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("aster-text-probe-\(UUID().uuidString)")
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let text = directory.appendingPathComponent("a.md")
+  try "# 标题\nhello\n".write(to: text, atomically: true, encoding: .utf8)
+  let binary = directory.appendingPathComponent("b.bin")
+  try Data([0x89, 0x50, 0x4E, 0x47, 0x00, 0x1A]).write(to: binary)
+  let empty = directory.appendingPathComponent("c.txt")
+  try Data().write(to: empty)
+  #expect(TargetFileInspector.isProbablyText(atPath: text.path))
+  #expect(!TargetFileInspector.isProbablyText(atPath: binary.path))
+  #expect(TargetFileInspector.isProbablyText(atPath: empty.path))
+  #expect(!TargetFileInspector.isProbablyText(atPath: directory.appendingPathComponent("missing").path))
+}
+
 @Test("可执行文件授权绑定文件身份且替换后重新确认")
 @MainActor
 func targetOpenCoordinatorInvalidatesChangedExecutablePermission() {

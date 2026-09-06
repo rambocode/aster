@@ -15,6 +15,7 @@ enum TargetOpenConfirmation: Equatable {
 @MainActor
 final class TerminalTargetOpenCoordinator {
   typealias FileInspector = @MainActor (String) -> TargetFileKind
+  typealias TextProbe = @MainActor (String) -> Bool
   typealias URLOpener = @MainActor (URL) -> Bool
   typealias AsterOpener = @MainActor (URL, Bool) -> Bool
   typealias ExecutableSignatureProvider = @MainActor (String) -> String?
@@ -24,6 +25,7 @@ final class TerminalTargetOpenCoordinator {
   private let preferences: AppPreferences
   private let resolver: TargetResolver
   private let inspectFile: FileInspector
+  private let isTextFile: TextProbe
   private let openURL: URLOpener
   private let openInAster: AsterOpener
   private let executableSignature: ExecutableSignatureProvider
@@ -34,6 +36,7 @@ final class TerminalTargetOpenCoordinator {
     preferences: AppPreferences,
     resolver: TargetResolver = TargetResolver(),
     inspectFile: @escaping FileInspector = TargetFileInspector.kind,
+    isTextFile: @escaping TextProbe = TargetFileInspector.isProbablyText,
     openURL: @escaping URLOpener = { NSWorkspace.shared.open($0) },
     openInAster: @escaping AsterOpener = { _, _ in false },
     executableSignature: @escaping ExecutableSignatureProvider = TerminalTargetOpenCoordinator.executableSignature,
@@ -43,6 +46,7 @@ final class TerminalTargetOpenCoordinator {
     self.preferences = preferences
     self.resolver = resolver
     self.inspectFile = inspectFile
+    self.isTextFile = isTextFile
     self.openURL = openURL
     self.openInAster = openInAster
     self.executableSignature = executableSignature
@@ -122,12 +126,20 @@ final class TerminalTargetOpenCoordinator {
     let controls = preferences.configuration.controls
     let opened: Bool
     switch target {
-    case .file:
-      let isDirectory = fileKind == .directory
-      let opensInternally = isDirectory
-        ? controls.resolvedFolderOpenWith == .aster
-        : controls.resolvedFileOpenWith == .aster
-      opened = opensInternally && openInAster(url, isDirectory) ? true : openURL(url)
+    case .file(let file):
+      // 按文件类型分流：`.app`、可执行文件、二进制和缺失文件不能进右侧 Pane，
+      // 否则编辑器会因 DocumentBufferError 失败；这些一律交给系统 open。
+      let route = TargetInternalOpenRoute.route(
+        fileKind: fileKind,
+        folderOpensInAster: controls.resolvedFolderOpenWith == .aster,
+        fileOpensInAster: controls.resolvedFileOpenWith == .aster,
+        isText: { isTextFile(file.path) }
+      )
+      switch route {
+      case .fileBrowser: opened = openInAster(url, true) || openURL(url)
+      case .editor: opened = openInAster(url, false) || openURL(url)
+      case .system: opened = openURL(url)
+      }
     case .url:
       // 内部打开器只接受 HTTP(S) Web Pane；mailto 或自定义协议返回 false 后仍交给
       // LaunchServices，且前面已经完成对应的 scheme 安全决策。
