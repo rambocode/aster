@@ -33,6 +33,23 @@ func projectSessionRegistryRejectsUnresumable() {
   #expect(registry.latest(for: "/tmp/p") == nil)
 }
 
+@Test("没有 session ID 时只登记能「续上最近一次」的 provider")
+func projectSessionRegistryRecordsContinueLatestOnlyWhenSupported() {
+  var registry = AgentProjectSessionRegistry()
+  let claude = registry.record(provider: .claudeCode, sessionID: nil, projectDirectory: "/tmp/p")
+  #expect(claude)
+  #expect(registry.latest(for: "/tmp/p")?.sessionID == nil)
+  #expect(registry.latest(for: "/tmp/p")?.provider == .claudeCode)
+  let codex = registry.record(provider: .codex, sessionID: nil, projectDirectory: "/tmp/q")
+  #expect(codex)
+  // Grok 能 --resume <id>，但没有「续上最近一次」的参数。
+  let grok = registry.record(provider: .grokBuild, sessionID: nil, projectDirectory: "/tmp/r")
+  #expect(!grok)
+  #expect(registry.latest(for: "/tmp/r") == nil)
+  #expect(AgentProvider.claudeCode.continueLatestSessionArguments == ["--continue"])
+  #expect(AgentProvider.codex.continueLatestSessionArguments == ["resume", "--last"])
+}
+
 @Test("超出容量时淘汰结束时间最早的记录")
 func projectSessionRegistryTrimsOldest() {
   var registry = AgentProjectSessionRegistry(capacity: 2)

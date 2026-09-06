@@ -552,6 +552,16 @@ public enum AgentSessionCommandPlanner {
 }
 
 extension AgentProvider {
+  /// 不带 session ID 也能「续上该目录最近一次会话」的原生参数；没有这种能力的 provider 为 nil。
+  /// 用于 hook 与会话文件都拿不到 ID 时的兜底 resume 命令。
+  public var continueLatestSessionArguments: [String]? {
+    switch self {
+    case .claudeCode: ["--continue"]
+    case .codex: ["resume", "--last"]
+    default: nil
+    }
+  }
+
   fileprivate func arguments(for continuation: AgentContinuationKind, sessionID: String) -> [String]
   {
     switch (self, continuation) {

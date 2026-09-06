@@ -72,15 +72,41 @@ if [ "${#session_id}" -gt 128 ]; then
   session_id=""
 fi
 
-# /dev/tty binds the event to the exact Aster Pane even when several agents share a cwd.
-# Failure is intentionally non-fatal: removing or closing Aster must not break the agent.
-if [ -w /dev/tty ]; then
-  if [ -n "$session_id" ]; then
-    /usr/bin/printf '\033]6974;AgentState=%s;Provider=%s;SessionID=%s\007' \
-      "$state" "$provider" "$session_id" > /dev/tty 2>/dev/null || true
-  else
-    /usr/bin/printf '\033]6974;AgentState=%s;Provider=%s\007' "$state" "$provider" \
-      > /dev/tty 2>/dev/null || true
+# 目标 tty 把事件绑定到确切的 Aster Pane（多个 Agent 共用 cwd 时也不会串）。
+# Claude Code 2.1.x 以「无控制终端」方式启动 hook 子进程：`[ -w /dev/tty ]` 仍为真，
+# 但真正打开时报 "Device not configured"，事件因此从未到达 Aster。claude 进程本身
+# 仍挂在 Pane 的 pty 上，所以先试 /dev/tty，打不开就沿父进程链找第一个带 tty 的
+# 祖先，把 OSC 写到它的 /dev/ttysNNN。失败一律静默：卸载或关闭 Aster 不能拖垮 Agent。
+resolve_target_tty() {
+  if ( : > /dev/tty ) 2>/dev/null; then
+    /usr/bin/printf '/dev/tty'
+    return 0
   fi
+  pid=$$
+  depth=0
+  while [ "$depth" -lt 8 ] && [ -n "$pid" ] && [ "$pid" != 1 ]; do
+    name=$(/bin/ps -o tty= -p "$pid" 2>/dev/null | /usr/bin/tr -d ' ')
+    case "$name" in
+      ''|'??'|'-') ;;
+      *)
+        if [ -w "/dev/$name" ]; then
+          /usr/bin/printf '/dev/%s' "$name"
+          return 0
+        fi
+        ;;
+    esac
+    pid=$(/bin/ps -o ppid= -p "$pid" 2>/dev/null | /usr/bin/tr -d ' ')
+    depth=$((depth + 1))
+  done
+  return 1
+}
+
+target_tty=$(resolve_target_tty) || exit 0
+if [ -n "$session_id" ]; then
+  /usr/bin/printf '\033]6974;AgentState=%s;Provider=%s;SessionID=%s\007' \
+    "$state" "$provider" "$session_id" > "$target_tty" 2>/dev/null || true
+else
+  /usr/bin/printf '\033]6974;AgentState=%s;Provider=%s\007' "$state" "$provider" \
+    > "$target_tty" 2>/dev/null || true
 fi
 exit 0

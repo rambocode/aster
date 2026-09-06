@@ -369,7 +369,7 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   var onCommandFinished: ((UUID) -> Void)?
   /// 已绑定 session ID 的 Agent 结束时上报 (paneID, provider, sessionID, 工作目录)。
   /// 窗口层据此登记「项目最近会话」并提示 resume ID。
-  var onAgentSessionEnded: ((UUID, AgentProvider, String, String) -> Void)?
+  var onAgentSessionEnded: ((UUID, AgentProvider, String?, String) -> Void)?
   /// 目录 → 补全首选项（项目最近一次 Agent 会话的 resume 命令）。由窗口层注入，
   /// 标签内每个终端 Pane 的补全控制器共用。
   var projectCommandSuggestionProvider: ((String) -> ProjectCommandSuggestion?)?
@@ -3734,14 +3734,15 @@ final class AppModel: ObservableObject {
     defaults.set(data, forKey: frequentFoldersKey)
   }
 
-  /// Agent 退出后登记「该项目最近一次会话」并提示可 resume 的 ID。没有原生 resume 能力
+  /// Agent 退出后登记「该项目最近一次会话」并提示可 resume 的命令。没有原生 resume 能力
   /// 的 provider 不登记也不提示；命令用当前启动前缀规划，与手动 Resume 完全一致。
-  private func recordEndedAgentSession(provider: AgentProvider, sessionID: String, directory: String) {
+  /// `sessionID` 为 nil 时登记为「续上最近一次」（`claude --continue` 等）。
+  private func recordEndedAgentSession(provider: AgentProvider, sessionID: String?, directory: String) {
     guard agentProjectSessions.record(
       provider: provider, sessionID: sessionID, projectDirectory: directory)
     else { return }
     persistAgentProjectSessions()
-    let command = projectAgentResumeCommand(provider: provider, sessionID: sessionID) ?? sessionID
+    guard let command = projectAgentResumeCommand(provider: provider, sessionID: sessionID) else { return }
     notice = "\(provider.displayName) 会话已结束 · \(command) · 在此项目新开终端时补全首选"
   }
 
@@ -3766,17 +3767,26 @@ final class AppModel: ObservableObject {
   }
 
   /// 展示用的 resume 命令文本；规划失败（provider 无 resume 能力等）返回 nil。
-  private func projectAgentResumeCommand(provider: AgentProvider, sessionID: String) -> String? {
+  /// 没有 session ID 时用 provider 的「续上最近一次」参数（`claude --continue`）。
+  private func projectAgentResumeCommand(provider: AgentProvider, sessionID: String?) -> String? {
     let components = launchComponents(for: provider)
     guard let executable = components.first,
       let prefix = try? AgentLaunchPrefix(
-        executable: executable, arguments: Array(components.dropFirst())),
-      let plan = try? AgentSessionCommandPlanner.plan(
+        executable: executable, arguments: Array(components.dropFirst()))
+    else { return nil }
+    let arguments: [String]
+    if let sessionID {
+      guard let plan = try? AgentSessionCommandPlanner.plan(
         .resume, sessionID: sessionID,
         configuration: AgentSessionConfiguration(provider: provider), launchPrefix: prefix)
-    else { return nil }
+      else { return nil }
+      arguments = plan.arguments
+    } else {
+      guard let native = provider.continueLatestSessionArguments else { return nil }
+      arguments = prefix.arguments + native
+    }
     // 展示用：只对含空白/引号的参数加单引号，避免 toast 里满屏 `'claude' '--resume'`。
-    return ([plan.executable] + plan.arguments).map { argument in
+    return ([prefix.executable] + arguments).map { argument in
       argument.rangeOfCharacter(from: .whitespacesAndNewlines) == nil && !argument.contains("'")
         ? argument : WorkflowShellCommandEncoder.quote(argument)
     }.joined(separator: " ")

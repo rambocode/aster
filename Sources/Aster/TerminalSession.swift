@@ -2230,6 +2230,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   var agentUsageHomeDirectory = FileManager.default.homeDirectoryForCurrentUser
   /// Claude 账号级 5h / 周配额服务（官方 /usage 接口）；测试注入假服务。
   var claudeAccountQuota: ClaudeAccountQuotaService = .shared
+  /// 当前 Agent 命令开始的时刻；会话文件定位据此只认「这次运行期间写过」的文件。
+  private var agentCommandStartedAt: Date?
+  /// 没有 hook 上报 ID 时，从 Agent 落盘的会话文件里补绑定 session ID 的后台任务。
+  private var agentSessionFileBindingTask: Task<Void, Never>?
   private var claudeAccountQuotaRetained = false
   private var claudeAccountQuotaSubscription: AnyCancellable?
   /// Hook 是否已成为该 Pane 的权威状态源。Prompt Queue 的自动派发只接受 hook 结论：
@@ -2378,7 +2382,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   var onCommandFinished: (() -> Void)?
   /// 已绑定 session ID 的 Agent 结束（命令退出或 PTY 退出）时上报 provider 与 session ID，
   /// 供窗口层登记「项目最近会话」并提示可 resume 的 ID。仅在 lifecycle hook 提供过 ID 时触发。
-  var onAgentSessionEnded: ((AgentProvider, String) -> Void)?
+  /// session ID 为 nil 表示「该目录确有此 provider 的会话，但没定位到本次的 ID」，
+  /// 窗口层据此登记为「续上最近一次」。
+  var onAgentSessionEnded: ((AgentProvider, String?) -> Void)?
   /// 按当前目录提供「项目命令」补全首选项（该项目最近一次 Agent 会话的 resume 命令）。
   /// 由窗口层注入；补全控制器每次刷新时按目录查询，返回 nil 表示没有可推荐的命令。
   var projectCommandSuggestionProvider: ((String) -> ProjectCommandSuggestion?)?
@@ -3129,8 +3135,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     hasRunningCommand = false
     awaitingInput = false
     stopAgentScreenMonitor()
+    // shell 随 Agent 一起退出（或 Agent 就是 PTY 的直接子进程）时同样要登记会话。
+    reportAgentSessionEndedIfNeeded()
     activeAgentProvider = nil
     activeAgentSessionID = nil
+    agentCommandStartedAt = nil
     clearAgentUsage()
     agentTaskState = .idle
     clearFallbackAgentActivity()
@@ -3837,6 +3846,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 立即结束进程组，因为主事件循环不会继续存活到延迟升级任务执行。
   func stop(immediately: Bool = false) {
     clearSSHRemoteEndpoint()
+    // 用户直接关 Pane/标签/退出 App 时 Agent 还在跑，不会有 commandFinished；
+    // 这是最常见的「结束」方式，必须在拆 surface 前登记会话，否则下次无从 resume。
+    reportAgentSessionEndedIfNeeded()
+    activeAgentSessionID = nil
+    agentCommandStartedAt = nil
     // Pane 关闭：停掉用量监听。
     clearAgentUsage()
     // 用户关闭 Pane/标签不会经过 GHOSTTY 的 child-exited 回调（destroySurface 直接
@@ -3923,6 +3937,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     explicitBadge = nil
     activeAgentProvider = nil
     activeAgentSessionID = nil
+    agentCommandStartedAt = nil
+    agentSessionFileBindingTask?.cancel()
+    agentSessionFileBindingTask = nil
     clearAgentUsage()
     agentTaskState = .idle
     agentTaskCompletionUnread = false
@@ -4165,6 +4182,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     guard hasRunningCommand, let detected else { return }
     activeAgentProvider = detected
     agentProviderIsTitleEvidenceOnly = true
+    if agentCommandStartedAt == nil { agentCommandStartedAt = Date() }
+    syncAgentSessionFileBinding()
     syncAgentScreenMonitor()
     if agentScreenMonitor == nil { markFallbackAgentActivity() }
   }
@@ -4271,6 +4290,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       agentLifecycleSequence = 0
       agentStateReducer = AgentTaskStateReducer()
       clearFallbackAgentActivity()
+      agentCommandStartedAt = activeAgentProvider == nil ? nil : Date()
+      syncAgentSessionFileBinding()
       // 有清单的 provider 优先走屏幕检测；monitor 启动后 5s 静默兜底自动禁用。
       syncAgentScreenMonitor()
       if activeAgentProvider != nil, agentScreenMonitor == nil {
@@ -4298,6 +4319,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       agentTaskState = .idle
       reportAgentSessionEndedIfNeeded()
       activeAgentProvider = nil
+      agentCommandStartedAt = nil
       clearAgentUsage()
       agentProviderIsTitleEvidenceOnly = false
       agentHasWorkEvidence = false
@@ -4746,9 +4768,77 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   /// 在清空 Agent 绑定之前上报「会话已结束」。必须在 provider / session ID 置 nil 之前调用。
+  /// hook 没给 ID 时最后再查一次会话文件：定位到就报真实 ID；该目录有此 provider 的会话
+  /// 但没有一个属于本次运行（如只跑了 `claude --version`）则报 nil，交给「续上最近一次」；
+  /// 目录里根本没有会话则不上报。
   private func reportAgentSessionEndedIfNeeded() {
-    guard let provider = activeAgentProvider, let sessionID = activeAgentSessionID else { return }
-    onAgentSessionEnded?(provider, sessionID)
+    guard let provider = activeAgentProvider else { return }
+    agentSessionFileBindingTask?.cancel()
+    agentSessionFileBindingTask = nil
+    if let sessionID = activeAgentSessionID {
+      onAgentSessionEnded?(provider, sessionID)
+      return
+    }
+    switch AgentSessionFileLocator.resolve(
+      provider: provider, projectDirectory: resolvedCurrentWorkingDirectory(),
+      homeDirectory: agentUsageHomeDirectory, startedAfter: agentCommandStartedAt)
+    {
+    case .session(let id): onAgentSessionEnded?(provider, id)
+    case .latestUnknown: onAgentSessionEnded?(provider, nil)
+    case .none: break
+    }
+  }
+
+  /// hook 没上报 session ID 时，从 Agent 自己写的会话文件里补绑定。
+  ///
+  /// Claude Code 2.1.x 的 hook 子进程没有控制终端，信号常常到不了 Aster；没装 hook 的用户
+  /// 更是从没有 ID。而会话标题、Fork / 复制 ID、Codex 用量、结束后的 resume 全都挂在
+  /// `activeAgentSessionID` 上。会话文件在首条 prompt 之后才出现，所以按递增间隔重试；
+  /// hook 先到、provider 切换或命令结束都会取消任务。只支持 Claude / Codex。
+  private func syncAgentSessionFileBinding() {
+    guard let provider = activeAgentProvider, activeAgentSessionID == nil,
+      provider == .claudeCode || provider == .codex
+    else {
+      agentSessionFileBindingTask?.cancel()
+      agentSessionFileBindingTask = nil
+      return
+    }
+    guard agentSessionFileBindingTask == nil else { return }
+    let home = agentUsageHomeDirectory
+    let startedAt = agentCommandStartedAt
+    agentSessionFileBindingTask = Task { @MainActor [weak self] in
+      // 首条 prompt 通常几秒内发出；之后逐渐放慢，长时间空闲的 TUI 不值得每秒扫目录。
+      let delays: [Duration] = [.seconds(3), .seconds(5), .seconds(12), .seconds(30), .seconds(60)]
+      var attempt = 0
+      while !Task.isCancelled {
+        try? await Task.sleep(for: delays[min(attempt, delays.count - 1)])
+        guard !Task.isCancelled, let self, self.activeAgentProvider == provider else { return }
+        if self.activeAgentSessionID != nil { return }
+        let directory = self.resolvedCurrentWorkingDirectory()
+        let resolution = await Task.detached(priority: .utility) {
+          AgentSessionFileLocator.resolve(
+            provider: provider, projectDirectory: directory, homeDirectory: home,
+            startedAfter: startedAt)
+        }.value
+        guard !Task.isCancelled, self.activeAgentProvider == provider,
+          self.activeAgentSessionID == nil
+        else { return }
+        if case .session(let id) = resolution {
+          self.bindAgentSessionID(id, provider: provider)
+          return
+        }
+        attempt += 1
+        if attempt >= 20 { return }
+      }
+    }
+  }
+
+  /// 把会话文件定位到的 ID 当作精确绑定：与 hook 上报走同一条下游（标题解析、记录、Codex 用量）。
+  private func bindAgentSessionID(_ sessionID: String, provider: AgentProvider) {
+    agentSessionFileBindingTask = nil
+    activeAgentSessionID = sessionID
+    eventRecorder?.agentChanged(id: id, provider: provider.rawValue, agentSessionID: sessionID)
+    syncCodexUsageMonitor()
   }
 
   /// 用户在 prompt 出现前接管终端（输入任何内容）时放弃自动重连。
@@ -4827,6 +4917,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     activeAgentProvider = directive.provider
     agentProviderIsTitleEvidenceOnly = false
     if let sessionID = directive.sessionID { activeAgentSessionID = sessionID }
+    if agentCommandStartedAt == nil { agentCommandStartedAt = Date() }
+    syncAgentSessionFileBinding()
     syncCodexUsageMonitor()
     agentLifecycleIsAuthoritative = true
     clearFallbackAgentActivity()
@@ -5052,6 +5144,7 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
       self.reportAgentSessionEndedIfNeeded()
       self.activeAgentProvider = nil
       self.activeAgentSessionID = nil
+      self.agentCommandStartedAt = nil
       self.clearAgentUsage()
       self.agentTaskState = .idle
       self.clearFallbackAgentActivity()

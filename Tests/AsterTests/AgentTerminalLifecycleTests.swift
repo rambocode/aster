@@ -831,6 +831,123 @@ func monitorStopBreaksRetainCycle() throws {
   #expect(weakMonitor == nil)
 }
 
+// hook 一条信号都没到（Claude Code 2.1.x 的常态）：靠 Claude 自己写的会话文件在运行中
+// 补绑定 session ID（驱动标题、Fork、结束登记），结束时登记的也是这个 ID。
+@Test("没有 hook 时从会话文件绑定 session ID，并在结束时登记 resume")
+@MainActor
+func agentSessionIsBoundFromSessionFileWithoutHooks() async throws {
+  let (suiteName, defaults) = try agentLifecycleDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  let session = try #require(tab.activeSession)
+  let home = FileManager.default.temporaryDirectory
+    .appendingPathComponent("AgentLifecycleHome.\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: home) }
+  session.agentUsageHomeDirectory = home
+  let terminal = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+  let directory = session.resolvedCurrentWorkingDirectory()
+
+  // 用户敲 `claude` 回车：只有命令首词，没有任何 hook。
+  terminal.onShellIntegrationEvent?(.promptStart)
+  terminal.onShellIntegrationEvent?(.inputStart)
+  terminal.onAutocompleteInput?(Array("claude\n".utf8)[...])
+  terminal.onShellIntegrationEvent?(.commandStart)
+  #expect(session.activeAgentProvider == .claudeCode)
+  #expect(session.activeAgentSessionID == nil)
+
+  // Claude 在首条 prompt 后写出会话文件。
+  let projectDirectory = home.appendingPathComponent(
+    ".claude/projects/\(AgentSessionFileLocator.claudeProjectDirectoryName(for: directory))",
+    isDirectory: true)
+  try FileManager.default.createDirectory(at: projectDirectory, withIntermediateDirectories: true)
+  try "{}".write(
+    to: projectDirectory.appendingPathComponent("file-sess-1.jsonl"), atomically: true, encoding: .utf8)
+  // 后台任务首次重试在 3s 后。
+  for _ in 0..<80 where session.activeAgentSessionID == nil {
+    try await Task.sleep(for: .milliseconds(100))
+  }
+  #expect(session.activeAgentSessionID == "file-sess-1")
+
+  terminal.onShellIntegrationEvent?(.commandFinished(exitStatus: 0))
+  #expect(model.latestProjectAgentSession(for: directory)?.sessionID == "file-sess-1")
+  #expect(model.projectAgentResumeSuggestion(for: directory)?.command == "claude --resume file-sess-1")
+}
+
+// 目录里有旧会话但本次运行没写新文件（例如 `claude --version`）：登记为「续上最近一次」。
+@Test("本次运行没有新会话文件时退化为 claude --continue")
+@MainActor
+func agentSessionFallsBackToContinueLatest() throws {
+  let (suiteName, defaults) = try agentLifecycleDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  let session = try #require(tab.activeSession)
+  let home = FileManager.default.temporaryDirectory
+    .appendingPathComponent("AgentLifecycleHome.\(UUID().uuidString)", isDirectory: true)
+  defer { try? FileManager.default.removeItem(at: home) }
+  session.agentUsageHomeDirectory = home
+  let terminal = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+  let directory = session.resolvedCurrentWorkingDirectory()
+  let projectDirectory = home.appendingPathComponent(
+    ".claude/projects/\(AgentSessionFileLocator.claudeProjectDirectoryName(for: directory))",
+    isDirectory: true)
+  try FileManager.default.createDirectory(at: projectDirectory, withIntermediateDirectories: true)
+  let old = projectDirectory.appendingPathComponent("old-sess.jsonl")
+  try "{}".write(to: old, atomically: true, encoding: .utf8)
+  try FileManager.default.setAttributes(
+    [.modificationDate: Date().addingTimeInterval(-3_600)], ofItemAtPath: old.path)
+
+  terminal.onShellIntegrationEvent?(.promptStart)
+  terminal.onShellIntegrationEvent?(.inputStart)
+  terminal.onAutocompleteInput?(Array("claude\n".utf8)[...])
+  terminal.onShellIntegrationEvent?(.commandStart)
+  terminal.onShellIntegrationEvent?(.commandFinished(exitStatus: 0))
+  let record = try #require(model.latestProjectAgentSession(for: directory))
+  #expect(record.sessionID == nil)
+  #expect(model.projectAgentResumeSuggestion(for: directory)?.command == "claude --continue")
+  #expect(model.notice?.contains("claude --continue") == true)
+}
+
+// 用户最常见的「结束」是直接关掉 Pane：没有 commandFinished，也没有 child-exited 回调。
+// stop() 必须在拆 surface 前登记会话，且只登记一次。
+@Test("关闭仍在运行 Agent 的 Pane 也登记项目会话")
+@MainActor
+func closingPaneWithRunningAgentRecordsProjectSession() throws {
+  let (suiteName, defaults) = try agentLifecycleDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  let session = try #require(tab.activeSession)
+  let terminal = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  let directory = session.resolvedCurrentWorkingDirectory()
+  var endedCount = 0
+  let upstream = session.onAgentSessionEnded
+  session.onAgentSessionEnded = { provider, sessionID in
+    endedCount += 1
+    upstream?(provider, sessionID)
+  }
+
+  terminal.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .claudeCode, signal: .processing, sessionID: "sess-close"))
+  #expect(model.latestProjectAgentSession(for: directory) == nil)
+  session.stop(immediately: true)
+  #expect(model.latestProjectAgentSession(for: directory)?.sessionID == "sess-close")
+  #expect(endedCount == 1)
+}
+
 // Agent 结束 → 登记项目最近会话并提示 resume 命令 → 同目录补全首选项就是这条命令。
 @Test("Agent 结束后登记项目会话，同目录补全首选 resume 命令")
 @MainActor
@@ -842,12 +959,17 @@ func endedAgentSessionIsRecordedAndSuggestedForProject() throws {
   model.ensureInitialTab()
   let tab = try #require(model.selectedTab)
   let session = try #require(tab.activeSession)
+  // 空 home：本机真实的 ~/.claude 里有该目录的会话文件，会让「无 ID」分支走到文件定位。
+  let home = FileManager.default.temporaryDirectory
+    .appendingPathComponent("AgentLifecycleHome.\(UUID().uuidString)", isDirectory: true)
+  defer { try? FileManager.default.removeItem(at: home) }
+  session.agentUsageHomeDirectory = home
   let terminal = try #require(
     session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
   defer { session.stop(immediately: true) }
   let directory = session.resolvedCurrentWorkingDirectory()
 
-  // 没有 session ID 的结束不登记：hook 未绑定时无 ID 可 resume。
+  // 没有 session ID、也没有任何会话文件的结束不登记：无 ID 可 resume，也无「最近一次」可续。
   terminal.onAgentTerminalDirective?(
     AgentTerminalDirective(provider: .claudeCode, signal: .processing, sessionID: nil))
   terminal.onShellIntegrationEvent?(.commandFinished(exitStatus: 0))

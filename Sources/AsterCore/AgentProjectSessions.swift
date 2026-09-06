@@ -2,12 +2,14 @@ import Foundation
 
 /// 某个项目目录里最近一次结束的 Agent 会话身份。只保留下一次 `--resume` 所需的
 /// provider + session ID 与结束时间，不保存 pane、PID 等运行态。
+/// `sessionID` 为 nil 表示「只知道该目录跑过这个 provider」：hook 与会话文件都没给出 ID，
+/// 下次用 provider 的「续上最近一次」命令（`claude --continue` / `codex resume --last`）。
 public struct AgentProjectSessionRecord: Codable, Equatable, Sendable {
   public let provider: AgentProvider
-  public let sessionID: String
+  public let sessionID: String?
   public let endedAt: Date
 
-  public init(provider: AgentProvider, sessionID: String, endedAt: Date) {
+  public init(provider: AgentProvider, sessionID: String?, endedAt: Date) {
     self.provider = provider
     self.sessionID = sessionID
     self.endedAt = endedAt
@@ -46,8 +48,8 @@ public struct AgentProjectSessionRegistry: Codable, Equatable, Sendable {
       ?? [:]
     self.init(capacity: decodedCapacity)
     for (path, record) in decoded {
-      guard let normalized = Self.normalizePath(path), Self.isValidSessionID(record.sessionID),
-        record.provider.capabilities.contains(.resumeSession)
+      guard let normalized = Self.normalizePath(path),
+        Self.isRecordable(provider: record.provider, sessionID: record.sessionID)
       else { continue }
       if let existing = records[normalized], existing.endedAt >= record.endedAt { continue }
       records[normalized] = record
@@ -56,16 +58,16 @@ public struct AgentProjectSessionRegistry: Codable, Equatable, Sendable {
   }
 
   /// 登记一次结束的会话。返回 false 表示未记录（路径非法、session ID 非法或 provider
-  /// 不支持 resume），调用方无需持久化。
+  /// 不支持 resume；ID 为 nil 时 provider 还必须能「续上最近一次」），调用方无需持久化。
   @discardableResult
   public mutating func record(
     provider: AgentProvider,
-    sessionID: String,
+    sessionID: String?,
     projectDirectory: String,
     endedAt: Date = Date()
   ) -> Bool {
-    guard let path = Self.normalizePath(projectDirectory), Self.isValidSessionID(sessionID),
-      provider.capabilities.contains(.resumeSession)
+    guard let path = Self.normalizePath(projectDirectory),
+      Self.isRecordable(provider: provider, sessionID: sessionID)
     else { return false }
     records[path] = AgentProjectSessionRecord(
       provider: provider, sessionID: sessionID, endedAt: endedAt)
@@ -92,6 +94,13 @@ public struct AgentProjectSessionRegistry: Codable, Equatable, Sendable {
     guard trimmed.hasPrefix("/"), !trimmed.contains("\0") else { return nil }
     let standardized = (trimmed as NSString).standardizingPath
     return standardized.isEmpty ? nil : standardized
+  }
+
+  /// 有 ID 时要求 provider 支持 resume 且 ID 合法；没有 ID 时要求 provider 有原生的
+  /// 「续上最近一次」命令，否则登记了也发不出任何命令。
+  static func isRecordable(provider: AgentProvider, sessionID: String?) -> Bool {
+    guard let sessionID else { return provider.continueLatestSessionArguments != nil }
+    return isValidSessionID(sessionID) && provider.capabilities.contains(.resumeSession)
   }
 
   /// 与 `AgentSessionCommandPlanner` 相同的 session ID 约束，保证登记的 ID 一定能规划成命令。
