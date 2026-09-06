@@ -589,7 +589,10 @@ final class TerminalAutocompleteController {
     case (_, .disabled):
       panelState = .hidden
     case (.hidden, .automatic):
-      if !panelSuppressedForPrompt, result.candidates.count >= 2 {
+      // 空 prompt 不自动弹面板：新开 Pane 或命令刚结束时用户还没表达任何意图，
+      // 一整列目录历史直接压在光标下只会打扰。候选仍然计算（resume/纠错 ghost 照常
+      // 显示），用户敲第一个字符或按 Esc/Tab 主动打开时再展开。
+      if !panelSuppressedForPrompt, !tracker.line.isEmpty, result.candidates.count >= 2 {
         panelState = .open(origin: .automatic, userSelected: false)
       }
     case (.hidden, _):
@@ -688,20 +691,34 @@ final class TerminalAutocompleteController {
     }
     let executable = ShellCommandTokenizer.tokenize(command).tokens.first ?? ""
     let status = exitStatus ?? 0
+    let output = ANSICleaner.visibleText(from: completedCommandOutput?.text ?? "")
+    // 只学习真正执行过的命令：`runningCommand` 本身只来自回车提交的行，这里再把
+    // shell 根本没能执行的（找不到命令 126/127、或输出里明说 command not found /
+    // 无法执行）挡在历史之外，避免打错的词进入补全污染后续候选。
+    let unexecutable = Self.commandWasNotExecutable(exitStatus: status, output: output)
     _ = service.record(
       command: command,
       directory: currentDirectory(),
-      exitStatus: status,
+      exitStatus: unexecutable ? 127 : status,
       ignorePatterns: configuration.resolvedAutocompleteHistoryIgnore,
       knownOptions: service.knownOptions(for: executable),
       sessionIdentifier: sessionIdentifier
     )
-    let output = ANSICleaner.visibleText(from: completedCommandOutput?.text ?? "")
     pendingCorrection = status == 0 ? nil : CommandCorrectionParser.suggestion(
       command: command,
       output: output,
       knownCommands: Set(service.specDatabase.commands.map(\.name))
     )
+  }
+
+  /// shell 报告「没能执行」的判定：126（不可执行）/127（找不到命令）是 POSIX 约定；
+  /// 非零退出且输出含 not found / cannot execute 兜住自定义 command_not_found_handler
+  /// 返回其它状态码的 shell。成功（0）的命令一律视为可执行，不看输出。
+  static func commandWasNotExecutable(exitStatus: Int, output: String) -> Bool {
+    if exitStatus == 126 || exitStatus == 127 { return true }
+    guard exitStatus != 0 else { return false }
+    let lowered = output.lowercased()
+    return lowered.contains("command not found") || lowered.contains("cannot execute")
   }
 
   /// 彻底收起补全:关面板、清候选、取消待执行的刷新。

@@ -347,6 +347,85 @@ func terminalAutocompleteKeepsManualPanelOpenWhileTyping() async throws {
   #expect(controller.currentResult.candidates.first?.insertText == "checkout")
 }
 
+// 新开 Pane / 命令刚结束时 prompt 为空，目录历史再多也不能自动压在光标下；
+// 候选与 ghost 照常计算，敲下第一个字符后面板才自动展开，Esc 仍可手动打开。
+@Test("空 prompt 不自动弹出候选面板，输入首字符后才展开")
+@MainActor
+func terminalAutocompleteDoesNotAutoOpenPanelOnEmptyPrompt() throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  fixture.controls.value.autocompleteCandidatePanel = .automatic
+  let controller = makeController(fixture)
+  for command in ["git status", "git commit -m x", "ls"] {
+    controller.receive(.promptStart)
+    controller.receive(.inputStart)
+    controller.receiveInput(Array("\(command)\n".utf8)[...])
+    controller.receive(.commandStart)
+    controller.receive(.commandFinished(exitStatus: 0))
+  }
+
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.refreshNow()
+  #expect(controller.currentResult.candidates.count >= 2)
+  #expect(!controller.panelVisible)
+
+  // Esc 是用户主动要看：空 prompt 也允许手动打开。
+  #expect(controller.handle(.escape))
+  #expect(controller.panelVisible)
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.refreshNow()
+  #expect(!controller.panelVisible)
+
+  controller.receiveInput(Array("g".utf8)[...])
+  controller.refreshNow()
+  #expect(controller.panelVisible)
+}
+
+// 打错的命令（127 / command not found）回车执行过也不进历史；126 同理。
+@Test("shell 没能执行的命令不写入学习历史")
+@MainActor
+func terminalAutocompleteSkipsUnexecutableCommands() throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let controller = TerminalAutocompleteController(
+    service: fixture.service,
+    sessionIdentifier: "session",
+    controls: { fixture.controls.value },
+    currentDirectory: { "/project" }
+  )
+  func run(_ command: String, exitStatus: Int, output: String) {
+    controller.receive(.promptStart)
+    controller.receive(.inputStart)
+    controller.receiveInput(Array("\(command)\n".utf8)[...])
+    controller.receive(.commandStart)
+    // 输出捕获以 OSC 133 C/D 作为命令输出的边界，与真实 PTY 流一致。
+    let stream = "\u{1B}]133;C\u{07}" + output + "\u{1B}]133;D;\(exitStatus)\u{07}"
+    controller.receiveOutput(Array(stream.utf8)[...])
+    controller.receive(.commandFinished(exitStatus: exitStatus))
+  }
+  run("sw", exitStatus: 127, output: "zsh: command not found: sw\n")
+  run("./notexec", exitStatus: 126, output: "zsh: permission denied: ./notexec\n")
+  // 自定义 command_not_found_handler 返回 1：靠输出判定。
+  run("gti status", exitStatus: 1, output: "zsh: command not found: gti\n")
+  // 正常失败的命令仍然学习（用户确实在用它）。
+  run("git push", exitStatus: 1, output: "fatal: no upstream\n")
+  run("ls", exitStatus: 0, output: "")
+
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.refreshNow()
+  let learned = controller.currentResult.candidates
+    .filter { $0.kind == .learnedCommand }.map(\.insertText)
+  #expect(!learned.contains("sw"))
+  #expect(!learned.contains("./notexec"))
+  #expect(!learned.contains("gti status"))
+  #expect(learned.contains("git push"))
+  #expect(learned.contains("ls"))
+  #expect(TerminalAutocompleteController.commandWasNotExecutable(exitStatus: 0, output: "command not found") == false)
+}
+
 @Test("Escape 关闭自动面板后本轮 prompt 内不再自动弹回")
 @MainActor
 func terminalAutocompleteEscapeKeepsAutoPanelClosedForRestOfPrompt() throws {
