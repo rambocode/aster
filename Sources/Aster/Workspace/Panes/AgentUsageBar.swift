@@ -2,7 +2,8 @@ import AppKit
 import AsterCore
 
 /// 终端 Pane 底部的 Agent 用量条：左侧 provider 名，右侧按快照里存在的窗口显示
-/// 「5h / 周 / 会话」三个小 meter。只展示，不承担任何自动行为。
+/// 「5h / 周 / 会话」三个小 meter。不承担任何自动行为；唯一的交互是点击整条
+/// 向 Agent 提交它自己的统计命令（`AgentProvider.usageStatsCommand`）。
 @MainActor
 final class AgentUsageBarView: NSView {
   static let preferredHeight: CGFloat = 20
@@ -12,6 +13,11 @@ final class AgentUsageBarView: NSView {
   private let providerLabel = makeLabel("", size: 10, weight: .semibold, color: AsterTheme.secondaryInk)
   private var meters: [AgentUsageWindowKind: AgentUsageMeterView] = [:]
   private(set) var snapshot: AgentUsageSnapshot
+  /// 点击回调，参数是要提交的斜杠命令；provider 没有统计命令时不会触发。
+  var onOpenStats: ((String) -> Void)?
+
+  /// 当前 provider 的统计命令；nil 时整条不可点击、不显示手型指针。
+  var statsCommand: String? { snapshot.provider.usageStatsCommand }
 
   init(snapshot: AgentUsageSnapshot) {
     self.snapshot = snapshot
@@ -46,10 +52,26 @@ final class AgentUsageBarView: NSView {
 
   required init?(coder: NSCoder) { nil }
 
+  /// 单击整条：把 provider 的统计命令交给回调。meter 自身有 tooltip，点击仍冒泡到这里。
+  override func mouseDown(with event: NSEvent) {
+    guard event.clickCount == 1, let statsCommand, let onOpenStats else {
+      super.mouseDown(with: event)
+      return
+    }
+    onOpenStats(statsCommand)
+  }
+
+  override func resetCursorRects() {
+    super.resetCursorRects()
+    if statsCommand != nil { addCursorRect(bounds, cursor: .pointingHand) }
+  }
+
   /// 原地更新：只改 meter 的比例、颜色、文字与 tooltip，不重建子视图。
   func apply(_ snapshot: AgentUsageSnapshot) {
     self.snapshot = snapshot
     providerLabel.stringValue = snapshot.provider.displayName
+    providerLabel.toolTip = statsCommand.map { "点击在 \(snapshot.provider.displayName) 中运行 \($0) 查看统计" }
+    window?.invalidateCursorRects(for: self)
     for (kind, meter) in meters {
       if let window = snapshot.window(kind) {
         meter.apply(window)

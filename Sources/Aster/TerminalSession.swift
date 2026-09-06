@@ -192,7 +192,6 @@ final class AsterTerminalView: LocalProcessTerminalView {
   var onTerminalNotification: ((TerminalNotification) -> Void)?
   var onTerminalBadgeDirective: ((TerminalBadgeDirective) -> Void)?
   var onAgentTerminalDirective: ((AgentTerminalDirective) -> Void)?
-  var onAgentUsageDirective: ((AgentUsageDirective) -> Void)?
   /// Kitty capability query 必须直接回到 PTY，不能经过用户输入和补全跟踪器。
   var onTerminalProtocolResponse: ((String) -> Void)?
   var terminalBellEnabled = true
@@ -1459,8 +1458,6 @@ final class AsterTerminalView: LocalProcessTerminalView {
         self?.onTerminalBadgeDirective?(directive)
       } else if let directive = AgentTerminalDirective(payload: payload) {
         self?.onAgentTerminalDirective?(directive)
-      } else if let directive = AgentUsageDirective(payload: payload) {
-        self?.onAgentUsageDirective?(directive)
       }
     }
   }
@@ -2208,22 +2205,33 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @Published private(set) var explicitBadge: TerminalBadgeState?
   /// 当前前台命令可明确识别为受支持 Agent 时发布 provider 与折叠状态。识别仅来自
   /// 用户提交命令的首个 token；不会扫描任意输出或把相似进程名误判为 Agent。
-  @Published private(set) var activeAgentProvider: AgentProvider?
+  @Published private(set) var activeAgentProvider: AgentProvider? {
+    didSet { if oldValue != activeAgentProvider { syncClaudeAccountQuota() } }
+  }
   @Published private(set) var activeAgentSessionID: String?
-  @Published private(set) var agentTaskState = AgentTaskState.idle
+  @Published private(set) var agentTaskState = AgentTaskState.idle {
+    // Claude 一轮结束（回到 idle 或等输入）说明刚有 API 响应记账，补拉一次账号配额。
+    didSet {
+      if oldValue == .processing, agentTaskState != .processing, activeAgentProvider == .claudeCode,
+        claudeAccountQuotaRetained
+      {
+        claudeAccountQuota.refreshSoon()
+      }
+    }
+  }
   @Published private(set) var agentTaskCompletionUnread = false
   /// 当前 Agent 的用量快照（5h / 周 / 会话上下文占比）。刻意不并入 TerminalTabItem 的
-  /// objectWillChange 聚合：statusLine 每次刷新都会重发，视图层按 Pane 订阅做原地更新。
+  /// objectWillChange 聚合：轮询与 rollout 追加会高频重发，视图层按 Pane 订阅做原地更新。
   @Published private(set) var agentUsage: AgentUsageSnapshot?
   /// Codex 用量来自 rollout 文件，绑定 session 后监听；provider 结束时停止。
   private var codexUsageMonitor: CodexUsageFileMonitor?
   private var codexUsageMonitorSessionID: String?
   /// Codex rollout 的根目录来源；测试注入临时 home。
   var agentUsageHomeDirectory = FileManager.default.homeDirectoryForCurrentUser
-  /// Claude statusLine 包装器写入的用量文件仓库；测试注入临时目录。必须在创建终端视图前设置。
-  var agentUsageFileStore: AgentUsageFileStore = .shared
-  /// 订阅用量文件的时刻：早于它的文件是上次运行遗留的，忽略。
-  private var agentUsageSubscribedAt: Date?
+  /// Claude 账号级 5h / 周配额服务（官方 /usage 接口）；测试注入假服务。
+  var claudeAccountQuota: ClaudeAccountQuotaService = .shared
+  private var claudeAccountQuotaRetained = false
+  private var claudeAccountQuotaSubscription: AnyCancellable?
   /// Hook 是否已成为该 Pane 的权威状态源。Prompt Queue 的自动派发只接受 hook 结论：
   /// 输出探针推断出来的 idle 只说明屏幕安静了一会儿，据此写入会打断运行中的 TUI。
   var hasAuthoritativeAgentLifecycle: Bool { agentLifecycleIsAuthoritative }
@@ -2587,10 +2595,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.onAgentTerminalDirective = { [weak self] directive in
       self?.handleAgentTerminalDirective(directive)
     }
-    view.onAgentUsageDirective = { [weak self] directive in
-      self?.handleAgentUsageDirective(directive)
-    }
-    subscribeAgentUsageFiles()
     view.onShellIntegrationStateChange = { [weak self] timeline in
       self?.handleShellIntegrationTimeline(timeline)
     }
@@ -2805,8 +2809,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     )
     // 先登记再创建 surface；极短命命令的退出 callback 可能在 createSurface 返回前到达。
     ghosttyView = view
-    // Ghostty 路径不经过 makeTerminalView，用量文件订阅在这里挂上（pane UUID 同一）。
-    subscribeAgentUsageFiles()
     processStartedAt = Date()
     automaticSecureInputEnabled = preferences.configuration.controls.secureInputAutomatically
 
@@ -3082,8 +3084,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         }
       } else if let directive = AgentTerminalDirective(payload: value) {
         handleAgentTerminalDirective(directive)
-      } else if let directive = AgentUsageDirective(payload: value) {
-        handleAgentUsageDirective(directive)
       }
     default:
       break
@@ -3330,6 +3330,18 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     pendingCommandOrigin = .recipeReplay
     send(command)
     return true
+  }
+
+  /// 向正在运行的 Agent TUI 提交斜杠命令（如 `/stats`）。命令文本与回车分两次写入并
+  /// 间隔片刻：Claude Code 输入 `/` 后会弹出命令菜单，同一块数据里的回车会被当作粘贴
+  /// 或在菜单尚未过滤时选中错误项。不走 `send`：这不是 shell 命令，不该进入命令记录。
+  func submitAgentSlashCommand(_ command: String) {
+    guard activeAgentProvider != nil else { return }
+    typeText(command)
+    Task { @MainActor [weak self] in
+      try? await Task.sleep(for: .milliseconds(80))
+      self?.typeText("\r")
+    }
   }
 
   /// 把文本原样写入 PTY（不带回车）：用于把命令预填到提示符，执行与否由用户确认。
@@ -3813,12 +3825,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 立即结束进程组，因为主事件循环不会继续存活到延迟升级任务执行。
   func stop(immediately: Bool = false) {
     clearSSHRemoteEndpoint()
-    // Pane 关闭：停掉用量监听并删掉本 pane 的用量文件。
+    // Pane 关闭：停掉用量监听。
     clearAgentUsage()
-    if agentUsageSubscribedAt != nil {
-      agentUsageFileStore.unsubscribe(paneID: id)
-      agentUsageSubscribedAt = nil
-    }
     // 用户关闭 Pane/标签不会经过 GHOSTTY 的 child-exited 回调（destroySurface 直接
     // 释放并清空回调）。必须在拆 surface 前显式闭合记录会话，否则 sessions 行永远
     // 停在 active，挂在会话结束链上的 Memory 提炼永远不会发生。记录层按 id 幂等，
@@ -4823,31 +4831,33 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     updateAgentTaskState()
   }
 
-  /// statusLine 包装器上报的用量：与 lifecycle 同一守门，已识别 provider 时拒绝其它
-  /// provider 注入；尚未识别时据此建立身份（wrapper 命令让 commandStart 认不出 claude）。
-  private func handleAgentUsageDirective(_ directive: AgentUsageDirective) {
-    if let activeAgentProvider, activeAgentProvider != directive.provider { return }
-    if activeAgentProvider == nil {
-      activeAgentProvider = directive.provider
-      agentProviderIsTitleEvidenceOnly = false
-      syncAgentScreenMonitor()
+  /// provider 变为 Claude 时引用账号配额服务并订阅；离开 Claude 时释放。
+  private func syncClaudeAccountQuota() {
+    let wantsQuota = activeAgentProvider == .claudeCode
+    if wantsQuota, !claudeAccountQuotaRetained {
+      claudeAccountQuotaRetained = true
+      claudeAccountQuota.retain()
+      claudeAccountQuotaSubscription = claudeAccountQuota.$windows
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in self?.recomputeClaudeUsage() }
+    } else if !wantsQuota, claudeAccountQuotaRetained {
+      claudeAccountQuotaRetained = false
+      claudeAccountQuotaSubscription = nil
+      claudeAccountQuota.release()
     }
-    let snapshot = directive.snapshot()
+  }
+
+  /// 测试直接注入快照（绕过 rollout / 网络）。provider 必须已识别且一致。
+  func injectUsageForTesting(_ snapshot: AgentUsageSnapshot) {
+    guard activeAgentProvider == snapshot.provider else { return }
     if agentUsage != snapshot { agentUsage = snapshot }
   }
 
-  /// 订阅本 pane 的用量文件（Claude statusLine 包装器按 pane UUID 写入）。只在第一次创建终端
-  /// 视图时订阅；重启进程复用同一 pane UUID，订阅保持。
-  private func subscribeAgentUsageFiles() {
-    guard agentUsageSubscribedAt == nil else { return }
-    let subscribedAt = Date()
-    agentUsageSubscribedAt = subscribedAt
-    agentUsageFileStore.subscribe(paneID: id) { [weak self] update in
-      guard let self else { return }
-      // Aster 崩溃后遗留的旧文件：mtime 早于本次订阅，不能把一个新 shell pane 标成 Claude。
-      guard update.modifiedAt >= subscribedAt - 1 else { return }
-      self.handleAgentUsageDirective(update.directive)
-    }
+  /// Claude 快照 = 账号级 5h / 周窗口；还没拿到数据时不显示条。
+  private func recomputeClaudeUsage() {
+    guard activeAgentProvider == .claudeCode, claudeAccountQuotaRetained else { return }
+    let snapshot = claudeAccountQuota.windows.map { AgentUsageSnapshot(provider: .claudeCode, windows: $0) }
+    if agentUsage != snapshot { agentUsage = snapshot }
   }
 
   /// Codex 绑定 session 后监听其 rollout；session 变化时重建，非 Codex 或无 session 时停止。
@@ -4876,10 +4886,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     codexUsageMonitorSessionID = nil
   }
 
-  /// provider 生命周期结束：停掉 Codex 监听、删掉本 pane 的用量文件并让用量条消失。
+  /// provider 生命周期结束：停掉 Codex 监听并让用量条消失。
   private func clearAgentUsage() {
     stopCodexUsageMonitor()
-    if agentUsageSubscribedAt != nil { agentUsageFileStore.remove(paneID: id) }
     if agentUsage != nil { agentUsage = nil }
   }
 

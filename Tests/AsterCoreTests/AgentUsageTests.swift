@@ -5,63 +5,6 @@ import Testing
 
 @Suite("AgentUsage")
 struct AgentUsageTests {
-  @Test("用量 directive 解析三个窗口并把 epoch 转成 Date")
-  func agentUsageDirectiveParsesAllThreeWindows() throws {
-    let directive = try #require(AgentUsageDirective(
-      payload: "AgentUsage=1;Provider=claudeCode;FiveHour=42:1788748005;SevenDay=13:1788900000;Session=57"))
-    #expect(directive.provider == .claudeCode)
-    let snapshot = directive.snapshot()
-    #expect(snapshot.windows.map(\.kind) == [.fiveHour, .weekly, .session])
-    #expect(snapshot.window(.fiveHour)?.usedPercent == 42)
-    #expect(snapshot.window(.fiveHour)?.resetsAt == Date(timeIntervalSince1970: 1_788_748_005))
-    #expect(snapshot.window(.weekly)?.usedPercent == 13)
-    #expect(snapshot.window(.session)?.usedPercent == 57)
-    #expect(snapshot.window(.session)?.resetsAt == nil)
-  }
-
-  @Test("用量 directive 接受部分窗口与缺省 epoch")
-  func agentUsageDirectiveAcceptsPartialWindowsAndMissingReset() throws {
-    let sessionOnly = try #require(AgentUsageDirective(payload: "AgentUsage=1;Provider=codex;Session=57"))
-    #expect(sessionOnly.windows.map(\.kind) == [.session])
-    let noEpoch = try #require(AgentUsageDirective(payload: "Provider=claudeCode;FiveHour=42;AgentUsage=1"))
-    #expect(noEpoch.windows.first?.resetsAt == nil)
-    #expect(noEpoch.windows.first?.usedPercent == 42)
-    // 超 100 保留（spend_limit 可超限），但钳制在上限内。
-    let over = try #require(AgentUsageDirective(payload: "AgentUsage=1;Provider=claudeCode;FiveHour=120"))
-    #expect(over.windows.first?.usedPercent == 120)
-  }
-
-  @Test("用量 directive 拒绝未知键、重复键、坏值与超限载荷")
-  func agentUsageDirectiveRejectsUnknownKeysDuplicatesAndBadValues() {
-    let rejected = [
-      "AgentUsage=1;Provider=claudeCode;Prompt=x;FiveHour=1",
-      "AgentUsage=1;Provider=claudeCode;FiveHour=1;FiveHour=2",
-      "AgentUsage=1;Provider=claudeCode;FiveHour=abc",
-      "AgentUsage=1;Provider=claudeCode;FiveHour=42:notanumber",
-      "AgentUsage=1;Provider=claudeCode;FiveHour=1234",
-      "AgentUsage=1;Provider=claudeCode;FiveHour=42:1234567890123",
-      "AgentUsage=2;Provider=claudeCode;FiveHour=1",
-      "AgentUsage=1;Provider=unknown;FiveHour=1",
-      "AgentUsage=1;Provider=claudeCode",
-      "AgentUsage=1;Provider=claudeCode;FiveHour=",
-      "AgentUsage=1;Provider=claudeCode;FiveHour=4２",
-      "AgentUsage=1;Provider=claudeCode;FiveHour=1;" + String(repeating: "x", count: 300),
-    ]
-    for payload in rejected {
-      #expect(AgentUsageDirective(payload: payload) == nil, "\(payload)")
-    }
-  }
-
-  @Test("用量 directive 与 lifecycle directive 互斥，接收顺序无关")
-  func agentUsageDirectiveIsNotMistakenForLifecycleDirective() {
-    let usage = "AgentUsage=1;Provider=claudeCode;FiveHour=42"
-    let lifecycle = "AgentState=idle;Provider=claudeCode"
-    #expect(AgentTerminalDirective(payload: usage) == nil)
-    #expect(AgentUsageDirective(payload: lifecycle) == nil)
-    #expect(AgentUsageDirective(payload: usage) != nil)
-    #expect(AgentTerminalDirective(payload: lifecycle) != nil)
-  }
-
   @Test("快照按 kind 排序去重，且相等比较忽略 updatedAt")
   func agentUsageSnapshotSortsWindowsByKindAndIgnoresTimestamp() throws {
     let session = try #require(AgentUsageWindow(kind: .session, usedPercent: 10))
@@ -89,6 +32,31 @@ struct AgentUsageTests {
 
   private static let weeklyPrimary = #"{"used_percent":52.0,"window_minutes":10080,"resets_at":1788748005}"#
   private static let fiveHourWindow = #"{"used_percent":7.5,"window_minutes":300,"resets_at":1788700000}"#
+
+  @Test("Claude 账号配额解析：/usage 响应的百分比与 ISO 8601 重置时间，凭据过期返回 nil")
+  func claudeAccountQuotaParsing() throws {
+    let response = #"""
+      {"five_hour":{"utilization":18.0,"resets_at":"2026-09-06T06:59:59.860820+00:00"},
+       "seven_day":{"utilization":11.0,"resets_at":"2026-09-07T10:59:59+00:00"},
+       "seven_day_opus":null}
+      """#.data(using: .utf8)!
+    let windows = try #require(ClaudeAccountQuotaParser.windows(fromUsageResponse: response))
+    #expect(windows.map(\.kind) == [.fiveHour, .weekly])
+    #expect(windows.map(\.usedPercent) == [18, 11])
+    #expect(windows[0].resetsAt.map { Int($0.timeIntervalSince1970) } == 1_788_677_999)
+    #expect(windows[1].resetsAt.map { Int($0.timeIntervalSince1970) } == 1_788_778_799)
+    #expect(ClaudeAccountQuotaParser.windows(fromUsageResponse: Data("{}".utf8)) == nil)
+    #expect(ClaudeAccountQuotaParser.windows(fromUsageResponse: Data("nope".utf8)) == nil)
+
+    let now = Date(timeIntervalSince1970: 1_788_000_000)
+    let valid = #"{"claudeAiOauth":{"accessToken":"tok","expiresAt":1788000001000}}"#.data(using: .utf8)!
+    let expired = #"{"claudeAiOauth":{"accessToken":"tok","expiresAt":1787999999000}}"#.data(using: .utf8)!
+    let flat = #"{"accessToken":"tok2"}"#.data(using: .utf8)!
+    #expect(ClaudeAccountQuotaParser.accessToken(fromCredentials: valid, now: now) == "tok")
+    #expect(ClaudeAccountQuotaParser.accessToken(fromCredentials: expired, now: now) == nil)
+    #expect(ClaudeAccountQuotaParser.accessToken(fromCredentials: flat, now: now) == "tok2")
+    #expect(ClaudeAccountQuotaParser.accessToken(fromCredentials: Data("{}".utf8), now: now) == nil)
+  }
 
   @Test("Codex rollout 解析最后一条 token_count：primary=周窗口且 secondary=null")
   func codexRolloutParserReadsLastTokenCountWithWeeklyPrimaryAndNullSecondary() throws {
@@ -135,38 +103,6 @@ struct AgentUsageTests {
     #expect(CodexRolloutUsageParser.parse(tail: Data()) == nil)
     let zero = CodexRolloutUsageParser.parse(tail: Data(Self.tokenCountLine(contextWindow: 0).utf8))
     #expect(zero == nil)
-  }
-
-  @Test("Planner 只对 Claude 且 statusLine 未接管时追加步骤，且该步骤不要求重启")
-  func agentSetupPlannerAddsStatusLineStepOnlyForClaudeWhenNotManaged() {
-    let claude = AgentSetupPlanner.plan(
-      for: .claudeCode,
-      evidence: AgentSetupEvidence(
-        executableAvailable: true, managedIntegrationInstalled: true, managedStatusLineInstalled: false))
-    #expect(claude.steps == [
-      .manageStatusLine(
-        path: AgentProvider.claudeStatusLineSettingsPath,
-        sideFile: AgentProvider.claudeStatusLineSideFilePath)
-    ])
-    #expect(!claude.requiresAgentRestart)
-
-    let fresh = AgentSetupPlanner.plan(
-      for: .claudeCode,
-      evidence: AgentSetupEvidence(
-        executableAvailable: true, managedIntegrationInstalled: false, managedStatusLineInstalled: false))
-    #expect(fresh.steps.count == 2)
-    #expect(fresh.requiresAgentRestart)
-
-    let notApplicable = AgentSetupPlanner.plan(
-      for: .claudeCode,
-      evidence: AgentSetupEvidence(executableAvailable: true, managedIntegrationInstalled: true))
-    #expect(notApplicable.steps.isEmpty)
-    let codex = AgentSetupPlanner.plan(
-      for: .codex,
-      evidence: AgentSetupEvidence(
-        executableAvailable: true, managedIntegrationInstalled: true, requiredFeatureEnabled: true,
-        managedStatusLineInstalled: false))
-    #expect(codex.steps.isEmpty)
   }
 
   @Test("用量条配置缺键时默认开启")

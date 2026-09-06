@@ -660,8 +660,8 @@ public struct AgentConfiguration: Codable, Equatable, Sendable {
   /// 是否可以把 hook 报告的 processing 覆盖为 awaiting-input。缺省开启。
   public var screenDetectionOverridesHook: Bool?
 
-  /// Pane 底部 Agent 用量条（Claude Code / Codex 的 5 小时、每周与会话上下文占比）。
-  /// Optional 保持旧配置可解码，缺省开启；关闭只隐藏条，不卸载 statusLine 集成。
+  /// Pane 底部 Agent 用量条（Claude Code 的 5 小时 / 每周配额，Codex 另有会话上下文占比）。
+  /// Optional 保持旧配置可解码，缺省开启；关闭只隐藏条，不停用任何 Agent 集成。
   public var usageBarEnabled: Bool?
 
   public var resolvedScreenDetectionEnabled: Bool { screenDetectionEnabled ?? true }

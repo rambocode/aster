@@ -4,6 +4,7 @@ import Foundation
 public enum AgentUsageWindowKind: String, Codable, Equatable, Sendable, CaseIterable {
   case fiveHour
   case weekly
+  /// 当前会话的上下文窗口占比；目前只有 Codex 提供（来自 rollout 文件）。
   case session
 
   /// 用量条上的短标签。
@@ -39,8 +40,8 @@ public struct AgentUsageWindow: Equatable, Sendable {
 
 /// 一个 Pane 当前 Agent 的用量快照。
 ///
-/// `==` 刻意不比较 `updatedAt`：Claude statusLine 每次刷新都会重发同样的百分比，
-/// Session 依赖 Equatable 抑制重复发布，否则用量条会以 statusLine 的频率重绘。
+/// `==` 刻意不比较 `updatedAt`：轮询与 rollout 追加常常带来同样的百分比，
+/// Session 依赖 Equatable 抑制重复发布，否则用量条会随每次刷新重绘。
 public struct AgentUsageSnapshot: Equatable, Sendable {
   public let provider: AgentProvider
   public let windows: [AgentUsageWindow]
@@ -64,84 +65,6 @@ public struct AgentUsageSnapshot: Equatable, Sendable {
 
   public static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.provider == rhs.provider && lhs.windows == rhs.windows
-  }
-}
-
-/// Agent 集成脚本经 OSC 6974 上报的用量载荷，与 `AgentTerminalDirective` 共用同一 OSC 号。
-///
-/// 形如 `AgentUsage=1;Provider=claudeCode;FiveHour=42:1788748005;SevenDay=13:1788900000;Session=57`。
-/// 键集合严格白名单，值只接受 `百分比[:epoch秒]`；任何一项不合法整条拒绝，不做部分接受，
-/// 避免把终端上任意文本当成用量。
-public struct AgentUsageDirective: Equatable, Sendable {
-  public static let maximumPayloadBytes = AgentTerminalDirective.maximumPayloadBytes
-  public static let schemaVersion = "1"
-  static let allowedKeys: Set<String> = ["AgentUsage", "Provider", "FiveHour", "SevenDay", "Session"]
-
-  public let provider: AgentProvider
-  public let windows: [AgentUsageWindow]
-
-  public init(provider: AgentProvider, windows: [AgentUsageWindow]) {
-    self.provider = provider
-    self.windows = windows
-  }
-
-  public init?(payload: String) {
-    guard payload.utf8.count <= Self.maximumPayloadBytes, payload.utf8.allSatisfy({ $0 < 0x80 }) else {
-      return nil
-    }
-    var values: [String: String] = [:]
-    for field in payload.split(separator: ";", omittingEmptySubsequences: false) {
-      guard let separator = field.firstIndex(of: "=") else { return nil }
-      let key = String(field[..<separator])
-      let value = String(field[field.index(after: separator)...])
-      guard !key.isEmpty, !value.isEmpty, values.updateValue(value, forKey: key) == nil else {
-        return nil
-      }
-    }
-    guard values["AgentUsage"] == Self.schemaVersion,
-      let providerValue = values["Provider"],
-      let provider = AgentProvider(rawValue: providerValue),
-      Set(values.keys).isSubset(of: Self.allowedKeys)
-    else { return nil }
-
-    var windows: [AgentUsageWindow] = []
-    let mapping: [(String, AgentUsageWindowKind)] = [
-      ("FiveHour", .fiveHour), ("SevenDay", .weekly), ("Session", .session),
-    ]
-    for (key, kind) in mapping {
-      guard let raw = values[key] else { continue }
-      guard let window = Self.parseWindow(raw, kind: kind) else { return nil }
-      windows.append(window)
-    }
-    guard !windows.isEmpty else { return nil }
-    self.init(provider: provider, windows: windows)
-  }
-
-  public func snapshot(now: Date = Date()) -> AgentUsageSnapshot {
-    AgentUsageSnapshot(provider: provider, windows: windows, updatedAt: now)
-  }
-
-  /// 值语法 `^[0-9]{1,3}(:[0-9]{1,12})?$`：前段整数百分比，后段可选 Unix 秒。
-  static func parseWindow(_ raw: String, kind: AgentUsageWindowKind) -> AgentUsageWindow? {
-    let parts = raw.split(separator: ":", omittingEmptySubsequences: false)
-    guard (1...2).contains(parts.count) else { return nil }
-    let percentText = parts[0]
-    guard (1...3).contains(percentText.count), percentText.allSatisfy(Self.isASCIIDigit),
-      let percent = Double(percentText)
-    else { return nil }
-    var resetsAt: Date?
-    if parts.count == 2 {
-      let epochText = parts[1]
-      guard (1...12).contains(epochText.count), epochText.allSatisfy(Self.isASCIIDigit),
-        let epoch = TimeInterval(epochText)
-      else { return nil }
-      resetsAt = Date(timeIntervalSince1970: epoch)
-    }
-    return AgentUsageWindow(kind: kind, usedPercent: percent, resetsAt: resetsAt)
-  }
-
-  private static func isASCIIDigit(_ character: Character) -> Bool {
-    character.isASCII && character.isNumber
   }
 }
 

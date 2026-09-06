@@ -2179,13 +2179,15 @@ final class WorkspaceViewController: NSViewController {
     guard preferences.configuration.agents.resolvedUsageBarEnabled else { return }
     paneUsageSubscriptions[paneID] = session.$agentUsage
       .removeDuplicates()
-      .sink { [weak self, weak host] snapshot in
-        guard let self, let host else { return }
-        self.applyUsageSnapshot(snapshot, on: host, paneID: paneID)
+      .sink { [weak self, weak host, weak session] snapshot in
+        guard let self, let host, let session else { return }
+        self.applyUsageSnapshot(snapshot, on: host, paneID: paneID, session: session)
       }
   }
 
-  private func applyUsageSnapshot(_ snapshot: AgentUsageSnapshot?, on host: ActivePaneHostView, paneID: UUID) {
+  private func applyUsageSnapshot(
+    _ snapshot: AgentUsageSnapshot?, on host: ActivePaneHostView, paneID: UUID, session: TerminalSession
+  ) {
     guard let snapshot else {
       usageBars[paneID] = nil
       host.setStatusStrip(nil)
@@ -2196,6 +2198,9 @@ final class WorkspaceViewController: NSViewController {
       return
     }
     let bar = AgentUsageBarView(snapshot: snapshot)
+    bar.onOpenStats = { [weak session] command in
+      session?.submitAgentSlashCommand(command)
+    }
     usageBars[paneID] = bar
     host.setStatusStrip(bar, height: AgentUsageBarView.preferredHeight)
   }

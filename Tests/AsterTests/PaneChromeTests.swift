@@ -202,20 +202,37 @@ func usageBarAppearsOnEveryAgentPaneAndUpdatesInPlace() async throws {
 
   let sessions = tab.layout.allPanes.compactMap { tab.runtime(for: $0.id)?.terminalSession }
   #expect(sessions.count == 2)
+  let quota = offlineClaudeQuotaService()
+  for session in sessions { session.claudeAccountQuota = quota }
   let views = try sessions.map { session in
     try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
   }
-  // 非焦点 Pane 也显示：两个 session 各发一次。
-  views[0].onAgentUsageDirective?(try #require(AgentUsageDirective(payload: "AgentUsage=1;Provider=claudeCode;FiveHour=42")))
-  views[1].onAgentUsageDirective?(try #require(AgentUsageDirective(payload: "AgentUsage=1;Provider=codex;SevenDay=90;Session=5")))
+  // 非焦点 Pane 也显示：Claude pane 走账号配额，Codex pane 用 rollout 解析出的快照。
+  views[0].onAgentTerminalDirective?(AgentTerminalDirective(provider: .claudeCode, signal: .idle))
+  quota.injectForTesting(try #require(ClaudeAccountQuotaParser.windows(
+    fromUsageResponse: Data(#"{"five_hour":{"utilization":42}}"#.utf8))))
+  views[1].onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .idle))
+  sessions[1].injectUsageForTesting(AgentUsageSnapshot(
+    provider: .codex,
+    windows: [
+      try #require(AgentUsageWindow(kind: .weekly, usedPercent: 90)),
+      try #require(AgentUsageWindow(kind: .session, usedPercent: 5)),
+    ]))
+  try await Task.sleep(for: .milliseconds(100))
   window.contentView?.layoutSubtreeIfNeeded()
   let initial = bars()
   #expect(initial.count == 2)
   let claudeBar = try #require(initial.first { $0.snapshot.provider == .claudeCode })
   #expect(claudeBar.frame.height == AgentUsageBarView.preferredHeight)
+  // 点击整条向 Agent 提交它的统计命令；回调由 WorkspaceView 接线。
+  #expect(claudeBar.statsCommand == "/stats")
+  #expect(claudeBar.onOpenStats != nil)
+  #expect(initial.first { $0.snapshot.provider == .codex }?.statsCommand == "/status")
 
   // 原地更新：同一实例。
-  views[0].onAgentUsageDirective?(try #require(AgentUsageDirective(payload: "AgentUsage=1;Provider=claudeCode;FiveHour=85")))
+  quota.injectForTesting(try #require(ClaudeAccountQuotaParser.windows(
+    fromUsageResponse: Data(#"{"five_hour":{"utilization":85}}"#.utf8))))
+  try await Task.sleep(for: .milliseconds(100))
   #expect(bars().count == 2)
   #expect(bars().first { $0.snapshot.provider == .claudeCode } === claudeBar)
   #expect(claudeBar.snapshot.window(.fiveHour)?.usedPercent == 85)

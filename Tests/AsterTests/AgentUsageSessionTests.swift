@@ -6,50 +6,11 @@ import Testing
 @testable import Aster
 @testable import AsterCore
 
-// Agent 用量条的数据链路：OSC 6974 AgentUsage → TerminalSession.agentUsage；Codex 走 rollout 文件监听。
-
-@Test("用量 directive 发布到 session，命令结束后清空")
-@MainActor
-func sessionPublishesUsageFromDirectiveAndClearsOnCommandFinished() throws {
-  let (suiteName, defaults) = try agentUsageDefaults()
-  defer { defaults.removePersistentDomain(forName: suiteName) }
-  let preferences = AppPreferences(defaults: defaults)
-  let session = TerminalSession(workingDirectory: "/tmp")
-  let terminalView = try #require(
-    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
-  )
-  defer { session.stop(immediately: true) }
-
-  var published: [AgentUsageSnapshot?] = []
-  let subscription = session.$agentUsage.dropFirst().sink { published.append($0) }
-  defer { subscription.cancel() }
-
-  let directive = try #require(AgentUsageDirective(
-    payload: "AgentUsage=1;Provider=claudeCode;FiveHour=42:1788748005;SevenDay=13;Session=57"))
-  terminalView.onAgentUsageDirective?(directive)
-  #expect(session.agentUsage?.window(.fiveHour)?.usedPercent == 42)
-  // wrapper 命令让 commandStart 认不出 claude 时，用量 directive 建立 provider 身份。
-  #expect(session.activeAgentProvider == .claudeCode)
-
-  // 同值不重复发布；lifecycle idle 不清用量。
-  terminalView.onAgentUsageDirective?(directive)
-  terminalView.onAgentTerminalDirective?(AgentTerminalDirective(provider: .claudeCode, signal: .idle))
-  #expect(published.count == 1)
-  #expect(session.agentUsage != nil)
-
-  // 外来 provider 的用量被拒绝。
-  terminalView.onAgentUsageDirective?(
-    try #require(AgentUsageDirective(payload: "AgentUsage=1;Provider=codex;Session=1")))
-  #expect(session.agentUsage?.provider == .claudeCode)
-
-  terminalView.onShellIntegrationEvent?(.commandFinished(exitStatus: 0))
-  #expect(session.agentUsage == nil)
-  #expect(published.last == .some(nil))
-}
+// Agent 用量条的数据链路：Claude 走账号配额服务（官方 /usage），Codex 走 rollout 文件监听；都发布到 TerminalSession.agentUsage。
 
 @Test("用量变化不触发 TerminalTabItem 的 objectWillChange")
 @MainActor
-func usageChangesDoNotTriggerTabObjectWillChange() throws {
+func usageChangesDoNotTriggerTabObjectWillChange() async throws {
   let (suiteName, defaults) = try agentUsageDefaults()
   defer { defaults.removePersistentDomain(forName: suiteName) }
   let preferences = AppPreferences(defaults: defaults)
@@ -57,21 +18,25 @@ func usageChangesDoNotTriggerTabObjectWillChange() throws {
   model.ensureInitialTab()
   let tab = try #require(model.selectedTab)
   let session = try #require(tab.activeSession)
+  let service = offlineClaudeQuotaService()
+  session.claudeAccountQuota = service
   let terminalView = try #require(
     session.makeTerminalView(preferences: preferences) as? AsterTerminalView
   )
   defer {
     for runtime in tab.runtimes.values { runtime.terminalSession?.stop(immediately: true) }
   }
+  terminalView.onAgentTerminalDirective?(AgentTerminalDirective(provider: .claudeCode, signal: .idle))
+  #expect(session.activeAgentProvider == .claudeCode)
 
   var tabChanges = 0
   let subscription = tab.objectWillChange.sink { _ in tabChanges += 1 }
   defer { subscription.cancel() }
-  terminalView.onAgentUsageDirective?(
-    try #require(AgentUsageDirective(payload: "AgentUsage=1;Provider=claudeCode;FiveHour=10")))
-  terminalView.onAgentUsageDirective?(
-    try #require(AgentUsageDirective(payload: "AgentUsage=1;Provider=claudeCode;FiveHour=11")))
-  #expect(session.agentUsage?.window(.fiveHour)?.usedPercent == 11)
+  service.injectForTesting(try #require(ClaudeAccountQuotaParser.windows(
+    fromUsageResponse: Data(#"{"five_hour":{"utilization":10}}"#.utf8))))
+  service.injectForTesting(try #require(ClaudeAccountQuotaParser.windows(
+    fromUsageResponse: Data(#"{"five_hour":{"utilization":11}}"#.utf8))))
+  try await waitUntil { session.agentUsage?.window(.fiveHour)?.usedPercent == 11 }
   #expect(tabChanges == 0)
 }
 
@@ -92,6 +57,7 @@ func codexMonitorReadsRolloutTailAfterAppend() async throws {
     .write(to: rollout, atomically: true, encoding: .utf8)
 
   let session = TerminalSession(workingDirectory: "/tmp")
+  session.claudeAccountQuota = offlineClaudeQuotaService()
   session.agentUsageHomeDirectory = home
   let terminalView = try #require(
     session.makeTerminalView(preferences: preferences) as? AsterTerminalView
@@ -126,77 +92,73 @@ func codexMonitorReadsRolloutTailAfterAppend() async throws {
   #expect(monitor.map { Mirror(reflecting: $0).displayStyle == .optional && String(describing: $0) == "nil" } ?? true)
 }
 
-@Test("Claude 用量文件按 pane UUID 分发：写入即发布，遗留旧文件忽略，命令结束后删除文件")
-@MainActor
-func claudeUsageFileStoreDeliversToMatchingPane() async throws {
-  let (suiteName, defaults) = try agentUsageDefaults()
-  defer { defaults.removePersistentDomain(forName: suiteName) }
-  let preferences = AppPreferences(defaults: defaults)
-  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-    "aster-usage-store-\(UUID().uuidString)", isDirectory: true)
-  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-  defer { try? FileManager.default.removeItem(at: directory) }
-  let store = AgentUsageFileStore(directory: directory)
-
-  // 订阅前就存在、且 mtime 明显更早的文件：视为 Aster 上次运行遗留，不能把新 pane 标成 Claude。
-  let stale = TerminalSession(workingDirectory: "/tmp")
-  let staleFile = store.fileURL(for: stale.id)
-  try "AgentUsage=1;Provider=claudeCode;FiveHour=99\n".write(to: staleFile, atomically: true, encoding: .utf8)
-  try FileManager.default.setAttributes(
-    [.modificationDate: Date().addingTimeInterval(-3600)], ofItemAtPath: staleFile.path)
-  stale.agentUsageFileStore = store
-  _ = try #require(stale.makeTerminalView(preferences: preferences) as? AsterTerminalView)
-  defer { stale.stop(immediately: true) }
-
-  let session = TerminalSession(workingDirectory: "/tmp")
-  session.agentUsageFileStore = store
-  let terminalView = try #require(
-    session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
-  defer { session.stop(immediately: true) }
-  let other = TerminalSession(workingDirectory: "/tmp")
-  other.agentUsageFileStore = store
-  _ = try #require(other.makeTerminalView(preferences: preferences) as? AsterTerminalView)
-  defer { other.stop(immediately: true) }
-
-  try await Task.sleep(for: .milliseconds(400))
-  #expect(stale.agentUsage == nil)
-  #expect(stale.activeAgentProvider == nil)
-
-  // statusLine 包装器的写法：临时文件 + mv。
-  let target = store.fileURL(for: session.id)
-  let temporary = directory.appendingPathComponent(".tmp-\(UUID().uuidString)")
-  try "AgentUsage=1;Provider=claudeCode;FiveHour=14:1788678000;SevenDay=10;Session=33\n"
-    .write(to: temporary, atomically: false, encoding: .utf8)
-  _ = try FileManager.default.replaceItemAt(target, withItemAt: temporary)
-  var observed: AgentUsageSnapshot?
-  for _ in 0..<30 where observed == nil {
-    try await Task.sleep(for: .milliseconds(100))
-    observed = session.agentUsage
-  }
-  let snapshot = try #require(observed)
-  #expect(snapshot.provider == .claudeCode)
-  #expect(snapshot.window(.fiveHour)?.usedPercent == 14)
-  #expect(snapshot.window(.session)?.usedPercent == 33)
-  #expect(session.activeAgentProvider == .claudeCode)
-  #expect(other.agentUsage == nil)
-
-  // 覆盖写入新值：同一 pane 更新。
-  try "AgentUsage=1;Provider=claudeCode;FiveHour=15\n".write(to: target, atomically: true, encoding: .utf8)
-  var updated = false
-  for _ in 0..<30 where !updated {
-    try await Task.sleep(for: .milliseconds(100))
-    updated = session.agentUsage?.window(.fiveHour)?.usedPercent == 15
-  }
-  #expect(updated)
-
-  terminalView.onShellIntegrationEvent?(.commandFinished(exitStatus: 0))
-  #expect(session.agentUsage == nil)
-  #expect(!FileManager.default.fileExists(atPath: target.path))
-}
-
 private func agentUsageDefaults() throws -> (String, UserDefaults) {
   let suiteName = "AgentUsageSessionTests.\(UUID().uuidString)"
   let defaults = try #require(UserDefaults(suiteName: suiteName))
   defaults.removePersistentDomain(forName: suiteName)
   return (suiteName, defaults)
+}
+
+
+@Test("Claude 5h / 周取自账号配额服务并实时刷新；Claude 结束后释放服务并清空")
+@MainActor
+func sessionMergesClaudeAccountQuotaWithSessionWindow() async throws {
+  let (suiteName, defaults) = try agentUsageDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  let responses = MutableBox([
+    #"{"five_hour":{"utilization":18.0},"seven_day":{"utilization":11.0}}"#,
+    #"{"five_hour":{"utilization":21.0},"seven_day":{"utilization":12.0}}"#,
+  ])
+  let fetchCount = MutableBox(0)
+  let service = ClaudeAccountQuotaService(
+    fetch: { _ in
+      fetchCount.value += 1
+      let text = responses.value.first ?? ""
+      if responses.value.count > 1 { responses.value.removeFirst() }
+      return text.data(using: .utf8)
+    },
+    readToken: { "token" }
+  )
+  let session = TerminalSession(workingDirectory: "/tmp")
+  session.claudeAccountQuota = service
+  let terminalView = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+
+  // lifecycle hook 认出 Claude 后服务开始轮询，首轮结果直接成为快照。
+  #expect(session.agentUsage == nil)
+  terminalView.onAgentTerminalDirective?(AgentTerminalDirective(provider: .claudeCode, signal: .idle))
+  try await waitUntil { fetchCount.value >= 1 && session.agentUsage?.window(.fiveHour)?.usedPercent == 18 }
+  #expect(session.agentUsage?.windows.map(\.usedPercent) == [18, 11])
+
+  // 一轮结束（processing → idle）触发补拉；测试里把最小间隔绕开：直接强制刷新。
+  await service.refresh(force: true)
+  #expect(fetchCount.value == 2)
+  try await waitUntil { session.agentUsage?.window(.fiveHour)?.usedPercent == 21 }
+  #expect(session.agentUsage?.windows.map(\.usedPercent) == [21, 12])
+
+  // Claude 结束：释放服务，条消失。
+  terminalView.onShellIntegrationEvent?(.commandFinished(exitStatus: 0))
+  #expect(session.agentUsage == nil)
+}
+
+private final class MutableBox<Value>: @unchecked Sendable {
+  var value: Value
+  init(_ value: Value) { self.value = value }
+}
+
+/// 轮询等待主线程上的异步状态，最多 2s。
+@MainActor
+private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
+  for _ in 0..<100 {
+    if condition() { return }
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(condition(), "等待超时")
+}
+
+/// 测试用离线账号配额服务：不读钥匙串、不发网络请求；用 `injectForTesting` 直接喂窗口。
+@MainActor
+func offlineClaudeQuotaService() -> ClaudeAccountQuotaService {
+  ClaudeAccountQuotaService(fetch: { _ in nil }, readToken: { nil })
 }

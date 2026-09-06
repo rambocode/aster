@@ -59,6 +59,16 @@ public enum AgentProvider: String, CaseIterable, Codable, Equatable, Sendable {
   }
 
   /// 面向用户的产品名；只用于展示，不参与命令拼装或 provider 检测。
+  /// 点击用量条时提交给 Agent 的斜杠命令，用于打开它自己的用量/统计面板。
+  /// 只有确认存在该命令的 provider 才提供；nil 表示用量条不可点击。
+  public var usageStatsCommand: String? {
+    switch self {
+    case .claudeCode: "/stats"
+    case .codex: "/status"
+    default: nil
+    }
+  }
+
   public var displayName: String {
     switch self {
     case .claudeCode: "Claude Code"
@@ -295,19 +305,15 @@ public struct AgentSetupEvidence: Equatable, Sendable {
   public let executableAvailable: Bool
   public let managedIntegrationInstalled: Bool
   public let requiredFeatureEnabled: Bool?
-  /// nil 表示该 provider 没有受管 statusLine（用量上报）；true/false 表示是否已指向 Aster 包装器。
-  public let managedStatusLineInstalled: Bool?
 
   public init(
     executableAvailable: Bool,
     managedIntegrationInstalled: Bool,
-    requiredFeatureEnabled: Bool? = nil,
-    managedStatusLineInstalled: Bool? = nil
+    requiredFeatureEnabled: Bool? = nil
   ) {
     self.executableAvailable = executableAvailable
     self.managedIntegrationInstalled = managedIntegrationInstalled
     self.requiredFeatureEnabled = requiredFeatureEnabled
-    self.managedStatusLineInstalled = managedStatusLineInstalled
   }
 }
 
@@ -319,15 +325,6 @@ public enum AgentSetupStep: Equatable, Sendable {
   /// 同名顶层布尔值，避免该值与当前 provider 的结构化配置表发生类型冲突。
   case enableFeature(path: String, key: String)
   case installManagedArtifact(directory: String, kind: AgentManagedArtifactKind)
-  /// 把 provider 的 statusLine 命令替换成 Aster 包装器以上报用量；原值备份到 `sideFile`，
-  /// 卸载时恢复。Claude 热读 statusLine，该步骤不需要重启 Agent。
-  case manageStatusLine(path: String, sideFile: String)
-
-  /// 只有 statusLine 步骤时 Agent 无需重启。
-  public var requiresAgentRestart: Bool {
-    if case .manageStatusLine = self { return false }
-    return true
-  }
 }
 
 public enum AgentSetupBlocker: Equatable, Sendable {
@@ -381,29 +378,18 @@ public enum AgentSetupPlanner {
     if provider == .codex, evidence.requiredFeatureEnabled != true {
       steps.append(.enableFeature(path: "~/.codex/config.toml", key: "hooks"))
     }
-    // `== false` 而不是 `!= true`：nil 表示该 provider 不适用 statusLine 上报。
-    if provider == .claudeCode, evidence.managedStatusLineInstalled == false {
-      steps.append(.manageStatusLine(
-        path: AgentProvider.claudeStatusLineSettingsPath,
-        sideFile: AgentProvider.claudeStatusLineSideFilePath))
-    }
 
     return AgentSetupPlan(
       provider: provider,
       steps: steps,
       blocker: nil,
-      requiresAgentRestart: steps.contains(where: \.requiresAgentRestart),
+      requiresAgentRestart: !steps.isEmpty,
       linksAfterNextLifecycleEvent: provider.linksOnLifecycleEvent && !steps.isEmpty
     )
   }
 }
 
 extension AgentProvider {
-  /// Claude Code 的 statusLine 所在设置文件，以及 Aster 备份原 statusLine 的 side file。
-  public static let claudeStatusLineSettingsPath = "~/.claude/settings.json"
-  public static let claudeStatusLineSideFilePath =
-    "~/Library/Application Support/Aster/agent-integration/claude-statusline.json"
-
   /// Aster 受管集成的安装步骤；只有屏幕检测清单的 provider 返回 nil。
   fileprivate var installationStep: AgentSetupStep? {
     switch self {
