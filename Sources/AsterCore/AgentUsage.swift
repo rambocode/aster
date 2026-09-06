@@ -4,6 +4,9 @@ import Foundation
 public enum AgentUsageWindowKind: String, Codable, Equatable, Sendable, CaseIterable {
   case fiveHour
   case weekly
+  /// 按模型单独计费的周窗口（Claude 的 `weekly_scoped`，例如 Fable）。标签由服务端给的
+  /// 模型名决定，所以实际展示走 `AgentUsageWindow.displayLabel`，这里只是兜底。
+  case modelWeekly
   /// 当前会话的上下文窗口占比；目前只有 Codex 提供（来自 rollout 文件）。
   case session
 
@@ -12,6 +15,7 @@ public enum AgentUsageWindowKind: String, Codable, Equatable, Sendable, CaseIter
     switch self {
     case .fiveHour: "5h"
     case .weekly: "周"
+    case .modelWeekly: "模型周"
     case .session: "会话"
     }
   }
@@ -27,15 +31,24 @@ public struct AgentUsageWindow: Equatable, Sendable {
   public let resetsAt: Date?
   /// tooltip 里的补充说明（例如累计 token 数）。
   public let detail: String?
+  /// 覆盖 `kind.shortLabel` 的展示名；用于服务端才知道名字的窗口（模型级周配额的模型名）。
+  public let label: String?
 
   /// 非有限数（NaN / inf）没有展示意义，直接拒绝而不是钳成 0。
-  public init?(kind: AgentUsageWindowKind, usedPercent: Double, resetsAt: Date? = nil, detail: String? = nil) {
+  public init?(
+    kind: AgentUsageWindowKind, usedPercent: Double, resetsAt: Date? = nil, detail: String? = nil,
+    label: String? = nil
+  ) {
     guard usedPercent.isFinite else { return nil }
     self.kind = kind
     self.usedPercent = min(max(usedPercent, 0), Self.maximumPercent)
     self.resetsAt = resetsAt
     self.detail = detail
+    self.label = label
   }
+
+  /// 用量条与 tooltip 实际显示的标签。
+  public var displayLabel: String { label ?? kind.shortLabel }
 }
 
 /// 一个 Pane 当前 Agent 的用量快照。

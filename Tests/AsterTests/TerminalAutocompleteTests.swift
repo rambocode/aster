@@ -756,3 +756,44 @@ func terminalAutocompleteSingleCandidateNeverOpensPanel() async throws {
   _ = controller.handle(.escape)
   #expect(!controller.panelVisible)
 }
+
+// 项目命令（最近一次 Agent 会话的 resume）必须是首个候选：空 prompt 时 ghost 就是整条命令，
+// 输入了前缀时仍排第一且 Tab 只补尚未输入的后缀；前缀不匹配时不出现。
+@Test("项目 resume 命令是补全首选项，空 prompt 与前缀都排第一")
+@MainActor
+func terminalAutocompleteRanksProjectCommandFirst() async throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let controller = TerminalAutocompleteController(
+    service: fixture.service,
+    sessionIdentifier: "session",
+    controls: { fixture.controls.value },
+    currentDirectory: { "/project" }
+  )
+  var queriedDirectories: [String] = []
+  controller.projectCommandProvider = { directory in
+    queriedDirectories.append(directory)
+    return ProjectCommandSuggestion(command: "claude --resume sess-42", description: "恢复 Claude Code 会话")
+  }
+  controller.attach(to: view)
+  view.onAutocompleteInput = { controller.receiveInput($0) }
+  view.onAutocompleteOutput = { controller.receiveOutput($0) }
+
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.refreshNow()
+  #expect(queriedDirectories == ["/project"])
+  #expect(controller.currentResult.candidates.first?.insertText == "claude --resume sess-42")
+  #expect(controller.currentResult.candidates.first?.kind == .snippet)
+  #expect(controller.currentResult.ghostText == "claude --resume sess-42")
+
+  controller.receiveInput(Array("cla".utf8)[...])
+  controller.refreshNow()
+  #expect(controller.currentResult.candidates.first?.insertText == "claude --resume sess-42")
+  #expect(controller.currentResult.ghostText == "ude --resume sess-42")
+
+  controller.receiveInput(Array("git ".utf8)[...])
+  controller.refreshNow()
+  #expect(controller.currentResult.candidates.first?.insertText != "claude --resume sess-42")
+}

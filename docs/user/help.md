@@ -285,6 +285,7 @@ Open Quickly 打开后输入焦点会直接落在搜索框，无需再点击即�
 
 - **恢复复用器会话**：快照时前台是 `tmux` / `screen`，重启后在首个 Prompt 自动执行 `tmux attach -t <会话>` 或 `screen -r <会话>`（解析不出会话名时用无参附着）。
 - **恢复 Code Agent 会话**：Claude / Codex / OpenCode 以原生 `--resume` 重连（与“智能体”页是同一开关）。
+- **项目最近一次 Agent 会话 = 补全首选项**：已安装 lifecycle hook 的 Agent（Claude Code、Codex、Grok Build 等）退出时，窗口顶部会提示该会话的 resume 命令（如 `claude --resume <session-id>`），Aster 记住“这个项目目录最近一次的会话”。之后在同一目录的任何终端 Pane 里，空 prompt 的 inline 补全 ghost 直接显示整条 resume 命令，候选面板里它排第一（图钉图标，描述“恢复 Claude Code 会话”），按 Tab 接受、回车执行；输入 `cl` 之类前缀时仍排第一。命令按 provider 区分：Claude / Grok 是 `claude --resume <id>` / `grok --resume <id>`，Codex 是 `codex resume <id>`，OpenCode / Kimi / Pi 是 `--session <id>`。只记录有原生 resume 能力的 provider；每个目录只保留最新一条，再次结束会覆盖。它不会自动执行任何命令。
 - **终端恢复协议（OSC 88）**：程序可以声明自己重启后应如何被拉起。`printf '\e]88;query\a'` 会收到 `\e]88;supported;v=1\a`；`printf '\e]88;restart=nvim .\a'` 声明恢复命令，`\e]88;clear\a` 撤销。声明只写入工作区快照，恢复时作为普通输入发送，不会被解释执行。
 - **恢复时重新运行进程**：“不重启 / 仅白名单内 / 所有运行中的进程”。白名单按逗号分隔、按命令前缀匹配（`npm run` 匹配 `npm run dev`）。
 

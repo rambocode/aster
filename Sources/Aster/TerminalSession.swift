@@ -2376,6 +2376,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 返回 false 表示当前目标不属于 Aster 内部 Pane 能力，协调器会安全回退系统应用。
   var onRequestOpenInAster: ((URL, Bool) -> Bool)?
   var onCommandFinished: (() -> Void)?
+  /// 已绑定 session ID 的 Agent 结束（命令退出或 PTY 退出）时上报 provider 与 session ID，
+  /// 供窗口层登记「项目最近会话」并提示可 resume 的 ID。仅在 lifecycle hook 提供过 ID 时触发。
+  var onAgentSessionEnded: ((AgentProvider, String) -> Void)?
+  /// 按当前目录提供「项目命令」补全首选项（该项目最近一次 Agent 会话的 resume 命令）。
+  /// 由窗口层注入；补全控制器每次刷新时按目录查询，返回 nil 表示没有可推荐的命令。
+  var projectCommandSuggestionProvider: ((String) -> ProjectCommandSuggestion?)?
   var onPasteIntoComposer: ((String) -> Void)? {
     didSet {
       terminalView?.onPasteIntoComposer = onPasteIntoComposer
@@ -2611,6 +2617,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         }
       )
       autocomplete.attach(to: view)
+      autocomplete.projectCommandProvider = { [weak self] directory in
+        self?.projectCommandSuggestionProvider?(directory)
+      }
       autocomplete.onCommandSubmitted = { [weak self] command in
         self?.recordSubmittedCommand(command)
       }
@@ -2965,6 +2974,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         }
       )
       autocomplete.attach(to: view)
+      autocomplete.projectCommandProvider = { [weak self] directory in
+        self?.projectCommandSuggestionProvider?(directory)
+      }
       autocomplete.onCommandSubmitted = { [weak self] command in
         self?.recordSubmittedCommand(command)
       }
@@ -4284,6 +4296,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       clearAwaitingInput()
       stopAgentScreenMonitor()
       agentTaskState = .idle
+      reportAgentSessionEndedIfNeeded()
       activeAgentProvider = nil
       clearAgentUsage()
       agentProviderIsTitleEvidenceOnly = false
@@ -4732,6 +4745,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     send(record.command)
   }
 
+  /// 在清空 Agent 绑定之前上报「会话已结束」。必须在 provider / session ID 置 nil 之前调用。
+  private func reportAgentSessionEndedIfNeeded() {
+    guard let provider = activeAgentProvider, let sessionID = activeAgentSessionID else { return }
+    onAgentSessionEnded?(provider, sessionID)
+  }
+
   /// 用户在 prompt 出现前接管终端（输入任何内容）时放弃自动重连。
   func cancelRestoredAgentResume() {
     pendingRestoredAgentResume = nil
@@ -5026,6 +5045,7 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
       self.hasRunningCommand = false
       self.awaitingInput = false
       self.stopAgentScreenMonitor()
+      self.reportAgentSessionEndedIfNeeded()
       self.activeAgentProvider = nil
       self.activeAgentSessionID = nil
       self.clearAgentUsage()

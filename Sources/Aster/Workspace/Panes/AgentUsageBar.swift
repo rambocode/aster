@@ -2,7 +2,7 @@ import AppKit
 import AsterCore
 
 /// 终端 Pane 底部的 Agent 用量条：左侧 provider 名，右侧按快照里存在的窗口显示
-/// 「5h / 周 / 会话」三个小 meter。不承担任何自动行为；唯一的交互是点击整条
+/// 「5h / 周 / 模型周 / 会话」几个小 meter。不承担任何自动行为；唯一的交互是点击整条
 /// 向 Agent 提交它自己的统计命令（`AgentProvider.usageStatsCommand`）。
 @MainActor
 final class AgentUsageBarView: NSView {
@@ -32,7 +32,7 @@ final class AgentUsageBarView: NSView {
     stack.spacing = 12
     stack.translatesAutoresizingMaskIntoConstraints = false
     stack.addArrangedSubview(providerLabel)
-    // 固定创建三个 meter，按快照显隐；这样 `apply` 只改数值，不增删子视图。
+    // 固定按 kind 全集创建 meter，按快照显隐；这样 `apply` 只改数值，不增删子视图。
     for kind in AgentUsageWindowKind.allCases {
       let meter = AgentUsageMeterView(kind: kind)
       meters[kind] = meter
@@ -82,7 +82,7 @@ final class AgentUsageBarView: NSView {
     }
     setAccessibilityLabel(
       "\(snapshot.provider.displayName) 用量 "
-        + snapshot.windows.map { "\($0.kind.shortLabel) \(Int($0.usedPercent))%" }.joined(separator: "，"))
+        + snapshot.windows.map { "\($0.displayLabel) \(Int($0.usedPercent))%" }.joined(separator: "，"))
   }
 }
 
@@ -136,6 +136,8 @@ final class AgentUsageMeterView: NSView {
   required init?(coder: NSCoder) { nil }
 
   func apply(_ window: AgentUsageWindow) {
+    // 模型级周窗口的标签来自服务端（模型名），同一个 meter 在模型更名后要跟着变。
+    label.stringValue = window.displayLabel
     fraction = min(max(window.usedPercent / 100, 0), 1)
     isWarning = window.usedPercent >= AgentUsageBarView.warningThreshold
     percentLabel.stringValue = "\(Int(window.usedPercent.rounded()))%"
@@ -146,7 +148,7 @@ final class AgentUsageMeterView: NSView {
 
   /// tooltip：窗口名 + 重置时间（本地时刻与相对时长）+ 补充说明。
   static func tooltip(for window: AgentUsageWindow, now: Date = Date()) -> String {
-    var parts = ["\(window.kind.shortLabel) 已用 \(Int(window.usedPercent.rounded()))%"]
+    var parts = ["\(window.displayLabel) 已用 \(Int(window.usedPercent.rounded()))%"]
     if let resetsAt = window.resetsAt {
       let formatter = DateFormatter()
       formatter.dateStyle = .short

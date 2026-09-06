@@ -17,6 +17,13 @@ protocol TerminalAutocompleteHost: AnyObject {
   func visibleShellSuggestion(after text: String) -> String?
 }
 
+/// 按目录推荐的整行「项目命令」（目前是该项目最近一次 Agent 会话的 resume 命令）。
+/// 它以最高分排在候选首位：空 prompt 时 ghost 直接显示整条命令，Tab 一次接受。
+struct ProjectCommandSuggestion: Equatable {
+  let command: String
+  let description: String
+}
+
 /// 只接受紧接真实光标的可见后缀；长空白后的右侧提示符不属于补全。
 private func shellSuggestionSuffix(prefix: String, typed: String, suffix: String) -> String? {
   guard !typed.isEmpty, prefix.hasSuffix(typed) else { return nil }
@@ -208,6 +215,8 @@ final class TerminalAutocompleteController {
   private var acceptsLateSubmittedInput = false
   /// 命令文本只在当前 Pane 内存中用于自动进度匹配，不进入工作区快照或日志。
   var onCommandSubmitted: ((String) -> Void)?
+  /// 目录 → 项目命令首选项。每次刷新按当前目录查询，返回 nil 时不插入任何候选。
+  var projectCommandProvider: ((String) -> ProjectCommandSuggestion?)?
 
   private var refreshTask: Task<Void, Never>?
   private var helpProbeTask: Task<Void, Never>?
@@ -552,6 +561,23 @@ final class TerminalAutocompleteController {
         ghostText: String(correction.dropFirst(tracker.line.count)),
         replacementStart: 0
       )
+    }
+    // 项目命令（最近一次 Agent 会话的 resume）排在首位；上一条命令的纠错意图更强，
+    // 两者同时存在时纠错保持第一，项目命令紧随其后。
+    if let project = projectCommandProvider?(currentDirectory()),
+      project.command.hasPrefix(tracker.line), project.command != tracker.line
+    {
+      let candidate = AutocompleteCandidate(
+        insertText: project.command,
+        description: project.description,
+        kind: .snippet,
+        score: Double.greatestFiniteMagnitude,
+        replacement: .fullLine
+      )
+      var candidates = result.candidates.filter { $0.insertText != project.command }
+      let insertionIndex = candidates.first?.kind == .correction ? 1 : 0
+      candidates.insert(candidate, at: insertionIndex)
+      result = AutocompleteResult.make(candidates: candidates, line: tracker.line)
     }
     currentResult = result
     selectedIndex = min(selectedIndex, max(0, result.candidates.count - 1))

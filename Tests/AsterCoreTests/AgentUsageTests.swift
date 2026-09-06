@@ -48,6 +48,31 @@ struct AgentUsageTests {
     #expect(ClaudeAccountQuotaParser.windows(fromUsageResponse: Data("{}".utf8)) == nil)
     #expect(ClaudeAccountQuotaParser.windows(fromUsageResponse: Data("nope".utf8)) == nil)
 
+    // 模型级周配额只在 limits 数组里（顶层 seven_day_opus / seven_day_sonnet 已恒为 null）。
+    let scopedResponse = #"""
+      {"five_hour":{"utilization":23.0,"resets_at":"2026-09-06T06:59:59.627986+00:00"},
+       "seven_day":{"utilization":12.0,"resets_at":"2026-09-07T10:59:59.628019+00:00"},
+       "seven_day_opus":null,"seven_day_sonnet":null,
+       "limits":[
+         {"kind":"session","group":"session","percent":23,"resets_at":"2026-09-06T06:59:59.627986+00:00","scope":null,"is_active":true},
+         {"kind":"weekly_all","group":"weekly","percent":12,"resets_at":"2026-09-07T10:59:59.628019+00:00","scope":null,"is_active":false},
+         {"kind":"weekly_scoped","group":"weekly","percent":20,"resets_at":"2026-09-07T10:59:59.628223+00:00","scope":{"model":{"id":null,"display_name":"Fable"},"surface":null},"is_active":false}]}
+      """#.data(using: .utf8)!
+    let scoped = try #require(ClaudeAccountQuotaParser.windows(fromUsageResponse: scopedResponse))
+    #expect(scoped.map(\.kind) == [.fiveHour, .weekly, .modelWeekly])
+    #expect(scoped.map(\.usedPercent) == [23, 12, 20])
+    #expect(scoped[2].displayLabel == "Fable")
+    #expect(scoped[2].resetsAt.map { Int($0.timeIntervalSince1970) } == 1_788_778_799)
+    #expect(scoped[0].displayLabel == "5h")
+
+    // 没有 weekly_scoped、或 scope 缺模型名时不产出模型窗口。
+    let noScope = #"""
+      {"five_hour":{"utilization":1.0},
+       "limits":[{"kind":"weekly_scoped","percent":20,"scope":{"model":{"display_name":""}}},
+                 {"kind":"weekly_all","percent":12,"scope":null}]}
+      """#.data(using: .utf8)!
+    #expect(try #require(ClaudeAccountQuotaParser.windows(fromUsageResponse: noScope)).map(\.kind) == [.fiveHour])
+
     let now = Date(timeIntervalSince1970: 1_788_000_000)
     let valid = #"{"claudeAiOauth":{"accessToken":"tok","expiresAt":1788000001000}}"#.data(using: .utf8)!
     let expired = #"{"claudeAiOauth":{"accessToken":"tok","expiresAt":1787999999000}}"#.data(using: .utf8)!

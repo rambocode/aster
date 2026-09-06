@@ -882,7 +882,9 @@ final class WorkspaceViewController: NSViewController {
         toast.centerXAnchor.constraint(equalTo: view.centerXAnchor),
         toast.topAnchor.constraint(equalTo: view.topAnchor, constant: 46),
       ])
-      DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+      // 短提示 2.2s；长文本（如带 resume 会话 ID 的提示）按字数延长，上限 8s，保证读得完。
+      let duration = min(8.0, max(2.2, Double(notice.count) * 0.09))
+      DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
         if self?.model.notice == notice { self?.model.notice = nil }
       }
     }

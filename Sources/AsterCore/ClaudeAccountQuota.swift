@@ -24,7 +24,7 @@ public enum ClaudeAccountQuotaParser {
   }
 
   /// `five_hour` / `seven_day` 的 `utilization` 已是百分比（0–100），`resets_at` 是带时区的
-  /// ISO 8601（含小数秒）。两个窗口都缺失时返回 nil，让调用方保留上一份数据。
+  /// ISO 8601（含小数秒）。所有窗口都缺失时返回 nil，让调用方保留上一份数据。
   public static func windows(fromUsageResponse data: Data) -> [AgentUsageWindow]? {
     guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
     var windows: [AgentUsageWindow] = []
@@ -38,7 +38,29 @@ public enum ClaudeAccountQuotaParser {
         windows.append(window)
       }
     }
+    if let scoped = modelWeeklyWindow(fromUsageObject: object) { windows.append(scoped) }
     return windows.isEmpty ? nil : windows
+  }
+
+  /// 模型级周配额（当前是 Fable）。服务端已把它从顶层 `seven_day_opus` / `seven_day_sonnet`
+  /// 这类固定键迁到 `limits` 数组，那些旧键现在恒为 null；新数据只出现在
+  /// `kind == "weekly_scoped"` 的条目里，模型名在 `scope.model.display_name`。
+  /// 只取第一条：一个账号同一时刻只会有一个受限模型，取多条 UI 也放不下。
+  static func modelWeeklyWindow(fromUsageObject object: [String: Any]) -> AgentUsageWindow? {
+    guard let limits = object["limits"] as? [[String: Any]] else { return nil }
+    for entry in limits {
+      guard entry["kind"] as? String == "weekly_scoped",
+        let percent = entry["percent"] as? NSNumber,
+        let scope = entry["scope"] as? [String: Any],
+        let model = scope["model"] as? [String: Any],
+        let name = model["display_name"] as? String, !name.isEmpty, name.utf8.count <= 64
+      else { continue }
+      let resetsAt = (entry["resets_at"] as? String).flatMap(parseISO8601)
+      return AgentUsageWindow(
+        kind: .modelWeekly, usedPercent: percent.doubleValue, resetsAt: resetsAt,
+        detail: "\(name) 的每周配额，与总周配额分开计算", label: name)
+    }
+    return nil
   }
 
   /// 服务端返回 `2026-09-06T06:59:59.860820+00:00`：六位小数秒，`ISO8601DateFormatter`

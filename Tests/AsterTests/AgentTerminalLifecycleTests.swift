@@ -830,3 +830,49 @@ func monitorStopBreaksRetainCycle() throws {
   }
   #expect(weakMonitor == nil)
 }
+
+// Agent 结束 → 登记项目最近会话并提示 resume 命令 → 同目录补全首选项就是这条命令。
+@Test("Agent 结束后登记项目会话，同目录补全首选 resume 命令")
+@MainActor
+func endedAgentSessionIsRecordedAndSuggestedForProject() throws {
+  let (suiteName, defaults) = try agentLifecycleDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  let model = AppModel(defaults: defaults)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  let session = try #require(tab.activeSession)
+  let terminal = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+  let directory = session.resolvedCurrentWorkingDirectory()
+
+  // 没有 session ID 的结束不登记：hook 未绑定时无 ID 可 resume。
+  terminal.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .claudeCode, signal: .processing, sessionID: nil))
+  terminal.onShellIntegrationEvent?(.commandFinished(exitStatus: 0))
+  #expect(model.latestProjectAgentSession(for: directory) == nil)
+  #expect(model.projectAgentResumeSuggestion(for: directory) == nil)
+
+  terminal.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .claudeCode, signal: .processing, sessionID: "sess-42"))
+  terminal.onShellIntegrationEvent?(.commandFinished(exitStatus: 0))
+  let record = try #require(model.latestProjectAgentSession(for: directory))
+  #expect(record.provider == .claudeCode)
+  #expect(record.sessionID == "sess-42")
+  let notice = try #require(model.notice)
+  #expect(notice.contains("--resume"), "notice: \(notice)")
+  #expect(notice.contains("sess-42"), "notice: \(notice)")
+
+  // 补全首选项：整条 resume 命令 + provider 描述；其它目录没有。
+  let suggestion = try #require(model.projectAgentResumeSuggestion(for: directory))
+  #expect(suggestion.command == "claude --resume sess-42")
+  #expect(suggestion.description.contains("Claude Code"))
+  #expect(model.projectAgentResumeSuggestion(for: "/private/tmp") == nil)
+  // 终端 Pane 的提供者链路已接通（Tab → Session）。
+  #expect(session.projectCommandSuggestionProvider?(directory) == suggestion)
+
+  // 记录随 defaults 持久化，新 AppModel 也能读到。
+  let reloaded = AppModel(defaults: defaults)
+  #expect(reloaded.latestProjectAgentSession(for: directory)?.sessionID == "sess-42")
+}

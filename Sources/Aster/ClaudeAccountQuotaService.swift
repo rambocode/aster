@@ -2,6 +2,14 @@ import AsterCore
 import Combine
 import Foundation
 
+/// `/usage` 一次请求的结果；服务据此决定丢 token、退避还是解析。
+enum ClaudeUsageFetchOutcome: Equatable, Sendable {
+  case success(Data)
+  case unauthorized
+  case rateLimited(retryAfter: TimeInterval?)
+  case failure(status: Int?)
+}
+
 /// Claude 账号级配额（5 小时 / 每周）的唯一数据源：用 Claude Code 自己维护的 OAuth token
 /// 直接调官方 `/api/oauth/usage`，与 Claude 的 `/usage` 面板同源同值。
 ///
@@ -18,8 +26,10 @@ final class ClaudeAccountQuotaService: ObservableObject {
   static let minimumRefreshInterval: TimeInterval = 10
   nonisolated static let keychainService = "Claude Code-credentials"
 
-  typealias Fetcher = @Sendable (_ token: String) async -> Data?
+  typealias Fetcher = @Sendable (_ token: String) async -> ClaudeUsageFetchOutcome
   typealias TokenReader = @Sendable () async -> String?
+  /// 限流 / 服务端错误后的退避上限；每次失败翻倍，成功一次即归零。
+  nonisolated static let maximumBackoff: TimeInterval = 600
 
   /// 最近一次成功拉取的窗口；nil 表示还没拿到过（无 token、离线、API key 登录）。
   @Published private(set) var windows: [AgentUsageWindow]?
@@ -31,6 +41,9 @@ final class ClaudeAccountQuotaService: ObservableObject {
   private var refreshTask: Task<Void, Never>?
   private var lastFetchAt: Date?
   private var cachedToken: String?
+  /// 退避截止时间：在此之前任何 refresh（包括定时轮询）都直接跳过，避免把 429 越打越多。
+  private var backoffUntil: Date?
+  private var consecutiveFailures = 0
 
   init(
     fetch: @escaping Fetcher = ClaudeAccountQuotaService.fetchUsage,
@@ -73,29 +86,68 @@ final class ClaudeAccountQuotaService: ObservableObject {
     }
   }
 
-  /// 拉一次：token 失效（401 或读不到）时清掉缓存，下一次重新读 Keychain。
+  /// 拉一次。只有 401 才丢弃 token（重新读 Keychain）；429 与其它服务端错误保留 token 并
+  /// 按 `Retry-After` / 指数退避暂停，否则一次限流会被当成「未登录」而永远不显示用量条。
+  /// 每个失败分支都写诊断（不含 token），让「条为什么没出来」能在日志里看到。
   func refresh(force: Bool) async {
-    if !force, let lastFetchAt, Date().timeIntervalSince(lastFetchAt) < Self.minimumRefreshInterval {
+    let now = Date()
+    if let backoffUntil, now < backoffUntil { return }
+    if !force, let lastFetchAt, now.timeIntervalSince(lastFetchAt) < Self.minimumRefreshInterval {
       return
     }
-    lastFetchAt = Date()
+    lastFetchAt = now
     if cachedToken == nil { cachedToken = await readToken() }
-    guard let token = cachedToken else { return }
-    guard let data = await fetch(token) else {
-      cachedToken = nil
+    guard let token = cachedToken else {
+      DiagnosticsCenter.shared.record(
+        "claude_quota.token_unavailable", level: .warning, category: .integration)
       return
     }
-    if let parsed = ClaudeAccountQuotaParser.windows(fromUsageResponse: data), parsed != windows {
-      windows = parsed
+    switch await fetch(token) {
+    case .success(let data):
+      guard let parsed = ClaudeAccountQuotaParser.windows(fromUsageResponse: data) else {
+        DiagnosticsCenter.shared.record(
+          "claude_quota.parse_failed", level: .warning, category: .integration,
+          attributes: ["bytes": "\(data.count)"])
+        return
+      }
+      backoffUntil = nil
+      consecutiveFailures = 0
+      if parsed != windows { windows = parsed }
+    case .unauthorized:
+      cachedToken = nil
+      DiagnosticsCenter.shared.record(
+        "claude_quota.unauthorized", level: .warning, category: .integration)
+    case .rateLimited(let retryAfter):
+      let delay = retryAfter ?? nextBackoff()
+      backoffUntil = now.addingTimeInterval(delay)
+      DiagnosticsCenter.shared.record(
+        "claude_quota.rate_limited", level: .warning, category: .integration,
+        attributes: ["retry_after_seconds": "\(Int(delay))"])
+    case .failure(let status):
+      let delay = nextBackoff()
+      backoffUntil = now.addingTimeInterval(delay)
+      DiagnosticsCenter.shared.record(
+        "claude_quota.fetch_failed", level: .warning, category: .integration,
+        attributes: ["status": status.map(String.init) ?? "network", "retry_after_seconds": "\(Int(delay))"])
     }
   }
+
+  /// 指数退避：60s、120s、240s … 封顶 `maximumBackoff`。
+  private func nextBackoff() -> TimeInterval {
+    consecutiveFailures += 1
+    return min(Self.maximumBackoff, 60 * pow(2, Double(consecutiveFailures - 1)))
+  }
+
+  /// 诊断 seam：当前是否处于退避期。
+  var isBackingOff: Bool { backoffUntil.map { Date() < $0 } ?? false }
 
   /// 测试直接注入窗口，绕过网络。
   func injectForTesting(_ windows: [AgentUsageWindow]) {
     self.windows = windows
   }
 
-  /// 官方接口；非 200 返回 nil（含 401 让调用方丢弃 token）。
+  /// 官方接口。按状态码分流：200 成功、401 token 失效、429 限流（带 `Retry-After` 秒数）、
+  /// 其余（含网络错误）为一般失败。
   static let fetchUsage: Fetcher = { token in
     var request = URLRequest(url: ClaudeAccountQuotaParser.usageEndpoint, timeoutInterval: 8)
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -103,9 +155,18 @@ final class ClaudeAccountQuotaService: ObservableObject {
     request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
     request.setValue("Aster", forHTTPHeaderField: "User-Agent")
     guard let (data, response) = try? await URLSession.shared.data(for: request),
-      (response as? HTTPURLResponse)?.statusCode == 200
-    else { return nil }
-    return data
+      let http = response as? HTTPURLResponse
+    else { return .failure(status: nil) }
+    switch http.statusCode {
+    case 200: return .success(data)
+    case 401: return .unauthorized
+    case 429:
+      // 实测服务端会返回 `Retry-After: 0`，按字面执行等于不退避；只有正值才采信，
+      // 否则交给指数退避。
+      let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+      return .rateLimited(retryAfter: retryAfter.flatMap { $0 > 0 ? min($0, maximumBackoff) : nil })
+    default: return .failure(status: http.statusCode)
+    }
   }
 
   /// 读 Claude Code 的凭据：先登录钥匙串（首次会弹一次系统授权，选「始终允许」即可），

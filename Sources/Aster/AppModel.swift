@@ -367,6 +367,12 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// 避免单次 `cd` 同时触发无关界面刷新。
   var onWorkingDirectoryChanged: ((String) -> Void)?
   var onCommandFinished: ((UUID) -> Void)?
+  /// 已绑定 session ID 的 Agent 结束时上报 (paneID, provider, sessionID, 工作目录)。
+  /// 窗口层据此登记「项目最近会话」并提示 resume ID。
+  var onAgentSessionEnded: ((UUID, AgentProvider, String, String) -> Void)?
+  /// 目录 → 补全首选项（项目最近一次 Agent 会话的 resume 命令）。由窗口层注入，
+  /// 标签内每个终端 Pane 的补全控制器共用。
+  var projectCommandSuggestionProvider: ((String) -> ProjectCommandSuggestion?)?
   /// 标签活动徽章的局部状态出口。Agent lifecycle 与完成未读在一次会话中频繁切换，
   /// 侧栏和 Dock 需要立即更新，但不能借 `objectWillChange` 重建整个 Pane 树。
   var onActivityBadgeChanged: (() -> Void)?
@@ -1001,6 +1007,14 @@ final class TerminalTabItem: ObservableObject, Identifiable {
         self?.applyProgramTitle(paneID: descriptor.id, code: code, text: text)
       }
       session.onCommandFinished = { [weak self] in self?.onCommandFinished?(descriptor.id) }
+      session.onAgentSessionEnded = { [weak self, weak session] provider, sessionID in
+        guard let self, let session else { return }
+        self.onAgentSessionEnded?(
+          descriptor.id, provider, sessionID, session.resolvedCurrentWorkingDirectory())
+      }
+      session.projectCommandSuggestionProvider = { [weak self] directory in
+        self?.projectCommandSuggestionProvider?(directory)
+      }
       Publishers.MergeMany(
         session.$lifecycleState.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         session.$isRunning.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
@@ -1253,6 +1267,7 @@ final class AppModel: ObservableObject {
   private var workspacePersistScheduled = false
   private let recentlyClosedKey = "aster.workspace.recently-closed.v1"
   private let frequentFoldersKey = "aster.frequent-folders.v1"
+  private let agentProjectSessionsKey = "aster.agent-project-sessions.v1"
   private let workflowRecipeTrustKey = "aster.workflow-recipe-trust.v1"
   private let closedWorkspaceItemsKey = "aster.workspace.closed-items.v1"
   private let applicationSessionRunningKey = "aster.session.running.v1"
@@ -1267,6 +1282,8 @@ final class AppModel: ObservableObject {
   var workflowCLISelectorResolver: ((String) -> UUID?)?
   private var recentlyClosedTabs: RecentlyClosedTabs
   private var frequentFolders: FrequentFolders
+  /// 项目目录 → 最近一次结束的 Agent 会话；新开项目标签时据此自动 resume。
+  private var agentProjectSessions: AgentProjectSessionRegistry
   private var workflowRecipeTrust: WorkflowRecipeTrustStore
   private var closedWorkspaceItems: [ClosedWorkspaceItem]
   private var shouldRestoreInitialWorkspace = true
@@ -1301,6 +1318,13 @@ final class AppModel: ObservableObject {
       frequentFolders = decoded
     } else {
       frequentFolders = FrequentFolders()
+    }
+    if let data = defaults.data(forKey: agentProjectSessionsKey),
+      let decoded = try? AgentProjectSessionStore.decode(data)
+    {
+      agentProjectSessions = decoded
+    } else {
+      agentProjectSessions = AgentProjectSessionRegistry()
     }
     if let data = defaults.data(forKey: workflowRecipeTrustKey),
       let decoded = try? JSONDecoder().decode(WorkflowRecipeTrustStore.self, from: data)
@@ -3668,6 +3692,12 @@ final class AppModel: ObservableObject {
       self?.completeWorkflowCLICommand(paneID: paneID)
       self?.dispatchNextRecipeCommand(paneID: paneID)
     }
+    tab.onAgentSessionEnded = { [weak self] _, provider, sessionID, directory in
+      self?.recordEndedAgentSession(provider: provider, sessionID: sessionID, directory: directory)
+    }
+    tab.projectCommandSuggestionProvider = { [weak self] directory in
+      self?.projectAgentResumeSuggestion(for: directory)
+    }
     tab.onAgentTaskStateChanged = { [weak self] paneID, state in
       self?.advancePromptQueue(paneID: paneID, reportedState: state)
       // 状态翻转的时刻正是 transcript 落盘/追加的时刻：借此解析会话标题，
@@ -3702,6 +3732,54 @@ final class AppModel: ObservableObject {
   private func persistFrequentFolders() {
     guard let data = try? FrequentFolderStore.encode(frequentFolders) else { return }
     defaults.set(data, forKey: frequentFoldersKey)
+  }
+
+  /// Agent 退出后登记「该项目最近一次会话」并提示可 resume 的 ID。没有原生 resume 能力
+  /// 的 provider 不登记也不提示；命令用当前启动前缀规划，与手动 Resume 完全一致。
+  private func recordEndedAgentSession(provider: AgentProvider, sessionID: String, directory: String) {
+    guard agentProjectSessions.record(
+      provider: provider, sessionID: sessionID, projectDirectory: directory)
+    else { return }
+    persistAgentProjectSessions()
+    let command = projectAgentResumeCommand(provider: provider, sessionID: sessionID) ?? sessionID
+    notice = "\(provider.displayName) 会话已结束 · \(command) · 在此项目新开终端时补全首选"
+  }
+
+  private func persistAgentProjectSessions() {
+    guard let data = try? AgentProjectSessionStore.encode(agentProjectSessions) else { return }
+    defaults.set(data, forKey: agentProjectSessionsKey)
+  }
+
+  /// 该目录最近一次结束的 Agent 会话（供测试与 UI 查询）。
+  func latestProjectAgentSession(for directory: String) -> AgentProjectSessionRecord? {
+    agentProjectSessions.latest(for: directory)
+  }
+
+  /// 该目录的补全首选项：最近一次 Agent 会话的 resume 命令；没有记录或无法规划时为 nil。
+  func projectAgentResumeSuggestion(for directory: String) -> ProjectCommandSuggestion? {
+    guard let record = agentProjectSessions.latest(for: directory),
+      let command = projectAgentResumeCommand(
+        provider: record.provider, sessionID: record.sessionID)
+    else { return nil }
+    return ProjectCommandSuggestion(
+      command: command, description: "恢复 \(record.provider.displayName) 会话")
+  }
+
+  /// 展示用的 resume 命令文本；规划失败（provider 无 resume 能力等）返回 nil。
+  private func projectAgentResumeCommand(provider: AgentProvider, sessionID: String) -> String? {
+    let components = launchComponents(for: provider)
+    guard let executable = components.first,
+      let prefix = try? AgentLaunchPrefix(
+        executable: executable, arguments: Array(components.dropFirst())),
+      let plan = try? AgentSessionCommandPlanner.plan(
+        .resume, sessionID: sessionID,
+        configuration: AgentSessionConfiguration(provider: provider), launchPrefix: prefix)
+    else { return nil }
+    // 展示用：只对含空白/引号的参数加单引号，避免 toast 里满屏 `'claude' '--resume'`。
+    return ([plan.executable] + plan.arguments).map { argument in
+      argument.rangeOfCharacter(from: .whitespacesAndNewlines) == nil && !argument.contains("'")
+        ? argument : WorkflowShellCommandEncoder.quote(argument)
+    }.joined(separator: " ")
   }
 
   /// 退出事务的可取消阶段。这里只处理未保存文档，不写退出标记、不终止进程；多窗口

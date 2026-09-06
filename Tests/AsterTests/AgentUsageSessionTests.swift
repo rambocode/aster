@@ -116,7 +116,7 @@ func sessionMergesClaudeAccountQuotaWithSessionWindow() async throws {
       fetchCount.value += 1
       let text = responses.value.first ?? ""
       if responses.value.count > 1 { responses.value.removeFirst() }
-      return text.data(using: .utf8)
+      return .success(Data(text.utf8))
     },
     readToken: { "token" }
   )
@@ -160,5 +160,49 @@ private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
 /// 测试用离线账号配额服务：不读钥匙串、不发网络请求；用 `injectForTesting` 直接喂窗口。
 @MainActor
 func offlineClaudeQuotaService() -> ClaudeAccountQuotaService {
-  ClaudeAccountQuotaService(fetch: { _ in nil }, readToken: { nil })
+  ClaudeAccountQuotaService(fetch: { _ in .failure(status: nil) }, readToken: { nil })
+}
+
+// 429 不是「未登录」：token 必须保留、进入退避，退避期内的轮询不再发请求；恢复 200 后正常出数。
+@Test("Claude 配额 429 保留 token 并退避，401 才丢弃 token")
+@MainActor
+func claudeQuotaServiceBacksOffOnRateLimitAndDropsTokenOnlyOnUnauthorized() async throws {
+  let outcomes = MutableBox<[ClaudeUsageFetchOutcome]>([
+    .rateLimited(retryAfter: 30),
+    .success(Data(#"{"five_hour":{"utilization":18.0},"seven_day":{"utilization":11.0}}"#.utf8)),
+  ])
+  let fetchCount = MutableBox(0)
+  let tokenReads = MutableBox(0)
+  let service = ClaudeAccountQuotaService(
+    fetch: { _ in
+      fetchCount.value += 1
+      return outcomes.value.isEmpty ? .failure(status: nil) : outcomes.value.removeFirst()
+    },
+    readToken: { tokenReads.value += 1; return "token" }
+  )
+
+  await service.refresh(force: true)
+  #expect(fetchCount.value == 1)
+  #expect(service.windows == nil)
+  #expect(service.isBackingOff)
+  // 退避期内强制刷新也不打接口，token 也没有被重新读取。
+  await service.refresh(force: true)
+  #expect(fetchCount.value == 1)
+  #expect(tokenReads.value == 1)
+
+  // 换成 401：必须真正丢 token（下一次会重新读 Keychain）。
+  let unauthorized = ClaudeAccountQuotaService(
+    fetch: { _ in .unauthorized }, readToken: { tokenReads.value += 1; return "token" })
+  tokenReads.value = 0
+  await unauthorized.refresh(force: true)
+  await unauthorized.refresh(force: true)
+  #expect(tokenReads.value == 2)
+  #expect(!unauthorized.isBackingOff)
+
+  // 成功一次即清退避并出数。
+  let healthy = ClaudeAccountQuotaService(
+    fetch: { _ in .success(Data(#"{"five_hour":{"utilization":18.0}}"#.utf8)) }, readToken: { "token" })
+  await healthy.refresh(force: true)
+  #expect(healthy.windows?.first?.usedPercent == 18)
+  #expect(!healthy.isBackingOff)
 }
