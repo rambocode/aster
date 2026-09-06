@@ -16,17 +16,20 @@ enum ClaudeUsageFetchOutcome: Equatable, Sendable {
 /// 为什么不用 statusLine：它的百分比来自上一次 API 响应头，只在本 pane 的 Claude 收到响应
 /// 时刷新，多 pane 或其它设备用掉的额度看不到，且精度只有两位小数，常与 `/usage` 差 1%。
 ///
-/// 生命周期由 pane 引用计数驱动：有 Claude pane 时每 60s 轮询，Agent 每轮结束再补拉一次；
-/// 没有 Claude pane 时不发任何请求。token 只在内存里缓存到过期，不落盘。
+/// 整个 app 只有一个实例（`shared`），所有 Claude pane 共用同一份结果与同一条请求时间线：
+/// 无论多少个 pane、Agent 启停多少次，对 `/usage` 的请求之间至少间隔 `minimumRequestInterval`。
+/// 生命周期由 pane 引用计数驱动：有 Claude pane 时按 `pollInterval` 轮询，Agent 每轮结束再
+/// 补拉一次；没有 Claude pane 时不发任何请求。token 只在内存里缓存到过期，不落盘。
 @MainActor
 final class ClaudeAccountQuotaService: ObservableObject {
   static let shared = ClaudeAccountQuotaService()
   /// 实测 `/usage` 的限流很紧：请求间隔 60s 仍会 429，≥90s 才稳定放行，且一旦被限流要
-  /// 静默数分钟才恢复。轮询 5 分钟一次、活动补拉至少隔 3 分钟，把整个 app 的请求频率
-  /// 压到远低于阈值；数据新旧由用量条 tooltip 标注。
-  static let pollInterval: Duration = .seconds(300)
-  /// 活动触发的补拉与上次请求至少间隔这么久，避免连续几轮回复把接口打成 429。
-  static let minimumRefreshInterval: TimeInterval = 180
+  /// 静默数分钟才恢复。之前 429 的真正来源不是轮询本身，而是每次 Claude 进程数从 0 变 1
+  /// 都无视间隔强制拉一次：多个 pane 反复启停就把接口打爆。现在全 app 共享一条请求
+  /// 时间线，任何来源（轮询首拍、轮询、回复结束补拉）都遵守同一个 90s 最小间隔。
+  static let minimumRequestInterval: TimeInterval = 90
+  /// 轮询周期与最小间隔一致：补拉发生后轮询会顺延到距上次请求满 90s，不会叠加请求。
+  static let pollInterval: Duration = .seconds(90)
   nonisolated static let keychainService = "Claude Code-credentials"
 
   typealias Fetcher = @Sendable (_ token: String) async -> ClaudeUsageFetchOutcome
@@ -81,6 +84,8 @@ final class ClaudeAccountQuotaService: ObservableObject {
     else { return }
     windows = cache.windows
     fetchedAt = cache.fetchedAt
+    // 快速重启也算在同一条请求时间线里：上次成功不到 90s 就不要再立刻打一次接口。
+    lastFetchAt = cache.fetchedAt
   }
 
   private func persistCache() {
@@ -90,16 +95,28 @@ final class ClaudeAccountQuotaService: ObservableObject {
     defaults.set(data, forKey: Self.cacheKey)
   }
 
-  /// pane 的 Claude 开始运行：第一个引用启动轮询并立即拉一次。
+  /// pane 的 Claude 开始运行：第一个引用启动轮询。轮询每一拍（含首拍）都先等到距上次
+  /// 请求满 `minimumRequestInterval` 再拉，所以 Claude 刚退出又启动、或另一个 pane 接着
+  /// 启动，都不会额外产生请求；已有数据时用量条直接显示共享的上次结果。
   func retain() {
     retainCount += 1
     guard retainCount == 1 else { return }
     pollTask = Task { [weak self] in
       while !Task.isCancelled {
-        await self?.refresh(force: true)
+        // 等待时长按上次请求时刻推算：补拉刚发生过就多等一会儿，从没请求过则立即拉。
+        let wait = self?.secondsUntilNextRequestAllowed() ?? 0
+        if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+        guard !Task.isCancelled else { return }
+        await self?.refresh(force: false)
         try? await Task.sleep(for: Self.pollInterval)
       }
     }
+  }
+
+  /// 距下一次允许请求还差多少秒；0 表示现在就可以。
+  private func secondsUntilNextRequestAllowed() -> TimeInterval {
+    guard let lastFetchAt else { return 0 }
+    return max(0, Self.minimumRequestInterval - Date().timeIntervalSince(lastFetchAt))
   }
 
   /// 最后一个 Claude pane 结束：停止轮询，保留最后数据供下次立刻显示。
@@ -123,13 +140,15 @@ final class ClaudeAccountQuotaService: ObservableObject {
     }
   }
 
-  /// 拉一次。只有 401 才丢弃 token（重新读 Keychain）；429 与其它服务端错误保留 token 并
+  /// 拉一次。`force` 只绕过最小间隔（仅测试使用），生产路径一律 `false`，由共享的
+  /// `lastFetchAt` 保证全 app 的请求间隔；退避期任何来源都不发请求。
+  /// 只有 401 才丢弃 token（重新读 Keychain）；429 与其它服务端错误保留 token 并
   /// 按 `Retry-After` / 指数退避暂停，否则一次限流会被当成「未登录」而永远不显示用量条。
   /// 每个失败分支都写诊断（不含 token），让「条为什么没出来」能在日志里看到。
   func refresh(force: Bool) async {
     let now = Date()
     if let backoffUntil, now < backoffUntil { return }
-    if !force, let lastFetchAt, now.timeIntervalSince(lastFetchAt) < Self.minimumRefreshInterval {
+    if !force, let lastFetchAt, now.timeIntervalSince(lastFetchAt) < Self.minimumRequestInterval {
       return
     }
     lastFetchAt = now

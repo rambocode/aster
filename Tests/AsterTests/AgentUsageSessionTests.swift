@@ -211,6 +211,37 @@ func claudeQuotaServiceBacksOffOnRateLimitAndDropsTokenOnlyOnUnauthorized() asyn
   #expect(!healthy.isBackingOff)
 }
 
+// 全 app 共享一条请求时间线：Claude 反复启停、多个 pane 同时引用，都不会在 90s 内再打接口。
+@Test("Claude 配额服务在最小间隔内重复 retain 不会重复请求")
+@MainActor
+func claudeQuotaServiceSharesRequestTimelineAcrossRetains() async throws {
+  let fetchCount = MutableBox(0)
+  let service = ClaudeAccountQuotaService(
+    fetch: { _ in
+      fetchCount.value += 1
+      return .success(Data(#"{"five_hour":{"utilization":18.0}}"#.utf8))
+    },
+    readToken: { "token" }, defaults: nil)
+
+  // 第一个 pane：从没请求过，轮询首拍立即拉。
+  service.retain()
+  try await waitUntil { fetchCount.value == 1 }
+  // 第二个 pane 同时引用：共享结果，不新增请求。
+  service.retain()
+  try await Task.sleep(for: .milliseconds(100))
+  #expect(fetchCount.value == 1)
+  // 两个 pane 都结束再立刻启动一个新的：引用计数回到 1，轮询重启，但距上次请求不足 90s，
+  // 首拍必须等待而不是立刻请求；补拉同样被拦下。
+  service.release()
+  service.release()
+  service.retain()
+  service.refreshSoon(delay: .zero)
+  try await Task.sleep(for: .milliseconds(200))
+  #expect(fetchCount.value == 1)
+  #expect(service.windows?.first?.usedPercent == 18)
+  service.release()
+}
+
 // 缓存：成功一次后写入 defaults；新实例启动即回填并带上原拉取时刻；过期缓存不回填。
 @Test("Claude 配额缓存跨启动回填，超过 24h 不回填")
 @MainActor
