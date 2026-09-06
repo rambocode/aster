@@ -22,7 +22,7 @@
 
 - 修复 Command 点击 `.app`、可执行文件或二进制文件路径时被错误送进编辑器并报错的问题：这些目标现在直接交给系统打开，目录与文本文件仍按设置在 Aster 内打开。
 ]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.11/Aster-0.4.11.dmg" length="27306273" type="application/octet-stream" sparkle:edSignature="XigkyxYjS7XC971GoIWiThoFrS0hCU/S8rV6t+TuyqnkshyKVFGPfXUND7he+9Ymzcm/5pfq0xJbGUdKq8zsDg=="/>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.11/Aster-0.4.11.dmg" length="27428991" type="application/octet-stream" sparkle:edSignature="syUU8AA7pc/Y6mq8vXeZLBsxk3CggcTsVay437jmkEL+SLvXLyD1r/47dmf3SKV88sz0wcckSYgLyY/RqG57Aw=="/>
         </item>
         <item>
             <title>0.4.10</title>
