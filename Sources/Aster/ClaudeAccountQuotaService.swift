@@ -21,9 +21,12 @@ enum ClaudeUsageFetchOutcome: Equatable, Sendable {
 @MainActor
 final class ClaudeAccountQuotaService: ObservableObject {
   static let shared = ClaudeAccountQuotaService()
-  static let pollInterval: Duration = .seconds(60)
+  /// 实测 `/usage` 的限流很紧：请求间隔 60s 仍会 429，≥90s 才稳定放行，且一旦被限流要
+  /// 静默数分钟才恢复。轮询 5 分钟一次、活动补拉至少隔 3 分钟，把整个 app 的请求频率
+  /// 压到远低于阈值；数据新旧由用量条 tooltip 标注。
+  static let pollInterval: Duration = .seconds(300)
   /// 活动触发的补拉与上次请求至少间隔这么久，避免连续几轮回复把接口打成 429。
-  static let minimumRefreshInterval: TimeInterval = 10
+  static let minimumRefreshInterval: TimeInterval = 180
   nonisolated static let keychainService = "Claude Code-credentials"
 
   typealias Fetcher = @Sendable (_ token: String) async -> ClaudeUsageFetchOutcome
@@ -32,10 +35,23 @@ final class ClaudeAccountQuotaService: ObservableObject {
   nonisolated static let maximumBackoff: TimeInterval = 600
 
   /// 最近一次成功拉取的窗口；nil 表示还没拿到过（无 token、离线、API key 登录）。
+  /// 启动时先从本地缓存回填，所以接口被限流期间用量条仍能立刻显示上次的数值。
   @Published private(set) var windows: [AgentUsageWindow]?
+  /// `windows` 对应的拉取时刻；缓存回填时是上次成功的时间，用量条据此标注数据新旧。
+  private(set) var fetchedAt: Date?
+  static let cacheKey = "aster.claude-quota.cache.v1"
+  /// 缓存超过这个时长就不回填：周配额一天内变化有限，隔天的数字只会误导。
+  static let cacheMaximumAge: TimeInterval = 24 * 3_600
+
+  /// 本地缓存的载荷：窗口 + 拉取时刻。
+  private struct Cache: Codable {
+    let windows: [AgentUsageWindow]
+    let fetchedAt: Date
+  }
 
   private let fetch: Fetcher
   private let readToken: TokenReader
+  private let defaults: UserDefaults?
   private var retainCount = 0
   private var pollTask: Task<Void, Never>?
   private var refreshTask: Task<Void, Never>?
@@ -45,12 +61,33 @@ final class ClaudeAccountQuotaService: ObservableObject {
   private var backoffUntil: Date?
   private var consecutiveFailures = 0
 
+  /// `defaults` 为 nil 时不读写缓存（测试用）。
   init(
     fetch: @escaping Fetcher = ClaudeAccountQuotaService.fetchUsage,
-    readToken: @escaping TokenReader = ClaudeAccountQuotaService.readKeychainToken
+    readToken: @escaping TokenReader = ClaudeAccountQuotaService.readKeychainToken,
+    defaults: UserDefaults? = .standard
   ) {
     self.fetch = fetch
     self.readToken = readToken
+    self.defaults = defaults
+    restoreCache()
+  }
+
+  /// 启动回填：只接受 24h 内的缓存。
+  private func restoreCache() {
+    guard let defaults, let data = defaults.data(forKey: Self.cacheKey),
+      let cache = try? JSONDecoder().decode(Cache.self, from: data),
+      Date().timeIntervalSince(cache.fetchedAt) < Self.cacheMaximumAge, !cache.windows.isEmpty
+    else { return }
+    windows = cache.windows
+    fetchedAt = cache.fetchedAt
+  }
+
+  private func persistCache() {
+    guard let defaults, let windows, let fetchedAt,
+      let data = try? JSONEncoder().encode(Cache(windows: windows, fetchedAt: fetchedAt))
+    else { return }
+    defaults.set(data, forKey: Self.cacheKey)
   }
 
   /// pane 的 Claude 开始运行：第一个引用启动轮询并立即拉一次。
@@ -112,7 +149,9 @@ final class ClaudeAccountQuotaService: ObservableObject {
       }
       backoffUntil = nil
       consecutiveFailures = 0
+      fetchedAt = now
       if parsed != windows { windows = parsed }
+      persistCache()
     case .unauthorized:
       cachedToken = nil
       DiagnosticsCenter.shared.record(
@@ -132,10 +171,11 @@ final class ClaudeAccountQuotaService: ObservableObject {
     }
   }
 
-  /// 指数退避：60s、120s、240s … 封顶 `maximumBackoff`。
+  /// 指数退避：120s、240s、480s … 封顶 `maximumBackoff`。起点取 120s 是因为被限流后
+  /// 60s 内再试几乎必然还是 429，只会把惩罚窗口拖长。
   private func nextBackoff() -> TimeInterval {
     consecutiveFailures += 1
-    return min(Self.maximumBackoff, 60 * pow(2, Double(consecutiveFailures - 1)))
+    return min(Self.maximumBackoff, 120 * pow(2, Double(consecutiveFailures - 1)))
   }
 
   /// 诊断 seam：当前是否处于退避期。
@@ -143,6 +183,7 @@ final class ClaudeAccountQuotaService: ObservableObject {
 
   /// 测试直接注入窗口，绕过网络。
   func injectForTesting(_ windows: [AgentUsageWindow]) {
+    fetchedAt = Date()
     self.windows = windows
   }
 

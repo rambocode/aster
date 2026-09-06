@@ -74,7 +74,7 @@ final class AgentUsageBarView: NSView {
     window?.invalidateCursorRects(for: self)
     for (kind, meter) in meters {
       if let window = snapshot.window(kind) {
-        meter.apply(window)
+        meter.apply(window, updatedAt: snapshot.updatedAt)
         meter.isHidden = false
       } else {
         meter.isHidden = true
@@ -135,20 +135,26 @@ final class AgentUsageMeterView: NSView {
 
   required init?(coder: NSCoder) { nil }
 
-  func apply(_ window: AgentUsageWindow) {
+  func apply(_ window: AgentUsageWindow, updatedAt: Date? = nil) {
     // 模型级周窗口的标签来自服务端（模型名），同一个 meter 在模型更名后要跟着变。
     label.stringValue = window.displayLabel
     fraction = min(max(window.usedPercent / 100, 0), 1)
     isWarning = window.usedPercent >= AgentUsageBarView.warningThreshold
     percentLabel.stringValue = "\(Int(window.usedPercent.rounded()))%"
-    toolTip = Self.tooltip(for: window)
+    toolTip = Self.tooltip(for: window, updatedAt: updatedAt)
     applyColors()
     needsLayout = true
   }
 
-  /// tooltip：窗口名 + 重置时间（本地时刻与相对时长）+ 补充说明。
-  static func tooltip(for window: AgentUsageWindow, now: Date = Date()) -> String {
+  /// tooltip：窗口名 + 重置时间（本地时刻与相对时长）+ 补充说明 + 数据时刻。
+  /// `/usage` 接口限流很紧，数据常常来自几分钟前甚至上次启动的缓存，超过两分钟就标出来。
+  static func tooltip(
+    for window: AgentUsageWindow, updatedAt: Date? = nil, now: Date = Date()
+  ) -> String {
     var parts = ["\(window.displayLabel) 已用 \(Int(window.usedPercent.rounded()))%"]
+    if let updatedAt, now.timeIntervalSince(updatedAt) > 120 {
+      parts.append("数据更新于 \(RelativeTime.string(since: updatedAt, relativeTo: now))")
+    }
     if let resetsAt = window.resetsAt {
       let formatter = DateFormatter()
       formatter.dateStyle = .short

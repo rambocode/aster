@@ -4875,7 +4875,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// Claude 快照 = 账号级 5h / 周窗口；还没拿到数据时不显示条。
   private func recomputeClaudeUsage() {
     guard activeAgentProvider == .claudeCode, claudeAccountQuotaRetained else { return }
-    let snapshot = claudeAccountQuota.windows.map { AgentUsageSnapshot(provider: .claudeCode, windows: $0) }
+    let snapshot = claudeAccountQuota.windows.map {
+      AgentUsageSnapshot(
+        provider: .claudeCode, windows: $0, updatedAt: claudeAccountQuota.fetchedAt ?? Date())
+    }
+    // `==` 忽略 updatedAt，缓存回填后拿到同样数字时不会重绘；这里只在数值变化时发布。
     if agentUsage != snapshot { agentUsage = snapshot }
   }
 

@@ -22,7 +22,7 @@ public enum AgentUsageWindowKind: String, Codable, Equatable, Sendable, CaseIter
 }
 
 /// 单个用量窗口：已用百分比与可选的重置时间。`session` 表示当前会话的上下文窗口占比。
-public struct AgentUsageWindow: Equatable, Sendable {
+public struct AgentUsageWindow: Codable, Equatable, Sendable {
   /// 超限（如 Claude spend_limit）时百分比可以 >100，但钳制到该上限避免 UI 溢出。
   public static let maximumPercent: Double = 999
 

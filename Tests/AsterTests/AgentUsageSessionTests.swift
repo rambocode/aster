@@ -118,7 +118,8 @@ func sessionMergesClaudeAccountQuotaWithSessionWindow() async throws {
       if responses.value.count > 1 { responses.value.removeFirst() }
       return .success(Data(text.utf8))
     },
-    readToken: { "token" }
+    readToken: { "token" },
+    defaults: nil
   )
   let session = TerminalSession(workingDirectory: "/tmp")
   session.claudeAccountQuota = service
@@ -160,7 +161,7 @@ private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
 /// 测试用离线账号配额服务：不读钥匙串、不发网络请求；用 `injectForTesting` 直接喂窗口。
 @MainActor
 func offlineClaudeQuotaService() -> ClaudeAccountQuotaService {
-  ClaudeAccountQuotaService(fetch: { _ in .failure(status: nil) }, readToken: { nil })
+  ClaudeAccountQuotaService(fetch: { _ in .failure(status: nil) }, readToken: { nil }, defaults: nil)
 }
 
 // 429 不是「未登录」：token 必须保留、进入退避，退避期内的轮询不再发请求；恢复 200 后正常出数。
@@ -178,7 +179,8 @@ func claudeQuotaServiceBacksOffOnRateLimitAndDropsTokenOnlyOnUnauthorized() asyn
       fetchCount.value += 1
       return outcomes.value.isEmpty ? .failure(status: nil) : outcomes.value.removeFirst()
     },
-    readToken: { tokenReads.value += 1; return "token" }
+    readToken: { tokenReads.value += 1; return "token" },
+    defaults: nil
   )
 
   await service.refresh(force: true)
@@ -192,7 +194,8 @@ func claudeQuotaServiceBacksOffOnRateLimitAndDropsTokenOnlyOnUnauthorized() asyn
 
   // 换成 401：必须真正丢 token（下一次会重新读 Keychain）。
   let unauthorized = ClaudeAccountQuotaService(
-    fetch: { _ in .unauthorized }, readToken: { tokenReads.value += 1; return "token" })
+    fetch: { _ in .unauthorized }, readToken: { tokenReads.value += 1; return "token" },
+    defaults: nil)
   tokenReads.value = 0
   await unauthorized.refresh(force: true)
   await unauthorized.refresh(force: true)
@@ -201,8 +204,40 @@ func claudeQuotaServiceBacksOffOnRateLimitAndDropsTokenOnlyOnUnauthorized() asyn
 
   // 成功一次即清退避并出数。
   let healthy = ClaudeAccountQuotaService(
-    fetch: { _ in .success(Data(#"{"five_hour":{"utilization":18.0}}"#.utf8)) }, readToken: { "token" })
+    fetch: { _ in .success(Data(#"{"five_hour":{"utilization":18.0}}"#.utf8)) }, readToken: { "token" },
+    defaults: nil)
   await healthy.refresh(force: true)
   #expect(healthy.windows?.first?.usedPercent == 18)
   #expect(!healthy.isBackingOff)
+}
+
+// 缓存：成功一次后写入 defaults；新实例启动即回填并带上原拉取时刻；过期缓存不回填。
+@Test("Claude 配额缓存跨启动回填，超过 24h 不回填")
+@MainActor
+func claudeQuotaServiceRestoresRecentCacheAcrossLaunches() async throws {
+  let suiteName = "AgentUsageSessionTests.cache.\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suiteName))
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let first = ClaudeAccountQuotaService(
+    fetch: { _ in .success(Data(#"{"five_hour":{"utilization":33.0}}"#.utf8)) },
+    readToken: { "token" }, defaults: defaults)
+  await first.refresh(force: true)
+  #expect(first.windows?.first?.usedPercent == 33)
+
+  // 第二个实例即便接口一直 429，也能立刻拿到上次的数字与时刻。
+  let second = ClaudeAccountQuotaService(
+    fetch: { _ in .rateLimited(retryAfter: nil) }, readToken: { "token" }, defaults: defaults)
+  #expect(second.windows?.first?.usedPercent == 33)
+  let fetchedAt = try #require(second.fetchedAt)
+  #expect(abs(fetchedAt.timeIntervalSinceNow) < 5)
+
+  // 把缓存时间改到 25h 前：不回填。
+  var stale = try #require(defaults.data(forKey: ClaudeAccountQuotaService.cacheKey))
+  var object = try #require(try JSONSerialization.jsonObject(with: stale) as? [String: Any])
+  object["fetchedAt"] = Date().addingTimeInterval(-25 * 3_600).timeIntervalSinceReferenceDate
+  stale = try JSONSerialization.data(withJSONObject: object)
+  defaults.set(stale, forKey: ClaudeAccountQuotaService.cacheKey)
+  let third = ClaudeAccountQuotaService(
+    fetch: { _ in .rateLimited(retryAfter: nil) }, readToken: { "token" }, defaults: defaults)
+  #expect(third.windows == nil)
 }
