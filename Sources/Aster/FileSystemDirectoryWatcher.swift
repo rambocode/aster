@@ -3,11 +3,14 @@ import Foundation
 
 enum FileSystemDirectoryWatcherError: Error, LocalizedError, Equatable {
   case cannotOpenDirectory(Int32)
+  case cannotOpenFile(Int32)
 
   var errorDescription: String? {
     switch self {
     case .cannotOpenDirectory(let code):
       "无法监听本地目录（errno=\(code)）。"
+    case .cannotOpenFile(let code):
+      "无法监听本地文件（errno=\(code)）。"
     }
   }
 }
@@ -20,11 +23,23 @@ enum FileSystemDirectoryWatcherError: Error, LocalizedError, Equatable {
 @MainActor
 final class FileSystemDirectoryWatcher {
   private let directory: URL
+  private let eventMask: DispatchSource.FileSystemEvent
+  private let isFile: Bool
   // DispatchSource 的取消和 deinit 都允许从非隔离上下文发生；生产读写仍只在 MainActor。
   private nonisolated(unsafe) var source: DispatchSourceFileSystemObject?
 
   init(directory: URL) {
     self.directory = directory.standardizedFileURL
+    eventMask = [.write, .delete, .rename, .attrib, .revoke]
+    isFile = false
+  }
+
+  /// 监听普通文件的追加或替换（vnode 对文件同样可用）。追加写同时触发 `.write` 与
+  /// `.extend`；文件被改名或删除时上报，调用方应停止并重新定位。
+  init(file: URL) {
+    directory = file.standardizedFileURL
+    eventMask = [.write, .extend, .delete, .rename, .revoke]
+    isFile = true
   }
 
   var isWatching: Bool { source != nil }
@@ -34,12 +49,14 @@ final class FileSystemDirectoryWatcher {
     guard source == nil else { return }
     let descriptor = Darwin.open(directory.path, O_EVTONLY | O_CLOEXEC)
     guard descriptor >= 0 else {
-      throw FileSystemDirectoryWatcherError.cannotOpenDirectory(errno)
+      throw isFile
+        ? FileSystemDirectoryWatcherError.cannotOpenFile(errno)
+        : FileSystemDirectoryWatcherError.cannotOpenDirectory(errno)
     }
 
     let source = DispatchSource.makeFileSystemObjectSource(
       fileDescriptor: descriptor,
-      eventMask: [.write, .delete, .rename, .attrib, .revoke],
+      eventMask: eventMask,
       queue: .main
     )
     source.setEventHandler {

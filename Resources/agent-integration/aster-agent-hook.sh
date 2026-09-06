@@ -1,12 +1,79 @@
 #!/bin/sh
 # Aster Agent lifecycle hook. Provider hooks execute this small, auditable bridge with
 # `state provider [session-id]` arguments. The hook payload is drained but never persisted or forwarded.
-state="${1-}"
-provider="${2-}"
-session_id="${3-}"
 maximum_payload_bytes=262144
 LC_ALL=C
 export LC_ALL
+
+# `statusline claudeCode`：Claude Code 的 statusLine 包装器。stdin 只能读一次：先整段吞进
+# 变量，提取 rate limit / context 用量写成 OSC 6974 `AgentUsage` 给所属 Pane，再把原 JSON
+# 喂给用户原来的 statusLine 命令并透传其 stdout。Claude 只会显示本脚本的 stdout。
+if [ "${1-}" = "statusline" ]; then
+  case "${2-}" in
+    claudeCode) ;;
+    *) /bin/cat >/dev/null 2>&1 || true; exit 0 ;;
+  esac
+  payload_with_marker=$(
+    /usr/bin/head -c $((maximum_payload_bytes + 1)) 2>/dev/null
+    /usr/bin/printf '\001'
+  )
+  payload="${payload_with_marker%?}"
+  /bin/cat >/dev/null 2>&1 || true
+
+  # 只取整数百分比与整数 epoch 秒；plutil 输出小数时截断，任何非数字内容一律丢弃。
+  extract_int() {
+    v=$(
+      /usr/bin/printf '%s' "$payload" \
+        | /usr/bin/plutil -extract "$1" raw -o - - 2>/dev/null \
+        || true
+    )
+    v="${v%%.*}"
+    case "$v" in ""|*[!0-9]*) v="" ;; esac
+    if [ "${#v}" -gt 12 ]; then v=""; fi
+    /usr/bin/printf '%s' "$v"
+  }
+
+  if [ "${#payload}" -le "$maximum_payload_bytes" ] && [ -w /dev/tty ]; then
+    five=$(extract_int rate_limits.five_hour.used_percentage)
+    five_reset=$(extract_int rate_limits.five_hour.resets_at)
+    week=$(extract_int rate_limits.seven_day.used_percentage)
+    week_reset=$(extract_int rate_limits.seven_day.resets_at)
+    ctx=$(extract_int context_window.used_percentage)
+    osc="AgentUsage=1;Provider=claudeCode"
+    if [ -n "$five" ]; then osc="$osc;FiveHour=$five${five_reset:+:$five_reset}"; fi
+    if [ -n "$week" ]; then osc="$osc;SevenDay=$week${week_reset:+:$week_reset}"; fi
+    if [ -n "$ctx" ]; then osc="$osc;Session=$ctx"; fi
+    if [ "$osc" != "AgentUsage=1;Provider=claudeCode" ]; then
+      /usr/bin/printf '\033]6974;%s\007' "$osc" 2>/dev/null > /dev/tty || true
+    fi
+  fi
+
+  # 透传：side file 里记录了接管前的 statusLine；只有 type=command 且 command 非空才执行。
+  # side file 缺失或为 null 时输出空（用户本来就没有 statusLine）。ASTER_STATUSLINE_SIDE_FILE
+  # 仅供测试注入。
+  side_file="${ASTER_STATUSLINE_SIDE_FILE:-$HOME/Library/Application Support/Aster/agent-integration/claude-statusline.json}"
+  original=""
+  if [ -f "$side_file" ] && [ ! -L "$side_file" ]; then
+    original_type=$(
+      /usr/bin/plutil -extract statusLine.type raw -expect string -o - "$side_file" 2>/dev/null \
+        || true
+    )
+    if [ "$original_type" = "command" ]; then
+      original=$(
+        /usr/bin/plutil -extract statusLine.command raw -expect string -o - "$side_file" 2>/dev/null \
+          || true
+      )
+    fi
+  fi
+  if [ -n "$original" ]; then
+    /usr/bin/printf '%s' "$payload" | /bin/sh -c "$original"
+  fi
+  exit 0
+fi
+
+state="${1-}"
+provider="${2-}"
+session_id="${3-}"
 
 case "$state" in
   processing|idle|awaiting-input) ;;

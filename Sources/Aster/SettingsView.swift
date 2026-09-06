@@ -1514,6 +1514,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         ) { [weak self] value in
           self?.preferences.configuration.agents.badgeAwaitingInput = value
         },
+        toggleRow(
+          "Pane 底部用量条", "Claude Code / Codex 运行时显示 5 小时、每周与当前会话用量",
+          value: preferences.configuration.agents.resolvedUsageBarEnabled
+        ) { [weak self] value in
+          self?.preferences.configuration.agents.usageBarEnabled = value
+        },
       ]),
       sectionTitle("通知"),
       card([
@@ -2646,6 +2652,36 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     catch { message = "无法打开清单目录：\(error.localizedDescription)"; refresh() }
   }
 
+  /// Claude Code statusLine 接管状态（用量上报）。hooks 已装的老用户不会再走 install，
+  /// 因此单独给一行动作；关闭「用量条」开关只隐藏条，不改这里。
+  private func claudeStatusLineStatus() -> (text: String, state: String) {
+    guard let status = try? agentSetupService.status(for: .claudeCode) else {
+      return ("配置不可安全读取", "denied")
+    }
+    switch status.managedStatusLineInstalled {
+    case true: return ("已接管：Claude 用量会上报到 Pane 底部", "authorized")
+    default: return ("未接管：Pane 底部不会显示 Claude 用量", "bannerDisabled")
+    }
+  }
+
+  private func toggleClaudeStatusLine() {
+    do {
+      let current = try agentSetupService.status(for: .claudeCode)
+      if current.managedStatusLineInstalled == true {
+        _ = try agentSetupService.uninstallManagedStatusLine()
+        message = "已恢复 Claude Code 原有 statusLine。"
+      } else if current.executableAvailable {
+        _ = try agentSetupService.install(.claudeCode)
+        message = "已接管 Claude Code statusLine；原有状态行继续显示，用量会上报到 Pane 底部。"
+      } else {
+        message = "未检测到 claude，请先安装 Claude Code CLI。"
+      }
+    } catch {
+      message = "Claude statusLine 操作失败：\(error.localizedDescription)"
+    }
+    refresh()
+  }
+
   /// 重新读取覆盖目录。已在运行的 Agent 会话继续用旧清单，新识别的会话用新清单。
   private func reloadAgentDetectionManifests() {
     AgentDetectionManifestStore.shared.reload()
@@ -3184,6 +3220,8 @@ extension SettingsViewController: WKNavigationDelegate {
       "shell.restoreProcessesMode": webRestoreProcessesMode(),
       "shell.notificationPermission": TerminalNotificationService.shared.webPermissionStatus.text,
       "shell.notificationPermissionState": TerminalNotificationService.shared.webPermissionStatus.state,
+      "agents.claudeStatusLine": claudeStatusLineStatus().text,
+      "agents.claudeStatusLineState": claudeStatusLineStatus().state,
       "shell.shellIntegration": configuration.shell.shellIntegration,
       "shell.sshIntegration": configuration.shell.sshIntegration,
       "shell.frecencyAutoRecord": configuration.shell.resolvedFrecencyAutoRecord,
@@ -3264,6 +3302,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "agents.badgeProcessing": configuration.agents.badgeProcessing,
       "agents.badgeTaskComplete": configuration.agents.badgeTaskComplete,
       "agents.badgeAwaitingInput": configuration.agents.badgeAwaitingInput,
+      "agents.usageBarEnabled": configuration.agents.resolvedUsageBarEnabled,
       "agents.notifyTaskComplete": configuration.agents.notifyTaskComplete,
       "agents.notifyAwaitingInput": configuration.agents.notifyAwaitingInput,
       "agents.screenDetectionEnabled": configuration.agents.resolvedScreenDetectionEnabled,
@@ -3766,6 +3805,7 @@ extension SettingsViewController: WKNavigationDelegate {
     case "agents.badgeProcessing": preferences.configuration.agents.badgeProcessing = try bool()
     case "agents.badgeTaskComplete": preferences.configuration.agents.badgeTaskComplete = try bool()
     case "agents.badgeAwaitingInput": preferences.configuration.agents.badgeAwaitingInput = try bool()
+    case "agents.usageBarEnabled": preferences.configuration.agents.usageBarEnabled = try bool()
     case "agents.notifyTaskComplete": preferences.configuration.agents.notifyTaskComplete = try bool()
     case "agents.notifyAwaitingInput": preferences.configuration.agents.notifyAwaitingInput = try bool()
     case "agents.screenDetectionEnabled": preferences.configuration.agents.screenDetectionEnabled = try bool()
@@ -4243,6 +4283,7 @@ extension SettingsViewController: WKNavigationDelegate {
     case "openThemesFolder": openThemesFolder()
     case "openAgentDetectionFolder": openAgentDetectionFolder()
     case "reloadAgentDetectionManifests": reloadAgentDetectionManifests()
+    case "manageClaudeStatusLine": toggleClaudeStatusLine()
     case "installFont": NSFontManager.shared.orderFrontFontPanel(nil)
     case "openFontsFolder": openFontsFolder()
     case "openRecipesFolder":

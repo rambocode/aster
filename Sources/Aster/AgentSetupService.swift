@@ -49,6 +49,8 @@ struct AgentSetupStatus: Equatable {
   let executablePath: String?
   let managedIntegrationInstalled: Bool
   let requiredFeatureEnabled: Bool?
+  /// Claude Code 的 statusLine 是否已指向 Aster 用量上报包装器；其它 provider 为 nil。
+  let managedStatusLineInstalled: Bool?
   let plan: AgentSetupPlan
 
   var executableAvailable: Bool { executablePath != nil }
@@ -72,6 +74,8 @@ struct AgentSetupService {
   static let managedArtifactFileName = "aster-agent-integration.ts"
   static let managedTOMLStartMarker = "# >>> Aster managed agent integration >>>"
   static let managedTOMLEndMarker = "# <<< Aster managed agent integration <<<"
+  /// side file 记录接管前的 statusLine 原值（或 null），卸载时据此恢复。
+  static let statusLineSideFileSchemaVersion = 1
 
   private static let schemaVersion = 1
   private static let artifactMarker = "// Aster managed agent integration v1"
@@ -123,16 +127,19 @@ struct AgentSetupService {
     let executablePath = executableLocator.path(for: provider.commandName)
     let managedIntegrationInstalled = try detectsManagedIntegration(for: provider)
     let requiredFeatureEnabled = try detectsRequiredFeature(for: provider)
+    let managedStatusLineInstalled = try detectsManagedStatusLine(for: provider)
     let evidence = AgentSetupEvidence(
       executableAvailable: executablePath != nil,
       managedIntegrationInstalled: managedIntegrationInstalled,
-      requiredFeatureEnabled: requiredFeatureEnabled
+      requiredFeatureEnabled: requiredFeatureEnabled,
+      managedStatusLineInstalled: managedStatusLineInstalled
     )
     return AgentSetupStatus(
       provider: provider,
       executablePath: executablePath,
       managedIntegrationInstalled: managedIntegrationInstalled,
       requiredFeatureEnabled: requiredFeatureEnabled,
+      managedStatusLineInstalled: managedStatusLineInstalled,
       plan: AgentSetupPlanner.plan(for: provider, evidence: evidence)
     )
   }
@@ -147,8 +154,8 @@ struct AgentSetupService {
     }
     guard !current.plan.steps.isEmpty else { return current }
 
-    // `map` 必须为全部步骤成功生成 edit 才返回；在此之前不会创建目录或改写文件。
-    let edits = try current.plan.steps.map { try prepareEdit(for: $0, provider: provider) }
+    // 必须为全部步骤成功生成 edit 才返回；在此之前不会创建目录或改写文件。
+    let edits = try prepareEdits(for: current.plan.steps, provider: provider)
     var attempted: [PreparedEdit] = []
     do {
       for edit in edits {
@@ -180,7 +187,9 @@ struct AgentSetupService {
   func uninstall(_ provider: AgentProvider) throws -> AgentSetupStatus {
     switch provider {
     case .claudeCode, .codex, .cursorCLI, .grokBuild:
-      try uninstallJSONHooks(for: provider)
+      // Claude 的 hooks 与 statusLine 同在 settings.json，合并成一次写入；Grok 共用该文件
+      // 但不得触碰 statusLine。
+      try uninstallJSONHooks(for: provider, restoreStatusLine: provider == .claudeCode)
     case .kimiCode:
       try uninstallManagedTOMLBlock(for: provider)
     case .openCode, .pi, .omp:
@@ -193,7 +202,22 @@ struct AgentSetupService {
     return try status(for: provider)
   }
 
-  private func uninstallJSONHooks(for provider: AgentProvider) throws {
+  /// 只恢复 Claude Code 的 statusLine（设置页「恢复 statusLine」动作），hooks 保持不变。
+  @discardableResult
+  func uninstallManagedStatusLine() throws -> AgentSetupStatus {
+    let target = try expandedManagedPath(AgentProvider.claudeStatusLineSettingsPath)
+    if let original = try readExistingRegularFile(at: target) {
+      var root = try decodeJSONObject(original.data, path: target.path)
+      let sideFile = try restoringStatusLine(into: &root)
+      if sideFile != nil {
+        try apply(PreparedEdit(target: target, contents: try serialize(root), original: original))
+      }
+      try removeStatusLineSideFile(sideFile)
+    }
+    return try status(for: .claudeCode)
+  }
+
+  private func uninstallJSONHooks(for provider: AgentProvider, restoreStatusLine: Bool) throws {
     let path = switch provider {
     case .claudeCode, .grokBuild: "~/.claude/settings.json"
     case .codex: "~/.codex/hooks.json"
@@ -203,7 +227,21 @@ struct AgentSetupService {
     let target = try expandedManagedPath(path)
     guard let original = try readExistingRegularFile(at: target) else { return }
     var root = try decodeJSONObject(original.data, path: target.path)
-    guard var hooks = root["hooks"] as? [String: Any] else { return }
+    var changed = removingManagedHooks(from: &root, provider: provider)
+    var sideFile: ExistingFile?
+    if restoreStatusLine {
+      sideFile = try restoringStatusLine(into: &root)
+      changed = changed || sideFile != nil
+    }
+    guard changed else { return }
+    try apply(PreparedEdit(target: target, contents: try serialize(root), original: original))
+    // settings.json 恢复成功后才删 side file；顺序反过来会在写入失败时丢失原值。
+    try removeStatusLineSideFile(sideFile)
+  }
+
+  /// 从 hooks 事件数组里移除当前 provider 的 Aster 条目；返回是否有改动。
+  private func removingManagedHooks(from root: inout [String: Any], provider: AgentProvider) -> Bool {
+    guard var hooks = root["hooks"] as? [String: Any] else { return false }
     var changed = false
     for specification in jsonHookSpecifications(for: provider) {
       guard var entries = hooks[specification.event] as? [[String: Any]] else { continue }
@@ -220,14 +258,54 @@ struct AgentSetupService {
         hooks[specification.event] = entries
       }
     }
-    guard changed else { return }
+    guard changed else { return false }
     if hooks.isEmpty { root.removeValue(forKey: "hooks") } else { root["hooks"] = hooks }
+    return true
+  }
+
+  /// 若 statusLine 仍是 Aster 包装器，则按 side file 写回原值（side file 为 null 或缺失时删键），
+  /// 返回读取到的 side file 以便写入成功后删除。用户已自行改掉 statusLine 时返回 nil 且不动。
+  private func restoringStatusLine(into root: inout [String: Any]) throws -> ExistingFile? {
+    guard isOwnedStatusLine(root["statusLine"]) else { return nil }
+    let side = try expandedManagedPath(AgentProvider.claudeStatusLineSideFilePath)
+    var restored: Any?
+    let sideFile = try readExistingRegularFile(at: side)
+    if let sideFile {
+      let object = try decodeJSONObject(sideFile.data, path: side.path)
+      guard object["provider"] as? String == AgentProvider.claudeCode.rawValue else {
+        throw AgentSetupServiceError.managedEntryConflict(side.path)
+      }
+      if let value = object["statusLine"], !(value is NSNull) { restored = value }
+    }
+    if let restored {
+      root["statusLine"] = restored
+    } else {
+      root.removeValue(forKey: "statusLine")
+    }
+    // 没有 side file 时也要返回非 nil 表示已改动；用一个空 ExistingFile 占位。
+    return sideFile ?? ExistingFile(data: Data(), permissions: nil)
+  }
+
+  /// 删除 side file 前复验字节；若安装后被外部改写则不删除，宁可残留也不覆盖新内容。
+  private func removeStatusLineSideFile(_ sideFile: ExistingFile?) throws {
+    guard let sideFile, !sideFile.data.isEmpty else { return }
+    let side = try expandedManagedPath(AgentProvider.claudeStatusLineSideFilePath)
+    guard try readExistingRegularFile(at: side)?.data == sideFile.data else {
+      throw AgentSetupServiceError.configurationChanged(side.path)
+    }
+    try fileManager.removeItem(at: side)
+  }
+
+  private func serialize(_ root: [String: Any]) throws -> Data {
+    guard JSONSerialization.isValidJSONObject(root) else {
+      throw AgentSetupServiceError.invalidConfiguration("settings")
+    }
     var contents = try JSONSerialization.data(
       withJSONObject: root,
       options: [.prettyPrinted, .sortedKeys]
     )
     contents.append(0x0A)
-    try apply(PreparedEdit(target: target, contents: contents, original: original))
+    return contents
   }
 
   private func uninstallManagedTOMLBlock(for provider: AgentProvider) throws {
@@ -315,6 +393,15 @@ struct AgentSetupService {
     }
   }
 
+  /// 只有 Claude Code 有受管 statusLine；它是否已接管取决于 command 是否等于生成值。
+  private func detectsManagedStatusLine(for provider: AgentProvider) throws -> Bool? {
+    guard provider == .claudeCode else { return nil }
+    let url = try expandedManagedPath(AgentProvider.claudeStatusLineSettingsPath)
+    guard let existing = try readExistingRegularFile(at: url) else { return false }
+    let root = try decodeJSONObject(existing.data, path: url.path)
+    return isOwnedStatusLine(root["statusLine"])
+  }
+
   private func detectsRequiredFeature(for provider: AgentProvider) throws -> Bool? {
     guard provider == .codex else { return nil }
     let url = try expandedManagedPath("~/.codex/config.toml")
@@ -327,6 +414,54 @@ struct AgentSetupService {
     return try featureBooleanValue(named: "hooks", in: text, path: url.path) ?? true
   }
 
+  /// 安装前读取的 JSON 文件状态：多个步骤改同一文件时在内存里累积，只产出一个 edit，
+  /// 否则第二个 edit 的 `original` 已经过期，`apply` 会报 configurationChanged。
+  private struct PendingJSONFile {
+    let target: URL
+    let original: ExistingFile?
+    var root: [String: Any]
+  }
+
+  private func prepareEdits(
+    for steps: [AgentSetupStep],
+    provider: AgentProvider
+  ) throws -> [PreparedEdit] {
+    var edits: [PreparedEdit] = []
+    var pending: PendingJSONFile?
+    func load(_ target: URL) throws -> PendingJSONFile {
+      if let pending, pending.target == target { return pending }
+      let original = try readExistingRegularFile(at: target)
+      let root = try original.map { try decodeJSONObject($0.data, path: target.path) } ?? [:]
+      return PendingJSONFile(target: target, original: original, root: root)
+    }
+    for step in steps {
+      switch step {
+      case .mergeManagedHooks(let path, .json):
+        let target = try expandedManagedPath(path)
+        var file = try load(target)
+        try mergeHooks(into: &file.root, provider: provider, path: target.path)
+        pending = file
+      case .manageStatusLine(let path, let sideFile):
+        let target = try expandedManagedPath(path)
+        var file = try load(target)
+        // side file 排在 settings.json 之前：回滚反序执行，settings 已改时 side file 一定存在。
+        if let sideEdit = try prepareStatusLineTakeover(
+          into: &file.root, sideFilePath: sideFile, settingsPath: target.path)
+        {
+          edits.append(sideEdit)
+        }
+        pending = file
+      default:
+        edits.append(try prepareEdit(for: step, provider: provider))
+      }
+    }
+    if let pending {
+      edits.append(PreparedEdit(
+        target: pending.target, contents: try serialize(pending.root), original: pending.original))
+    }
+    return edits
+  }
+
   private func prepareEdit(
     for step: AgentSetupStep,
     provider: AgentProvider
@@ -336,10 +471,15 @@ struct AgentSetupService {
       let target = try expandedManagedPath(path)
       switch format {
       case .json:
-        return try prepareJSONEdit(at: target, provider: provider)
+        let original = try readExistingRegularFile(at: target)
+        var root = try original.map { try decodeJSONObject($0.data, path: target.path) } ?? [:]
+        try mergeHooks(into: &root, provider: provider, path: target.path)
+        return PreparedEdit(target: target, contents: try serialize(root), original: original)
       case .toml:
         return try prepareTOMLManagedBlockEdit(at: target, provider: provider)
       }
+    case .manageStatusLine:
+      preconditionFailure("statusLine steps are prepared by prepareEdits")
 
     case .enableFeature(let path, let key):
       let target = try expandedManagedPath(path)
@@ -356,16 +496,16 @@ struct AgentSetupService {
     }
   }
 
-  private func prepareJSONEdit(
-    at target: URL,
-    provider: AgentProvider
-  ) throws -> PreparedEdit {
-    let original = try readExistingRegularFile(at: target)
-    var root = try original.map { try decodeJSONObject($0.data, path: target.path) } ?? [:]
+  /// 在内存 JSON 根对象上合并当前 provider 的 Aster hook 条目（纯内存，不写盘）。
+  private func mergeHooks(
+    into root: inout [String: Any],
+    provider: AgentProvider,
+    path: String
+  ) throws {
     var hooks: [String: Any]
     if let value = root["hooks"] {
       guard let object = value as? [String: Any] else {
-        throw AgentSetupServiceError.invalidConfiguration(target.path)
+        throw AgentSetupServiceError.invalidConfiguration(path)
       }
       hooks = object
     } else {
@@ -375,7 +515,7 @@ struct AgentSetupService {
       var entries: [[String: Any]]
       if let existing = hooks[specification.event] {
         guard let decoded = existing as? [[String: Any]] else {
-          throw AgentSetupServiceError.invalidConfiguration(target.path)
+          throw AgentSetupServiceError.invalidConfiguration(path)
         }
         entries = decoded
       } else {
@@ -392,14 +532,51 @@ struct AgentSetupService {
     root["hooks"] = hooks
     if provider == .cursorCLI, root["version"] == nil { root["version"] = 1 }
     guard JSONSerialization.isValidJSONObject(root) else {
-      throw AgentSetupServiceError.invalidConfiguration(target.path)
+      throw AgentSetupServiceError.invalidConfiguration(path)
     }
-    var data = try JSONSerialization.data(
-      withJSONObject: root,
-      options: [.prettyPrinted, .sortedKeys]
-    )
-    data.append(0x0A)
-    return PreparedEdit(target: target, contents: data, original: original)
+  }
+
+  /// 接管 statusLine：把原值（或 null）写进 side file，根对象的 statusLine 换成 Aster 包装器。
+  /// 已接管时不产出任何改动；statusLine 不是对象时拒绝，不猜测语义。
+  private func prepareStatusLineTakeover(
+    into root: inout [String: Any],
+    sideFilePath: String,
+    settingsPath: String
+  ) throws -> PreparedEdit? {
+    let current = root["statusLine"]
+    if isOwnedStatusLine(current) { return nil }
+    if let current, !(current is [String: Any]) {
+      throw AgentSetupServiceError.invalidConfiguration(settingsPath)
+    }
+    let side = try expandedManagedPath(sideFilePath)
+    let sideOriginal = try readExistingRegularFile(at: side)
+    let sideObject: [String: Any] = [
+      "schemaVersion": Self.statusLineSideFileSchemaVersion,
+      "provider": AgentProvider.claudeCode.rawValue,
+      "statusLine": current ?? NSNull(),
+    ]
+    root["statusLine"] = try generatedStatusLine(preserving: current as? [String: Any])
+    return PreparedEdit(target: side, contents: try serialize(sideObject), original: sideOriginal)
+  }
+
+  /// 包装器命令；`padding` 是用户版式偏好，接管后保留。
+  private func generatedStatusLine(preserving original: [String: Any]?) throws -> [String: Any] {
+    var object: [String: Any] = ["type": "command", "command": try statusLineCommand()]
+    if let padding = original?["padding"] { object["padding"] = padding }
+    return object
+  }
+
+  private func isOwnedStatusLine(_ value: Any?) -> Bool {
+    guard let object = value as? [String: Any],
+      object["type"] as? String == "command",
+      let command = try? statusLineCommand()
+    else { return false }
+    return object["command"] as? String == command
+  }
+
+  private func statusLineCommand() throws -> String {
+    let script = try validatedIntegrationScriptPath()
+    return "/bin/sh \(shellQuoted(script)) statusline \(AgentProvider.claudeCode.rawValue)"
   }
 
   private func prepareTOMLManagedBlockEdit(
@@ -571,10 +748,8 @@ struct AgentSetupService {
     return lines.joined(separator: "\n")
   }
 
-  private func lifecycleHookCommand(
-    state: AgentTaskStateSignal,
-    provider: AgentProvider
-  ) throws -> String {
+  /// hook 脚本必须是 bundle 内的普通文件（非 symlink），否则视为集成资源缺失。
+  private func validatedIntegrationScriptPath() throws -> String {
     guard let integrationScriptURL,
       let values = try? integrationScriptURL.resourceValues(forKeys: [
         .isRegularFileKey, .isSymbolicLinkKey,
@@ -582,12 +757,20 @@ struct AgentSetupService {
       values.isRegularFile == true,
       values.isSymbolicLink != true
     else { throw AgentSetupServiceError.integrationResourceUnavailable }
+    return integrationScriptURL.path
+  }
+
+  private func lifecycleHookCommand(
+    state: AgentTaskStateSignal,
+    provider: AgentProvider
+  ) throws -> String {
+    let scriptPath = try validatedIntegrationScriptPath()
     let stateValue = switch state {
     case .processing, .inputSubmitted: "processing"
     case .idle: "idle"
     case .awaitingInput: "awaiting-input"
     }
-    return "/bin/sh \(shellQuoted(integrationScriptURL.path)) \(stateValue) \(provider.rawValue)"
+    return "/bin/sh \(shellQuoted(scriptPath)) \(stateValue) \(provider.rawValue)"
   }
 
   private func shellQuoted(_ value: String) -> String {

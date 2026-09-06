@@ -192,6 +192,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
   var onTerminalNotification: ((TerminalNotification) -> Void)?
   var onTerminalBadgeDirective: ((TerminalBadgeDirective) -> Void)?
   var onAgentTerminalDirective: ((AgentTerminalDirective) -> Void)?
+  var onAgentUsageDirective: ((AgentUsageDirective) -> Void)?
   /// Kitty capability query 必须直接回到 PTY，不能经过用户输入和补全跟踪器。
   var onTerminalProtocolResponse: ((String) -> Void)?
   var terminalBellEnabled = true
@@ -1458,6 +1459,8 @@ final class AsterTerminalView: LocalProcessTerminalView {
         self?.onTerminalBadgeDirective?(directive)
       } else if let directive = AgentTerminalDirective(payload: payload) {
         self?.onAgentTerminalDirective?(directive)
+      } else if let directive = AgentUsageDirective(payload: payload) {
+        self?.onAgentUsageDirective?(directive)
       }
     }
   }
@@ -2209,6 +2212,14 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @Published private(set) var activeAgentSessionID: String?
   @Published private(set) var agentTaskState = AgentTaskState.idle
   @Published private(set) var agentTaskCompletionUnread = false
+  /// 当前 Agent 的用量快照（5h / 周 / 会话上下文占比）。刻意不并入 TerminalTabItem 的
+  /// objectWillChange 聚合：statusLine 每次刷新都会重发，视图层按 Pane 订阅做原地更新。
+  @Published private(set) var agentUsage: AgentUsageSnapshot?
+  /// Codex 用量来自 rollout 文件，绑定 session 后监听；provider 结束时停止。
+  private var codexUsageMonitor: CodexUsageFileMonitor?
+  private var codexUsageMonitorSessionID: String?
+  /// Codex rollout 的根目录来源；测试注入临时 home。
+  var agentUsageHomeDirectory = FileManager.default.homeDirectoryForCurrentUser
   /// Hook 是否已成为该 Pane 的权威状态源。Prompt Queue 的自动派发只接受 hook 结论：
   /// 输出探针推断出来的 idle 只说明屏幕安静了一会儿，据此写入会打断运行中的 TUI。
   var hasAuthoritativeAgentLifecycle: Bool { agentLifecycleIsAuthoritative }
@@ -2571,6 +2582,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.onTerminalUserInput = { [weak self] in self?.handleTerminalUserInput() }
     view.onAgentTerminalDirective = { [weak self] directive in
       self?.handleAgentTerminalDirective(directive)
+    }
+    view.onAgentUsageDirective = { [weak self] directive in
+      self?.handleAgentUsageDirective(directive)
     }
     view.onShellIntegrationStateChange = { [weak self] timeline in
       self?.handleShellIntegrationTimeline(timeline)
@@ -3061,6 +3075,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         }
       } else if let directive = AgentTerminalDirective(payload: value) {
         handleAgentTerminalDirective(directive)
+      } else if let directive = AgentUsageDirective(payload: value) {
+        handleAgentUsageDirective(directive)
       }
     default:
       break
@@ -3096,6 +3112,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     stopAgentScreenMonitor()
     activeAgentProvider = nil
     activeAgentSessionID = nil
+    clearAgentUsage()
     agentTaskState = .idle
     clearFallbackAgentActivity()
     foregroundPollTask?.cancel()
@@ -3873,6 +3890,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     explicitBadge = nil
     activeAgentProvider = nil
     activeAgentSessionID = nil
+    clearAgentUsage()
     agentTaskState = .idle
     agentTaskCompletionUnread = false
     agentLifecycleIsAuthoritative = false
@@ -4123,6 +4141,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     stopAgentScreenMonitor()
     clearFallbackAgentActivity()
     activeAgentProvider = nil
+    clearAgentUsage()
     agentProviderIsTitleEvidenceOnly = false
     agentHasWorkEvidence = false
     updateAgentTaskState()
@@ -4211,6 +4230,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       } else {
         activeAgentProvider = nil
       }
+      clearAgentUsage()
       agentProviderIsTitleEvidenceOnly = false
       agentHasWorkEvidence = false
       agentLifecycleIsAuthoritative = false
@@ -4244,6 +4264,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       stopAgentScreenMonitor()
       agentTaskState = .idle
       activeAgentProvider = nil
+      clearAgentUsage()
       agentProviderIsTitleEvidenceOnly = false
       agentHasWorkEvidence = false
       activeAgentSessionID = nil
@@ -4766,6 +4787,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     activeAgentProvider = directive.provider
     agentProviderIsTitleEvidenceOnly = false
     if let sessionID = directive.sessionID { activeAgentSessionID = sessionID }
+    syncCodexUsageMonitor()
     agentLifecycleIsAuthoritative = true
     clearFallbackAgentActivity()
     eventRecorder?.agentChanged(
@@ -4786,6 +4808,51 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // 只消费屏幕上的阻塞表单。通知与未读标记统一由 updateAgentTaskState 的转换发布。
     syncAgentScreenMonitor()
     updateAgentTaskState()
+  }
+
+  /// statusLine 包装器上报的用量：与 lifecycle 同一守门，已识别 provider 时拒绝其它
+  /// provider 注入；尚未识别时据此建立身份（wrapper 命令让 commandStart 认不出 claude）。
+  private func handleAgentUsageDirective(_ directive: AgentUsageDirective) {
+    if let activeAgentProvider, activeAgentProvider != directive.provider { return }
+    if activeAgentProvider == nil {
+      activeAgentProvider = directive.provider
+      agentProviderIsTitleEvidenceOnly = false
+      syncAgentScreenMonitor()
+    }
+    let snapshot = directive.snapshot()
+    if agentUsage != snapshot { agentUsage = snapshot }
+  }
+
+  /// Codex 绑定 session 后监听其 rollout；session 变化时重建，非 Codex 或无 session 时停止。
+  private func syncCodexUsageMonitor() {
+    guard activeAgentProvider == .codex, let sessionID = activeAgentSessionID else {
+      stopCodexUsageMonitor()
+      return
+    }
+    guard codexUsageMonitorSessionID != sessionID else { return }
+    stopCodexUsageMonitor()
+    codexUsageMonitorSessionID = sessionID
+    let monitor = CodexUsageFileMonitor(
+      agentSessionID: sessionID,
+      homeDirectory: agentUsageHomeDirectory
+    ) { [weak self] snapshot in
+      guard let self, self.activeAgentProvider == .codex else { return }
+      if self.agentUsage != snapshot { self.agentUsage = snapshot }
+    }
+    codexUsageMonitor = monitor
+    monitor.start()
+  }
+
+  private func stopCodexUsageMonitor() {
+    codexUsageMonitor?.stop()
+    codexUsageMonitor = nil
+    codexUsageMonitorSessionID = nil
+  }
+
+  /// provider 生命周期结束：停掉 Codex 监听并让用量条消失。
+  private func clearAgentUsage() {
+    stopCodexUsageMonitor()
+    if agentUsage != nil { agentUsage = nil }
   }
 
   private func showCompletedFlash() {
@@ -4924,6 +4991,7 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
       self.stopAgentScreenMonitor()
       self.activeAgentProvider = nil
       self.activeAgentSessionID = nil
+      self.clearAgentUsage()
       self.agentTaskState = .idle
       self.clearFallbackAgentActivity()
       self.clearSSHRemoteEndpoint()

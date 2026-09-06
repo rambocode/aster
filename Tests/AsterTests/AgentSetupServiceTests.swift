@@ -717,3 +717,186 @@ private func makeExecutable(named name: String, in directory: URL) throws {
     ofItemAtPath: executable.path
   )
 }
+
+// MARK: - Claude statusLine 接管（用量上报）
+
+@Test("接管 Claude statusLine：原值备份到 side file、包装器保留 padding、幂等；卸载恢复原值并删 side file")
+func claudeStatusLineInstallBacksUpOriginalAndUninstallRestores() throws {
+  let root = try agentSetupTemporaryDirectory(named: "aster-claude-statusline")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let (home, service) = try makeClaudeSetupFixture(in: root)
+  let settings = home.appendingPathComponent(".claude/settings.json")
+  try #"{"theme":"dark","statusLine":{"type":"command","command":"bash ~/.claude/statusline-command.sh","padding":0}}"#
+    .write(to: settings, atomically: true, encoding: .utf8)
+  let sideFile = home.appendingPathComponent(
+    "Library/Application Support/Aster/agent-integration/claude-statusline.json")
+
+  let before = try service.status(for: .claudeCode)
+  #expect(before.managedStatusLineInstalled == false)
+  // hooks 与 statusLine 都改 settings.json：必须合并成一次写入而不是报 configurationChanged。
+  #expect(before.plan.steps.count == 2)
+
+  let installed = try service.install(.claudeCode)
+  #expect(installed.integrationInstalled)
+  #expect(installed.managedStatusLineInstalled == true)
+  #expect(installed.plan.steps.isEmpty)
+  let root1 = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
+  let statusLine = try #require(root1["statusLine"] as? [String: Any])
+  #expect(statusLine["type"] as? String == "command")
+  #expect((statusLine["command"] as? String)?.hasSuffix("statusline claudeCode") == true)
+  #expect(statusLine["padding"] as? Int == 0)
+  #expect(root1["theme"] as? String == "dark")
+  #expect(root1["hooks"] != nil)
+  let side = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: sideFile)) as? [String: Any])
+  #expect(side["provider"] as? String == "claudeCode")
+  #expect((side["statusLine"] as? [String: Any])?["command"] as? String == "bash ~/.claude/statusline-command.sh")
+
+  // 幂等。
+  let again = try service.install(.claudeCode)
+  #expect(again == installed)
+  #expect(try Data(contentsOf: sideFile) == JSONSerialization.data(withJSONObject: side, options: [.prettyPrinted, .sortedKeys]) + Data([0x0A]))
+
+  // 卸载集成：hooks 移除 + statusLine 恢复，一次写入；side file 删除。
+  let removed = try service.uninstall(.claudeCode)
+  #expect(!removed.integrationInstalled)
+  #expect(removed.managedStatusLineInstalled == false)
+  let root2 = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
+  #expect((root2["statusLine"] as? [String: Any])?["command"] as? String == "bash ~/.claude/statusline-command.sh")
+  #expect(root2["hooks"] == nil)
+  #expect(!FileManager.default.fileExists(atPath: sideFile.path))
+}
+
+@Test("没有原 statusLine 时 side file 记 null，只恢复 statusLine 的动作删键并保留 hooks")
+func claudeStatusLineOnlyUninstallRemovesKeyAndKeepsHooks() throws {
+  let root = try agentSetupTemporaryDirectory(named: "aster-claude-statusline-null")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let (home, service) = try makeClaudeSetupFixture(in: root)
+  let settings = home.appendingPathComponent(".claude/settings.json")
+  let sideFile = home.appendingPathComponent(
+    "Library/Application Support/Aster/agent-integration/claude-statusline.json")
+
+  _ = try service.install(.claudeCode)
+  let side = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: sideFile)) as? [String: Any])
+  #expect(side["statusLine"] is NSNull)
+
+  let restored = try service.uninstallManagedStatusLine()
+  #expect(restored.managedStatusLineInstalled == false)
+  #expect(restored.integrationInstalled)
+  let root1 = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
+  #expect(root1["statusLine"] == nil)
+  #expect(root1["hooks"] != nil)
+  #expect(!FileManager.default.fileExists(atPath: sideFile.path))
+  // 再次只装 statusLine（hooks 已装）：计划只剩一步且不要求重启。
+  let plan = try service.status(for: .claudeCode).plan
+  #expect(plan.steps.count == 1)
+  #expect(!plan.requiresAgentRestart)
+}
+
+@Test("用户自行改掉 statusLine 后卸载不动它；Grok 卸载不触碰 Claude statusLine")
+func claudeStatusLineUninstallLeavesUserReplacedValueUntouched() throws {
+  let root = try agentSetupTemporaryDirectory(named: "aster-claude-statusline-user")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let (home, service) = try makeClaudeSetupFixture(in: root)
+  let settings = home.appendingPathComponent(".claude/settings.json")
+  let sideFile = home.appendingPathComponent(
+    "Library/Application Support/Aster/agent-integration/claude-statusline.json")
+  _ = try service.install(.claudeCode)
+  _ = try service.install(.grokBuild)
+
+  _ = try service.uninstall(.grokBuild)
+  #expect(try service.status(for: .claudeCode).managedStatusLineInstalled == true)
+  #expect(FileManager.default.fileExists(atPath: sideFile.path))
+
+  var root1 = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
+  root1["statusLine"] = ["type": "command", "command": "my-own-statusline"]
+  try JSONSerialization.data(withJSONObject: root1).write(to: settings)
+  #expect(try service.status(for: .claudeCode).managedStatusLineInstalled == false)
+  _ = try service.uninstall(.claudeCode)
+  let root2 = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
+  #expect((root2["statusLine"] as? [String: Any])?["command"] as? String == "my-own-statusline")
+  // side file 留着：用户可能还想手动找回原值。
+  #expect(FileManager.default.fileExists(atPath: sideFile.path))
+}
+
+@Test("statusLine 不是对象时拒绝接管且不写任何文件")
+func claudeStatusLineInstallRejectsNonObjectStatusLine() throws {
+  let root = try agentSetupTemporaryDirectory(named: "aster-claude-statusline-bad")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let (home, service) = try makeClaudeSetupFixture(in: root)
+  let settings = home.appendingPathComponent(".claude/settings.json")
+  try #"{"statusLine":"bash x.sh"}"#.write(to: settings, atomically: true, encoding: .utf8)
+  let sideFile = home.appendingPathComponent(
+    "Library/Application Support/Aster/agent-integration/claude-statusline.json")
+  #expect(throws: AgentSetupServiceError.invalidConfiguration(settings.path)) {
+    try service.install(.claudeCode)
+  }
+  #expect(try String(contentsOf: settings, encoding: .utf8) == #"{"statusLine":"bash x.sh"}"#)
+  #expect(!FileManager.default.fileExists(atPath: sideFile.path))
+}
+
+@Test("statusline 子命令透传原命令输出，side file 缺失或 null 时输出空")
+func statusLineWrapperPassesThroughOriginalCommand() throws {
+  let root = try agentSetupTemporaryDirectory(named: "aster-statusline-script")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let sideFile = root.appendingPathComponent("side.json")
+  try #"{"schemaVersion":1,"provider":"claudeCode","statusLine":{"type":"command","command":"/bin/cat | /usr/bin/plutil -extract model.display_name raw -o - -"}}"#
+    .write(to: sideFile, atomically: true, encoding: .utf8)
+  let payload = #"{"model":{"display_name":"Opus"},"rate_limits":{"five_hour":{"used_percentage":42.5,"resets_at":1788748005}},"context_window":{"used_percentage":57.2}}"#
+
+  let output = try runStatusLineWrapper(payload: payload, sideFile: sideFile)
+  #expect(output.contains("Opus"))
+  // 伪终端里 /dev/tty 可写：OSC 载荷落在同一输出流。
+  #expect(output.contains("\u{1B}]6974;AgentUsage=1;Provider=claudeCode;FiveHour=42:1788748005;Session=57\u{07}"))
+
+  let missing = try runStatusLineWrapper(payload: payload, sideFile: root.appendingPathComponent("none.json"))
+  #expect(!missing.contains("Opus"))
+  #expect(missing.contains("AgentUsage=1"))
+
+  // 非 claudeCode provider：排空 stdin 后静默退出。
+  let other = try runStatusLineWrapper(payload: payload, sideFile: sideFile, provider: "codex")
+  #expect(!other.contains("AgentUsage"))
+  #expect(!other.contains("Opus"))
+}
+
+/// Claude 夹具：临时 home + claude/grok 可执行文件 + 指向仓库 hook 脚本的服务。
+private func makeClaudeSetupFixture(in root: URL) throws -> (URL, AgentSetupService) {
+  let home = root.appendingPathComponent("home", isDirectory: true)
+  let bin = root.appendingPathComponent("bin", isDirectory: true)
+  try FileManager.default.createDirectory(at: home.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+  try makeExecutable(named: "claude", in: bin)
+  try makeExecutable(named: "grok", in: bin)
+  let hook = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    .appendingPathComponent("Resources/agent-integration/aster-agent-hook.sh")
+  return (home, AgentSetupService(homeDirectory: home, executableSearchDirectories: [bin], integrationScriptURL: hook))
+}
+
+/// 在伪终端里跑 `statusline` 子命令，stdout 与 /dev/tty 的输出都进同一管道。
+private func runStatusLineWrapper(payload: String, sideFile: URL, provider: String = "claudeCode") throws -> String {
+  let hook = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    .appendingPathComponent("Resources/agent-integration/aster-agent-hook.sh")
+  let payloadFile = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "aster-statusline-payload-\(UUID().uuidString).json")
+  try payload.write(to: payloadFile, atomically: true, encoding: .utf8)
+  defer { try? FileManager.default.removeItem(at: payloadFile) }
+  let process = Process()
+  let output = Pipe()
+  process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+  process.arguments = [
+    "-q", "/dev/null", "/bin/sh", "-c",
+    "exec /bin/sh \"$1\" statusline \"$3\" < \"$2\"",
+    "aster-statusline-test", hook.path, payloadFile.path, provider,
+  ]
+  var environment = ProcessInfo.processInfo.environment
+  environment["ASTER_STATUSLINE_SIDE_FILE"] = sideFile.path
+  process.environment = environment
+  process.standardInput = FileHandle.nullDevice
+  process.standardOutput = output
+  process.standardError = output
+  try process.run()
+  process.waitUntilExit()
+  guard process.terminationStatus == 0 else { throw CocoaError(.executableRuntimeMismatch) }
+  return String(decoding: try output.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
+}

@@ -337,6 +337,7 @@ Aster 支持 Claude Code、Codex、OpenCode、Cursor CLI、Kimi Code、Pi、omp 
 - “Shell”菜单对齐 Otty 的完整结构：顶部是“重命名标签页…”“设置标签页前缀…”（共用同一原生对话框，后者预选动态前缀模式）与“清屏”（`⌘K`）；随后是围绕当前工作目录的“拷贝路径”“在访达中显示”“打开方式”（无可靠 CWD 时置灰）；中段保留 Vi/Mark/Hint、只读模式与 Composer；底部是“Git”子菜单（图形客户端入口 + Commit/Push/Pull/Fetch/Merge…/Rebase…，全部只预填命令到终端，由你回车执行）与“通知与权限…”（跳到设置的 Shell 分类）。“打开方式”与“Git”和窗口标题胶囊弹层显示完全相同的条目。
 - 打开“Shell”菜单时，Aster 会根据当前聚焦 Pane 显示 `Codex`、`Claude` 等对应的 Agent 子菜单；切换分屏后菜单随焦点更新，不会操作同一标签里的其它 Agent。菜单展开后，Fork 动作会固定作用于当时的工作区，不会因设置页或其它窗口切换到前台而失效或落到别处。在“设置 → 智能体”安装对应 lifecycle 集成并重启 Agent 后，会话会自动关联，可拷贝会话 ID、查看会话历史，或 Fork 到上下左右分屏、新标签页、新窗口。Agent 子菜单的“查看会话历史”只显示当前项目的会话（优先按已关联会话的项目归属判定，尚未关联时按该 Pane 的工作目录）；要浏览全部项目的历史，请使用命令面板（`⇧⌘P`）里的“Agent 历史”。Codex 首次加载新 hook 时还需运行 `/hooks` 审核并信任 Aster 条目；安装器会迁移旧版 Aster 遗留的非法顶层 `hooks` 布尔配置。尚未收到可信会话 ID 时，复制与 Fork 会保持禁用。
 - Agent 历史浮层（Agent 子菜单“查看会话历史”按当前项目打开；命令面板“Agent 历史”显示全部）与 Open Quickly 可搜索已知 provider 的本机会话记录，并使用 provider 原生命令 Resume 或 Fork；不支持 Fork 的 provider 会明确拒绝。在 Agent 历史里按 `↩` 或点“打开”，会像 Otty 一样把该会话作为新标签打开：左侧 TABS 增加一项（标签名即会话标题），右侧只读渲染完整 transcript：你的消息显示为浅色卡片、Agent 回复按 Markdown 渲染，连续的工具调用折叠成一行摘要（如「Claude · 30×Bash, 26×Edit」，点击展开）；页头显示标题、会话文件与项目归属，并提供 Resume / Fork。超长会话按单条与总量上限截断并明确标注；同一会话重复打开只会选中已有标签。
+- **Pane 底部用量条**：Claude Code 或 Codex 运行时，该 Pane 底部会出现一条 20pt 的用量条，按 provider 实际提供的窗口显示「5h」「周」「会话」三个小进度条（会话 = 当前上下文窗口占比），达到 80% 变为警示色，悬停显示重置时间与 token 数。用量条只展示，不阻止发送也不发通知；分屏里每个运行 Agent 的 Pane 各自显示，非焦点 Pane 也不淡化；Prompt Queue 打开时排在用量条上方，终端行数相应减少而不是被遮挡。Claude Code 的配额只在它的 statusLine 数据里，所以需要在“设置 → 智能体 → Claude 用量上报”点“接管 / 恢复”：Aster 会把 `~/.claude/settings.json` 的 `statusLine` 换成自己的包装脚本，原来的状态行命令继续执行、显示不变，同时把用量上报给所属 Pane；再点一次即恢复原值（原值备份在 `~/Library/Application Support/Aster/agent-integration/claude-statusline.json`，卸载集成也会一并恢复）。Codex 在会话关联（hook 上报 session ID）后从本机 `~/.codex/sessions` 的 rollout 文件读取，每轮回复后更新；你的套餐没有的窗口（例如只有周限额）就不显示。“设置 → 智能体 → Pane 底部显示用量条”关闭只隐藏这条，不改动任何 Agent 配置。
 - Composer 支持多行草稿、普通文件附件、固定/浮动与取消；发送时使用 bracketed paste，仍服从只读和粘贴保护。Prompt Queue 只按 lifecycle hook 的 `idle` 自动派发，`processing` 与 `awaiting-input` 都只排队；未安装 hook 时不自动发送，每一项都由你点击左侧发送图标提交。
 - **让 Agent 自己操作 Aster（skill）**：Aster 附带一份 skill 文档（`aster --skill` 可打印），教 Claude Code / Codex 用 `aster` 命令读旁边 pane 的输出、启动或等待另一个 Agent、发送按键与通知。在“设置 → 智能体”点“安装 Aster skill”会把它复制到 `~/.claude/skills/aster` 或 `~/.codex/skills/aster`，并写入版本标记；Aster 升级后设置页会提示“需要更新”。只会接管带 Aster 标记的目录：你自己写的同名 skill 或符号链接不会被覆盖，卸载也只删 Aster 装的那份。skill 里的写入动作（提交 prompt、发送文本、聚焦）同样需要“设置 → 控制 → IPC 允许发送输入”，没开时 Agent 会收到 `write_not_allowed` 并转而请你手动操作。skill 只在 Aster 的终端里生效（`ASTER_ENV=1`），Agent 在别的终端里不会误用它。
 - Send to Chat 可接收终端选区、当前可见 transcript 或文件上下文。上下文被包在 `untrusted-context` 中，移除终端控制字符、遮盖常见密钥并执行 128 KiB 总预算；Aster 不声称能识别所有业务敏感信息，发送前仍应复核。终端发送面板会以普通键入预填目标 Agent 输入框，最终提交始终由你决定。
@@ -388,7 +389,7 @@ Aster 附带一个本地 MCP server `aster-memory-mcp`，任何支持 MCP 的 Ag
 - **Shell**：按 Otty 同构排列——新窗口/新标签页/新分屏的工作目录、Shell/SSH 集成、Aster CLI（安装命令、省略 `aster` 前缀、覆盖已有命令、自定义别名）、常用文件夹（自动记录、管理已跟踪/已忽略、Zoxide 同步）、会话恢复（复用器、Code Agent、终端恢复协议、恢复进程三档：不重启/仅白名单内/所有运行中的进程）、声音（终端响铃、出错蜂鸣）、通知（系统权限状态、应用/完成/出错/watch 通知、前台策略、按类别选择的通知声音、Dock 图标跳动——持续跳到切回 Aster）和终端标识。`TERM` 通过下拉选择，`auto` 优先使用应用内置的 `xterm-ghostty`（能力与终端引擎一致），缺少条目时回退到兼容的 `xterm-256color`；选择“自定义…”后可填写本机真实安装的 terminfo 名称。
 - **控制**：与 Otty 相同，严格按自动补全、选择、滚动、打开方式、链接协议、键盘、鼠标、安全输入、剪贴板九组排列；包含 inline suggestion、Option/Meta、VT100 keypad、TUI 鼠标绕过、复制清理、危险粘贴、链接 scheme/安全例外、首尾滚动和安全输入指示。
 - **编辑器**：自动换行、行号、不可见字符、Tab 宽度、滚动越过末尾、Vim 按键与富文档预览。
-- **智能体**：八类 Agent（含 Grok Build）的启用状态、结构化启动命令、集成安装/卸载、标签徽章、通知与运行选项。
+- **智能体**：八类 Agent（含 Grok Build）的启用状态、结构化启动命令、集成安装/卸载、标签徽章、Pane 底部用量条与 Claude 用量上报（statusLine 接管）、通知与运行选项。
 - **视图**：对齐 Otty 的四组。「标签页与标题定制」按项（别名 / 图标 / 标题各一张规则列表）或按项目（一个项目同时设三项）排列规则；每条规则由路径、命令、Agent、SSH 主机、文件等条件（全部成立才命中，无条件即所有标签页）加上项目别名、图标（61 个内置图标或 emoji，可着色）和标题模板组成，模板支持 `${alias}`、`${cwd}`、`${folder}`、`${user}`、`${host}`、`${agent}`、`${branch}`、`${command}`、`${title}`、`${shell}`、`${index}`、`${file}`，`${title|folder|'Shell'}` 取第一个有值的；规则标题优先级低于手动固定名、高于自动标题。「标签页图标与角标」选择图标与角标合并（共用一个指示位，有状态时角标接管）或分开（图标在左、角标在右并隐藏 shell 名），以及命令完成 / 失败 / 等待输入三种角标开关。「网页窗格」控制是否把 cookie 写盘（只影响之后新开的窗格）并可一键清除全部浏览数据。「详情面板」用拖动排序和开关决定信息 / 大纲 / Git / 文件 / 记忆哪些显示、按什么顺序，还可以「添加视图」：在面板内运行终端程序（如 `lazydocker`，命令与目录支持 `${cwd}`、`${pid}` 等变量，目录留空时使用 `~/.config/aster/views/<名称>`）或加载一个网页（可按移动版请求）。
 - **外观**：当前工作区左右 Panel 宽度、标签位置与自动隐藏、窗口尺寸、Dock 任务状态、浅深色主题、主题编辑/导入、文本样式、字体来源与回退、光标颜色/样式/闪烁/动画。
 - **Recipes**：命令重放与按内容信任策略；外部命令必须按所选策略确认。
@@ -433,6 +434,10 @@ Aster 会优先给中央内容保留可操作空间，窗口不足时临时压�
 ### Recipe 会自动执行命令吗？
 
 取决于“设置 → Recipes”的重放模式。默认会先显示命令预览并确认；选择“从不”时只恢复布局，选择信任时也只信任当前 SHA-256 内容，文件修改后会再次询问。命令按空闲 Prompt 串行重放，不会直接交给独立 `/bin/sh` 执行。
+
+### Pane 底部没有用量条？
+
+先确认“设置 → 智能体 → Pane 底部显示用量条”已开启。Claude Code 还需要“Claude 用量上报”显示为“已接管”，并且是按订阅登录（API key 用户没有 5 小时 / 周限额，只会显示“会话”一项）；接管后已经在跑的 Claude 会在下一次状态行刷新时开始上报。Codex 需要先安装 Aster 集成并重启，让会话 ID 关联到 Pane；首条消息发出前 rollout 文件尚不存在，条会在第一轮回复后出现。
 
 ### 关闭编辑器时会丢内容吗？
 
