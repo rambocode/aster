@@ -2805,6 +2805,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     )
     // 先登记再创建 surface；极短命命令的退出 callback 可能在 createSurface 返回前到达。
     ghosttyView = view
+    // Ghostty 路径不经过 makeTerminalView，用量文件订阅在这里挂上（pane UUID 同一）。
+    subscribeAgentUsageFiles()
     processStartedAt = Date()
     automaticSecureInputEnabled = preferences.configuration.controls.secureInputAutomatically
 
