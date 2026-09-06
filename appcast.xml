@@ -3,6 +3,28 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.4.11</title>
+            <pubDate>Sun, 06 Sep 2026 13:03:50 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>16</sparkle:version>
+            <sparkle:shortVersionString>0.4.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## Pane 底部用量条
+
+- Claude Code 或 Codex 运行时，Pane 底部显示一条用量条：Claude 显示 5 小时与每周配额，Codex 另含当前会话上下文占比；达到 80% 变为警示色，悬停查看重置时间。
+- Claude 的配额直接读取官方 `/usage` 接口，与 Claude 自己的 `/usage` 面板数值一致，有 Claude 运行时每分钟刷新、每轮回复结束再更新一次。首次会请求一次钥匙串访问授权，选「始终允许」即可；不改动 `~/.claude/settings.json`。
+- 点击用量条会在该 Pane 的 Agent 里打开完整统计面板（Claude Code 运行 `/stats`，Codex 运行 `/status`）。
+- 可在“设置 → 智能体 → Pane 底部显示用量条”关闭。
+
+## 链接与路径打开
+
+- 修复 Command 点击 `.app`、可执行文件或二进制文件路径时被错误送进编辑器并报错的问题：这些目标现在直接交给系统打开，目录与文本文件仍按设置在 Aster 内打开。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.11/Aster-0.4.11.dmg" length="27306273" type="application/octet-stream" sparkle:edSignature="XigkyxYjS7XC971GoIWiThoFrS0hCU/S8rV6t+TuyqnkshyKVFGPfXUND7he+9Ymzcm/5pfq0xJbGUdKq8zsDg=="/>
+        </item>
+        <item>
             <title>0.4.10</title>
             <pubDate>Sat, 05 Sep 2026 15:13:39 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -90,43 +112,6 @@
 - 标签栏运行动画只在有 Agent 时显示，避免普通命令运行时被误认成 Agent。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.7/Aster-0.4.7.dmg" length="27068456" type="application/octet-stream" sparkle:edSignature="k9kiFpBbZtUNhWOpj8oYRE4ZRIKQvGpB9W76wGdQ7+Q4xcnv6Arj/za/5mYSPmo6VaQubc6Y7eAfPE6XxWmoAA=="/>
-        </item>
-        <item>
-            <title>0.4.6</title>
-            <pubDate>Mon, 31 Aug 2026 16:27:57 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>11</sparkle:version>
-            <sparkle:shortVersionString>0.4.6</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## 命令补全大幅增强
-
-- 补全候选现在会读取项目里的活数据：git 分支与 remote、`package.json` 的 scripts、
-  Makefile 的 target、Homebrew 已装的包等，都能直接补出来，不用再手打。
-- 排序换成跨来源统一打分：常用的命令靠「最近用得多」自然浮到前面，冷门的历史记录
-  不会再压住真正贴合当前输入的子命令和选项。
-- 命令名刚打完、还没敲空格时也会列出它的子命令与选项（`docker` 从 1 条变 62 条）。
-- 候选按「补全后的完整命令行」去重，历史和规格不再重复占两行。
-- 候选面板：超过 8 条可滚动，新增右侧描述栏显示选中项的完整说明（窄 Pane 自动降级
-  回行内描述），选中行改为强调色淡染 + 前导标记条。
-- 自动弹出的候选面板在你按方向键之前不会吞掉回车，命令照常提交。
-- 装了 zsh-autosuggestions 之类插件时，Aster 的行内建议会被插件挡住而不可见；此时
-  按 Tab 改为打开候选面板，既不会插入你没看见的文本，也不会让你完全看不到候选。
-- `aster learn` 支持三种目标：目录、PATH 上的命令（自动探测 `--help` 生成规格）、
-  整行命令；`aster ignore` 与它一一对应地撤销。
-
-## 修复
-
-- 左右分屏时，侧栏标签的 Agent 图标严格跟随当前聚焦的 Pane。左边跑 Codex、右边是
-  普通 shell 时，点右边不会再显示 Codex 图标。
-- Agent 自己在标题里转动 ✳/◐ 之类的字符时，不再额外叠加一个 Aster 图标。
-- 上一条命令失败后，新的空命令行上不会再画出整条纠错建议——它此前会和 shell 自己的
-  历史建议重叠成一团。
-- Pane 顶部的拖动把手与关闭按钮恢复为「鼠标靠近才出现」。此前分屏或调整窗口大小后
-  它们会永久显示在所有 Pane 上。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.6/Aster-0.4.6.dmg" length="26998062" type="application/octet-stream" sparkle:edSignature="APbaL73EOtQ+1K1u7p38yVlU6dQVVbzQWUjcbi5knmzijjyYTq7o4uswzerxuaM+8NbE15WIOpaypr4rL6XqBg=="/>
         </item>
     </channel>
 </rss>
