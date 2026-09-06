@@ -116,3 +116,123 @@ final class CodexUsageFileMonitor {
     return .tail(data)
   }
 }
+
+/// Claude 用量数据源：statusLine 包装器按 pane UUID 把 `AgentUsage=…` 一行写进
+/// `~/Library/Application Support/Aster/agent-usage/<pane-uuid>.usage`，本仓库监听该目录并
+/// 把更新分发给对应的 `TerminalSession`。
+///
+/// 为什么不用 OSC：Claude 启动 statusLine 命令时脱离控制终端（进程无 TTY，`/dev/tty` 打不开），
+/// lifecycle hook 那条 `/dev/tty` 通道对 statusLine 不可用。文件由 Aster 自己的目录承载，
+/// pane 结束时删除；Aster 崩溃遗留的旧文件靠 mtime 早于订阅时刻来忽略。
+@MainActor
+final class AgentUsageFileStore {
+  static let shared = AgentUsageFileStore(directory: defaultDirectory)
+  nonisolated static let fileExtension = "usage"
+  nonisolated static let maximumFiles = 256
+  nonisolated static let maximumFileBytes = 512
+  static let debounce: Duration = .milliseconds(200)
+  /// 超过该时长未更新的文件视为遗留，扫描时删除。
+  nonisolated static let staleAge: TimeInterval = 7 * 24 * 3600
+
+  static var defaultDirectory: URL {
+    FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Application Support/Aster/agent-usage", isDirectory: true)
+  }
+
+  struct Update: Equatable {
+    let directive: AgentUsageDirective
+    let modifiedAt: Date
+  }
+
+  let directory: URL
+  private var handlers: [UUID: @MainActor (Update) -> Void] = [:]
+  private var lastDelivered: [UUID: Update] = [:]
+  private var watcher: FileSystemDirectoryWatcher?
+  private var scanTask: Task<Void, Never>?
+
+  init(directory: URL) {
+    self.directory = directory
+  }
+
+  /// 注册 pane 的更新回调；首次注册时创建目录并开始监听，随后立即扫描一次。
+  func subscribe(paneID: UUID, onUpdate: @escaping @MainActor (Update) -> Void) {
+    handlers[paneID] = onUpdate
+    lastDelivered[paneID] = nil
+    startWatchingIfNeeded()
+    scheduleScan()
+  }
+
+  func unsubscribe(paneID: UUID) {
+    handlers[paneID] = nil
+    lastDelivered[paneID] = nil
+  }
+
+  /// pane 的 Agent 结束：删掉它的用量文件，避免下次同一 pane UUID 启动 shell 时被当成仍在跑。
+  func remove(paneID: UUID) {
+    lastDelivered[paneID] = nil
+    try? FileManager.default.removeItem(at: fileURL(for: paneID))
+  }
+
+  func fileURL(for paneID: UUID) -> URL {
+    directory.appendingPathComponent(paneID.uuidString).appendingPathExtension(Self.fileExtension)
+  }
+
+  private func startWatchingIfNeeded() {
+    guard watcher == nil else { return }
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let watcher = FileSystemDirectoryWatcher(directory: directory)
+    do {
+      try watcher.start { [weak self] in self?.scheduleScan() }
+      self.watcher = watcher
+    } catch {
+      // 监听失败只影响实时性；订阅时的一次扫描仍会执行。
+    }
+  }
+
+  /// 目录事件可能合并，去抖后在后台读全部文件再回主线程分发。
+  private func scheduleScan() {
+    scanTask?.cancel()
+    let directory = directory
+    scanTask = Task { [weak self] in
+      try? await Task.sleep(for: Self.debounce)
+      guard !Task.isCancelled else { return }
+      let entries = await Task.detached(priority: .utility) { Self.readAll(in: directory) }.value
+      guard !Task.isCancelled, let self else { return }
+      for (paneID, update) in entries {
+        guard let handler = self.handlers[paneID], self.lastDelivered[paneID] != update else { continue }
+        self.lastDelivered[paneID] = update
+        handler(update)
+      }
+    }
+  }
+
+  /// 读取目录里全部 `<uuid>.usage`；只接受普通文件、有界大小、能通过 directive 解析的内容。
+  nonisolated static func readAll(in directory: URL) -> [UUID: Update] {
+    let manager = FileManager.default
+    let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
+    guard let urls = try? manager.contentsOfDirectory(
+      at: directory, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles])
+    else { return [:] }
+    var result: [UUID: Update] = [:]
+    let now = Date()
+    for url in urls.prefix(maximumFiles) where url.pathExtension == fileExtension {
+      guard let values = try? url.resourceValues(forKeys: keys),
+        values.isRegularFile == true, values.isSymbolicLink != true,
+        let size = values.fileSize, size <= maximumFileBytes,
+        let modifiedAt = values.contentModificationDate,
+        let paneID = UUID(uuidString: url.deletingPathExtension().lastPathComponent)
+      else { continue }
+      if now.timeIntervalSince(modifiedAt) > staleAge {
+        try? manager.removeItem(at: url)
+        continue
+      }
+      guard let data = try? Data(contentsOf: url),
+        let line = String(data: data, encoding: .utf8)?
+          .split(separator: "\n", omittingEmptySubsequences: true).first,
+        let directive = AgentUsageDirective(payload: String(line))
+      else { continue }
+      result[paneID] = Update(directive: directive, modifiedAt: modifiedAt)
+    }
+    return result
+  }
+}

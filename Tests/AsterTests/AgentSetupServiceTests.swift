@@ -834,28 +834,43 @@ func claudeStatusLineInstallRejectsNonObjectStatusLine() throws {
   #expect(!FileManager.default.fileExists(atPath: sideFile.path))
 }
 
-@Test("statusline 子命令透传原命令输出，side file 缺失或 null 时输出空")
-func statusLineWrapperPassesThroughOriginalCommand() throws {
+@Test("statusline 子命令按 pane UUID 写用量文件并透传原命令输出，side file 缺失时输出空")
+func statusLineWrapperWritesUsageFileAndPassesThroughOriginalCommand() throws {
   let root = try agentSetupTemporaryDirectory(named: "aster-statusline-script")
   defer { try? FileManager.default.removeItem(at: root) }
+  let usageDirectory = root.appendingPathComponent("usage", isDirectory: true)
+  try FileManager.default.createDirectory(at: usageDirectory, withIntermediateDirectories: true)
   let sideFile = root.appendingPathComponent("side.json")
   try #"{"schemaVersion":1,"provider":"claudeCode","statusLine":{"type":"command","command":"/bin/cat | /usr/bin/plutil -extract model.display_name raw -o - -"}}"#
     .write(to: sideFile, atomically: true, encoding: .utf8)
   let payload = #"{"model":{"display_name":"Opus"},"rate_limits":{"five_hour":{"used_percentage":42.5,"resets_at":1788748005}},"context_window":{"used_percentage":57.2}}"#
+  let paneID = UUID()
 
-  let output = try runStatusLineWrapper(payload: payload, sideFile: sideFile)
+  let output = try runStatusLineWrapper(
+    payload: payload, sideFile: sideFile, usageDirectory: usageDirectory, paneID: paneID.uuidString)
   #expect(output.contains("Opus"))
-  // 伪终端里 /dev/tty 可写：OSC 载荷落在同一输出流。
-  #expect(output.contains("\u{1B}]6974;AgentUsage=1;Provider=claudeCode;FiveHour=42:1788748005;Session=57\u{07}"))
+  let usageFile = usageDirectory.appendingPathComponent("\(paneID.uuidString).usage")
+  #expect(try String(contentsOf: usageFile, encoding: .utf8)
+    == "AgentUsage=1;Provider=claudeCode;FiveHour=42:1788748005;Session=57\n")
+  // 临时文件不残留。
+  #expect(try FileManager.default.contentsOfDirectory(atPath: usageDirectory.path) == ["\(paneID.uuidString).usage"])
 
-  let missing = try runStatusLineWrapper(payload: payload, sideFile: root.appendingPathComponent("none.json"))
+  let missing = try runStatusLineWrapper(
+    payload: payload, sideFile: root.appendingPathComponent("none.json"),
+    usageDirectory: usageDirectory, paneID: paneID.uuidString)
   #expect(!missing.contains("Opus"))
-  #expect(missing.contains("AgentUsage=1"))
+
+  // 不在 Aster 里（没有 pane UUID）或 UUID 不合法：不写文件。
+  try FileManager.default.removeItem(at: usageFile)
+  _ = try runStatusLineWrapper(payload: payload, sideFile: sideFile, usageDirectory: usageDirectory, paneID: "")
+  _ = try runStatusLineWrapper(payload: payload, sideFile: sideFile, usageDirectory: usageDirectory, paneID: "../evil")
+  #expect(try FileManager.default.contentsOfDirectory(atPath: usageDirectory.path).isEmpty)
 
   // 非 claudeCode provider：排空 stdin 后静默退出。
-  let other = try runStatusLineWrapper(payload: payload, sideFile: sideFile, provider: "codex")
-  #expect(!other.contains("AgentUsage"))
+  let other = try runStatusLineWrapper(
+    payload: payload, sideFile: sideFile, usageDirectory: usageDirectory, paneID: paneID.uuidString, provider: "codex")
   #expect(!other.contains("Opus"))
+  #expect(try FileManager.default.contentsOfDirectory(atPath: usageDirectory.path).isEmpty)
 }
 
 /// Claude 夹具：临时 home + claude/grok 可执行文件 + 指向仓库 hook 脚本的服务。
@@ -872,8 +887,10 @@ private func makeClaudeSetupFixture(in root: URL) throws -> (URL, AgentSetupServ
   return (home, AgentSetupService(homeDirectory: home, executableSearchDirectories: [bin], integrationScriptURL: hook))
 }
 
-/// 在伪终端里跑 `statusline` 子命令，stdout 与 /dev/tty 的输出都进同一管道。
-private func runStatusLineWrapper(payload: String, sideFile: URL, provider: String = "claudeCode") throws -> String {
+/// 像 Claude 那样在没有控制终端的环境里跑 `statusline` 子命令，只取 stdout。
+private func runStatusLineWrapper(
+  payload: String, sideFile: URL, usageDirectory: URL, paneID: String, provider: String = "claudeCode"
+) throws -> String {
   let hook = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     .appendingPathComponent("Resources/agent-integration/aster-agent-hook.sh")
@@ -883,16 +900,14 @@ private func runStatusLineWrapper(payload: String, sideFile: URL, provider: Stri
   defer { try? FileManager.default.removeItem(at: payloadFile) }
   let process = Process()
   let output = Pipe()
-  process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
-  process.arguments = [
-    "-q", "/dev/null", "/bin/sh", "-c",
-    "exec /bin/sh \"$1\" statusline \"$3\" < \"$2\"",
-    "aster-statusline-test", hook.path, payloadFile.path, provider,
-  ]
+  process.executableURL = URL(fileURLWithPath: "/bin/sh")
+  process.arguments = [hook.path, "statusline", provider]
   var environment = ProcessInfo.processInfo.environment
   environment["ASTER_STATUSLINE_SIDE_FILE"] = sideFile.path
+  environment["ASTER_AGENT_USAGE_DIR"] = usageDirectory.path
+  environment["ASTER_SESSION_ID"] = paneID
   process.environment = environment
-  process.standardInput = FileHandle.nullDevice
+  process.standardInput = try FileHandle(forReadingFrom: payloadFile)
   process.standardOutput = output
   process.standardError = output
   try process.run()

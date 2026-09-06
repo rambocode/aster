@@ -6,8 +6,8 @@ LC_ALL=C
 export LC_ALL
 
 # `statusline claudeCode`：Claude Code 的 statusLine 包装器。stdin 只能读一次：先整段吞进
-# 变量，提取 rate limit / context 用量写成 OSC 6974 `AgentUsage` 给所属 Pane，再把原 JSON
-# 喂给用户原来的 statusLine 命令并透传其 stdout。Claude 只会显示本脚本的 stdout。
+# 变量，提取 rate limit / context 用量写成 `AgentUsage=…` 一行放进 Aster 的用量目录，再把
+# 原 JSON 喂给用户原来的 statusLine 命令并透传其 stdout。Claude 只会显示本脚本的 stdout。
 if [ "${1-}" = "statusline" ]; then
   case "${2-}" in
     claudeCode) ;;
@@ -33,18 +33,33 @@ if [ "${1-}" = "statusline" ]; then
     /usr/bin/printf '%s' "$v"
   }
 
-  if [ "${#payload}" -le "$maximum_payload_bytes" ] && [ -w /dev/tty ]; then
+  # Claude 启动 statusLine 命令时脱离控制终端（/dev/tty 不可用），所以不能像 lifecycle hook
+  # 那样写 OSC；改为按 Aster 注入的 ASTER_SESSION_ID（pane UUID）写文件，Aster 监听该目录。
+  # ASTER_AGENT_USAGE_DIR 仅供测试注入。不在 Aster 里运行（无 pane UUID）时不写任何文件。
+  pane_uuid="${ASTER_SESSION_ID-}"
+  case "$pane_uuid" in
+    ""|*[!A-Fa-f0-9-]*) pane_uuid="" ;;
+  esac
+  if [ "${#pane_uuid}" -ne 36 ]; then pane_uuid=""; fi
+  if [ "${#payload}" -le "$maximum_payload_bytes" ] && [ -n "$pane_uuid" ]; then
     five=$(extract_int rate_limits.five_hour.used_percentage)
     five_reset=$(extract_int rate_limits.five_hour.resets_at)
     week=$(extract_int rate_limits.seven_day.used_percentage)
     week_reset=$(extract_int rate_limits.seven_day.resets_at)
     ctx=$(extract_int context_window.used_percentage)
-    osc="AgentUsage=1;Provider=claudeCode"
-    if [ -n "$five" ]; then osc="$osc;FiveHour=$five${five_reset:+:$five_reset}"; fi
-    if [ -n "$week" ]; then osc="$osc;SevenDay=$week${week_reset:+:$week_reset}"; fi
-    if [ -n "$ctx" ]; then osc="$osc;Session=$ctx"; fi
-    if [ "$osc" != "AgentUsage=1;Provider=claudeCode" ]; then
-      /usr/bin/printf '\033]6974;%s\007' "$osc" 2>/dev/null > /dev/tty || true
+    usage="AgentUsage=1;Provider=claudeCode"
+    if [ -n "$five" ]; then usage="$usage;FiveHour=$five${five_reset:+:$five_reset}"; fi
+    if [ -n "$week" ]; then usage="$usage;SevenDay=$week${week_reset:+:$week_reset}"; fi
+    if [ -n "$ctx" ]; then usage="$usage;Session=$ctx"; fi
+    if [ "$usage" != "AgentUsage=1;Provider=claudeCode" ]; then
+      usage_dir="${ASTER_AGENT_USAGE_DIR:-$HOME/Library/Application Support/Aster/agent-usage}"
+      if [ -d "$usage_dir" ] && [ ! -L "$usage_dir" ]; then
+        # 先写临时文件再 mv，Aster 读到的永远是完整一行。
+        tmp_file="$usage_dir/.$pane_uuid.$$.tmp"
+        if /usr/bin/printf '%s\n' "$usage" > "$tmp_file" 2>/dev/null; then
+          /bin/mv -f "$tmp_file" "$usage_dir/$pane_uuid.usage" 2>/dev/null || /bin/rm -f "$tmp_file"
+        fi
+      fi
     fi
   fi
 
