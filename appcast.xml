@@ -3,6 +3,32 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.4.12</title>
+            <pubDate>Sun, 06 Sep 2026 17:35:32 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>17</sparkle:version>
+            <sparkle:shortVersionString>0.4.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## Pane 底部用量条
+
+- Claude 用量改为整个 Aster 共享一份数据与一条请求时间线：不管开了多少个 Claude Pane、Agent 启停多少次，对 `/usage` 接口的请求之间都至少隔 90 秒。此前每次 Claude 进程从无到有都会立刻请求一次，多个 Pane 反复启停会把接口打成 429，用量条随之空白；现在新开的 Pane 直接显示共享的上次结果，轮询恢复为每 90 秒一次。
+
+## Agent 会话 resume
+
+- 修复 Claude Code 2.1.x 下 Aster 收不到任何 hook 信号的问题：新版 Claude 启动 hook 时没有控制终端，写 `/dev/tty` 会失败。hook 脚本现在会沿父进程链找到 Pane 的终端设备再写入。此前「会话结束提示 resume 命令并作为同目录补全首选」因此从未生效，现在恢复正常。
+- 直接关闭仍在运行 Agent 的 Pane、标签或退出 Aster，也会登记该项目的最近会话，下次在同目录新开终端时补全首选就是对应的 resume 命令。
+- Claude Code 与 Codex 的会话关联不再依赖 hook：Aster 直接读取它们写在本机的会话文件，在运行中就把 session ID 绑定到 Pane。标签与标题栏的会话标题、Shell 菜单里的 Fork / 复制会话 ID、结束后的 resume 补全，在没装 hook 或 hook 信号丢失时同样可用。本次运行没有产生新会话文件但目录里有旧会话时，补全首选退化为 `claude --continue` / `codex resume --last`。
+
+## 补全与历史
+
+- 新开 Pane 或命令刚结束时（空 prompt）不再自动弹出候选面板；敲下第一个字符后才自动展开，按 Esc 仍可随时手动打开。行内 ghost（resume 命令、上一条命令的纠错）不受影响。
+- 只有真正执行过的命令才进入学习历史：找不到命令（127）、无法执行（126）或输出里明确写 command not found 的命令不再记录，避免打错的词污染后续补全。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.12/Aster-0.4.12.dmg" length="28480652" type="application/octet-stream" sparkle:edSignature="bepmuI7traRNCfixOveBtV3GkuaZQgZLqMHGwK12amXZgYyju25V+0XjsuiuEKhh5B/byP1xYcsPQ6NT82AdCA=="/>
+        </item>
+        <item>
             <title>0.4.11</title>
             <pubDate>Sun, 06 Sep 2026 13:03:50 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -90,28 +116,6 @@
 - 普通命令的标签只在失败时显示徽章，避免和 Agent 的徽章混淆。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.8/Aster-0.4.8.dmg" length="28142497" type="application/octet-stream" sparkle:edSignature="95o2VbRrqhUsdcY4dhPXBlPId3ie5tQifO6KfFFOkUAekMK5cH9Rqf8xQBAr9l6SXIlmlSLWeHFrU3HmhYThCA=="/>
-        </item>
-        <item>
-            <title>0.4.7</title>
-            <pubDate>Thu, 03 Sep 2026 18:06:38 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>12</sparkle:version>
-            <sparkle:shortVersionString>0.4.7</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## 链接识别改进
-
-- 终端里的本地路径识别更准：裸相对路径（如 site、Makefile）现在会先核实当前目录下
-  真实存在才画下划线，减少误判成链接。
-- Command 悬停链接预览逻辑重构，PTY 有新输出时会自动刷新下划线。
-- 设置页「文件与链接」拆分为更聚焦的「链接协议」卡片，各开关的说明文字更明确。
-
-## 修复
-
-- 标签栏运行动画只在有 Agent 时显示，避免普通命令运行时被误认成 Agent。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.7/Aster-0.4.7.dmg" length="27068456" type="application/octet-stream" sparkle:edSignature="k9kiFpBbZtUNhWOpj8oYRE4ZRIKQvGpB9W76wGdQ7+Q4xcnv6Arj/za/5mYSPmo6VaQubc6Y7eAfPE6XxWmoAA=="/>
         </item>
     </channel>
 </rss>
