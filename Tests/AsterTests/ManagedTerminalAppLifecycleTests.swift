@@ -258,6 +258,11 @@ func managedTerminalSurvivesAppTerminationAndRestoresSamePID() async throws {
   model.ensureInitialTab()
   let tab = try #require(model.selectedTab)
   let session = try #require(tab.activeSession)
+  // 绑定在 P3 起是异步的（远端传输每次都是 SSH 往返，不能阻塞主线程），
+  // 因此这里等待绑定完成，而不是假设它在 ensureInitialTab 返回时已经发生。
+  for _ in 0..<250 where !session.isManagedTerminal {
+    try await Task.sleep(for: .milliseconds(20))
+  }
   #expect(session.isManagedTerminal, "受管模式开启时新建 Pane 必须是受管终端")
   let reference = try #require(session.managedTerminal)
   let created = try #require(
@@ -275,6 +280,10 @@ func managedTerminalSurvivesAppTerminationAndRestoresSamePID() async throws {
   reopened.ensureInitialTab()
   let restoredTab = try #require(reopened.selectedTab)
   let restoredSession = try #require(restoredTab.activeSession)
+  // 恢复绑定同样是异步的（要向服务端查真实状态），等待对账结果落地再断言。
+  for _ in 0..<250 where restoredSession.managedTerminal == nil {
+    try await Task.sleep(for: .milliseconds(20))
+  }
   #expect(restoredSession.managedTerminal == reference, "重开后必须绑定同一受管终端引用")
   let afterReopen = try #require(
     try coordinator.liveTerminals().first { $0.reference.terminalID == reference.terminalID })
@@ -348,6 +357,15 @@ func managedTerminalBridgeCrashKeepsCLIDetachAndEndUsable() async throws {
   let client = ControlFakeClient()
 
   let session = try #require(workspace.model.selectedTab?.activeSession)
+  // `ControlTestWorkspace` 会真的建一个 Pane，受管模式下它自己也会异步创建一个受管终端。
+  // P3 起绑定是异步的，必须等那次自动绑定落地并把它结束掉，否则它会在本用例显式绑定
+  // 之后才覆盖引用，导致后面的 end 结束错误的终端。
+  for _ in 0..<250 where session.managedTerminal == nil {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  if let autoCreated = session.managedTerminal, autoCreated != created.reference {
+    _ = coordinator.terminate(autoCreated)
+  }
   session.bindManagedTerminal(created.reference)
   let window = NSWindow(
     contentRect: NSRect(x: 0, y: 0, width: 800, height: 480),

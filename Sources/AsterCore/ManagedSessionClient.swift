@@ -68,6 +68,59 @@ public protocol ManagedSessionClient: Sendable {
     terminalID: String,
     readOnly: Bool
   ) -> [String]
+  /// 显示桥的本地可执行文件。本机实现是 `aster-session` 自身，SSH 实现是 `ssh`。
+  func bridgeExecutablePath(_ endpoint: ManagedSessionEndpoint) -> String
+}
+
+extension ManagedSessionClient {
+  /// 默认按本机语义：桥直接执行受管运行时二进制。
+  public func bridgeExecutablePath(_ endpoint: ManagedSessionEndpoint) -> String {
+    endpoint.binaryPath
+  }
+}
+
+/// `aster-session` 结构化 CLI 的参数形状。
+///
+/// 本机实现与 SSH 实现必须使用**同一份**参数形状，否则两条传输会各自漂移；
+/// 因此集中在这里生成，不在各实现内重复拼装。
+public enum ManagedSessionCommand {
+  public static func serverStart(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["server", "start", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
+  public static func serverStatus(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["server", "status", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
+  public static func terminalCreate(
+    _ endpoint: ManagedSessionEndpoint,
+    workingDirectory: String,
+    argv: [String]
+  ) -> [String] {
+    ["terminal", "create", endpoint.stateParentPath, endpoint.sessionName, workingDirectory] + argv
+  }
+
+  public static func terminalList(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["terminal", "list", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
+  public static func terminalTerminate(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String
+  ) -> [String] {
+    ["terminal", "terminate", endpoint.stateParentPath, endpoint.sessionName, terminalID]
+  }
+
+  public static func bridge(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String,
+    readOnly: Bool
+  ) -> [String] {
+    [
+      "terminal", readOnly ? "observe" : "attach", endpoint.stateParentPath,
+      endpoint.sessionName, terminalID,
+    ]
+  }
 }
 
 /// 服务实例身份。`serverEpoch` 每次启动重新生成，用于识别冷重启。
@@ -173,7 +226,7 @@ public struct LocalManagedSessionClient: ManagedSessionClient {
   public init(timeout: TimeInterval = 15) { self.timeout = timeout }
 
   public func ensureServer(_ endpoint: ManagedSessionEndpoint) throws -> SessionServerReference {
-    let output = try run(endpoint, ["server", "start", endpoint.stateParentPath, endpoint.sessionName])
+    let output = try run(endpoint, ManagedSessionCommand.serverStart(endpoint))
     let json = try ManagedSessionReplyDecoder.envelope(output)
     // server start 的信封把已校验状态嵌在 status 字段里；直接启动与 already_running
     // 两条路径都必须走同一份已验证身份，不能用启动进程的 PID 代替身份。
@@ -187,8 +240,7 @@ public struct LocalManagedSessionClient: ManagedSessionClient {
   }
 
   public func serverStatus(_ endpoint: ManagedSessionEndpoint) throws -> SessionServerIdentity {
-    let output = try run(
-      endpoint, ["server", "status", endpoint.stateParentPath, endpoint.sessionName])
+    let output = try run(endpoint, ManagedSessionCommand.serverStatus(endpoint))
     return try ManagedSessionReplyDecoder.serverIdentity(
       machineProfileID: endpoint.machineProfileID,
       from: try ManagedSessionReplyDecoder.envelope(output)
@@ -203,8 +255,8 @@ public struct LocalManagedSessionClient: ManagedSessionClient {
     guard !argv.isEmpty else { throw ManagedSessionError.malformedReply("empty argv") }
     let output = try run(
       endpoint,
-      ["terminal", "create", endpoint.stateParentPath, endpoint.sessionName, workingDirectory]
-        + argv
+      ManagedSessionCommand.terminalCreate(
+        endpoint, workingDirectory: workingDirectory, argv: argv)
     )
     let json = try ManagedSessionReplyDecoder.envelope(output)
     let identity = try ManagedSessionReplyDecoder.serverIdentity(
@@ -217,8 +269,7 @@ public struct LocalManagedSessionClient: ManagedSessionClient {
   }
 
   public func listTerminals(_ endpoint: ManagedSessionEndpoint) throws -> [ManagedTerminalStatus] {
-    let output = try run(
-      endpoint, ["terminal", "list", endpoint.stateParentPath, endpoint.sessionName])
+    let output = try run(endpoint, ManagedSessionCommand.terminalList(endpoint))
     let json = try ManagedSessionReplyDecoder.envelope(output)
     let identity = try ManagedSessionReplyDecoder.serverIdentity(
       machineProfileID: endpoint.machineProfileID, from: json)
@@ -235,8 +286,7 @@ public struct LocalManagedSessionClient: ManagedSessionClient {
     terminalID: String
   ) throws -> ManagedTerminalStatus {
     let output = try run(
-      endpoint,
-      ["terminal", "terminate", endpoint.stateParentPath, endpoint.sessionName, terminalID])
+      endpoint, ManagedSessionCommand.terminalTerminate(endpoint, terminalID: terminalID))
     let json = try ManagedSessionReplyDecoder.envelope(output)
     let identity = try ManagedSessionReplyDecoder.serverIdentity(
       machineProfileID: endpoint.machineProfileID, from: json)
@@ -250,10 +300,7 @@ public struct LocalManagedSessionClient: ManagedSessionClient {
     terminalID: String,
     readOnly: Bool
   ) -> [String] {
-    [
-      "terminal", readOnly ? "observe" : "attach", endpoint.stateParentPath,
-      endpoint.sessionName, terminalID,
-    ]
+    ManagedSessionCommand.bridge(endpoint, terminalID: terminalID, readOnly: readOnly)
   }
 
   /// 执行一次结构化命令并返回 stdout；超时会终止子进程并按结果未知报错。

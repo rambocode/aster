@@ -2447,6 +2447,15 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   var isManagedTerminal: Bool { managedTerminal != nil }
 
   /// 绑定受管终端引用。必须在首次挂载（创建 surface）前调用。
+  /// 该终端所属远端执行机器的显示名；本机终端或非受管终端为 nil。
+  ///
+  /// 界面用它决定是否禁用本机文件类动作（P3.7）。判断依据是「受管引用 + 当前传输是
+  /// SSH」，不能只看引用存在：本机受管终端的文件动作仍然合法。
+  var remoteManagedMachineLabel: String? {
+    guard managedTerminal != nil else { return nil }
+    return ManagedTerminalCoordinator.shared.remoteMachineLabel
+  }
+
   func bindManagedTerminal(_ reference: ManagedTerminalReference?) {
     managedTerminal = reference
     managedFailure = nil
@@ -2456,6 +2465,15 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   func markManagedFailure(_ message: String) {
     managedTerminal = nil
     managedFailure = message
+  }
+
+  /// 记录「服务端缺少可选能力」的非致命提示（P3.7）。
+  ///
+  /// 复用既有的 `startupError` 警告条：`lifecycleState` 不是 `.startFailed` 时它按
+  /// 警告显示而不是失败卡，正好符合「缺失可选能力只禁用对应动作，不阻断连接」。
+  func noteManagedCapabilityLimitation(_ message: String) {
+    guard managedFailure == nil else { return }
+    startupError = message
   }
 
   var canRestart: Bool {
@@ -2599,7 +2617,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
           rawValue,
           source: source,
           currentDirectory: self.currentWorkingDirectoryIsLocal
-            ? self.currentWorkingDirectory : ""
+            ? self.currentWorkingDirectory : "",
+          remoteMachineLabel: self.remoteManagedMachineLabel
         )
       }
     }
@@ -2933,7 +2952,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         rawValue,
         source: .osc8,
         currentDirectory: self.currentWorkingDirectoryIsLocal
-          ? self.currentWorkingDirectory : ""
+          ? self.currentWorkingDirectory : "",
+        remoteMachineLabel: self.remoteManagedMachineLabel
       )
     }
     view.onSecureInputChange = { [weak self, weak view] requested in
@@ -2979,7 +2999,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         rawValue,
         source: source,
         currentDirectory: self.currentWorkingDirectoryIsLocal
-          ? self.currentWorkingDirectory : ""
+          ? self.currentWorkingDirectory : "",
+        remoteMachineLabel: self.remoteManagedMachineLabel
       )
     }
     view.onResolveHintCopyTarget = { [weak self] rawValue, source in
@@ -3179,31 +3200,50 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     clearSSHRemoteEndpoint()
     // 受管终端的 surface 子进程是显示桥。桥退出（例如用户在桥内按 Ctrl+B q）不等于
     // 任务结束，必须先查服务端真实状态；否则会把仍在运行的任务写成 session ended。
+    //
+    // P3 起这条查询可能是一次 SSH 往返，绝不能在 MainActor 上同步等待，否则整个界面
+    // 会随远端网络延迟卡住。因此这里立刻返回，真实状态回来后再决定走分离还是结束；
+    // 在结果到达之前保持既有状态，不预先写任何结束事件。
     if let reference = managedTerminal {
-      let resolution = ManagedTerminalCoordinator.shared.reconcile(
-        references: [reference], persistedServerEpoch: nil)[reference]
-      if case .attached = resolution {
-        ManagedTerminalCoordinator.shared.detach(reference)
-        lifecycleState = .detached
-        isRunning = false
-        hasRunningCommand = false
-        awaitingInput = false
-        stopAgentScreenMonitor()
-        clearFallbackAgentActivity()
-        foregroundPollTask?.cancel()
-        foregroundPollTask = nil
-        awaitingInputTask?.cancel()
-        awaitingInputTask = nil
-        SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
-        diagnostics.record(
-          "terminal.managed_bridge_exited",
-          level: .info,
-          category: .terminal,
-          attributes: processDiagnosticAttributes(extra: ["mode": "bridge_exit"])
-        )
-        return
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        let resolution = await ManagedTerminalCoordinator.shared.reconcileAsync(
+          references: [reference], persistedServerEpoch: nil)[reference]
+        if case .attached = resolution {
+          self.applyManagedBridgeExit(reference)
+        } else {
+          self.applyProcessExit(code: code)
+        }
       }
+      return
     }
+    applyProcessExit(code: code)
+  }
+
+  /// 显示桥退出但服务端任务仍在运行：按分离处理，不写任何结束事件。
+  private func applyManagedBridgeExit(_ reference: ManagedTerminalReference) {
+    ManagedTerminalCoordinator.shared.detach(reference)
+    lifecycleState = .detached
+    isRunning = false
+    hasRunningCommand = false
+    awaitingInput = false
+    stopAgentScreenMonitor()
+    clearFallbackAgentActivity()
+    foregroundPollTask?.cancel()
+    foregroundPollTask = nil
+    awaitingInputTask?.cancel()
+    awaitingInputTask = nil
+    SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
+    diagnostics.record(
+      "terminal.managed_bridge_exited",
+      level: .info,
+      category: .terminal,
+      attributes: processDiagnosticAttributes(extra: ["mode": "bridge_exit"])
+    )
+  }
+
+  /// 终端进程真实结束：写结束事件并收敛全部运行态。
+  private func applyProcessExit(code: Int32?) {
     eventRecorder?.sessionEnded(id: id, exitCode: code)
     let termination = TerminalProcessTermination(rawWaitStatus: code.map { $0 << 8 })
     lifecycleState = .ended(termination)

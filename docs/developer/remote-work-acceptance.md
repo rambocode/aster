@@ -1,6 +1,6 @@
 # 远程工作模式验收规格
 
-状态：A01–A03 的 P0 范围已通过，证据见 [P0 记录](remote-work-evidence/p0.md)。A04–A07 的 P1 范围已通过（A06 布局并发项按阶段归属移至 A15）；A08、A09 的 P2 范围已通过，证据见 [P2 记录](remote-work-evidence/p2.md)，其中 CLI→App 端到端已执行并通过，人工 GUI 一项保留为未执行；A10–A24 尚未执行；A01 的四平台最终矩阵仍在 P8 验收，不能将 P0 通过视为完整远程模式交付。
+状态：A01–A03 的 P0 范围已通过，证据见 [P0 记录](remote-work-evidence/p0.md)。A04–A07 的 P1 范围已通过（A06 布局并发项按阶段归属移至 A15）；A08、A09 的 P2 范围已通过，证据见 [P2 记录](remote-work-evidence/p2.md)，其中 CLI→App 端到端已执行并通过，人工 GUI 一项保留为未执行；A10、A11、A12 的 P3 范围已通过，证据见 [P3 记录](remote-work-evidence/p3.md)，验收在客户端 macOS arm64 与远端 OrbStack Linux x86_64（`root@ubuntu@orb`，root）真实执行，其中 `ssh://[IPv6]` URI 仅完成解析验证（本机 OpenSSH 不接受该形式），人工 GUI 与显示桥端到端保留为未执行；A13–A24 尚未执行；A01 的四平台最终矩阵仍在 P8 验收，不能将 P0 通过视为完整远程模式交付。
 
 目标合同见 [设计草案](remote-work.md)，阶段入口与任务见 [分阶段实施](remote-work-stages.md)。表中“通过”必须同时满足全部断言；环境缺失、测试跳过和结果未知均不能计为通过。
 

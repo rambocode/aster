@@ -30,12 +30,53 @@ final class ManagedTerminalCoordinator {
   /// 最近一次连接失败原因，用于界面显示明确错误而不是静默回退。
   private(set) var lastError: String?
 
+  /// 远端 SSH target 的环境变量；设置后受管终端走 SSH 传输而不是本机传输。
+  static let remoteTargetEnvironmentKey = "ASTER_REMOTE_SSH_TARGET"
+
   init(
-    client: any ManagedSessionClient = LocalManagedSessionClient(),
+    client: (any ManagedSessionClient)? = nil,
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) {
-    self.client = client
+    self.client = client ?? Self.makeClient(environment: environment)
     self.environment = environment
+  }
+
+  /// 依据环境选择传输实现。
+  ///
+  /// target 解析失败时**不回退到本机传输**：那会让用户以为连上了远端，实际在本机
+  /// 建进程。这里保留本机客户端只是为了让协调器仍能构造，真正的拒绝发生在
+  /// `remoteTransport` 为 nil 时——此时 `endpoint` 也不会被使用。
+  private static func makeClient(environment: [String: String]) -> any ManagedSessionClient {
+    guard let raw = environment[remoteTargetEnvironmentKey], !raw.isEmpty,
+      let target = try? RemoteSSHTarget.parse(raw)
+    else { return LocalManagedSessionClient() }
+    let policy = RemoteSSHPolicy.fromEnvironment(environment)
+    // 私有临时配置只在 manage_ssh_config 开启时创建；关闭时直接用用户 OpenSSH 配置。
+    let managed =
+      policy.manageSSHConfig
+      ? try? RemoteSSHConfigurationManager.makePrivateConfiguration(policy: policy) : nil
+    return RemoteManagedSessionClient(
+      transport: RemoteSessionTransport(
+        target: target, policy: policy, managedConfiguration: managed))
+  }
+
+  /// 当前是否为远端受管模式。界面据此禁用本机文件类操作（P3.7）。
+  var isRemote: Bool { client is RemoteManagedSessionClient }
+
+  /// 远端机器显示名；本机模式返回 nil。
+  var remoteMachineLabel: String? {
+    (client as? RemoteManagedSessionClient)?.transport.target.rawText
+  }
+
+  /// 当前服务缺失的可选能力提示（P3.7）。没有缺失或未握手时返回 nil。
+  var unavailableCapabilityMessage: String? {
+    guard let identity = serverIdentity else { return nil }
+    guard
+      case .compatible(let missing) = RemoteCompatibilityCheck.evaluate(
+        protocolMajor: RemoteProtocolContract.clientProtocolMajor,
+        capabilities: identity.capabilities)
+    else { return nil }
+    return RemoteCompatibilityCheck.unavailableActionMessage(missingOptional: missing)
   }
 
   /// 受管模式是否可用。缺少显式配置时返回 nil，调用方保持既有本地终端行为。
@@ -52,7 +93,84 @@ final class ManagedTerminalCoordinator {
 
   var isEnabled: Bool { endpoint != nil }
 
+  /// 异步连接。把阻塞的服务查询挪出主线程。
+  ///
+  /// P3 起同一个协调器要驱动 SSH 传输，每次调用都是一次网络往返；在 MainActor 上
+  /// 同步等待会卡住整个界面。本机实现也走同一条异步路径，避免两条传输出现两套时序。
+  @discardableResult
+  func connectAsync() async -> SessionServerIdentity? {
+    guard let endpoint else {
+      connectionState = .disabled
+      return nil
+    }
+    connectionState = .connecting
+    let client = self.client
+    let outcome = await Task.detached(priority: .userInitiated) { () -> Result<SessionServerIdentity, any Error> in
+      do {
+        _ = try client.ensureServer(endpoint)
+        return .success(try client.serverStatus(endpoint))
+      } catch {
+        return .failure(error)
+      }
+    }.value
+    switch outcome {
+    case .success(let identity):
+      serverIdentity = identity
+      connectionState = .online
+      lastError = nil
+      return identity
+    case .failure(let error):
+      connectionState = .attention
+      lastError = String(describing: error)
+      return nil
+    }
+  }
+
+  /// 异步创建受管终端。失败向上抛出，调用方必须显示明确错误。
+  func createTerminalAsync(workingDirectory: String, argv: [String]) async throws
+    -> ManagedTerminalStatus
+  {
+    guard let endpoint else { throw ManagedSessionError.runtimeUnavailable("managed mode disabled") }
+    if serverIdentity == nil { _ = await connectAsync() }
+    guard connectionState == .online else {
+      throw ManagedSessionError.runtimeUnavailable(lastError ?? "server unavailable")
+    }
+    let client = self.client
+    return try await Task.detached(priority: .userInitiated) {
+      try client.createTerminal(endpoint, workingDirectory: workingDirectory, argv: argv)
+    }.value
+  }
+
+  /// 异步对账持久化引用与服务端实测状态。
+  func reconcileAsync(
+    references: [ManagedTerminalReference],
+    persistedServerEpoch: String?
+  ) async -> [ManagedTerminalReference: ManagedTerminalResolution] {
+    guard let endpoint else {
+      return Dictionary(
+        uniqueKeysWithValues: references.map {
+          ($0, ManagedTerminalResolution.unreachable($0, reason: "managed mode disabled"))
+        })
+    }
+    let identity = await connectAsync()
+    let client = self.client
+    let live = await Task.detached(priority: .userInitiated) {
+      (try? client.listTerminals(endpoint)) ?? []
+    }.value
+    return ManagedTerminalReconciler.reconcile(
+      references: references,
+      liveTerminals: live,
+      currentServer: identity?.reference,
+      currentServerEpoch: identity?.serverEpoch,
+      persistedServerEpoch: persistedServerEpoch,
+      unreachableReason: identity == nil ? (lastError ?? "server unavailable") : nil
+    )
+  }
+
   /// 连接（必要时启动）本地默认后台服务。Local 允许首次使用时自动启动或附加。
+  ///
+  /// 同步版本保留给必须在返回前完成的关闭路径（`stop()`/`terminate`）；
+  /// 交互路径一律用 `connectAsync()`。
   @discardableResult
   func connect() -> SessionServerIdentity? {
     guard let endpoint else {
@@ -146,7 +264,8 @@ final class ManagedTerminalCoordinator {
     guard let endpoint else { return nil }
     let arguments = client.bridgeArguments(
       endpoint, terminalID: reference.terminalID, readOnly: readOnly)
+    // 桥的可执行文件由传输实现决定：本机是 aster-session 本身，SSH 是 /usr/bin/ssh。
     return GhosttyConfiguration.launchCommand(
-      shell: endpoint.binaryPath, arguments: arguments)
+      shell: client.bridgeExecutablePath(endpoint), arguments: arguments)
   }
 }

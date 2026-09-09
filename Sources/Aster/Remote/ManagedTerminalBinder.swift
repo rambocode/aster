@@ -31,18 +31,37 @@ enum ManagedTerminalBinder {
     descriptor: PaneDescriptor,
     isRestored: Bool,
     shell: String,
-    onBind: (ManagedTerminalReference) -> Void
+    onBind: @escaping (ManagedTerminalReference) -> Void
   ) {
     let coordinator = ManagedTerminalCoordinator.shared
     guard coordinator.isEnabled else { return }
+    // 绑定要么查服务端真实状态、要么创建远端终端，两者在 P3 都可能是 SSH 往返。
+    // 必须异步执行：在 MainActor 上同步等待会让新建 Pane 时整个界面随网络延迟卡住。
+    Task { @MainActor in
+      await bindAsync(
+        session: session, descriptor: descriptor, isRestored: isRestored, shell: shell,
+        onBind: onBind)
+    }
+  }
+
+  /// 绑定的异步实现。全部服务查询都在这里完成，调用方不阻塞主线程。
+  private static func bindAsync(
+    session: TerminalSession,
+    descriptor: PaneDescriptor,
+    isRestored: Bool,
+    shell: String,
+    onBind: @escaping (ManagedTerminalReference) -> Void
+  ) async {
+    let coordinator = ManagedTerminalCoordinator.shared
 
     if let existing = descriptor.managedTerminal {
       // 重开 App 必须查服务端真实状态；持久化的引用本身不是运行证据。
-      let resolution = coordinator.reconcile(
+      let resolution = await coordinator.reconcileAsync(
         references: [existing], persistedServerEpoch: nil)[existing]
       switch resolution {
       case .attached:
         session.bindManagedTerminal(existing)
+        noteCapabilityLimitations(session: session, coordinator: coordinator)
       case .exited(let status):
         session.markManagedFailure(
           "受管终端已退出（exit \(status.exitCode.map(String.init) ?? "未知")）。")
@@ -62,14 +81,24 @@ enum ManagedTerminalBinder {
     guard !isRestored else { return }
 
     do {
-      let status = try coordinator.createTerminal(
+      let status = try await coordinator.createTerminalAsync(
         workingDirectory: descriptor.workingDirectory,
         argv: shellArguments(shell: shell)
       )
       session.bindManagedTerminal(status.reference)
+      noteCapabilityLimitations(session: session, coordinator: coordinator)
       onBind(status.reference)
     } catch {
       session.markManagedFailure(String(describing: error))
     }
+  }
+
+  /// 握手成功后把服务端缺失的可选能力提示出来，避免用户以为对应动作是坏了。
+  private static func noteCapabilityLimitations(
+    session: TerminalSession,
+    coordinator: ManagedTerminalCoordinator
+  ) {
+    guard let message = coordinator.unavailableCapabilityMessage else { return }
+    session.noteManagedCapabilityLimitation(message)
   }
 }

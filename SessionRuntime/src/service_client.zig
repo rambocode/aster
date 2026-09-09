@@ -219,14 +219,17 @@ fn waitStopped(allocator: std.mem.Allocator, parent: std.fs.Dir, name: []const u
         deadline.wait(stream.handle, std.posix.POLL.IN) catch |err| {
             if (err != error.ServiceDisconnected) return err;
         };
-        var byte: [1]u8 = undefined;
-        const count = stream.read(&byte) catch |err| switch (err) {
+        var scratch: [512]u8 = undefined;
+        const count = stream.read(&scratch) catch |err| switch (err) {
             error.WouldBlock => continue,
             error.ConnectionResetByPeer => break,
             else => return err,
         };
         if (count == 0) break;
-        return error.InvalidServiceStop;
+        // 服务进入 stopping 后仍会有界排空已生成的回复与事件（设计草案 §5），这些
+        // 字节完全合法。旧实现把它们当成停止失败，结果是「只要还有运行中的终端就必然
+        // 报 InvalidServiceStop」——服务其实已正常停止，退出码却不可信，会诱使调用方
+        // 重试或升级成信号。这里丢弃并继续等待连接关闭，上界仍由 deadline 兜底。
     }
     while (true) {
         _ = try deadline.remainingMilliseconds();
