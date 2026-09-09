@@ -326,7 +326,12 @@ aster pane send-text --pane w1:p3 'npm test' --enter
 aster pane wait-output w1:p3 --match "passed" --timeout 60000
 aster events subscribe --kind pane.agent_status_changed
 aster notification show "构建完成" --body "全部通过"
+aster session terminals                      # 后台受管终端及其真实状态
+aster session detach --current               # 分离：后台任务继续运行
+aster session end w1:p3                      # 结束：终止该受管终端的后台进程
 ```
+
+`session terminals/detach/end` 只对**受管终端**有效。受管终端是运行在后台会话服务里的终端：关闭窗口或退出 Aster 只是「分离」，里面的任务继续运行，下次打开会重新附加到同一个进程；只有「结束」才会终止它。这项能力目前默认关闭，仅在同时设置了 `ASTER_SESSION_BINARY` 与 `ASTER_SESSION_STATE_DIR` 的专用测试配置里可用；普通本地终端不受影响，对普通 pane 执行这两个命令会直接报错，不会结束它的 Shell。菜单「文件 → 分离受管终端 / 结束受管终端 / 把布局托管到后台…」提供同样的动作。
 
 pane 与 Agent 用短 ID 引用（`w1` 窗口、`w1:t2` 标签、`w1:p5` pane），也可用 Agent 名或 `--current`（当前 pane，来自环境变量 `ASTER_PANE_ID`）。`agent`、`events`、`notification` 命令只在 Aster 自己的终端里可用（环境变量 `ASTER_ENV=1`），在别的终端里需要显式加 `--allow-outside`。写入类命令与 `pane send/run/exec` 受同一套 IPC 开关约束；`--json` 输出原始结果，出错时 stderr 打印 `{"code":"…","message":"…"}` 并以退出码 1 结束。
 

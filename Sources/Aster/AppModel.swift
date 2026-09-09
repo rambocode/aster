@@ -309,7 +309,13 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
     }
   }
 
-  func stop(immediately: Bool = false) {
+  /// 关闭 Pane 运行态。`disposition` 只影响受管终端：分离保留后台进程与布局，
+  /// 结束才终止远端进程；本地非受管终端行为不变。
+  func stop(
+    immediately: Bool = false,
+    disposition: ManagedTerminalDisposition = .terminated
+  ) {
+    terminalSession?.managedDisposition = disposition
     terminalSession?.stop(immediately: immediately)
   }
 }
@@ -499,7 +505,8 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     self.layout = initial
     activePaneID = initial.firstPaneID ?? UUID()
     paneTitleStates[activePaneID] = initialTitleState
-    rebuildRuntimes(for: initial)
+    // 传入 layout 表示这是恢复/模板实例化；未传则是全新默认 Pane。
+    rebuildRuntimes(for: initial, isRestored: layout != nil)
   }
 
   convenience init(snapshot: WorkspaceTabSnapshot) {
@@ -908,9 +915,12 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     return true
   }
 
-  func stop(immediately: Bool = false) {
+  func stop(
+    immediately: Bool = false,
+    disposition: ManagedTerminalDisposition = .terminated
+  ) {
     for runtime in runtimes.values {
-      runtime.stop(immediately: immediately)
+      runtime.stop(immediately: immediately, disposition: disposition)
     }
   }
 
@@ -963,16 +973,37 @@ final class TerminalTabItem: ObservableObject, Identifiable {
 
   func markUpdated() { updatedAt = Date() }
 
-  private func rebuildRuntimes(for layout: PaneLayout) {
+  /// - Parameter isRestored: 来自持久化/模板的既有布局。只有全新创建的默认 Pane
+  ///   才允许自动创建受管终端；恢复的旧 Pane 必须走显式迁移。
+  private func rebuildRuntimes(for layout: PaneLayout, isRestored: Bool = true) {
     for pane in layout.allPanes {
-      addRuntime(for: pane)
+      addRuntime(for: pane, isRestored: isRestored)
     }
   }
 
-  private func addRuntime(for descriptor: PaneDescriptor) {
+  /// - Parameter isRestored: 来自持久化恢复的 Pane。旧布局中没有受管引用的 Pane
+  ///   不自动托管，必须走显式迁移事务。
+  private func addRuntime(for descriptor: PaneDescriptor, isRestored: Bool = false) {
     guard runtimes[descriptor.id] == nil else { return }
     let runtime = WorkspacePaneRuntime(descriptor: descriptor)
     runtimes[descriptor.id] = runtime
+    if let session = runtime.terminalSession {
+      let paneID = descriptor.id
+      ManagedTerminalBinder.bind(
+        session: session,
+        descriptor: descriptor,
+        isRestored: isRestored,
+        shell: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+      ) { [weak self] reference in
+        // 引用写回布局后才会随工作区快照持久化，重开 App 才能查真实状态。
+        guard let self else { return }
+        self.layout = self.layout.updatingPane(paneID: paneID) { descriptor in
+          var updated = descriptor
+          updated.managedTerminal = reference
+          return updated
+        }
+      }
+    }
     if paneTitleStates[descriptor.id] == nil {
       paneTitleStates[descriptor.id] = TerminalTitleState(
         tabOverride: titleState.tabOverride,
@@ -1775,6 +1806,45 @@ final class AppModel: ObservableObject {
   func splitSelectedTab(_ direction: SplitDirection = .right) {
     selectedTab?.split(direction: direction)
     persistWorkspace()
+  }
+
+  /// 分离当前受管终端：只结束本客户端的显示桥，后台任务与布局保留。
+  @discardableResult
+  func detachActiveManagedTerminal() -> Bool {
+    selectedTab?.activeSession?.detachManagedTerminal() ?? false
+  }
+
+  /// 显式结束当前受管终端：终止后台进程，Pane 保留结束状态。
+  ///
+  /// 与关闭 Pane 是两个动作，但同样沿用运行任务关闭确认策略。
+  @discardableResult
+  func terminateActiveManagedTerminal() -> Bool {
+    guard let session = selectedTab?.activeSession, session.isManagedTerminal else { return false }
+    guard confirmClose(.pane, hasRunningProcess: session.hasForegroundCommand) else { return false }
+    return session.terminateManagedTerminal()
+  }
+
+  /// 把当前工作区布局托管到后台会话。
+  ///
+  /// 事务顺序：备份 → 连接服务 → 逐个创建新受管终端 → 追加新标签。任何一步失败都
+  /// 回滚（清理本次新建的受管终端并保留备份），现有本地 PTY 一律不结束。
+  @discardableResult
+  func migrateWorkspaceToManagedSession() -> ManagedMigrationOutcome? {
+    guard let endpoint = ManagedTerminalCoordinator.shared.endpoint else { return nil }
+    let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+    let outcome = ManagedTerminalMigration.migrate(
+      tabs: tabs.map(\.snapshot),
+      endpoint: endpoint,
+      client: LocalManagedSessionClient(),
+      shellArguments: ManagedTerminalBinder.shellArguments(shell: shell),
+      backupURL: ManagedMigrationSupport.makeBackupURL()
+    )
+    guard outcome.succeeded else { return outcome }
+    for snapshot in ManagedMigrationSupport.rebased(outcome.tabs) {
+      insertTab(TerminalTabItem(snapshot: snapshot), position: nil, hasContent: true)
+    }
+    persistWorkspace()
+    return outcome
   }
 
   func closeActivePane() {
@@ -3811,7 +3881,8 @@ final class AppModel: ObservableObject {
       "workspace.session_marked_clean", level: .notice, category: .workspace)
     // `terminateNow` 返回后 AppKit 不保证延迟任务继续运行，因此退出路径直接终止
     // 各 Shell 进程组；普通 Pane/标签关闭仍保留温和退出与 750ms 升级窗口。
-    for tab in tabs { tab.stop(immediately: true) }
+    // 退出 App 属于分离：受管终端的后台进程与布局必须保留（A08）。
+    for tab in tabs { tab.stop(immediately: true, disposition: .detached) }
   }
 
   /// 保留单模型调用入口；多窗口退出必须使用 `WorkspaceTerminationTransaction`，避免

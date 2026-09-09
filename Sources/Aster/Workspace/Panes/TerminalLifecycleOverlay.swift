@@ -35,6 +35,10 @@ final class TerminalLifecycleOverlayView: NSView {
         detail = startupError?.split(separator: "\n").first.map(String.init)
           ?? "无法创建本地终端进程，可以修正配置后重试。"
         symbol = "exclamationmark.triangle"
+      case .detached:
+        title = "已分离"
+        detail = "后台任务继续运行，布局已保留。重新附加即可恢复画面。"
+        symbol = "bolt.horizontal.circle"
       case .notStarted, .starting, .running, .stopping:
         return nil
       }
@@ -96,9 +100,15 @@ final class TerminalLifecycleOverlayView: NSView {
     privacy.font = .systemFont(ofSize: 9.5)
     privacy.textColor = AsterTheme.tertiaryInk
 
-    let restart = ActionButton(title: "重新启动 Shell", symbol: "arrow.clockwise") {
-      [weak session] in
-      _ = session?.restart()
+    // 分离态的按钮是“重新附加”，不能沿用“重新启动 Shell”——后者会让用户以为
+    // 需要新建进程，而受管任务其实仍在运行。
+    let isDetached = session.lifecycleState == .detached
+    let restart = ActionButton(
+      title: isDetached ? "重新附加" : "重新启动 Shell",
+      symbol: isDetached ? "bolt.horizontal.circle" : "arrow.clockwise"
+    ) { [weak session] in
+      guard let session else { return }
+      _ = isDetached ? session.reattachManagedTerminal() : session.restart()
     }
     restart.identifier = NSUserInterfaceItemIdentifier(
       "terminal-restart-shell-\(session.id.uuidString)")

@@ -985,6 +985,22 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   @objc private func splitDown(_ sender: Any?) { activeWorkspaceModel.splitSelectedTab(.down) }
   @objc private func splitUp(_ sender: Any?) { activeWorkspaceModel.splitSelectedTab(.up) }
   @objc private func closePane(_ sender: Any?) { activeWorkspaceModel.closeActivePane() }
+  /// 「分离」与「结束受管终端」是两个独立入口：分离保留后台任务，结束才终止进程。
+  @objc private func detachManagedTerminal(_ sender: Any?) {
+    _ = activeWorkspaceModel.detachActiveManagedTerminal()
+  }
+  @objc private func endManagedTerminal(_ sender: Any?) {
+    _ = activeWorkspaceModel.terminateActiveManagedTerminal()
+  }
+  @objc private func migrateWorkspaceToManagedSession(_ sender: Any?) {
+    guard let outcome = activeWorkspaceModel.migrateWorkspaceToManagedSession() else { return }
+    guard let failure = outcome.failure else { return }
+    let alert = NSAlert()
+    alert.messageText = "托管到后台失败"
+    alert.informativeText = "\(failure)。已回滚，现有终端未受影响。"
+    alert.alertStyle = .warning
+    alert.runModal()
+  }
   @objc private func zoomSplit(_ sender: Any?) { activeWorkspaceModel.toggleZoomActivePane() }
   @objc private func equalizeSplits(_ sender: Any?) { activeWorkspaceModel.equalizeSplits() }
   @objc private func moveDividerUp(_ sender: Any?) { activeWorkspaceModel.moveDivider(.up) }
@@ -1312,6 +1328,12 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(menuItem("关闭标签页", #selector(closeTab(_:)), "", modifiers: []))
     submenu.addItem(
       menuItem("关闭窗口", #selector(closeActiveWindow(_:)), "w", modifiers: [.command, .shift]))
+    submenu.addItem(.separator())
+    submenu.addItem(menuItem("分离受管终端", #selector(detachManagedTerminal(_:)), "", modifiers: []))
+    submenu.addItem(menuItem("结束受管终端", #selector(endManagedTerminal(_:)), "", modifiers: []))
+    submenu.addItem(
+      menuItem(
+        "把布局托管到后台…", #selector(migrateWorkspaceToManagedSession(_:)), "", modifiers: []))
     item.submenu = submenu
     return item
   }

@@ -85,6 +85,9 @@ enum TerminalSessionLifecycleState: Equatable {
   case ended(TerminalProcessTermination)
   case startFailed
   case stopping
+  /// 受管终端已分离：后台进程与布局继续保留，只是本客户端不再显示画面。
+  /// 与 `ended` 严格区分——分离不是结束。
+  case detached
 }
 
 extension TerminalSessionLifecycleState {
@@ -98,6 +101,7 @@ extension TerminalSessionLifecycleState {
     case .ended(.ioFailure): "io_failure"
     case .startFailed: "start_failed"
     case .stopping: "stopping"
+    case .detached: "detached"
     }
   }
 }
@@ -2432,9 +2436,31 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     return foreground > 0 && foreground != process.shellPid
   }
 
+  /// 受管终端引用；nil 表示这是本地非受管终端，全部既有行为保持不变。
+  private(set) var managedTerminal: ManagedTerminalReference?
+  /// 受管终端创建失败原因。非空时不启动任何本地 Shell，只显示明确错误，
+  /// 避免用一个未经标识的新本地 Shell 冒充受管终端。
+  private(set) var managedFailure: String?
+  /// 本次关闭的语义。分离只释放客户端资源并保留服务端进程；结束才终止远端进程。
+  var managedDisposition: ManagedTerminalDisposition = .terminated
+  /// 是否为受管终端。
+  var isManagedTerminal: Bool { managedTerminal != nil }
+
+  /// 绑定受管终端引用。必须在首次挂载（创建 surface）前调用。
+  func bindManagedTerminal(_ reference: ManagedTerminalReference?) {
+    managedTerminal = reference
+    managedFailure = nil
+  }
+
+  /// 标记受管终端创建/对账失败；该 Pane 只显示错误，不启动本地 Shell。
+  func markManagedFailure(_ message: String) {
+    managedTerminal = nil
+    managedFailure = message
+  }
+
   var canRestart: Bool {
     switch lifecycleState {
-    case .ended, .startFailed: true
+    case .ended, .startFailed, .detached: true
     case .notStarted, .starting, .running, .stopping: false
     }
   }
@@ -2826,6 +2852,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // aster-direct-child 绕过 login(1)，由 Ghostty 等待受控启动命令的真实退出状态。
     view.command = GhosttyConfiguration.launchCommand(
       shell: shell, arguments: Self.launchArguments(forShell: shell))
+    // 受管终端的 surface 子进程是显示桥，不是任务本身：关闭 surface 只结束桥，
+    // 后台服务持有的 PTY 与进程组继续运行。
+    if let managedTerminal,
+      let bridge = ManagedTerminalCoordinator.shared.bridgeCommandText(for: managedTerminal)
+    {
+      view.command = bridge
+    }
     // 先登记再创建 surface；极短命命令的退出 callback 可能在 createSurface 返回前到达。
     ghosttyView = view
     processStartedAt = Date()
@@ -3033,6 +3066,14 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       }
     }
     view.setReadOnly(readOnly)
+    // 受管终端创建失败时不落地任何进程：显示错误状态，等待用户重试或修复配置。
+    if let managedFailure {
+      view.surfaceCreationDisabled = true
+      isRunning = false
+      lifecycleState = .startFailed
+      startupError = "受管终端不可用：\(managedFailure)"
+      return view
+    }
     view.createSurface()
     return view
   }
@@ -3136,6 +3177,33 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   private func handleGhosttyProcessExit(code: Int32?) {
     clearSSHRemoteEndpoint()
+    // 受管终端的 surface 子进程是显示桥。桥退出（例如用户在桥内按 Ctrl+B q）不等于
+    // 任务结束，必须先查服务端真实状态；否则会把仍在运行的任务写成 session ended。
+    if let reference = managedTerminal {
+      let resolution = ManagedTerminalCoordinator.shared.reconcile(
+        references: [reference], persistedServerEpoch: nil)[reference]
+      if case .attached = resolution {
+        ManagedTerminalCoordinator.shared.detach(reference)
+        lifecycleState = .detached
+        isRunning = false
+        hasRunningCommand = false
+        awaitingInput = false
+        stopAgentScreenMonitor()
+        clearFallbackAgentActivity()
+        foregroundPollTask?.cancel()
+        foregroundPollTask = nil
+        awaitingInputTask?.cancel()
+        awaitingInputTask = nil
+        SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
+        diagnostics.record(
+          "terminal.managed_bridge_exited",
+          level: .info,
+          category: .terminal,
+          attributes: processDiagnosticAttributes(extra: ["mode": "bridge_exit"])
+        )
+        return
+      }
+    }
     eventRecorder?.sessionEnded(id: id, exitCode: code)
     let termination = TerminalProcessTermination(rawWaitStatus: code.map { $0 << 8 })
     lifecycleState = .ended(termination)
@@ -3856,6 +3924,21 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 立即结束进程组，因为主事件循环不会继续存活到延迟升级任务执行。
   func stop(immediately: Bool = false) {
     clearSSHRemoteEndpoint()
+    // 受管终端先按语义处理服务端资源：分离保留进程与布局，结束才终止远端进程。
+    // 分离路径不写 Agent 结束和 `session ended`，否则会把一个仍在运行的任务
+    // 记成已结束（A08 明确禁止）。
+    if let managedTerminal {
+      switch managedDisposition {
+      case .detached:
+        ManagedTerminalCoordinator.shared.detach(managedTerminal)
+        finishManagedDetach(immediately: immediately)
+        return
+      case .terminated:
+        if let status = ManagedTerminalCoordinator.shared.terminate(managedTerminal) {
+          eventRecorder?.sessionEnded(id: id, exitCode: status.exitCode)
+        }
+      }
+    }
     // 用户直接关 Pane/标签/退出 App 时 Agent 还在跑，不会有 commandFinished；
     // 这是最常见的「结束」方式，必须在拆 surface 前登记会话，否则下次无从 resume。
     reportAgentSessionEndedIfNeeded()
@@ -3926,6 +4009,75 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // 后保留旧 PID。托管器只接受仍运行的 View，并在 Session 释放后继续负责升级
     // 信号及等待 monitor 回收，避免僵尸进程和 PID 复用后的误杀。
     TerminalRetirementCoordinator.shared.retire(view, immediately: immediately)
+  }
+
+  /// 显式“分离”入口：保留后台进程与布局，只结束本客户端的显示桥。
+  ///
+  /// 与“结束”是两个独立动作；界面必须分别提供，不能复用关闭语义（R01/A08）。
+  @discardableResult
+  func detachManagedTerminal() -> Bool {
+    guard managedTerminal != nil, lifecycleState != .detached else { return false }
+    managedDisposition = .detached
+    stop(immediately: false)
+    managedDisposition = .terminated
+    return true
+  }
+
+  /// 显式“结束”入口：终止后台受管进程并保留结束状态与最后画面。
+  ///
+  /// 与分离互斥。这里写一次结束事件；服务端重复上报由协调器去重。
+  @discardableResult
+  func terminateManagedTerminal() -> Bool {
+    guard let reference = managedTerminal else { return false }
+    let status = ManagedTerminalCoordinator.shared.terminate(reference)
+    // 进程已在服务端结束，剩下的只是拆本地桥；用分离路径拆桥可避免重复 terminate。
+    managedDisposition = .detached
+    stop(immediately: false)
+    managedDisposition = .terminated
+    lifecycleState = .ended(.exited(code: status?.exitCode ?? 0))
+    eventRecorder?.sessionEnded(id: id, exitCode: status?.exitCode)
+    return true
+  }
+
+  /// 重新附加到仍在后台运行的受管终端；在原 Pane 容器内重建显示桥。
+  @discardableResult
+  func reattachManagedTerminal() -> Bool {
+    guard managedTerminal != nil, lifecycleState == .detached else { return false }
+    return restart()
+  }
+
+  /// 受管终端的“分离”：只拆本客户端的显示桥与订阅，不写结束事件、不动远端进程。
+  ///
+  /// 与 `stop()` 的结束路径共享视图清理，但刻意不调用 `reportAgentSessionEndedIfNeeded`
+  /// 和 `eventRecorder.sessionEnded`；服务端进程仍在运行，写结束事件会污染录制与
+  /// Agent 状态。
+  private func finishManagedDetach(immediately: Bool) {
+    lifecycleState = .detached
+    diagnostics.record(
+      "terminal.managed_detached",
+      level: .info,
+      category: .terminal,
+      attributes: processDiagnosticAttributes(extra: [
+        "mode": immediately ? "immediate" : "graceful"
+      ])
+    )
+    let ghostty = ghosttyView
+    ghosttyView = nil
+    ghosttyShellProcessIdentifier = nil
+    // 刻意保留 terminalHostView：重新附加时 `restart()` 在原容器里重建 surface，
+    // 不需要工作区重建整棵视图树。
+    targetOpenCoordinator = nil
+    autocompleteController = nil
+    isRunning = false
+    foregroundPollTask?.cancel()
+    foregroundPollTask = nil
+    stopAgentScreenMonitor()
+    clearFallbackAgentActivity()
+    awaitingInputTask?.cancel()
+    completedFlashTask?.cancel()
+    progressExpiryTask?.cancel()
+    SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
+    ghostty?.destroySurface()
   }
 
   /// 新进程不能继承上一代 Shell/TUI 的瞬态状态。Pane 的稳定身份、只读开关、回调和

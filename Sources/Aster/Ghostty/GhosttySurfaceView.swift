@@ -323,7 +323,12 @@ final class GhosttySurfaceView: NSView {
 
   // MARK: - Surface lifecycle
 
+  /// 受管终端不可用时禁止落地任何本地进程：surface 创建被彻底阻断，
+  /// 包括 `viewDidMoveToWindow` 的自动创建路径。
+  var surfaceCreationDisabled = false
+
   func createSurface() {
+    guard !surfaceCreationDisabled else { return }
     guard !isDestroyed, surface == nil else { return }
     // macOS Ghostty surface 创建需要 NSView 已进入真实窗口；工作区先组装离屏视图树时
     // 只记录待创建，不能把正常的 AppKit 挂载顺序误报成启动失败。
