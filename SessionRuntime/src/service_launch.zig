@@ -11,9 +11,15 @@ const c = @cImport({
 /// Readiness is bound to a parent-generated epoch so a replacement server cannot
 /// be mistaken for the child we just launched. Unknown outcomes never kill PIDs.
 pub fn start(allocator: std.mem.Allocator, parent_path: []const u8, name: []const u8) ![]u8 {
-    try StateDirectory.validateName(name);
     var parent = try std.fs.cwd().openDir(parent_path, .{ .no_follow = true });
     defer parent.close();
+    return startAt(allocator, parent, name);
+}
+
+/// Same contract as `start`, driven by an already-open registry parent handle so
+/// a running service can start a sibling session without re-resolving a path.
+pub fn startAt(allocator: std.mem.Allocator, parent: std.fs.Dir, name: []const u8) ![]u8 {
+    try StateDirectory.validateName(name);
     const info = try std.posix.fstat(parent.fd);
     if (info.uid != std.posix.geteuid() or info.mode & 0o077 != 0) return error.UnsafeStateParent;
     var clock = try std.time.Timer.start();

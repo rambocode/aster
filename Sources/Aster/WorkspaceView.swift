@@ -23,7 +23,24 @@ final class WorkspaceViewController: NSViewController {
   }
 
   let model: AppModel
-  private let preferences: AppPreferences
+  // 机器侧栏分区在同模块的扩展里构建，需要读取同一份偏好与主题。
+  let preferences: AppPreferences
+  /// 远端机器工作区的投影协调器（P4.2）。
+  ///
+  /// 懒建：只用 Local 的用户永远不会构造它，也就不会有任何远端握手；构造之后
+  /// 刷新回调把服务端结构变化接回侧栏与标签栏。
+  /// 已经构造出来的协调器；读它**不会**触发懒构造。
+  ///
+  /// 窗口关闭 / App 退出的收尾必须走这个入口：用 `remoteWorkspaces` 收尾会反过来
+  /// 在退出路径上现造一个协调器出来。
+  private(set) var loadedRemoteWorkspaces: RemoteWorkspaceCoordinator?
+  var remoteWorkspaces: RemoteWorkspaceCoordinator {
+    if let loadedRemoteWorkspaces { return loadedRemoteWorkspaces }
+    let coordinator = RemoteWorkspaceCoordinator(model: model)
+    coordinator.onDidRefresh = { [weak self] in self?.scheduleRefresh() }
+    loadedRemoteWorkspaces = coordinator
+    return coordinator
+  }
   /// 安全输入是进程级能力，生产窗口共享单例；测试可注入无副作用实现，避免调用全局
   /// Carbon 状态。窗口只观察真实系统保护状态，不自行维护第二份开关。
   private let secureInputCoordinator: SecureInputCoordinator
@@ -199,6 +216,12 @@ final class WorkspaceViewController: NSViewController {
       .store(in: &modelSubscriptions)
     // 详情面板显隐跟随持久化的偏好值；之后用户的每次切换再写回，重启窗口即恢复。
     model.isInspectorPresented = preferences.inspectorPresented
+    // 机器列表是客户端级事实：先让 Local 立即可见，enabled 的远端机器在各自
+    // 独立任务里连接，任何一台失联都不阻塞本地启动与输入（§4.1 第 1 条）。
+    machineFleet.objectWillChange
+      .sink { [weak self] _ in self?.scheduleRefresh() }
+      .store(in: &modelSubscriptions)
+    machineFleet.start()
     model.ensureInitialTab()
     installPaneClickMonitor()
     installWorkspaceOverlayKeyMonitor()
@@ -681,7 +704,7 @@ final class WorkspaceViewController: NSViewController {
     )
   }
 
-  private func scheduleRefresh() {
+  func scheduleRefresh() {
     guard !refreshScheduled else { return }
     refreshScheduled = true
     DispatchQueue.main.async { [weak self] in
@@ -1273,6 +1296,12 @@ final class WorkspaceViewController: NSViewController {
       menu.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -5),
     ])
     column.addArrangedSubview(header)
+
+    // 机器分区放在 TABS 之上：Local 与远端机器决定「标签属于哪台机器」，
+    // 顺序颠倒会让用户先选标签再发现自己在别的机器上。
+    let machines = makeMachineSection()
+    column.addArrangedSubview(machines)
+    machines.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
 
     // 红绿灯行感应区：header 顶部与交通灯同高的一条带子，只用来界定「折叠」按钮的
     // 显示范围。它不自带 tracking area，也不参与命中测试（否则会吃掉窗口拖动），

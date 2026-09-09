@@ -77,9 +77,19 @@ struct ControlClient {
   func call(
     _ method: AsterControlMethod, params: JSONValue?, timeout: TimeInterval = defaultTimeout
   ) throws -> JSONValue {
+    try call(method.rawValue, params: params, timeout: timeout)
+  }
+
+  /// 按方法名调用。
+  ///
+  /// `machine.*` 与新增的 `session.*` 不在 `AsterControlMethod` 里（那是 AsterCore 的封闭
+  /// 枚举），但协议请求的 `method` 本来就是字符串；服务端在解析枚举之前先处理这组方法。
+  func call(
+    _ method: String, params: JSONValue?, timeout: TimeInterval = defaultTimeout
+  ) throws -> JSONValue {
     let connection = try connectOrLaunch()
     defer { connection.close() }
-    try connection.send(AsterControlRequest(id: .number(1), method: method.rawValue, params: params))
+    try connection.send(AsterControlRequest(id: .number(1), method: method, params: params))
     let response = try connection.receiveResponse(timeout: timeout)
     if let error = response.error { throw error }
     return response.result ?? .null

@@ -70,12 +70,43 @@ public protocol ManagedSessionClient: Sendable {
   ) -> [String]
   /// 显示桥的本地可执行文件。本机实现是 `aster-session` 自身，SSH 实现是 `ssh`。
   func bridgeExecutablePath(_ endpoint: ManagedSessionEndpoint) -> String
+  /// 事件流订阅的完整本地调用形状（可执行文件 + argv）。
+  ///
+  /// 与显示桥同理：argv 由 `ManagedSessionCommand.eventSubscribe` 集中生成，
+  /// 这里只决定由谁执行——本机是运行时自身，SSH 实现覆写成 `ssh` 转发。
+  func eventSubscribeInvocation(_ endpoint: ManagedSessionEndpoint) -> ManagedSessionInvocation
+  /// 执行一次结构化 CLI 调用并返回 stdout（只承载协议输出，诊断在 stderr）。
+  ///
+  /// 这是两条传输面唯一的差异点：本机直接执行 `binaryPath`，SSH 把同一份 argv 交给
+  /// `ssh`。会话作用域动作与注册表作用域动作（`ManagedRegistryEndpoint`，没有
+  /// sessionName）都建立在它之上，因此参数只取 `binaryPath`，不取整个会话端点。
+  func executeStructured(binaryPath: String, arguments: [String]) throws -> String
 }
 
 extension ManagedSessionClient {
   /// 默认按本机语义：桥直接执行受管运行时二进制。
   public func bridgeExecutablePath(_ endpoint: ManagedSessionEndpoint) -> String {
     endpoint.binaryPath
+  }
+
+  /// 默认按本机语义：直接执行受管运行时二进制。
+  public func eventSubscribeInvocation(_ endpoint: ManagedSessionEndpoint)
+    -> ManagedSessionInvocation
+  {
+    ManagedSessionInvocation(
+      executablePath: endpoint.binaryPath,
+      arguments: ManagedSessionCommand.eventSubscribe(endpoint))
+  }
+}
+
+/// 一次长命子进程调用的完整形状。用具名结构而不是元组，便于跨模块传递与比较。
+public struct ManagedSessionInvocation: Equatable, Sendable {
+  public var executablePath: String
+  public var arguments: [String]
+
+  public init(executablePath: String, arguments: [String]) {
+    self.executablePath = executablePath
+    self.arguments = arguments
   }
 }
 
@@ -109,6 +140,11 @@ public enum ManagedSessionCommand {
     terminalID: String
   ) -> [String] {
     ["terminal", "terminate", endpoint.stateParentPath, endpoint.sessionName, terminalID]
+  }
+
+  /// `event subscribe <state-parent> <name>`：流式事件订阅，进程不会自行退出。
+  public static func eventSubscribe(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["event", "subscribe", endpoint.stateParentPath, endpoint.sessionName]
   }
 
   public static func bridge(
@@ -303,16 +339,21 @@ public struct LocalManagedSessionClient: ManagedSessionClient {
     ManagedSessionCommand.bridge(endpoint, terminalID: terminalID, readOnly: readOnly)
   }
 
+  /// 会话作用域动作的传输入口；只是把端点里的二进制路径转交给共用原语。
+  private func run(_ endpoint: ManagedSessionEndpoint, _ arguments: [String]) throws -> String {
+    try executeStructured(binaryPath: endpoint.binaryPath, arguments: arguments)
+  }
+
   /// 执行一次结构化命令并返回 stdout；超时会终止子进程并按结果未知报错。
   ///
   /// stdout 只承载协议输出，诊断在 stderr；两者分开读取避免互相污染，也避免管道
   /// 写满导致子进程阻塞。
-  private func run(_ endpoint: ManagedSessionEndpoint, _ arguments: [String]) throws -> String {
-    guard FileManager.default.isExecutableFile(atPath: endpoint.binaryPath) else {
-      throw ManagedSessionError.runtimeUnavailable(endpoint.binaryPath)
+  public func executeStructured(binaryPath: String, arguments: [String]) throws -> String {
+    guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
+      throw ManagedSessionError.runtimeUnavailable(binaryPath)
     }
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: endpoint.binaryPath)
+    process.executableURL = URL(fileURLWithPath: binaryPath)
     process.arguments = arguments
     let out = Pipe()
     let err = Pipe()

@@ -4,7 +4,11 @@ const Reactor = @import("service_reactor.zig").Reactor;
 const Pool = @import("terminal_pool.zig").Pool;
 const Terminals = @import("terminal_service.zig").Service;
 const Surfaces = @import("surface_service.zig").Service;
-const Domains = struct { terminals: *Terminals, surfaces: *Surfaces };
+const Workspaces = @import("workspace_service.zig").Service;
+const Store = @import("workspace_store.zig").Store;
+const RegistryEndpoint = @import("registry_service.zig").Endpoint;
+const Session = @import("session_registry.zig").Session;
+const Domains = struct { terminals: *Terminals, surfaces: *Surfaces, workspaces: *Workspaces };
 const Request = @import("operation_request.zig").Request;
 const ids = @import("service_identity.zig");
 const Report = @import("startup_report.zig").Writer;
@@ -34,27 +38,50 @@ pub fn run(allocator: std.mem.Allocator, parent: std.fs.Dir, name: []const u8, r
         return err;
     };
     if (startup_epoch) |epoch| instance.epoch = epoch;
-    const result = runInitialized(allocator, &instance, report, wake);
+    const result = runInitialized(allocator, &instance, name, report, wake);
     const cleanup = instance.close();
     try result;
     try cleanup;
 }
 
-fn runInitialized(allocator: std.mem.Allocator, instance: *Instance, report: ?*Report, wake: std.posix.fd_t) !void {
+fn runInitialized(allocator: std.mem.Allocator, instance: *Instance, name: []const u8, report: ?*Report, wake: std.posix.fd_t) !void {
     var reactor = try Reactor.init(allocator, instance, .{});
     defer reactor.deinit();
     var pool = try Pool.init(allocator, .{ .scope_cleanup = true });
     defer pool.deinit();
+    // A damaged layout stops startup on purpose: silently serving an empty
+    // session would look exactly like the user's workspaces having vanished.
+    var store = Store.init(allocator);
+    defer store.deinit();
+    try store.load(instance.state.dir);
     var terminals = try Terminals.init(allocator, &pool, &instance.state, instance.identity, instance.epoch);
     defer terminals.deinit();
+    terminals.shared_revision = &store.revision;
+    var workspaces = try Workspaces.init(allocator, &store, &terminals, &pool, instance.state.dir);
+    defer workspaces.deinit();
+    terminals.structure_hook = workspaces.hook();
+    defer terminals.structure_hook = null;
     var surfaces = try Surfaces.init(allocator, &terminals, &reactor);
     defer surfaces.deinit();
-    var domains = Domains{ .terminals = &terminals, .surfaces = &surfaces };
+    var domains = Domains{ .terminals = &terminals, .surfaces = &surfaces, .workspaces = &workspaces };
     reactor.control.handler = .{ .context = &domains, .respond = terminalRespond, .disconnect = terminalDisconnect, .input_closed = terminalInputClosed };
     // Reactor's original teardown occurs after domain teardown; clear callback
     // borrowing first. Domain deinit already owns attachment cleanup on exit.
     defer reactor.control.handler = null;
-    reactor.control.advertised_capabilities = &.{ "health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest" };
+    // The serving session answers registry queries about itself from its own
+    // identity: it cannot connect to its own control socket mid-request.
+    var registry = RegistryEndpoint{
+        .registry = .{
+            .parent = instance.parent,
+            .launcher = .child_process,
+            .live = Session.withKnown(ids.uuidText(instance.identity.session_id), ids.uuidText(instance.identity.server_id), ids.uuidText(instance.epoch), name),
+        },
+        .log = &terminals.log,
+        .epoch = instance.epoch,
+    };
+    reactor.control.registry = .{ .context = &registry, .respond = registryRespond };
+    defer reactor.control.registry = null;
+    reactor.control.advertised_capabilities = &.{ "health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation" };
     var clock = try std.time.Timer.start();
     if (try stopping()) return error.ServiceStartupCancelled;
     if (report) |writer| try writer.finish(.ready);
@@ -67,12 +94,16 @@ fn runInitialized(allocator: std.mem.Allocator, instance: *Instance, report: ?*R
         }
         pool.tick();
         try terminals.tick();
+        try workspaces.tick();
         try deliverTerminalMessages(allocator, &reactor, &terminals);
+        try deliverWorkspaceMessages(allocator, &reactor, &terminals, &workspaces);
         try reactor.step(instance, clock.read());
         try terminals.tick();
+        try workspaces.tick();
         try deliverTerminalMessages(allocator, &reactor, &terminals);
+        try deliverWorkspaceMessages(allocator, &reactor, &terminals, &workspaces);
         try surfaces.tick(clock.read() / std.time.ns_per_ms);
-        reactor.control.revision = terminals.revision;
+        reactor.control.revision = store.revision;
         if (reactor.control.stop_requested and !shutdown_started) {
             pool.beginShutdown();
             shutdown_started = true;
@@ -146,13 +177,50 @@ fn terminalRespond(context: *anyopaque, allocator: std.mem.Allocator, request: R
     const domains: *Domains = @ptrCast(@alignCast(context));
     return switch (request.operation) {
         .@"surface.subscribe", .@"surface.unsubscribe", .@"surface.snapshot" => domains.surfaces.respond(allocator, request, generation),
+        .@"session.snapshot", .@"workspace.list", .@"workspace.create", .@"workspace.update", .@"workspace.close", .@"tab.create", .@"tab.update", .@"tab.close", .@"pane.split", .@"pane.update", .@"pane.close" => domains.workspaces.respond(allocator, request, generation),
         else => domains.terminals.respond(allocator, request, generation),
     };
 }
 fn terminalDisconnect(context: *anyopaque, generation: u64) void {
     const domains: *Domains = @ptrCast(@alignCast(context));
     domains.surfaces.disconnect(generation);
+    domains.workspaces.disconnect(generation);
     domains.terminals.disconnect(generation);
+}
+
+fn registryRespond(context: *anyopaque, allocator: std.mem.Allocator, request: Request) anyerror![]u8 {
+    const endpoint: *RegistryEndpoint = @ptrCast(@alignCast(context));
+    return endpoint.respond(allocator, request);
+}
+
+/// Broadcasts structural changes. The body is domain-owned; only the envelope
+/// (eventID plus this connection's next sequence and the current revision)
+/// belongs to the transport, so no two connections share a sequence.
+fn deliverWorkspaceMessages(allocator: std.mem.Allocator, reactor: *Reactor, terminals: *Terminals, workspaces: *Workspaces) !void {
+    while (workspaces.takeReply()) |reply| {
+        defer allocator.free(reply.bytes);
+        _ = reactor.deliver(reply.connection_generation, reply.bytes, true);
+    }
+    while (workspaces.takeEvent()) |event| {
+        defer allocator.free(event.body);
+        var generations: [64]u64 = undefined;
+        const recipients = try reactor.controlGenerations(&generations);
+        const event_id = ids.uuidText(ids.newUUID());
+        for (recipients) |generation| {
+            const sequence = reactor.nextEventSequence(generation) orelse {
+                reactor.drop(generation);
+                continue;
+            };
+            const encoded = std.fmt.allocPrint(allocator,
+                "{{\"type\":\"event\",\"event\":\"{s}\",\"eventID\":\"{s}\",\"target\":{{\"serverID\":\"{s}\",\"serverEpoch\":\"{s}\",\"sessionID\":\"{s}\"}},\"sequence\":{d},\"revision\":{d},\"body\":{s}}}",
+                .{ event.name, &event_id, &terminals.server_id, &terminals.epoch_text, &terminals.session_id, sequence, event.revision, event.body }) catch {
+                reactor.drop(generation);
+                continue;
+            };
+            defer allocator.free(encoded);
+            _ = reactor.deliver(generation, encoded, false);
+        }
+    }
 }
 fn deliverTerminalMessages(allocator: std.mem.Allocator, reactor: *Reactor, terminals: *Terminals) !void {
     while (terminals.takeReply()) |reply| {
@@ -174,7 +242,7 @@ fn deliverTerminalMessages(allocator: std.mem.Allocator, reactor: *Reactor, term
                 .eventID = &event_id,
                 .target = .{ .serverID = &terminals.server_id, .serverEpoch = &terminals.epoch_text, .sessionID = &terminals.session_id },
                 .sequence = sequence,
-                .revision = terminals.revision,
+                .revision = terminals.currentRevision(),
                 .body = terminal,
             }, .{ .emit_null_optional_fields = false }) catch {
                 reactor.drop(generation);
@@ -196,7 +264,7 @@ fn deliverTerminalMessages(allocator: std.mem.Allocator, reactor: *Reactor, term
             .eventID = &event_id,
             .target = .{ .serverID = &terminals.server_id, .serverEpoch = &terminals.epoch_text, .sessionID = &terminals.session_id },
             .sequence = sequence,
-            .revision = terminals.revision,
+            .revision = terminals.currentRevision(),
             .body = .{ .terminalID = &event.terminal_id, .leaseID = &event.grant.lease.lease_id, .leaseEpoch = event.grant.lease.lease_epoch, .reason = event.reason },
         }, .{}) catch {
             reactor.drop(event.connection_generation);

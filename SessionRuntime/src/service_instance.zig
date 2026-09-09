@@ -12,10 +12,15 @@ pub const ServiceInstance = struct {
     epoch: [16]u8,
     socket: ServiceSocket,
     previous_cwd: std.fs.Dir,
+    /// Registry parent, kept open for the instance lifetime so registry-scope
+    /// requests resolve without re-walking a path the caller may have changed.
+    parent: std.fs.Dir,
 
     pub fn open(parent: std.fs.Dir, name: []const u8) !ServiceInstance {
         var previous = try std.fs.cwd().openDir(".", .{});
         errdefer previous.close();
+        var retained = try parent.openDir(".", .{ .iterate = true });
+        errdefer retained.close();
         var state = try StateDirectory.acquire(parent, name);
         errdefer state.deinit();
         const identity = try identities.Identity.loadOrCreate(&state);
@@ -25,7 +30,7 @@ pub const ServiceInstance = struct {
             std.posix.fchdir(previous.fd) catch return error.ServiceDirectoryRestoreFailed;
             return err;
         };
-        return .{ .state = state, .identity = identity, .epoch = epoch, .socket = socket, .previous_cwd = previous };
+        return .{ .state = state, .identity = identity, .epoch = epoch, .socket = socket, .previous_cwd = previous, .parent = retained };
     }
 
     /// Closes the endpoint before releasing its lifetime lock. Persistent
@@ -33,6 +38,7 @@ pub const ServiceInstance = struct {
     pub fn close(self: *ServiceInstance) !void {
         defer self.* = undefined;
         defer self.previous_cwd.close();
+        defer self.parent.close();
         defer self.state.deinit();
         const socket_result = self.socket.close();
         try std.posix.fchdir(self.previous_cwd.fd);

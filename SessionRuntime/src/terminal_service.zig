@@ -10,6 +10,13 @@ const replies = @import("operation_response.zig");
 const preparation = @import("launch_preparation.zig");
 const ID = [36]u8;
 pub const Reply = struct { connection_generation: u64, bytes: []u8 };
+/// Lets the workspace domain own the pool completions of the terminals it
+/// launched for structural creates. Returning false keeps the original
+/// "unowned completion" fault for anything nobody claims.
+pub const StructureHook = struct {
+    context: *anyopaque,
+    claim: *const fn (*anyopaque, pool_mod.Completion) bool,
+};
 pub const LeaseEvent = struct { connection_generation: u64, terminal_id: ID, grant: leases.Grant, reason: []const u8 };
 pub const Terminal = struct {
     terminalID: []const u8,
@@ -63,7 +70,15 @@ pub const Service = struct {
     session_id: ID,
     epoch_text: ID,
     clock: std.time.Timer,
+    /// Standalone fallback used only when no workspace store is attached (unit
+    /// tests, terminal-only servers). The terminal domain never advances it.
     revision: u64 = 0,
+    /// When set, reads of the layout revision are borrowed from the workspace
+    /// store so responses and terminal events quote the same number the layout
+    /// transactions use. Read-only for this domain: terminal lifecycle never
+    /// advances the layout revision (see `tick`).
+    shared_revision: ?*const u64 = null,
+    structure_hook: ?StructureHook = null,
     /// Latched durability fault; does not disable reads or existing PTY control.
     persistence_failure: ?anyerror = null,
     pending: std.ArrayList(Pending) = .empty,
@@ -72,6 +87,7 @@ pub const Service = struct {
     lease_states: std.ArrayList(LeaseState) = .empty,
     lease_events: std.ArrayList(LeaseEvent) = .empty,
     exit_events: std.ArrayList(ID) = .empty,
+    /// Count of published exits; the per-record latch lives on the pool entry.
     reported_exits: u64 = 0,
     completion_encoding_failures: u64 = 0,
     control_cursors: std.ArrayList(ControlCursor) = .empty,
@@ -104,14 +120,18 @@ pub const Service = struct {
         self.control_cursors.deinit(self.allocator);
         self.log.deinit();
     }
+    /// Current layout revision, borrowed from the workspace store when attached.
+    pub fn currentRevision(self: *const Service) u64 {
+        return if (self.shared_revision) |shared| shared.* else self.revision;
+    }
     fn now(self: *Service) u64 {
         return self.clock.read() / std.time.ns_per_ms;
     }
-    fn target(self: *Service) @TypeOf(@as(Request, undefined).target) {
+    pub fn target(self: *Service) @TypeOf(@as(Request, undefined).target) {
         return .{ .serverID = &self.server_id, .serverEpoch = &self.epoch_text, .sessionID = &self.session_id };
     }
     fn success(self: *Service, allocator: std.mem.Allocator, request: Request, result: anytype) ![]u8 {
-        return std.json.Stringify.valueAlloc(allocator, replies.Response(@TypeOf(result)){ .type = "response", .requestID = request.requestID, .scope = request.scope, .operation = request.operation, .target = self.target(), .revision = self.revision, .result = result }, .{ .emit_null_optional_fields = false });
+        return std.json.Stringify.valueAlloc(allocator, replies.Response(@TypeOf(result)){ .type = "response", .requestID = request.requestID, .scope = request.scope, .operation = request.operation, .target = self.target(), .revision = self.currentRevision(), .result = result }, .{ .emit_null_optional_fields = false });
     }
     fn pendingRequest(self: *Service, p: *const Pending) Request {
         return .{ .type = "request", .requestID = &p.request_id, .clientID = &p.client_id, .scope = .session, .operation = p.operation, .target = self.target(), .params = .{ .object = std.json.ObjectMap.init(self.allocator) } };
@@ -129,9 +149,20 @@ pub const Service = struct {
             .@"terminal.create", .@"terminal.terminate" => return self.mutate(a, r, generation),
             .@"terminal.list" => {
                 try only(r.params, &.{});
-                var list: [64]Terminal = undefined;
-                for (self.pool.entries.items, 0..) |*entry, i| list[i] = terminal(entry);
-                return try self.success(a, r, .{ .terminals = list[0..self.pool.entries.items.len] });
+                // Live records first, then the bounded recent-exit window, so a
+                // terminal that lost its slot still reports its real exit code
+                // instead of vanishing silently between two polls.
+                var list: [64 + pool_mod.recent_exit_capacity]Terminal = undefined;
+                var count: usize = 0;
+                for (self.pool.entries.items) |*entry| {
+                    list[count] = terminal(entry);
+                    count += 1;
+                }
+                for (self.pool.retired.items) |*record| {
+                    list[count] = retiredTerminal(record);
+                    count += 1;
+                }
+                return try self.success(a, r, .{ .terminals = list[0..count] });
             },
             .@"terminal.attach", .@"terminal.observe" => return try self.attach(a, r, generation),
             .@"terminal.release" => return try self.release(a, r, generation),
@@ -159,12 +190,21 @@ pub const Service = struct {
         var resource_id: ID = undefined;
         var resources: [1][]const u8 = undefined;
         var count: usize = 0;
+        var forgotten = false;
         if (result.terminal_id) |value| {
             resource_id = ids.uuidText(value);
             resources[0] = &resource_id;
             count = 1;
+            // A committed operation whose terminal the pool no longer knows at
+            // all — neither live nor in the recent-exit window — must read as
+            // invalidated. Otherwise the stored success response is all a client
+            // sees and the original process looks like it is still around. An
+            // in-flight or failed operation owns no live resource to invalidate.
+            forgotten = result.state == .committed and
+                self.pool.find(resource_id) == null and self.pool.findRetired(resource_id) == null;
         }
-        const invalidated = if (result.epoch) |epoch| !std.mem.eql(u8, &epoch, &self.epoch) else false;
+        const epoch_changed = if (result.epoch) |epoch| !std.mem.eql(u8, &epoch, &self.epoch) else false;
+        const invalidated = epoch_changed or forgotten;
         return self.success(a, r, .{
             .queriedRequestID = &queried,
             .operation = if (result.operation) |operation| @tagName(operation) else "unknown",
@@ -260,6 +300,9 @@ pub const Service = struct {
                 matched = true;
                 break;
             };
+            if (!matched) {
+                if (self.structure_hook) |hook| matched = hook.claim(hook.context, completion);
+            }
             if (!matched) return error.UnownedPoolCompletion;
         }
         var index: usize = 0;
@@ -279,8 +322,7 @@ pub const Service = struct {
                         .failed => |err| self.completionBytes(p, failure(self.allocator, r, errorCode(err.reason), errorRetry(err.reason))),
                         .cancelled => self.completionBytes(p, failure(self.allocator, r, "service_stopping", .after_reconnect)),
                     };
-                } else {
-                    const entry = self.pool.find(p.terminal_id) orelse return error.TerminalNotFound;
+                } else if (self.pool.find(p.terminal_id)) |entry| {
                     if (entry.session.cleanup_error != null and !entry.session.cleanupComplete()) {
                         p.response = self.completionBytes(p, failure(self.allocator, r, "outcome_unknown", .after_query));
                     } else if (!entry.session.cleanupComplete() or !entry.session.eof) {
@@ -288,6 +330,13 @@ pub const Service = struct {
                         continue;
                     }
                     if (p.response == null) p.response = self.completionBytes(p, self.success(self.allocator, r, terminal(entry)));
+                } else if (self.pool.findRetired(p.terminal_id)) |record| {
+                    // The record gave its slot back while this stop was in
+                    // flight. Report the recorded exit; the process is gone
+                    // either way, so this stop did complete.
+                    p.response = self.completionBytes(p, self.success(self.allocator, r, retiredTerminal(record)));
+                } else {
+                    p.response = self.completionBytes(p, failure(self.allocator, r, "terminal_not_found", .never));
                 }
             }
             if (!p.persisted and !p.completion_failed) {
@@ -317,13 +366,25 @@ pub const Service = struct {
         }
         // Emit the real exit once, only after the final PTY bytes have drained.
         // Pool retains entries in stable order for this service epoch.
-        for (self.pool.entries.items, 0..) |entry, slot| {
-            const mask = @as(u64, 1) << @as(u6, @intCast(slot));
-            if (self.reported_exits & mask != 0 or entry.session.exit_status == null or !entry.session.eof or !entry.session.cleanupComplete()) continue;
+        //
+        // Why no revision bump here: the revision is the optimistic-concurrency
+        // token for *layout* transactions, and a terminal exiting is not a layout
+        // edit. Advancing it on reap would reject otherwise legal transactions
+        // with `revision_conflict` whenever an unrelated terminal happened to be
+        // reaped inside a client's read/submit window, and would break the
+        // "exactly one of two racing same-revision submissions wins" rule by
+        // making both lose. The exit event still carries the current layout
+        // revision, which stays monotonic and never rewinds.
+        //
+        // The "already reported" latch lives on the record, not on a slot index:
+        // a reclaimed record can now hand its slot to a new terminal, and an
+        // index-keyed mask would then suppress the newcomer's exit event.
+        for (self.pool.entries.items) |*entry| {
+            if (entry.exit_reported or entry.session.exit_status == null or !entry.session.eof or !entry.session.cleanupComplete()) continue;
             if (self.exit_events.items.len == 64) break;
             self.exit_events.appendAssumeCapacity(entry.id);
-            self.reported_exits |= mask;
-            self.revision +|= 1;
+            entry.exit_reported = true;
+            self.reported_exits +|= 1;
         }
         for (self.lease_states.items) |*state| {
             if (self.lease_events.items.len >= 256) break;
@@ -333,11 +394,16 @@ pub const Service = struct {
     pub fn takeReply(self: *Service) ?Reply {
         return if (self.replies.items.len == 0) null else self.replies.orderedRemove(0);
     }
+    /// A queued exit can outlive its record when the slot is reused, so fall back
+    /// to the retired summary and skip an event whose summary already aged out
+    /// rather than reporting a stale live terminal.
     pub fn takeExitEvent(self: *Service) ?Terminal {
-        if (self.exit_events.items.len == 0) return null;
-        const terminal_id = self.exit_events.orderedRemove(0);
-        const entry = self.pool.find(terminal_id) orelse unreachable;
-        return terminal(entry);
+        while (self.exit_events.items.len != 0) {
+            const terminal_id = self.exit_events.orderedRemove(0);
+            if (self.pool.find(terminal_id)) |entry| return terminal(entry);
+            if (self.pool.findRetired(terminal_id)) |record| return retiredTerminal(record);
+        }
+        return null;
     }
 
     pub fn takeLeaseEvent(self: *Service) ?LeaseEvent {
@@ -476,7 +542,7 @@ pub const Service = struct {
         } else return error.InvalidRequest;
         cursor.sequence = sequence;
         cursor.fingerprint = hash;
-        cursor.revision = self.revision;
+        cursor.revision = self.currentRevision();
         _ = try state.state.renew(owner, lease, now_ms);
         return response;
     }
@@ -542,7 +608,7 @@ pub const Service = struct {
     }
 };
 
-fn terminal(entry: *pool_mod.Entry) Terminal {
+pub fn terminal(entry: *pool_mod.Entry) Terminal {
     var result = Terminal{ .terminalID = &entry.id, .cwd = entry.cwd, .state = if (entry.session.exit_status != null and entry.session.cleanupComplete()) .exited else if (entry.failure != null) .unavailable else if (entry.session.termination_timer != null) .terminating else .running };
     if (result.state == .running or result.state == .terminating) result.pid = @intCast(entry.original_pid);
     if (entry.session.terminal.screenMetrics()) |metrics| {
@@ -557,6 +623,17 @@ fn terminal(entry: *pool_mod.Entry) Terminal {
         result.pid = null;
     }
     if (entry.session.exit_status) |status| {
+        if (std.posix.W.IFEXITED(status)) result.exitCode = std.posix.W.EXITSTATUS(status);
+        if (std.posix.W.IFSIGNALED(status)) result.signal = std.posix.W.TERMSIG(status);
+    }
+    return result;
+}
+/// Wire view of a terminal that already released its slot. It never carries a
+/// PID or geometry: the process and its VT are gone, so claiming either would
+/// let a client mistake a dead terminal for a running one.
+pub fn retiredTerminal(record: *const pool_mod.Retired) Terminal {
+    var result = Terminal{ .terminalID = &record.id, .cwd = record.cwd, .state = if (record.unavailable) .unavailable else .exited };
+    if (record.exit_status) |status| {
         if (std.posix.W.IFEXITED(status)) result.exitCode = std.posix.W.EXITSTATUS(status);
         if (std.posix.W.IFSIGNALED(status)) result.signal = std.posix.W.TERMSIG(status);
     }
@@ -1026,6 +1103,63 @@ test "terminal service connection sequence survives cross terminal and reattachm
     defer a.free(fresh);
     try std.testing.expect(std.mem.indexOf(u8, fresh, "accepted") != null);
     try std.testing.expectEqual(@as(usize, 3), pool.find(second_id).?.session.pending_input.items.len);
+}
+
+test "a retired terminal keeps its exit visible and is never reported as running" {
+    const a = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var state = try StateDirectory.acquire(tmp.dir, "service");
+    defer state.deinit();
+    var pool = try Pool.init(a, .{ .maximum_terminals = 2 });
+    defer pool.deinit();
+    var service = try Service.init(a, &pool, &state, .{ .server_id = ids.newUUID(), .session_id = ids.newUUID() }, ids.newUUID());
+    defer service.deinit();
+    const short = try testRequest(&service, a, .@"terminal.create", '1', "{\"cwd\":\"/\",\"argv\":[\"/bin/sh\",\"-c\",\"exit 4\"]}");
+    defer short.deinit();
+    try std.testing.expect(try service.respond(a, short.value, 1) == null);
+    a.free(try testAsync(&service));
+    const retired_id = pool.entries.items[0].id;
+    var timer = try std.time.Timer.start();
+    while (!(pool.find(retired_id).?.session.exit_status != null and pool.find(retired_id).?.session.cleanupComplete() and pool.find(retired_id).?.session.eof)) {
+        pool.tick();
+        try service.tick();
+        if (timer.read() > 5 * std.time.ns_per_s) return error.TestProcessesDidNotExit;
+        std.Thread.sleep(std.time.ns_per_ms);
+    }
+    inline for (.{ '2', '3' }) |serial| {
+        const request = try testRequest(&service, a, .@"terminal.create", serial, "{\"cwd\":\"/\",\"argv\":[\"/bin/sh\",\"-c\",\"read line\"]}");
+        defer request.deinit();
+        try std.testing.expect(try service.respond(a, request.value, 1) == null);
+        a.free(try testAsync(&service));
+    }
+    // The third create had to take the exited terminal's slot; its outcome must
+    // survive as an exit summary rather than as a phantom running terminal.
+    try std.testing.expect(pool.find(retired_id) == null);
+    const list = try testRequest(&service, a, .@"terminal.list", '4', "{}");
+    defer list.deinit();
+    const listed = (try service.respond(a, list.value, 1)).?;
+    defer a.free(listed);
+    const decoded = try std.json.parseFromSlice(std.json.Value, a, listed, .{});
+    defer decoded.deinit();
+    const terminals = decoded.value.object.get("result").?.object.get("terminals").?.array.items;
+    try std.testing.expectEqual(@as(usize, 3), terminals.len);
+    var found = false;
+    for (terminals) |item| {
+        if (!std.mem.eql(u8, item.object.get("terminalID").?.string, &retired_id)) continue;
+        found = true;
+        try std.testing.expectEqualStrings("exited", item.object.get("state").?.string);
+        try std.testing.expectEqual(@as(i64, 4), item.object.get("exitCode").?.integer);
+        try std.testing.expect(item.object.get("pid") == null);
+    }
+    try std.testing.expect(found);
+    const params = try std.fmt.allocPrint(a, "{{\"terminalID\":\"{s}\"}}", .{retired_id});
+    defer a.free(params);
+    const attach = try testRequest(&service, a, .@"terminal.attach", '5', params);
+    defer attach.deinit();
+    const rejected = (try service.respond(a, attach.value, 1)).?;
+    defer a.free(rejected);
+    try std.testing.expect(std.mem.indexOf(u8, rejected, "terminal_not_found") != null);
 }
 
 test "terminal service control cursor capacity stays bounded and disconnect reclaims it" {

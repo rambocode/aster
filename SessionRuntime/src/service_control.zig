@@ -15,6 +15,13 @@ pub const Handler = struct {
     input_closed: ?*const fn (*anyopaque, u64) void = null,
 };
 
+/// Registry-scope endpoint. Registry requests carry no target, so the service
+/// serves them against the state parent directory it lives in.
+pub const RegistryHandler = struct {
+    context: *anyopaque,
+    respond: *const fn (*anyopaque, std.mem.Allocator, Request) anyerror![]u8,
+};
+
 pub const version = "0.1.0-dev";
 pub const capabilities = [_][]const u8{ "health_check", "server_lifecycle" };
 pub const Status = struct {
@@ -34,6 +41,7 @@ pub const Control = struct {
     revision: u64 = 0,
     stop_requested: bool = false,
     handler: ?Handler = null,
+    registry: ?RegistryHandler = null,
     advertised_capabilities: []const []const u8 = &capabilities,
 
     pub fn init(identity: identities.Identity, epoch: [16]u8) Control {
@@ -66,6 +74,13 @@ pub const Control = struct {
         defer parsed.deinit();
         const request = parsed.value;
         request.validateEnvelope() catch return error.InvalidControlRequest;
+        if (request.scope == .registry) {
+            // The registry is a directory of independent services, so a stopping
+            // instance still refuses new work rather than acting for its peers.
+            if (self.stop_requested) return try failure(allocator, request, "service_stopping", "Service is stopping.", .after_reconnect);
+            if (self.registry) |handler| return try handler.respond(handler.context, allocator, request);
+            return try failure(allocator, request, "unsupported_operation", "This endpoint serves one session.", .never);
+        }
         if (request.scope != .session)
             return try failure(allocator, request, "unsupported_operation", "This endpoint serves one session.", .never);
         const target = request.target.?;

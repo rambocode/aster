@@ -2445,6 +2445,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   var managedDisposition: ManagedTerminalDisposition = .terminated
   /// 是否为受管终端。
   var isManagedTerminal: Bool { managedTerminal != nil }
+  /// 受管终端交互闸门（P4.2 §4.2）。默认 true：本地非受管终端与 Local 受管终端
+  /// 永远不会被关闸，既有行为一个字节都不变。
+  private(set) var managedInputGateOpen = true
+  /// 当前是否接受键盘输入。远端 Pane 在服务端完整快照确认到达之前为 false。
+  var allowsInput: Bool { managedInputGateOpen }
 
   /// 绑定受管终端引用。必须在首次挂载（创建 surface）前调用。
   /// 该终端所属远端执行机器的显示名；本机终端或非受管终端为 nil。
@@ -2453,7 +2458,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// SSH」，不能只看引用存在：本机受管终端的文件动作仍然合法。
   var remoteManagedMachineLabel: String? {
     guard managedTerminal != nil else { return nil }
-    return ManagedTerminalCoordinator.shared.remoteMachineLabel
+    return ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal).remoteMachineLabel
   }
 
   func bindManagedTerminal(_ reference: ManagedTerminalReference?) {
@@ -2874,7 +2879,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // 受管终端的 surface 子进程是显示桥，不是任务本身：关闭 surface 只结束桥，
     // 后台服务持有的 PTY 与进程组继续运行。
     if let managedTerminal,
-      let bridge = ManagedTerminalCoordinator.shared.bridgeCommandText(for: managedTerminal)
+      let bridge = ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal)
+        .bridgeCommandText(for: managedTerminal)
     {
       view.command = bridge
     }
@@ -3087,6 +3093,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       }
     }
     view.setReadOnly(readOnly)
+    // 重建显示桥（重新附加）时必须把闸门状态一起带过去，否则新 surface 默认放行，
+    // 快照还没确认就能打字。
+    view.setManagedInputGate(open: managedInputGateOpen)
     // 受管终端创建失败时不落地任何进程：显示错误状态，等待用户重试或修复配置。
     if let managedFailure {
       view.surfaceCreationDisabled = true
@@ -3207,8 +3216,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     if let reference = managedTerminal {
       Task { @MainActor [weak self] in
         guard let self else { return }
-        let resolution = await ManagedTerminalCoordinator.shared.reconcileAsync(
-          references: [reference], persistedServerEpoch: nil)[reference]
+        let resolution = await ManagedTerminalCoordinatorRegistry.coordinator(for: reference)
+          .reconcileAsync(references: [reference], persistedServerEpoch: nil)[reference]
         if case .attached = resolution {
           self.applyManagedBridgeExit(reference)
         } else {
@@ -3222,7 +3231,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   /// 显示桥退出但服务端任务仍在运行：按分离处理，不写任何结束事件。
   private func applyManagedBridgeExit(_ reference: ManagedTerminalReference) {
-    ManagedTerminalCoordinator.shared.detach(reference)
+    ManagedTerminalCoordinatorRegistry.coordinator(for: reference).detach(reference)
     lifecycleState = .detached
     isRunning = false
     hasRunningCommand = false
@@ -3851,6 +3860,32 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalView?.setReadOnly(value)
   }
 
+  /// 开关受管终端的交互闸门（P4.2 §4.2「可见后先同步快照再允许交互」）。
+  ///
+  /// 关闸期间按键被**丢弃**，不排队、不在开闸后重放——§4.1 第 6 条要求清空旧代输入，
+  /// 缓存断线期间的键入会在恢复瞬间把整串命令灌进远端 Shell。
+  /// 刻意不复用 `setReadOnly`：那是用户显式的 Pane 只读模式，会改 Ghostty 终端模式、
+  /// 点亮 READ ONLY 角标并回写用户设置，用它当闸门会在开闸时把用户的只读设置抹掉。
+  func setManagedInputGate(open: Bool) {
+    guard managedInputGateOpen != open else { return }
+    managedInputGateOpen = open
+    ghosttyView?.setManagedInputGate(open: open)
+    updateManagedInputGateNotice()
+  }
+
+  /// 关闸时给出可见提示，开闸时只清掉自己这条，不动别人写的错误。
+  private func updateManagedInputGateNotice() {
+    if managedInputGateOpen {
+      if startupError == Self.managedInputGateNotice { startupError = nil }
+    } else if startupError == nil {
+      startupError = Self.managedInputGateNotice
+    }
+  }
+
+  /// 关闸提示文案。复用 `startupError` 警告条（`lifecycleState` 非 `.startFailed` 时
+  /// 它按警告显示），不新增一套提示位。
+  static let managedInputGateNotice = "正在同步远端会话快照，暂时不接受键盘输入。"
+
   func toggleReadOnly() { setReadOnly(!readOnly) }
   func enterViMode() {
     if let ghosttyView { ghosttyView.enterViMode(); return }
@@ -3986,11 +4021,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     if let managedTerminal {
       switch managedDisposition {
       case .detached:
-        ManagedTerminalCoordinator.shared.detach(managedTerminal)
+        ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal).detach(managedTerminal)
         finishManagedDetach(immediately: immediately)
         return
       case .terminated:
-        if let status = ManagedTerminalCoordinator.shared.terminate(managedTerminal) {
+        if let status = ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal)
+          .terminate(managedTerminal)
+        {
           eventRecorder?.sessionEnded(id: id, exitCode: status.exitCode)
         }
       }
@@ -4085,7 +4122,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @discardableResult
   func terminateManagedTerminal() -> Bool {
     guard let reference = managedTerminal else { return false }
-    let status = ManagedTerminalCoordinator.shared.terminate(reference)
+    let status = ManagedTerminalCoordinatorRegistry.coordinator(for: reference).terminate(reference)
     // 进程已在服务端结束，剩下的只是拆本地桥；用分离路径拆桥可避免重复 terminate。
     managedDisposition = .detached
     stop(immediately: false)
@@ -4133,7 +4170,37 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     completedFlashTask?.cancel()
     progressExpiryTask?.cancel()
     SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
-    ghostty?.destroySurface()
+    shutDownManagedBridge(ghostty, immediately: immediately)
+  }
+
+  /// 显示桥的分离转义：Ctrl-B（0x02）后跟 `q`，由 `terminal attach` 的 Prefix 解析。
+  private static let managedBridgeDetachEscape: [UInt8] = [0x02, 0x71]
+
+  /// 结束显示桥：先请桥**自己**退出，桥没在期限内退出才强拆 surface。
+  ///
+  /// 为什么不能直接 `destroySurface()`：那只杀本机进程。桥退出时会向服务端发
+  /// `terminal.release` 释放写租约，而强杀走的是传输断开路径——服务端要等连接真的
+  /// 断掉才回收 attachment 与租约（SSH 桥实测约 2 秒）。这期间用户点「重新附加」，
+  /// 新桥必被 `lease_busy retry=never` 拒绝，画面停在错误文本上。发一次分离转义
+  /// 让旧桥走正常退出路径，租约在本机进程结束之前就已经释放（实测 1 秒内）。
+  ///
+  /// `immediately`（App 即将退出）不走这条路：主事件循环不再运转，等不到桥的退出，
+  /// 而且此时没有「随后重新附加」这回事。
+  private func shutDownManagedBridge(_ ghostty: GhosttySurfaceView?, immediately: Bool) {
+    guard let ghostty else { return }
+    guard !immediately, ghostty.isProcessRunning,
+      ghostty.sendProtocolBytes(Self.managedBridgeDetachEscape)
+    else {
+      ghostty.destroySurface()
+      return
+    }
+    Task { @MainActor in
+      let deadline = ContinuousClock.now + .seconds(2)
+      while ContinuousClock.now < deadline, ghostty.isProcessRunning {
+        try? await Task.sleep(for: .milliseconds(50))
+      }
+      ghostty.destroySurface()
+    }
   }
 
   /// 新进程不能继承上一代 Shell/TUI 的瞬态状态。Pane 的稳定身份、只读开关、回调和

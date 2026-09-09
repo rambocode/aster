@@ -315,6 +315,38 @@ def main(binary):
                 for rejected in (stale, future, missing):
                     unknown = success(verifier.call("request.status", {"queriedRequestID": rejected["requestID"]}))
                     assert unknown["state"] == "unknown", unknown
+                # A long-lived workspace must keep launching terminals after more than
+                # the 32-record pool limit has been consumed. Every finished terminal
+                # releases its slot; the live one keeps its PID and its own slot.
+                keeper = success(verifier.call("terminal.create", {
+                    "cwd": parent, "argv": ["/bin/sh", "-c", "exec /bin/sleep 60"],
+                }))
+                keeper_pid = keeper["pid"]
+                assert keeper_pid > 0, keeper
+                os.kill(keeper_pid, 0)  # Existence check only; never signal a terminal PID.
+                churned = []
+                for index in range(40):
+                    created = success(verifier.call("terminal.create", {
+                        "cwd": parent, "argv": ["/bin/sh", "-c", f"exit {index % 7}"],
+                    }))
+                    churned.append(created["terminalID"])
+                    finished = eventually(lambda: exited(verifier, created["terminalID"]), f"churn terminal {index} exit")
+                    assert finished["exitCode"] == index % 7, finished
+                    assert finished.get("pid") is None, finished
+                    live = terminal(verifier, keeper["terminalID"])
+                    assert live["state"] == "running" and live["pid"] == keeper_pid, live
+                inventory = terminals(verifier)
+                assert len(inventory) <= 32 + 8, len(inventory)
+                # Slots really were reused: the oldest finished terminals left the
+                # inventory, and each of them reports nothing at all afterwards
+                # instead of a stale running terminal.
+                dropped = [item for item in churned if not any(entry["terminalID"] == item for entry in inventory)]
+                assert dropped, (len(inventory), len(churned))
+                for old_id in dropped:
+                    failure(verifier.call("terminal.attach", {"terminalID": old_id}), "terminal_not_found")
+                os.kill(keeper_pid, 0)
+                assert success(verifier.call("terminal.terminate", {"terminalID": keeper["terminalID"]}))["state"] == "exited"
+
                 assert success(verifier.call("server.stop"))["stopping"]
                 process.wait(timeout=TIMEOUT)
                 assert process.returncode == 0, process.returncode

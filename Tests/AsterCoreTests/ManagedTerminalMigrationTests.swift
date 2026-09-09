@@ -92,6 +92,11 @@ private final class FakeManagedSessionClient: ManagedSessionClient, @unchecked S
     terminalID: String,
     readOnly: Bool
   ) -> [String] { [] }
+
+  /// 迁移事务不使用结构化 CLI 原语；这里只满足协议要求，被调用即说明用法有误。
+  func executeStructured(binaryPath: String, arguments: [String]) throws -> String {
+    throw ManagedSessionError.runtimeUnavailable(binaryPath)
+  }
 }
 
 private let migrationEndpoint = ManagedSessionEndpoint(

@@ -7706,6 +7706,11 @@
         },
         "target": {
           "$ref": "#/$defs/target"
+        },
+        "currentRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
         }
       },
       "required": [

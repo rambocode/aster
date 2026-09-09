@@ -86,6 +86,60 @@ attach/observe 使用独立控制和画面连接，完整校验快照/增量后�
 
 surface.subscribe/snapshot/unsubscribe 已接入持久服务，文本历史视口可投影。不同源/目标尺寸的独立投影及历史中部分可见图像尚未实现，对不支持的投影明确失败；不能据此宣告完整画面支持。P1 整体验收与 App 接入仍未完成。
 
+## P4 命名会话注册表与共享工作区
+
+注册表就是私有 state parent 目录本身：每个命名会话是一个子目录，持有自己的锁、`identity.bin`、
+幂等日志和 `layout.json`。没有额外索引文件，因此崩溃的写入方不可能让注册表与实际状态不一致。
+稳定 sessionID 来自该会话已提交的 `identity.bin`；没有提交身份的目录不算会话，会被列表忽略。
+
+```sh
+aster-session session list <state-parent>
+aster-session session create <state-parent> <name>
+aster-session session attach <state-parent> <name-or-id>
+aster-session session stop <state-parent> <name-or-id>
+aster-session session delete <state-parent> <name-or-id>
+aster-session session snapshot <state-parent> <name>
+aster-session workspace list <state-parent> <name>
+aster-session workspace create <state-parent> <name> --expected-revision <n> --title <t> --cwd <abs> -- <argv...>
+aster-session workspace update <state-parent> <name> --workspace <id> --expected-revision <n> --title <t>
+aster-session workspace close <state-parent> <name> --workspace <id> --expected-revision <n>
+aster-session tab create <state-parent> <name> --workspace <id> --expected-revision <n> --title <t> --cwd <abs> -- <argv...>
+aster-session tab update <state-parent> <name> --tab <id> --expected-revision <n> --title <t>
+aster-session tab close <state-parent> <name> --tab <id> --expected-revision <n>
+aster-session pane split <state-parent> <name> --pane <id> --direction <left|right|up|down> --expected-revision <n> --cwd <abs> -- <argv...>
+aster-session pane update <state-parent> <name> --pane <id> --expected-revision <n> --title <t>
+aster-session pane close <state-parent> <name> --pane <id> --expected-revision <n>
+```
+
+`session create` 启动独立后台服务实例并返回稳定 sessionID、serverID、serverEpoch 和实际状态；
+running 状态必须由该会话自己的 socket 应答核对 sessionID 后才成立，仅目录存在不算运行。
+`session stop` 只对该会话发送 `server.stop`，不发 PID 信号，并保留 `layout.json`；
+`session delete` 要求已停止，运行中返回 `session_running`，删除只影响该会话目录。
+注册表操作同时通过控制 socket 提供（registry scope 请求不带 target），由请求到达的那个会话
+按自己所在的 state parent 服务；正在服务请求的会话用自身身份回答自己的状态，并拒绝通过注册表
+停止自己（改用 session 范围的 `server.stop`）。运行中的服务不会 fork 自己来创建兄弟会话，而是
+运行已安装二进制自身的 `server start` 入口，新守护进程与提出请求的会话不共享任何状态。
+
+`workspace_store.zig` 持有工作区→标签→递归分屏树与单调递增的会话 revision；结构变更和终端退出
+共用这一个计数器。上限为 1024 工作区、128 标签、64 pane、16 层深度。布局以 `layout.json`（0600）
+原子提交：临时文件 → fsync → rename → 目录 fsync。文件损坏时保留原文件并明确报错，服务拒绝启动，
+不会静默当成空布局。
+
+`workspace_service.zig` 实现 `session.snapshot`、`workspace.list/create/update/close`、
+`tab.create/update/close`、`pane.split/update/close`。全部结构变更携带 `expectedRevision`；
+校验与 revision 自增在**准入时**一起完成，因此两个客户端用同一 revision 并发提交时恰好一个被接受，
+另一个返回 `revision_conflict`，失败信封额外携带 `currentRevision` 让失败方无需再查即可重试。
+带 `terminalSpec` 的创建操作真实创建受管终端，cwd 由服务端校验（不存在返回 `cwd_unavailable`），
+只有进程真正存在且布局落盘后才提交结构节点，失败不留下半个节点。close 先落盘再结束受管终端，
+关闭最后一个 pane 会关闭标签，关闭最后一个标签会关闭工作区。durable 操作接入既有幂等日志。
+
+结构变更后向所有控制连接广播 `workspace.changed` / `tab.changed` / `pane.changed` /
+`terminal.created`，序号按连接连续递增、revision 不回退；关闭事件用受影响的父对象表达，
+被关闭的工作区表示为 `tabs: []`。服务握手新增 `session_snapshot` 与 `workspace_mutation`。
+
+`tests/session_registry.py` 与 `tests/workspace_transaction.py` 使用真实进程验证上述行为，
+包括两个客户端进程用同一 expectedRevision 并发提交、冲突方重新取快照后重试成功。
+
 ## 依赖与扩展边界
 
 VT 使用 Ghostty revision `4dcb09ada0c0909717d92547623b26eafa50ca8a`。构建脚本核对固定源码及完整补丁集，拒绝覆盖额外源码修改。Headless 可执行文件不依赖 AppKit、Metal 或 Sparkle。

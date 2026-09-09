@@ -271,3 +271,24 @@ private func sampleClient(_ runner: FakeSSHRunner) throws -> RemoteManagedSessio
   let observeCommand = try #require(observe.last)
   #expect(observeCommand.contains("'terminal' 'observe'"))
 }
+
+/// P4 §6.8 回归：长命流（显示桥、事件订阅）不得走 ControlMaster 复用。
+///
+/// 复用时会话通道挂在后台 master 上：本机进程被杀死后，远端 `terminal attach` 会一直活到
+/// `ControlPersist` 到期（OrbStack 实测 60 秒），期间每 5 秒续租写租约，重新附加必被
+/// `lease_busy retry=never` 拒绝。短命控制命令**仍然要**复用，否则每条命令都要重新握手。
+@Test func remoteManagedSessionClientKeepsLongLivedStreamsOffTheControlMaster() throws {
+  let runner = FakeSSHRunner(
+    result: RemoteSSHResult(exitStatus: 0, standardOutput: "", standardError: ""))
+  let client = try sampleClient(runner)
+  let endpoint = sampleEndpoint()
+
+  let bridge = client.bridgeArguments(endpoint, terminalID: "t1", readOnly: false)
+  #expect(bridge.contains("ControlPath=none"))
+  let observe = client.bridgeArguments(endpoint, terminalID: "t1", readOnly: true)
+  #expect(observe.contains("ControlPath=none"))
+  #expect(client.eventSubscribeInvocation(endpoint).arguments.contains("ControlPath=none"))
+
+  // 短命控制命令保持复用：这里不能出现退出复用的选项。
+  #expect(!client.transport.sshArguments(remoteCommand: ["x"]).contains("ControlPath=none"))
+}

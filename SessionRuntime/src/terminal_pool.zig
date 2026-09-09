@@ -30,6 +30,29 @@ pub const Entry = struct {
     session: *Session,
     failure: ?anyerror = null,
     cleanup_failure: ?anyerror = null,
+    /// Owner-side latch for "this exit was already published". It lives on the
+    /// record instead of on a slot index because slots are reused now: an index
+    /// mask would follow the wrong terminal after a record is retired.
+    exit_reported: bool = false,
+};
+
+/// How many already-reclaimed terminals keep a reportable summary after losing
+/// their slot. The bound is deliberately small: a summary must outlive its slot
+/// long enough for a client that was mid-request when the terminal exited to
+/// still read the real exit code, but a shared workspace runs for weeks, so an
+/// unbounded exit journal would be the same leak this record retirement fixes.
+/// Eight covers the observable window (one pending create/terminate per client
+/// connection plus the queued exit events) without holding VT memory, because a
+/// retired record owns nothing except its ID, cwd text and exit status.
+pub const recent_exit_capacity: usize = 8;
+
+/// Post-mortem summary of a terminal whose PTY/VT/child were already released.
+/// It carries no Session: a retired terminal can never be reported as running.
+pub const Retired = struct {
+    id: [36]u8,
+    cwd: [:0]u8,
+    exit_status: ?u32,
+    unavailable: bool,
 };
 
 pub const CreationFailure = struct {
@@ -62,6 +85,8 @@ pub const Pool = struct {
     entries: std.ArrayList(Entry) = .empty,
     pending: std.ArrayList(Pending) = .empty,
     completions: std.ArrayList(Completion) = .empty,
+    /// Bounded FIFO of summaries for records that gave their slot back.
+    retired: std.ArrayList(Retired) = .empty,
     next_entry: usize = 0,
     history_manager: history.Manager,
     history_stats: history.Stats = .{ .charged_bytes = 0, .removed_rows = 0, .removed_pages = 0, .tracked_pages = 0 },
@@ -79,7 +104,10 @@ pub const Pool = struct {
         errdefer pending.deinit(allocator);
         var completions: std.ArrayList(Completion) = .empty;
         try completions.ensureTotalCapacity(allocator, limits.maximum_terminals);
-        return .{ .allocator = allocator, .limits = limits, .entries = entries, .pending = pending, .completions = completions, .history_manager = history.Manager.init(allocator) };
+        errdefer completions.deinit(allocator);
+        var retired: std.ArrayList(Retired) = .empty;
+        try retired.ensureTotalCapacity(allocator, recent_exit_capacity);
+        return .{ .allocator = allocator, .limits = limits, .entries = entries, .pending = pending, .completions = completions, .retired = retired, .history_manager = history.Manager.init(allocator) };
     }
 
     pub fn deinit(self: *Pool) void {
@@ -102,9 +130,12 @@ pub const Pool = struct {
             self.allocator.free(entry.cwd);
             self.entries.items.len -= 1;
         }
+        for (self.retired.items) |record| self.allocator.free(record.cwd);
+        self.retired.clearRetainingCapacity();
         self.history_manager.deinit();
         self.pending.deinit(self.allocator);
         self.completions.deinit(self.allocator);
+        self.retired.deinit(self.allocator);
         self.entries.deinit(self.allocator);
         self.* = undefined;
     }
@@ -147,15 +178,69 @@ pub const Pool = struct {
 
     fn containsID(self: *Pool, id: [36]u8) bool {
         if (self.find(id) != null) return true;
+        if (self.findRetired(id) != null) return true;
         for (self.pending.items) |item| if (std.mem.eql(u8, &item.id, &id)) return true;
         for (self.completions.items) |item| if (std.mem.eql(u8, &item.id, &id)) return true;
+        return false;
+    }
+
+    /// True once a record owns no operating-system resource at all: the child is
+    /// reaped, its PTY master is closed and no cleanup is outstanding.
+    fn reclaimed(entry: *const Entry) bool {
+        if (!entry.session.cleanupComplete() or entry.session.cleanup_error != null) return false;
+        return entry.session.exit_status != null or entry.failure != null;
+    }
+
+    /// Post-mortem summary of a terminal that already gave its slot back, or
+    /// null once even that summary aged out of the bounded window.
+    pub fn findRetired(self: *Pool, id: [36]u8) ?*Retired {
+        for (self.retired.items) |*record| if (std.mem.eql(u8, &record.id, &id)) return record;
+        return null;
+    }
+
+    /// Releases one record's VT, history and graphics memory and keeps only its
+    /// summary. Fails without mutating anything when the final teardown cannot
+    /// complete, so a record that still owns a process is never dropped.
+    fn retire(self: *Pool, index: usize) !void {
+        const entry = self.entries.items[index];
+        const status = entry.session.exit_status;
+        try entry.session.tryDestroy();
+        // Only after teardown succeeded: the ID must not exist twice, and the
+        // FIFO order of history observations must forget this lifecycle.
+        self.history_manager.forget(entry.id);
+        if (self.retired.items.len == recent_exit_capacity) self.allocator.free(self.retired.orderedRemove(0).cwd);
+        self.retired.appendAssumeCapacity(.{ .id = entry.id, .cwd = entry.cwd, .exit_status = status, .unavailable = entry.failure != null });
+        _ = self.entries.orderedRemove(index);
+    }
+
+    /// Frees the oldest fully reclaimed slot so a new terminal can use it.
+    ///
+    /// Why the eviction victim is a reclaimed record and never a live one: the
+    /// documented limit exists to bound live PTYs, VTs and child processes, so a
+    /// record that owns none of those is pure bookkeeping and can go. Killing a
+    /// `running`/`terminating` terminal to admit a new one would silently destroy
+    /// a user's work, so that case still reports resource_limit. Oldest-first
+    /// keeps the surviving summaries the most recent ones.
+    fn reclaimSlot(self: *Pool) bool {
+        for (self.entries.items, 0..) |*entry, index| {
+            if (!reclaimed(entry)) continue;
+            self.retire(index) catch |err| {
+                self.entries.items[index].cleanup_failure = err;
+                continue;
+            };
+            return true;
+        }
         return false;
     }
 
     fn validateLaunch(self: *Pool, id: [36]u8, launch: Launch) !void {
         if (!validID(&id)) return error.InvalidTerminalID;
         if (self.containsID(id)) return error.TerminalAlreadyExists;
-        if (self.entries.items.len + self.pending.items.len >= self.limits.maximum_terminals) return error.TerminalLimitReached;
+        // The limit counts live resources. A pool full of exited-and-reaped
+        // records must not block a long-lived workspace forever, so retire the
+        // oldest dead record instead of refusing the launch.
+        if (self.entries.items.len + self.pending.items.len >= self.limits.maximum_terminals and !self.reclaimSlot())
+            return error.TerminalLimitReached;
         try launch.geometry.validate();
         if (launch.geometry.columns > self.limits.maximum_columns or
             @as(usize, launch.geometry.rows) * launch.geometry.columns > self.limits.maximum_cells)
@@ -443,6 +528,49 @@ test "invalid launches and capacity checks do not consume slots" {
     try pool.create(testID('1'), .{ .cwd = "/", .argv = &.{ "/bin/sh", "-c", "read line" } });
     try std.testing.expectError(error.TerminalAlreadyExists, pool.create(testID('1'), .{ .cwd = "/", .argv = &.{"/bin/sh"} }));
     try std.testing.expectError(error.TerminalLimitReached, pool.create(testID('2'), .{ .cwd = "/", .argv = &.{"/bin/sh"} }));
+}
+
+test "a full pool reuses the oldest reclaimed slot and keeps its exit observable" {
+    var pool = try Pool.init(std.testing.allocator, .{ .maximum_terminals = 2 });
+    defer pool.deinit();
+    try pool.create(testID('1'), .{ .cwd = "/", .argv = &.{ "/bin/sh", "-c", "exit 5" } });
+    try pool.create(testID('2'), .{ .cwd = "/", .argv = &.{ "/bin/sh", "-c", "exit 6" } });
+    try waitForExit(&pool);
+    // Both records are reaped, so a third terminal must be admitted: the limit
+    // bounds live PTYs, not the history of a long-lived workspace.
+    try pool.create(testID('3'), .{ .cwd = "/", .argv = &.{ "/bin/sh", "-c", "read line" } });
+    try std.testing.expectEqual(@as(usize, 2), pool.entries.items.len);
+    try std.testing.expect(pool.find(testID('1')) == null);
+    const retired = pool.findRetired(testID('1')).?;
+    try std.testing.expectEqual(@as(u8, 5), std.posix.W.EXITSTATUS(retired.exit_status.?));
+    try std.testing.expectEqualStrings("/", retired.cwd);
+    try std.testing.expect(!retired.unavailable);
+    try std.testing.expectError(error.TerminalAlreadyExists, pool.create(testID('1'), .{ .cwd = "/", .argv = &.{"/bin/sh"} }));
+    // The remaining reclaimed record goes next; after that every record owns a
+    // live child and the resource limit applies again.
+    try pool.create(testID('4'), .{ .cwd = "/", .argv = &.{ "/bin/sh", "-c", "read line" } });
+    try std.testing.expect(pool.find(testID('2')) == null and pool.findRetired(testID('2')) != null);
+    try std.testing.expect(pool.find(testID('3')).?.session.process.pid > 0);
+    try std.testing.expectError(error.TerminalLimitReached, pool.create(testID('5'), .{ .cwd = "/", .argv = &.{"/bin/sh"} }));
+    try std.testing.expectEqual(@as(usize, 2), pool.entries.items.len);
+    try std.testing.expect(pool.find(testID('4')).?.session.exit_status == null);
+}
+
+test "recent exit summaries stay bounded and older terminals become unknown" {
+    var pool = try Pool.init(std.testing.allocator, .{ .maximum_terminals = 2 });
+    defer pool.deinit();
+    const serials = "0123456789ab";
+    const first = testID(serials[0]);
+    for (serials) |serial| {
+        try pool.create(testID(serial), .{ .cwd = "/", .argv = &.{ "/bin/sh", "-c", "exit 0" } });
+        try waitForExit(&pool);
+    }
+    try std.testing.expectEqual(recent_exit_capacity, pool.retired.items.len);
+    // Beyond the window a terminal is unknown everywhere: no live record can be
+    // mistaken for it, and no stale summary claims to still know its state.
+    try std.testing.expect(pool.find(first) == null and pool.findRetired(first) == null);
+    const newest_retired = pool.retired.items[pool.retired.items.len - 1];
+    try std.testing.expectEqual(@as(u8, 0), std.posix.W.EXITSTATUS(newest_retired.exit_status.?));
 }
 
 test "arguments are literal and a noisy terminal does not prevent another from exiting" {

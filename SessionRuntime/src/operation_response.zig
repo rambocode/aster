@@ -32,6 +32,11 @@ pub const Failure = struct {
     operation: []const u8,
     scope: kinds.Scope,
     target: ?Target = null,
+    /// Present on revision_conflict: the authoritative session revision at the
+    /// moment the optimistic-concurrency check rejected the request. Optional
+    /// elsewhere, so older decoders keep working; it never replaces a real
+    /// session.snapshot, it only saves the loser one round trip.
+    currentRevision: ?u64 = null,
     @"error": struct {
         code: []const u8,
         message: []const u8,

@@ -23,6 +23,11 @@ final class ManagedTerminalCoordinator {
 
   private let client: any ManagedSessionClient
   private let environment: [String: String]
+  /// 本协调器绑定的机器配置 ID（P4.2）。
+  ///
+  /// 默认是 Local，因此 `shared` 与 P2/P3 完全同义；远端协调器由注册表按机器传入，
+  /// 使它产出的 `ManagedTerminalReference` 天然带正确的机器身份，跨机器对账不会串。
+  let machineProfileID: UUID
   private var lifecycle = ManagedTerminalLifecycleTracker()
   /// 最近一次成功握手的服务身份；用于识别冷重启。
   private(set) var serverIdentity: SessionServerIdentity?
@@ -35,10 +40,12 @@ final class ManagedTerminalCoordinator {
 
   init(
     client: (any ManagedSessionClient)? = nil,
-    environment: [String: String] = ProcessInfo.processInfo.environment
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    machineProfileID: UUID = MachineProfile.localProfileID
   ) {
     self.client = client ?? Self.makeClient(environment: environment)
     self.environment = environment
+    self.machineProfileID = machineProfileID
   }
 
   /// 依据环境选择传输实现。
@@ -85,6 +92,7 @@ final class ManagedTerminalCoordinator {
       let stateParent = environment[Self.stateDirectoryEnvironmentKey], !stateParent.isEmpty
     else { return nil }
     return ManagedSessionEndpoint(
+      machineProfileID: machineProfileID,
       binaryPath: binary,
       stateParentPath: stateParent,
       sessionName: environment[Self.sessionNameEnvironmentKey] ?? "default"
@@ -92,6 +100,15 @@ final class ManagedTerminalCoordinator {
   }
 
   var isEnabled: Bool { endpoint != nil }
+
+  /// 该机器的布局事务客户端（P4.2）。受管模式未开启时返回 nil。
+  ///
+  /// 事务与受管终端必须共用同一条传输：拆成两个客户端很容易在本机/SSH 之间配错，
+  /// 结果是结构提交到一台机器、终端创建在另一台。
+  var transactionClient: WorkspaceTransactionClient? {
+    guard let endpoint else { return nil }
+    return WorkspaceTransactionClient(client: client, endpoint: endpoint)
+  }
 
   /// 异步连接。把阻塞的服务查询挪出主线程。
   ///

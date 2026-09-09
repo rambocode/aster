@@ -90,7 +90,9 @@ fn validateFile(stat: std.posix.Stat) !void {
         return error.UnsafeIdentityFile;
 }
 
-fn readExisting(dir: std.fs.Dir) !?Identity {
+/// Reads a committed identity without creating or repairing one. The session
+/// registry uses this to learn a stopped session's stable sessionID.
+pub fn readExisting(dir: std.fs.Dir) !?Identity {
     const fd = std.posix.openat(dir.fd, file_name, .{
         .ACCMODE = .RDONLY,
         .CLOEXEC = true,

@@ -38,6 +38,12 @@ pub fn status(allocator: std.mem.Allocator, parent: std.fs.Dir, name: []const u8
 pub fn stopAtPath(allocator: std.mem.Allocator, parent_path: []const u8, name: []const u8, timeout_ms: u32) !Reply {
     var parent = try std.fs.cwd().openDir(parent_path, .{ .no_follow = true });
     defer parent.close();
+    return stop(allocator, parent, name, timeout_ms);
+}
+
+/// Stops one named session through its own control socket. Never sends a signal
+/// and never touches any sibling session's state.
+pub fn stop(allocator: std.mem.Allocator, parent: std.fs.Dir, name: []const u8, timeout_ms: u32) !Reply {
     return transact(allocator, parent, name, timeout_ms, .@"server.stop");
 }
 
@@ -164,7 +170,7 @@ pub const Deadline = struct {
         if (elapsed >= self.budget) return error.ServiceTimedOut;
         return @intCast((self.budget - elapsed + std.time.ns_per_ms - 1) / std.time.ns_per_ms);
     }
-    fn wait(self: *Deadline, fd: std.posix.fd_t, events: i16) !void {
+    pub fn wait(self: *Deadline, fd: std.posix.fd_t, events: i16) !void {
         const elapsed = self.clock.read();
         if (elapsed >= self.budget) return error.ServiceTimedOut;
         const remaining = (self.budget - elapsed + std.time.ns_per_ms - 1) / std.time.ns_per_ms;

@@ -324,6 +324,11 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
 @MainActor
 final class TerminalTabItem: ObservableObject, Identifiable {
   let id: UUID
+  /// 该标签对应的远端共享标签 ID（P4.2）。本地标签恒为 nil。
+  ///
+  /// 服务端的 tabID 是字符串而本地标签身份是 UUID，两者不能互相冒充：这里显式保留
+  /// 映射，结构事务才能把界面动作翻译成正确的服务端对象。
+  var remoteTabID: String?
   let createdAt: Date
   private(set) var updatedAt: Date
   /// 标签显示名。刻意不是 `@Published`：Agent CLI（Claude Code / codex）经 OSC 0/2
@@ -675,6 +680,28 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     activePaneID = descriptor.id
     if let state = paneTitleStates[descriptor.id] { applyActiveTitleState(state) }
     zoomedPaneID = nil
+  }
+
+  /// 对齐一份来自远端共享结构的布局（P4.2）。
+  ///
+  /// 与 `split` / `restorePane` 的根本区别：结构的真值在服务端，本地只做「对齐」。
+  /// 因此消失的 Pane 一律按**分离**语义拆本地运行态——用 `.terminated` 会去 terminate
+  /// 远端进程，而这条路径的含义只是「本客户端不再显示它」；新出现的 Pane 按
+  /// `isRestored: true` 建运行态，避免 binder 为已有受管引用再创建一个新终端。
+  func applyRemoteLayout(_ newLayout: PaneLayout, title newTitle: String) {
+    let incoming = Set(newLayout.allPanes.map(\.id))
+    for removed in runtimes.keys.filter({ !incoming.contains($0) }) {
+      runtimes.removeValue(forKey: removed)?.stop(disposition: .detached)
+      paneTitleStates.removeValue(forKey: removed)
+      paneAgentSessionTitles.removeValue(forKey: removed)
+      if zoomedPaneID == removed { zoomedPaneID = nil }
+    }
+    if layout != newLayout { layout = newLayout }
+    rebuildRuntimes(for: newLayout, isRestored: true)
+    if !incoming.contains(activePaneID), let first = newLayout.firstPaneID {
+      activePaneID = first
+    }
+    if title != newTitle { title = newTitle }
   }
 
   /// 切换焦点面板。`paneID` 不存在或未变化时保持原状，避免无谓的 first responder 抖动。
@@ -1166,6 +1193,82 @@ final class AppModel: ObservableObject {
 
   @Published private(set) var tabs: [TerminalTabItem] = []
 
+  // MARK: - P4.2 按机器分组的标签集合
+
+  /// 一台机器的整组标签状态。
+  ///
+  /// 切换机器是**分离视图**，不是关闭：整组 `TerminalTabItem` 被强引用留在这里，
+  /// 不调用 `stop()` / `closeTab()` 的任何一条路径。少了这条强引用，本地 PTY 会随
+  /// 标签一起释放，A08 已验收的保活路径当场失效。
+  private struct MachineTabGroup {
+    var tabs: [TerminalTabItem]
+    var selectedTabID: UUID?
+    var dividerAfterTabIDs: Set<UUID>
+  }
+
+  /// 当前活动机器。默认 Local，本地渲染与持久化路径与 P2/P3 完全一致。
+  @Published private(set) var activeMachineID: UUID = MachineProfile.localProfileID
+  /// 已被切走的机器的标签集合。
+  private var machineTabGroups: [UUID: MachineTabGroup] = [:]
+
+  /// 当前活动机器是否为 Local。
+  var isLocalMachineActive: Bool { activeMachineID == MachineProfile.localProfileID }
+
+  /// 远端机器的结构变更出口（P4.2）。
+  ///
+  /// 非 nil 表示当前活动机器是远端：新建标签 / 分屏 / 关闭 / 改标题必须变成带
+  /// `expectedRevision` 的服务端事务。就地改本地 `layout` 会让本客户端与服务端结构
+  /// 分叉，其它客户端也永远看不到这次修改。
+  var remoteStructureHandler: (any RemoteStructureHandling)?
+
+  /// 切换活动机器：保存当前机器的整组标签，装载目标机器的整组标签。
+  ///
+  /// 返回 false 表示目标就是当前机器，调用方不必刷新界面。
+  @discardableResult
+  func switchMachine(to machineProfileID: UUID) -> Bool {
+    guard machineProfileID != activeMachineID else { return false }
+    // 切走之前把 Local 的当前状态落一次盘；远端标签永远不写本地工作区快照。
+    if isLocalMachineActive { persistWorkspace() }
+    machineTabGroups[activeMachineID] = MachineTabGroup(
+      tabs: tabs, selectedTabID: selectedTabID, dividerAfterTabIDs: dividerAfterTabIDs)
+    activeMachineID = machineProfileID
+    // 取出即移除：活动机器的真值是 `tabs`，把一份旧副本继续留在表里会一直强引用
+    // 已经被服务端删掉的标签，也给「哪份才是最新」留下歧义。
+    let group = machineTabGroups.removeValue(forKey: machineProfileID)
+    dividerAfterTabIDs = group?.dividerAfterTabIDs ?? []
+    tabs = group?.tabs ?? []
+    selectedTabID = group?.selectedTabID ?? tabs.first?.id
+    if isLocalMachineActive { persistWorkspace() }
+    return true
+  }
+
+  /// 装载某台机器的标签集合（由远端投影构造）。
+  ///
+  /// 目标机器不是当前活动机器时只更新它的分组缓存，不动界面：后台机器仍然接收结构
+  /// 与 Agent 事件，但不能抢走用户正在看的标签栏。
+  func setTabs(_ newTabs: [TerminalTabItem], forMachine machineProfileID: UUID) {
+    for tab in newTabs { configurePersistence(for: tab) }
+    guard machineProfileID == activeMachineID else {
+      var group = machineTabGroups[machineProfileID]
+        ?? MachineTabGroup(tabs: [], selectedTabID: nil, dividerAfterTabIDs: [])
+      group.tabs = newTabs
+      if !newTabs.contains(where: { $0.id == group.selectedTabID }) {
+        group.selectedTabID = newTabs.first?.id
+      }
+      machineTabGroups[machineProfileID] = group
+      return
+    }
+    tabs = newTabs
+    if !newTabs.contains(where: { $0.id == selectedTabID }) {
+      selectedTabID = newTabs.first?.id
+    }
+  }
+
+  /// 取某台机器当前持有的标签集合（活动机器读 `tabs`，其余读分组缓存）。
+  func tabs(forMachine machineProfileID: UUID) -> [TerminalTabItem] {
+    machineProfileID == activeMachineID ? tabs : (machineTabGroups[machineProfileID]?.tabs ?? [])
+  }
+
   /// 关闭确认目标。窗口级由 AsterApp 在 `windowShouldClose` 中调用。
   enum CloseTarget { case tab, window, pane }
   /// 读取「关闭确认」设置;为 nil(测试、无 AsterApp)时不询问,保持原有行为。
@@ -1627,6 +1730,11 @@ final class AppModel: ObservableObject {
     position: NewTabPosition? = nil,
     hasContent: Bool = false
   ) {
+    // 远端机器上「新建标签」是一次服务端事务；本地不能凭空造标签，否则结构分叉。
+    if let remoteStructureHandler {
+      remoteStructureHandler.createTab(workingDirectory: workingDirectory)
+      return
+    }
     let directory = workingDirectory
       ?? selectedTab?.workingDirectory
       ?? FileManager.default.homeDirectoryForCurrentUser.path
@@ -1695,6 +1803,10 @@ final class AppModel: ObservableObject {
   /// 才关闭整个标签页。与 Otty/iTerm 一致——多分屏工作区里误关整个标签代价太大。
   func closeSelectedPaneOrTab() {
     guard let tab = selectedTab else { return }
+    if remoteStructureHandler != nil {
+      if tab.layout.allPanes.count > 1 { closeActivePane() } else { closeTab(id: tab.id) }
+      return
+    }
     if closePaneAndRecord(in: tab) {
       persistWorkspace()
       return
@@ -1712,6 +1824,12 @@ final class AppModel: ObservableObject {
   /// 未保存文档拒绝关闭时不改变任何模型状态。
   func closeTab(id: UUID) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+    // 远端关闭标签是**资源关闭**语义（会结束远端进程），必须走服务端事务。
+    if let remoteStructureHandler {
+      guard confirmClose(.tab, hasRunningProcess: tabs[index].hasForegroundCommand) else { return }
+      remoteStructureHandler.closeTab(tabID: id)
+      return
+    }
     guard confirmClose(.tab, hasRunningProcess: tabs[index].hasForegroundCommand),
       tabs[index].confirmCloseDocuments()
     else { return }
@@ -1804,7 +1922,14 @@ final class AppModel: ObservableObject {
   }
 
   func splitSelectedTab(_ direction: SplitDirection = .right) {
-    selectedTab?.split(direction: direction)
+    guard let tab = selectedTab else { return }
+    // 远端分屏走 `pane.split` 事务；成功后由新快照刷新结构，不在本地先画一个分屏。
+    if let remoteStructureHandler {
+      remoteStructureHandler.splitPane(
+        tabID: tab.id, paneID: tab.activePaneID, direction: direction)
+      return
+    }
+    tab.split(direction: direction)
     persistWorkspace()
   }
 
@@ -1830,7 +1955,10 @@ final class AppModel: ObservableObject {
   /// 回滚（清理本次新建的受管终端并保留备份），现有本地 PTY 一律不结束。
   @discardableResult
   func migrateWorkspaceToManagedSession() -> ManagedMigrationOutcome? {
-    guard let endpoint = ManagedTerminalCoordinator.shared.endpoint else { return nil }
+    guard
+      let endpoint = ManagedTerminalCoordinatorRegistry
+        .coordinator(forMachine: MachineProfile.localProfileID).endpoint
+    else { return nil }
     let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
     let outcome = ManagedTerminalMigration.migrate(
       tabs: tabs.map(\.snapshot),
@@ -1848,7 +1976,15 @@ final class AppModel: ObservableObject {
   }
 
   func closeActivePane() {
-    guard let tab = selectedTab, closePaneAndRecord(in: tab) else { return }
+    guard let tab = selectedTab else { return }
+    if let remoteStructureHandler {
+      guard tab.layout.allPanes.count > 1,
+        confirmClose(.pane, hasRunningProcess: tab.activePaneHasForegroundCommand)
+      else { return }
+      remoteStructureHandler.closePane(tabID: tab.id, paneID: tab.activePaneID)
+      return
+    }
+    guard closePaneAndRecord(in: tab) else { return }
     persistWorkspace()
   }
 
@@ -2665,6 +2801,11 @@ final class AppModel: ObservableObject {
     case .alertFirstButtonReturn:
       let override: TerminalTitleOverride = mode.indexOfSelectedItem == 0
         ? .name(field.stringValue) : .prefix(field.stringValue)
+      // 远端标签标题属于共享结构：先提交 `tab.update` 事务，标题由新快照回灌。
+      if let remoteStructureHandler {
+        remoteStructureHandler.renameTab(tabID: tab.id, title: field.stringValue)
+        return
+      }
       tab.setTabTitleOverride(override)
     case .alertThirdButtonReturn:
       tab.setTabTitleOverride(.automatic)
@@ -3736,6 +3877,9 @@ final class AppModel: ObservableObject {
   }
 
   func persistWorkspace() {
+    // 远端机器的标签是服务端结构的投影，不是本客户端的工作区。把它们写进本地快照会
+    // 污染下次启动的恢复内容，也会把远端受管引用混进 A09 的旧布局迁移路径。
+    guard isLocalMachineActive else { return }
     guard let selectedTabID, !tabs.isEmpty else { return }
     let snapshot = WorkspaceSnapshot(
       selectedTabID: selectedTabID,

@@ -36,12 +36,18 @@ public struct RemoteSessionTransport: Sendable {
   }
 
   /// 生成一次远端调用的完整 ssh argv。
-  public func sshArguments(remoteCommand: [String]) -> [String] {
+  ///
+  /// - Parameter multiplexed: 是否允许走 ControlMaster 复用连接。短命控制命令用
+  ///   复用省掉握手；**长命流（显示桥、事件订阅）必须传 false**，理由见下。
+  public func sshArguments(remoteCommand: [String], multiplexed: Bool = true) -> [String] {
     RemoteSSHInvocation(
       target: target,
       // 只有开启 SSH 配置管理时才注入 `-F`；关闭时完全使用用户配置。
       configurationFile: policy.manageSSHConfig ? managedConfiguration?.configurationPath : nil,
-      options: extraOptions,
+      // `ControlPath=none` 是唯一能真正退出复用的写法：只写 `ControlMaster=no`
+      // 时 OpenSSH 仍会去连已存在的 control socket。命令行 `-o` 覆盖配置文件里的
+      // `ControlMaster auto`，用户自己的复用连接不受影响（那是另一个 ControlPath）。
+      options: multiplexed ? extraOptions : extraOptions + ["ControlPath=none"],
       remoteCommand: remoteCommand,
       connectTimeout: policy.connectTimeout
     ).arguments()
@@ -137,6 +143,13 @@ public struct RemoteManagedSessionClient: ManagedSessionClient {
   ///
   /// 桥必须要求分配 TTY（`-tt`），否则远端 attach 无法进入 raw 模式；同时
   /// 显式关闭 `RequestTTY` 之外的交互，让桥退出后本地终端可正常恢复。
+  ///
+  /// **桥不复用 ControlMaster**（`multiplexed: false`）。复用时会话通道挂在后台
+  /// master 上：本机桥进程被杀死后，master 不会立刻关闭该通道，远端
+  /// `terminal attach` 会一直活着、每 5 秒续租写租约，直到 `ControlPersist` 到期
+  /// 才退出（OrbStack 实测 62 秒）。这期间重新附加必被 `lease_busy retry=never`
+  /// 拒绝，画面停在错误文本上。独立连接时本机进程一死 TCP 就断，远端 2 秒内退出
+  /// 并释放租约（实测）。
   public func bridgeArguments(
     _ endpoint: ManagedSessionEndpoint,
     terminalID: String,
@@ -145,12 +158,30 @@ public struct RemoteManagedSessionClient: ManagedSessionClient {
     var argv = ["-tt"]
     argv += transport.sshArguments(
       remoteCommand: [endpoint.binaryPath]
-        + ManagedSessionCommand.bridge(endpoint, terminalID: terminalID, readOnly: readOnly))
+        + ManagedSessionCommand.bridge(endpoint, terminalID: terminalID, readOnly: readOnly),
+      multiplexed: false)
     return argv
   }
 
   public func bridgeExecutablePath(_ endpoint: ManagedSessionEndpoint) -> String {
     RemoteSSHInvocation.executablePath
+  }
+
+  /// 事件订阅经同一条 ssh 转发。
+  ///
+  /// 与显示桥的区别是**不加 `-tt`**：订阅只需要一条干净的 stdout 字节流，分配 TTY
+  /// 会让远端进程改走终端语义（行编辑、信号归属），破坏 JSON Lines 的逐行边界。
+  ///
+  /// 与桥相同的是**不复用 ControlMaster**：订阅同样是长命流，复用时本机进程结束
+  /// 后远端订阅进程会滞留到 `ControlPersist` 到期，白占服务端连接与事件序号。
+  public func eventSubscribeInvocation(_ endpoint: ManagedSessionEndpoint)
+    -> ManagedSessionInvocation
+  {
+    ManagedSessionInvocation(
+      executablePath: RemoteSSHInvocation.executablePath,
+      arguments: transport.sshArguments(
+        remoteCommand: [endpoint.binaryPath] + ManagedSessionCommand.eventSubscribe(endpoint),
+        multiplexed: false))
   }
 
   /// 执行一次远端结构化命令并返回 stdout。
@@ -159,7 +190,12 @@ public struct RemoteManagedSessionClient: ManagedSessionClient {
   /// 并携带已脱敏的分类（认证失败要能被上层映射成 attention），后者仍由
   /// `ManagedSessionReplyDecoder.envelope` 抛 `serviceError`。
   private func run(_ endpoint: ManagedSessionEndpoint, _ arguments: [String]) throws -> String {
-    let remoteCommand = [endpoint.binaryPath] + arguments
+    try executeStructured(binaryPath: endpoint.binaryPath, arguments: arguments)
+  }
+
+  /// 共用传输原语：会话作用域与注册表作用域动作走同一条 ssh 转发与同一套错误分类。
+  public func executeStructured(binaryPath: String, arguments: [String]) throws -> String {
+    let remoteCommand = [binaryPath] + arguments
     let result: RemoteSSHResult
     do {
       result = try runner.run(

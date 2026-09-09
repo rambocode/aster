@@ -58,6 +58,11 @@ final class AsterControlDispatcher {
           code: .protocolMismatch,
           message: "协议版本 \(protocolVersion) 不受支持，服务端为 \(AsterControlProtocol.version)")
       }
+      // 机器/会话方法先于 `resolvedMethod()` 处理：`AsterControlMethod` 是 AsterCore 的
+      // 封闭枚举，未知方法名会被它直接判成 method_not_found。
+      if let response = await handleMachineMethod(request, fleet: MachineFleetModel.shared) {
+        return response
+      }
       let method = try request.resolvedMethod()
       let result = try await dispatch(method, request: request, client: client)
       return AsterControlResponse(id: request.id, result: result)
@@ -182,7 +187,7 @@ final class AsterControlDispatcher {
 
   /// 向后台服务查询一次真实状态；受管模式未开启或服务不可达时返回空表，列表仍可输出本地引用。
   private func liveManagedStatuses() -> [String: ManagedTerminalStatus] {
-    let coordinator = ManagedTerminalCoordinator.shared
+    let coordinator = ManagedTerminalCoordinatorRegistry.coordinator(forMachine: MachineProfile.localProfileID)
     guard coordinator.isEnabled, let statuses = try? coordinator.liveTerminals() else { return [:] }
     return Dictionary(statuses.map { ($0.reference.terminalID, $0) }, uniquingKeysWith: { first, _ in first })
   }

@@ -9,13 +9,9 @@ import Foundation
 /// 3. 旧布局里没有受管引用的 Pane 不自动托管——托管必须走 P2.6 的显式迁移事务。
 @MainActor
 enum ManagedTerminalBinder {
-  /// 受管终端使用的登录 Shell argv。与本地终端一致，保证行为可比。
+  /// 本机受管终端使用的登录 Shell argv。规则收敛在 `ManagedTerminalLaunchSpec`。
   static func shellArguments(shell: String) -> [String] {
-    switch URL(fileURLWithPath: shell).lastPathComponent {
-    case "bash": [shell, "--login", "-i"]
-    case "fish": [shell, "--login", "--interactive"]
-    default: [shell, "-l", "-i"]
-    }
+    ManagedTerminalLaunchSpec.localArgv(shell: shell)
   }
 
   /// 绑定一个终端 Pane。
@@ -33,8 +29,20 @@ enum ManagedTerminalBinder {
     shell: String,
     onBind: @escaping (ManagedTerminalReference) -> Void
   ) {
-    let coordinator = ManagedTerminalCoordinator.shared
+    // 受管协调器按 Pane 所属机器取；没有受管引用时落到 Local，行为与 P2/P3 一致。
+    let coordinator = ManagedTerminalCoordinatorRegistry.coordinator(for: descriptor.managedTerminal)
     guard coordinator.isEnabled else { return }
+    // 描述符**已经带**受管引用时，先同步绑上再去对账。
+    //
+    // 为什么必须同步：surface 的启动命令在 `makeTerminalHost` 那一刻就定死了——
+    // 那时 `managedTerminal` 是 nil 就会起一个**本机 Shell**，之后再 `bindManagedTerminal`
+    // 也不会重建 surface。而视图刷新（`WorkspaceViewController.scheduleRefresh`）是合并到
+    // 下一轮 runloop 的，几乎总是早于一次 SSH 对账往返完成。实测结果就是：远端投影出来的
+    // Pane 挂着一个本机 Shell，显示桥 `ssh … terminal attach` 从头到尾没启动过
+    // （P4 §6.8 里「ps 采样不到 terminal attach」的根因）。
+    // 引用本身来自服务端权威快照或持久化布局，同步采信它是安全的：对账失败会走
+    // `markManagedFailure` 明确报错，不会退化成一个未标识的本机 Shell。
+    if let existing = descriptor.managedTerminal { session.bindManagedTerminal(existing) }
     // 绑定要么查服务端真实状态、要么创建远端终端，两者在 P3 都可能是 SSH 往返。
     // 必须异步执行：在 MainActor 上同步等待会让新建 Pane 时整个界面随网络延迟卡住。
     Task { @MainActor in
@@ -52,7 +60,7 @@ enum ManagedTerminalBinder {
     shell: String,
     onBind: @escaping (ManagedTerminalReference) -> Void
   ) async {
-    let coordinator = ManagedTerminalCoordinator.shared
+    let coordinator = ManagedTerminalCoordinatorRegistry.coordinator(for: descriptor.managedTerminal)
 
     if let existing = descriptor.managedTerminal {
       // 重开 App 必须查服务端真实状态；持久化的引用本身不是运行证据。
@@ -80,10 +88,17 @@ enum ManagedTerminalBinder {
     // 旧布局的非受管 Pane 保持原样，等待显式迁移。
     guard !isRestored else { return }
 
+    // cwd 与 Shell 属于**执行机器**：协调器是 SSH 传输时，本机 Pane 目录与本机 `$SHELL`
+    // 在远端都可能不存在（修 §6.9）。两条路径共用同一个入口，不再各拼一份。
+    let launch = ManagedTerminalLaunchSpec.resolve(
+      coordinator: coordinator,
+      localWorkingDirectory: descriptor.workingDirectory,
+      localShell: shell)
+
     do {
       let status = try await coordinator.createTerminalAsync(
-        workingDirectory: descriptor.workingDirectory,
-        argv: shellArguments(shell: shell)
+        workingDirectory: launch.workingDirectory,
+        argv: launch.argv
       )
       session.bindManagedTerminal(status.reference)
       noteCapabilityLimitations(session: session, coordinator: coordinator)

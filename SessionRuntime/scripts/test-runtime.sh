@@ -5,7 +5,7 @@ runtime_dir="$(cd "$(dirname "$0")/.." && pwd)"
 "$runtime_dir/scripts/build-vt.sh" native
 cd "$runtime_dir"
 zig build -Dvt-prefix=.build/vt-host
-zig build test-reactor test-startup test-pool -Dvt-prefix=.build/vt-host --summary all
+zig build test-reactor test-startup test-pool test-workspace-store test-registry test-event-stream -Dvt-prefix=.build/vt-host --summary all
 python3 tests/probe.py zig-out/bin/aster-session
 python3 tests/handshake_gate.py zig-out/bin/aster-session
 python3 tests/snapshot_gate.py zig-out/bin/aster-session
@@ -23,3 +23,9 @@ python3 tests/service_client.py zig-out/bin/aster-session
 python3 tests/service_launch.py zig-out/bin/aster-session
 
 python3 tests/service_stop.py zig-out/bin/aster-session
+
+python3 tests/session_registry.py zig-out/bin/aster-session
+
+python3 tests/workspace_transaction.py zig-out/bin/aster-session
+
+python3 tests/event_stream.py zig-out/bin/aster-session

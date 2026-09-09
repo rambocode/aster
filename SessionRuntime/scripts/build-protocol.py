@@ -138,7 +138,10 @@ def response(operation):
     return obj(required)
 
 def artifacts():
-    error = obj({'type':enum('error'),'requestID':ID,'operation':SHORT,'scope':enum('session','registry','bootstrap'),'error':ref('error')}, {'target':ref('target')})
+    # currentRevision lets a revision_conflict failure carry the authoritative
+    # session revision, so the loser of an optimistic-concurrency race can retry
+    # without an extra session.snapshot round trip. Optional for every failure.
+    error = obj({'type':enum('error'),'requestID':ID,'operation':SHORT,'scope':enum('session','registry','bootstrap'),'error':ref('error')}, {'target':ref('target'),'currentRevision':U64})
     schema = {'$schema':'https://json-schema.org/draft/2020-12/schema','$id':'urn:aster:session:operations:1',
               'title':'Aster operation protocol v1','$defs':D,'oneOf':[request(x) for x in OPS]+[response(x) for x in OPS]+[error]}
     catalog = {'protocolMajor':1,'commonErrors':COMMON_ERRORS,'operations':OPS,
