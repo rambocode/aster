@@ -74,7 +74,7 @@
 
 **交付物：** 本地 App/CLI 接入、兼容迁移、退出/录制规则、用户帮助和 P2 证据。
 
-**当前验收环境与边界：** 验收在本机 macOS 26.6.2 / arm64 完成，使用真实 AppKit 宿主、真实 Ghostty surface、真实 `aster-session` 后台服务与真实 PID。受管模式默认关闭，只在同时提供 `ASTER_SESSION_BINARY` 与 `ASTER_SESSION_STATE_DIR` 的专用测试配置下开启。`aster session` CLI 三个动作的端到端 CLI→App 链路与人工 GUI 点击验收未执行，原因与解除条件见 P2 记录第 5 节；这两项保留为未完成，不计入通过。
+**当前验收环境与边界：** 验收在本机 macOS 26.6.2 / arm64 完成，使用真实 AppKit 宿主、真实 Ghostty surface、真实 `aster-session` 后台服务与真实 PID。受管模式默认关闭，只在同时提供 `ASTER_SESSION_BINARY` 与 `ASTER_SESSION_STATE_DIR` 的专用测试配置下开启。`aster session terminals/detach/end` 的端到端 CLI→App 链路已在真实运行中的 App 实例上执行并全部通过（过程中修复三个真实缺陷，见 P2 记录 §5.1）。人工 GUI 点击验收仍未执行，保留为未完成项，不计入通过。
 
 **验收：** A08、A09 通过，并回归现有标签、递归分屏、Ghostty 输入、历史录制和 Agent 结束逻辑。真实退出/重开 App 后同一任务 PID 不变。
 

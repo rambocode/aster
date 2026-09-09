@@ -3305,6 +3305,22 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 返回长期存活的 AppKit 容器。容器和终端的父子关系在 Session 生命周期内保持不变，
   /// 标签切换、主题刷新或递归分屏只会重新安放最外层容器。
   func makeTerminalHost(preferences: AppPreferences) -> NSView {
+    // 受管终端的分离态刻意不持有 surface。视图树在分离后还会重建若干次（布局写回、
+    // 标签切换、主题刷新），此时绝不能顺手新建 surface：那会立刻拉起一个新的显示桥，
+    // 让刚刚经 CLI 或菜单完成的“分离”被自动重新附加，分离形同无效。重新附加只走
+    // 用户显式的 `reattachManagedTerminal()`。
+    if isManagedTerminal, lifecycleState == .detached {
+      self.preferences = preferences
+      if let terminalHostView {
+        terminalHostView.layer?.backgroundColor = preferences.terminalCanvasBackgroundColor.cgColor
+        return terminalHostView
+      }
+      let placeholder = NSView()
+      placeholder.wantsLayer = true
+      placeholder.layer?.backgroundColor = preferences.terminalCanvasBackgroundColor.cgColor
+      terminalHostView = placeholder
+      return placeholder
+    }
     let terminal = makeGhosttyTerminalView(preferences: preferences)
     if let terminalHostView {
       terminalHostView.layer?.backgroundColor = preferences.terminalCanvasBackgroundColor.cgColor

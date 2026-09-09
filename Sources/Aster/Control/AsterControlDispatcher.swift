@@ -214,11 +214,18 @@ final class AsterControlDispatcher {
     }
   }
 
-  /// 解析 detach/end 的目标：必须是受管终端，并通过与 `pane.send_text` 相同的 IPC 写门禁。
+  /// 解析 detach/end 的目标：必须是受管终端，并通过与 `pane.send_text` 相同的 IPC 权限门禁。
   /// 非受管的普通本地 pane 在这里就被拒绝，绝不会被静默分离或杀掉。
+  ///
+  /// 门禁只取 `policyBlocker`（Allow Send Keys + 敏感会话），不取 surface 可写性：显示桥
+  /// 退出后本地无法键入，但服务端进程仍在跑，仍必须能被 CLI 分离/结束（P2.5 以服务端真实
+  /// 状态为准）。是否真的已结束，由服务端上报的 `live` 状态回答。
   private func resolveManagedTarget(
     _ selector: String
-  ) throws -> (AsterControlBridge.PaneRecord, TerminalSession, ManagedTerminalReference) {
+  ) throws -> (
+    AsterControlBridge.PaneRecord, TerminalSession, ManagedTerminalReference,
+    ManagedTerminalStatus?
+  ) {
     let record = try bridge.resolve(selector: selector)
     guard let session = record.session else {
       throw AsterControlError(code: .paneNotTerminal, message: "\(record.paneID) 不是终端 pane")
@@ -226,17 +233,30 @@ final class AsterControlDispatcher {
     guard let reference = session.managedTerminal else {
       throw AsterControlError.invalidParams("\(record.paneID) 不是受管终端，session detach/end 不适用")
     }
-    try gate(session)
-    return (record, session, reference)
+    let policy = policyProvider()
+    if let blocker = AsterControlWriteGate.policyBlocker(
+      session: session, allowSendKeys: policy.allowSendKeys,
+      allowSensitiveSessions: policy.allowSensitiveSessions)
+    {
+      throw blocker
+    }
+    let live = liveManagedStatuses()[reference.terminalID]
+    if live?.state == .exited {
+      throw AsterControlError(
+        code: .paneNotRunning, message: "\(record.paneID) 的受管终端已在服务端结束")
+    }
+    return (record, session, reference, live)
   }
 
   /// session.detach：拆本客户端显示桥，后台进程与布局保留。
+  ///
+  /// 桥先前已自行退出（例如桥内 `Ctrl+B q`）时本地已是分离态，服务端进程仍在运行；
+  /// 这属于“已达成”而不是失败，按幂等成功返回，不再报 `write_rejected`。
   private func detachManagedTerminal(_ selector: String) throws -> ManagedTerminalActionResult {
-    let (record, session, reference) = try resolveManagedTarget(selector)
     // PID 在动作前取：分离后服务端仍持有该进程，这里保留证据字段。
-    let live = liveManagedStatuses()[reference.terminalID]
-    guard session.detachManagedTerminal() else {
-      throw AsterControlError(code: .writeRejected, message: "\(record.paneID) 无法分离（可能已分离）")
+    let (record, session, reference, live) = try resolveManagedTarget(selector)
+    if !session.detachManagedTerminal(), session.lifecycleState != .detached {
+      throw AsterControlError(code: .writeRejected, message: "\(record.paneID) 无法分离")
     }
     return ManagedTerminalActionResult(
       terminal: managedInfo(
@@ -246,8 +266,7 @@ final class AsterControlDispatcher {
 
   /// session.end：显式结束后台受管进程，与分离互斥。
   private func endManagedTerminal(_ selector: String) throws -> ManagedTerminalActionResult {
-    let (record, session, reference) = try resolveManagedTarget(selector)
-    let live = liveManagedStatuses()[reference.terminalID]
+    let (record, session, reference, live) = try resolveManagedTarget(selector)
     guard session.terminateManagedTerminal() else {
       throw AsterControlError(code: .writeRejected, message: "\(record.paneID) 无法结束受管终端")
     }

@@ -200,8 +200,15 @@ fn checkGeometry(session: *Session, geometry: Geometry) !void {
     try geometry.validate();
     const metrics = try session.terminal.screenMetrics();
     const pixels = try session.terminal.pixelSize();
-    if (metrics.rows != geometry.rows or metrics.columns != geometry.columns or
-        (geometry.pixel_width != 0 and (pixels.width != geometry.pixel_width or pixels.height != geometry.pixel_height))) return error.UnsupportedProjection;
+    if (metrics.rows != geometry.rows or metrics.columns != geometry.columns) return error.UnsupportedProjection;
+    // The VT stores only a cell size, so a resize keeps cellWidth()*columns and
+    // drops the sub-cell remainder of the reported pixel size. A real client PTY
+    // (a Ghostty surface) rarely reports an exact multiple, so compare on the
+    // same quantized basis the session actually holds; comparing raw pixels
+    // rejected every genuine display bridge as an unsupported projection.
+    if (geometry.pixel_width != 0 and
+        (pixels.width != geometry.cellWidth() * geometry.columns or
+            pixels.height != geometry.cellHeight() * geometry.rows)) return error.UnsupportedProjection;
 }
 /// History uses the read-only viewport projector. The active bottom retains
 /// the existing graphics-aware capture path; neither path resizes the source.

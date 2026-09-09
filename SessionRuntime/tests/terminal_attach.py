@@ -27,7 +27,12 @@ class Host:
             stdin=self.slave, stdout=self.slave, stderr=self.slave, start_new_session=True)
 
     def resize(self, rows, columns):
-        fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
+        # A real GUI host reports pixel dimensions that are not exact multiples
+        # of the cell grid. The service keeps only a cell size, so this leftover
+        # remainder is the case that used to make every display bridge fail
+        # surface.subscribe; keep it in every attach the suite performs.
+        fcntl.ioctl(self.slave, termios.TIOCSWINSZ,
+                    struct.pack("HHHH", rows, columns, columns * 15 + 7, rows * 26 + 11))
 
     def write(self, data):
         assert self.process.poll() is None, "CLI exited before input"

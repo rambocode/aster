@@ -95,6 +95,10 @@ const Client = struct {
                             return error.TerminalInputClosed;
                     }
                 }
+                // The Zig error name alone loses the server's decision. Report
+                // the validated operation, code, message and retry class so a
+                // rejected bridge is diagnosable from the caller's stderr.
+                reportRejection(operation, failure.value.@"error".code, failure.value.@"error".message, @tagName(failure.value.@"error".retry));
                 return error.TerminalRequestRejected;
             }
             const result = try std.json.parseFromSlice(Response, a, bytes, .{ .allocate = .alloc_always });
@@ -504,6 +508,14 @@ const Prefix = struct {
         return .{ .length = length, .detach = false };
     }
 };
+/// Print a server rejection to stderr. Best effort and non-fatal: a failure to
+/// report must never replace the rejection the caller has to act on. CR+LF is
+/// used because the caller's terminal may still be in raw mode at this point.
+fn reportRejection(operation: @import("operation_kind.zig").Operation, code: []const u8, message: []const u8, retry: []const u8) void {
+    var buffer: [4608]u8 = undefined;
+    const text = std.fmt.bufPrint(&buffer, "aster-session: {s} rejected: code={s} retry={s} message={s}\r\n", .{ @tagName(operation), code, retry, message }) catch return;
+    std.fs.File.stderr().writeAll(text) catch {};
+}
 fn resize(owner: *Client, terminal_id: []const u8, geometry: Geometry) !void {
     const reply = try owner.rpc(.@"terminal.control", .{ .terminalID = terminal_id, .action = "resize", .geometry = geometry });
     defer reply.deinit();

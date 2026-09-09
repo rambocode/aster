@@ -114,6 +114,13 @@ func managedTerminalDetachKeepsProcessAliveAndReattachesSamePID() async throws {
   // A08 的硬性断言：分离不得写成 session ended。
   #expect(recorder.endedCalls.isEmpty)
 
+  // 分离后视图树仍会重建（布局写回、标签切换、主题刷新）。重建不得顺手新建 surface，
+  // 否则会立刻拉起新的显示桥，把刚完成的分离自动撤销。
+  let rebuilt = session.makeTerminalHost(preferences: preferences)
+  #expect(rebuilt === host, "分离后应复用原容器")
+  try await Task.sleep(for: .milliseconds(500))
+  #expect(session.lifecycleState == .detached, "重建视图树不得把分离态自动改回附着")
+
   try await Task.sleep(for: .seconds(2))
   #expect(processAlive(managedPID), "分离后受管进程必须继续存在")
   let afterDetach = try lineCount(of: outputFile)
@@ -276,4 +283,118 @@ func managedTerminalSurvivesAppTerminationAndRestoresSamePID() async throws {
 
   _ = coordinator.terminate(reference)
   stopServer(binary: binary, stateParent: stateParent.path, name: "p2appquit")
+}
+
+/// 找出正在附着某个受管终端的显示桥进程 PID（`aster-session terminal attach <id>`）。
+/// 用命令行精确匹配而不是猜测前台 PID，避免误杀无关进程。
+private func bridgeProcessIdentifier(terminalID: String) -> Int32? {
+  let process = Process()
+  process.executableURL = URL(fileURLWithPath: "/bin/ps")
+  process.arguments = ["-axo", "pid=,command="]
+  let pipe = Pipe()
+  process.standardOutput = pipe
+  process.standardError = FileHandle.nullDevice
+  guard (try? process.run()) != nil else { return nil }
+  let data = pipe.fileHandleForReading.readDataToEndOfFile()
+  process.waitUntilExit()
+  let text = String(decoding: data, as: UTF8.self)
+  for line in text.split(separator: "\n") {
+    guard line.contains("terminal attach"), line.contains(terminalID) else { continue }
+    let trimmed = line.drop { $0 == " " }
+    guard let pid = Int32(trimmed.prefix { $0.isNumber }) else { continue }
+    return pid
+  }
+  return nil
+}
+
+@Test("显示桥被杀后以服务端状态为准：仍可经控制协议分离与结束")
+@MainActor
+func managedTerminalBridgeCrashKeepsCLIDetachAndEndUsable() async throws {
+  _ = NSApplication.shared
+  let binary = runtimeBinaryPath()
+  #expect(FileManager.default.isExecutableFile(atPath: binary), "缺少运行时二进制：\(binary)")
+  guard FileManager.default.isExecutableFile(atPath: binary) else { return }
+
+  let stateParent = try makeStateParent()
+  let outputFile = stateParent.appendingPathComponent("counter.txt")
+  let coordinator = ManagedTerminalCoordinator(
+    environment: [
+      ManagedTerminalCoordinator.binaryEnvironmentKey: binary,
+      ManagedTerminalCoordinator.stateDirectoryEnvironmentKey: stateParent.path,
+      ManagedTerminalCoordinator.sessionNameEnvironmentKey: "p2bridgecrash",
+    ])
+  let previous = ManagedTerminalCoordinator.shared
+  ManagedTerminalCoordinator.shared = coordinator
+  defer {
+    ManagedTerminalCoordinator.shared = previous
+    stopServer(binary: binary, stateParent: stateParent.path, name: "p2bridgecrash")
+  }
+  _ = try #require(coordinator.connect(), "后台会话服务未能启动")
+
+  let script = "i=0; while true; do i=$((i+1)); echo \"$i\" >> \(outputFile.path); sleep 0.2; done"
+  let created = try coordinator.createTerminal(
+    workingDirectory: "/tmp", argv: ["/bin/sh", "-c", script])
+  let managedPID = try #require(created.pid)
+
+  // 控制协议侧夹具：真实 AppModel + 真实 pane，session.detach/end 走完整分发路径。
+  let workspace = try ControlTestWorkspace()
+  defer { workspace.tearDown() }
+  let bridge = AsterControlBridge(socketPath: "/tmp/aster-p2-bridge-crash.sock", binaryPath: "/tmp/aster-cli")
+  bridge.activeModelProvider = { [weak model = workspace.model] in model }
+  bridge.attach(model: workspace.model)
+  let policy = AsterControlDispatcher.Policy(
+    allowSendKeys: true, allowSensitiveSessions: false, shell: AsterConfiguration().shell)
+  let dispatcher = AsterControlDispatcher(bridge: bridge, version: "9.9.9") { policy }
+  let client = ControlFakeClient()
+
+  let session = try #require(workspace.model.selectedTab?.activeSession)
+  session.bindManagedTerminal(created.reference)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 800, height: 480),
+    styleMask: [.titled], backing: .buffered, defer: false)
+  window.makeKeyAndOrderFront(nil)
+  defer { window.orderOut(nil) }
+  let host = session.makeTerminalHost(preferences: workspace.preferences)
+  host.frame = window.contentView?.bounds ?? .zero
+  window.contentView?.addSubview(host)
+  window.layoutIfNeeded()
+  // 真实 Ghostty surface 的 PTY 会上报带余数的像素尺寸；桥必须能通过 surface.subscribe。
+  for _ in 0..<250 where session.lifecycleState != .running {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(session.lifecycleState == .running, "真实 surface 下显示桥必须附着成功")
+
+  // —— 人为杀掉显示桥进程（模拟桥崩溃，而不是用户主动分离） ——
+  var bridgePID: Int32?
+  for _ in 0..<100 where bridgePID == nil {
+    bridgePID = bridgeProcessIdentifier(terminalID: created.reference.terminalID)
+    if bridgePID == nil { try await Task.sleep(for: .milliseconds(50)) }
+  }
+  let killed = try #require(bridgePID, "找不到显示桥进程")
+  #expect(killed != managedPID, "只允许杀桥进程，绝不能杀受管进程")
+  kill(killed, SIGKILL)
+  for _ in 0..<250 where session.lifecycleState != .detached {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(session.lifecycleState == .detached, "桥崩溃后必须按服务端真实状态进入分离态")
+  #expect(processAlive(managedPID), "桥崩溃不得影响受管进程")
+
+  // —— 桥已死，但 session.detach / session.end 仍必须可用 ——
+  let before = try lineCount(of: outputFile)
+  let detach = await dispatcher.handle(
+    controlRequest("session.detach", ["pane": "w1:p1"]), client: client)
+  #expect(detach.error == nil, "桥退出不得让 detach 被判成「终端进程已退出」：\(String(describing: detach.error))")
+  #expect(detach.result?["disposition"]?.stringValue == "detached")
+  try await Task.sleep(for: .seconds(1))
+  #expect(processAlive(managedPID), "detach 之后受管进程仍须存活")
+  #expect(try lineCount(of: outputFile) > before, "detach 之后任务必须继续产出")
+
+  let end = await dispatcher.handle(
+    controlRequest("session.end", ["pane": "w1:p1"]), client: client)
+  #expect(end.error == nil, "桥退出不得让 end 被判成「终端进程已退出」：\(String(describing: end.error))")
+  #expect(end.result?["disposition"]?.stringValue == "terminated")
+  for _ in 0..<100 where processAlive(managedPID) {
+    try await Task.sleep(for: .milliseconds(50))
+  }
+  #expect(!processAlive(managedPID), "显式结束后受管进程必须退出")
 }
