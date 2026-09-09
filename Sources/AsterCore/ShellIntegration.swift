@@ -13,7 +13,9 @@ public enum ShellIntegrationEvent: Equatable, Sendable {
     // Ghostty 按 FinalTerm 扩展在 A 后附加 `cl=line`，它只描述提示符行语义，
     // 不携带命令正文。仅接受这个已知属性，继续拒绝 C 后的任意文本，避免扩大
     // 控制序列可伪造的业务输入面。
-    case "A", "A;cl=line": self = .promptStart
+    // Ghostty 在提示符插件改写 PS1 后用 P;k=i 补报已绘制的初始提示符，
+    // 其时间线语义与 A 相同；这里不重绘终端，也不接受其他 P 属性。
+    case "A", "A;cl=line", "P;k=i": self = .promptStart
     case "B": self = .inputStart
     case "C": self = .commandStart
     case "D": self = .commandFinished(exitStatus: nil)

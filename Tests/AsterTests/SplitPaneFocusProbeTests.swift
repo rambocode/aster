@@ -54,9 +54,7 @@ func newlySplitPaneTakesOverKeyboardInput() async throws {
   // 前置:键盘焦点在原 Pane 的终端上(用户正在输入)。
   let firstPane = tab.activePaneID
   let firstSession = try #require(tab.runtime(for: firstPane)?.terminalSession)
-  let firstTerminal = try #require(
-    firstSession.makeTerminalView(preferences: preferences) as? AsterTerminalView
-  )
+  let firstTerminal = try liveGhosttyView(for: firstSession, preferences: preferences)
   #expect(window.firstResponder === firstTerminal)
 
   // 动作:拆分出新 Pane(模型会把 activePaneID 切到新 Pane)。
@@ -66,9 +64,7 @@ func newlySplitPaneTakesOverKeyboardInput() async throws {
   let newPane = tab.activePaneID
   #expect(newPane != firstPane, "拆分后活动 Pane 应是新建的那个")
   let newSession = try #require(tab.runtime(for: newPane)?.terminalSession)
-  let newTerminal = try #require(
-    newSession.makeTerminalView(preferences: preferences) as? AsterTerminalView
-  )
+  let newTerminal = try liveGhosttyView(for: newSession, preferences: preferences)
 
   // 症状断言 1:first responder 必须是新 Pane 的终端,而不是旧 Pane。
   #expect(
@@ -79,9 +75,10 @@ func newlySplitPaneTakesOverKeyboardInput() async throws {
   // 症状断言 2:按键必须编码进新 Pane 的发送路径,且不进旧 Pane。
   var newEncoded: [[UInt8]] = []
   var oldEncoded: [[UInt8]] = []
-  newTerminal.onEncodedInput = { newEncoded.append(Array($0)) }
-  firstTerminal.onEncodedInput = { oldEncoded.append(Array($0)) }
-  (window.firstResponder as? AsterTerminalView)?.keyDown(with: try keyEvent("z"))
+  observeTestPTYWrites(newTerminal) { newEncoded.append($0) }
+  observeTestPTYWrites(firstTerminal) { oldEncoded.append($0) }
+  (window.firstResponder as? GhosttySurfaceView)?.keyDown(with: try keyEvent("z"))
+  try await Task.sleep(for: .milliseconds(50))
   #expect(newEncoded == [Array("z".utf8)], "按键应写入新 Pane 的 PTY")
   #expect(oldEncoded.isEmpty, "按键不得写入旧 Pane 的 PTY")
 }

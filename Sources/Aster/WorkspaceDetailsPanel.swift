@@ -3362,8 +3362,15 @@ final class PointingHandButton: NSButton {
   }
 
   override func sendAction(_ action: Selector?, to target: Any?) -> Bool {
-    if activatesOnDoubleClickOnly, (NSApp.currentEvent?.clickCount ?? 1) < 2 { return false }
+    if activatesOnDoubleClickOnly, !Self.isDoubleClickEvent(NSApp.currentEvent) { return false }
     return super.sendAction(action, to: target)
+  }
+
+  /// AppKit 对非鼠标事件访问 clickCount 会抛 Objective-C 异常。
+  /// 程序化激活、键盘与应用事件按单击处理，只有左键双击可打开文件。
+  static func isDoubleClickEvent(_ event: NSEvent?) -> Bool {
+    guard let event, event.type == .leftMouseDown || event.type == .leftMouseUp else { return false }
+    return event.clickCount >= 2
   }
 }
 

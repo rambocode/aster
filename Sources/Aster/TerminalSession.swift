@@ -2822,6 +2822,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       environment: environment,
       configurationText: GhosttyConfiguration.make(preferences: preferences)
     )
+    // C surface 入口接收 Shell 文本；逐参数转义保留路径和登录参数，避免注入。
+    // aster-direct-child 绕过 login(1)，由 Ghostty 等待受控启动命令的真实退出状态。
+    view.command = GhosttyConfiguration.launchCommand(
+      shell: shell, arguments: Self.launchArguments(forShell: shell))
     // 先登记再创建 surface；极短命命令的退出 callback 可能在 createSurface 返回前到达。
     ghosttyView = view
     processStartedAt = Date()
@@ -3074,6 +3078,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       )
       guard signature != lastGhosttyShellMarker else { return }
       lastGhosttyShellMarker = signature
+      // surface 创建早于子进程就绪，首个回调可能还读不到前台 PID。
+      // 在真实提示符处补齐 Shell 身份，再停掉轮询；否则后续 cat/Agent 会被误认作 Shell。
+      if ghosttyShellProcessIdentifier == nil, event == .promptStart || event == .inputStart {
+        ghosttyShellProcessIdentifier = view.foregroundProcessIdentifier
+      }
       let token = recordGhosttyAnchor(point)
       ghosttyShellCommandTimeline.receive(
         event,
@@ -3165,7 +3174,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     foregroundPollTask = Task { @MainActor [weak self] in
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(1))
-        guard let self else { return }
+        // Shell 集成接管会取消休眠；取消后不能再用旧采样覆盖刚到达的 C/D 状态。
+        guard !Task.isCancelled, let self else { return }
         if let ghosttyView = self.ghosttyView {
           guard ghosttyView.isProcessRunning else {
             if self.hasRunningCommand { self.hasRunningCommand = false }

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:aster:session:hello:1",
+  "title": "Session server handshake v1",
+  "type": "object",
+  "required": ["type", "protocolMajor", "protocolMinor", "serverID", "serverEpoch", "sessionID", "platform", "capabilities"],
+  "properties": {
+    "type": {"const": "hello"},
+    "protocolMajor": {"type": "integer", "minimum": 0, "maximum": 65535},
+    "protocolMinor": {"type": "integer", "minimum": 0, "maximum": 65535},
+    "serverID": {"$ref": "#/$defs/identity"},
+    "serverEpoch": {"$ref": "#/$defs/identity"},
+    "sessionID": {"$ref": "#/$defs/identity"},
+    "platform": {"enum": ["macos-aarch64", "macos-x86_64", "linux-aarch64", "linux-x86_64"]},
+    "capabilities": {"type": "array", "maxItems": 128, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}}
+  },
+  "$defs": {"identity": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}},
+  "additionalProperties": true
+}

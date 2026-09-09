@@ -46,6 +46,8 @@ enum GhosttyConfiguration {
       }
 
     var lines = [
+      // Aster 提供环境与登录参数，直接托管子进程才能获得真实退出状态。
+      "aster-direct-child = true",
       "font-family = \(font)",
       "font-size = \(format(appearance.fontSize))",
       "adjust-cell-height = \(lineHeightAdjustment)%",
@@ -90,6 +92,18 @@ enum GhosttyConfiguration {
       lines.append("palette = \(index)=\(rgb(color))")
     }
     return lines.joined(separator: "\n") + "\n"
+  }
+
+  /// C surface command 是 Shell 文本。双引号兼容 Ghostty 的 Shell 探测器，
+  /// 同时转义所有会被 /bin/sh 展开的字符；每个路径/参数仍是单独一个 argv 元素。
+  static func launchCommand(shell: String, arguments: [String]) -> String {
+    ([shell] + arguments).map { value in
+      let escaped = value.replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "\"", with: "\\\"")
+        .replacingOccurrences(of: "$", with: "\\$")
+        .replacingOccurrences(of: "`", with: "\\`")
+      return "\"" + escaped + "\""
+    }.joined(separator: " ")
   }
 
   private static func rgb(_ color: HexColor) -> String {

@@ -296,7 +296,8 @@ private func isolatedDefaults() -> UserDefaults {
     #expect(CLIAgentMemoryExtractor.provider(from: nil) == .claudeCode)
     #expect(CLIAgentMemoryExtractor.provider(from: "") == .claudeCode)
     #expect(CLIAgentMemoryExtractor.provider(from: "codex") == .codex)
-    #expect(CLIAgentMemoryExtractor.provider(from: "gemini") == nil)
+    #expect(CLIAgentMemoryExtractor.provider(from: "gemini") == .gemini)
+    #expect(CLIAgentMemoryExtractor.provider(from: "unsupported-provider") == nil)
     #expect(
       CLIAgentMemoryExtractor.arguments(for: .claudeCode, prompt: "P")
         == ["-p", "P", "--output-format", "json"])

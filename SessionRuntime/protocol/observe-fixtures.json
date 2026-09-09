@@ -1,0 +1,12 @@
+[
+  {
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.observe\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"response\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"operation\": \"terminal.observe\", \"scope\": \"session\", \"result\": {\"attachmentID\": \"12345678-1234-1234-1234-123456789abc\", \"terminalID\": \"12345678-1234-1234-1234-123456789abc\", \"readOnly\": true, \"currentLeaseEpoch\": 0}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}, \"revision\": 0}",
+    "epoch": 0
+  },
+  {
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.observe\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"response\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"operation\": \"terminal.observe\", \"scope\": \"session\", \"result\": {\"attachmentID\": \"12345678-1234-1234-1234-123456789abc\", \"terminalID\": \"12345678-1234-1234-1234-123456789abc\", \"readOnly\": true, \"currentLeaseEpoch\": 18446744073709551615}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}, \"revision\": 0}",
+    "epoch": 18446744073709551615
+  }
+]

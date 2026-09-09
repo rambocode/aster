@@ -41,7 +41,7 @@ final class SettingsSearchField: NSSearchField {
   }
 }
 
-/// 与 Otty 信息架构一致的九类纯 AppKit 设置页。控件直接写入 `AppPreferences`，
+/// 采用 Otty 信息架构并包含编辑器的十类纯 AppKit 设置页。控件直接写入 `AppPreferences`，
 /// 当前终端会话通过其 Combine 订阅即时获得字体、配色、Meta 键和鼠标设置变化。
 @MainActor
 final class SettingsViewController: NSViewController, NSSearchFieldDelegate {

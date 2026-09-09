@@ -1,0 +1,391 @@
+diff --git a/src/lib_vt.zig b/src/lib_vt.zig
+index ae0c87b1e..975e844d1 100644
+--- a/src/lib_vt.zig
++++ b/src/lib_vt.zig
+@@ -205,6 +205,16 @@ comptime {
+         @export(&c.sgr_unknown_partial, .{ .name = "ghostty_sgr_unknown_partial" });
+         @export(&c.sgr_attribute_tag, .{ .name = "ghostty_sgr_attribute_tag" });
+         @export(&c.sgr_attribute_value, .{ .name = "ghostty_sgr_attribute_value" });
++        @export(&c.aster_placement_anchor, .{ .name = "ghostty_aster_placement_anchor" });
++        @export(&c.aster_screen_row_buf, .{ .name = "ghostty_aster_screen_row_buf" });
++        @export(&c.aster_screen_state_buf, .{ .name = "ghostty_aster_screen_state_buf" });
++        @export(&c.aster_screen_total_rows, .{ .name = "ghostty_aster_screen_total_rows" });
++        @export(&c.aster_placement_render_info, .{ .name = "ghostty_aster_placement_render_info" });
++        @export(&c.aster_graphics_for_screen, .{ .name = "ghostty_aster_graphics_for_screen" });
++        @export(&c.aster_image_ids, .{ .name = "ghostty_aster_image_ids" });
++        @export(&c.aster_saved_modes_buf, .{ .name = "ghostty_aster_saved_modes_buf" });
++        @export(&c.aster_cursor_replay_buf, .{ .name = "ghostty_aster_cursor_replay_buf" });
++        @export(&c.aster_screen_format_buf, .{ .name = "ghostty_aster_screen_format_buf" });
+         @export(&c.formatter_terminal_new, .{ .name = "ghostty_formatter_terminal_new" });
+         @export(&c.formatter_format_buf, .{ .name = "ghostty_formatter_format_buf" });
+         @export(&c.formatter_format_alloc, .{ .name = "ghostty_formatter_format_alloc" });
+diff --git a/src/terminal/c/formatter.zig b/src/terminal/c/formatter.zig
+index 5b4504c8c..4a7c3cb6a 100644
+--- a/src/terminal/c/formatter.zig
++++ b/src/terminal/c/formatter.zig
+@@ -473,3 +473,344 @@ test "format html" {
+     try testing.expect(written > 0);
+     try testing.expect(std.mem.indexOf(u8, buf[0..written], "Html") != null);
+ }
++
++
++/// Aster headless extension: read either screen without switching or mutating
++/// the terminal. An uninitialized alternate screen returns invalid_value.
++pub fn aster_screen_format_buf(
++    terminal_: terminal_c.Terminal,
++    screen_id: u32,
++    styled: bool,
++    out_: ?[*]u8,
++    out_len: usize,
++    out_written: *usize,
++) callconv(lib.calling_conv) Result {
++    out_written.* = 0;
++    const t = (terminal_ orelse return .invalid_value).terminal;
++    const key: @import("../ScreenSet.zig").Key = switch (screen_id) {
++        0 => .primary,
++        1 => .alternate,
++        else => return .invalid_value,
++    };
++    const screen = t.screens.get(key) orelse return .invalid_value;
++    var formatter: formatterpkg.ScreenFormatter = .init(screen, .{
++        .emit = if (styled) .vt else .plain,
++        .unwrap = false,
++        .trim = true,
++    });
++    formatter.extra = if (styled) .all else .none;
++    var writer: std.Io.Writer = .fixed(if (out_) |out| out[0..out_len] else &.{});
++    formatter.format(&writer) catch {
++        var discarding: std.Io.Writer.Discarding = .init(&.{});
++        formatter.format(&discarding.writer) catch return .invalid_value;
++        out_written.* = @intCast(discarding.count);
++        return .out_of_space;
++    };
++    out_written.* = writer.end;
++    return .success;
++}
++
++
++pub fn aster_cursor_replay_buf(
++    terminal_: terminal_c.Terminal,
++    screen_id: u32,
++    out_: ?[*]u8,
++    out_len: usize,
++    out_written: *usize,
++) callconv(lib.calling_conv) Result {
++    out_written.* = 0;
++    const terminal = (terminal_ orelse return .invalid_value).terminal;
++    const key: @import("../ScreenSet.zig").Key = switch (screen_id) {
++        0 => .primary, 1 => .alternate, else => return .invalid_value,
++    };
++    const screen = terminal.screens.get(key) orelse return .invalid_value;
++    var writer: std.Io.Writer = .fixed(if (out_) |out| out[0..out_len] else &.{});
++    cursorReplay(terminal, screen, &writer) catch {
++        var discarding: std.Io.Writer.Discarding = .init(&.{});
++        cursorReplay(terminal, screen, &discarding.writer) catch return .invalid_value;
++        out_written.* = @intCast(discarding.count);
++        return .out_of_space;
++    };
++    out_written.* = writer.end;
++    return .success;
++}
++
++fn cursorReplay(terminal: *const ZigTerminal, live: *const @import("../Screen.zig"), writer: *std.Io.Writer) std.Io.Writer.Error!void {
++    const saved = live.saved_cursor orelse @import("../Screen.zig").SavedCursor{
++        .x = 0, .y = 0, .style = .{}, .protected = false,
++        .pending_wrap = false, .origin = false, .charset = .{},
++    };
++    // A shallow, read-only screen projection lets the existing formatter encode
++    // styles/charsets without changing any live pages or allocating cloned cells.
++    var projected = live.*;
++    projected.cursor.x = saved.x;
++    projected.cursor.y = saved.y;
++    projected.cursor.style = saved.style;
++    projected.cursor.protected = saved.protected;
++    projected.cursor.pending_wrap = saved.pending_wrap;
++    projected.charset = saved.charset;
++    try cursorState(terminal, &projected, saved.origin, writer);
++    try writer.writeAll("\x1b7");
++    try cursorState(terminal, live, terminal.modes.get(.origin), writer);
++}
++
++fn cursorState(terminal: *const ZigTerminal, screen: *const @import("../Screen.zig"), origin: bool, writer: *std.Io.Writer) std.Io.Writer.Error!void {
++    try writer.writeAll(if (origin) "\x1b[?6h" else "\x1b[?6l");
++    var formatter: formatterpkg.ScreenFormatter = .init(screen, .{ .emit = .vt, .unwrap = false, .trim = true });
++    formatter.content = .none;
++    formatter.extra = .none;
++    formatter.extra.cursor = true;
++    formatter.extra.style = true;
++    formatter.extra.protection = false;
++    try writer.writeAll(if (screen.cursor.protected) "\x1b[1\"q" else "\x1b[0\"q");
++    formatter.extra.charsets = true;
++    if (origin) formatter.cursor_position = .{
++        .x = screen.cursor.x -| terminal.scrolling_region.left,
++        .y = screen.cursor.y -| terminal.scrolling_region.top,
++    };
++    try formatter.format(writer);
++    if (screen.cursor.pending_wrap) {
++        // CUP clears the pending-wrap bit. Reprint the existing final grapheme
++        // at its original position to reconstruct the bit without changing text.
++        const cell = screen.pages.getCell(.{ .active = .{ .x = screen.cursor.x, .y = screen.cursor.y } }) orelse return error.WriteFailed;
++        const start_x = if (cell.cell.wide == .spacer_tail) screen.cursor.x -| 1 else screen.cursor.x;
++        const x = if (origin) start_x -| terminal.scrolling_region.left else start_x;
++        const y = if (origin) screen.cursor.y -| terminal.scrolling_region.top else screen.cursor.y;
++        try writer.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
++        const pin = screen.pages.pin(.{ .active = .{ .x = start_x, .y = screen.cursor.y } }) orelse return error.WriteFailed;
++        const last = screen.pages.pin(.{ .active = .{ .x = screen.cursor.x, .y = screen.cursor.y } }) orelse return error.WriteFailed;
++        var glyph: formatterpkg.ScreenFormatter = .init(screen, .{ .emit = .vt, .unwrap = false, .trim = false });
++        glyph.content = .{ .selection = @import("../Selection.zig").init(pin, last, false) };
++        try writer.writeAll(if (cell.cell.protected) "\x1b[1\"q" else "\x1b[0\"q");
++        try glyph.format(writer);
++        // Restore attributes without another cursor move, retaining pending wrap.
++        formatter.extra.cursor = false;
++        try writer.writeAll(if (screen.cursor.protected) "\x1b[1\"q" else "\x1b[0\"q");
++        try formatter.format(writer);
++    }
++}
++
++
++pub fn aster_saved_modes_buf(
++    terminal_: terminal_c.Terminal,
++    out_: ?[*]u8,
++    out_len: usize,
++    out_written: *usize,
++) callconv(lib.calling_conv) Result {
++    out_written.* = 0;
++    const terminal = (terminal_ orelse return .invalid_value).terminal;
++    var writer: std.Io.Writer = .fixed(if (out_) |out| out[0..out_len] else &.{});
++    savedModes(terminal, &writer) catch {
++        var discarding: std.Io.Writer.Discarding = .init(&.{});
++        savedModes(terminal, &discarding.writer) catch return .invalid_value;
++        out_written.* = @intCast(discarding.count);
++        return .out_of_space;
++    };
++    out_written.* = writer.end;
++    return .success;
++}
++
++fn savedModes(terminal: *const ZigTerminal, writer: *std.Io.Writer) std.Io.Writer.Error!void {
++    const modes = @import("../modes.zig");
++    const initial: modes.ModePacked = .{};
++    // Execute immediately after RIS, before restoring screen content/cursors:
++    // changing a saved alternate-screen mode can itself clear a screen.
++    inline for (@typeInfo(modes.Mode).@"enum".fields) |field| {
++        const tag: modes.ModeTag = @bitCast(@as(u16, @intCast(field.value)));
++        if (!tag.ansi) {
++            const saved = @field(terminal.modes.saved, field.name);
++            const baseline = @field(initial, field.name);
++            if (saved != baseline) {
++                try writer.print("\x1b[?{d}{s}\x1b[?{d}s\x1b[?{d}{s}", .{
++                    tag.value, if (saved) "h" else "l", tag.value,
++                    tag.value, if (baseline) "h" else "l",
++                });
++            }
++        }
++    }
++}
++
++
++pub fn aster_image_ids(
++    terminal_: terminal_c.Terminal,
++    screen_id: u32,
++    out_: ?[*]u32,
++    capacity: usize,
++    count: *usize,
++) callconv(lib.calling_conv) Result {
++    count.* = 0;
++    if (comptime !@import("terminal_options").kitty_graphics) return .no_value;
++    const terminal = (terminal_ orelse return .invalid_value).terminal;
++    const key: @import("../ScreenSet.zig").Key = switch (screen_id) {
++        0 => .primary, 1 => .alternate, else => return .invalid_value,
++    };
++    const screen = terminal.screens.get(key) orelse return .success;
++    count.* = screen.kitty_images.images.count();
++    if (count.* == 0) return .success;
++    const out = out_ orelse return .out_of_space;
++    if (capacity < count.*) return .out_of_space;
++    var iterator = screen.kitty_images.images.keyIterator();
++    var index: usize = 0;
++    while (iterator.next()) |id| : (index += 1) out[index] = id.*;
++    std.mem.sort(u32, out[0..count.*], {}, std.sort.asc(u32));
++    return .success;
++}
++
++
++/// Absolute full-screen anchor, including scrollback. Virtual placements have
++/// no pin and return no_value; never clamp an off-screen pin to the viewport.
++pub fn aster_placement_anchor(
++    terminal_: terminal_c.Terminal,
++    screen_id: u32,
++    iterator_: @import("kitty_graphics.zig").PlacementIterator,
++    out_column: *u32,
++    out_row: *u32,
++) callconv(lib.calling_conv) Result {
++    if (comptime !@import("terminal_options").kitty_graphics) return .no_value;
++    const terminal = (terminal_ orelse return .invalid_value).terminal;
++    const iterator = iterator_ orelse return .invalid_value;
++    const entry = iterator.entry orelse return .invalid_value;
++    const pin = switch (entry.value_ptr.location) {
++        .pin => |pin| pin,
++        .virtual => return .no_value,
++    };
++    const key: @import("../ScreenSet.zig").Key = switch (screen_id) {
++        0 => .primary, 1 => .alternate, else => return .invalid_value,
++    };
++    const screen = terminal.screens.get(key) orelse return .no_value;
++    const point = screen.pages.pointFromPin(.screen, pin.*) orelse return .no_value;
++    out_column.* = point.screen.x;
++    out_row.* = point.screen.y;
++    return .success;
++}
++
++/// Formats one absolute row, preserving styled content without moving the
++/// live terminal. Used to interleave image anchors with history reconstruction.
++pub fn aster_screen_row_buf(
++    terminal_: terminal_c.Terminal,
++    screen_id: u32,
++    row: u32,
++    out_: ?[*]u8,
++    out_len: usize,
++    out_written: *usize,
++) callconv(lib.calling_conv) Result {
++    out_written.* = 0;
++    const terminal = (terminal_ orelse return .invalid_value).terminal;
++    const key: @import("../ScreenSet.zig").Key = switch (screen_id) {
++        0 => .primary, 1 => .alternate, else => return .invalid_value,
++    };
++    const screen = terminal.screens.get(key) orelse return .invalid_value;
++    const first = screen.pages.pin(.{ .screen = .{ .x = 0, .y = row } }) orelse return .invalid_value;
++    const last = screen.pages.pin(.{ .screen = .{ .x = terminal.cols - 1, .y = row } }) orelse return .invalid_value;
++    var formatter: formatterpkg.ScreenFormatter = .init(screen, .{ .emit = .vt, .unwrap = false, .trim = false });
++    formatter.content = .{ .selection = @import("../Selection.zig").init(first, last, false) };
++    var writer: std.Io.Writer = .fixed(if (out_) |out| out[0..out_len] else &.{});
++    formatter.format(&writer) catch {
++        var discarding: std.Io.Writer.Discarding = .init(&.{});
++        formatter.format(&discarding.writer) catch return .invalid_value;
++        out_written.* = @intCast(discarding.count);
++        return .out_of_space;
++    };
++    out_written.* = writer.end;
++    return .success;
++}
++
++
++pub fn aster_graphics_for_screen(
++    terminal_: terminal_c.Terminal,
++    screen_id: u32,
++) callconv(lib.calling_conv) ?*anyopaque {
++    if (comptime !@import("terminal_options").kitty_graphics) return null;
++    const terminal = (terminal_ orelse return null).terminal;
++    const key: @import("../ScreenSet.zig").Key = switch (screen_id) {
++        0 => .primary, 1 => .alternate, else => return null,
++    };
++    const screen = terminal.screens.get(key) orelse return null;
++    return &screen.kitty_images;
++}
++
++
++pub fn aster_screen_total_rows(terminal_: terminal_c.Terminal, screen_id: u32, out: *usize) callconv(lib.calling_conv) Result {
++    const terminal = (terminal_ orelse return .invalid_value).terminal;
++    const key: @import("../ScreenSet.zig").Key = switch (screen_id) {
++        0 => .primary, 1 => .alternate, else => return .invalid_value,
++    };
++    const screen = terminal.screens.get(key) orelse return .no_value;
++    out.* = screen.pages.total_rows;
++    return .success;
++}
++
++pub fn aster_placement_render_info(
++    terminal_: terminal_c.Terminal,
++    screen_id: u32,
++    iterator: @import("kitty_graphics.zig").PlacementIterator,
++    image: @import("kitty_graphics.zig").ImageHandle,
++    out: ?*@import("kitty_graphics.zig").PlacementRenderInfo,
++) callconv(lib.calling_conv) Result {
++    const original = terminal_ orelse return .invalid_value;
++    const key: @import("../ScreenSet.zig").Key = switch (screen_id) {
++        0 => .primary, 1 => .alternate, else => return .invalid_value,
++    };
++    const screen = original.terminal.screens.get(key) orelse return .no_value;
++    // Pure read-only geometry functions borrow this stack projection. No stream
++    // writes, callbacks, ownership transfer or live screen mutation occurs.
++    var projected = original.terminal.*;
++    projected.screens.active = screen;
++    projected.screens.active_key = key;
++    var wrapper = original.*;
++    wrapper.terminal = &projected;
++    return @import("kitty_graphics.zig").placement_render_info(iterator, image, &wrapper, out);
++}
++
++
++pub fn aster_screen_state_buf(
++    terminal_: terminal_c.Terminal,
++    screen_id: u32,
++    before_content: bool,
++    out_: ?[*]u8,
++    out_len: usize,
++    out_written: *usize,
++) callconv(lib.calling_conv) Result {
++    out_written.* = 0;
++    const original = (terminal_ orelse return .invalid_value).terminal;
++    const key: @import("../ScreenSet.zig").Key = switch (screen_id) {
++        0 => .primary, 1 => .alternate, else => return .invalid_value,
++    };
++    const screen = original.screens.get(key) orelse return .no_value;
++    var projected = original.*;
++    projected.screens.active = screen;
++    projected.screens.active_key = key;
++    var writer: std.Io.Writer = .fixed(if (out_) |out| out[0..out_len] else &.{});
++    screenState(&projected, before_content, &writer) catch {
++        var discarding: std.Io.Writer.Discarding = .init(&.{});
++        screenState(&projected, before_content, &discarding.writer) catch return .invalid_value;
++        out_written.* = @intCast(discarding.count);
++        return .out_of_space;
++    };
++    out_written.* = writer.end;
++    return .success;
++}
++
++fn screenState(terminal: *const ZigTerminal, before: bool, writer: *std.Io.Writer) std.Io.Writer.Error!void {
++    const modes = @import("../modes.zig");
++    inline for (@typeInfo(modes.Mode).@"enum".fields) |field| {
++        const tag: modes.ModeTag = @bitCast(@as(u16, @intCast(field.value)));
++        const screen_mode = !tag.ansi and (tag.value == 47 or tag.value == 1047 or tag.value == 1049);
++        const positioning = !tag.ansi and (tag.value == 6 or tag.value == 69);
++        if (!screen_mode and ((before and !positioning) or (!before and positioning))) {
++            const value = @field(terminal.modes.values, field.name);
++            if (!before or value != @field(terminal.modes.default, field.name)) {
++                try writer.print("\x1b[{s}{d}{s}", .{ if (tag.ansi) "" else "?", tag.value, if (value) "h" else "l" });
++            }
++        }
++    }
++    if (before) return;
++    var formatter: formatterpkg.TerminalFormatter = .init(terminal, .{ .emit = .vt, .unwrap = false, .trim = true });
++    formatter.content = .none;
++    formatter.extra = .all;
++    formatter.extra.modes = false;
++    formatter.extra.palette = false;
++    formatter.extra.pwd = false;
++    formatter.extra.screen.cursor = false;
++    try formatter.format(writer);
++}
+diff --git a/src/terminal/c/main.zig b/src/terminal/c/main.zig
+index 126b66401..64c65a3f5 100644
+--- a/src/terminal/c/main.zig
++++ b/src/terminal/c/main.zig
+@@ -60,6 +60,16 @@ pub const focus_encode = focus.encode;
+ pub const mode_report_encode = modes.report_encode;
+ 
+ pub const formatter_terminal_new = formatter.terminal_new;
++pub const aster_screen_format_buf = formatter.aster_screen_format_buf;
++pub const aster_cursor_replay_buf = formatter.aster_cursor_replay_buf;
++pub const aster_saved_modes_buf = formatter.aster_saved_modes_buf;
++pub const aster_image_ids = formatter.aster_image_ids;
++pub const aster_graphics_for_screen = formatter.aster_graphics_for_screen;
++pub const aster_screen_total_rows = formatter.aster_screen_total_rows;
++pub const aster_screen_state_buf = formatter.aster_screen_state_buf;
++pub const aster_placement_render_info = formatter.aster_placement_render_info;
++pub const aster_placement_anchor = formatter.aster_placement_anchor;
++pub const aster_screen_row_buf = formatter.aster_screen_row_buf;
+ pub const formatter_format_buf = formatter.format_buf;
+ pub const formatter_format_alloc = formatter.format_alloc;
+ pub const formatter_free = formatter.free;

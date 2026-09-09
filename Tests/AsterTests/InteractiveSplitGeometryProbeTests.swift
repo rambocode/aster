@@ -47,7 +47,7 @@ func interactiveVerticalSplitShowsSecondPane() async throws {
   #expect(paneIDs.count == 2)
 
   // 两个终端都必须挂在窗口里,且各占据有效高度(不塌成分隔条)。
-  let terminals = deepViews(controller.view).compactMap { $0 as? AsterTerminalView }
+  let terminals = deepViews(controller.view).compactMap { $0 as? GhosttySurfaceView }
   #expect(terminals.count == 2)
   for terminal in terminals {
     #expect(terminal.window === window)

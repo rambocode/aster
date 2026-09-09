@@ -57,7 +57,7 @@ func settingsWindowClampsRememberedHeightToScreen() throws {
   #expect(window.contentRect(forFrameRect: window.frame).height <= available)
 }
 
-@Test("设置页使用单一非持久化 WKWebView 宿主")
+@Test("设置兼容桥使用单一非持久化 WKWebView 宿主")
 @MainActor
 func settingsUsesOneEphemeralWebView() throws {
   let defaults = isolatedSettingsDefaults()
@@ -74,7 +74,7 @@ func settingsUsesOneEphemeralWebView() throws {
   #expect(controller.view.subviews.last is SettingsTitlebarDragStrip)
   #expect(!webView.configuration.websiteDataStore.isPersistent)
   #expect(webView.identifier?.rawValue == "settings-web-view")
-  #expect(controller.sections.count == 9)
+  #expect(controller.sections.count == 10)
 }
 
 @MainActor
@@ -87,7 +87,7 @@ private func evaluateString(_ script: String, in webView: WKWebView) async throw
   }
 }
 
-@Test("本地设置文档通过 CSP 加载并渲染九类导航")
+@Test("本地设置文档通过 CSP 加载并渲染十类导航")
 @MainActor
 func settingsDocumentLoadsAndRendersNavigation() async throws {
   let defaults = isolatedSettingsDefaults()
@@ -107,7 +107,7 @@ func settingsDocumentLoadsAndRendersNavigation() async throws {
     try await Task.sleep(for: .milliseconds(20))
   }
 
-  #expect(count == 9)
+  #expect(count == 10)
   #expect(try await evaluateString("document.querySelector('.page-title')?.textContent ?? ''", in: webView) == "通用")
   #expect(Int(try await evaluateString("String(document.querySelectorAll('.setting-row').length)", in: webView)) ?? 0 > 10)
 

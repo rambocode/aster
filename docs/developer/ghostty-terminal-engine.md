@@ -143,3 +143,11 @@ Outline、Vi/Mark 模式和可见 URL/路径 Hint。重复的 OSC 133 仅在 pay
 - `./scripts/build-dmg.sh` 会对只读挂载卷内的 App 再执行严格签名和无窗口资源自检。发布验收
   应使用独立 scratch 构建并在自检前移走 scratch，确保构建机绝对路径无法掩盖资源缺失。
 - 真机验收普通 Shell、中文 IME、持续输出、全屏 TUI、分屏/PiP、复制粘贴、查找、退出与重启。
+
+### 子进程退出状态
+
+Aster 开启 vendor 的 `aster-direct-child`，将配置的 Shell 路径与原有登录/交互参数交给
+`GhosttyConfiguration.launchCommand` 逐项转义后传入 C surface。不能在该入口使用
+`direct:` 前缀；它按 Shell 文本解释。引擎在此模式下绕过会吞掉退出码的 macOS
+`login(1)`，继续由同一 PTY/引擎等待子进程并发送退出事件。Shell 资源和启动环境仍由
+现有构造链提供。修复以真实 `exit 7`、旧代迟到回调、同 Pane 重启和特殊字符路径验收。

@@ -454,10 +454,20 @@ func appModelPrefillsSelectedAgentChatWithoutSubmitting() async throws {
   model.ensureInitialTab()
   let session = try #require(model.selectedTab?.activeSession)
   let preferences = AppPreferences(defaults: behaviorTestDefaults())
-  let terminal = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  let terminal = try liveGhosttyView(for: session, preferences: preferences)
+  let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+                        styleMask: [.titled], backing: .buffered, defer: false)
+  window.contentView = terminal.superview
+  window.makeKeyAndOrderFront(nil)
+  defer { window.orderOut(nil) }
+  let readyDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+  while !session.shellIntegrationDetected, ContinuousClock.now < readyDeadline {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  try #require(session.shellIntegrationDetected)
   defer { session.stop(immediately: true) }
 
-  terminal.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .idle))
+  terminal.onOSC?(6_974, Array("AgentState=idle;Provider=codex".utf8), .init())
   var requested: AgentChatPresentation?
   let cancellable = model.agentChatPresentationRequested.sink { requested = $0 }
   defer { cancellable.cancel() }
@@ -469,7 +479,7 @@ func appModelPrefillsSelectedAgentChatWithoutSubmitting() async throws {
   #expect(presentation.destinations[0].provider == .codex)
 
   var encoded: [UInt8] = []
-  terminal.onEncodedInput = { encoded.append(contentsOf: $0) }
+  observeTestPTYWrites(terminal) { encoded.append(contentsOf: $0) }
   #expect(
     model.prefillAgentChat(
       destination: presentation.destinations[0],
@@ -478,10 +488,11 @@ func appModelPrefillsSelectedAgentChatWithoutSubmitting() async throws {
       transcript: nil
     )
   )
+  try await Task.sleep(for: .milliseconds(50))
   #expect(encoded.contains(13) == false)
-  // “发送到聊天”与 Prompt 队列一样必须按普通键入传输。强制 bracketed paste 在部分
-  // Codex/Claude TUI 中会被忽略，表现为弹窗提示成功但目标输入框没有文字。
-  #expect(String(decoding: encoded, as: UTF8.self).contains("\u{001B}[200~") == false)
+  // 实际 zsh 输入区已协商 bracketed paste；预填遵循目标模式，不追加提交回车。
+  #expect(String(decoding: encoded, as: UTF8.self).contains("\u{001B}[200~"))
+  #expect(String(decoding: encoded, as: UTF8.self).contains("\u{001B}[201~"))
   #expect(String(decoding: encoded, as: UTF8.self).contains("__CHAT_PREFILL_DELIVERED__"))
 
   // 仅观察编码回调不能证明真实终端收到字节。预填不回车时，运行中的 zsh 仍会回显普通
@@ -608,19 +619,28 @@ func promptQueueCardSendButtonSubmitsToCurrentCLI() async throws {
   model.ensureInitialTab()
   let paneID = try #require(model.selectedTab?.activePaneID)
   let session = try #require(model.selectedTab?.activeSession)
-  let terminal = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  let terminal = try liveGhosttyView(for: session, preferences: preferences)
   defer { session.stop(immediately: true) }
 
   var encoded: [UInt8] = []
-  terminal.onEncodedInput = { encoded.append(contentsOf: $0) }
+  observeTestPTYWrites(terminal) { encoded.append(contentsOf: $0) }
   // Prompt Queue 是终端输入工作流，不依赖 Claude/Codex 的瞬时识别状态；普通 CLI
   // 也必须能打开列表并由左侧按钮完成粘贴加 Return。
   #expect(model.canPresentPromptQueue)
-  #expect(model.updatePromptQueueDraft("printf '__PROMPT_QUEUE_DELIVERED__\\n'", paneID: paneID))
+  #expect(model.updatePromptQueueDraft("printf '__PROMPT_QUEUE_%s\\n' DELIVERED__", paneID: paneID))
   #expect(model.enqueuePromptQueueDraft(paneID: paneID))
 
   let controller = WorkspaceViewController(model: model, preferences: preferences)
-  controller.loadViewIfNeeded()
+  let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
+                        styleMask: [.titled], backing: .buffered, defer: false)
+  window.contentViewController = controller
+  window.makeKeyAndOrderFront(nil)
+  defer { window.orderOut(nil) }
+  let readyDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+  while !session.shellIntegrationDetected, ContinuousClock.now < readyDeadline {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  try #require(session.shellIntegrationDetected)
   model.togglePromptQueue()
   controller.view.layoutSubtreeIfNeeded()
 
@@ -636,12 +656,16 @@ func promptQueueCardSendButtonSubmitsToCurrentCLI() async throws {
 
   button.performClick(nil)
 
-  // 不以 `onEncodedInput` 代替 PTY 验收：必须等真实子进程回显 marker，才能证明按钮
-  // 的文本和 Return 穿过 AppKit/SwiftTerm 并抵达当前 CLI。
-  try await Task.sleep(for: .milliseconds(500))
+  // 命令回显不含完整 marker；必须等真实 printf 执行输出，才能证明按钮
+  // 的文本和 Return 穿过 AppKit/Ghostty 并抵达当前 CLI。
+  let outputDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+  while (!session.textSnapshot().lines.joined(separator: "\n").contains("__PROMPT_QUEUE_DELIVERED__")
+         || !encoded.contains(13)), ContinuousClock.now < outputDeadline {
+    try await Task.sleep(for: .milliseconds(20))
+  }
 
   #expect(model.promptQueueItems(for: paneID).isEmpty)
-  #expect(String(decoding: encoded, as: UTF8.self).contains("__PROMPT_QUEUE_DELIVERED__"))
+  #expect(String(decoding: encoded, as: UTF8.self).contains("__PROMPT_QUEUE_%s"))
   // 文本编码跟随目标是否协商 bracketed paste，因此不锁定具体字节；Return 必须仍然
   // 单独抵达，marker 回显则证明整条命令确实进了当前 CLI 而不是被 TUI 逐键吃掉。
   #expect(encoded.contains(13))

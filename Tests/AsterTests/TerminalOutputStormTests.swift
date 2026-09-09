@@ -55,8 +55,29 @@ private struct WorkspaceFixture {
     window.layoutIfNeeded()
   }
 
-  var terminal: AsterTerminalView? {
-    controller.view.descendantViews.compactMap { $0 as? AsterTerminalView }.first
+  var terminal: GhosttySurfaceView? {
+    controller.view.descendantViews.compactMap { $0 as? GhosttySurfaceView }.first
+  }
+
+  /// 真实 PTY 内运行可控输出进程，避免 Shell 每条命令自己的标题/提示符扰动用例。
+  func startOutputProcess(in view: GhosttySurfaceView) async throws {
+    let ready = "OUTPUT_READY_" + UUID().uuidString
+    let program = """
+      import sys, base64
+      print("\(ready)", flush=True)
+      for line in sys.stdin:
+          sys.stdout.buffer.write(base64.b64decode(line))
+          sys.stdout.buffer.flush()
+      """
+    let encoded = Data(program.utf8).base64EncodedString()
+    let command = "exec /usr/bin/python3 -u -c \"$(printf %s \(encoded) | /usr/bin/base64 -D)\"\n"
+    #expect(view.sendBytes(Array(command.utf8)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    while view.readText(includeScrollback: false)?.contains(ready) != true,
+          ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    try #require(view.readText(includeScrollback: false)?.contains(ready) == true)
   }
 
   func tearDown() {
@@ -107,12 +128,13 @@ func titleStormDoesNotRebuildWorkspace() async throws {
 
   let root = try #require(fixture.controller.view.subviews.first)
   let terminal = try #require(fixture.terminal)
+  try await fixture.startOutputProcess(in: terminal)
   fixture.window.makeFirstResponder(terminal)
 
   // Agent CLI（Claude Code / codex）每秒多次经 OSC 0/2 更新标题；工作区不能因此整树重建，
   // 否则其他 Pane 的输入、IME 组合与滚动都会被打断。
   for index in 0..<8 {
-    terminal.dataReceived(slice: Array("\u{1B}]0;job-\(index)\u{07}".utf8)[...])
+    try await emitStreamingOutput(terminal, "\u{1B}]0;job-\(index)\u{07}")
     try await Task.sleep(for: .milliseconds(20))
   }
 
@@ -129,24 +151,25 @@ func commandLifecycleDoesNotRebuildWorkspace() async throws {
   try await Task.sleep(for: .milliseconds(80))
 
   let root = try #require(fixture.controller.view.subviews.first)
-  let terminals = fixture.controller.view.descendantViews.compactMap { $0 as? AsterTerminalView }
+  let terminals = fixture.controller.view.descendantViews.compactMap { $0 as? GhosttySurfaceView }
   #expect(terminals.count == 2)
   let first = try #require(terminals.first)
+  try await fixture.startOutputProcess(in: first)
 
   // 一个 Pane 里跑命令：OSC 133 C/D 会翻转 hasRunningCommand。徽章、Dock 与详情
   // 面板各有专用通道,不允许借 objectWillChange 重建整个工作区——那会让其余
   // Pane 的终端视图被重新安放,表现为“别的 Pane 也在刷新”。
   for index in 0..<6 {
-    first.dataReceived(
-      slice: Array("\u{1B}]133;A\u{07}\u{1B}]133;B\u{07}cmd-\(index)\u{1B}]133;C\u{07}".utf8)[...])
+    try await emitStreamingOutput(first,
+      "\u{1B}]133;A\u{07}\u{1B}]133;B\u{07}cmd-\(index)\u{1B}]133;C\u{07}")
     try await Task.sleep(for: .milliseconds(15))
-    first.dataReceived(slice: Array("out\r\n\u{1B}]133;D;0\u{07}".utf8)[...])
+    try await emitStreamingOutput(first, "out\r\n\u{1B}]133;D;0\u{07}")
     try await Task.sleep(for: .milliseconds(15))
   }
 
   #expect(fixture.controller.view.subviews.first === root)
   let terminalsAfter = fixture.controller.view.descendantViews.compactMap {
-    $0 as? AsterTerminalView
+    $0 as? GhosttySurfaceView
   }
   #expect(terminalsAfter.count == 2)
   #expect(terminalsAfter.allSatisfy { after in terminals.contains { $0 === after } })
@@ -159,12 +182,13 @@ func titleStormDoesNotPersistSnapshotPerUpdate() async throws {
   defer { fixture.tearDown() }
   try await Task.sleep(for: .milliseconds(80))
   let terminal = try #require(fixture.terminal)
+  try await fixture.startOutputProcess(in: terminal)
 
   let snapshotKey = "aster.workspace.snapshot.v1"
   var writeIterations = 0
   var lastSnapshot = fixture.defaults.data(forKey: snapshotKey)
   for index in 0..<8 {
-    terminal.dataReceived(slice: Array("\u{1B}]0;spin-\(index)\u{07}".utf8)[...])
+    try await emitStreamingOutput(terminal, "\u{1B}]0;spin-\(index)\u{07}")
     try await Task.sleep(for: .milliseconds(20))
     let current = fixture.defaults.data(forKey: snapshotKey)
     if current != lastSnapshot {
@@ -184,8 +208,9 @@ func activityBadgeRefreshReusesSpinner() async throws {
   try await Task.sleep(for: .milliseconds(80))
 
   let terminal = try #require(fixture.terminal)
-  // OSC 9;4;3（indeterminate）把活动 Pane 置为 running，驱动侧栏 spinner。
-  terminal.dataReceived(slice: Array("\u{1B}]9;4;3\u{07}".utf8)[...])
+  try await fixture.startOutputProcess(in: terminal)
+  // 行内运行动画只属于 Agent；用真实 lifecycle hook 建立 provider 和 processing。
+  try await emitStreamingOutput(terminal, "\u{1B}]6974;AgentState=processing;Provider=claudeCode\u{07}")
   try await Task.sleep(for: .milliseconds(80))
 
   let rows = fixture.controller.view.descendantViews.compactMap { $0 as? TabRowButton }
@@ -212,4 +237,25 @@ extension NSView {
   fileprivate var descendantViews: [NSView] {
     subviews.flatMap { [$0] + $0.descendantViews }
   }
+}
+
+/// 等待 PTY 确认读到本批数据，不用固定延迟猜测进程是否已经输出。
+@MainActor
+private func emitStreamingOutput(_ view: GhosttySurfaceView, _ payload: String) async throws {
+  let marker = "OUTPUT_ACK_" + UUID().uuidString
+  var observed = Data()
+  let previous = view.onPTYRead
+  view.onPTYRead = { bytes in
+    previous?(bytes)
+    observed.append(contentsOf: bytes)
+  }
+  defer { view.onPTYRead = previous }
+  let encoded = Data((payload + marker).utf8).base64EncodedString() + "\n"
+  #expect(view.sendBytes(Array(encoded.utf8)))
+  let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+  let markerBytes = Data(marker.utf8)
+  while observed.range(of: markerBytes) == nil, ContinuousClock.now < deadline {
+    try await Task.sleep(for: .milliseconds(10))
+  }
+  try #require(observed.range(of: markerBytes) != nil)
 }

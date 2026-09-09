@@ -1,11 +1,8 @@
 diff --git a/include/ghostty.h b/include/ghostty.h
-index b099741..04ece52 100644
+index b099741fc..04ece525a 100644
 --- a/include/ghostty.h
 +++ b/include/ghostty.h
-@@ -440,11 +440,72 @@ typedef struct {
-   bool rectangle;
- } ghostty_selection_s;
- 
+@@ -442,0 +443,48 @@ typedef struct {
 +// Stable point for the lifetime of a retained Ghostty page. `screen_row` is
 +// the zero-based row in the current retained scrollback. The page tuple lets
 +// Aster resolve the same cell after rows are appended or old pages are pruned.
@@ -54,11 +51,7 @@ index b099741..04ece52 100644
 +  bool has_text;
 +} ghostty_aster_cell_s;
 +
- typedef struct {
-   const char* key;
-   const char* value;
- } ghostty_env_var_s;
- 
+@@ -447,0 +496,13 @@ typedef struct {
 +// Aster embeds a pinned Ghostty revision and maintains this versioned extension
 +// ABI for capabilities that are intentionally not part of libghostty's internal
 +// embedding API. Callback payloads are borrowed and only valid for the duration
@@ -72,33 +65,15 @@ index b099741..04ece52 100644
 +                                    size_t,
 +                                    const ghostty_aster_buffer_point_s*);
 +
- typedef struct {
-   void* nsview;
- } ghostty_platform_macos_s;
-@@ -477,6 +538,9 @@ typedef struct {
-   const char* initial_input;
-   bool wait_after_command;
-   ghostty_surface_context_e context;
+@@ -479,0 +541,3 @@ typedef struct {
 +  ghostty_aster_pty_io_cb aster_pty_read_cb;
 +  ghostty_aster_pty_io_cb aster_pty_write_cb;
 +  ghostty_aster_osc_cb aster_osc_cb;
- } ghostty_surface_config_s;
- 
- typedef struct {
-@@ -1098,6 +1162,9 @@ GHOSTTY_API void ghostty_app_set_color_scheme(ghostty_app_t, ghostty_color_schem
- 
- GHOSTTY_API ghostty_surface_config_s ghostty_surface_config_new();
- 
+@@ -1100,0 +1165,3 @@ GHOSTTY_API ghostty_surface_config_s ghostty_surface_config_new();
 +// Returns the ABI version of the Aster-only extension symbols and fields.
 +GHOSTTY_API uint32_t ghostty_aster_extension_abi_version(void);
 +
- GHOSTTY_API ghostty_surface_t ghostty_surface_new(ghostty_app_t,
-                                                      const ghostty_surface_config_s*);
- GHOSTTY_API void ghostty_surface_free(ghostty_surface_t);
-@@ -1161,6 +1228,28 @@ GHOSTTY_API bool ghostty_surface_read_text(ghostty_surface_t,
-                                               ghostty_text_s*);
- GHOSTTY_API void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
- 
+@@ -1163,0 +1231,22 @@ GHOSTTY_API void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
 +// Aster extension: current retained buffer geometry and tracked selection.
 +GHOSTTY_API bool ghostty_aster_surface_buffer_info(
 +    ghostty_surface_t, ghostty_aster_buffer_info_s*);
@@ -121,38 +96,33 @@ index b099741..04ece52 100644
 +    ghostty_aster_search_flags_t,
 +    ghostty_aster_search_result_s*);
 +
- #ifdef __APPLE__
- GHOSTTY_API void ghostty_surface_set_display_id(ghostty_surface_t, uint32_t);
- GHOSTTY_API void* ghostty_surface_quicklook_font(ghostty_surface_t);
+diff --git a/pkg/dcimgui/build.zig b/pkg/dcimgui/build.zig
+index 924e7c932..772f591b7 100644
+--- a/pkg/dcimgui/build.zig
++++ b/pkg/dcimgui/build.zig
+@@ -184 +184 @@ pub fn build(b: *std.Build) !void {
+-            .files = &.{"ext.cpp"},
++            .files = &.{"dcimgui_ext.cpp"},
+diff --git a/pkg/dcimgui/ext.cpp b/pkg/dcimgui/dcimgui_ext.cpp
+similarity index 100%
+rename from pkg/dcimgui/ext.cpp
+rename to pkg/dcimgui/dcimgui_ext.cpp
 diff --git a/src/Surface.zig b/src/Surface.zig
-index 5d16f33..53de691 100644
+index 5d16f3326..c30389f40 100644
 --- a/src/Surface.zig
 +++ b/src/Surface.zig
-@@ -17,6 +17,7 @@ pub const Message = apprt.surface.Message;
- 
- const std = @import("std");
- const builtin = @import("builtin");
+@@ -19,0 +20 @@ const builtin = @import("builtin");
 +const build_config = @import("build_config.zig");
- const assert = @import("quirks.zig").inlineAssert;
- const Allocator = std.mem.Allocator;
- const ArenaAllocator = std.heap.ArenaAllocator;
-@@ -684,6 +685,12 @@ pub fn init(
-             .renderer_wakeup = render_thread.wakeup,
-             .renderer_mailbox = render_thread.mailbox,
-             .surface_mailbox = .{ .surface = self, .app = app_mailbox },
+@@ -661,0 +663 @@ pub fn init(
++            .aster_direct_child = config.@"aster-direct-child",
+@@ -686,0 +689,6 @@ pub fn init(
 +            .aster_observer = if (comptime build_config.artifact == .lib) .{
 +                .userdata = rt_surface.userdata,
 +                .pty_read = rt_surface.aster_pty_read_cb,
 +                .pty_write = rt_surface.aster_pty_write_cb,
 +                .osc = rt_surface.aster_osc_cb,
 +            } else .{},
-         });
-     }
-     // Outside the block, IO has now taken ownership of our temporary state
-@@ -2369,6 +2376,162 @@ fn setSelection(self: *Surface, sel_: ?terminal.Selection) !void {
-     }
- }
- 
+@@ -2371,0 +2380,155 @@ fn setSelection(self: *Surface, sel_: ?terminal.Selection) !void {
 +/// Aster extension entrypoint for setting or clearing an exact terminal
 +/// selection. The caller constructs untracked pins while holding no locks;
 +/// `Screen.select` converts them to tracked pins before this method returns.
@@ -166,7 +136,6 @@ index 5d16f33..53de691 100644
 +/// Variant for the embedded ABI after it has resolved stable page anchors
 +/// while already holding the renderer mutex.
 +pub fn asterSetSelectionLocked(self: *Surface, sel: ?terminal.Selection) bool {
-+
 +    self.setSelection(sel) catch |err| {
 +        log.warn("Aster selection update failed err={}", .{err});
 +        return false;
@@ -309,50 +278,26 @@ index 5d16f33..53de691 100644
 +    return lhs.y > rhs.y or (lhs.y == rhs.y and lhs.x > rhs.x);
 +}
 +
- /// Change the cell size for the terminal grid. This can happen as
- /// a result of changing the font size at runtime.
- fn setCellSize(self: *Surface, size: rendererpkg.CellSize) !void {
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index 730913e..9a9f9f8 100644
+index 730913eba..9a9f9f8ba 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
-@@ -410,6 +410,9 @@ pub const Surface = struct {
-     app: *App,
-     platform: Platform,
-     userdata: ?*anyopaque = null,
+@@ -412,0 +413,3 @@ pub const Surface = struct {
 +    aster_pty_read_cb: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
 +    aster_pty_write_cb: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
 +    aster_osc_cb: ?*const fn (?*anyopaque, u32, [*]const u8, usize, *const @import("../termio/Options.zig").AsterObserver.BufferPoint) callconv(.c) void = null,
-     core_surface: CoreSurface,
-     content_scale: apprt.ContentScale,
-     size: apprt.SurfaceSize,
-@@ -461,6 +464,12 @@ pub const Surface = struct {
- 
-         /// Context for the new surface
-         context: apprt.surface.NewSurfaceContext = .window,
+@@ -463,0 +467,6 @@ pub const Surface = struct {
 +
 +        /// Aster extension callbacks. These are synchronous observation-only
 +        /// hooks; payloads are borrowed for the duration of the callback.
 +        aster_pty_read_cb: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
 +        aster_pty_write_cb: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
 +        aster_osc_cb: ?*const fn (?*anyopaque, u32, [*]const u8, usize, *const @import("../termio/Options.zig").AsterObserver.BufferPoint) callconv(.c) void = null,
-     };
- 
-     pub fn init(self: *Surface, app: *App, opts: Options) !void {
-@@ -468,6 +477,9 @@ pub const Surface = struct {
-             .app = app,
-             .platform = try .init(opts.platform_tag, opts.platform),
-             .userdata = opts.userdata,
+@@ -470,0 +480,3 @@ pub const Surface = struct {
 +            .aster_pty_read_cb = opts.aster_pty_read_cb,
 +            .aster_pty_write_cb = opts.aster_pty_write_cb,
 +            .aster_osc_cb = opts.aster_osc_cb,
-             .core_surface = undefined,
-             .content_scale = .{
-                 .x = @floatCast(opts.scale_factor),
-@@ -1386,6 +1398,68 @@ pub const CAPI = struct {
-         }
-     };
- 
+@@ -1388,0 +1401,62 @@ pub const CAPI = struct {
 +    const AsterBufferPoint = extern struct {
 +        column: u32,
 +        screen_row: u64,
@@ -415,25 +360,13 @@ index 730913e..9a9f9f8 100644
 +        has_text: bool,
 +    };
 +
-     // Reference the conditional exports based on target platform
-     // so they're included in the C API.
-     comptime {
-@@ -1538,6 +1612,11 @@ pub const CAPI = struct {
-         return .{};
-     }
- 
+@@ -1540,0 +1615,5 @@ pub const CAPI = struct {
 +    /// Version gate for the Aster-only extension ABI.
 +    export fn ghostty_aster_extension_abi_version() u32 {
 +        return 1;
 +    }
 +
-     /// Create a new surface as part of an app.
-     export fn ghostty_surface_new(
-         app: *App,
-@@ -1680,6 +1759,196 @@ pub const CAPI = struct {
-         ptr.deinit();
-     }
- 
+@@ -1682,0 +1762,190 @@ pub const CAPI = struct {
 +    export fn ghostty_aster_surface_buffer_info(
 +        surface: *Surface,
 +        result: *AsterBufferInfo,
@@ -624,38 +557,70 @@ index 730913e..9a9f9f8 100644
 +        return true;
 +    }
 +
-     /// Tell the surface that it needs to schedule a render
-     export fn ghostty_surface_refresh(surface: *Surface) void {
-         surface.refresh();
+diff --git a/src/config/Config.zig b/src/config/Config.zig
+index 5b1d73deb..97ca99c7f 100644
+--- a/src/config/Config.zig
++++ b/src/config/Config.zig
+@@ -1358,0 +1359,5 @@ input: RepeatableReadableIO = .{},
++/// Aster supplies the child environment and explicit login-shell arguments.
++/// Bypass macOS login(1), which discards the child's exit status. Other hosts
++/// retain upstream login/session behavior unless they explicitly opt in.
++@"aster-direct-child": bool = false,
++
+diff --git a/src/renderer/Metal.zig b/src/renderer/Metal.zig
+index 6c7432d21..da0059d5f 100644
+--- a/src/renderer/Metal.zig
++++ b/src/renderer/Metal.zig
+@@ -42,0 +43,5 @@ layer: IOSurfaceLayer,
++/// Optional Aster host callback. Borrowed for the surface lifetime, like the
++/// embedded userdata; renderer teardown drains all GPU completions before the
++/// host view may finish deinitializing. Never retain the view (it owns us).
++aster_frame_host: ?objc.Object = null,
++
+@@ -149,0 +155,5 @@ pub fn init(alloc: Allocator, opts: rendererpkg.Options) !Metal {
++        .aster_frame_host = if (info.view.msgSend(bool, objc.sel("respondsToSelector:"), .{
++            objc.sel("asterWantsPictureInPictureFrame"),
++        }) and info.view.msgSend(bool, objc.sel("respondsToSelector:"), .{
++            objc.sel("asterDidRenderPictureInPictureFrame:"),
++        })) info.view else null,
+@@ -458,0 +469,14 @@ fn queryMaxTextureSize(device: objc.Object) u32 {
++
++/// Called before encoding completes. The host reserves a bounded capture slot;
++/// no allocation, CPU synchronization, or frame copy occurs when disabled.
++pub fn wantsAsterFrame(self: *const Metal) bool {
++    const host = self.aster_frame_host orelse return false;
++    return host.msgSend(bool, objc.sel("asterWantsPictureInPictureFrame"), .{});
++}
++
++/// The host must synchronously copy the IOSurface. Called after GPU completion
++/// and before releasing the swap-chain slot, so the GPU cannot overwrite it.
++pub fn publishAsterFrame(self: *const Metal, target: Target) void {
++    const host = self.aster_frame_host orelse return;
++    host.msgSend(void, objc.sel("asterDidRenderPictureInPictureFrame:"), .{target.surface});
++}
 diff --git a/src/renderer/Thread.zig b/src/renderer/Thread.zig
-index 5087213..a6e63ba 100644
+index 508721379..a6e63baf9 100644
 --- a/src/renderer/Thread.zig
 +++ b/src/renderer/Thread.zig
-@@ -68,1 +68,7 @@ draw_now: xev.Async,
- draw_now_c: xev.Completion = .{},
-+
+@@ -69,0 +70,6 @@ draw_now_c: xev.Completion = .{},
 +/// Runs display-link shutdown only after the draw-now completion has rearmed.
 +/// CVDisplayLink's callback notifies draw_now synchronously, so stopping while
 +/// drawNowCallback owns that completion can deadlock both threads.
 +vsync_stop: xev.Async,
 +vsync_stop_c: xev.Completion = .{},
-@@ -155,1 +161,5 @@ pub fn init(
-     errdefer draw_now.deinit();
 +
+@@ -156,0 +163,4 @@ pub fn init(
 +    // Deferred display-link shutdown, see the field comment above.
 +    var vsync_stop = try xev.Async.init();
 +    errdefer vsync_stop.deinit();
-@@ -173,1 +183,2 @@ pub fn init(
-         .draw_now = draw_now,
++
+@@ -173,0 +184 @@ pub fn init(
 +        .vsync_stop = vsync_stop,
-@@ -190,1 +201,2 @@ pub fn deinit(self: *Thread) void {
-     self.draw_now.deinit();
+@@ -190,0 +202 @@ pub fn deinit(self: *Thread) void {
 +    self.vsync_stop.deinit();
-@@ -241,1 +253,2 @@ fn threadMain_(self: *Thread) !void {
-     self.draw_now.wait(&self.loop, &self.draw_now_c, Thread, self, drawNowCallback);
+@@ -241,0 +254 @@ fn threadMain_(self: *Thread) !void {
 +    self.vsync_stop.wait(&self.loop, &self.vsync_stop_c, Thread, self, vsyncStopCallback);
-@@ -566,1 +579,11 @@ fn drawNowCallback(
-     const t = self_.?;
+@@ -566,0 +580,10 @@ fn drawNowCallback(
 +    if (@hasDecl(rendererpkg.Renderer, "consumeVsync") and
 +        !t.renderer.consumeVsync())
 +    {
@@ -666,9 +631,7 @@ index 5087213..a6e63ba 100644
 +            log.warn("error scheduling display link stop err={}", .{err});
 +        return .rearm;
 +    }
-@@ -570,1 +594,19 @@ fn drawNowCallback(
- }
-+
+@@ -571,0 +595,18 @@ fn drawNowCallback(
 +fn vsyncStopCallback(
 +    self_: ?*Thread,
 +    _: *xev.Loop,
@@ -686,19 +649,17 @@ index 5087213..a6e63ba 100644
 +    }
 +    return .rearm;
 +}
-@@ -614,1 +656,5 @@ fn renderCallback(
-         log.warn("error rendering err={}", .{err});
 +
+@@ -615,0 +657,4 @@ fn renderCallback(
 +    if (@hasDecl(rendererpkg.Renderer, "requestVsync")) {
 +        t.renderer.requestVsync();
 +    }
++
 diff --git a/src/renderer/generic.zig b/src/renderer/generic.zig
-index 0f4a294..832294f 100644
+index 0f4a294bc..832294fcc 100644
 --- a/src/renderer/generic.zig
 +++ b/src/renderer/generic.zig
-@@ -117,1 +117,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
-         focused: bool,
-+
+@@ -117,0 +118,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +        /// True while the embedded surface is visible. The display link is
 +        /// armed only when both visibility and focus allow presenting frames.
 +        visible: bool = true,
@@ -707,8 +668,8 @@ index 0f4a294..832294f 100644
 +        /// stops after one quiet refresh. This preserves synchronized drawing
 +        /// without waking at the full display rate while the terminal is idle.
 +        vsync_requested: bool = true,
-@@ -693,2 +702,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
-                 .macos => if (options.config.vsync)
++
+@@ -694 +703,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 -                    try macos.video.DisplayLink.createWithActiveCGDisplays()
 +                    macos.video.DisplayLink.createWithActiveCGDisplays() catch |err| fallback: {
 +                        // Embedded hosts can run before macOS exposes an active display (for
@@ -717,10 +678,7 @@ index 0f4a294..832294f 100644
 +                        log.warn("unable to create display link, disabling vsync err={}", .{err});
 +                        break :fallback null;
 +                    }
-@@ -1024,2 +1039,35 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
-             return display_link.isRunning();
-         }
-+
+@@ -1025,0 +1041,33 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +        /// Arm the macOS display link for the next synchronized frame. Repeated
 +        /// updates before the next refresh coalesce into the same presentation.
 +        pub fn requestVsync(self: *Self) void {
@@ -753,21 +711,75 @@ index 0f4a294..832294f 100644
 +            if (self.hasAnimations() or self.vsync_requested) return;
 +            display_link.stop() catch {};
 +        }
-@@ -1032,1 +1081,2 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
-             self.focused = focus;
++
+@@ -1032,0 +1081 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +            self.vsync_requested = focus;
-@@ -1053,1 +1103,3 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
-         pub fn setVisible(self: *Self, visible: bool) void {
+@@ -1053,0 +1103,2 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +            self.visible = visible;
 +            self.vsync_requested = visible and self.focused;
+diff --git a/src/renderer/metal/Frame.zig b/src/renderer/metal/Frame.zig
+index 388b4f9ed..7486b2715 100644
+--- a/src/renderer/metal/Frame.zig
++++ b/src/renderer/metal/Frame.zig
+@@ -50,0 +51 @@ pub fn begin(
++            .captures_aster_frame = false,
+@@ -62,0 +64 @@ const CompletionBlock = objc.Block(struct {
++    captures_aster_frame: bool,
+@@ -81,0 +84 @@ fn bufferCompleted(
++        if (block.captures_aster_frame) block.renderer.api.publishAsterFrame(block.target.*);
+@@ -108,0 +112,10 @@ pub inline fn complete(self: *Self, sync: bool) void {
++    self.block.captures_aster_frame = self.block.renderer.api.wantsAsterFrame();
++    // Discrete Macs use managed textures. Explicitly synchronize the rendered
++    // resource before the completion callback is allowed to read it on the CPU.
++    if (self.block.captures_aster_frame and
++        self.block.renderer.api.default_storage_mode == .managed)
++    {
++        const blit = self.buffer.msgSend(objc.Object, objc.sel("blitCommandEncoder"), .{});
++        blit.msgSend(void, objc.sel("synchronizeResource:"), .{self.block.target.texture.value});
++        blit.msgSend(void, objc.sel("endEncoding"), .{});
++    }
+diff --git a/src/termio/Exec.zig b/src/termio/Exec.zig
+index 87d47807c..5517d175c 100644
+--- a/src/termio/Exec.zig
++++ b/src/termio/Exec.zig
+@@ -566,0 +567 @@ pub const Config = struct {
++    aster_direct_child: bool = false,
+@@ -821 +822 @@ const Subprocess = struct {
+-        const args: []const [:0]const u8 = execCommand(
++        const args: []const [:0]const u8 = execCommandWithLogin(
+@@ -824,0 +826 @@ const Subprocess = struct {
++            !cfg.aster_direct_child,
+@@ -1426,0 +1429,9 @@ fn execCommand(
++) (Allocator.Error || error{SystemError})![]const [:0]const u8 {
++    return execCommandWithLogin(alloc, command, passwdpkg, true);
++}
++
++fn execCommandWithLogin(
++    alloc: Allocator,
++    command: configpkg.Command,
++    comptime passwdpkg: type,
++    use_login: bool,
+@@ -1431,0 +1443 @@ fn execCommand(
++        if (!use_login) break :darwin;
+@@ -1858,0 +1871,13 @@ test "execCommand windows: direct command is passed through unchanged" {
++
++test "execCommand Aster direct child preserves argv without login wrapper" {
++    const testing = std.testing;
++    var arena = std.heap.ArenaAllocator.init(testing.allocator);
++    defer arena.deinit();
++    const result = try execCommandWithLogin(arena.allocator(), .{ .direct = &.{
++        "/bin/zsh", "-l", "-i",
++    } }, internal_os.passwd, false);
++    try testing.expectEqual(@as(usize, 3), result.len);
++    try testing.expectEqualStrings("/bin/zsh", result[0]);
++    try testing.expectEqualStrings("-l", result[1]);
++    try testing.expectEqualStrings("-i", result[2]);
++}
 diff --git a/src/termio/Options.zig b/src/termio/Options.zig
-index a6bf8c4..f470e91 100644
+index a6bf8c4d4..f470e9129 100644
 --- a/src/termio/Options.zig
 +++ b/src/termio/Options.zig
-@@ -6,6 +6,40 @@ const renderer = @import("../renderer.zig");
- const Config = @import("../config.zig").Config;
- const termio = @import("../termio.zig");
- 
+@@ -8,0 +9,34 @@ const termio = @import("../termio.zig");
 +/// Aster-only observation hooks for the pinned embedded build. These callbacks
 +/// observe bytes without consuming or changing the normal Ghostty parser path.
 +/// Payload memory is borrowed for the duration of each callback.
@@ -802,63 +814,30 @@ index a6bf8c4..f470e91 100644
 +    }
 +};
 +
- /// All size metrics for the terminal.
- size: renderer.Size,
- 
-@@ -39,3 +73,6 @@ renderer_mailbox: *renderer.Thread.Mailbox,
- 
- /// The mailbox for sending the surface messages.
- surface_mailbox: apprt.surface.Mailbox,
+@@ -41,0 +76,3 @@ surface_mailbox: apprt.surface.Mailbox,
 +
 +/// Versioned Aster observation hooks. Other runtimes leave this empty.
 +aster_observer: AsterObserver = .{},
 diff --git a/src/termio/Termio.zig b/src/termio/Termio.zig
-index 1d1bfe2..8919790 100644
+index 1d1bfe25a..8919790ba 100644
 --- a/src/termio/Termio.zig
 +++ b/src/termio/Termio.zig
-@@ -53,6 +53,11 @@ renderer_mailbox: *renderer.Thread.Mailbox,
- /// The mailbox for communicating with the surface.
- surface_mailbox: apprt.surface.Mailbox,
- 
+@@ -55,0 +56,5 @@ surface_mailbox: apprt.surface.Mailbox,
 +/// Aster's observer never owns or mutates terminal data. It mirrors PTY bytes
 +/// and runs a separate bounded OSC scanner before Ghostty consumes the stream.
 +aster_observer: termio.Options.AsterObserver,
 +aster_osc_scanner: AsterOSCScanner,
 +
- /// The cached size info
- size: renderer.Size,
- 
-@@ -303,6 +308,8 @@ pub fn init(self: *Termio, alloc: Allocator, opts: termio.Options) !void {
-         .renderer_wakeup = opts.renderer_wakeup,
-         .renderer_mailbox = opts.renderer_mailbox,
-         .surface_mailbox = opts.surface_mailbox,
+@@ -305,0 +311,2 @@ pub fn init(self: *Termio, alloc: Allocator, opts: termio.Options) !void {
 +        .aster_observer = opts.aster_observer,
 +        .aster_osc_scanner = .init(opts.aster_observer),
-         .size = opts.size,
-         .backend = backend,
-         .mailbox = opts.mailbox,
-@@ -414,6 +421,7 @@ pub inline fn queueWrite(
-     data: []const u8,
-     linefeed: bool,
- ) !void {
+@@ -416,0 +424 @@ pub inline fn queueWrite(
 +    self.aster_observer.notifyPtyWrite(data);
-     try self.backend.queueWrite(self.alloc, td, data, linefeed);
- }
- 
-@@ -641,6 +649,9 @@ pub fn focusGained(self: *Termio, td: *ThreadData, focused: bool) !void {
- /// call with pty data but it is also called by the read thread when using
- /// an exec subprocess.
- pub fn processOutput(self: *Termio, buf: []const u8) void {
+@@ -643,0 +652,3 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
 +    // Observation happens before taking the renderer mutex. Callbacks are
 +    // synchronous and must copy borrowed bytes before returning.
 +    self.aster_observer.notifyPtyRead(buf);
-     // We are modifying terminal state from here on out and we need
-     // the lock to grab our read data.
-     self.renderer_state.mutex.lock();
-@@ -648,6 +659,214 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
-     self.processOutputLocked(buf);
- }
- 
+@@ -650,0 +662,208 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
 +/// Streaming OSC scanner used only by the Aster extension ABI. Ghostty's
 +/// parser still receives every original byte; malformed and over-limit OSCs
 +/// are dropped only from this observer channel.
@@ -1067,13 +1046,7 @@ index 1d1bfe2..8919790 100644
 +    try std.testing.expectEqual(AsterOSCScanner.State.ground, scanner.state);
 +}
 +
- /// Process output from readdata but the lock is already held.
- fn processOutputLocked(self: *Termio, buf: []const u8) void {
-     // Schedule a render. We can call this first because we have the lock.
-@@ -687,7 +906,23 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
-             };
- 
-             self.terminal_stream.next(byte);
+@@ -689,0 +909,15 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
 +            if (self.aster_observer.osc != null) {
 +                if (self.aster_osc_scanner.next(byte)) |event| self.notifyAsterOSC(event);
 +            }
@@ -1089,15 +1062,9 @@ index 1d1bfe2..8919790 100644
 +                self.notifyAsterOSC(event);
 +                segment_start = i + 1;
 +            }
-         }
+@@ -690,0 +925 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
 +        if (segment_start < buf.len) self.terminal_stream.nextSlice(buf[segment_start..]);
-     } else {
-         self.terminal_stream.nextSlice(buf);
-     }
-@@ -700,6 +935,18 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
-     }
- }
- 
+@@ -702,0 +938,12 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
 +fn notifyAsterOSC(self: *Termio, event: AsterOSCScanner.Event) void {
 +    const screen = self.terminal.screens.active;
 +    const pin = screen.cursor.page_pin.*;
@@ -1110,73 +1077,3 @@ index 1d1bfe2..8919790 100644
 +    });
 +}
 +
- /// Sends a DSR response for the current color scheme to the pty.
- pub fn colorSchemeReport(self: *Termio, td: *ThreadData, force: bool) !void {
-     self.renderer_state.mutex.lock();
-diff --git a/pkg/dcimgui/build.zig b/pkg/dcimgui/build.zig
-index 924e7c9..772f591 100644
---- a/pkg/dcimgui/build.zig
-+++ b/pkg/dcimgui/build.zig
-@@ -182,5 +182,5 @@ pub fn build(b: *std.Build) !void {
-         lib.addCSourceFiles(.{
-             .root = b.path(""),
--            .files = &.{"ext.cpp"},
-+            .files = &.{"dcimgui_ext.cpp"},
-             .flags = flags.items,
-         });
-diff --git a/pkg/dcimgui/ext.cpp b/pkg/dcimgui/dcimgui_ext.cpp
-similarity index 100%
-rename from pkg/dcimgui/ext.cpp
-rename to pkg/dcimgui/dcimgui_ext.cpp
-diff --git a/src/renderer/Metal.zig b/src/renderer/Metal.zig
-index 6c7432d21..da0059d5f 100644
---- a/src/renderer/Metal.zig
-+++ b/src/renderer/Metal.zig
-@@ -42,0 +43,5 @@ layer: IOSurfaceLayer,
-+/// Optional Aster host callback. Borrowed for the surface lifetime, like the
-+/// embedded userdata; renderer teardown drains all GPU completions before the
-+/// host view may finish deinitializing. Never retain the view (it owns us).
-+aster_frame_host: ?objc.Object = null,
-+
-@@ -149,0 +155,5 @@ pub fn init(alloc: Allocator, opts: rendererpkg.Options) !Metal {
-+        .aster_frame_host = if (info.view.msgSend(bool, objc.sel("respondsToSelector:"), .{
-+            objc.sel("asterWantsPictureInPictureFrame"),
-+        }) and info.view.msgSend(bool, objc.sel("respondsToSelector:"), .{
-+            objc.sel("asterDidRenderPictureInPictureFrame:"),
-+        })) info.view else null,
-@@ -458,0 +469,14 @@ fn queryMaxTextureSize(device: objc.Object) u32 {
-+
-+/// Called before encoding completes. The host reserves a bounded capture slot;
-+/// no allocation, CPU synchronization, or frame copy occurs when disabled.
-+pub fn wantsAsterFrame(self: *const Metal) bool {
-+    const host = self.aster_frame_host orelse return false;
-+    return host.msgSend(bool, objc.sel("asterWantsPictureInPictureFrame"), .{});
-+}
-+
-+/// The host must synchronously copy the IOSurface. Called after GPU completion
-+/// and before releasing the swap-chain slot, so the GPU cannot overwrite it.
-+pub fn publishAsterFrame(self: *const Metal, target: Target) void {
-+    const host = self.aster_frame_host orelse return;
-+    host.msgSend(void, objc.sel("asterDidRenderPictureInPictureFrame:"), .{target.surface});
-+}
-diff --git a/src/renderer/metal/Frame.zig b/src/renderer/metal/Frame.zig
-index 388b4f9ed..7486b2715 100644
---- a/src/renderer/metal/Frame.zig
-+++ b/src/renderer/metal/Frame.zig
-@@ -50,0 +51 @@ pub fn begin(
-+            .captures_aster_frame = false,
-@@ -62,0 +64 @@ const CompletionBlock = objc.Block(struct {
-+    captures_aster_frame: bool,
-@@ -81,0 +84 @@ fn bufferCompleted(
-+        if (block.captures_aster_frame) block.renderer.api.publishAsterFrame(block.target.*);
-@@ -108,0 +112,10 @@ pub inline fn complete(self: *Self, sync: bool) void {
-+    self.block.captures_aster_frame = self.block.renderer.api.wantsAsterFrame();
-+    // Discrete Macs use managed textures. Explicitly synchronize the rendered
-+    // resource before the completion callback is allowed to read it on the CPU.
-+    if (self.block.captures_aster_frame and
-+        self.block.renderer.api.default_storage_mode == .managed)
-+    {
-+        const blit = self.buffer.msgSend(objc.Object, objc.sel("blitCommandEncoder"), .{});
-+        blit.msgSend(void, objc.sel("synchronizeResource:"), .{self.block.target.texture.value});
-+        blit.msgSend(void, objc.sel("endEncoding"), .{});
-+    }

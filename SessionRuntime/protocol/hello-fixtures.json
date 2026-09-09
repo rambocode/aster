@@ -1,0 +1,117 @@
+[
+  {
+    "name": "future-compatible",
+    "hello": {
+      "type": "hello",
+      "protocolMajor": 1,
+      "protocolMinor": 99,
+      "serverID": "12345678-1234-1234-1234-123456789abc",
+      "serverEpoch": "12345678-1234-1234-1234-123456789abd",
+      "sessionID": "12345678-1234-1234-1234-123456789abe",
+      "platform": "linux-x86_64",
+      "capabilities": [
+        "session_snapshot",
+        "terminal_control",
+        "surface_interest",
+        "health_check",
+        "future_capability"
+      ],
+      "futureField": true
+    },
+    "result": "ok"
+  },
+  {
+    "name": "wrong-major",
+    "hello": {
+      "type": "hello",
+      "protocolMajor": 2,
+      "protocolMinor": 99,
+      "serverID": "12345678-1234-1234-1234-123456789abc",
+      "serverEpoch": "12345678-1234-1234-1234-123456789abd",
+      "sessionID": "12345678-1234-1234-1234-123456789abe",
+      "platform": "linux-x86_64",
+      "capabilities": [
+        "session_snapshot",
+        "terminal_control",
+        "surface_interest",
+        "health_check",
+        "future_capability"
+      ],
+      "futureField": true
+    },
+    "result": "incompatibleMajor"
+  },
+  {
+    "name": "missing-capability",
+    "hello": {
+      "type": "hello",
+      "protocolMajor": 1,
+      "protocolMinor": 99,
+      "serverID": "12345678-1234-1234-1234-123456789abc",
+      "serverEpoch": "12345678-1234-1234-1234-123456789abd",
+      "sessionID": "12345678-1234-1234-1234-123456789abe",
+      "platform": "linux-x86_64",
+      "capabilities": [
+        "health_check"
+      ],
+      "futureField": true
+    },
+    "result": "missingCapabilities"
+  },
+  {
+    "name": "duplicate-capability",
+    "hello": {
+      "type": "hello",
+      "protocolMajor": 1,
+      "protocolMinor": 99,
+      "serverID": "12345678-1234-1234-1234-123456789abc",
+      "serverEpoch": "12345678-1234-1234-1234-123456789abd",
+      "sessionID": "12345678-1234-1234-1234-123456789abe",
+      "platform": "linux-x86_64",
+      "capabilities": [
+        "health_check",
+        "health_check"
+      ],
+      "futureField": true
+    },
+    "result": "invalidHandshake"
+  },
+  {
+    "name": "invalid-identity",
+    "hello": {
+      "type": "hello",
+      "protocolMajor": 1,
+      "protocolMinor": 99,
+      "serverID": "not-a-server-id",
+      "serverEpoch": "12345678-1234-1234-1234-123456789abd",
+      "sessionID": "12345678-1234-1234-1234-123456789abe",
+      "platform": "linux-x86_64",
+      "capabilities": [
+        "session_snapshot",
+        "terminal_control",
+        "surface_interest",
+        "health_check",
+        "future_capability"
+      ],
+      "futureField": true
+    },
+    "result": "invalidHandshake"
+  },
+  {
+    "name": "invalid-capability",
+    "hello": {
+      "type": "hello",
+      "protocolMajor": 1,
+      "protocolMinor": 99,
+      "serverID": "12345678-1234-1234-1234-123456789abc",
+      "serverEpoch": "12345678-1234-1234-1234-123456789abd",
+      "sessionID": "12345678-1234-1234-1234-123456789abe",
+      "platform": "linux-x86_64",
+      "capabilities": [
+        "bad capability"
+      ],
+      "futureField": true
+    },
+    "result": "invalidHandshake"
+  }
+]

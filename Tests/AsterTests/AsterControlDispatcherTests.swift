@@ -1,3 +1,4 @@
+import AppKit
 import AsterCore
 import Foundation
 import Testing
@@ -132,7 +133,8 @@ struct AsterControlDispatcherTests {
   func sendTextAndReadEcho() async throws {
     let (fixture, _) = try makeFixture()
     defer { fixture.workspace.tearDown() }
-    _ = try fixture.workspace.makeActiveTerminalView()
+    let (_, _, window) = try await fixture.workspace.makeReadyGhosttyTerminal()
+    defer { window.orderOut(nil) }
     let marker = "aster-ctl-\(UUID().uuidString.prefix(6))"
     // 用 printf 拼接避免命令行本身（回显）先于输出命中。
     let command = "printf '%s\\n' \(marker.prefix(9))\"\(marker.dropFirst(9))\""
@@ -186,7 +188,8 @@ struct AsterControlDispatcherTests {
   func promptWait() async throws {
     let (fixture, _) = try makeFixture()
     defer { fixture.workspace.tearDown() }
-    let (session, view) = try fixture.workspace.makeActiveTerminalView()
+    let (session, view, window) = try await fixture.workspace.makeReadyGhosttyTerminal()
+    defer { window.orderOut(nil) }
     // 这里的「agent」其实是真实 shell：prompt 若被 shell 执行，OSC 133 commandStart 会按命令名
     // 重新识别 provider 并清掉 hook 权威，让假 agent「退出」。先让 `cat` 占住前台读 stdin，
     // 之后所有 prompt 都只进 cat，不再产生 commandStart（真实 agent TUI 自己持有 PTY，无此问题）。
@@ -196,8 +199,8 @@ struct AsterControlDispatcherTests {
     for _ in 0..<100 where !session.hasForegroundCommand { await pumpControlEvents(milliseconds: 100) }
     #expect(session.hasForegroundCommand)
     await pumpControlEvents(milliseconds: 200)
-    view.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .processing))
-    view.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .idle))
+    view.onOSC?(6_974, Array("AgentState=processing;Provider=codex".utf8), .init())
+    view.onOSC?(6_974, Array("AgentState=idle;Provider=codex".utf8), .init())
     await pumpControlEvents()
     // idle(done) 状态下发 prompt：用户输入回调会把 unread 清掉 → 状态从 done 变 idle，
     // 这算一次变化，但之后没有 processing → 等待超时。
@@ -206,9 +209,9 @@ struct AsterControlDispatcherTests {
 
     let waiting = Task { await fixture.call("agent.prompt", ["target": "w1:p1", "text": "go", "wait": ["timeout_ms": 5_000]]) }
     await pumpControlEvents(milliseconds: 100)
-    view.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .processing))
+    view.onOSC?(6_974, Array("AgentState=processing;Provider=codex".utf8), .init())
     await pumpControlEvents(milliseconds: 100)
-    view.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .awaitingInput))
+    view.onOSC?(6_974, Array("AgentState=awaiting-input;Provider=codex".utf8), .init())
     let resolved = await waiting.value
     #expect(resolved.result?["status"]?.stringValue == "blocked", "\(String(describing: resolved.error))")
   }
@@ -392,7 +395,11 @@ struct AsterControlDispatcherTests {
     // 让 PTY 启动引起的 running/cwd 变化先发完，再观察标题引起的 pane.updated。
     await pumpControlEvents(milliseconds: 400)
     var titles: [String] = []
-    bridge.hub.subscribe(id: UUID(), kinds: [.paneUpdated]) { titles.append($0.data["title"]?.stringValue ?? "") }
+    var updates: [JSONValue] = []
+    bridge.hub.subscribe(id: UUID(), kinds: [.paneUpdated]) {
+      updates.append($0.data)
+      titles.append($0.data["title"]?.stringValue ?? "")
+    }
     for spinner in ["✳", "✶", "✻", "⠋"] {
       session.setTerminalTitle(source: view, title: "\(spinner) Claude Code")
       await pumpControlEvents(milliseconds: 60)
@@ -401,12 +408,16 @@ struct AsterControlDispatcherTests {
     // 事件里永远是剥掉 spinner 的标题；四次 spinner 翻转最多只有首次（"Shell" → "Claude Code"）
     // 触发标题更新，其余事件（若有）来自 PTY 启动尾声的 running/cwd 变化，标题不变。
     #expect(titles.allSatisfy { $0 == "Claude Code" })
-    #expect(titles.filter { $0 == "Claude Code" }.count <= 2)
-    let beforeVim = titles.count
+    #expect(titles.contains("Claude Code"))
     session.setTerminalTitle(source: view, title: "vim README.md")
     await pumpControlEvents(milliseconds: 60)
-    #expect(titles.count == beforeVim + 1)
-    #expect(titles.last == "vim README.md")
+    // pane.updated 同时承载运行态/目录，不能把这些合法更新算成重复标题事件。
+    // 验证完整快照没有相邻重复，且标题投影只发生 Claude → vim 这一轮变化。
+    #expect(zip(updates, updates.dropFirst()).allSatisfy { $0 != $1 })
+    let transitions = titles.reduce(into: [String]()) { result, title in
+      if result.last != title { result.append(title) }
+    }
+    #expect(transitions == ["Claude Code", "vim README.md"])
   }
 
   @Test("workflow.execute 桥接旧 CLI：参数错误 exit 64，capture 成功")

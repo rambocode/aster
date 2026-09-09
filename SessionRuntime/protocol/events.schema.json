@@ -1,0 +1,1736 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:aster:session:events:1",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "u64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^/[^\\x00]*$"
+    },
+    "geometry": {
+      "type": "object",
+      "properties": {
+        "rows": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "pixelWidth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "pixelHeight": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      },
+      "required": [
+        "rows",
+        "columns"
+      ],
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "serverID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "serverEpoch": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "sessionID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "serverID",
+        "serverEpoch",
+        "sessionID"
+      ],
+      "additionalProperties": false
+    },
+    "lease": {
+      "type": "object",
+      "properties": {
+        "leaseID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "leaseEpoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "leaseID",
+        "leaseEpoch"
+      ],
+      "additionalProperties": false
+    },
+    "terminalSpec": {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\x00]*$"
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "maxItems": 128,
+          "minItems": 1
+        },
+        "environment": {
+          "type": "object",
+          "maxProperties": 128,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 8192
+          }
+        },
+        "geometry": {
+          "$ref": "#/$defs/geometry"
+        }
+      },
+      "required": [
+        "cwd",
+        "argv"
+      ],
+      "additionalProperties": false
+    },
+    "terminal": {
+      "type": "object",
+      "properties": {
+        "terminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\x00]*$"
+        },
+        "state": {
+          "enum": [
+            "running",
+            "terminating",
+            "exited",
+            "unavailable"
+          ]
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "exitCode": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "signal": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "geometry": {
+          "$ref": "#/$defs/geometry"
+        }
+      },
+      "required": [
+        "terminalID",
+        "cwd",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "session": {
+      "type": "object",
+      "properties": {
+        "sessionID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "state": {
+          "enum": [
+            "running",
+            "stopped",
+            "attention"
+          ]
+        },
+        "serverID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "serverEpoch": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "sessionID",
+        "name",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "pane": {
+      "type": "object",
+      "properties": {
+        "paneID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "terminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "paneID",
+        "terminalID"
+      ],
+      "additionalProperties": false
+    },
+    "tab": {
+      "type": "object",
+      "properties": {
+        "tabID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "layout": {
+          "$ref": "#/$defs/layout16"
+        }
+      },
+      "required": [
+        "tabID",
+        "title",
+        "layout"
+      ],
+      "additionalProperties": false
+    },
+    "workspace": {
+      "type": "object",
+      "properties": {
+        "workspaceID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\x00]*$"
+        },
+        "tabs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tab"
+          },
+          "maxItems": 128,
+          "minItems": 0
+        }
+      },
+      "required": [
+        "workspaceID",
+        "title",
+        "cwd",
+        "tabs"
+      ],
+      "additionalProperties": false
+    },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "paneHistory": {
+          "type": "boolean"
+        },
+        "resumeAgentsOnRestore": {
+          "type": "boolean"
+        },
+        "historyBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 268435456
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "agent": {
+      "type": "object",
+      "properties": {
+        "terminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "state": {
+          "enum": [
+            "idle",
+            "working",
+            "blocked",
+            "done",
+            "unknown"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "nativeSession": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "unread": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "terminalID",
+        "provider",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "upload": {
+      "type": "object",
+      "properties": {
+        "uploadID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "maximumBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20971520
+        },
+        "receivedBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20971520
+        }
+      },
+      "required": [
+        "uploadID",
+        "maximumBytes",
+        "receivedBytes"
+      ],
+      "additionalProperties": false
+    },
+    "attachment": {
+      "type": "object",
+      "properties": {
+        "attachmentID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "terminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "readOnly": {
+          "type": "boolean"
+        },
+        "lease": {
+          "$ref": "#/$defs/lease"
+        }
+      },
+      "required": [
+        "attachmentID",
+        "terminalID",
+        "readOnly"
+      ],
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "retry": {
+          "enum": [
+            "never",
+            "after_query",
+            "after_reconnect",
+            "backoff"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retry"
+      ],
+      "additionalProperties": false
+    },
+    "writeAttachment": {
+      "type": "object",
+      "properties": {
+        "attachmentID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "terminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "readOnly": {
+          "enum": [
+            false
+          ]
+        },
+        "lease": {
+          "$ref": "#/$defs/lease"
+        }
+      },
+      "required": [
+        "attachmentID",
+        "terminalID",
+        "readOnly",
+        "lease"
+      ],
+      "additionalProperties": false
+    },
+    "readAttachment": {
+      "type": "object",
+      "properties": {
+        "attachmentID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "terminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "readOnly": {
+          "enum": [
+            true
+          ]
+        },
+        "currentLeaseEpoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "attachmentID",
+        "terminalID",
+        "readOnly",
+        "currentLeaseEpoch"
+      ],
+      "additionalProperties": false
+    },
+    "layout0": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "leaf"
+          ]
+        },
+        "pane": {
+          "$ref": "#/$defs/pane"
+        }
+      },
+      "required": [
+        "kind",
+        "pane"
+      ],
+      "additionalProperties": false
+    },
+    "layout1": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout0"
+            },
+            "second": {
+              "$ref": "#/$defs/layout0"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout2": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout1"
+            },
+            "second": {
+              "$ref": "#/$defs/layout1"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout3": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout2"
+            },
+            "second": {
+              "$ref": "#/$defs/layout2"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout4": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout3"
+            },
+            "second": {
+              "$ref": "#/$defs/layout3"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout5": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout4"
+            },
+            "second": {
+              "$ref": "#/$defs/layout4"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout6": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout5"
+            },
+            "second": {
+              "$ref": "#/$defs/layout5"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout7": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout6"
+            },
+            "second": {
+              "$ref": "#/$defs/layout6"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout8": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout7"
+            },
+            "second": {
+              "$ref": "#/$defs/layout7"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout9": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout8"
+            },
+            "second": {
+              "$ref": "#/$defs/layout8"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout10": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout9"
+            },
+            "second": {
+              "$ref": "#/$defs/layout9"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout11": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout10"
+            },
+            "second": {
+              "$ref": "#/$defs/layout10"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout12": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout11"
+            },
+            "second": {
+              "$ref": "#/$defs/layout11"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout13": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout12"
+            },
+            "second": {
+              "$ref": "#/$defs/layout12"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout14": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout13"
+            },
+            "second": {
+              "$ref": "#/$defs/layout13"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout15": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout14"
+            },
+            "second": {
+              "$ref": "#/$defs/layout14"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout16": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout15"
+            },
+            "second": {
+              "$ref": "#/$defs/layout15"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "event"
+          ]
+        },
+        "event": {
+          "enum": [
+            "session.changed"
+          ]
+        },
+        "eventID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "body": {
+          "$ref": "#/$defs/session"
+        }
+      },
+      "required": [
+        "type",
+        "event",
+        "eventID",
+        "target",
+        "sequence",
+        "revision",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "event"
+          ]
+        },
+        "event": {
+          "enum": [
+            "workspace.changed"
+          ]
+        },
+        "eventID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "body": {
+          "$ref": "#/$defs/workspace"
+        }
+      },
+      "required": [
+        "type",
+        "event",
+        "eventID",
+        "target",
+        "sequence",
+        "revision",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "event"
+          ]
+        },
+        "event": {
+          "enum": [
+            "tab.changed"
+          ]
+        },
+        "eventID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "body": {
+          "$ref": "#/$defs/tab"
+        }
+      },
+      "required": [
+        "type",
+        "event",
+        "eventID",
+        "target",
+        "sequence",
+        "revision",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "event"
+          ]
+        },
+        "event": {
+          "enum": [
+            "pane.changed"
+          ]
+        },
+        "eventID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "body": {
+          "$ref": "#/$defs/pane"
+        }
+      },
+      "required": [
+        "type",
+        "event",
+        "eventID",
+        "target",
+        "sequence",
+        "revision",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "event"
+          ]
+        },
+        "event": {
+          "enum": [
+            "terminal.created"
+          ]
+        },
+        "eventID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "body": {
+          "$ref": "#/$defs/terminal"
+        }
+      },
+      "required": [
+        "type",
+        "event",
+        "eventID",
+        "target",
+        "sequence",
+        "revision",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "event"
+          ]
+        },
+        "event": {
+          "enum": [
+            "terminal.updated"
+          ]
+        },
+        "eventID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "body": {
+          "$ref": "#/$defs/terminal"
+        }
+      },
+      "required": [
+        "type",
+        "event",
+        "eventID",
+        "target",
+        "sequence",
+        "revision",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "event"
+          ]
+        },
+        "event": {
+          "enum": [
+            "terminal.exited"
+          ]
+        },
+        "eventID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "body": {
+          "$ref": "#/$defs/terminal"
+        }
+      },
+      "required": [
+        "type",
+        "event",
+        "eventID",
+        "target",
+        "sequence",
+        "revision",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "event"
+          ]
+        },
+        "event": {
+          "enum": [
+            "agent.changed"
+          ]
+        },
+        "eventID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "body": {
+          "$ref": "#/$defs/agent"
+        }
+      },
+      "required": [
+        "type",
+        "event",
+        "eventID",
+        "target",
+        "sequence",
+        "revision",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "event"
+          ]
+        },
+        "event": {
+          "enum": [
+            "lease.revoked"
+          ]
+        },
+        "eventID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "terminalID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "leaseID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "leaseEpoch": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "terminalID",
+            "leaseID",
+            "leaseEpoch",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "event",
+        "eventID",
+        "target",
+        "sequence",
+        "revision",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "event"
+          ]
+        },
+        "event": {
+          "enum": [
+            "server.replacing"
+          ]
+        },
+        "eventID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "operationID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "state": {
+              "enum": [
+                "prepared",
+                "transferring",
+                "committed",
+                "rolled_back"
+              ]
+            }
+          },
+          "required": [
+            "operationID",
+            "state"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "event",
+        "eventID",
+        "target",
+        "sequence",
+        "revision",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "event"
+          ]
+        },
+        "event": {
+          "enum": [
+            "server.closed"
+          ]
+        },
+        "eventID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "event",
+        "eventID",
+        "target",
+        "sequence",
+        "revision",
+        "body"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

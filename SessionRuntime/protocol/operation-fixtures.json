@@ -1,0 +1,3530 @@
+[
+  {
+    "name": "health.check request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "health.check",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "health.check response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "health.check",
+      "scope": "session",
+      "result": {
+        "alive": true
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "health.check missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "health.check",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "session.list request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "registry",
+      "operation": "session.list",
+      "params": {}
+    }
+  },
+  {
+    "name": "session.list response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "session.list",
+      "scope": "registry",
+      "result": {
+        "sessions": []
+      }
+    }
+  },
+  {
+    "name": "session.list missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "registry",
+      "operation": "session.list",
+      "params": {}
+    }
+  },
+  {
+    "name": "session.create request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "registry",
+      "operation": "session.create",
+      "params": {
+        "name": "sample"
+      },
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "session.create response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "session.create",
+      "scope": "registry",
+      "result": {
+        "sessionID": "12345678-1234-1234-1234-123456789abc",
+        "name": "sample",
+        "state": "running"
+      }
+    }
+  },
+  {
+    "name": "session.create missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "registry",
+      "operation": "session.create",
+      "params": {
+        "name": "sample"
+      },
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "session.attach request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "registry",
+      "operation": "session.attach",
+      "params": {
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "session.attach response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "session.attach",
+      "scope": "registry",
+      "result": {
+        "sessionID": "12345678-1234-1234-1234-123456789abc",
+        "name": "sample",
+        "state": "running"
+      }
+    }
+  },
+  {
+    "name": "session.attach missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "registry",
+      "operation": "session.attach",
+      "params": {
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "session.stop request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "registry",
+      "operation": "session.stop",
+      "params": {
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "session.stop response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "session.stop",
+      "scope": "registry",
+      "result": {
+        "sessionID": "12345678-1234-1234-1234-123456789abc",
+        "name": "sample",
+        "state": "running"
+      }
+    }
+  },
+  {
+    "name": "session.stop missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "registry",
+      "operation": "session.stop",
+      "params": {
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "session.delete request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "registry",
+      "operation": "session.delete",
+      "params": {
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "session.delete response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "session.delete",
+      "scope": "registry",
+      "result": {
+        "deleted": false
+      }
+    }
+  },
+  {
+    "name": "session.delete missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "registry",
+      "operation": "session.delete",
+      "params": {
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "session.snapshot request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "session.snapshot",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "session.snapshot response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "session.snapshot",
+      "scope": "session",
+      "result": {
+        "workspaces": [],
+        "terminals": []
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "session.snapshot missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "session.snapshot",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "session.settings.get request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "session.settings.get",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "session.settings.get response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "session.settings.get",
+      "scope": "session",
+      "result": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "session.settings.get missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "session.settings.get",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "session.settings.update request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "session.settings.update",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0
+    }
+  },
+  {
+    "name": "session.settings.update response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "session.settings.update",
+      "scope": "session",
+      "result": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "session.settings.update missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "session.settings.update",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0
+    }
+  },
+  {
+    "name": "workspace.list request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "workspace.list",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "workspace.list response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "workspace.list",
+      "scope": "session",
+      "result": {
+        "workspaces": []
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "workspace.list missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "workspace.list",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "workspace.create request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "workspace.create",
+      "params": {
+        "title": "sample",
+        "terminal": {
+          "cwd": "/tmp/aster-protocol",
+          "argv": [
+            "sample"
+          ]
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "workspace.create response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "workspace.create",
+      "scope": "session",
+      "result": {
+        "workspaceID": "12345678-1234-1234-1234-123456789abc",
+        "title": "sample",
+        "cwd": "/tmp/aster-protocol",
+        "tabs": []
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "workspace.create missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "workspace.create",
+      "params": {
+        "title": "sample",
+        "terminal": {
+          "cwd": "/tmp/aster-protocol",
+          "argv": [
+            "sample"
+          ]
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "workspace.update request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "workspace.update",
+      "params": {
+        "workspaceID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "workspace.update response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "workspace.update",
+      "scope": "session",
+      "result": {
+        "workspaceID": "12345678-1234-1234-1234-123456789abc",
+        "title": "sample",
+        "cwd": "/tmp/aster-protocol",
+        "tabs": []
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "workspace.update missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "workspace.update",
+      "params": {
+        "workspaceID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "workspace.close request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "workspace.close",
+      "params": {
+        "workspaceID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "workspace.close response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "workspace.close",
+      "scope": "session",
+      "result": {
+        "closed": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "workspace.close missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "workspace.close",
+      "params": {
+        "workspaceID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "tab.create request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "tab.create",
+      "params": {
+        "workspaceID": "12345678-1234-1234-1234-123456789abc",
+        "title": "sample",
+        "terminal": {
+          "cwd": "/tmp/aster-protocol",
+          "argv": [
+            "sample"
+          ]
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "tab.create response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "tab.create",
+      "scope": "session",
+      "result": {
+        "tabID": "12345678-1234-1234-1234-123456789abc",
+        "title": "sample",
+        "layout": {
+          "kind": "leaf",
+          "pane": {
+            "paneID": "12345678-1234-1234-1234-123456789abc",
+            "terminalID": "12345678-1234-1234-1234-123456789abc"
+          }
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "tab.create missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "tab.create",
+      "params": {
+        "workspaceID": "12345678-1234-1234-1234-123456789abc",
+        "title": "sample",
+        "terminal": {
+          "cwd": "/tmp/aster-protocol",
+          "argv": [
+            "sample"
+          ]
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "tab.update request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "tab.update",
+      "params": {
+        "tabID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "tab.update response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "tab.update",
+      "scope": "session",
+      "result": {
+        "tabID": "12345678-1234-1234-1234-123456789abc",
+        "title": "sample",
+        "layout": {
+          "kind": "leaf",
+          "pane": {
+            "paneID": "12345678-1234-1234-1234-123456789abc",
+            "terminalID": "12345678-1234-1234-1234-123456789abc"
+          }
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "tab.update missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "tab.update",
+      "params": {
+        "tabID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "tab.close request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "tab.close",
+      "params": {
+        "tabID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "tab.close response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "tab.close",
+      "scope": "session",
+      "result": {
+        "closed": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "tab.close missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "tab.close",
+      "params": {
+        "tabID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "pane.split request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "pane.split",
+      "params": {
+        "paneID": "12345678-1234-1234-1234-123456789abc",
+        "direction": "left",
+        "terminal": {
+          "cwd": "/tmp/aster-protocol",
+          "argv": [
+            "sample"
+          ]
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "pane.split response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "pane.split",
+      "scope": "session",
+      "result": {
+        "pane": {
+          "paneID": "12345678-1234-1234-1234-123456789abc",
+          "terminalID": "12345678-1234-1234-1234-123456789abc"
+        },
+        "terminal": {
+          "terminalID": "12345678-1234-1234-1234-123456789abc",
+          "cwd": "/tmp/aster-protocol",
+          "state": "running"
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "pane.split missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "pane.split",
+      "params": {
+        "paneID": "12345678-1234-1234-1234-123456789abc",
+        "direction": "left",
+        "terminal": {
+          "cwd": "/tmp/aster-protocol",
+          "argv": [
+            "sample"
+          ]
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "pane.update request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "pane.update",
+      "params": {
+        "paneID": "12345678-1234-1234-1234-123456789abc",
+        "title": "sample"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "pane.update response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "pane.update",
+      "scope": "session",
+      "result": {
+        "paneID": "12345678-1234-1234-1234-123456789abc",
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "pane.update missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "pane.update",
+      "params": {
+        "paneID": "12345678-1234-1234-1234-123456789abc",
+        "title": "sample"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "pane.close request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "pane.close",
+      "params": {
+        "paneID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "pane.close response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "pane.close",
+      "scope": "session",
+      "result": {
+        "closed": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "pane.close missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "pane.close",
+      "params": {
+        "paneID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "expectedRevision": 0,
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "terminal.create request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.create",
+      "params": {
+        "cwd": "/tmp/aster-protocol",
+        "argv": [
+          "sample"
+        ]
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "terminal.create response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.create",
+      "scope": "session",
+      "result": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "cwd": "/tmp/aster-protocol",
+        "state": "running"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "terminal.create missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.create",
+      "params": {
+        "cwd": "/tmp/aster-protocol",
+        "argv": [
+          "sample"
+        ]
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "terminal.list request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.list",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "terminal.list response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.list",
+      "scope": "session",
+      "result": {
+        "terminals": []
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "terminal.list missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.list",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "terminal.attach request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.attach",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "terminal.attach response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.attach",
+      "scope": "session",
+      "result": {
+        "attachmentID": "12345678-1234-1234-1234-123456789abc",
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "readOnly": false,
+        "lease": {
+          "leaseID": "12345678-1234-1234-1234-123456789abc",
+          "leaseEpoch": 0
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "terminal.attach missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.attach",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "terminal.observe request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.observe",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "terminal.observe response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.observe",
+      "scope": "session",
+      "result": {
+        "attachmentID": "12345678-1234-1234-1234-123456789abc",
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "readOnly": true,
+        "currentLeaseEpoch": 0
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "terminal.observe missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.observe",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "terminal.control request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.control",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "action": "input",
+        "data": "YQ=="
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "lease": {
+        "leaseID": "12345678-1234-1234-1234-123456789abc",
+        "leaseEpoch": 0
+      },
+      "controlSequence": 0
+    }
+  },
+  {
+    "name": "terminal.control response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.control",
+      "scope": "session",
+      "result": {
+        "accepted": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "terminal.control missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.control",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "action": "input",
+        "data": "YQ=="
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "lease": {
+        "leaseID": "12345678-1234-1234-1234-123456789abc",
+        "leaseEpoch": 0
+      },
+      "controlSequence": 0
+    }
+  },
+  {
+    "name": "terminal.release request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.release",
+      "params": {
+        "attachmentID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "terminal.release response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.release",
+      "scope": "session",
+      "result": {
+        "released": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "terminal.release missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.release",
+      "params": {
+        "attachmentID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "terminal.terminate request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.terminate",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "terminal.terminate response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.terminate",
+      "scope": "session",
+      "result": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "cwd": "/tmp/aster-protocol",
+        "state": "running"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "terminal.terminate missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.terminate",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "surface.subscribe request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "surface.subscribe",
+      "params": {
+        "attachmentID": "12345678-1234-1234-1234-123456789abc",
+        "geometry": {
+          "rows": 1,
+          "columns": 1
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "surface.subscribe response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "surface.subscribe",
+      "scope": "session",
+      "result": {
+        "streamID": "12345678-1234-1234-1234-123456789abc",
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "surface.subscribe missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "surface.subscribe",
+      "params": {
+        "attachmentID": "12345678-1234-1234-1234-123456789abc",
+        "geometry": {
+          "rows": 1,
+          "columns": 1
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "surface.unsubscribe request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "surface.unsubscribe",
+      "params": {
+        "streamID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "surface.unsubscribe response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "surface.unsubscribe",
+      "scope": "session",
+      "result": {
+        "unsubscribed": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "surface.unsubscribe missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "surface.unsubscribe",
+      "params": {
+        "streamID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "surface.snapshot request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "surface.snapshot",
+      "params": {
+        "streamID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "surface.snapshot response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "surface.snapshot",
+      "scope": "session",
+      "result": {
+        "scheduled": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "surface.snapshot missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "surface.snapshot",
+      "params": {
+        "streamID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "agent.list request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "agent.list",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "agent.list response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "agent.list",
+      "scope": "session",
+      "result": {
+        "agents": []
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "agent.list missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "agent.list",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "agent.report request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "agent.report",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "provider": "sample",
+        "state": "idle"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "agent.report response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "agent.report",
+      "scope": "session",
+      "result": {
+        "accepted": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "agent.report missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "agent.report",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "provider": "sample",
+        "state": "idle"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "agent.explain request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "agent.explain",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "agent.explain response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "agent.explain",
+      "scope": "session",
+      "result": {
+        "agent": {
+          "terminalID": "12345678-1234-1234-1234-123456789abc",
+          "provider": "sample",
+          "state": "idle"
+        },
+        "reason": "sample"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "agent.explain missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "agent.explain",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "agent.rename request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "agent.rename",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "agent.rename response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "agent.rename",
+      "scope": "session",
+      "result": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "provider": "sample",
+        "state": "idle"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "agent.rename missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "agent.rename",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "agent.acknowledge request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "agent.acknowledge",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "agent.acknowledge response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "agent.acknowledge",
+      "scope": "session",
+      "result": {
+        "acknowledged": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "agent.acknowledge missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "agent.acknowledge",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "upload.begin request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "upload.begin",
+      "params": {
+        "mimeType": "image/png",
+        "length": 1,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "upload.begin response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "upload.begin",
+      "scope": "session",
+      "result": {
+        "uploadID": "12345678-1234-1234-1234-123456789abc",
+        "maximumBytes": 1,
+        "receivedBytes": 0
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "upload.begin missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "upload.begin",
+      "params": {
+        "mimeType": "image/png",
+        "length": 1,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "upload.chunk request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "upload.chunk",
+      "params": {
+        "uploadID": "12345678-1234-1234-1234-123456789abc",
+        "offset": 0,
+        "data": "YQ=="
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "upload.chunk response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "upload.chunk",
+      "scope": "session",
+      "result": {
+        "uploadID": "12345678-1234-1234-1234-123456789abc",
+        "maximumBytes": 1,
+        "receivedBytes": 0
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "upload.chunk missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "upload.chunk",
+      "params": {
+        "uploadID": "12345678-1234-1234-1234-123456789abc",
+        "offset": 0,
+        "data": "YQ=="
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "upload.commit request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "upload.commit",
+      "params": {
+        "uploadID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "upload.commit response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "upload.commit",
+      "scope": "session",
+      "result": {
+        "path": "/tmp/aster-protocol",
+        "expiresAt": "sample"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "upload.commit missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "upload.commit",
+      "params": {
+        "uploadID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "upload.abort request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "upload.abort",
+      "params": {
+        "uploadID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "upload.abort response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "upload.abort",
+      "scope": "session",
+      "result": {
+        "aborted": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "upload.abort missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "upload.abort",
+      "params": {
+        "uploadID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "upload.clear request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "upload.clear",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "upload.clear response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "upload.clear",
+      "scope": "session",
+      "result": {
+        "removedCount": 0
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "upload.clear missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "upload.clear",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "config.get request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "config.get",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "config.get response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "config.get",
+      "scope": "session",
+      "result": {
+        "keybindings": [],
+        "settings": {}
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "config.get missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "config.get",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "config.reload request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "config.reload",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "config.reload response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "config.reload",
+      "scope": "session",
+      "result": {
+        "reloaded": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "config.reload missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "config.reload",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "custom_command.list request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "custom_command.list",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "custom_command.list response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "custom_command.list",
+      "scope": "session",
+      "result": {
+        "commands": []
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "custom_command.list missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "custom_command.list",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "custom_command.run request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "custom_command.run",
+      "params": {
+        "commandID": "12345678-1234-1234-1234-123456789abc",
+        "cwd": "/tmp/aster-protocol"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "custom_command.run response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "custom_command.run",
+      "scope": "session",
+      "result": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "cwd": "/tmp/aster-protocol",
+        "state": "running"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "custom_command.run missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "custom_command.run",
+      "params": {
+        "commandID": "12345678-1234-1234-1234-123456789abc",
+        "cwd": "/tmp/aster-protocol"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "integration.list request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "integration.list",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "integration.list response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "integration.list",
+      "scope": "session",
+      "result": {
+        "integrations": []
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "integration.list missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "integration.list",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "integration.install request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "integration.install",
+      "params": {
+        "provider": "sample"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "integration.install response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "integration.install",
+      "scope": "session",
+      "result": {
+        "installed": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "integration.install missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "integration.install",
+      "params": {
+        "provider": "sample"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "integration.remove request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "integration.remove",
+      "params": {
+        "provider": "sample"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "integration.remove response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "integration.remove",
+      "scope": "session",
+      "result": {
+        "removed": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "integration.remove missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "integration.remove",
+      "params": {
+        "provider": "sample"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "server.prepare request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "bootstrap",
+      "operation": "server.prepare",
+      "params": {
+        "sessionName": "sample",
+        "allowStart": false,
+        "requiredCapabilities": []
+      }
+    }
+  },
+  {
+    "name": "server.prepare response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "server.prepare",
+      "scope": "bootstrap",
+      "result": {
+        "session": {
+          "sessionID": "12345678-1234-1234-1234-123456789abc",
+          "name": "sample",
+          "state": "running"
+        },
+        "protocolMajor": 0,
+        "protocolMinor": 0,
+        "capabilities": []
+      }
+    }
+  },
+  {
+    "name": "server.prepare missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "bootstrap",
+      "operation": "server.prepare",
+      "params": {
+        "sessionName": "sample",
+        "allowStart": false,
+        "requiredCapabilities": []
+      }
+    }
+  },
+  {
+    "name": "server.status request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "server.status",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "server.status response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "server.status",
+      "scope": "session",
+      "result": {
+        "version": "sample",
+        "protocolMajor": 0,
+        "protocolMinor": 0,
+        "capabilities": []
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "server.status missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "server.status",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "server.stop request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "server.stop",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "server.stop response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "server.stop",
+      "scope": "session",
+      "result": {
+        "stopping": true
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "server.stop missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "server.stop",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "server.replace request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "server.replace",
+      "params": {
+        "installedVersion": "sample",
+        "expectedServerEpoch": "12345678-1234-1234-1234-123456789abc",
+        "stopRunningTerminals": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "server.replace response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "server.replace",
+      "scope": "session",
+      "result": {
+        "operationID": "12345678-1234-1234-1234-123456789abc",
+        "state": "prepared"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "server.replace missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "server.replace",
+      "params": {
+        "installedVersion": "sample",
+        "expectedServerEpoch": "12345678-1234-1234-1234-123456789abc",
+        "stopRunningTerminals": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "server.handoff request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "server.handoff",
+      "params": {
+        "installedVersion": "sample",
+        "expectedServerEpoch": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "server.handoff response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "server.handoff",
+      "scope": "session",
+      "result": {
+        "operationID": "12345678-1234-1234-1234-123456789abc",
+        "state": "prepared"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "server.handoff missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "server.handoff",
+      "params": {
+        "installedVersion": "sample",
+        "expectedServerEpoch": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "request.status request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "request.status",
+      "params": {
+        "queriedRequestID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "request.status response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "request.status",
+      "scope": "session",
+      "result": {
+        "queriedRequestID": "12345678-1234-1234-1234-123456789abc",
+        "operation": "sample",
+        "state": "pending",
+        "resourceIDs": []
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "request.status missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "request.status",
+      "params": {
+        "queriedRequestID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "upload.status request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "upload.status",
+      "params": {
+        "uploadID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "upload.status response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "upload.status",
+      "scope": "session",
+      "result": {
+        "uploadID": "12345678-1234-1234-1234-123456789abc",
+        "maximumBytes": 1,
+        "receivedBytes": 0
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "upload.status missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "upload.status",
+      "params": {
+        "uploadID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "server.operation_status request",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "registry",
+      "operation": "server.operation_status",
+      "params": {
+        "operationID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "server.operation_status response",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "server.operation_status",
+      "scope": "registry",
+      "result": {
+        "operationID": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc",
+        "state": "prepared"
+      }
+    }
+  },
+  {
+    "name": "server.operation_status missing requestID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "registry",
+      "operation": "server.operation_status",
+      "params": {
+        "operationID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "invalid ID",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "requestID": "bad",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.list",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "wrong scope",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "registry",
+      "operation": "terminal.list",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "missing target",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.list",
+      "params": {}
+    }
+  },
+  {
+    "name": "missing durable timestamp",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.create",
+      "params": {
+        "cwd": "/tmp/aster-protocol",
+        "argv": [
+          "sample"
+        ]
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "timestamp on read",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.list",
+      "params": {},
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "createdAtUnixMs": 1
+    }
+  },
+  {
+    "name": "takeover missing epoch",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.attach",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "takeover": true
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "takeover maximum epoch",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.attach",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "takeover": true,
+        "expectedLeaseEpoch": 18446744073709551615
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "maximum creation timestamp",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.create",
+      "params": {
+        "cwd": "/tmp/aster-protocol",
+        "argv": [
+          "sample"
+        ]
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "createdAtUnixMs": 18446744073709551615
+    }
+  },
+  {
+    "name": "missing revision",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "workspace.create",
+      "params": {
+        "title": "sample",
+        "terminal": {
+          "cwd": "/tmp/aster-protocol",
+          "argv": [
+            "sample"
+          ]
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "createdAtUnixMs": 0
+    }
+  },
+  {
+    "name": "missing lease",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.control",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "action": "input",
+        "data": "YQ=="
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "controlSequence": 0
+    }
+  },
+  {
+    "name": "missing control sequence",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.control",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "action": "input",
+        "data": "YQ=="
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "lease": {
+        "leaseID": "12345678-1234-1234-1234-123456789abc",
+        "leaseEpoch": 0
+      }
+    }
+  },
+  {
+    "name": "params not object",
+    "valid": false,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.list",
+      "params": [],
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "maximum counters",
+    "valid": true,
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "terminal.control",
+      "params": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "action": "input",
+        "data": "YQ=="
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "lease": {
+        "leaseID": "12345678-1234-1234-1234-123456789abc",
+        "leaseEpoch": 18446744073709551615
+      },
+      "controlSequence": 18446744073709551615
+    }
+  },
+  {
+    "name": "error response",
+    "valid": true,
+    "value": {
+      "type": "error",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.create",
+      "scope": "session",
+      "error": {
+        "code": "cwd_unavailable",
+        "message": "Remote directory is unavailable",
+        "retry": "never"
+      }
+    }
+  },
+  {
+    "name": "invalid error retry",
+    "valid": false,
+    "value": {
+      "type": "error",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.create",
+      "scope": "session",
+      "error": {
+        "code": "cwd_unavailable",
+        "message": "Remote directory is unavailable",
+        "retry": "automatically_execute"
+      }
+    }
+  },
+  {
+    "name": "write attachment missing lease",
+    "valid": false,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.attach",
+      "scope": "session",
+      "result": {
+        "attachmentID": "12345678-1234-1234-1234-123456789abc",
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "readOnly": false
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "observer current lease epoch 0",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.observe",
+      "scope": "session",
+      "result": {
+        "attachmentID": "12345678-1234-1234-1234-123456789abc",
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "readOnly": true,
+        "currentLeaseEpoch": 0
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "observer current lease epoch 18446744073709551615",
+    "valid": true,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.observe",
+      "scope": "session",
+      "result": {
+        "attachmentID": "12345678-1234-1234-1234-123456789abc",
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "readOnly": true,
+        "currentLeaseEpoch": 18446744073709551615
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "observer current lease epoch negative",
+    "valid": false,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.observe",
+      "scope": "session",
+      "result": {
+        "attachmentID": "12345678-1234-1234-1234-123456789abc",
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "readOnly": true,
+        "currentLeaseEpoch": -1
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "observer current lease epoch overflow",
+    "valid": false,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.observe",
+      "scope": "session",
+      "result": {
+        "attachmentID": "12345678-1234-1234-1234-123456789abc",
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "readOnly": true,
+        "currentLeaseEpoch": 18446744073709551616
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "observer missing current lease epoch",
+    "valid": false,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.observe",
+      "scope": "session",
+      "result": {
+        "attachmentID": "12345678-1234-1234-1234-123456789abc",
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "readOnly": true
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  },
+  {
+    "name": "observer unexpectedly has lease",
+    "valid": false,
+    "value": {
+      "type": "response",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "operation": "terminal.observe",
+      "scope": "session",
+      "result": {
+        "attachmentID": "12345678-1234-1234-1234-123456789abc",
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "readOnly": true,
+        "currentLeaseEpoch": 0,
+        "lease": {
+          "leaseID": "12345678-1234-1234-1234-123456789abc",
+          "leaseEpoch": 0
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "revision": 0
+    }
+  }
+]

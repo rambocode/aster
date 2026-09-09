@@ -1,0 +1,57 @@
+[
+  {
+    "name": "snapshot_begin",
+    "valid": true,
+    "value": {
+      "type": "snapshot_begin",
+      "length": 1,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sequence": 0
+    }
+  },
+  {
+    "name": "delta_begin",
+    "valid": true,
+    "value": {
+      "type": "delta_begin",
+      "length": 1,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sequence": 1,
+      "baseSequence": 0
+    }
+  },
+  {
+    "name": "snapshot_end",
+    "valid": true,
+    "value": {
+      "type": "snapshot_end"
+    }
+  },
+  {
+    "name": "delta_end",
+    "valid": true,
+    "value": {
+      "type": "delta_end"
+    }
+  },
+  {
+    "name": "oversized snapshot",
+    "valid": false,
+    "value": {
+      "type": "snapshot_begin",
+      "length": 33554433,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sequence": 0
+    }
+  },
+  {
+    "name": "delta missing base",
+    "valid": false,
+    "value": {
+      "type": "delta_begin",
+      "length": 1,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sequence": 0
+    }
+  }
+]

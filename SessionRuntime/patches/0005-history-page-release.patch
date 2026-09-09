@@ -1,0 +1,239 @@
+diff --git a/src/terminal/PageList.zig b/src/terminal/PageList.zig
+index 17eea73d0..c4207574a 100644
+--- a/src/terminal/PageList.zig
++++ b/src/terminal/PageList.zig
+@@ -59,6 +59,10 @@ const std_capacity = pagepkg.std_capacity;
+ /// The byte size required for a standard page.
+ const std_size = Page.layout(std_capacity).total_size;
+ 
++// Embedders budget retained history across terminals. Do not retain freed
++// standard pages in per-terminal arenas after that history has been evicted.
++const direct_pages = build_options.artifact == .lib;
++
+ /// The memory pool we use for page memory buffers. We use a separate pool
+ /// so we can allocate these with a page allocator. We have to use a page
+ /// allocator because we need memory that is zero-initialized and page-aligned.
+@@ -89,7 +93,7 @@ pub const MemoryPool = struct {
+     ) Allocator.Error!MemoryPool {
+         var node_pool = try NodePool.initPreheated(gen_alloc, preheat);
+         errdefer node_pool.deinit();
+-        var page_pool = try PagePool.initPreheated(page_alloc, preheat);
++        var page_pool = try PagePool.initPreheated(page_alloc, if (direct_pages) 0 else preheat);
+         errdefer page_pool.deinit();
+         var pin_pool = try PinPool.initPreheated(gen_alloc, 8);
+         errdefer pin_pool.deinit();
+@@ -437,7 +441,7 @@ fn initPages(
+     // Add pages as needed to create our initial viewport.
+     const cap = initialCapacity(cols);
+     const layout = Page.layout(cap);
+-    const pooled = layout.total_size <= std_size;
++    const pooled = !direct_pages and layout.total_size <= std_size;
+     const page_alloc = pool.pages.arena.child_allocator;
+ 
+     // Guaranteed by comptime checks in initialCapacity but
+@@ -449,7 +453,7 @@ fn initPages(
+     errdefer {
+         var it = page_list.first;
+         while (it) |node| : (it = node.next) {
+-            if (node.data.memory.len > std_size) {
++            if (direct_pages or node.data.memory.len > std_size) {
+                 page_alloc.free(node.data.memory);
+             }
+         }
+@@ -469,7 +473,7 @@ fn initPages(
+             break :buf try page_alloc.alignedAlloc(
+                 u8,
+                 .fromByteUnits(std.heap.page_size_min),
+-                layout.total_size,
++                if (direct_pages) @max(std_size, layout.total_size) else layout.total_size,
+             );
+         };
+         errdefer if (pooled)
+@@ -638,7 +642,7 @@ pub fn deinit(self: *PageList) void {
+     const page_alloc = self.pool.pages.arena.child_allocator;
+     var it = self.pages.first;
+     while (it) |node| : (it = node.next) {
+-        if (node.data.memory.len > std_size) {
++        if (direct_pages or node.data.memory.len > std_size) {
+             page_alloc.free(node.data.memory);
+         }
+     }
+@@ -658,6 +662,10 @@ pub fn deinit(self: *PageList) void {
+ pub fn reset(self: *PageList) void {
+     defer self.assertIntegrity();
+ 
++    // Reset is infallible: the library reuses sufficient existing buffers,
++    // rather than releasing all buffers then risking an OOM in initPages.
++    if (direct_pages) return self.resetDirectPages();
++
+     // We need enough pages/nodes to keep our active area. This should
+     // never fail since we by definition have allocated a page already
+     // that fits our size but I'm not confident to make that assertion.
+@@ -679,7 +687,7 @@ pub fn reset(self: *PageList) void {
+         const page_alloc = self.pool.pages.arena.child_allocator;
+         var it = self.pages.first;
+         while (it) |node| : (it = node.next) {
+-            if (node.data.memory.len > std_size) {
++            if (direct_pages or node.data.memory.len > std_size) {
+                 page_alloc.free(node.data.memory);
+             }
+         }
+@@ -755,6 +763,41 @@ pub fn reset(self: *PageList) void {
+     self.viewport = .active;
+ }
+ 
++/// Allocation-free reset for direct page backing. All discarded buffers are
++/// returned immediately; retained buffers remain active-screen allocations.
++fn resetDirectPages(self: *PageList) void {
++    var remaining = self.rows;
++    var it = self.pages.first;
++    while (it) |node| {
++        const next = node.next;
++        if (remaining == 0) {
++            self.pages.remove(node);
++            self.destroyNode(node);
++        } else {
++            node.data.reinit();
++            // Non-reflow shrink preserves capacity.cols; reinit restores that
++            // capacity, so restore the current logical width explicitly.
++            node.data.size.cols = self.cols;
++            node.data.size.rows = @min(remaining, node.data.capacity.rows);
++            remaining -= node.data.size.rows;
++            node.serial = self.page_serial;
++            self.page_serial += 1;
++        }
++        it = next;
++    }
++    assert(remaining == 0);
++    self.page_serial_min = self.pages.first.?.serial;
++    self.total_rows = self.rows;
++    for (self.tracked_pins.keys()) |pin_| {
++        pin_.node = self.pages.first.?;
++        pin_.x = 0;
++        pin_.y = 0;
++        pin_.garbage = true;
++    }
++    self.viewport_pin.garbage = false;
++    self.viewport = .active;
++}
++
+ pub const Clone = struct {
+     /// The top and bottom (inclusive) points of the region to clone.
+     /// The x coordinate is ignored; the full row is always cloned.
+@@ -820,7 +863,7 @@ pub fn clone(
+         const page_alloc = pool.pages.arena.child_allocator;
+         var page_it = page_list.first;
+         while (page_it) |node| : (page_it = node.next) {
+-            if (node.data.memory.len > std_size) {
++            if (direct_pages or node.data.memory.len > std_size) {
+                 page_alloc.free(node.data.memory);
+             }
+         }
+@@ -3375,7 +3418,7 @@ inline fn createPageExt(
+     errdefer pool.nodes.destroy(page);
+ 
+     const layout = Page.layout(cap);
+-    const pooled = layout.total_size <= std_size;
++    const pooled = !direct_pages and layout.total_size <= std_size;
+     const page_alloc = pool.pages.arena.child_allocator;
+ 
+     // It would be better to encode this into the Zig error handling
+@@ -3392,7 +3435,7 @@ inline fn createPageExt(
+         try page_alloc.alignedAlloc(
+             u8,
+             .fromByteUnits(std.heap.page_size_min),
+-            layout.total_size,
++            if (direct_pages) @max(std_size, layout.total_size) else layout.total_size,
+         );
+     errdefer if (pooled)
+         pool.pages.destroy(page_buf)
+@@ -3442,7 +3485,7 @@ fn destroyNodeExt(
+     // Update our accounting for page size
+     if (total_size) |v| v.* -= page.memory.len;
+ 
+-    if (page.memory.len <= std_size) {
++    if (!direct_pages and page.memory.len <= std_size) {
+         // Reset the memory to zero so it can be reused
+         @memset(page.memory, 0);
+         pool.pages.destroy(@ptrCast(page.memory.ptr));
+@@ -14654,3 +14697,80 @@ test "PageList split preserves hyperlinks" {
+         try testing.expectEqualStrings("https://example.com", link.uri.slice(second_page.memory));
+     }
+ }
++
++test "PageList library page backing bypasses spare arena and reset reuses buffers" {
++    const testing = std.testing;
++    if (!direct_pages) return error.SkipZigTest;
++    var list = try PageList.init(testing.allocator, 80, 3, 16 * 1024 * 1024);
++    defer list.deinit();
++    for (0..1000) |_| _ = try list.grow();
++    try testing.expect(list.pages.first != list.pages.last);
++    try testing.expect(list.pool.pages.arena.state.buffer_list.first == null);
++    list.eraseHistory(null);
++    try testing.expectEqual(@as(usize, list.rows), list.total_rows);
++    try testing.expect(list.pool.pages.arena.state.buffer_list.first == null);
++    for (0..1000) |_| _ = try list.grow();
++    list.reset();
++    try testing.expectEqual(@as(usize, list.rows), list.total_rows);
++    try testing.expect(list.pool.pages.arena.state.buffer_list.first == null);
++    list.reset();
++    try testing.expectEqual(@as(usize, list.rows), list.total_rows);
++}
++
++test "PageList library direct page allocations are released through destroyNodeExt" {
++    const testing = std.testing;
++    if (!direct_pages) return error.SkipZigTest;
++    // Testing allocator catches mismatched frees and leaked direct allocations,
++    // unlike the native page allocator used by production PageList.init.
++    var pool = try MemoryPool.init(testing.allocator, testing.allocator, 8);
++    defer pool.deinit();
++    var serial: u64 = 0;
++    const initialized = try initPages(&pool, &serial, 80, 100);
++    var nodes = initialized[0];
++    var bytes = initialized[1];
++    try testing.expect(bytes > 0);
++    try testing.expect(pool.pages.arena.state.buffer_list.first == null);
++    while (nodes.popFirst()) |node| destroyNodeExt(&pool, node, &bytes);
++    try testing.expectEqual(@as(usize, 0), bytes);
++    try testing.expect(pool.pages.arena.state.buffer_list.first == null);
++}
++
++test "PageList library reset preserves resized geometry accounting and tracked pins" {
++    const testing = std.testing;
++    if (!direct_pages) return error.SkipZigTest;
++    for ([_]bool{ false, true }) |reflow| {
++        for ([_][2]size.CellCountInt{ .{ 80, 10 }, .{ 10, 120 } }) |columns| {
++            var list = try PageList.init(testing.allocator, columns[0], 3, 16 * 1024 * 1024);
++            defer list.deinit();
++            for (0..1000) |_| _ = try list.grow();
++            const tracked = try list.trackPin(list.pin(.{ .active = .{ .x = 1, .y = 1 } }).?);
++            defer list.untrackPin(tracked);
++            try list.resize(.{ .cols = columns[1], .rows = 5, .reflow = reflow });
++            const before_bytes = list.page_size;
++            list.reset();
++            try testing.expectEqual(columns[1], list.cols);
++            try testing.expectEqual(@as(size.CellCountInt, 5), list.rows);
++            try testing.expectEqual(@as(usize, 5), list.total_rows);
++            var bytes: usize = 0;
++            var rows: usize = 0;
++            var it = list.pages.first;
++            while (it) |node| : (it = node.next) {
++                try testing.expectEqual(list.cols, node.data.size.cols);
++                try testing.expect(node.data.size.rows > 0);
++                bytes += node.data.memory.len;
++                rows += node.data.size.rows;
++            }
++            try testing.expectEqual(@as(usize, 5), rows);
++            try testing.expectEqual(bytes, list.page_size);
++            try testing.expect(bytes <= before_bytes);
++            try testing.expect(tracked.node == list.pages.first.?);
++            try testing.expectEqual(@as(size.CellCountInt, 0), tracked.x);
++            try testing.expectEqual(@as(size.CellCountInt, 0), tracked.y);
++            try testing.expect(tracked.garbage);
++            try testing.expect(list.viewport_pin.node == list.pages.first.?);
++            try testing.expect(!list.viewport_pin.garbage);
++            try testing.expect(list.viewport == .active);
++            try testing.expect(list.pool.pages.arena.state.buffer_list.first == null);
++        }
++    }
++}

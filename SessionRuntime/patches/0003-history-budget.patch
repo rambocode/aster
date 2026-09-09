@@ -1,0 +1,94 @@
+diff --git a/src/terminal/c/formatter.zig b/src/terminal/c/formatter.zig
+--- a/src/terminal/c/formatter.zig
++++ b/src/terminal/c/formatter.zig
+@@ -814,3 +814,66 @@
+     formatter.extra.screen.cursor = false;
+     try formatter.format(writer);
+ }
++
++/// Charged bytes include the entire backing allocation of a mixed history /
++/// active page. This is a conservative retained-history charge, not process RSS
++/// (page-pool spare allocations and separately budgeted graphics are excluded).
++pub const AsterHistoryUsage = extern struct {
++    rows: usize,
++    charged_bytes: usize,
++    reclaimable_bytes: usize,
++};
++
++fn historyUsage(screen: *const @import("../Screen.zig")) AsterHistoryUsage {
++    var result: AsterHistoryUsage = .{ .rows = screen.pages.total_rows - screen.pages.rows, .charged_bytes = 0, .reclaimable_bytes = 0 };
++    if (result.rows == 0) return result;
++    var it = screen.pages.pageIterator(.right_down, .{ .history = .{} }, null);
++    while (it.next()) |chunk| {
++        result.charged_bytes += chunk.node.data.memory.len;
++        if (chunk.fullPage()) result.reclaimable_bytes += chunk.node.data.memory.len;
++    }
++    return result;
++}
++
++pub fn aster_history_usage(terminal_: terminal_c.Terminal, screen_id: u32, out: *AsterHistoryUsage) callconv(lib.calling_conv) Result {
++    const terminal = (terminal_ orelse return .invalid_value).terminal;
++    const key: @import("../ScreenSet.zig").Key = switch (screen_id) {
++        0 => .primary, 1 => .alternate, else => return .invalid_value,
++    };
++    const screen = terminal.screens.get(key) orelse return .no_value;
++    out.* = historyUsage(screen);
++    return .success;
++}
++
++/// Removes only an oldest history prefix. Whole history chunks are removed so
++/// the allocation charge actually decreases; a final mixed chunk removes only
++/// its history rows, preserving the active screen's cells and cursor.
++pub fn aster_history_trim(terminal_: terminal_c.Terminal, screen_id: u32, maximum: usize, removed: *usize, out: *AsterHistoryUsage) callconv(lib.calling_conv) Result {
++    removed.* = 0;
++    const terminal = (terminal_ orelse return .invalid_value).terminal;
++    const key: @import("../ScreenSet.zig").Key = switch (screen_id) {
++        0 => .primary, 1 => .alternate, else => return .invalid_value,
++    };
++    const screen = terminal.screens.get(key) orelse return .no_value;
++    const before = historyUsage(screen);
++    if (before.charged_bytes <= maximum) {
++        out.* = before;
++        return .success;
++    }
++    var remaining = before.charged_bytes;
++    var rows: usize = 0;
++    var it = screen.pages.pageIterator(.right_down, .{ .history = .{} }, null);
++    while (it.next()) |chunk| {
++        rows += chunk.end - chunk.start;
++        remaining -= chunk.node.data.memory.len;
++        if (remaining <= maximum) break;
++    }
++    // Validate the full range before mutation; no truncating integer cast may
++    // turn a large history prefix into a different region.
++    if (rows == 0 or rows > before.rows) return .invalid_value;
++    const bottom = std.math.cast(u32, rows - 1) orelse return .invalid_value;
++    screen.eraseHistory(.{ .history = .{ .y = bottom } });
++    out.* = historyUsage(screen);
++    removed.* = before.rows - out.rows;
++    return .success;
++}
+diff --git a/src/terminal/c/main.zig b/src/terminal/c/main.zig
+--- a/src/terminal/c/main.zig
++++ b/src/terminal/c/main.zig
+@@ -66,6 +66,8 @@
+ pub const aster_image_ids = formatter.aster_image_ids;
+ pub const aster_graphics_for_screen = formatter.aster_graphics_for_screen;
+ pub const aster_screen_total_rows = formatter.aster_screen_total_rows;
++pub const aster_history_usage = formatter.aster_history_usage;
++pub const aster_history_trim = formatter.aster_history_trim;
+ pub const aster_screen_state_buf = formatter.aster_screen_state_buf;
+ pub const aster_placement_render_info = formatter.aster_placement_render_info;
+ pub const aster_placement_anchor = formatter.aster_placement_anchor;
+diff --git a/src/lib_vt.zig b/src/lib_vt.zig
+--- a/src/lib_vt.zig
++++ b/src/lib_vt.zig
+@@ -209,6 +209,8 @@
+         @export(&c.aster_screen_row_buf, .{ .name = "ghostty_aster_screen_row_buf" });
+         @export(&c.aster_screen_state_buf, .{ .name = "ghostty_aster_screen_state_buf" });
+         @export(&c.aster_screen_total_rows, .{ .name = "ghostty_aster_screen_total_rows" });
++        @export(&c.aster_history_usage, .{ .name = "ghostty_aster_history_usage" });
++        @export(&c.aster_history_trim, .{ .name = "ghostty_aster_history_trim" });
+         @export(&c.aster_placement_render_info, .{ .name = "ghostty_aster_placement_render_info" });
+         @export(&c.aster_graphics_for_screen, .{ .name = "ghostty_aster_graphics_for_screen" });
+         @export(&c.aster_image_ids, .{ .name = "ghostty_aster_image_ids" });

@@ -45,3 +45,6 @@ site/docs/
 
 # 本地临时归档，不入库
 _to_delete/
+
+# Python protocol and test orchestration helpers
+__pycache__/

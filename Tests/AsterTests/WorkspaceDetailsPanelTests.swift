@@ -138,12 +138,9 @@ func inspectorPresentationAnimatesWithoutRelayoutingTerminalEachFrame() async th
   window.contentView?.layoutSubtreeIfNeeded()
 
   let terminal = try #require(
-    controller.view.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
+    controller.view.allDescendants.compactMap { $0 as? GhosttySurfaceView }.first)
   let initialTerminalWidth = terminal.frame.width
-  var gridSizes: [(columns: Int, rows: Int)] = []
-  terminal.onGridSizeChange = { columns, rows in
-    gridSizes.append((columns, rows))
-  }
+  let geometry = TestTerminalGeometryRecorder(view: terminal)
 
   model.toggleInspector()
   window.contentView?.layoutSubtreeIfNeeded()
@@ -171,7 +168,7 @@ func inspectorPresentationAnimatesWithoutRelayoutingTerminalEachFrame() async th
   // 展开只能把终端从收起态宽度直接切到展开态宽度。若先布局到终态、再退回
   // 折叠动画起点、最后再次进入终态，这里会记录三次网格变化，TUI 的 SIGWINCH
   // 重绘就会作为真实内容重复进入缓冲区。
-  #expect(gridSizes.count == 1)
+  #expect(geometry.sizes.count == 1)
 }
 
 @Test("重复开关详情面板不复制终端缓冲区内容")
@@ -200,36 +197,46 @@ func repeatedInspectorTransitionsKeepOneTerminalReflowPerToggle() async throws {
   window.contentView?.layoutSubtreeIfNeeded()
 
   let terminal = try #require(
-    controller.view.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
+    controller.view.allDescendants.compactMap { $0 as? GhosttySurfaceView }.first)
   let session = try #require(model.selectedTab?.activeSession)
   let sentinel = "ASTER_PANEL_REFLOW_SENTINEL"
-  terminal.dataReceived(slice: Array("\r\n\(sentinel)\r\n".utf8)[...])
+  let readyDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+  while !session.shellIntegrationDetected, ContinuousClock.now < readyDeadline {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  try #require(session.shellIntegrationDetected)
+  // 分开格式串和参数，Shell 回显不含完整 sentinel，只计真实输出。
+  #expect(session.sendAutomationBytes(Array("printf 'ASTER_PANEL_%s\\n' REFLOW_SENTINEL\n".utf8)))
+  let outputDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+  while !session.textSnapshot().lines.contains(where: { $0.contains(sentinel) }),
+        ContinuousClock.now < outputDeadline {
+    try await Task.sleep(for: .milliseconds(20))
+  }
   let occurrencesBefore = session.textSnapshot().lines.filter { $0.contains(sentinel) }.count
-  var gridSizes: [(columns: Int, rows: Int)] = []
-  terminal.onGridSizeChange = { columns, rows in gridSizes.append((columns, rows)) }
+  let geometry = TestTerminalGeometryRecorder(view: terminal)
 
   for _ in 0..<3 {
-    let beforePresentation = gridSizes.count
+    let beforePresentation = geometry.sizes.count
     model.toggleInspector()
     try await Task.sleep(for: .milliseconds(250))
     window.contentView?.layoutSubtreeIfNeeded()
-    #expect(gridSizes.count - beforePresentation == 1)
+    #expect(geometry.sizes.count - beforePresentation == 1)
 
-    let beforeRemoval = gridSizes.count
+    let beforeRemoval = geometry.sizes.count
     model.toggleInspector()
     try await Task.sleep(for: .milliseconds(250))
     window.contentView?.layoutSubtreeIfNeeded()
-    #expect(gridSizes.count - beforeRemoval == 1)
+    #expect(geometry.sizes.count - beforeRemoval == 1)
   }
 
   let currentTerminal = try #require(
-    controller.view.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
+    controller.view.allDescendants.compactMap { $0 as? GhosttySurfaceView }.first)
   let occurrencesAfter = session.textSnapshot().lines.filter { $0.contains(sentinel) }.count
   #expect(currentTerminal === terminal)
   #expect(occurrencesBefore == 1)
   #expect(occurrencesAfter == occurrencesBefore)
-  #expect(gridSizes.count == 6)
-  #expect(Set(gridSizes.map(\.columns)).count == 2)
+  #expect(geometry.sizes.count == 6)
+  #expect(Set(geometry.sizes.map(\.width)).count == 2)
 }
 
 @Test("关闭详情面板不对终端子树做 frame 动画")
@@ -255,11 +262,8 @@ func inspectorRemovalDoesNotAnimateTerminalViewTree() throws {
   let split = try #require(inspectorSplit(in: controller.view))
   let content = try #require(split.panelView(for: .content))
   let terminal = try #require(
-    content.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
-  var gridSizes: [(columns: Int, rows: Int)] = []
-  terminal.onGridSizeChange = { columns, rows in
-    gridSizes.append((columns, rows))
-  }
+    content.allDescendants.compactMap { $0 as? GhosttySurfaceView }.first)
+  let geometry = TestTerminalGeometryRecorder(view: terminal)
 
   model.toggleInspector()
   window.contentView?.layoutSubtreeIfNeeded()
@@ -274,8 +278,8 @@ func inspectorRemovalDoesNotAnimateTerminalViewTree() throws {
   // 内延迟刷新终端子树，容器或终端 layer 仍会被二次拉伸。
   #expect(animatedViews.isEmpty)
   // 一次显隐只能把终端网格直接切到最终列数。重复通知意味着 NSSplitView 的中间
-  // frame 泄漏进 SwiftTerm，会让 TUI 连续清屏、reflow，用户看到的就是抖动闪烁。
-  #expect(gridSizes.count <= 1)
+  // frame 泄漏进 Ghostty，会让 TUI 连续清屏、reflow，用户看到的就是抖动闪烁。
+  #expect(geometry.sizes.count <= 1)
 }
 
 @Test("面板显隐始终保留唯一切换入口并呈现五个页签 chip")
@@ -480,7 +484,7 @@ func togglingInspectorDoesNotRebuildWorkspaceViews() async throws {
   window.contentView?.layoutSubtreeIfNeeded()
 
   let terminal = try #require(
-    controller.view.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
+    controller.view.allDescendants.compactMap { $0 as? GhosttySurfaceView }.first)
   let tabsLabel = try #require(
     controller.view.allDescendants.compactMap { $0 as? NSTextField }
       .first { $0.stringValue == "TABS" })
@@ -540,7 +544,7 @@ func collapsingInspectorRestoresFocusFromItsSearchField() async throws {
   window.contentView?.layoutSubtreeIfNeeded()
 
   let terminal = try #require(
-    controller.view.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
+    controller.view.allDescendants.compactMap { $0 as? GhosttySurfaceView }.first)
   let search = try #require(
     controller.view.allDescendants.compactMap { $0 as? NSSearchField }.first)
   #expect(window.makeFirstResponder(search))
@@ -2189,7 +2193,7 @@ func workingDirectoryChangeRefreshesFilesWithoutRebuildingWorkspaceOrStealingFoc
   await Task.yield()
 
   let terminalView = try #require(
-    controller.view.allDescendants.compactMap { $0 as? AsterTerminalView }.first)
+    controller.view.allDescendants.compactMap { $0 as? GhosttySurfaceView }.first)
   let detailsController = try #require(
     controller.children.compactMap { $0 as? DetailsPanelViewController }.first)
   #expect(window.makeFirstResponder(terminalView))
@@ -2206,7 +2210,7 @@ func workingDirectoryChangeRefreshesFilesWithoutRebuildingWorkspaceOrStealingFoc
   let directorySubscription = model.selectedTab?.workingDirectoryChanged.sink {
     observedDirectories.append($0.directory)
   }
-  session.hostCurrentDirectoryUpdate(source: terminalView, directory: directory.path)
+  terminalView.applyWorkingDirectory(directory.path)
   var visibleButtonTitles: [String] = []
   for _ in 0..<40 {
     visibleButtonTitles = controller.view.allDescendants.compactMap { ($0 as? NSButton)?.title }

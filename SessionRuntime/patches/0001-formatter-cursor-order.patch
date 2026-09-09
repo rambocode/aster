@@ -1,0 +1,123 @@
+diff --git a/src/terminal/formatter.zig b/src/terminal/formatter.zig
+index a375b4dd7..bc61e2106 100644
+--- a/src/terminal/formatter.zig
++++ b/src/terminal/formatter.zig
+@@ -337,6 +337,9 @@ pub const TerminalFormatter = struct {
+         var screen_formatter: ScreenFormatter = .init(self.terminal.screens.active, self.opts);
+         screen_formatter.content = self.content;
+         screen_formatter.extra = self.extra.screen;
++        // Terminal-level margins and tabstops can move the cursor. Restore it
++        // only after those operations have completed.
++        screen_formatter.extra.cursor = false;
+         screen_formatter.pin_map = self.pin_map;
+         try screen_formatter.format(writer);
+ 
+@@ -416,12 +419,31 @@ pub const TerminalFormatter = struct {
+                     std.math.cast(usize, discarding.count) orelse return error.WriteFailed,
+                 ) catch return error.WriteFailed;
+             }
++            if (self.extra.screen.cursor) {
++                var cursor_formatter: ScreenFormatter = .init(self.terminal.screens.active, self.opts);
++                cursor_formatter.content = .none;
++                cursor_formatter.extra = .none;
++                cursor_formatter.extra.cursor = true;
++                if (self.terminal.modes.get(.origin)) {
++                    const cursor = &self.terminal.screens.active.cursor;
++                    cursor_formatter.cursor_position = .{
++                        .x = cursor.x -| self.terminal.scrolling_region.left,
++                        .y = cursor.y -| self.terminal.scrolling_region.top,
++                    };
++                }
++                cursor_formatter.pin_map = self.pin_map;
++                try cursor_formatter.format(writer);
++            }
+         }
+     }
+ };
+ 
+ /// Screen formatter formats a single terminal screen (e.g. primary vs alt).
+ pub const ScreenFormatter = struct {
++    /// CUP uses region-relative coordinates when the receiving terminal has
++    /// origin mode enabled. Standalone screen export keeps absolute coordinates.
++    cursor_position: ?struct { x: usize, y: usize } = null,
++
+     /// The screen to format.
+     screen: *const Screen,
+ 
+@@ -598,7 +620,23 @@ pub const ScreenFormatter = struct {
+ 
+         // Emit Kitty keyboard protocol state using CSI = u
+         if (self.extra.kitty_keyboard) {
+-            const current_flags = self.screen.kitty_keyboard.current();
++            const stack = &self.screen.kitty_keyboard;
++            const current_flags = stack.current();
++            var has_saved_flags = false;
++            for (stack.flags, 0..) |flags, index| {
++                if (index != stack.idx and flags.int() != 0) has_saved_flags = true;
++            }
++            if (has_saved_flags) {
++                // Restore ring entries oldest-to-newest. The physical index is
++                // irrelevant, but future pops must reveal the original flags.
++                try writer.writeAll("\x1b[<8u");
++                const first = (@as(usize, stack.idx) + 1) % stack.flags.len;
++                try writer.print("\x1b[={d};1u", .{stack.flags[first].int()});
++                for (1..stack.flags.len) |offset| {
++                    const index = (first + offset) % stack.flags.len;
++                    try writer.print("\x1b[>{d}u", .{stack.flags[index].int()});
++                }
++            }
+             if (current_flags.int() != kitty.KeyFlags.disabled.int()) {
+                 const flags = current_flags.int();
+                 try writer.print("\x1b[={d};1u", .{flags});
+@@ -656,7 +694,9 @@ pub const ScreenFormatter = struct {
+         if (self.extra.cursor) {
+             const cursor = &self.screen.cursor;
+             // CUP is 1-indexed
+-            try writer.print("\x1b[{d};{d}H", .{ cursor.y + 1, cursor.x + 1 });
++            const x = if (self.cursor_position) |position| position.x else cursor.x;
++            const y = if (self.cursor_position) |position| position.y else cursor.y;
++            try writer.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
+         }
+ 
+         // If we have a pin_map, we need to count how many bytes the extras
+@@ -998,6 +1038,7 @@ pub const PageFormatter = struct {
+ 
+         // Our style for non-plain formats
+         var style: Style = .{};
++        var protected = false;
+ 
+         // Track hyperlink state for HTML output. We need to close </a> tags
+         // when the hyperlink changes or ends.
+@@ -1302,6 +1343,10 @@ pub const PageFormatter = struct {
+                     }
+                 }
+ 
++                if (self.opts.emit == .vt and protected != cell.protected) {
++                    protected = cell.protected;
++                    try self.writeProtection(writer, protected, .{ .x = x, .y = y });
++                }
+                 switch (cell.content_tag) {
+                     // We combine codepoint and graphemes because both have
+                     // shared style handling. We use comptime to dup it.
+@@ -1336,6 +1381,8 @@ pub const PageFormatter = struct {
+             }
+         }
+ 
++        if (self.opts.emit == .vt and protected) try self.writeProtection(writer, false, .{ .x = end_x, .y = end_y });
++
+         // If the style is non-default, we need to close our style tag.
+         if (!style.default()) try self.formatStyleClose(writer);
+ 
+@@ -1361,6 +1408,12 @@ pub const PageFormatter = struct {
+         return .{ .rows = blank_rows, .cells = blank_cells };
+     }
+ 
++    fn writeProtection(self: PageFormatter, writer: *std.Io.Writer, protected: bool, point_: Coordinate) std.Io.Writer.Error!void {
++        const sequence = if (protected) "\x1b[1\"q" else "\x1b[0\"q";
++        try writer.writeAll(sequence);
++        if (self.point_map) |*map| map.map.appendNTimes(map.alloc, point_, sequence.len) catch return error.WriteFailed;
++    }
++
+     fn writeCell(
+         self: PageFormatter,
+         comptime tag: Cell.ContentTag,

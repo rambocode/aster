@@ -142,6 +142,7 @@ func mouseGestureRoutingPreventsPartialReports() throws {
   view.dataReceived(slice: Array("abcd\r\nwxyz".utf8)[...])
   view.dataReceived(slice: Array("\u{1B}[?1000h".utf8)[...])
   view.allowMouseReporting = true
+  view.mouseReportingBypassModifiers = [.option]
   var encodedInput: [UInt8] = []
   view.onEncodedInput = { encodedInput.append(contentsOf: $0) }
 
@@ -190,8 +191,8 @@ func mouseGestureRoutingPreventsPartialReports() throws {
   #expect(bytesAfterPress > 0)
   #expect(encodedInput.count > bytesAfterPress)
 
-  // Shift 默认绕过报告；程序用 XTSHIFTESCAPE 捕获 Shift 后则完整报告该手势。
-  view.dataReceived(slice: Array("\u{1B}[>0s".utf8)[...])
+  // 绕过修饰键由用户设置决定；切换到 Shift 后完整选择，关闭绕过后完整报告。
+  view.mouseReportingBypassModifiers = [.shift]
   encodedInput.removeAll()
   view.mouseDown(
     with: try mouseEvent(.leftMouseDown, at: NSPoint(x: 1, y: 1), modifiers: [.shift]))
@@ -199,7 +200,7 @@ func mouseGestureRoutingPreventsPartialReports() throws {
     with: try mouseEvent(.leftMouseUp, at: NSPoint(x: 1, y: 1), modifiers: [.shift]))
   #expect(encodedInput.isEmpty)
 
-  view.dataReceived(slice: Array("\u{1B}[>1s".utf8)[...])
+  view.mouseReportingBypassModifiers = []
   view.mouseDown(
     with: try mouseEvent(.leftMouseDown, at: NSPoint(x: 1, y: 1), modifiers: [.shift]))
   view.mouseUp(

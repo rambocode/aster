@@ -1,0 +1,10 @@
+[
+  {"name":"json-control","wire":[1,0,0,0,2,123,125],"payload":[123,125],"kind":1},
+  {"name":"binary-surface","wire":[2,0,0,0,4,0,255,27,65],"payload":[0,255,27,65],"kind":2},
+  {"name":"unknown-kind","wire":[3,0,0,0,1,65],"error":"unknownFrameKind"},
+  {"name":"empty-control","wire":[1,0,0,0,0],"error":"invalidFrameLength"},
+  {"name":"oversized-control","wire":[1,0,16,0,1],"error":"invalidFrameLength"},
+  {"name":"oversized-surface","wire":[2,0,4,0,1],"error":"invalidFrameLength"},
+  {"name":"truncated-header","wire":[1,0],"error":"truncatedFrame"},
+  {"name":"truncated-payload","wire":[1,0,0,0,2,123],"error":"truncatedFrame"}
+]

@@ -1,5 +1,6 @@
 # 网页设置架构
 
+当前设置界面有十类 WebKit 分类（含编辑器），由 AppKit 根容器和标题栏拖动条承载；原生设置控件保留为开发诊断回退。
 ## 背景
 
 Aster 设置页以 Otty 1.3.1 应用包内的 `settings-ui.html` 为功能与视觉基准，并以应用自有 HTML、CSS 和 JavaScript 实现。外观分类逐段对应原页的布局选择、标签页、窗口、主题详情、文本、四级字体来源、光标和 Dock 图标；主题详情同时覆盖语义 token 与 ANSI 16 色。
@@ -9,7 +10,7 @@ Aster 设置页以 Otty 1.3.1 应用包内的 `settings-ui.html` 为功能与视
 ## 领域边界
 
 - `Resources/settings-ui/index.html`：静态入口与 CSP，只允许同目录脚本、样式和图片，禁止网络连接、对象、表单和外部 base URL。
-- `Resources/settings-ui/settings.js`：九类字段清单、搜索、Otty 外观页专用渲染器、主题/Agent/Recipe/快捷键列表和消息协议。
+- `Resources/settings-ui/settings.js`：十类字段清单、搜索、Otty 外观页专用渲染器、主题/Agent/Recipe/快捷键列表和消息协议。
 - `Resources/settings-ui/settings.css`：Otty 风格的 200px 侧栏、单列卡片、外观预览、明暗外观、键盘焦点和响应式布局。
 - `SettingsViewController`：创建非持久化 `WKWebView`，只允许 `settings-ui` 目录内的 file URL 导航；接收消息、校验字段和执行 allowlist action。
 - `AppPreferences`：强类型 `AsterConfiguration` 是运行时真值；尚未进入运行时模型的跨平台字段由 `SettingsCompatibilityValue` 按 Bool、Number 或 String 原类型持久化。
@@ -40,8 +41,7 @@ flowchart LR
 
 设置窗口打开期间，只合并由配置广播触发的工作区整树刷新；现存终端偏好仍就地应用，
 而 Tab、Pane、焦点和其它工作区模型变化继续经过普通 `scheduleRefresh()` 立即显示。设置页的
-`WKWebView` 只占据系统 content area，不使用 `.fullSizeContentView` 覆盖透明标题栏，窗口顶部
-因此保留原生拖动区域。
+`WKWebView` 延伸到 `.fullSizeContentView` 的透明标题栏区域，上层原生 `SettingsTitlebarDragStrip` 将该区域的鼠标事件交回窗口，保留拖动能力。
 
 软件更新的四个字段不写入 `settings.json`，导入导出也不携带它们。
 
@@ -55,7 +55,7 @@ flowchart LR
 
 ## 验证
 
-`SettingsResponsivenessTests` 与 `AppKitMigrationTests` 覆盖窗口几何、原生标题栏拖动边界、设置打开期间 Tab/Pane 与标签栏布局实时刷新、单一非持久化 WebView、CSP/九类资源、Otty 外观页结构与范围控件真值、主题详情快照、Windows capability、强类型与复合字段写入、动态 Agent 字段、菜单快捷键、兼容字段持久化和活动工作区 Panel 宽度。软件更新一组另有专门回归：`settingsBridgeRoutesUpdateSettingsToUpdaterAndPreferences`（真值归属）、`settingsSnapshotExposesUpdateStatusAndCapability`（状态点与取反派生键）、`settingsUpdateActionTriggersCheck`（action allowlist 与重入）、`settingsUpdateSectionMatchesBridge`（网页清单与 Swift 桥、CSS 状态色一致）。发布前还需运行：
+`SettingsResponsivenessTests` 与 `AppKitMigrationTests` 覆盖窗口几何、原生标题栏拖动边界、设置打开期间 Tab/Pane 与标签栏布局实时刷新、单一非持久化 WebView、CSP/十类资源、Otty 外观页结构与范围控件真值、主题详情快照、Windows capability、强类型与复合字段写入、动态 Agent 字段、菜单快捷键、兼容字段持久化和活动工作区 Panel 宽度。软件更新一组另有专门回归：`settingsBridgeRoutesUpdateSettingsToUpdaterAndPreferences`（真值归属）、`settingsSnapshotExposesUpdateStatusAndCapability`（状态点与取反派生键）、`settingsUpdateActionTriggersCheck`（action allowlist 与重入）、`settingsUpdateSectionMatchesBridge`（网页清单与 Swift 桥、CSS 状态色一致）。发布前还需运行：
 
 ```bash
 node --check Resources/settings-ui/settings.js
