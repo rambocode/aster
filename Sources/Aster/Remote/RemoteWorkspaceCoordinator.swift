@@ -187,9 +187,137 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
     }
   }
 
+  // MARK: - 远端 Agent 事件桥接（P5.5）
+
+  /// 跨机器 Agent 状态聚合器。
+  let agentAggregator = RemoteAgentStateAggregator()
+  /// 通知服务注入点；测试替换为替身。
+  var agentNotificationPoster: (any TerminalNotificationPosting)?
+
+  /// 处理服务端 agent.changed 事件：解码 → 桥接到 TerminalSession → 聚合 → 通知。
+  ///
+  /// 远端 agent 状态由服务端权威决定。本地屏幕检测对远端 Pane 不与服务端竞争——
+  /// 每 provider 一个固定权威（见 P5.2 RemoteAgentStateAuthority）。
+  func handleAgentEvent(_ event: RemoteSessionEvent, machineProfileID: UUID) {
+    guard !isStopped else { return }
+    // 事件去重：(serverID, epoch, eventID)
+    let dedupKey = RemoteAgentEventKey(
+      serverID: event.target.serverID,
+      epoch: event.target.serverEpoch,
+      eventID: event.eventID)
+    guard !agentAggregator.checkAndRecordEvent(dedupKey) else { return }
+
+    // 解码 agent 信息
+    guard let body = event.decodedBody(),
+      let agentJSON = body["agent"] as? [String: Any] ?? Optional(body),
+      let info = decodeAgentInfo(agentJSON)
+    else { return }
+
+    // 桥接到对应的 TerminalSession
+    if let session = session(forTerminalID: info.terminalID, machineProfileID: machineProfileID) {
+      session.applyRemoteAgentState(info)
+    }
+
+    // 聚合并通知
+    _ = agentAggregator.aggregate(machineID: machineProfileID, agents: [info])
+    postAgentNotificationIfNeeded(info: info, machineProfileID: machineProfileID)
+  }
+
+  /// 解码 JSON 字典为 RemoteAgentInfo。容错：字段缺失时取默认值。
+  private func decodeAgentInfo(_ json: [String: Any]) -> RemoteAgentInfo? {
+    guard let terminalID = json["terminalID"] as? String,
+      let providerRaw = json["provider"] as? String,
+      let provider = AgentProvider(rawValue: providerRaw),
+      let stateRaw = json["state"] as? String,
+      let state = RemoteAgentStatus(rawValue: stateRaw)
+    else { return nil }
+    let sourceRaw = json["source"] as? String ?? "heuristic"
+    let source = RemoteAgentAuthority(rawValue: sourceRaw) ?? .heuristic
+    return RemoteAgentInfo(
+      terminalID: terminalID,
+      provider: provider,
+      state: state,
+      name: json["name"] as? String,
+      nativeSession: json["nativeSession"] as? String,
+      source: source,
+      unread: json["unread"] as? Bool ?? false)
+  }
+
+  /// 按 terminalID 找到对应的 TerminalSession（跨所有标签页搜索）。
+  private func session(forTerminalID terminalID: String, machineProfileID: UUID)
+    -> TerminalSession?
+  {
+    guard let model else { return nil }
+    for tab in model.tabs(forMachine: machineProfileID) {
+      for pane in tab.layout.allPanes
+      where pane.managedTerminal?.terminalID == terminalID {
+        return tab.runtime(for: pane.id)?.terminalSession
+      }
+    }
+    return nil
+  }
+
+  /// 远端 Agent 通知使用的默认 Shell 配置。远端 Agent 事件不与本地 Pane 的偏好绑定——
+  /// 它们可能发生在后台机器上，没有对应的前台标签。
+  private static let agentNotificationShellConfig = ShellConfiguration.agentNotificationDefault
+
+  /// 根据 Agent 状态决定是否发送 macOS 通知。
+  ///
+  /// 规则：blocked 发"等待输入"，done+unread 发"已完成"；stale(unknown) 不通知完成；
+  /// 重复事件由 agentAggregator.checkAndRecordEvent 在入口处拦截，不会到这里。
+  private func postAgentNotificationIfNeeded(info: RemoteAgentInfo, machineProfileID: UUID) {
+    let poster = agentNotificationPoster ?? TerminalNotificationService.shared
+    let machineName = machineLabel(for: machineProfileID)
+    let providerName = info.provider.displayName
+
+    switch info.state {
+    case .blocked:
+      let notification = TerminalNotification(
+        identifier: "agent.\(machineProfileID).\(info.terminalID).blocked",
+        title: "\(providerName) 等待输入",
+        body: "\(machineName) 上的 \(providerName) 需要你的确认。",
+        urgency: .normal)
+      poster.post(
+        notification, category: .commandFinish,
+        configuration: Self.agentNotificationShellConfig,
+        sourceTabIsFocused: false)
+    case .done where info.unread:
+      let notification = TerminalNotification(
+        identifier: "agent.\(machineProfileID).\(info.terminalID).done",
+        title: "\(providerName) 已完成",
+        body: "\(machineName) 上的 \(providerName) 任务已完成。",
+        urgency: .normal)
+      poster.post(
+        notification, category: .commandFinish,
+        configuration: Self.agentNotificationShellConfig,
+        sourceTabIsFocused: false)
+    default:
+      break
+    }
+  }
+
+  /// 取机器显示标签。远端机器用 SSH target，本机用 "Local"。
+  private func machineLabel(for machineProfileID: UUID) -> String {
+    ManagedTerminalCoordinatorRegistry.coordinator(forMachine: machineProfileID)
+      .remoteMachineLabel ?? "远端机器"
+  }
+
+  /// 机器断线时标记其所有 Agent 为 stale（不伪造完成）。
+  private func staleAgentsForMachine(_ machineProfileID: UUID) {
+    agentAggregator.staleAllForMachine(machineID: machineProfileID)
+    // 清除该机器所有 session 的远端权威标记
+    guard let model else { return }
+    for tab in model.tabs(forMachine: machineProfileID) {
+      for pane in tab.layout.allPanes where pane.managedTerminal != nil {
+        tab.runtime(for: pane.id)?.terminalSession?.clearRemoteAgentState()
+      }
+    }
+  }
+
   /// 连接中断：订阅、闸门与事件游标全部作废。
   func connectionLost(machineProfileID: UUID) {
     stopEventSubscription(forMachine: machineProfileID)
+    staleAgentsForMachine(machineProfileID)
     guard !isStopped, let workspace = workspaces[machineProfileID] else { return }
     apply(intents: workspace.controller.connectionLost(), to: workspace)
     closeInputGates(forMachine: machineProfileID)
@@ -228,7 +356,11 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
       },
       onEvent: { event in
         Task { @MainActor [weak self] in
-          await self?.handleEvent(sequence: event.sequence, machineProfileID: machineProfileID)
+          if event.kind == .agentChanged {
+            self?.handleAgentEvent(event, machineProfileID: machineProfileID)
+          } else {
+            await self?.handleEvent(sequence: event.sequence, machineProfileID: machineProfileID)
+          }
         }
       },
       onResynchronize: { _ in
@@ -258,10 +390,17 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
   }
 
   /// 收到基线握手：只有基线 revision 与本地不一致才补一次快照，避免每次订阅都多跑一趟。
+  ///
+  /// 初始 synchronize 尚未完成时 controller.revision 为 0，几乎任何非零订阅
+  /// revision 都会被误判为"不一致"而触发第二次 refresh。这个竞态会在首次 refresh
+  /// 完成前重建画面兴趣集合，导致显示桥被拆掉又重建。用 projection == nil 守护：
+  /// 首次 apply 设置投影之前不补快照，让初始 refresh 独占首轮同步。
   private func eventStreamSubscribed(
     _ subscription: RemoteSessionSubscription, machineProfileID: UUID
   ) async {
     guard !isStopped, let workspace = workspaces[machineProfileID] else { return }
+    // 初始 synchronize 尚未完成（projection 为 nil）时跳过：让首次 refresh 独占。
+    guard workspace.controller.projection != nil else { return }
     guard subscription.revision != workspace.controller.revision else { return }
     await refresh(machineProfileID: machineProfileID)
   }

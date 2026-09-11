@@ -33,6 +33,8 @@ public enum RemoteSessionEventKind: Equatable, Sendable {
   case terminalCreated
   case terminalUpdated
   case terminalExited
+  /// 远端 Agent 状态变更事件（P5）。
+  case agentChanged
   case unknown(String)
 
   public init(rawValue: String) {
@@ -43,6 +45,7 @@ public enum RemoteSessionEventKind: Equatable, Sendable {
     case "terminal.created": self = .terminalCreated
     case "terminal.updated": self = .terminalUpdated
     case "terminal.exited": self = .terminalExited
+    case "agent.changed": self = .agentChanged
     default: self = .unknown(rawValue)
     }
   }
@@ -55,6 +58,7 @@ public enum RemoteSessionEventKind: Equatable, Sendable {
     case .terminalCreated: return "terminal.created"
     case .terminalUpdated: return "terminal.updated"
     case .terminalExited: return "terminal.exited"
+    case .agentChanged: return "agent.changed"
     case .unknown(let name): return name
     }
   }

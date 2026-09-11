@@ -22,6 +22,14 @@ pub const Command = union(enum) {
     pane_split: struct { pane_id: []const u8, direction: []const u8, spec: Spec, revision: u64 },
     pane_update: struct { pane_id: []const u8, title: []const u8, revision: u64 },
     pane_close: struct { pane_id: []const u8, revision: u64 },
+    /// Agent 状态列表（只读）
+    agent_list,
+    /// Agent 状态上报（带 JSON body）
+    agent_report: struct { body: []const u8 },
+    /// Agent 详情诊断（按 terminalID）
+    agent_explain: struct { terminal_id: []const u8 },
+    /// Agent 完成确认（按 terminalID）
+    agent_acknowledge: struct { terminal_id: []const u8 },
 };
 
 /// Single-threaded CLI client for session-scope workspace operations.
@@ -122,12 +130,16 @@ fn kind(command: Command) Operation {
         .pane_split => .@"pane.split",
         .pane_update => .@"pane.update",
         .pane_close => .@"pane.close",
+        .agent_list => .@"agent.list",
+        .agent_report => .@"agent.report",
+        .agent_explain => .@"agent.explain",
+        .agent_acknowledge => .@"agent.acknowledge",
     };
 }
 
 fn revision(command: Command) u64 {
     return switch (command) {
-        .snapshot, .workspace_list => 0,
+        .snapshot, .workspace_list, .agent_list, .agent_report, .agent_explain, .agent_acknowledge => 0,
         .workspace_create => |value| value.revision,
         .workspace_update => |value| value.revision,
         .workspace_close => |value| value.revision,
@@ -143,7 +155,19 @@ fn revision(command: Command) u64 {
 fn parameters(a: std.mem.Allocator, command: Command) !std.json.Value {
     var result = std.json.ObjectMap.init(a);
     switch (command) {
-        .snapshot, .workspace_list => {},
+        .snapshot, .workspace_list, .agent_list => {},
+        .agent_report => |value| {
+            // agent.report 的 body 是预编码的 JSON，直接嵌入参数对象
+            const parsed = std.json.parseFromSlice(std.json.Value, a, value.body, .{}) catch return error.InvalidAgentBody;
+            defer parsed.deinit();
+            if (parsed.value != .object) return error.InvalidAgentBody;
+            var iter = parsed.value.object.iterator();
+            while (iter.next()) |entry| {
+                try result.put(entry.key_ptr.*, entry.value_ptr.*);
+            }
+        },
+        .agent_explain => |value| try result.put("terminalID", .{ .string = try validated(value.terminal_id) }),
+        .agent_acknowledge => |value| try result.put("terminalID", .{ .string = try validated(value.terminal_id) }),
         .workspace_create => |value| {
             try result.put("title", .{ .string = try shortText(value.title) });
             try result.put("terminal", try terminalSpec(a, value.spec));

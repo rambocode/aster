@@ -81,7 +81,7 @@ fn runInitialized(allocator: std.mem.Allocator, instance: *Instance, name: []con
     };
     reactor.control.registry = .{ .context = &registry, .respond = registryRespond };
     defer reactor.control.registry = null;
-    reactor.control.advertised_capabilities = &.{ "health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation" };
+    reactor.control.advertised_capabilities = &.{ "health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation", "agent_state" };
     var clock = try std.time.Timer.start();
     if (try stopping()) return error.ServiceStartupCancelled;
     if (report) |writer| try writer.finish(.ready);
@@ -272,6 +272,27 @@ fn deliverTerminalMessages(allocator: std.mem.Allocator, reactor: *Reactor, term
         };
         defer allocator.free(encoded);
         _ = reactor.deliver(event.connection_generation, encoded, false);
+    }
+    // agent.changed 事件广播给所有控制连接
+    while (terminals.takeAgentEvent()) |body| {
+        defer allocator.free(body);
+        var generations: [64]u64 = undefined;
+        const recipients = try reactor.controlGenerations(&generations);
+        const event_id = ids.uuidText(ids.newUUID());
+        for (recipients) |generation| {
+            const sequence = reactor.nextEventSequence(generation) orelse {
+                reactor.drop(generation);
+                continue;
+            };
+            const encoded = std.fmt.allocPrint(allocator,
+                "{{\"type\":\"event\",\"event\":\"agent.changed\",\"eventID\":\"{s}\",\"target\":{{\"serverID\":\"{s}\",\"serverEpoch\":\"{s}\",\"sessionID\":\"{s}\"}},\"sequence\":{d},\"revision\":{d},\"body\":{s}}}",
+                .{ &event_id, &terminals.server_id, &terminals.epoch_text, &terminals.session_id, sequence, terminals.currentRevision(), body }) catch {
+                reactor.drop(generation);
+                continue;
+            };
+            defer allocator.free(encoded);
+            _ = reactor.deliver(generation, encoded, false);
+        }
     }
 }
 

@@ -16,7 +16,7 @@ pub fn main() !void {
             return;
         }
         if (@import("build_options").with_vt and (std.mem.eql(u8, arg, "session") or std.mem.eql(u8, arg, "workspace") or
-            std.mem.eql(u8, arg, "tab") or std.mem.eql(u8, arg, "pane")))
+            std.mem.eql(u8, arg, "tab") or std.mem.eql(u8, arg, "pane") or std.mem.eql(u8, arg, "agent")))
         {
             structuralCommand(allocator, arg, &args) catch |err| {
                 const encoded = try std.json.Stringify.valueAlloc(allocator, .{ .type = "client_error", .code = @errorName(err) }, .{});
@@ -192,6 +192,28 @@ fn structuralCommand(allocator: std.mem.Allocator, domain: []const u8, args: *st
         try std.fs.File.stdout().writeAll(outcome.bytes);
         try std.fs.File.stdout().writeAll("\n");
         if (outcome.is_error) std.process.exit(1);
+        return;
+    }
+    // P5: Agent 操作不走 Options 解析，terminalID 是裸位置参数
+    if (std.mem.eql(u8, domain, "agent")) {
+        const parent = args.next() orelse return error.MissingStateParent;
+        const name = args.next() orelse return error.MissingStateName;
+        const command: client.Command = if (std.mem.eql(u8, action, "list"))
+            .agent_list
+        else if (std.mem.eql(u8, action, "report")) blk: {
+            const stdin = std.fs.File.stdin();
+            break :blk .{ .agent_report = .{ .body = try stdin.readToEndAlloc(allocator, 1024 * 1024) } };
+        } else if (std.mem.eql(u8, action, "explain"))
+            .{ .agent_explain = .{ .terminal_id = args.next() orelse return error.MissingTerminalID } }
+        else if (std.mem.eql(u8, action, "ack") or std.mem.eql(u8, action, "acknowledge"))
+            .{ .agent_acknowledge = .{ .terminal_id = args.next() orelse return error.MissingTerminalID } }
+        else
+            return error.UnsupportedAgentAction;
+        const reply = try client.execute(allocator, parent, name, command, 15000);
+        defer allocator.free(reply.bytes);
+        try std.fs.File.stdout().writeAll(reply.bytes);
+        try std.fs.File.stdout().writeAll("\n");
+        if (reply.is_error) std.process.exit(1);
         return;
     }
     const parent = args.next() orelse return error.MissingStateParent;

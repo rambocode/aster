@@ -157,6 +157,35 @@ public enum ManagedSessionCommand {
       endpoint.sessionName, terminalID,
     ]
   }
+
+  /// `agent list <state-parent> <name>`：列出该会话中所有 Agent 的状态。
+  public static func agentList(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["agent", "list", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
+  /// `agent report <state-parent> <name> <terminalID>`：上报 Agent 状态变更。
+  public static func agentReport(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String
+  ) -> [String] {
+    ["agent", "report", endpoint.stateParentPath, endpoint.sessionName, terminalID]
+  }
+
+  /// `agent explain <state-parent> <name> <terminalID>`：获取 Agent 详情与诊断。
+  public static func agentExplain(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String
+  ) -> [String] {
+    ["agent", "explain", endpoint.stateParentPath, endpoint.sessionName, terminalID]
+  }
+
+  /// `agent ack <state-parent> <name> <terminalID>`：确认 Agent 完成通知。
+  public static func agentAcknowledge(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String
+  ) -> [String] {
+    ["agent", "ack", endpoint.stateParentPath, endpoint.sessionName, terminalID]
+  }
 }
 
 /// 服务实例身份。`serverEpoch` 每次启动重新生成，用于识别冷重启。
@@ -233,6 +262,27 @@ public enum ManagedSessionReplyDecoder {
       cwd: raw["cwd"] as? String,
       exitCode: exitCode,
       serverEpoch: serverEpoch
+    )
+  }
+
+  /// 解析单个 Agent 信息。字段缺失时返回 nil，不抛错。
+  public static func agentInfo(_ raw: [String: Any]) -> RemoteAgentInfo? {
+    guard let terminalID = raw["terminalID"] as? String,
+      let providerValue = raw["provider"] as? String,
+      let provider = AgentProvider(rawValue: providerValue)
+    else { return nil }
+    let stateText = (raw["state"] as? String) ?? "unknown"
+    let state = RemoteAgentStatus(rawValue: stateText) ?? .unknown
+    let sourceText = (raw["source"] as? String) ?? "heuristic"
+    let source = RemoteAgentAuthority(rawValue: sourceText) ?? .heuristic
+    return RemoteAgentInfo(
+      terminalID: terminalID,
+      provider: provider,
+      state: state,
+      name: raw["name"] as? String,
+      nativeSession: raw["nativeSession"] as? String,
+      source: source,
+      unread: (raw["unread"] as? Bool) ?? false
     )
   }
 

@@ -40,7 +40,21 @@ pub const Session = struct {
     cleanup_context: ?scope.Context = null,
     history_limit: usize = history.terminal_limit,
     history_usage: history.Usage = .{},
+    /// Agent lifecycle hooks (Aster's `aster-agent-hook.sh`) announce state with
+    /// a private OSC 6974 written to the terminal. Ghostty's VT drops OSCs it
+    /// does not know, and a display bridge replays *screen state*, so the
+    /// directive would never reach any client through the surface stream and
+    /// a hidden pane would never learn about it at all. The server therefore
+    /// scans raw PTY output here and hands each payload to the service, which
+    /// is the authority for remote agent state (P5.2). Payloads are bounded and
+    /// the pending list is small; a flood only drops directives, never output.
+    agent_directives: std.ArrayList([]u8) = .empty,
+    /// Bytes after an unterminated OSC 6974 prefix carried to the next chunk.
+    directive_carry: std.ArrayList(u8) = .empty,
     pub const input_limit = 65536;
+    pub const directive_prefix = "\x1b]6974;";
+    pub const directive_limit = 256;
+    pub const pending_directive_limit = 16;
 
     pub fn create(allocator: std.mem.Allocator, cwd: [:0]const u8, executable: [:0]const u8, argv: [*:null]const ?[*:0]const u8, env: [*:null]const ?[*:0]const u8, rows: u16, cols: u16) !*Session {
         const self = try prepare(allocator, .{ .rows = rows, .columns = cols });
@@ -135,6 +149,9 @@ pub const Session = struct {
         self.terminal.deinit();
         self.pending_input.deinit(self.allocator);
         self.delta_bytes.deinit(self.allocator);
+        for (self.agent_directives.items) |bytes| self.allocator.free(bytes);
+        self.agent_directives.deinit(self.allocator);
+        self.directive_carry.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 
@@ -299,6 +316,7 @@ pub const Session = struct {
                         break;
                     }
                     try self.delta_bytes.appendSlice(self.allocator, buffer[0..n]);
+                    try self.scanAgentDirectives(buffer[0..n]);
                     self.terminal.write(buffer[0..n]);
                     try self.enforceHistoryLimit();
                     const response = try self.responses.bytes();
@@ -317,6 +335,73 @@ pub const Session = struct {
         try self.pollExit();
         if (self.delta_bytes.items.len != 0) self.delta_safe = self.delta_filter.consume(self.delta_bytes.items) and !self.viewport_snapshot_required;
         return changed;
+    }
+
+    /// Extracts complete `ESC ] 6974 ; payload (BEL | ESC \\)` sequences from one
+    /// output chunk. A prefix split across chunks is carried over (bounded by
+    /// `directive_limit`); anything longer is discarded as not-a-directive.
+    fn scanAgentDirectives(self: *Session, chunk: []const u8) !void {
+        var owned: ?[]u8 = null;
+        defer if (owned) |bytes| self.allocator.free(bytes);
+        const data = if (self.directive_carry.items.len == 0) chunk else blk: {
+            const joined = try self.allocator.alloc(u8, self.directive_carry.items.len + chunk.len);
+            @memcpy(joined[0..self.directive_carry.items.len], self.directive_carry.items);
+            @memcpy(joined[self.directive_carry.items.len..], chunk);
+            self.directive_carry.clearRetainingCapacity();
+            owned = joined;
+            break :blk joined;
+        };
+        var cursor: usize = 0;
+        while (std.mem.indexOfPos(u8, data, cursor, directive_prefix)) |start| {
+            const payload_start = start + directive_prefix.len;
+            var end: usize = payload_start;
+            var terminator_len: usize = 0;
+            var abandoned = false;
+            while (end < data.len) : (end += 1) {
+                const byte = data[end];
+                if (byte == 0x07) {
+                    terminator_len = 1;
+                    break;
+                }
+                if (byte == 0x1b) {
+                    if (end + 1 < data.len and data[end + 1] == '\\') {
+                        terminator_len = 2;
+                        break;
+                    }
+                    // A lone ESC at the very end may be half of ST: carry it.
+                    if (end + 1 == data.len) break;
+                    abandoned = true;
+                    break;
+                }
+                // Any other control byte, or an over-long payload, means this was
+                // not a directive; resume scanning right here so a real directive
+                // that follows is not swallowed together with the garbage.
+                if (byte < 0x20 or byte == 0x7f or end - payload_start >= directive_limit) {
+                    abandoned = true;
+                    break;
+                }
+            }
+            if (abandoned) {
+                cursor = end;
+                continue;
+            }
+            if (terminator_len == 0) {
+                // Ran out of data without a terminator: carry the bounded tail.
+                try self.directive_carry.appendSlice(self.allocator, data[start..]);
+                return;
+            }
+            const payload = data[payload_start..end];
+            if (payload.len != 0 and self.agent_directives.items.len < pending_directive_limit) {
+                try self.agent_directives.append(self.allocator, try self.allocator.dupe(u8, payload));
+            }
+            cursor = end + terminator_len;
+        }
+    }
+
+    /// Hands one pending hook directive payload to the service; caller frees it.
+    pub fn takeAgentDirective(self: *Session) ?[]u8 {
+        if (self.agent_directives.items.len == 0) return null;
+        return self.agent_directives.orderedRemove(0);
     }
 
     /// Returns null only while graphics are waiting for client pixel geometry.

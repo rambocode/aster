@@ -58,6 +58,12 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     }), .filters = &.{"workspace store"} });
     b.step("test-workspace-store", "Run workspace/tab/pane tree and layout persistence tests").dependOn(&b.addRunArtifact(layout_tests).step);
+    const agent_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/agent_store.zig"),
+        .target = target,
+        .optimize = optimize,
+    }), .filters = &.{"agent store"} });
+    b.step("test-agent-store", "Run bounded agent state store tests").dependOn(&b.addRunArtifact(agent_tests).step);
     const idempotency_tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/idempotency_log.zig"),
         .target = target,

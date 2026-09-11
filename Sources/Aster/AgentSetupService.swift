@@ -179,9 +179,9 @@ struct AgentSetupService {
   @discardableResult
   func uninstall(_ provider: AgentProvider) throws -> AgentSetupStatus {
     switch provider {
-    case .claudeCode, .codex, .cursorCLI, .grokBuild:
+    case .claudeCode, .codex, .cursorCLI:
       try uninstallJSONHooks(for: provider)
-    case .kimiCode:
+    case .kimiCode, .grokBuild:
       try uninstallManagedTOMLBlock(for: provider)
     case .openCode, .pi, .omp:
       try uninstallManagedArtifact(for: provider)
@@ -195,7 +195,7 @@ struct AgentSetupService {
 
   private func uninstallJSONHooks(for provider: AgentProvider) throws {
     let path = switch provider {
-    case .claudeCode, .grokBuild: "~/.claude/settings.json"
+    case .claudeCode: "~/.claude/settings.json"
     case .codex: "~/.codex/hooks.json"
     case .cursorCLI: "~/.cursor/hooks.json"
     default: preconditionFailure("JSON provider switch must be exhaustive")
@@ -243,9 +243,14 @@ struct AgentSetupService {
     return contents
   }
 
+  /// TOML 受管区块卸载：按 provider.installationStep 的路径定位目标文件。
   private func uninstallManagedTOMLBlock(for provider: AgentProvider) throws {
-    precondition(provider == .kimiCode)
-    let target = try expandedManagedPath("~/.kimi-code/config.toml")
+    let path: String = switch provider {
+    case .kimiCode: "~/.kimi-code/config.toml"
+    case .grokBuild: "~/.grok/config.toml"
+    default: preconditionFailure("TOML provider switch must be exhaustive")
+    }
+    let target = try expandedManagedPath(path)
     guard let original = try readExistingRegularFile(at: target) else { return }
     let current = try utf8String(original.data, path: target.path)
     guard let block = try managedTOMLBlock(in: current, path: target.path),
@@ -283,9 +288,9 @@ struct AgentSetupService {
 
   private func detectsManagedIntegration(for provider: AgentProvider) throws -> Bool {
     switch provider {
-    case .claudeCode, .codex, .cursorCLI, .grokBuild:
+    case .claudeCode, .codex, .cursorCLI:
       let path = switch provider {
-      case .claudeCode, .grokBuild: "~/.claude/settings.json"
+      case .claudeCode: "~/.claude/settings.json"
       case .codex: "~/.codex/hooks.json"
       case .cursorCLI: "~/.cursor/hooks.json"
       default: preconditionFailure("JSON provider switch must be exhaustive")
@@ -301,8 +306,13 @@ struct AgentSetupService {
         }
       }
 
-    case .kimiCode:
-      let url = try expandedManagedPath("~/.kimi-code/config.toml")
+    case .kimiCode, .grokBuild:
+      let tomlPath: String = switch provider {
+      case .kimiCode: "~/.kimi-code/config.toml"
+      case .grokBuild: "~/.grok/config.toml"
+      default: preconditionFailure("TOML provider switch must be exhaustive")
+      }
+      let url = try expandedManagedPath(tomlPath)
       guard let existing = try readExistingRegularFile(at: url) else { return false }
       let text = try utf8String(existing.data, path: url.path)
       guard let block = try managedTOMLBlock(in: text, path: url.path) else { return false }
@@ -526,15 +536,6 @@ struct AgentSetupService {
         .init(event: "Stop", state: .idle),
         .init(event: "PermissionRequest", state: .awaitingInput),
       ]
-    case .grokBuild:
-      // Grok 读 Claude 兼容事件，但没有 PermissionRequest；awaiting-input 因此不报。
-      [
-        .init(event: "SessionStart", state: .idle),
-        .init(event: "UserPromptSubmit", state: .processing),
-        .init(event: "PreToolUse", state: .processing),
-        .init(event: "PostToolUse", state: .processing),
-        .init(event: "Stop", state: .idle),
-      ]
     case .codex:
       [
         .init(event: "SessionStart", state: .idle),
@@ -550,7 +551,7 @@ struct AgentSetupService {
         .init(event: "postToolUse", state: .processing),
         .init(event: "stop", state: .idle),
       ]
-    case .openCode, .kimiCode, .pi, .omp,
+    case .grokBuild, .openCode, .kimiCode, .pi, .omp,
       .gemini, .githubCopilot, .amp, .droid, .devin, .kiro, .qoder, .qwen, .hermes,
       .antigravity, .maki, .muse, .cline, .kilo:
       []
@@ -593,7 +594,9 @@ struct AgentSetupService {
     ]
   }
 
+  /// 生成 TOML 受管区块。grok 使用 [[hooks.Event]] 嵌套格式，其余 provider 使用平坦 [[hooks]]。
   private func generatedTOMLBlock(for provider: AgentProvider) throws -> String {
+    if provider == .grokBuild { return try generatedGrokTOMLBlock() }
     var lines = [
       Self.managedTOMLStartMarker,
       "# schema_version = \(Self.schemaVersion)",
@@ -612,6 +615,31 @@ struct AgentSetupService {
         "[[hooks]]",
         "event = \"\(specification.event)\"",
         "command = \"\(tomlEscaped(command))\"",
+      ]
+    }
+    lines.append(Self.managedTOMLEndMarker)
+    return lines.joined(separator: "\n")
+  }
+
+  /// grok 原生 hooks 格式：[[hooks.EventName]] + [[hooks.EventName.hooks]]。
+  private func generatedGrokTOMLBlock() throws -> String {
+    var lines = [
+      Self.managedTOMLStartMarker,
+      "# schema_version = \(Self.schemaVersion)",
+    ]
+    let events: [(event: String, state: AgentTaskStateSignal)] = [
+      ("SessionStart", .idle),
+      ("PreToolUse", .processing),
+      ("PostToolUse", .processing),
+      ("SessionEnd", .idle),
+    ]
+    for (event, state) in events {
+      let command = try lifecycleHookCommand(state: state, provider: .grokBuild)
+      lines += [
+        "[[hooks.\(event)]]",
+        "  [[hooks.\(event).hooks]]",
+        "  type = \"command\"",
+        "  command = \"\(tomlEscaped(command))\"",
       ]
     }
     lines.append(Self.managedTOMLEndMarker)

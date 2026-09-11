@@ -220,11 +220,12 @@ private final class StreamRecorder: @unchecked Sendable {
 @Test func sessionEventStreamTreatsUnknownEventAsResynchronization() {
   var decoder = SessionEventStreamDecoder(expected: sampleTarget())
   _ = decoder.consume(line: handshakeLine(revision: 0))
-  let outcome = decoder.consume(line: eventLine("agent.changed", sequence: 1, revision: 1))
-  #expect(outcome == .resynchronize(.unknownEvent("agent.changed")))
+  // 使用一个真正未知的事件类型（agent.changed 已在 P5 加入已知枚举）
+  let outcome = decoder.consume(line: eventLine("upload.progress", sequence: 1, revision: 1))
+  #expect(outcome == .resynchronize(.unknownEvent("upload.progress")))
   // 序号确实被这条事件占用了，所以游标推进；但它不算已应用的业务变更。
   #expect(decoder.sequence == 1)
-  #expect(RemoteSessionEventKind(rawValue: "agent.changed").isUnknown)
+  #expect(RemoteSessionEventKind(rawValue: "upload.progress").isUnknown)
 }
 
 @Test func sessionEventStreamRejectsMalformedAndEventsBeforeHandshake() {

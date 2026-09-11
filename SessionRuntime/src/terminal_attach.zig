@@ -114,6 +114,17 @@ const Client = struct {
         defer parsed.deinit();
         const value = parsed.value;
         try value.validate(value.event, .{ .serverID = &self.server, .serverEpoch = &self.epoch, .sessionID = &self.session }, self.event_sequence, self.event_revision);
+        // The control channel is shared with P4/P5 broadcasts (workspace.changed,
+        // tab.changed, pane.changed, agent.changed) that every control connection
+        // receives. They carry nothing this bridge acts on, but they do consume a
+        // sequence number, so the cursor must advance or the next terminal event
+        // would look like a gap. Treating them as fatal killed every attached
+        // display bridge the moment any agent state was reported.
+        if (!isTerminalControlEvent(value.event)) {
+            self.event_sequence = value.sequence;
+            self.event_revision = value.revision;
+            return;
+        }
         const terminal_id = try identity(try string(value.body, "terminalID"));
         const matching = if (self.terminal_id) |bound| std.mem.eql(u8, &terminal_id, &bound) else false;
         var revoked = false;
@@ -259,12 +270,15 @@ pub fn run(a: std.mem.Allocator, parent_path: []const u8, name: []const u8, term
 }
 
 pub fn runWithTakeover(a: std.mem.Allocator, parent_path: []const u8, name: []const u8, terminal_id: []const u8, read_only: bool, takeover: bool) !void {
+    openExitLog(parent_path, name);
+    defer closeExitLog();
     // A missing control event invalidates both ownership and cached state.
     // Re-enter through the same handshake path once, with fresh connection IDs
     // and leases. Never replay an interrupted request or repeat a takeover.
     var recovering = false;
     while (true) {
         runConnection(a, parent_path, name, terminal_id, read_only, if (recovering) false else takeover) catch |err| {
+            logExit(terminal_id, @errorName(err));
             if (err != error.SequenceGap or recovering) return err;
             recovering = true;
             if (c.isatty(0) == 1) _ = c.tcflush(0, c.TCIFLUSH);
@@ -511,10 +525,64 @@ const Prefix = struct {
 /// Print a server rejection to stderr. Best effort and non-fatal: a failure to
 /// report must never replace the rejection the caller has to act on. CR+LF is
 /// used because the caller's terminal may still be in raw mode at this point.
+/// Only these event kinds change bridge ownership or the bound terminal's
+/// lifecycle; everything else on the shared control channel is a broadcast
+/// for other subscribers.
+fn isTerminalControlEvent(name: []const u8) bool {
+    return std.mem.eql(u8, name, "terminal.exited") or std.mem.eql(u8, name, "lease.revoked");
+}
+
 fn reportRejection(operation: @import("operation_kind.zig").Operation, code: []const u8, message: []const u8, retry: []const u8) void {
     var buffer: [4608]u8 = undefined;
     const text = std.fmt.bufPrint(&buffer, "aster-session: {s} rejected: code={s} retry={s} message={s}\r\n", .{ @tagName(operation), code, retry, message }) catch return;
     std.fs.File.stderr().writeAll(text) catch {};
+    appendExitLog(text);
+}
+
+/// Bridge exit diagnostics live in the private state directory as
+/// `<state>/<name>/attach-exits.log`. A bridge runs as a Ghostty surface
+/// command, so its stderr is painted onto a surface that the client tears down
+/// on exit; without this file a rejected or failed bridge leaves no evidence
+/// of *why* it exited. The log is best effort and bounded: any failure to
+/// open or write it is ignored, and it stops growing at 1 MiB.
+var exit_log: ?std.fs.File = null;
+
+fn openExitLog(parent_path: []const u8, name: []const u8) void {
+    var path_buffer: [4096]u8 = undefined;
+    const path = std.fmt.bufPrint(&path_buffer, "{s}/{s}/attach-exits.log", .{ parent_path, name }) catch return;
+    const file = std.fs.cwd().createFile(path, .{ .truncate = false, .mode = 0o600 }) catch return;
+    const size = (file.stat() catch {
+        file.close();
+        return;
+    }).size;
+    if (size >= 1024 * 1024) {
+        file.close();
+        return;
+    }
+    file.seekFromEnd(0) catch {
+        file.close();
+        return;
+    };
+    exit_log = file;
+}
+
+fn closeExitLog() void {
+    if (exit_log) |file| file.close();
+    exit_log = null;
+}
+
+fn appendExitLog(text: []const u8) void {
+    const file = exit_log orelse return;
+    var stamp: [64]u8 = undefined;
+    const prefix = std.fmt.bufPrint(&stamp, "[{d}] ", .{std.time.timestamp()}) catch return;
+    file.writeAll(prefix) catch return;
+    file.writeAll(text) catch return;
+}
+
+fn logExit(terminal_id: []const u8, reason: []const u8) void {
+    var buffer: [512]u8 = undefined;
+    const text = std.fmt.bufPrint(&buffer, "terminal attach {s} exited: {s}\n", .{ terminal_id, reason }) catch return;
+    appendExitLog(text);
 }
 fn resize(owner: *Client, terminal_id: []const u8, geometry: Geometry) !void {
     const reply = try owner.rpc(.@"terminal.control", .{ .terminalID = terminal_id, .action = "resize", .geometry = geometry });

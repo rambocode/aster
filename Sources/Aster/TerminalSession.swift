@@ -3214,6 +3214,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // 会随远端网络延迟卡住。因此这里立刻返回，真实状态回来后再决定走分离还是结束；
     // 在结果到达之前保持既有状态，不预先写任何结束事件。
     if let reference = managedTerminal {
+      // 必须在这里同步抓取：surface 会在分离路径里被销毁，之后读不到桥打出的拒绝原因。
+      let tail = ghosttyView?.readText(includeScrollback: true).map { text -> String in
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(trimmed.suffix(600))
+      } ?? ""
+      lastManagedBridgeExit = ManagedBridgeExit(code: code, outputTail: tail)
       Task { @MainActor [weak self] in
         guard let self else { return }
         let resolution = await ManagedTerminalCoordinatorRegistry.coordinator(for: reference)
@@ -3247,7 +3253,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       "terminal.managed_bridge_exited",
       level: .info,
       category: .terminal,
-      attributes: processDiagnosticAttributes(extra: ["mode": "bridge_exit"])
+      attributes: processDiagnosticAttributes(extra: [
+        "mode": "bridge_exit",
+        "exitCode": lastManagedBridgeExit?.code.map(String.init) ?? "nil",
+        "outputTail": lastManagedBridgeExit?.outputTail ?? "",
+      ])
     )
   }
 
@@ -3885,6 +3895,89 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 关闸提示文案。复用 `startupError` 警告条（`lifecycleState` 非 `.startFailed` 时
   /// 它按警告显示），不新增一套提示位。
   static let managedInputGateNotice = "正在同步远端会话快照，暂时不接受键盘输入。"
+
+  /// 显示桥最近一次非正常退出的诊断：退出码与退出瞬间的画面尾部。
+  /// 桥进程（`aster-session terminal attach`）把服务端拒绝码打在 stderr，也就是
+  /// surface 本身；分离路径随后会销毁 surface，这里在销毁前把它留住，否则
+  /// "桥为什么退出"在事后无从查证。
+  struct ManagedBridgeExit: Equatable {
+    let code: Int32?
+    let outputTail: String
+  }
+  private(set) var lastManagedBridgeExit: ManagedBridgeExit?
+
+  // MARK: - 远端 Agent 状态桥接（P5）
+
+  /// 服务端权威的 Agent 状态是否已接管本 Pane 的 agentTaskState。
+  /// 一旦为 true，本地屏幕检测与 hook 不再竞争。
+  private(set) var remoteAgentStateIsAuthoritative = false
+
+  /// 接收服务端权威的 Agent 状态（P5.5 agentChanged 事件）。
+  ///
+  /// 远端受管终端的状态由服务端决定，本地屏幕检测对远端 Pane 不得与服务端竞争。
+  /// 状态映射：working→processing, blocked→awaitingInput, done(unread)→idle+completionUnread,
+  /// idle→idle, unknown→不变（stale 不伪造完成）。
+  func applyRemoteAgentState(_ info: RemoteAgentInfo) {
+    // 与本地 hook 指令相同的 provider 关联规则：已识别 provider 后拒绝其它 provider 改写。
+    if let activeAgentProvider, activeAgentProvider != info.provider { return }
+    if activeAgentProvider == nil {
+      activeAgentProvider = info.provider
+      agentProviderIsTitleEvidenceOnly = false
+      if agentCommandStartedAt == nil { agentCommandStartedAt = Date() }
+    }
+    if let nativeSession = info.nativeSession, !nativeSession.isEmpty {
+      activeAgentSessionID = nativeSession
+    }
+    if info.state == .working || info.state == .blocked {
+      agentHasWorkEvidence = true
+    }
+
+    switch RemoteAgentStateAuthority.resolve(for: info.provider) {
+    case .hook:
+      // 完整生命周期 hook：服务端上报单独裁决，本地不再扫屏。
+      remoteAgentStateIsAuthoritative = true
+      stopAgentScreenMonitor()
+    case .screen, .heuristic:
+      // 部分 hook（Grok/Claude）：屏幕才看得到"等待批准"与"回到空闲"。hook 上报只用来
+      // 识别 provider 并启动对应清单的屏幕轮询；画面在（可见且桥已附加）时由屏幕裁决，
+      // 没有画面（隐藏/分离）时才退回下面的 hook 状态映射，后台仍能更新。
+      remoteAgentStateIsAuthoritative = false
+      syncAgentScreenMonitor()
+      if agentScreenMonitor != nil {
+        updateAgentTaskState()
+        return
+      }
+    }
+
+    let newState: AgentTaskState
+    switch info.state {
+    case .working:
+      newState = .processing
+    case .blocked:
+      newState = .awaitingInput
+    case .done:
+      newState = .idle
+    case .idle:
+      newState = .idle
+    case .unknown:
+      // stale：保持当前状态，不伪造转换
+      return
+    }
+    if agentTaskState != newState {
+      agentTaskState = newState
+    }
+    // done + unread → 标记完成未读
+    if info.state == .done, info.unread {
+      agentTaskCompletionUnread = true
+    } else if info.state != .done {
+      agentTaskCompletionUnread = false
+    }
+  }
+
+  /// 清除远端权威状态（断线/机器切走时）。
+  func clearRemoteAgentState() {
+    remoteAgentStateIsAuthoritative = false
+  }
 
   func toggleReadOnly() { setReadOnly(!readOnly) }
   func enterViMode() {

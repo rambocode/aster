@@ -96,6 +96,18 @@ public enum AgentProvider: String, CaseIterable, Codable, Equatable, Sendable {
     }
   }
 
+  /// `--version` 输出中用于二次确认身份的子串（大小写不敏感）。
+  /// 探测时若版本输出存在但不含此 token，则判定为 commandName 冲突（非本 provider）。
+  /// nil 表示无已知特征，退回冲突检测（查看其他 provider 的 token 是否出现）。
+  public var versionIdentityToken: String? {
+    switch self {
+    case .grokBuild: "grok"
+    case .claudeCode: "claude"
+    case .codex: "codex"
+    default: nil
+    }
+  }
+
   /// herdr 屏幕检测清单 id；没有清单的 provider（omp）返回 nil。
   public var detectionManifestID: String? {
     switch self {
@@ -408,8 +420,8 @@ extension AgentProvider {
     case .omp:
       .installManagedArtifact(directory: "~/.omp/agent/extensions", kind: .extension)
     case .grokBuild:
-      // Grok 只把用户级 hook 当作 Claude 兼容层来读，装进 ~/.claude/settings.json。
-      .mergeManagedHooks(path: "~/.claude/settings.json", format: .json)
+      // Grok 从 ~/.grok/config.toml 读取用户级 hooks（[[hooks.Event]] 格式）。
+      .mergeManagedHooks(path: "~/.grok/config.toml", format: .toml)
     case .gemini, .githubCopilot, .amp, .droid, .devin, .kiro, .qoder, .qwen, .hermes,
       .antigravity, .maki, .muse, .cline, .kilo:
       nil

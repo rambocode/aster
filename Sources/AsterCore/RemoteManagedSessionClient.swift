@@ -215,4 +215,57 @@ public struct RemoteManagedSessionClient: ManagedSessionClient {
     }
     return result.standardOutput
   }
+
+  // MARK: - Agent 状态查询（P5）
+
+  /// 列出该会话中所有 Agent 的当前状态。
+  public func agentList(
+    _ endpoint: ManagedSessionEndpoint
+  ) throws -> [RemoteAgentInfo] {
+    let output = try run(endpoint, ManagedSessionCommand.agentList(endpoint))
+    let json = try ManagedSessionReplyDecoder.envelope(output)
+    let result = json["result"] as? [String: Any] ?? [:]
+    let raw = result["agents"] as? [[String: Any]] ?? []
+    return raw.compactMap { ManagedSessionReplyDecoder.agentInfo($0) }
+  }
+
+  /// 上报指定终端的 Agent 状态变更，返回是否成功。
+  public func agentReport(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String
+  ) throws -> Bool {
+    let output = try run(
+      endpoint, ManagedSessionCommand.agentReport(endpoint, terminalID: terminalID))
+    let json = try ManagedSessionReplyDecoder.envelope(output)
+    return (json["result"] as? [String: Any])?["ok"] as? Bool ?? false
+  }
+
+  /// 获取 Agent 详情与诊断文本。
+  public func agentExplain(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String
+  ) throws -> (RemoteAgentInfo, String) {
+    let output = try run(
+      endpoint, ManagedSessionCommand.agentExplain(endpoint, terminalID: terminalID))
+    let json = try ManagedSessionReplyDecoder.envelope(output)
+    let result = json["result"] as? [String: Any] ?? [:]
+    guard let agentJSON = result["agent"] as? [String: Any],
+      let info = ManagedSessionReplyDecoder.agentInfo(agentJSON)
+    else {
+      throw ManagedSessionError.malformedReply("missing agent in explain result")
+    }
+    let explanation = result["explanation"] as? String ?? ""
+    return (info, explanation)
+  }
+
+  /// 确认 Agent 完成通知（标记已读），返回是否成功。
+  public func agentAcknowledge(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String
+  ) throws -> Bool {
+    let output = try run(
+      endpoint, ManagedSessionCommand.agentAcknowledge(endpoint, terminalID: terminalID))
+    let json = try ManagedSessionReplyDecoder.envelope(output)
+    return (json["result"] as? [String: Any])?["ok"] as? Bool ?? false
+  }
 }

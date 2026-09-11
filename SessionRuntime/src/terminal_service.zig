@@ -8,6 +8,7 @@ const durable = @import("idempotency_log.zig");
 const leases = @import("writer_lease.zig");
 const replies = @import("operation_response.zig");
 const preparation = @import("launch_preparation.zig");
+const agent_mod = @import("agent_store.zig");
 const ID = [36]u8;
 pub const Reply = struct { connection_generation: u64, bytes: []u8 };
 /// Lets the workspace domain own the pool completions of the terminals it
@@ -91,10 +92,14 @@ pub const Service = struct {
     reported_exits: u64 = 0,
     completion_encoding_failures: u64 = 0,
     control_cursors: std.ArrayList(ControlCursor) = .empty,
+    /// 会话级 Agent 状态存储
+    agent_store: agent_mod.Store = undefined,
+    /// 待广播的 agent.changed 事件体（已编码 JSON）
+    agent_events: std.ArrayList([]u8) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, pool: *Pool, state: *StateDirectory, identity: ids.Identity, epoch: [16]u8) !Service {
         const clock = try std.time.Timer.start();
-        var self: Service = .{ .allocator = allocator, .pool = pool, .log = try durable.Log.open(allocator, state, .{}), .identity = identity, .epoch = epoch, .server_id = ids.uuidText(identity.server_id), .session_id = ids.uuidText(identity.session_id), .epoch_text = ids.uuidText(epoch), .clock = clock };
+        var self: Service = .{ .allocator = allocator, .pool = pool, .log = try durable.Log.open(allocator, state, .{}), .identity = identity, .epoch = epoch, .server_id = ids.uuidText(identity.server_id), .session_id = ids.uuidText(identity.session_id), .epoch_text = ids.uuidText(epoch), .clock = clock, .agent_store = agent_mod.Store.init(allocator) };
         errdefer self.deinit();
         try self.control_cursors.ensureTotalCapacity(allocator, 64);
         try self.pending.ensureTotalCapacity(allocator, 64);
@@ -103,6 +108,7 @@ pub const Service = struct {
         try self.lease_states.ensureTotalCapacity(allocator, 64);
         try self.lease_events.ensureTotalCapacity(allocator, 256);
         try self.exit_events.ensureTotalCapacity(allocator, 64);
+        try self.agent_events.ensureTotalCapacity(allocator, 64);
         return self;
     }
     pub fn deinit(self: *Service) void {
@@ -118,6 +124,9 @@ pub const Service = struct {
         self.lease_events.deinit(self.allocator);
         self.exit_events.deinit(self.allocator);
         self.control_cursors.deinit(self.allocator);
+        for (self.agent_events.items) |bytes| self.allocator.free(bytes);
+        self.agent_events.deinit(self.allocator);
+        self.agent_store.deinit();
         self.log.deinit();
     }
     /// Current layout revision, borrowed from the workspace store when attached.
@@ -167,6 +176,11 @@ pub const Service = struct {
             .@"terminal.attach", .@"terminal.observe" => return try self.attach(a, r, generation),
             .@"terminal.release" => return try self.release(a, r, generation),
             .@"terminal.control" => return try self.control(a, r, generation),
+            .@"agent.list" => return try self.agentList(a, r),
+            .@"agent.report" => return try self.agentReport(a, r),
+            .@"agent.explain" => return try self.agentExplain(a, r),
+            .@"agent.rename" => return try self.agentRename(a, r),
+            .@"agent.acknowledge" => return try self.agentAcknowledge(a, r),
             else => return error.MissingCapability,
         }
     }
@@ -380,11 +394,25 @@ pub const Service = struct {
         // a reclaimed record can now hand its slot to a new terminal, and an
         // index-keyed mask would then suppress the newcomer's exit event.
         for (self.pool.entries.items) |*entry| {
+            // Hook directives found in this terminal's output become server-side
+            // agent state: the server is the authority, hidden panes and other
+            // clients learn about it through agent.changed, and nothing depends
+            // on a display bridge relaying a private OSC.
+            while (entry.session.takeAgentDirective()) |payload| {
+                defer self.allocator.free(payload);
+                self.applyAgentDirective(entry.id, payload) catch |err| {
+                    std.log.warn("agent directive ignored: {s}", .{@errorName(err)});
+                };
+            }
+        }
+        for (self.pool.entries.items) |*entry| {
             if (entry.exit_reported or entry.session.exit_status == null or !entry.session.eof or !entry.session.cleanupComplete()) continue;
             if (self.exit_events.items.len == 64) break;
             self.exit_events.appendAssumeCapacity(entry.id);
             entry.exit_reported = true;
             self.reported_exits +|= 1;
+            // 终端退出时清理其 Agent 记录
+            self.agent_store.removeTerminal(entry.id);
         }
         for (self.lease_states.items) |*state| {
             if (self.lease_events.items.len >= 256) break;
@@ -409,6 +437,120 @@ pub const Service = struct {
     pub fn takeLeaseEvent(self: *Service) ?LeaseEvent {
         return if (self.lease_events.items.len == 0) null else self.lease_events.orderedRemove(0);
     }
+    /// 取出下一条待广播的 agent.changed 事件体（已编码 JSON）
+    pub fn takeAgentEvent(self: *Service) ?[]u8 {
+        return if (self.agent_events.items.len == 0) null else self.agent_events.orderedRemove(0);
+    }
+    // ---- agent operations ------------------------------------------------
+
+    /// agent.list — 返回所有 Agent 状态
+    fn agentList(self: *Service, a: std.mem.Allocator, r: Request) ![]u8 {
+        try only(r.params, &.{});
+        const agents = self.agent_store.list();
+        var arena = std.heap.ArenaAllocator.init(a);
+        defer arena.deinit();
+        const temp = arena.allocator();
+        var array = std.json.Array.init(temp);
+        for (agents) |agent| try array.append(try agentValue(temp, &agent));
+        return try self.success(a, r, .{ .agents = std.json.Value{ .array = array } });
+    }
+
+    /// agent.report — 客户端上报 Agent 状态
+    fn agentReport(self: *Service, a: std.mem.Allocator, r: Request) ![]u8 {
+        try only(r.params, &.{ "terminalID", "provider", "state", "name", "nativeSession", "source" });
+        const terminal_id = try idParam(r.params, "terminalID");
+        const provider = try stringParam(r.params, "provider");
+        const state_str = try stringParam(r.params, "state");
+        const state = agent_mod.State.fromString(state_str) orelse return error.InvalidRequest;
+        const name_val = optionalString(r.params, "name");
+        const native_session = optionalString(r.params, "nativeSession");
+        const source = optionalString(r.params, "source");
+        const accepted = try self.agent_store.report(terminal_id, provider, state, name_val, native_session, source);
+        if (accepted) try self.emitAgentChanged(terminal_id);
+        return try self.success(a, r, .{ .accepted = accepted });
+    }
+
+    /// agent.explain — 查询单个终端的 Agent 详情
+    fn agentExplain(self: *Service, a: std.mem.Allocator, r: Request) ![]u8 {
+        try only(r.params, &.{"terminalID"});
+        const terminal_id = try idParam(r.params, "terminalID");
+        if (self.agent_store.explain(terminal_id)) |agent| {
+            var arena = std.heap.ArenaAllocator.init(a);
+            defer arena.deinit();
+            return try self.success(a, r, .{ .agent = try agentValue(arena.allocator(), agent) });
+        }
+        return try self.success(a, r, .{ .agent = null });
+    }
+
+    /// agent.rename — 重命名 Agent
+    fn agentRename(self: *Service, a: std.mem.Allocator, r: Request) ![]u8 {
+        try only(r.params, &.{ "terminalID", "name" });
+        const terminal_id = try idParam(r.params, "terminalID");
+        const name_str = try stringParam(r.params, "name");
+        const accepted = try self.agent_store.rename(terminal_id, name_str);
+        if (accepted) try self.emitAgentChanged(terminal_id);
+        return try self.success(a, r, .{ .accepted = accepted });
+    }
+
+    /// agent.acknowledge — 标记 Agent 完成已读
+    fn agentAcknowledge(self: *Service, a: std.mem.Allocator, r: Request) ![]u8 {
+        try only(r.params, &.{"terminalID"});
+        const terminal_id = try idParam(r.params, "terminalID");
+        const accepted = self.agent_store.acknowledge(terminal_id);
+        return try self.success(a, r, .{ .accepted = accepted });
+    }
+
+    /// 将 Agent 状态编码为协议 JSON 对象
+    fn agentValue(arena: std.mem.Allocator, agent: *const agent_mod.Agent) !std.json.Value {
+        var object = std.json.ObjectMap.init(arena);
+        try object.put("terminalID", .{ .string = try arena.dupe(u8, &agent.terminal_id) });
+        try object.put("provider", .{ .string = try arena.dupe(u8, agent.provider) });
+        try object.put("state", .{ .string = @tagName(agent.state) });
+        if (agent.name) |n| try object.put("name", .{ .string = try arena.dupe(u8, n) });
+        if (agent.native_session) |ns| try object.put("nativeSession", .{ .string = try arena.dupe(u8, ns) });
+        if (agent.source) |s| try object.put("source", .{ .string = try arena.dupe(u8, s) });
+        try object.put("unread", .{ .bool = agent.unread });
+        return .{ .object = object };
+    }
+
+    /// 解析 hook 的 OSC 6974 载荷（`AgentState=…;Provider=…[;SessionID=…]`）并作为
+    /// hook 来源写入 agent_store。键集合与客户端 `AgentTerminalDirective` 一致：未知键
+    /// 或缺少必需键一律拒绝，不猜测。
+    fn applyAgentDirective(self: *Service, terminal_id: ID, payload: []const u8) !void {
+        var agent_state: ?[]const u8 = null;
+        var provider: ?[]const u8 = null;
+        var session_id: ?[]const u8 = null;
+        var parts = std.mem.splitScalar(u8, payload, ';');
+        while (parts.next()) |part| {
+            const eq = std.mem.indexOfScalar(u8, part, '=') orelse return error.InvalidRequest;
+            const key = part[0..eq];
+            const value = part[eq + 1 ..];
+            if (std.mem.eql(u8, key, "AgentState")) {
+                agent_state = value;
+            } else if (std.mem.eql(u8, key, "Provider")) {
+                provider = value;
+            } else if (std.mem.eql(u8, key, "SessionID")) {
+                session_id = value;
+            } else return error.InvalidRequest;
+        }
+        const state_text = agent_state orelse return error.InvalidRequest;
+        const provider_text = provider orelse return error.InvalidRequest;
+        // hook 的三个状态映射到服务端状态集合：processing→working，awaiting-input→blocked，idle→idle。
+        const state: agent_mod.State = if (std.mem.eql(u8, state_text, "processing")) .working else if (std.mem.eql(u8, state_text, "awaiting-input")) .blocked else if (std.mem.eql(u8, state_text, "idle")) .idle else return error.InvalidRequest;
+        const accepted = try self.agent_store.report(terminal_id, provider_text, state, null, session_id, "hook");
+        if (accepted) try self.emitAgentChanged(terminal_id);
+    }
+
+    /// 编码一条 agent.changed 事件并入队待广播
+    fn emitAgentChanged(self: *Service, terminal_id: ID) !void {
+        if (self.agent_events.items.len >= 64) return;
+        const agent = self.agent_store.get(terminal_id) orelse return;
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const body = try std.json.Stringify.valueAlloc(self.allocator, try agentValue(arena.allocator(), agent), .{});
+        self.agent_events.appendAssumeCapacity(body);
+    }
+
     fn emitLease(self: *Service, terminal_id: ID, grant: leases.Grant, reason: []const u8) void {
         self.lease_events.appendAssumeCapacity(.{ .connection_generation = grant.owner.connection_generation, .terminal_id = terminal_id, .grant = grant, .reason = reason });
     }
@@ -702,6 +844,12 @@ fn stringParam(value: std.json.Value, name: []const u8) ![]const u8 {
 }
 fn idParam(value: std.json.Value, name: []const u8) !ID {
     return textID(try stringParam(value, name));
+}
+/// 可选字符串参数，缺失或 null 返回 null
+fn optionalString(value: std.json.Value, name: []const u8) ?[]const u8 {
+    if (value != .object) return null;
+    const item = value.object.get(name) orelse return null;
+    return if (item == .string) item.string else null;
 }
 fn integer(comptime T: type, value: std.json.Value) !T {
     return switch (value) {

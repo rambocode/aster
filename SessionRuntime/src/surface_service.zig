@@ -124,10 +124,21 @@ pub const Service = struct {
             const interest = self.registry.find(stream_id) orelse continue;
             const generation = interest.surface_generation;
             if (!self.terminals.attachmentAlive(interest.attachment.id, interest.attachment.control_generation)) {
+                logSurfaceDisconnect("attachment_not_alive", &stream_id);
                 self.disconnect(generation);
                 continue;
             }
-            self.advance(stream_id, now_ms) catch {
+            self.advance(stream_id, now_ms) catch |err| {
+                // A TUI that sends RIS (\x1bc) or switches alternate screens
+                // can briefly change the terminal's pixel state before the
+                // bridge re-syncs. Disconnecting kills the display bridge;
+                // instead, skip this tick and let the bridge's resize cycle
+                // restore agreement.
+                if (err == error.UnsupportedProjection) {
+                    logSurfaceDisconnect("geometry_mismatch_transient", &stream_id);
+                    continue;
+                }
+                logSurfaceDisconnect(@errorName(err), &stream_id);
                 self.disconnect(generation);
             };
         }
@@ -196,6 +207,14 @@ fn id(value: []const u8) !ID {
     if (!@import("operation_request.zig").validID(value)) return error.InvalidIdentity;
     return value[0..36].*;
 }
+
+/// Diagnostic: log surface disconnection reason to stderr for bridge debugging.
+fn logSurfaceDisconnect(reason: []const u8, stream_id: *const ID) void {
+    var buffer: [256]u8 = undefined;
+    const nl = "\n";
+    const text = std.fmt.bufPrint(&buffer, "surface_service: disconnect reason={s} stream={s}" ++ nl, .{ reason, stream_id }) catch return;
+    std.fs.File.stderr().writeAll(text) catch {};
+}
 fn checkGeometry(session: *Session, geometry: Geometry) !void {
     try geometry.validate();
     const metrics = try session.terminal.screenMetrics();
@@ -206,7 +225,9 @@ fn checkGeometry(session: *Session, geometry: Geometry) !void {
     // (a Ghostty surface) rarely reports an exact multiple, so compare on the
     // same quantized basis the session actually holds; comparing raw pixels
     // rejected every genuine display bridge as an unsupported projection.
-    if (geometry.pixel_width != 0 and
+    // When terminal pixel size is 0 (cleared by RIS / alternate screen),
+    // skip pixel comparison — 0 means "unavailable", not a real mismatch.
+    if (geometry.pixel_width != 0 and pixels.width != 0 and
         (pixels.width != geometry.cellWidth() * geometry.columns or
             pixels.height != geometry.cellHeight() * geometry.rows)) return error.UnsupportedProjection;
 }
