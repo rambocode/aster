@@ -441,6 +441,19 @@ pub const Service = struct {
     pub fn takeAgentEvent(self: *Service) ?[]u8 {
         return if (self.agent_events.items.len == 0) null else self.agent_events.orderedRemove(0);
     }
+    /// Returns (provider, native_session) for a terminal's agent binding, or
+    /// null if no agent is tracked. Used by workspace_service to sync agent
+    /// fields to the layout store before persist.
+    pub fn getAgentBinding(self: *const Service, terminal_id: ID) ?struct { provider: []const u8, native_session: ?[]const u8 } {
+        const agent = self.agent_store.get(terminal_id) orelse return null;
+        return .{ .provider = agent.provider, .native_session = agent.native_session };
+    }
+
+    /// True if there are pending agent state changes not yet consumed.
+    pub fn hasAgentChanges(self: *const Service) bool {
+        return self.agent_events.items.len > 0;
+    }
+
     // ---- agent operations ------------------------------------------------
 
     /// agent.list — 返回所有 Agent 状态

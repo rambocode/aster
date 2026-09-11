@@ -40,6 +40,8 @@ pub const Session = struct {
     cleanup_context: ?scope.Context = null,
     history_limit: usize = history.terminal_limit,
     history_usage: history.Usage = .{},
+    /// If true, this terminal is excluded from disk screen history.
+    history_excluded: bool = false,
     /// Agent lifecycle hooks (Aster's `aster-agent-hook.sh`) announce state with
     /// a private OSC 6974 written to the terminal. Ghostty's VT drops OSCs it
     /// does not know, and a display bridge replays *screen state*, so the

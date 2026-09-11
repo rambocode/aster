@@ -13,6 +13,8 @@ pub const Launch = struct {
     argv: []const []const u8,
     environment: []const []const u8 = &.{},
     geometry: Geometry = .{ .rows = 24, .columns = 80 },
+    /// Opt this terminal out of disk screen history (P6.2 incognito/exclude).
+    history_excluded: bool = false,
 };
 
 pub const Limits = struct {
@@ -34,6 +36,8 @@ pub const Entry = struct {
     /// record instead of on a slot index because slots are reused now: an index
     /// mask would follow the wrong terminal after a record is retired.
     exit_reported: bool = false,
+    /// Mirrors Session.history_excluded for pool-level lookups without a Session.
+    history_excluded: bool = false,
 };
 
 /// How many already-reclaimed terminals keep a reportable summary after losing
@@ -74,6 +78,7 @@ const Pending = struct {
     session: *Session,
     startup: Startup,
     cleanup_failure: ?anyerror = null,
+    history_excluded: bool = false,
 };
 
 /// Service-owned process/VT records. There is deliberately no client reference
@@ -281,10 +286,11 @@ pub const Pool = struct {
         errdefer self.allocator.free(cwd);
         const session = try Session.prepare(self.allocator, launch.geometry);
         session.scope_cleanup = self.limits.scope_cleanup;
+        session.history_excluded = launch.history_excluded;
         errdefer session.destroy();
         var startup = try Startup.beginGeometry(cwd, executable, args.ptr, env.ptr, launch.geometry);
         startup.scope_cleanup = self.limits.scope_cleanup;
-        self.pending.appendAssumeCapacity(.{ .id = id, .cwd = cwd, .session = session, .startup = startup });
+        self.pending.appendAssumeCapacity(.{ .id = id, .cwd = cwd, .session = session, .startup = startup, .history_excluded = launch.history_excluded });
     }
 
     /// Cancel an accepted creation, retaining its child until nonblocking reap
@@ -365,7 +371,7 @@ pub const Pool = struct {
                 var process = pending.startup.takeProcess() catch unreachable;
                 pending.session.adoptProcess(&process);
                 const pid = pending.session.process.pid;
-                self.entries.appendAssumeCapacity(.{ .id = pending.id, .cwd = pending.cwd, .original_pid = pid, .session = pending.session });
+                self.entries.appendAssumeCapacity(.{ .id = pending.id, .cwd = pending.cwd, .original_pid = pid, .session = pending.session, .history_excluded = pending.history_excluded });
                 self.completions.appendAssumeCapacity(.{ .id = pending.id, .result = .{ .created = pid } });
                 _ = self.pending.orderedRemove(index);
                 continue;

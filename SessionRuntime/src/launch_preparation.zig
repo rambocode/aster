@@ -100,7 +100,8 @@ fn executable(path: []const u8) bool {
     std.posix.access(path, std.posix.X_OK) catch return false;
     return true;
 }
-fn resolveExecutable(a: std.mem.Allocator, cwd: []const u8, program: []const u8, path: []const u8) ![]const u8 {
+/// Resolve a program name to an absolute path via PATH lookup.
+pub fn resolveExecutable(a: std.mem.Allocator, cwd: []const u8, program: []const u8, path: []const u8) ![]const u8 {
     if (std.mem.indexOfScalar(u8, program, '/') != null) {
         const candidate = if (std.fs.path.isAbsolute(program)) try a.dupe(u8, program) else try std.fs.path.join(a, &.{ cwd, program });
         if (!executable(candidate)) return error.ExecutableUnavailable;

@@ -21,7 +21,16 @@ pub const limits = struct {
 pub const Axis = enum { horizontal, vertical };
 pub const Direction = enum { left, right, up, down };
 
-pub const Pane = struct { pane_id: ID, terminal_id: ID, title: ?[]u8 = null };
+/// One terminal-holding leaf. `agent_provider`/`agent_native_session` (P6.3)
+/// record which remote-work provider, if any, is attached to this pane's
+/// terminal and that provider's own session handle; both are set together.
+pub const Pane = struct {
+    pane_id: ID,
+    terminal_id: ID,
+    title: ?[]u8 = null,
+    agent_provider: ?[]u8 = null,
+    agent_native_session: ?[]u8 = null,
+};
 const Split = struct { axis: Axis, ratio: f64, first: usize, second: usize };
 /// `free` is a tombstone: node indices are referenced by parent splits, so a
 /// removed node keeps its slot until a later split reuses it. Slots per tab are
@@ -59,6 +68,11 @@ pub const Store = struct {
     /// `revision_conflict`. A structural request that also creates a terminal
     /// advances it exactly once, at admission.
     revision: u64 = 0,
+    /// P6.2 server-side toggle: whether this session should retain a
+    /// scrollback screen-history export for remote clients. Pure persisted
+    /// state — the store does not itself capture or enforce history; the
+    /// terminal/session domains read this flag.
+    screen_history_enabled: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) Store {
         return .{ .allocator = allocator };
@@ -80,6 +94,8 @@ pub const Store = struct {
     fn freeTab(self: *Store, tab: *Tab) void {
         for (tab.nodes.items) |node| if (node == .leaf) {
             if (node.leaf.title) |title| self.allocator.free(title);
+            if (node.leaf.agent_provider) |provider| self.allocator.free(provider);
+            if (node.leaf.agent_native_session) |session| self.allocator.free(session);
         };
         tab.nodes.deinit(self.allocator);
         self.allocator.free(tab.title);
@@ -304,7 +320,10 @@ pub const Store = struct {
 
     fn releaseNode(self: *Store, tab: *Tab, index: usize) void {
         if (tab.nodes.items[index] == .leaf) {
-            if (tab.nodes.items[index].leaf.title) |title| self.allocator.free(title);
+            const leaf = tab.nodes.items[index].leaf;
+            if (leaf.title) |title| self.allocator.free(title);
+            if (leaf.agent_provider) |provider| self.allocator.free(provider);
+            if (leaf.agent_native_session) |session| self.allocator.free(session);
         }
         tab.nodes.items[index] = .free;
     }
@@ -360,6 +379,8 @@ pub const Store = struct {
             for (tab.nodes.items) |existing| {
                 if (existing != .leaf or !std.mem.eql(u8, &existing.leaf.pane_id, &node.leaf.pane_id)) continue;
                 node.leaf.title = existing.leaf.title;
+                node.leaf.agent_provider = existing.leaf.agent_provider;
+                node.leaf.agent_native_session = existing.leaf.agent_native_session;
             }
         }
         tab.nodes.deinit(self.allocator);
@@ -377,10 +398,30 @@ pub const Store = struct {
             if (pane != .object) return error.InvalidRequest;
             const index = tab.nodes.items.len;
             if (index >= 2 * limits.panes) return error.ResourceLimit;
-            try tab.nodes.append(self.allocator, .{ .leaf = .{
+            var leaf = Pane{
                 .pane_id = try readID(pane, "paneID"),
                 .terminal_id = try readID(pane, "terminalID"),
-            } });
+            };
+            // Agent binding is server-owned persisted state (P6.3), not part
+            // of the client-facing layout16 wire shape, so it is only ever
+            // present when decoding layout.json off disk.
+            // Empty or non-string values are silently treated as absent so
+            // that a stale/corrupt layout.json with empty agent references
+            // degrades gracefully to new_shell instead of crashing the
+            // entire server startup (fixes 5b: empty ref -> start_failed).
+            if (pane.object.get("agentProvider")) |value2| {
+                if (value2 != .string or value2.string.len > limits.short_text) return error.InvalidRequest;
+                if (value2.string.len > 0) {
+                    leaf.agent_provider = try self.allocator.dupe(u8, value2.string);
+                }
+            }
+            if (pane.object.get("agentNativeSession")) |value3| {
+                if (value3 != .string or value3.string.len > limits.long_text) return error.InvalidRequest;
+                if (value3.string.len > 0) {
+                    leaf.agent_native_session = try self.allocator.dupe(u8, value3.string);
+                }
+            }
+            try tab.nodes.append(self.allocator, .{ .leaf = leaf });
             return index;
         }
         if (!std.mem.eql(u8, kind.string, "split")) return error.InvalidRequest;
@@ -431,6 +472,8 @@ pub const Store = struct {
         try object.put("paneID", .{ .string = try arena.dupe(u8, &pane.pane_id) });
         try object.put("terminalID", .{ .string = try arena.dupe(u8, &pane.terminal_id) });
         if (pane.title) |title| try object.put("title", .{ .string = try arena.dupe(u8, title) });
+        if (pane.agent_provider) |provider| try object.put("agentProvider", .{ .string = try arena.dupe(u8, provider) });
+        if (pane.agent_native_session) |session| try object.put("agentNativeSession", .{ .string = try arena.dupe(u8, session) });
         return .{ .object = object };
     }
 
@@ -464,12 +507,47 @@ pub const Store = struct {
 
     const file_name = "layout.json";
     const staging_name = "layout.pending";
+    const backup_name = "layout.json.bak";
+    /// Schema version written to `layout.json`. Bumped only for an
+    /// incompatible change; `decode()` rejects anything this build does not
+    /// understand yet (versions above this constant).
+    pub const layout_version: i64 = 1;
 
     /// Reads the committed layout. A missing file is an empty session; a damaged
     /// one is an explicit error with the original file left untouched, because
     /// silently starting empty would look like the user's work simply vanished.
     pub fn load(self: *Store, dir: std.fs.Dir) !void {
-        const fd = std.posix.openat(dir.fd, file_name, .{ .ACCMODE = .RDONLY, .CLOEXEC = true, .NOFOLLOW = true }, 0) catch |err| switch (err) {
+        try self.loadNamed(dir, file_name);
+    }
+
+    pub const LoadResult = enum { loaded_primary, loaded_backup, empty };
+
+    /// Loads the committed layout, recovering from `layout.json.bak` (written
+    /// by `persist`) when the primary file exists but fails to decode. A
+    /// plain `load()` cannot tell "nothing was ever persisted" apart from "an
+    /// empty session was persisted", so this checks existence explicitly and
+    /// reports which source, if any, supplied the layout.
+    pub fn loadOrRecover(self: *Store, dir: std.fs.Dir) !LoadResult {
+        if (!existsAt(dir, file_name)) return .empty;
+        self.loadNamed(dir, file_name) catch |err| {
+            if (err != error.CorruptLayout or !existsAt(dir, backup_name)) return err;
+            try self.loadNamed(dir, backup_name);
+            return .loaded_backup;
+        };
+        return .loaded_primary;
+    }
+
+    fn existsAt(dir: std.fs.Dir, name: []const u8) bool {
+        _ = std.posix.fstatat(dir.fd, name, std.posix.AT.SYMLINK_NOFOLLOW) catch return false;
+        return true;
+    }
+
+    /// Shared body for `load` and backup recovery: opens `name` inside `dir`,
+    /// validates it is a private regular file (same posture as identity.bin),
+    /// and decodes it. A missing file is "nothing to load", not corruption —
+    /// callers that need to distinguish a missing file check existence first.
+    fn loadNamed(self: *Store, dir: std.fs.Dir, name: []const u8) !void {
+        const fd = std.posix.openat(dir.fd, name, .{ .ACCMODE = .RDONLY, .CLOEXEC = true, .NOFOLLOW = true }, 0) catch |err| switch (err) {
             error.FileNotFound => return,
             else => return err,
         };
@@ -491,9 +569,15 @@ pub const Store = struct {
     fn decode(self: *Store, value: std.json.Value) !void {
         if (value != .object) return error.CorruptLayout;
         const version = value.object.get("version") orelse return error.CorruptLayout;
-        if (version != .integer or version.integer != 1) return error.CorruptLayout;
+        if (version != .integer or version.integer < 1 or version.integer > layout_version) return error.CorruptLayout;
         const revision = value.object.get("revision") orelse return error.CorruptLayout;
         if (revision != .integer or revision.integer < 0) return error.CorruptLayout;
+        // Older layout.json files predate this flag; absence means "off",
+        // not corruption.
+        const history_enabled = if (value.object.get("screenHistoryEnabled")) |item| switch (item) {
+            .bool => |flag| flag,
+            else => return error.CorruptLayout,
+        } else false;
         const list = value.object.get("workspaces") orelse return error.CorruptLayout;
         if (list != .array or list.array.items.len > limits.workspaces) return error.CorruptLayout;
         errdefer {
@@ -526,6 +610,7 @@ pub const Store = struct {
         }
         if (self.paneCount() > limits.panes or self.tabCount() > limits.tabs) return error.CorruptLayout;
         self.revision = @intCast(revision.integer);
+        self.screen_history_enabled = history_enabled;
     }
 
     /// Atomic commit: private staging file, fsync, rename, directory fsync. A
@@ -535,8 +620,9 @@ pub const Store = struct {
         defer arena.deinit();
         const temporary = arena.allocator();
         var object = std.json.ObjectMap.init(temporary);
-        try object.put("version", .{ .integer = 1 });
+        try object.put("version", .{ .integer = layout_version });
         try object.put("revision", .{ .integer = @intCast(self.revision) });
+        try object.put("screenHistoryEnabled", .{ .bool = self.screen_history_enabled });
         try object.put("workspaces", try self.workspacesValue(temporary));
         const bytes = try std.json.Stringify.valueAlloc(temporary, std.json.Value{ .object = object }, .{});
         dir.deleteFile(staging_name) catch |err| switch (err) {
@@ -558,6 +644,12 @@ pub const Store = struct {
         }
         try dir.rename(staging_name, file_name);
         try std.posix.fsync(dir.fd);
+        // Best-effort recovery copy: if a later write ever leaves layout.json
+        // truncated or corrupted, loadOrRecover() can fall back to the last
+        // successfully committed layout instead of losing the whole session.
+        // Non-fatal: a backup failure must not block the primary commit that
+        // already succeeded.
+        dir.copyFile(file_name, dir, backup_name, .{}) catch {};
     }
 };
 
@@ -686,4 +778,85 @@ test "workspace store persists atomically and refuses corrupt layout files" {
     const preserved = try tmp.dir.readFileAlloc(std.testing.allocator, "layout.json", 65536);
     defer std.testing.allocator.free(preserved);
     try std.testing.expectEqual(original.len / 2, preserved.len);
+}
+
+test "workspace store loadOrRecover falls back to backup and reports an empty session" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // No layout.json at all: a fresh session, not corruption.
+    {
+        var store = Store.init(std.testing.allocator);
+        defer store.deinit();
+        try std.testing.expectEqual(Store.LoadResult.empty, try store.loadOrRecover(tmp.dir));
+    }
+
+    // Persist twice so layout.json.bak reflects a known-good prior commit,
+    // then damage only the primary file.
+    {
+        var store = Store.init(std.testing.allocator);
+        defer store.deinit();
+        _ = try store.createWorkspace("first", "/tmp", testPane());
+        store.revision = 1;
+        try store.persist(tmp.dir);
+        store.revision = 2;
+        try store.persist(tmp.dir);
+    }
+    var damaged = try tmp.dir.createFile("layout.json", .{ .truncate = true, .mode = 0o600 });
+    try damaged.writeAll("{not json");
+    damaged.close();
+
+    var store = Store.init(std.testing.allocator);
+    defer store.deinit();
+    try std.testing.expectEqual(Store.LoadResult.loaded_backup, try store.loadOrRecover(tmp.dir));
+    try std.testing.expectEqual(@as(u64, 2), store.revision);
+    try std.testing.expectEqual(@as(usize, 1), store.workspaces.items.len);
+}
+
+
+test "workspace store empty agent reference degrades to null instead of CorruptLayout" {
+    // Regression: an empty agentNativeSession in layout.json caused
+    // loadOrRecover to return CorruptLayout, preventing server startup.
+    // After the fix, empty strings are silently treated as absent (null).
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Create a workspace with agent binding, persist, then patch the
+    // serialized layout to have an empty agentNativeSession.
+    const pane = testPane();
+    {
+        var store = Store.init(std.testing.allocator);
+        defer store.deinit();
+        _ = try store.createWorkspace("agent-test", "/tmp", pane);
+        // Manually set agent fields so persist writes them.
+        store.workspaces.items[0].tabs.items[0].nodes.items[0].leaf.agent_provider =
+            try std.testing.allocator.dupe(u8, "grokBuild");
+        store.workspaces.items[0].tabs.items[0].nodes.items[0].leaf.agent_native_session =
+            try std.testing.allocator.dupe(u8, "placeholder");
+        store.revision = 1;
+        try store.persist(tmp.dir);
+    }
+    // Read back, replace the session value with empty string.
+    const original = try tmp.dir.readFileAlloc(std.testing.allocator, "layout.json", 65536);
+    defer std.testing.allocator.free(original);
+    const needle = "\"placeholder\"";
+    const pos = std.mem.indexOf(u8, original, needle) orelse unreachable;
+    const patched = try std.fmt.allocPrint(std.testing.allocator, "{s}\"\"{s}", .{
+        original[0..pos],
+        original[pos + needle.len ..],
+    });
+    defer std.testing.allocator.free(patched);
+    var f = try tmp.dir.createFile("layout.json", .{ .truncate = true, .mode = 0o600 });
+    try f.writeAll(patched);
+    f.close();
+    // Load must succeed -- no CorruptLayout error.
+    var store = Store.init(std.testing.allocator);
+    defer store.deinit();
+    const result = try store.loadOrRecover(tmp.dir);
+    try std.testing.expectEqual(Store.LoadResult.loaded_primary, result);
+    try std.testing.expectEqual(@as(usize, 1), store.paneCount());
+    const loaded = store.workspaces.items[0].tabs.items[0].nodes.items[0].leaf;
+    // Provider should survive; empty native session should become null.
+    try std.testing.expect(loaded.agent_provider != null);
+    try std.testing.expectEqualStrings("grokBuild", loaded.agent_provider.?);
+    try std.testing.expectEqual(@as(?[]u8, null), loaded.agent_native_session);
 }

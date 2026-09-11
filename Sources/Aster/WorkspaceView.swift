@@ -2385,6 +2385,13 @@ final class WorkspaceViewController: NSViewController {
       host.addSubview(endedOverlay)
       endedOverlay.pinEdges(to: host)
     }
+    // 冷恢复路径状态卡：仅在 recoveryPath 有值且 lifecycle 不处于 ended/startFailed 时显示。
+    if let rp = session.recoveryPath,
+       TerminalLifecycleOverlayView(session: session) == nil,
+       let recoveryOverlay = TerminalLifecycleOverlayView(session: session, recoveryPath: rp) {
+      host.addSubview(recoveryOverlay)
+      recoveryOverlay.pinEdges(to: host)
+    }
     return host
   }
 

@@ -1,4 +1,5 @@
 import AppKit
+import AsterCore
 import Darwin
 
 /// 覆盖在已结束终端最后一帧之上的可恢复状态卡。根视图本身穿透命中，用户仍可选择、
@@ -57,6 +58,39 @@ final class TerminalLifecycleOverlayView: NSView {
       default: "SIGNAL"
       }
       return "\(signal)（\(name)）"
+    }
+  }
+
+  /// 冷恢复路径对应的状态卡展示。
+  private struct RecoveryPresentation {
+    let title: String
+    let detail: String
+    let symbol: String
+
+    /// 将 PaneRecoveryPath 映射为状态卡文案与图标。
+    init(_ path: PaneRecoveryPath) {
+      switch path {
+      case .continueRunning:
+        title = "继续运行"
+        detail = "后台任务持续运行中，已重新连接。"
+        symbol = "checkmark.circle"
+      case .newShell:
+        title = "新 Shell"
+        detail = "服务重启后创建了新的 Shell 进程。"
+        symbol = "terminal"
+      case .historyReplay:
+        title = "历史回放"
+        detail = "正在回放磁盘上保存的屏幕历史，非实时状态。"
+        symbol = "clock.arrow.circlepath"
+      case .agentRestore(_, _, _, let provider, _):
+        title = "Agent 对话恢复"
+        detail = "已通过 \(provider.rawValue) --resume 恢复对话。"
+        symbol = "arrow.uturn.backward.circle"
+      case .failed(_, _, _, let reason):
+        title = "恢复失败"
+        detail = "\(reason)。已创建新 Shell 替代。"
+        symbol = "exclamationmark.triangle"
+      }
     }
   }
 
@@ -119,6 +153,64 @@ final class TerminalLifecycleOverlayView: NSView {
     text.alignment = .leading
     text.spacing = 3
     let row = NSStackView(views: [icon, text, restart])
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = 10
+    row.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+    card.addSubview(row)
+    row.pinEdges(to: card)
+
+    addSubview(card)
+    card.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      card.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+      card.centerXAnchor.constraint(equalTo: centerXAnchor),
+      card.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
+      card.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
+      card.widthAnchor.constraint(lessThanOrEqualToConstant: 680),
+    ])
+  }
+
+  /// 从冷恢复路径创建状态卡。仅在有有效 recoveryPath 时返回非 nil。
+  init?(session: TerminalSession, recoveryPath: PaneRecoveryPath) {
+    let rp = RecoveryPresentation(recoveryPath)
+    super.init(frame: .zero)
+    identifier = NSUserInterfaceItemIdentifier("terminal-recovery-overlay-\(session.id.uuidString)")
+
+    let card = NSView()
+    card.wantsLayer = true
+    card.layer?.backgroundColor = AsterTheme.panel.withAlphaComponent(0.96).cgColor
+    card.layer?.borderColor = AsterTheme.hairline.cgColor
+    card.layer?.borderWidth = 1
+    card.layer?.cornerRadius = 10
+
+    let icon = NSImageView(
+      image: NSImage(
+        systemSymbolName: rp.symbol,
+        accessibilityDescription: rp.title
+      ) ?? NSImage()
+    )
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 17, weight: .medium)
+    icon.contentTintColor = AsterTheme.warning
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      icon.widthAnchor.constraint(equalToConstant: 22),
+      icon.heightAnchor.constraint(equalToConstant: 22),
+    ])
+
+    let title = NSTextField(labelWithString: rp.title)
+    title.font = .systemFont(ofSize: 12, weight: .semibold)
+    title.textColor = AsterTheme.ink
+    let detail = NSTextField(wrappingLabelWithString: rp.detail)
+    detail.font = .systemFont(ofSize: 10.5)
+    detail.textColor = AsterTheme.secondaryInk
+    detail.maximumNumberOfLines = 2
+
+    let text = NSStackView(views: [title, detail])
+    text.orientation = .vertical
+    text.alignment = .leading
+    text.spacing = 3
+    let row = NSStackView(views: [icon, text])
     row.orientation = .horizontal
     row.alignment = .centerY
     row.spacing = 10

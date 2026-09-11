@@ -8,6 +8,7 @@ const Workspaces = @import("workspace_service.zig").Service;
 const Store = @import("workspace_store.zig").Store;
 const RegistryEndpoint = @import("registry_service.zig").Endpoint;
 const Session = @import("session_registry.zig").Session;
+const screen_history = @import("screen_history.zig");
 const Domains = struct { terminals: *Terminals, surfaces: *Surfaces, workspaces: *Workspaces };
 const Request = @import("operation_request.zig").Request;
 const ids = @import("service_identity.zig");
@@ -54,11 +55,29 @@ fn runInitialized(allocator: std.mem.Allocator, instance: *Instance, name: []con
     var store = Store.init(allocator);
     defer store.deinit();
     try store.load(instance.state.dir);
+    // Screen history: periodic VT snapshots to disk. Tracks the
+    // store's screen_history_enabled flag so settings updates take
+    // effect without a restart.
+    // Allow test overrides via env vars so quota eviction can be exercised
+    // with a tiny budget without changing product defaults.
+    var history_config = screen_history.Config{ .enabled = store.screen_history_enabled };
+    if (std.posix.getenv("ASTER_HISTORY_SESSION_LIMIT")) |val| {
+        history_config.session_limit = std.fmt.parseInt(usize, val, 10) catch history_config.session_limit;
+    }
+    if (std.posix.getenv("ASTER_HISTORY_PER_TERMINAL_LIMIT")) |val| {
+        history_config.per_terminal_limit = std.fmt.parseInt(usize, val, 10) catch history_config.per_terminal_limit;
+    }
+    if (std.posix.getenv("ASTER_HISTORY_SNAPSHOT_INTERVAL_MS")) |val| {
+        history_config.snapshot_interval_ms = std.fmt.parseInt(u64, val, 10) catch history_config.snapshot_interval_ms;
+    }
+    var history_writer = try screen_history.Writer.init(allocator, instance.state.dir, history_config);
+    defer history_writer.deinit();
     var terminals = try Terminals.init(allocator, &pool, &instance.state, instance.identity, instance.epoch);
     defer terminals.deinit();
     terminals.shared_revision = &store.revision;
     var workspaces = try Workspaces.init(allocator, &store, &terminals, &pool, instance.state.dir);
     defer workspaces.deinit();
+    workspaces.screen_history_writer = &history_writer;
     terminals.structure_hook = workspaces.hook();
     defer terminals.structure_hook = null;
     var surfaces = try Surfaces.init(allocator, &terminals, &reactor);
@@ -81,7 +100,7 @@ fn runInitialized(allocator: std.mem.Allocator, instance: *Instance, name: []con
     };
     reactor.control.registry = .{ .context = &registry, .respond = registryRespond };
     defer reactor.control.registry = null;
-    reactor.control.advertised_capabilities = &.{ "health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation", "agent_state" };
+    reactor.control.advertised_capabilities = &.{ "health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation", "agent_state", "session_restore", "session_settings" };
     var clock = try std.time.Timer.start();
     if (try stopping()) return error.ServiceStartupCancelled;
     if (report) |writer| try writer.finish(.ready);
@@ -103,6 +122,8 @@ fn runInitialized(allocator: std.mem.Allocator, instance: *Instance, name: []con
         try deliverTerminalMessages(allocator, &reactor, &terminals);
         try deliverWorkspaceMessages(allocator, &reactor, &terminals, &workspaces);
         try surfaces.tick(clock.read() / std.time.ns_per_ms);
+        workspaces.maybeSyncAgentBindings();
+        persistScreenHistory(&history_writer, &store, &pool, clock.read());
         reactor.control.revision = store.revision;
         if (reactor.control.stop_requested and !shutdown_started) {
             pool.beginShutdown();
@@ -115,6 +136,23 @@ fn runInitialized(allocator: std.mem.Allocator, instance: *Instance, name: []con
             return;
         }
         try waitResources(&reactor, instance, &pool, clock.read(), 1000, wake);
+    }
+}
+
+/// Snapshot each terminal's visible screen to disk if the interval has elapsed.
+/// Syncs the writer's enabled flag with the store so settings.update takes
+/// effect without a server restart. Errors are caught and silently ignored:
+/// screen history is best-effort and must never crash the service main loop.
+fn persistScreenHistory(writer: *screen_history.Writer, store: *Store, pool: *Pool, now_ns: u64) void {
+    // Dynamic toggle: track the store's flag each tick.
+    writer.config.enabled = store.screen_history_enabled;
+    if (!writer.config.enabled) return;
+    const now_ms = now_ns / std.time.ns_per_ms;
+    for (pool.entries.items) |*entry| {
+        const screen_text = entry.session.snapshotForClient(writer.config.per_terminal_limit) catch continue;
+        const text = screen_text orelse continue;
+        defer entry.session.allocator.free(text);
+        writer.maybePersist(entry.id, text, now_ms, entry.history_excluded) catch {};
     }
 }
 
@@ -177,7 +215,7 @@ fn terminalRespond(context: *anyopaque, allocator: std.mem.Allocator, request: R
     const domains: *Domains = @ptrCast(@alignCast(context));
     return switch (request.operation) {
         .@"surface.subscribe", .@"surface.unsubscribe", .@"surface.snapshot" => domains.surfaces.respond(allocator, request, generation),
-        .@"session.snapshot", .@"workspace.list", .@"workspace.create", .@"workspace.update", .@"workspace.close", .@"tab.create", .@"tab.update", .@"tab.close", .@"pane.split", .@"pane.update", .@"pane.close" => domains.workspaces.respond(allocator, request, generation),
+        .@"session.snapshot", .@"session.restore", .@"session.settings.get", .@"session.settings.update", .@"workspace.list", .@"workspace.create", .@"workspace.update", .@"workspace.close", .@"tab.create", .@"tab.update", .@"tab.close", .@"pane.split", .@"pane.update", .@"pane.close" => domains.workspaces.respond(allocator, request, generation),
         else => domains.terminals.respond(allocator, request, generation),
     };
 }

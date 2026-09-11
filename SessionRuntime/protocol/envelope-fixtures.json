@@ -140,6 +140,28 @@
     }
   },
   {
+    "name": "session.restore",
+    "result": "ok",
+    "value": {
+      "type": "request",
+      "requestID": "12345678-1234-1234-1234-123456789abc",
+      "clientID": "12345678-1234-1234-1234-123456789abc",
+      "scope": "session",
+      "operation": "session.restore",
+      "params": {
+        "geometry": {
+          "rows": 1,
+          "columns": 1
+        }
+      },
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
     "name": "workspace.list",
     "result": "ok",
     "value": {

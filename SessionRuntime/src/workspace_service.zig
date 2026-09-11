@@ -9,6 +9,7 @@ const replies = @import("operation_response.zig");
 const preparation = @import("launch_preparation.zig");
 const terminals_mod = @import("terminal_service.zig");
 const store_mod = @import("workspace_store.zig");
+const screen_history = @import("screen_history.zig");
 const Store = store_mod.Store;
 const ID = store_mod.ID;
 
@@ -66,6 +67,17 @@ pub const Service = struct {
     /// further structural mutation is refused because memory and disk no longer
     /// agree and silently continuing would lose the user's layout on restart.
     persistence_failure: ?anyerror = null,
+    /// True once a client has completed a cold restore for this server incarnation.
+    /// Prevents duplicate restores from another client or reconnect.
+    restore_completed: bool = false,
+    /// Terminal IDs created during cold restore; their completions are claimed
+    /// silently (no durable log, no client response, no "session started").
+    restore_terminal_ids: std.ArrayList(ID) = .empty,
+    /// Whether disk screen history is enabled for this session (P6.2, default off).
+    screen_history_enabled: bool = false,
+    /// Optional reference to the shared screen history writer (set by service_server).
+    /// Used during cold restore to check for persisted screen data.
+    screen_history_writer: ?*screen_history.Writer = null,
 
     pub fn init(allocator: std.mem.Allocator, store: *Store, terminals: *terminals_mod.Service, pool: *Pool, dir: std.fs.Dir) !Service {
         var self = Service{ .allocator = allocator, .store = store, .terminals = terminals, .pool = pool, .dir = dir };
@@ -73,6 +85,7 @@ pub const Service = struct {
         try self.pending.ensureTotalCapacity(allocator, 64);
         try self.replies.ensureTotalCapacity(allocator, 64);
         try self.events.ensureTotalCapacity(allocator, 256);
+        try self.restore_terminal_ids.ensureTotalCapacity(allocator, 64);
         return self;
     }
 
@@ -83,6 +96,7 @@ pub const Service = struct {
         self.pending.deinit(self.allocator);
         self.replies.deinit(self.allocator);
         self.events.deinit(self.allocator);
+        self.restore_terminal_ids.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -108,6 +122,13 @@ pub const Service = struct {
             if (!std.mem.eql(u8, &item.terminal_id, &completion.id)) continue;
             item.completion = completion;
             return true;
+        }
+        // Also claim completions for cold-restore terminals (P6.1).
+        for (self.restore_terminal_ids.items, 0..) |*rid, i| {
+            if (std.mem.eql(u8, rid, &completion.id)) {
+                _ = self.restore_terminal_ids.orderedRemove(i);
+                return true;
+            }
         }
         return false;
     }
@@ -157,6 +178,9 @@ pub const Service = struct {
     fn dispatch(self: *Service, a: std.mem.Allocator, r: Request, generation: u64) !?[]u8 {
         return switch (r.operation) {
             .@"session.snapshot" => try self.snapshot(a, r),
+            .@"session.restore" => try self.restore(a, r),
+            .@"session.settings.get" => try self.settingsGet(a, r),
+            .@"session.settings.update" => try self.settingsUpdate(a, r),
             .@"workspace.list" => try self.list(a, r),
             .@"workspace.create", .@"tab.create", .@"pane.split" => try self.beginCreate(a, r, generation),
             .@"workspace.update", .@"workspace.close", .@"tab.update", .@"tab.close", .@"pane.update", .@"pane.close" => try self.mutate(a, r),
@@ -456,6 +480,40 @@ pub const Service = struct {
         };
     }
 
+    /// Sync agent bindings from agent_store to layout panes, then persist.
+    /// Called from the service main loop. Checks each pane for stale bindings.
+    pub fn maybeSyncAgentBindings(self: *Service) void {
+        var dirty = false;
+        for (self.store.workspaces.items) |*workspace| {
+            for (workspace.tabs.items) |*tab| {
+                for (tab.nodes.items) |*node| {
+                    if (node.* != .leaf) continue;
+                    const pane = &node.leaf;
+                    if (self.terminals.getAgentBinding(pane.terminal_id)) |binding| {
+                        if (pane.agent_provider == null or !std.mem.eql(u8, pane.agent_provider.?, binding.provider)) {
+                            if (pane.agent_provider) |old| self.allocator.free(old);
+                            pane.agent_provider = self.allocator.dupe(u8, binding.provider) catch null;
+                            dirty = true;
+                        }
+                        if (binding.native_session) |ns| {
+                            if (pane.agent_native_session == null or !std.mem.eql(u8, pane.agent_native_session.?, ns)) {
+                                if (pane.agent_native_session) |old| self.allocator.free(old);
+                                pane.agent_native_session = self.allocator.dupe(u8, ns) catch null;
+                                dirty = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (dirty) {
+            self.store.persist(self.dir) catch |err| {
+                self.persistence_failure = self.persistence_failure orelse err;
+            };
+        }
+    }
+
+
     fn queueEvent(self: *Service, name: []const u8, body: std.json.Value) !void {
         if (self.events.items.len >= 256) return error.ResourceLimit;
         const bytes = try std.json.Stringify.valueAlloc(self.allocator, body, .{});
@@ -588,6 +646,191 @@ pub const Service = struct {
         };
     }
 
+    // ---- cold restore (P6.1/P6.4) ----------------------------------------
+
+    /// Handles session.restore: for each stale pane in the persisted layout,
+    /// assigns a new terminal ID and enqueues a deferred create. The response
+    /// is returned immediately with the old→new mapping; the actual terminals
+    /// start asynchronously and completions are claimed by this service's
+    /// structure hook. Prevents duplicate restore across clients.
+    fn restore(self: *Service, a: std.mem.Allocator, r: Request) ![]u8 {
+        try only(r.params, &.{ "geometry", "theme" });
+        if (self.restore_completed) {
+            return self.success(a, r, .{ .entries = &[0]std.json.Value{}, .alreadyRestored = true });
+        }
+        // Parse client-provided geometry for new terminal creation
+        const geometry_value = r.params.object.get("geometry") orelse return error.InvalidRequest;
+        const parsed_geo = std.json.parseFromValue(struct { rows: u16, columns: u16, pixelWidth: u16 = 0, pixelHeight: u16 = 0 }, a, geometry_value, .{}) catch return error.InvalidRequest;
+        defer parsed_geo.deinit();
+        const geometry = @import("geometry.zig").Geometry{
+            .rows = parsed_geo.value.rows, .columns = parsed_geo.value.columns,
+            .pixel_width = parsed_geo.value.pixelWidth, .pixel_height = parsed_geo.value.pixelHeight,
+        };
+        try geometry.validate();
+
+        // Collect stale panes and build restore entries
+        var arena = std.heap.ArenaAllocator.init(a);
+        defer arena.deinit();
+        const temporary = arena.allocator();
+        var entries = std.json.Array.init(temporary);
+
+        for (self.store.workspaces.items) |*workspace| {
+            for (workspace.tabs.items) |*tab| {
+                try self.collectRestorePanes(temporary, tab, tab.root, workspace.cwd, geometry, &entries);
+            }
+        }
+
+        // Persist the updated layout with new terminal IDs
+        if (entries.items.len > 0) {
+            try self.commitLayout();
+        }
+        self.restore_completed = true;
+        return self.success(a, r, .{ .entries = entries.items, .alreadyRestored = false });
+    }
+
+    /// Walk layout nodes, assign new terminal IDs to stale panes, and enqueue
+    /// each as a workspace-service Pending (so structure_hook claims the
+    /// completion). Agent references produce resume argv instead of /bin/sh.
+    fn collectRestorePanes(self: *Service, arena: std.mem.Allocator, tab: *store_mod.Tab, index: usize, cwd: []const u8, geometry: @import("geometry.zig").Geometry, entries: *std.json.Array) !void {
+        if (index >= tab.nodes.items.len) return;
+        switch (tab.nodes.items[index]) {
+            .leaf => |*pane| {
+                const old_terminal_id = pane.terminal_id;
+                // Skip terminals that are already running (detach-reattach)
+                if (self.pool.find(old_terminal_id) != null) return;
+                // Assign new terminal ID
+                const new_terminal_id = ids.uuidText(ids.newUUID());
+                // Determine restore path and argv — check screen history first:
+                // if history data exists for this terminal and no agent binding,
+                // use history_replay instead of starting a fresh shell.
+                var path: []const u8 = "new_shell";
+                var history_captured_at_ms: ?u64 = null;
+                if (self.screen_history_writer) |hw| {
+                    history_captured_at_ms = readHistoryCapturedAt(hw, old_terminal_id);
+                }
+                var agent_provider: ?[]const u8 = null;
+                var agent_session: ?[]const u8 = null;
+                // Build the terminal spec for pool.beginCreate
+                const spec_cwd = try self.allocator.dupeZ(u8, cwd);
+                errdefer self.allocator.free(spec_cwd);
+                var default_argv = [_][]const u8{"/bin/sh"};
+                var actual_argv: []const []const u8 = &default_argv;
+                var restore_argv_buf: [8][]const u8 = undefined;
+                if (pane.agent_provider) |provider| {
+                    if (pane.agent_native_session) |session| {
+                        if (buildAgentRestoreArgv(provider, session, &restore_argv_buf)) |restore_argv| {
+                            actual_argv = restore_argv;
+                            path = "agent_restore";
+                            agent_provider = provider;
+                            agent_session = session;
+                        }
+                    }
+                }
+                // Resolve argv[0] to an absolute path (pool requires it).
+                if (!std.fs.path.isAbsolute(actual_argv[0])) {
+                    const default_path = "/usr/local/bin:/usr/bin:/bin";
+                    const path_env = std.posix.getenv("PATH") orelse default_path;
+                    if (preparation.resolveExecutable(arena, cwd, actual_argv[0], path_env)) |resolved| {
+                        restore_argv_buf[0] = resolved;
+                        actual_argv = restore_argv_buf[0..actual_argv.len];
+                    } else |_| {
+                        // CLI not found; fall back to new shell
+                        path = "new_shell";
+                        agent_provider = null;
+                        agent_session = null;
+                        actual_argv = &default_argv;
+                    }
+                }
+                // If no agent binding but history exists, mark as history_replay.
+                if (std.mem.eql(u8, path, "new_shell") and history_captured_at_ms != null) {
+                    path = "history_replay";
+                }
+                // Use pool.beginCreate for the actual terminal spawn
+                self.pool.beginCreate(new_terminal_id, .{
+                    .cwd = cwd, .argv = actual_argv, .geometry = geometry,
+                }) catch |err| {
+                    self.allocator.free(spec_cwd);
+                    // Record failure entry
+                    var entry = std.json.ObjectMap.init(arena);
+                    entry.put("paneID", .{ .string = arena.dupe(u8, &pane.pane_id) catch return err }) catch return err;
+                    entry.put("oldTerminalID", .{ .string = arena.dupe(u8, &old_terminal_id) catch return err }) catch return err;
+                    entry.put("newTerminalID", .{ .string = arena.dupe(u8, &new_terminal_id) catch return err }) catch return err;
+                    entry.put("path", .{ .string = "failed" }) catch return err;
+                    entry.put("failureReason", .{ .string = @errorName(err) }) catch return err;
+                    entries.append(.{ .object = entry }) catch return err;
+                    return;
+                };
+                self.allocator.free(spec_cwd);
+                // Register in terminal_service so tick() claims the completion
+                try self.restore_terminal_ids.append(self.allocator, new_terminal_id);
+                // Update the store with the new terminal ID
+                pane.terminal_id = new_terminal_id;
+                // Build the restore entry for the response
+                var entry = std.json.ObjectMap.init(arena);
+                try entry.put("paneID", .{ .string = try arena.dupe(u8, &pane.pane_id) });
+                try entry.put("oldTerminalID", .{ .string = try arena.dupe(u8, &old_terminal_id) });
+                try entry.put("newTerminalID", .{ .string = try arena.dupe(u8, &new_terminal_id) });
+                try entry.put("path", .{ .string = path });
+                if (agent_provider) |p| try entry.put("agentProvider", .{ .string = try arena.dupe(u8, p) });
+                if (agent_session) |s| try entry.put("agentNativeSession", .{ .string = try arena.dupe(u8, s) });
+                if (history_captured_at_ms) |ts| try entry.put("capturedAtMs", .{ .integer = @intCast(ts) });
+                try entries.append(.{ .object = entry });
+            },
+            .split => |split| {
+                try self.collectRestorePanes(arena, tab, split.first, cwd, geometry, entries);
+                try self.collectRestorePanes(arena, tab, split.second, cwd, geometry, entries);
+            },
+            .free => {},
+        }
+    }
+
+
+    /// Read the captured_at_ms timestamp from a terminal's screen history file.
+    /// Opens history/ under the writer's state directory and parses the file
+    /// header directly. Returns null if the file is missing or corrupted.
+    fn readHistoryCapturedAt(writer: *screen_history.Writer, terminal_id: [36]u8) ?u64 {
+        var dir = writer.dir.openDir("history", .{}) catch return null;
+        defer dir.close();
+        const header_len = 4 + 1 + 8 + 4; // magic(4) + version(1) + captured_at_ms(8) + data_len(4)
+        var name_buf: [36 + 5]u8 = undefined;
+        @memcpy(name_buf[0..36], &terminal_id);
+        @memcpy(name_buf[36..], ".hist");
+        const fd = std.posix.openat(dir.fd, &name_buf, .{ .ACCMODE = .RDONLY, .CLOEXEC = true, .NOFOLLOW = true }, 0) catch return null;
+        var file = std.fs.File{ .handle = fd };
+        defer file.close();
+        var header: [header_len]u8 = undefined;
+        const n = file.readAll(&header) catch return null;
+        if (n < header_len) return null;
+        if (!std.mem.eql(u8, header[0..4], "ASTH") or header[4] != 1) return null;
+        return std.mem.readInt(u64, header[5..13], .little);
+    }
+
+    // ---- session settings (P6.2) ------------------------------------------
+
+    /// Returns current session settings including screen history toggle.
+    fn settingsGet(self: *Service, a: std.mem.Allocator, r: Request) ![]u8 {
+        try only(r.params, &.{});
+        return self.success(a, r, .{
+            .paneHistory = self.store.screen_history_enabled,
+            .resumeAgentsOnRestore = true,
+        });
+    }
+
+    /// Updates session settings. Currently supports screen history toggle.
+    fn settingsUpdate(self: *Service, a: std.mem.Allocator, r: Request) ![]u8 {
+        try self.checkRevision(r);
+        if (r.params.object.get("paneHistory")) |value| {
+            if (value != .bool) return error.InvalidRequest;
+            self.store.screen_history_enabled = value.bool;
+        }
+        self.store.revision +|= 1;
+        try self.commitLayout();
+        return self.success(a, r, .{
+            .paneHistory = self.store.screen_history_enabled,
+            .resumeAgentsOnRestore = true,
+        });
+    }
+
     pub fn takeReply(self: *Service) ?Reply {
         return if (self.replies.items.len == 0) null else self.replies.orderedRemove(0);
     }
@@ -634,6 +877,36 @@ fn terminalValue(arena: std.mem.Allocator, value: terminals_mod.Terminal) !std.j
     return parsed;
 }
 
+/// Build provider-specific resume argv (P6.3). Returns null if provider unknown.
+fn buildAgentRestoreArgv(provider: []const u8, session: []const u8, buf: *[8][]const u8) ?[]const []const u8 {
+    if (std.mem.eql(u8, provider, "grokBuild")) {
+        buf[0] = "grok"; buf[1] = "--resume"; buf[2] = session;
+        return buf[0..3];
+    } else if (std.mem.eql(u8, provider, "claudeCode")) {
+        buf[0] = "claude"; buf[1] = "--resume"; buf[2] = session;
+        return buf[0..3];
+    } else if (std.mem.eql(u8, provider, "codex")) {
+        buf[0] = "codex"; buf[1] = "--resume"; buf[2] = session;
+        return buf[0..3];
+    } else if (std.mem.eql(u8, provider, "openCode")) {
+        buf[0] = "opencode"; buf[1] = "--resume"; buf[2] = session;
+        return buf[0..3];
+    } else if (std.mem.eql(u8, provider, "kimiCode")) {
+        buf[0] = "kimi"; buf[1] = "--resume"; buf[2] = session;
+        return buf[0..3];
+    } else if (std.mem.eql(u8, provider, "pi")) {
+        buf[0] = "pi"; buf[1] = "--resume"; buf[2] = session;
+        return buf[0..3];
+    } else if (std.mem.eql(u8, provider, "omp")) {
+        buf[0] = "omp"; buf[1] = "--resume"; buf[2] = session;
+        return buf[0..3];
+    } else if (std.mem.eql(u8, provider, "cursorCLI")) {
+        buf[0] = "agent"; buf[1] = "--resume"; buf[2] = session;
+        return buf[0..3];
+    }
+    return null;
+}
+
 fn errorCode(err: anyerror) []const u8 {
     return switch (err) {
         error.RevisionConflict => "revision_conflict",
@@ -644,6 +917,7 @@ fn errorCode(err: anyerror) []const u8 {
         error.InvalidTerminalDirectory, error.WorkingDirectoryUnavailable => "cwd_unavailable",
         error.ExecutableUnavailable => "executable_unavailable",
         error.ResourceLimit, error.TerminalLimitReached, error.CreationCompletionBackpressure, error.LogCapacity, error.TerminalGeometryLimit => "resource_limit",
+        error.RestoreAlreadyCompleted => "restore_already_completed",
         error.PaneNotFound, error.InvalidRequest, error.InvalidTerminalArguments, error.InvalidTerminalEnvironment, error.DuplicateEnvironmentName, error.FutureRequest, error.InvalidDimensions, error.InvalidPixelDimensions, error.UnsafeLayoutFile => "invalid_request",
         else => "internal_error",
     };

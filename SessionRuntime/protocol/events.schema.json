@@ -430,6 +430,59 @@
       ],
       "additionalProperties": false
     },
+    "restoreEntry": {
+      "type": "object",
+      "properties": {
+        "paneID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "oldTerminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "newTerminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "path": {
+          "enum": [
+            "new_shell",
+            "agent_restore",
+            "history_replay",
+            "failed"
+          ]
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "agentProvider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "agentNativeSession": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "failureReason": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "historyAvailable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "paneID",
+        "oldTerminalID",
+        "newTerminalID",
+        "path"
+      ],
+      "additionalProperties": false
+    },
     "writeAttachment": {
       "type": "object",
       "properties": {

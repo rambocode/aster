@@ -42,6 +42,10 @@ D = {
  'attachment':obj({'attachmentID':ID,'terminalID':ID,'readOnly':BOOL}, {'lease':ref('lease')}),
  'error':obj({'code':{'type':'string','pattern':'^[a-z][a-z0-9_]{0,63}$'},'message':TEXT,
               'retry':enum('never','after_query','after_reconnect','backoff')}),
+ 'restoreEntry':obj({'paneID':ID,'oldTerminalID':ID,'newTerminalID':ID,
+                     'path':enum('new_shell','agent_restore','history_replay','failed')},
+                    {'pid':integer(1,4294967295),'agentProvider':SHORT,'agentNativeSession':TEXT,
+                     'failureReason':TEXT,'historyAvailable':BOOL}),
 }
 D['writeAttachment'] = obj({'attachmentID':ID,'terminalID':ID,'readOnly':enum(False),'lease':ref('lease')})
 D['readAttachment'] = obj({'attachmentID':ID,'terminalID':ID,'readOnly':enum(True),'currentLeaseEpoch':U64})
@@ -66,6 +70,7 @@ op('session.delete','registry',None,'P4','mutation',obj({'sessionID':ID}),obj({'
 op('session.snapshot','session','session_snapshot','P1','read',obj(),obj({'workspaces':array(ref('workspace')),'terminals':array(ref('terminal'))}))
 op('session.settings.get','session','session_settings','P6','read',obj(),ref('settings'))
 op('session.settings.update','session','session_settings','P6','structure',ref('settings'),ref('settings'))
+op('session.restore','session','session_restore','P6','mutation',obj({'geometry':ref('geometry')},{'theme':SHORT}),obj({'entries':array(ref('restoreEntry'),64),'alreadyRestored':BOOL}),('restore_already_completed','corrupt_layout','incompatible_version'))
 op('workspace.list','session','session_snapshot','P4','read',obj(),obj({'workspaces':array(ref('workspace'))}))
 op('workspace.create','session','workspace_mutation','P4','structure',obj({'title':SHORT,'terminal':ref('terminalSpec')}),ref('workspace'))
 op('workspace.update','session','workspace_mutation','P4','structure',obj({'workspaceID':ID},{'title':SHORT}),ref('workspace'),('workspace_not_found',))

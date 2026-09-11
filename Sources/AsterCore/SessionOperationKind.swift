@@ -21,6 +21,7 @@ public enum SessionOperationKind: String, Codable, CaseIterable, Sendable {
   case sessionSnapshot = "session.snapshot"
   case sessionSettingsGet = "session.settings.get"
   case sessionSettingsUpdate = "session.settings.update"
+  case sessionRestore = "session.restore"
   case workspaceList = "workspace.list"
   case workspaceCreate = "workspace.create"
   case workspaceUpdate = "workspace.update"
@@ -77,6 +78,7 @@ public enum SessionOperationKind: String, Codable, CaseIterable, Sendable {
     case .sessionSnapshot: .init(scope: .session, capability: "session_snapshot", requiresRevision: false, requiresLease: false, requiresControlSequence: false, requiresCreatedAt: false)
     case .sessionSettingsGet: .init(scope: .session, capability: "session_settings", requiresRevision: false, requiresLease: false, requiresControlSequence: false, requiresCreatedAt: false)
     case .sessionSettingsUpdate: .init(scope: .session, capability: "session_settings", requiresRevision: true, requiresLease: false, requiresControlSequence: false, requiresCreatedAt: false)
+    case .sessionRestore: .init(scope: .session, capability: "session_restore", requiresRevision: false, requiresLease: false, requiresControlSequence: false, requiresCreatedAt: false)
     case .workspaceList: .init(scope: .session, capability: "session_snapshot", requiresRevision: false, requiresLease: false, requiresControlSequence: false, requiresCreatedAt: false)
     case .workspaceCreate: .init(scope: .session, capability: "workspace_mutation", requiresRevision: true, requiresLease: false, requiresControlSequence: false, requiresCreatedAt: true)
     case .workspaceUpdate: .init(scope: .session, capability: "workspace_mutation", requiresRevision: true, requiresLease: false, requiresControlSequence: false, requiresCreatedAt: true)

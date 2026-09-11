@@ -431,6 +431,59 @@
       ],
       "additionalProperties": false
     },
+    "restoreEntry": {
+      "type": "object",
+      "properties": {
+        "paneID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "oldTerminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "newTerminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "path": {
+          "enum": [
+            "new_shell",
+            "agent_restore",
+            "history_replay",
+            "failed"
+          ]
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "agentProvider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "agentNativeSession": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "failureReason": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "historyAvailable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "paneID",
+        "oldTerminalID",
+        "newTerminalID",
+        "path"
+      ],
+      "additionalProperties": false
+    },
     "writeAttachment": {
       "type": "object",
       "properties": {
@@ -1703,6 +1756,72 @@
         "params",
         "target",
         "expectedRevision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "session.restore"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "geometry": {
+              "$ref": "#/$defs/geometry"
+            },
+            "theme": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "geometry"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
       ],
       "additionalProperties": false
     },
@@ -5132,6 +5251,69 @@
         },
         "result": {
           "$ref": "#/$defs/settings"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "session.restore"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/restoreEntry"
+              },
+              "maxItems": 64,
+              "minItems": 0
+            },
+            "alreadyRestored": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "entries",
+            "alreadyRestored"
+          ],
+          "additionalProperties": false
         },
         "target": {
           "$ref": "#/$defs/target"

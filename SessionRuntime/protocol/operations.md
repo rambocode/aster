@@ -13,6 +13,7 @@
 | `session.snapshot` | session | session_snapshot | P1 | read |
 | `session.settings.get` | session | session_settings | P6 | read |
 | `session.settings.update` | session | session_settings | P6 | structure |
+| `session.restore` | session | session_restore | P6 | mutation |
 | `workspace.list` | session | session_snapshot | P4 | read |
 | `workspace.create` | session | workspace_mutation | P4 | structure |
 | `workspace.update` | session | workspace_mutation | P4 | structure |

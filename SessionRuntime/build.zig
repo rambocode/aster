@@ -58,6 +58,13 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     }), .filters = &.{"workspace store"} });
     b.step("test-workspace-store", "Run workspace/tab/pane tree and layout persistence tests").dependOn(&b.addRunArtifact(layout_tests).step);
+    const cold_restore_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/cold_restore.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    }), .filters = &.{"cold restore"} });
+    b.step("test-cold-restore", "Run cold-restart restore plan tests").dependOn(&b.addRunArtifact(cold_restore_tests).step);
     const agent_tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/agent_store.zig"),
         .target = target,

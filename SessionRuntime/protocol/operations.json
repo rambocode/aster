@@ -287,6 +287,59 @@
       "durable": false
     },
     {
+      "name": "session.restore",
+      "scope": "session",
+      "capability": "session_restore",
+      "phase": "P6",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "geometry": {
+            "$ref": "#/$defs/geometry"
+          },
+          "theme": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "geometry"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/restoreEntry"
+            },
+            "maxItems": 64,
+            "minItems": 0
+          },
+          "alreadyRestored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entries",
+          "alreadyRestored"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "restore_already_completed",
+        "corrupt_layout",
+        "incompatible_version"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
       "name": "workspace.list",
       "scope": "session",
       "capability": "session_snapshot",

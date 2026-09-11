@@ -2191,6 +2191,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @Published private(set) var lifecycleState = TerminalSessionLifecycleState.notStarted
   @Published private(set) var exitCode: Int32?
   @Published private(set) var startupError: String?
+  /// 冷恢复路径，仅在远端冷恢复后设置。nil 表示未经历冷恢复。
+  @Published private(set) var recoveryPath: PaneRecoveryPath?
   /// Shell Integration 已观察到至少一个合法 OSC 133 标记；用于停用进程轮询回退。
   @Published private(set) var shellIntegrationDetected = false
   /// 最近一条完整命令的退出状态。nil 表示尚无完整记录或 Shell 未提供状态。
