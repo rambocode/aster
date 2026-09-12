@@ -682,7 +682,7 @@ pub const Service = struct {
 
         for (self.store.workspaces.items) |*workspace| {
             for (workspace.tabs.items) |*tab| {
-                try self.collectRestorePanes(temporary, tab, tab.root, workspace.cwd, geometry, only_pane, &entries);
+                try self.collectRestorePanes(temporary, tab, tab.root, workspace.cwd, geometry, only_pane, force, &entries);
             }
         }
 
@@ -697,14 +697,19 @@ pub const Service = struct {
     /// Walk layout nodes, assign new terminal IDs to stale panes, and enqueue
     /// each as a workspace-service Pending (so structure_hook claims the
     /// completion). Agent references produce resume argv instead of /bin/sh.
-    fn collectRestorePanes(self: *Service, arena: std.mem.Allocator, tab: *store_mod.Tab, index: usize, cwd: []const u8, geometry: @import("geometry.zig").Geometry, only_pane: ?[36]u8, entries: *std.json.Array) !void {
+    fn collectRestorePanes(self: *Service, arena: std.mem.Allocator, tab: *store_mod.Tab, index: usize, cwd: []const u8, geometry: @import("geometry.zig").Geometry, only_pane: ?[36]u8, force: bool, entries: *std.json.Array) !void {
         if (index >= tab.nodes.items.len) return;
         switch (tab.nodes.items[index]) {
             .leaf => |*pane| {
                 if (only_pane) |wanted| if (!std.mem.eql(u8, &wanted, &pane.pane_id)) return;
                 const old_terminal_id = pane.terminal_id;
-                // Skip terminals that are already running (detach-reattach)
-                if (self.pool.find(old_terminal_id) != null) return;
+                // Skip terminals that are already running (detach-reattach).
+                // 已退出的终端会留在池里直到被淘汰；用户显式（force）重启时先把它退休，
+                // 让新终端接管这个窗格。仍在运行的终端任何情况下都不动。
+                if (self.pool.find(old_terminal_id)) |existing| {
+                    if (!force or existing.session.exit_status == null) return;
+                    if (!self.pool.retireExited(old_terminal_id)) return;
+                }
                 // Assign new terminal ID
                 const new_terminal_id = ids.uuidText(ids.newUUID());
                 // Determine restore path and argv — check screen history first:
@@ -787,8 +792,8 @@ pub const Service = struct {
                 try entries.append(.{ .object = entry });
             },
             .split => |split| {
-                try self.collectRestorePanes(arena, tab, split.first, cwd, geometry, only_pane, entries);
-                try self.collectRestorePanes(arena, tab, split.second, cwd, geometry, only_pane, entries);
+                try self.collectRestorePanes(arena, tab, split.first, cwd, geometry, only_pane, force, entries);
+                try self.collectRestorePanes(arena, tab, split.second, cwd, geometry, only_pane, force, entries);
             },
             .free => {},
         }

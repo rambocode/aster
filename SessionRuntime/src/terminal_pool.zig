@@ -201,6 +201,21 @@ pub const Pool = struct {
         return entry.session.exit_status != null or entry.failure != null;
     }
 
+    /// 用户显式重启窗格时把已退出的旧记录退休，让新终端接管同一窗格。只对已回收
+    /// （进程已 reap、PTY 已关）的记录动手；仍在运行或清理未完成的记录原样保留并返回 false。
+    pub fn retireExited(self: *Pool, id: [36]u8) bool {
+        for (self.entries.items, 0..) |*entry, index| {
+            if (!std.mem.eql(u8, &entry.id, &id)) continue;
+            if (!reclaimed(entry)) return false;
+            self.retire(index) catch |err| {
+                self.entries.items[index].cleanup_failure = err;
+                return false;
+            };
+            return true;
+        }
+        return false;
+    }
+
     /// Post-mortem summary of a terminal that already gave its slot back, or
     /// null once even that summary aged out of the bounded window.
     pub fn findRetired(self: *Pool, id: [36]u8) ?*Retired {
