@@ -148,6 +148,14 @@ extension WorkspaceViewController {
     toggle.identifier = NSUserInterfaceItemIdentifier("machine-menu-toggle")
     menu.addItem(toggle)
 
+    // 更新远端服务是显式事务（§7）：只在用户点了它才会停止/替换远端进程，后台永不自动做。
+    let update = NSMenuItem(
+      title: "更新远端服务…", action: #selector(updateMachineService(_:)), keyEquivalent: "")
+    update.target = self
+    update.representedObject = row.id
+    update.identifier = NSUserInterfaceItemIdentifier("machine-menu-update-service")
+    menu.addItem(update)
+
     menu.addItem(.separator())
     let remove = NSMenuItem(title: "移除…", action: #selector(removeMachine(_:)), keyEquivalent: "")
     remove.target = self
@@ -168,15 +176,34 @@ extension WorkspaceViewController {
       let result = await self.machineFleet.addMachine(
         label: draft.label, sshTarget: draft.sshTarget, sessionName: draft.sessionName,
         confirm: { MachineSetupSheet.confirm($0, in: window) })
-      switch result {
-      case .added:
-        self.scheduleRefresh()
-      case .cancelled:
-        // 取消不保存任何配置，也不提示错误：这是一次正常的中止。
-        break
-      case .failed(let message):
-        MachineSetupSheet.presentFailure(message, in: window)
-      }
+      self.present(result, in: window)
+    }
+  }
+
+  /// 更新远端服务：探测 → 确认（含受影响终端数）→ 停止/安装/重启 → 更新配置。
+  @objc private func updateMachineService(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? UUID else { return }
+    let window = view.window
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      let result = await self.machineFleet.updateService(
+        id, confirm: { MachineSetupSheet.confirm($0, in: window) })
+      self.present(result, in: window)
+    }
+  }
+
+  /// 添加 / 更新结果的统一呈现。
+  private func present(_ result: MachineSetupResult, in window: NSWindow?) {
+    switch result {
+    case .added, .updated:
+      scheduleRefresh()
+    case .upToDate(let message):
+      MachineSetupSheet.presentNotice(message, in: window)
+    case .cancelled:
+      // 取消不保存任何配置，也不提示错误：这是一次正常的中止。
+      break
+    case .failed(let message):
+      MachineSetupSheet.presentFailure(message, in: window)
     }
   }
 

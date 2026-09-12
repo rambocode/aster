@@ -18,6 +18,31 @@ enum MachineFleetFixtures {
   static let report = RemoteProbeReport(
     platform: RemotePlatform(os: "linux", architecture: "x86_64", homeDirectory: "/root"),
     candidates: [])
+
+  /// 远端已有运行中服务与一个 PATH 候选的报告（更新服务用例）。
+  static let runningReport = RemoteProbeReport(
+    platform: RemotePlatform(os: "linux", architecture: "x86_64", homeDirectory: "/root"),
+    candidates: [
+      RemoteBinaryCandidate(
+        path: "/usr/local/bin/aster-session", source: .path, releaseVersion: "0.1.0-dev",
+        protocolMajor: 1, protocolMinor: 0)
+    ],
+    runningServer: identity)
+
+  static let artifact = RemoteServiceArtifact(
+    localPath: "/tmp/aster-session-linux-x86_64",
+    manifest: RemoteReleaseManifest(
+      version: "dev-0123456789ab", platform: "linux", architecture: "x86_64",
+      sha256: String(repeating: "ab", count: 32), sizeBytes: 4096,
+      artifactKind: .developmentBuild, protocolMajor: 1))
+
+  static let installOutcome = RemoteInstallOutcome(
+    installedPath: "/root/.local/share/aster/bin/aster-session",
+    versionedPath: "/root/.local/share/aster/versions/dev-0123456789ab/aster-session",
+    version: "dev-0123456789ab", previousVersion: nil, artifactKind: .developmentBuild)
+
+  static let replaceOutcome = RemoteReplacementOutcome(
+    affectedTerminalIDs: ["t1"], installOutcome: installOutcome, newServerIdentity: identity)
 }
 
 @Suite(.serialized)
@@ -28,21 +53,67 @@ struct MachineFleetTests {
   private final class FakeServices: MachineFleetServices, @unchecked Sendable {
     var setupOutcome: RemoteSetupOutcome?
     var setupError: (any Error)?
+    /// 按调用顺序消费的设置事务结果；用完后回落到 `setupOutcome` / 默认成功。
+    var setupQueue: [RemoteSetupOutcome] = []
+    /// 本机产物；nil 表示没有可安装的产物。
+    var artifact: RemoteServiceArtifact?
+    var artifactError: (any Error)?
+    var installOutcome: RemoteInstallOutcome?
+    var replaceOutcome: RemoteReplacementOutcome?
+    var remoteDigest: String?
+    private(set) var installCalls: [(target: String, accept: Bool)] = []
+    private(set) var replaceCalls: [(profileID: UUID, accept: Bool)] = []
+    private(set) var setupCalls = 0
 
     func runSetup(rawTarget: String, label: String, sessionName: String, profileID: UUID)
       async throws -> RemoteSetupOutcome
     {
+      setupCalls += 1
       if let setupError { throw setupError }
+      if !setupQueue.isEmpty { return setupQueue.removeFirst() }
       if let setupOutcome { return setupOutcome }
       return .ready(
         profile: MachineProfile(
-          id: profileID, label: label, sshTarget: rawTarget, sessionName: sessionName),
+          id: profileID, label: label, sshTarget: rawTarget, sessionName: sessionName,
+          remoteBinaryPath: "/usr/local/bin/aster-session",
+          stateParentPath: "/root/.local/state/aster"),
         identity: MachineFleetFixtures.identity,
         report: MachineFleetFixtures.report)
     }
 
     func registry(for profile: MachineProfile) throws -> MachineRegistryAccess {
       throw ManagedSessionError.runtimeUnavailable("测试不提供注册表传输")
+    }
+
+    func serviceArtifact(for platform: RemotePlatform) throws -> RemoteServiceArtifact? {
+      if let artifactError { throw artifactError }
+      return artifact
+    }
+
+    func installService(
+      rawTarget: String, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
+      acceptDevelopmentArtifact: Bool
+    ) async throws -> RemoteInstallOutcome {
+      installCalls.append((rawTarget, acceptDevelopmentArtifact))
+      guard let installOutcome else {
+        throw ManagedSessionError.runtimeUnavailable("测试未提供安装结果")
+      }
+      return installOutcome
+    }
+
+    func replaceService(
+      profile: MachineProfile, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
+      acceptDevelopmentArtifact: Bool
+    ) async throws -> RemoteReplacementOutcome {
+      replaceCalls.append((profile.id, acceptDevelopmentArtifact))
+      guard let replaceOutcome else {
+        throw ManagedSessionError.runtimeUnavailable("测试未提供替换结果")
+      }
+      return replaceOutcome
+    }
+
+    func remoteBinaryDigest(rawTarget: String, path: String) async throws -> String? {
+      remoteDigest
     }
   }
 
@@ -106,6 +177,7 @@ struct MachineFleetTests {
   func addMachineCancelledLeavesNothing() async throws {
     let services = FakeServices()
     services.setupOutcome = .installationRequired(report: MachineFleetFixtures.report, reason: "远端没有二进制")
+    services.artifact = MachineFleetFixtures.artifact
     let (fleet, url, _) = makeFleet(services)
     defer { cleanUp(fleet, url) }
 
@@ -124,6 +196,160 @@ struct MachineFleetTests {
     #expect(shown?.reason == "远端没有二进制")
     #expect(!FileManager.default.fileExists(atPath: url.path))
     #expect(fleet.rows.count == 1)
+  }
+
+  @Test("添加机器：需要安装时装完再走一遍设置事务，只有 .ready 才保存配置")
+  func addMachineInstallsThenSaves() async throws {
+    let services = FakeServices()
+    services.setupQueue = [
+      .installationRequired(report: MachineFleetFixtures.report, reason: "远端没有二进制")
+    ]
+    services.artifact = MachineFleetFixtures.artifact
+    services.installOutcome = MachineFleetFixtures.installOutcome
+    let (fleet, url, _) = makeFleet(services)
+    defer { cleanUp(fleet, url) }
+
+    var shown: MachineSetupConfirmation?
+    let result = await fleet.addMachine(
+      label: "orb", sshTarget: "root@ubuntu@orb", sessionName: "work",
+      confirm: { confirmation in
+        shown = confirmation
+        return true
+      })
+    guard case .added(let profile) = result else {
+      Issue.record("添加应成功，实际：\(result)")
+      return
+    }
+    // 开发产物必须以 developmentArtifact 形态确认，并把接受结果传给安装事务。
+    #expect(shown?.kind == .developmentArtifact)
+    #expect(shown?.version.contains("开发产物") == true)
+    #expect(services.installCalls.count == 1)
+    #expect(services.installCalls.first?.accept == true)
+    #expect(services.setupCalls == 2)
+    #expect(profile.sshTarget == "root@ubuntu@orb")
+    #expect(try MachineProfileStore(fileURL: url).load() == .loaded([profile]))
+  }
+
+  @Test("添加机器：本机没有该平台的产物时直接失败，不弹确认、不做任何远端写动作")
+  func addMachineWithoutArtifactFails() async throws {
+    let services = FakeServices()
+    services.setupOutcome = .installationRequired(report: MachineFleetFixtures.report, reason: "远端没有二进制")
+    let (fleet, url, _) = makeFleet(services)
+    defer { cleanUp(fleet, url) }
+
+    var confirmations = 0
+    let result = await fleet.addMachine(
+      label: "orb", sshTarget: "root@ubuntu@orb", sessionName: "work",
+      confirm: { _ in
+        confirmations += 1
+        return true
+      })
+    guard case .failed(let message) = result else {
+      Issue.record("应失败，实际：\(result)")
+      return
+    }
+    #expect(message.contains("linux/x86_64"))
+    #expect(message.contains(RemoteEnvironmentKeys.remoteBinary))
+    #expect(confirmations == 0)
+    #expect(services.installCalls.isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: url.path))
+  }
+
+  @Test("更新远端服务：确认后停止/安装/重启，配置里的二进制路径换成新活动路径")
+  func updateServiceReplacesAndPersists() async throws {
+    let services = FakeServices()
+    services.artifact = MachineFleetFixtures.artifact
+    services.replaceOutcome = MachineFleetFixtures.replaceOutcome
+    services.remoteDigest = String(repeating: "cd", count: 32)
+    let (fleet, url, _) = makeFleet(services)
+    defer { cleanUp(fleet, url) }
+    guard case .added(let profile) = await fleet.addMachine(
+      label: "orb", sshTarget: "root@ubuntu@orb", sessionName: "work", confirm: { _ in true })
+    else {
+      Issue.record("前置添加失败")
+      return
+    }
+    services.setupOutcome = .ready(
+      profile: profile, identity: MachineFleetFixtures.identity,
+      report: MachineFleetFixtures.runningReport)
+
+    var shown: MachineSetupConfirmation?
+    let result = await fleet.updateService(
+      profile.id,
+      confirm: { confirmation in
+        shown = confirmation
+        return true
+      })
+    guard case .updated(let updated) = result else {
+      Issue.record("应更新成功，实际：\(result)")
+      return
+    }
+    #expect(shown?.kind == .developmentArtifact)
+    #expect(shown?.processImpact.contains("停止") == true)
+    #expect(shown?.processImpact.contains("work") == true)
+    #expect(services.replaceCalls.map(\.profileID) == [profile.id])
+    #expect(services.installCalls.isEmpty)
+    #expect(updated.remoteBinaryPath == "/root/.local/share/aster/bin/aster-session")
+    #expect(updated.stateParentPath == profile.stateParentPath)
+    #expect(try MachineProfileStore(fileURL: url).load() == .loaded([updated]))
+  }
+
+  @Test("更新远端服务：远端已是同一份二进制时不停服务、不上传")
+  func updateServiceSkipsWhenDigestMatches() async throws {
+    let services = FakeServices()
+    services.artifact = MachineFleetFixtures.artifact
+    services.remoteDigest = MachineFleetFixtures.artifact.manifest.sha256
+    let (fleet, url, _) = makeFleet(services)
+    defer { cleanUp(fleet, url) }
+    guard case .added(let profile) = await fleet.addMachine(
+      label: "orb", sshTarget: "root@ubuntu@orb", sessionName: "work", confirm: { _ in true })
+    else {
+      Issue.record("前置添加失败")
+      return
+    }
+    services.setupOutcome = .ready(
+      profile: profile, identity: MachineFleetFixtures.identity,
+      report: MachineFleetFixtures.runningReport)
+
+    var confirmations = 0
+    let result = await fleet.updateService(
+      profile.id,
+      confirm: { _ in
+        confirmations += 1
+        return true
+      })
+    guard case .upToDate = result else {
+      Issue.record("应报告无需更新，实际：\(result)")
+      return
+    }
+    #expect(confirmations == 0)
+    #expect(services.replaceCalls.isEmpty)
+    #expect(services.installCalls.isEmpty)
+  }
+
+  @Test("更新远端服务：用户取消时什么也不做；Local 不提供该动作")
+  func updateServiceCancelDoesNothing() async throws {
+    let services = FakeServices()
+    services.artifact = MachineFleetFixtures.artifact
+    let (fleet, url, _) = makeFleet(services)
+    defer { cleanUp(fleet, url) }
+    guard case .added(let profile) = await fleet.addMachine(
+      label: "orb", sshTarget: "root@ubuntu@orb", sessionName: "work", confirm: { _ in true })
+    else {
+      Issue.record("前置添加失败")
+      return
+    }
+    services.setupOutcome = .ready(
+      profile: profile, identity: MachineFleetFixtures.identity,
+      report: MachineFleetFixtures.runningReport)
+
+    #expect(await fleet.updateService(profile.id, confirm: { _ in false }) == .cancelled)
+    #expect(services.replaceCalls.isEmpty)
+    guard case .failed = await fleet.updateService(MachineProfile.localProfileID, confirm: { _ in true })
+    else {
+      Issue.record("Local 应拒绝更新服务")
+      return
+    }
   }
 
   @Test("添加机器：设置事务失败不保存配置")

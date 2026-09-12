@@ -46,6 +46,10 @@ enum ManagedTerminalCoordinatorRegistry {
   /// 清空远端缓存。只用于测试与机器配置整体重载；Local 不受影响。
   static func reset() { remote.removeAll() }
 
+  /// 丢掉单台机器的缓存协调器：服务被替换后 serverID/epoch 与二进制路径都变了，
+  /// 旧协调器里的端点与连接状态不能再复用。
+  static func reset(machineProfileID: UUID) { remote.removeValue(forKey: machineProfileID) }
+
   /// 生产工厂：把机器配置翻译成一份「只覆盖运行时四个键」的环境。
   ///
   /// 覆盖而不是新建整份环境：`RemoteSSHPolicy.fromEnvironment` 还要读用户的 SSH 策略

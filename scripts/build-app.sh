@@ -59,6 +59,12 @@ cp -R "$PROJECT_DIR/Resources/settings-ui" "$RESOURCES_DIR/settings-ui"
 cp -R "$PROJECT_DIR/Resources/themes" "$RESOURCES_DIR/themes"
 # Agent skill 文档：`aster --skill` 与设置页「安装 skill」都从 Contents/Resources/skills 读取。
 cp -R "$PROJECT_DIR/Resources/skills" "$RESOURCES_DIR/skills"
+# 远端服务产物（scripts/build-remote-service.sh 生成）：「添加机器 / 更新远端服务」从
+# Contents/Resources/remote-service/<platform>-<arch>/ 取二进制与清单安装到远端。
+# 没构建就不打进去，App 会提示用 ASTER_REMOTE_BINARY 指定自定义构建。
+if [[ -d "$PROJECT_DIR/dist/remote-service" ]]; then
+  cp -R "$PROJECT_DIR/dist/remote-service" "$RESOURCES_DIR/remote-service"
+fi
 
 # Aster 自有 terminfo 在构建期编译进签名 Bundle。运行时只读取资源，不生成隐藏脚本
 # 或修改系统数据库；TERMINFO_DIRS 会把该目录放在系统条目前面。

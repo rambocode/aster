@@ -142,11 +142,13 @@ extension AsterControlDispatcher {
         label: params.label, sshTarget: params.sshTarget, sessionName: params.sessionName,
         confirm: { _ in false })
       switch outcome {
-      case .added(let profile):
+      case .added(let profile), .updated(let profile):
         guard let row = fleet.rows.first(where: { $0.id == profile.id }) else {
           throw AsterControlError(code: .internalError, message: "机器已保存但未出现在列表中。")
         }
         return try encodeMachine(Self.row(row))
+      case .upToDate(let message):
+        throw AsterControlError(code: .invalidRequest, message: message)
       case .cancelled:
         throw AsterControlError(
           code: .invalidRequest,

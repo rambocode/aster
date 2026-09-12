@@ -38,6 +38,8 @@ struct MachineSetupConfirmation: Equatable {
     case incompatibleServer
     /// 使用 `ASTER_REMOTE_BINARY` 指定的开发产物，必须显式接受。
     case developmentArtifact
+    /// 用户主动更新远端服务：停止运行中的服务、安装新版本并重启。
+    case serviceReplacement
   }
 
   var kind: Kind
@@ -53,9 +55,13 @@ struct MachineSetupConfirmation: Equatable {
   var reason: String
 }
 
-/// 添加机器的结果。
+/// 添加 / 更新机器的结果。
 enum MachineSetupResult: Equatable {
   case added(MachineProfile)
+  /// 远端服务已替换为新版本，配置里的运行时路径已更新。
+  case updated(MachineProfile)
+  /// 远端已经是本机产物的同一份二进制，什么也没动。
+  case upToDate(String)
   /// 用户在确认对话框里取消：不保存任何配置。
   case cancelled
   case failed(String)
@@ -80,6 +86,39 @@ protocol MachineFleetServices: Sendable {
     -> RemoteSetupOutcome
   /// 为一台机器构造命名会话注册表的访问入口。
   func registry(for profile: MachineProfile) throws -> MachineRegistryAccess
+  /// 本机可安装到该平台的服务产物；没有返回 nil，有但不可用（平台不符、清单坏）抛错。
+  func serviceArtifact(for platform: RemotePlatform) throws -> RemoteServiceArtifact?
+  /// 把产物安装到远端私有目录（P3.4）。不停止任何运行中的服务。
+  func installService(
+    rawTarget: String, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
+    acceptDevelopmentArtifact: Bool
+  ) async throws -> RemoteInstallOutcome
+  /// 显式替换运行中的服务（§7）：列出影响 → 停止 → 安装 → 用新二进制重启同一命名会话。
+  func replaceService(
+    profile: MachineProfile, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
+    acceptDevelopmentArtifact: Bool
+  ) async throws -> RemoteReplacementOutcome
+  /// 远端某个文件的 SHA256（小写 hex），用于判断是否已是同一份二进制；拿不到返回 nil。
+  func remoteBinaryDigest(rawTarget: String, path: String) async throws -> String?
+}
+
+/// 安装/替换的默认实现：不提供产物、不执行任何远端写动作。
+/// 只关心连接与注册表的测试替身不必逐个实现这些方法。
+extension MachineFleetServices {
+  func serviceArtifact(for platform: RemotePlatform) throws -> RemoteServiceArtifact? { nil }
+  func installService(
+    rawTarget: String, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
+    acceptDevelopmentArtifact: Bool
+  ) async throws -> RemoteInstallOutcome {
+    throw ManagedSessionError.runtimeUnavailable("本服务实现不支持远端安装。")
+  }
+  func replaceService(
+    profile: MachineProfile, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
+    acceptDevelopmentArtifact: Bool
+  ) async throws -> RemoteReplacementOutcome {
+    throw ManagedSessionError.runtimeUnavailable("本服务实现不支持远端服务替换。")
+  }
+  func remoteBinaryDigest(rawTarget: String, path: String) async throws -> String? { nil }
 }
 
 /// 机器与 Local 的统一编排（P4.3 / P4.4 / P4.5 / P4.7）。
@@ -297,40 +336,53 @@ final class MachineFleetModel: ObservableObject {
 
     let profileID = UUID()
     let outcome: RemoteSetupOutcome
-    do {
-      outcome = try await services.runSetup(
-        rawTarget: sshTarget, label: trimmedLabel, sessionName: trimmedSession,
-        profileID: profileID)
-    } catch let failure as RemoteSetupFailure {
-      return .failed(failure.message)
-    } catch {
-      return .failed(RemoteSetupDescription.text(for: error))
+    switch await setupOutcome(
+      rawTarget: sshTarget, label: trimmedLabel, sessionName: trimmedSession, profileID: profileID)
+    {
+    case .success(let value): outcome = value
+    case .failure(let failure): return .failed(failure.message)
     }
 
     switch outcome {
     case .ready(let profile, _, _):
-      do { try store.save(profiles + [profile]) } catch {
-        return .failed("配置保存失败：\(Self.describe(error))")
-      }
-      profiles.append(profile)
-      rebuildRows()
-      await supervisor.start(profile: profile)
-      await refreshStatuses()
-      return .added(profile)
+      return await saveNewProfile(profile)
 
     case .installationRequired(let report, let reason):
+      // 安装只写入新文件、不碰运行中的进程；装完再走一遍完整设置事务，配置仍然只在
+      // `.ready` 时产出。用户取消时磁盘上什么也没写。
+      let artifact: RemoteServiceArtifact
+      switch locateArtifact(for: report.platform) {
+      case .found(let found): artifact = found
+      case .unavailable(let message): return .failed(message)
+      }
       let accepted = confirm(
         MachineSetupConfirmation(
-          kind: .installation,
+          kind: artifact.manifest.artifactKind == .developmentBuild
+            ? .developmentArtifact : .installation,
           target: sshTarget,
           platform: "\(report.platform.os)/\(report.platform.architecture)",
-          version: report.candidates.first?.releaseVersion ?? "（远端尚无 aster-session）",
+          version: artifact.manifest.displaySummary,
           processImpact: "安装只写入新的二进制文件，不会停止远端正在运行的任何进程。",
           reason: reason))
-      // 用户取消：配置从未产出，磁盘上什么也没写。
-      return accepted ? .failed("安装事务尚未在本入口开放，请使用显式安装设置。") : .cancelled
+      guard accepted else { return .cancelled }
+      do {
+        _ = try await services.installService(
+          rawTarget: sshTarget, report: report, artifact: artifact,
+          acceptDevelopmentArtifact: accepted)
+      } catch {
+        return .failed("安装失败：\(RemoteSetupDescription.text(for: error))")
+      }
+      return await completeSetup(
+        rawTarget: sshTarget, label: trimmedLabel, sessionName: trimmedSession,
+        profileID: profileID)
 
     case .incompatibleServerRunning(let report, let reason):
+      // 运行中服务主版本不兼容：只能显式替换。替换后重新走设置事务拿到新服务的身份。
+      let artifact: RemoteServiceArtifact
+      switch locateArtifact(for: report.platform) {
+      case .found(let found): artifact = found
+      case .unavailable(let message): return .failed(message)
+      }
       let accepted = confirm(
         MachineSetupConfirmation(
           kind: .incompatibleServer,
@@ -338,9 +390,199 @@ final class MachineFleetModel: ObservableObject {
           platform: "\(report.platform.os)/\(report.platform.architecture)",
           version: report.runningServer?.version ?? report.candidates.first?.releaseVersion ?? "未知",
           processImpact: "替换会停止运行中的服务实例及其全部受管进程。Aster 不会在后台执行它。",
-          reason: reason))
-      return accepted ? .failed("服务替换属于显式更新事务，本入口不执行。") : .cancelled
+          reason: reason + "\n将安装：" + artifact.manifest.displaySummary))
+      guard accepted else { return .cancelled }
+      // 尚未保存的机器没有 profile；用本次设置的 ID、标签与会话名临时构造一份端点信息，
+      // 运行时路径取不兼容的那个候选（它就是正在运行的服务）。
+      let pending = MachineProfile(
+        id: profileID, label: trimmedLabel, sshTarget: sshTarget, sessionName: trimmedSession,
+        remoteBinaryPath: report.candidates.first { $0.protocolMajor != nil }?.path)
+      do {
+        _ = try await services.replaceService(
+          profile: pending, report: report, artifact: artifact,
+          acceptDevelopmentArtifact: accepted)
+      } catch {
+        return .failed("服务替换失败：\(RemoteSetupDescription.text(for: error))")
+      }
+      return await completeSetup(
+        rawTarget: sshTarget, label: trimmedLabel, sessionName: trimmedSession,
+        profileID: profileID)
     }
+  }
+
+  /// 更新一台已保存机器的远端服务：探测 → 找本机产物 → 与远端比对 → 确认 → 替换 → 更新配置。
+  ///
+  /// 远端已经是同一份二进制（摘要相同）时什么也不做。替换会停止该命名会话里的全部
+  /// 受管进程，所以确认文案必须写出受影响的终端数。
+  func updateService(
+    _ id: UUID, confirm: (MachineSetupConfirmation) -> Bool
+  ) async -> MachineSetupResult {
+    guard id != MachineProfile.localProfileID else { return .failed("Local 的服务随 App 更新。") }
+    guard let profile = profiles.first(where: { $0.id == id }), let target = profile.sshTarget
+    else { return .failed("机器不存在。") }
+
+    // 复用设置事务做探测与握手：拿到平台、候选与运行中服务身份。
+    let outcome: RemoteSetupOutcome
+    switch await setupOutcome(
+      rawTarget: target, label: profile.label, sessionName: profile.sessionName,
+      profileID: profile.id)
+    {
+    case .success(let value): outcome = value
+    case .failure(let failure): return .failed(failure.message)
+    }
+    let report: RemoteProbeReport
+    let runningBinaryPath: String?
+    switch outcome {
+    case .ready(let fresh, _, let freshReport):
+      report = freshReport
+      runningBinaryPath = fresh.remoteBinaryPath
+    case .incompatibleServerRunning(let freshReport, _):
+      report = freshReport
+      runningBinaryPath = freshReport.candidates.first { $0.protocolMajor != nil }?.path
+    case .installationRequired(let freshReport, _):
+      report = freshReport
+      runningBinaryPath = nil
+    }
+
+    let artifact: RemoteServiceArtifact
+    switch locateArtifact(for: report.platform) {
+    case .found(let found): artifact = found
+    case .unavailable(let message): return .failed(message)
+    }
+
+    // 远端已经在跑同一份二进制：不停服务、不上传。
+    if let runningBinaryPath,
+      let digest = try? await services.remoteBinaryDigest(rawTarget: target, path: runningBinaryPath),
+      digest == artifact.manifest.sha256
+    {
+      return .upToDate("远端服务已是本机的这一份（\(artifact.manifest.displaySummary)），无需更新。")
+    }
+
+    let serviceRunning = report.runningServer != nil
+    let affected = serviceRunning ? ((try? await runningTerminalCount(profile)) ?? 0) : 0
+    let current = report.candidates.first { $0.path == runningBinaryPath }
+    let accepted = confirm(
+      MachineSetupConfirmation(
+        kind: artifact.manifest.artifactKind == .developmentBuild
+          ? .developmentArtifact : .serviceReplacement,
+        target: target,
+        platform: "\(report.platform.os)/\(report.platform.architecture)",
+        version: artifact.manifest.displaySummary,
+        processImpact: serviceRunning
+          ? "会停止命名会话「\(profile.sessionName)」的服务及其中 \(affected) 个受管终端，重启后按冷恢复恢复布局。"
+          : "远端当前没有运行中的服务，安装后直接启动。",
+        reason: "远端当前：\(current?.releaseVersion ?? "无可用服务") \(runningBinaryPath ?? "")"))
+    guard accepted else { return .cancelled }
+
+    var updated = profile
+    do {
+      if serviceRunning {
+        let replacement = try await services.replaceService(
+          profile: profile, report: report, artifact: artifact,
+          acceptDevelopmentArtifact: accepted)
+        updated.remoteBinaryPath = replacement.installOutcome.installedPath
+      } else {
+        let install = try await services.installService(
+          rawTarget: target, report: report, artifact: artifact,
+          acceptDevelopmentArtifact: accepted)
+        updated.remoteBinaryPath = install.installedPath
+      }
+    } catch {
+      return .failed("服务更新失败：\(RemoteSetupDescription.text(for: error))")
+    }
+
+    guard let index = profiles.firstIndex(where: { $0.id == id }) else { return .failed("机器不存在。") }
+    var next = profiles
+    next[index] = updated
+    do { try store.save(next) } catch { return .failed("配置保存失败：\(Self.describe(error))") }
+    profiles = next
+    rebuildRows()
+    // 新服务是新的 serverID/epoch：丢掉按旧二进制路径缓存的协调器，重新建立连接。
+    ManagedTerminalCoordinatorRegistry.reset(machineProfileID: id)
+    await supervisor.remove(profileID: id)
+    if updated.enabled { await supervisor.start(profile: updated) }
+    await refreshStatuses()
+    return .updated(updated)
+  }
+
+  /// 跑一次设置事务并把两类错误统一成 `RemoteSetupFailure`。
+  private func setupOutcome(
+    rawTarget: String, label: String, sessionName: String, profileID: UUID
+  ) async -> Result<RemoteSetupOutcome, RemoteSetupFailure> {
+    do {
+      return .success(
+        try await services.runSetup(
+          rawTarget: rawTarget, label: label, sessionName: sessionName, profileID: profileID))
+    } catch let failure as RemoteSetupFailure {
+      return .failure(failure)
+    } catch {
+      return .failure(
+        RemoteSetupFailure(
+          stage: .sessionPreparation, requiresExplicitSetup: true,
+          message: RemoteSetupDescription.text(for: error)))
+    }
+  }
+
+  /// 安装/替换之后的收尾：再跑一遍完整设置事务，只有 `.ready` 才保存配置。
+  /// 到这里还需要安装或替换，说明刚装的二进制没被探测到或仍不兼容，直接报失败，
+  /// 不再弹第二次确认。
+  private func completeSetup(
+    rawTarget: String, label: String, sessionName: String, profileID: UUID
+  ) async -> MachineSetupResult {
+    switch await setupOutcome(
+      rawTarget: rawTarget, label: label, sessionName: sessionName, profileID: profileID)
+    {
+    case .failure(let failure): return .failed(failure.message)
+    case .success(.ready(let profile, _, _)): return await saveNewProfile(profile)
+    case .success(.installationRequired(_, let reason)):
+      return .failed("安装完成后远端仍未发现可用的 aster-session：\(reason)")
+    case .success(.incompatibleServerRunning(_, let reason)):
+      return .failed("替换完成后远端服务仍不兼容：\(reason)")
+    }
+  }
+
+  /// `.ready` 的唯一落盘入口：写配置、进列表、起连接。
+  private func saveNewProfile(_ profile: MachineProfile) async -> MachineSetupResult {
+    do { try store.save(profiles + [profile]) } catch {
+      return .failed("配置保存失败：\(Self.describe(error))")
+    }
+    profiles.append(profile)
+    rebuildRows()
+    await supervisor.start(profile: profile)
+    await refreshStatuses()
+    return .added(profile)
+  }
+
+  private enum ArtifactLookup {
+    case found(RemoteServiceArtifact)
+    case unavailable(String)
+  }
+
+  /// 找本机产物；找不到或不可用都转成可直接展示的失败文案。
+  private func locateArtifact(for platform: RemotePlatform) -> ArtifactLookup {
+    do {
+      guard let artifact = try services.serviceArtifact(for: platform) else {
+        return .unavailable(
+          "本机没有适用于 \(platform.os)/\(platform.architecture) 的 aster-session 产物。"
+            + "可用 \(RemoteEnvironmentKeys.remoteBinary) 指定自定义构建，或使用内含远端服务产物的正式版 App。")
+      }
+      return .found(artifact)
+    } catch let error as RemoteServiceArtifactError {
+      return .unavailable(error.text)
+    } catch {
+      return .unavailable(RemoteSetupDescription.text(for: error))
+    }
+  }
+
+  /// 替换前统计会被停止的受管终端数，只用于确认文案。
+  private func runningTerminalCount(_ profile: MachineProfile) async throws -> Int {
+    let access = try services.registry(for: profile)
+    let endpoint = ManagedSessionEndpoint(
+      machineProfileID: profile.id, binaryPath: access.endpoint.binaryPath,
+      stateParentPath: access.endpoint.stateParentPath, sessionName: profile.sessionName)
+    return try await Task.detached(priority: .userInitiated) {
+      try access.client.listTerminals(endpoint).filter { $0.state == .running }.count
+    }.value
   }
 
   /// 重命名（§4.1 第 7 条）：只改标签，不触发重连。
@@ -611,6 +853,136 @@ struct RemoteMachineFleetServices: MachineFleetServices {
       endpoint: ManagedRegistryEndpoint(
         machineProfileID: profile.id, binaryPath: runtime.binaryPath,
         stateParentPath: runtime.stateParentPath))
+  }
+
+  /// 产物目录：`ASTER_REMOTE_BINARY` 覆盖优先，否则读 App 包内 `Resources/remote-service/`。
+  private var artifactCatalog: RemoteServiceArtifactCatalog {
+    RemoteServiceArtifactCatalog(
+      bundledDirectory: Bundle.main.resourceURL?.appendingPathComponent(
+        RemoteServiceArtifactCatalog.bundledDirectoryName, isDirectory: true),
+      environment: environment)
+  }
+
+  func serviceArtifact(for platform: RemotePlatform) throws -> RemoteServiceArtifact? {
+    try artifactCatalog.artifact(forPlatform: platform.os, architecture: platform.architecture)
+  }
+
+  /// 受管发布的签名验证。
+  ///
+  /// 目前没有正式的发布签名基础设施：`RemoteInstallSignature` 里只有测试密钥对，用它
+  /// 给 `managedRelease` 放行等于把测试签名当正式签名。因此这里一律拒绝，打包脚本产出的
+  /// 清单也标为 `developmentBuild`，由用户在确认框里显式接受。接入真实发布密钥后替换此处。
+  private static let releaseSignatureVerifier: @Sendable (RemoteReleaseManifest) -> Bool = {
+    _ in false
+  }
+
+  func installService(
+    rawTarget: String, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
+    acceptDevelopmentArtifact: Bool
+  ) async throws -> RemoteInstallOutcome {
+    let transport = try makeTransport(rawTarget)
+    let executor = RemoteSSHInstallExecutor(transport: transport)
+    let plan = RemoteInstallPlan(
+      targetDescription: rawTarget,
+      homeDirectory: report.platform.homeDirectory,
+      manifest: artifact.manifest,
+      existingVersion: try await Self.activeInstalledVersion(
+        executor: executor, homeDirectory: report.platform.homeDirectory))
+    let transaction = RemoteInstallTransaction(
+      executor: executor,
+      remotePlatform: report.platform.os,
+      remoteArchitecture: report.platform.architecture,
+      acceptDevelopmentArtifact: acceptDevelopmentArtifact,
+      signatureVerifier: Self.releaseSignatureVerifier)
+    // 上传与远端复核是阻塞的 SSH 往返，必须离开主线程。
+    return try await Task.detached(priority: .userInitiated) {
+      try transaction.install(
+        plan: plan, manifest: artifact.manifest, localPath: artifact.localPath)
+    }.value
+  }
+
+  func replaceService(
+    profile: MachineProfile, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
+    acceptDevelopmentArtifact: Bool
+  ) async throws -> RemoteReplacementOutcome {
+    guard let rawTarget = profile.sshTarget else { throw MachineFleetError.machineNotFound }
+    let transport = try makeTransport(rawTarget)
+    // 停止/重启走当前运行中的服务端点；二进制路径优先取配置里的实测值。
+    let stateParent = Self.nonEmpty(environment[RemoteEnvironmentKeys.stateDirectory])
+      ?? Self.nonEmpty(profile.stateParentPath)
+      ?? RemoteHostProbe.privateStateParentPath(homeDirectory: report.platform.homeDirectory)
+    guard let stateParent else {
+      throw ManagedSessionError.runtimeUnavailable("无法确定远端状态目录，无法替换服务。")
+    }
+    let currentBinary = Self.nonEmpty(environment[RemoteEnvironmentKeys.remoteBinary])
+      ?? Self.nonEmpty(profile.remoteBinaryPath)
+      ?? report.candidates.first?.path
+      ?? RemoteHostProbe.privateInstallPath(homeDirectory: report.platform.homeDirectory)
+    let endpoint = ManagedSessionEndpoint(
+      machineProfileID: profile.id, binaryPath: currentBinary,
+      stateParentPath: stateParent, sessionName: profile.sessionName)
+    let installExecutor = RemoteSSHInstallExecutor(transport: transport)
+    let plan = RemoteInstallPlan(
+      targetDescription: rawTarget,
+      homeDirectory: report.platform.homeDirectory,
+      manifest: artifact.manifest,
+      existingVersion: try await Self.activeInstalledVersion(
+        executor: installExecutor, homeDirectory: report.platform.homeDirectory))
+    let transaction = RemoteReplacementTransaction(
+      executor: RemoteSSHReplacementExecutor(
+        client: RemoteManagedSessionClient(transport: transport), endpoint: endpoint),
+      installTransaction: RemoteInstallTransaction(
+        executor: installExecutor,
+        remotePlatform: report.platform.os,
+        remoteArchitecture: report.platform.architecture,
+        acceptDevelopmentArtifact: acceptDevelopmentArtifact,
+        signatureVerifier: Self.releaseSignatureVerifier))
+    return try await Task.detached(priority: .userInitiated) {
+      try transaction.replace(
+        plan: plan, manifest: artifact.manifest, localPath: artifact.localPath)
+    }.value
+  }
+
+  func remoteBinaryDigest(rawTarget: String, path: String) async throws -> String? {
+    let transport = try makeTransport(rawTarget)
+    let quoted = RemoteSSHInvocation.quote(path)
+    let script =
+      "command -v sha256sum >/dev/null 2>&1 && sha256sum \(quoted) || shasum -a 256 \(quoted)"
+    let result = try await Task.detached(priority: .userInitiated) {
+      try RemoteSSHProcessRunner().run(
+        arguments: transport.sshArguments(remoteCommand: ["/bin/sh", "-c", script]),
+        timeout: TimeInterval(transport.policy.connectTimeout + 20))
+    }.value
+    guard result.exitStatus == 0 else { return nil }
+    let digest = result.standardOutput.split(whereSeparator: { $0 == " " || $0 == "\n" }).first
+      .map(String.init)?.lowercased()
+    guard let digest, RemoteInstallValidation.isLowercaseHexDigest(digest) else { return nil }
+    return digest
+  }
+
+  /// 私有安装目录当前活动 symlink 指向的版本名（`versions/<v>/aster-session` 里的 `<v>`）。
+  /// 只有由安装事务写入的版本化目录才能作为回滚目标；`/usr/local/bin` 之类的外部路径不算。
+  private static func activeInstalledVersion(
+    executor: RemoteSSHInstallExecutor, homeDirectory: String
+  ) async throws -> String? {
+    let active = RemoteInstallPlan.defaultInstallRoot(homeDirectory: homeDirectory)
+      + "/bin/" + RemoteInstallPlan.binaryName
+    let result = try await Task.detached(priority: .userInitiated) {
+      try executor.runRemote(["readlink", active])
+    }.value
+    guard result.exitStatus == 0 else { return nil }
+    let components = result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+      .split(separator: "/").map(String.init)
+    // …/versions/<v>/aster-session
+    guard components.count >= 3, components[components.count - 3] == "versions" else {
+      return nil
+    }
+    return components[components.count - 2]
+  }
+
+  private static func nonEmpty(_ value: String?) -> String? {
+    guard let value, !value.isEmpty else { return nil }
+    return value
   }
 
   /// 构造 SSH 传输。私有临时配置只在 `manage_ssh_config` 开启时创建。

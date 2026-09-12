@@ -78,7 +78,8 @@ enum MachineSetupSheet {
       switch confirmation.kind {
       case .installation: "需要在远端安装 aster-session"
       case .incompatibleServer: "远端运行中的服务与客户端不兼容"
-      case .developmentArtifact: "将使用自定义开发产物"
+      case .developmentArtifact: "将向远端安装未签名的开发产物"
+      case .serviceReplacement: "更新远端 aster-session 将重启服务"
       }
     alert.informativeText = """
       目标：\(confirmation.target)
@@ -102,6 +103,16 @@ enum MachineSetupSheet {
     alert.addButton(withTitle: "取消")
     alert.addButton(withTitle: "移除")
     return run(alert, in: window) == .alertSecondButtonReturn
+  }
+
+  /// 展示一条信息性说明（例如"远端已是最新"）。不是错误，不用警告样式。
+  static func presentNotice(_ message: String, in window: NSWindow?) {
+    let alert = NSAlert()
+    alert.alertStyle = .informational
+    alert.messageText = "无需更新"
+    alert.informativeText = message
+    alert.addButton(withTitle: "好")
+    _ = run(alert, in: window)
   }
 
   /// 展示一条可直接阅读的失败说明。文案来自设置事务，已脱敏。
