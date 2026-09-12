@@ -206,6 +206,19 @@ final class RemoteWorkspaceController: ObservableObject {
     }
   }
 
+  /// 新建工作区事务（服务端同时创建首个标签与终端）。
+  /// 空会话的第一个标签只能走这里：`tab create` 必须挂在已有工作区上。
+  @discardableResult
+  func createWorkspace(title: String, terminal: RemoteTerminalSpec) async throws
+    -> RemoteWorkspace
+  {
+    try await submit { client, expected in
+      try client.withConflictRetry(expectedRevision: expected) { revision in
+        try client.createWorkspace(expectedRevision: revision, title: title, terminal: terminal)
+      }
+    }
+  }
+
   /// 分屏事务。
   @discardableResult
   func splitPane(

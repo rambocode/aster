@@ -43,6 +43,8 @@ final class RemoteMachineWorkspace {
   var workspaceID: String?
   /// 该机器最近一次刷新的错误；界面显示明确原因而不是空标签栏。
   var lastError: String?
+  /// 空会话的首个工作区是否已经请求过。失败后不自动重试，避免「刷新 → 建 → 失败 → 刷新」循环。
+  var initialWorkspaceRequested = false
 
   init(machineProfileID: UUID, controller: RemoteWorkspaceController) {
     self.machineProfileID = machineProfileID
@@ -163,6 +165,7 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
       lastError = nil
       workspace.lastError = nil
       onDidRefresh?()
+      ensureInitialWorkspace(projection: projection, workspace: workspace)
       return true
     } catch {
       let message = RemoteSetupDescription.text(for: error)
@@ -526,15 +529,56 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
   // MARK: - 结构事务
 
   func createTab(workingDirectory: String?) {
-    guard let model, let workspace = workspaces[model.activeMachineID],
-      let workspaceID = workspace.workspaceID
-    else { return }
+    guard let model, let workspace = workspaces[model.activeMachineID] else { return }
+    // 服务端还没有任何工作区（全新会话、或工作区已被全部关闭）时，「新建标签」就是
+    // 新建第一个工作区：`tab create` 必须挂在已有 workspace 上，否则只能静默失败，
+    // 用户看到的就是"点了没反应"。
+    guard let workspaceID = workspace.workspaceID else {
+      let spec = initialTerminalSpec(workingDirectory: workingDirectory, in: workspace)
+      submit(workspace) { controller in
+        _ = try await controller.createWorkspace(title: spec.title, terminal: spec.terminal)
+      }
+      return
+    }
     let cwd = workingDirectory ?? remoteFallbackDirectory(workspace)
     submit(workspace) { controller in
       _ = try await controller.createTab(
         workspaceID: workspaceID, title: TerminalTabItem.displayName(forDirectory: cwd),
         terminal: self.terminalSpec(cwd: cwd))
     }
+  }
+
+  /// 空会话在成为活动机器时自动建第一个工作区与 Shell，与本地「工作区永不为空」一致；
+  /// 否则用户只看到一片空白。只对活动机器做：后台机器不凭空在远端创建进程。
+  /// 请求失败时 `lastError` 已显示原因，不自动重试。
+  private func ensureInitialWorkspace(
+    projection: ProjectedRemoteSession, workspace: RemoteMachineWorkspace
+  ) {
+    guard !projection.workspaces.isEmpty else {
+      guard let model, model.activeMachineID == workspace.machineProfileID,
+        !workspace.initialWorkspaceRequested
+      else { return }
+      workspace.initialWorkspaceRequested = true
+      createTab(workingDirectory: nil)
+      return
+    }
+    workspace.initialWorkspaceRequested = false
+  }
+
+  /// 首个工作区的终端规格。没有任何服务端 cwd 可用时把落脚点交给远端 Shell 自己
+  /// `cd "$HOME"`（cwd 先用 POSIX 保证存在的 `/`），标题按 `~` 显示而不是 `/`。
+  private func initialTerminalSpec(workingDirectory: String?, in workspace: RemoteMachineWorkspace)
+    -> (title: String, terminal: RemoteTerminalSpec)
+  {
+    if let cwd = workingDirectory ?? workspace.controller.projection?.workspaces.first?.cwd {
+      return (TerminalTabItem.displayName(forDirectory: cwd), terminalSpec(cwd: cwd))
+    }
+    return (
+      "~",
+      RemoteTerminalSpec(
+        cwd: ManagedTerminalLaunchSpec.remoteRootDirectory,
+        argv: ManagedTerminalLaunchSpec.remoteArgv(landsInHome: true))
+    )
   }
 
   func splitPane(tabID: UUID, paneID: UUID, direction: SplitDirection) {
@@ -583,9 +627,14 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
       do {
         try await body(workspace.controller)
       } catch {
+        // 失败也要重新取快照（服务端可能已部分变更），但取完快照后必须把事务错误
+        // 放回去：refresh 成功会清掉 lastError，否则用户看到的就是"点了没反应"。
         let message = RemoteSetupDescription.text(for: error)
+        await self.refresh(machineProfileID: workspace.machineProfileID)
         self.lastError = message
         workspace.lastError = message
+        self.onDidRefresh?()
+        return
       }
       await self.refresh(machineProfileID: workspace.machineProfileID)
     }
