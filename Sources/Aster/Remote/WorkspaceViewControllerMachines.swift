@@ -156,6 +156,13 @@ extension WorkspaceViewController {
     update.identifier = NSUserInterfaceItemIdentifier("machine-menu-update-service")
     menu.addItem(update)
 
+    let newAgent = NSMenuItem(
+      title: "新建 Agent…", action: #selector(newMachineAgent(_:)), keyEquivalent: "")
+    newAgent.target = self
+    newAgent.representedObject = row.id
+    newAgent.identifier = NSUserInterfaceItemIdentifier("machine-menu-new-agent")
+    menu.addItem(newAgent)
+
     let agents = NSMenuItem(
       title: "远端 Agent 集成…", action: #selector(configureMachineAgents(_:)), keyEquivalent: "")
     agents.target = self
@@ -184,6 +191,45 @@ extension WorkspaceViewController {
         label: draft.label, sshTarget: draft.sshTarget, sessionName: draft.sessionName,
         confirm: { MachineSetupSheet.confirm($0, in: window) })
       self.present(result, in: window)
+    }
+  }
+
+  /// 侧栏右键「新建 Agent…」。
+  @objc private func newMachineAgent(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? UUID else { return }
+    presentNewRemoteAgent(machineID: id)
+  }
+
+  /// 新建远端 Agent：探测远端清单 → 选 CLI → 切到该机器 → 服务端事务以 Agent 身份开标签。
+  func presentNewRemoteAgent(machineID id: UUID) {
+    let window = view.window
+    let label = machineFleet.rows.first { $0.id == id }?.label ?? ""
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      let catalog: [RemoteAgentCatalogEntry]
+      do { catalog = try await self.machineFleet.remoteAgentCatalog(id) } catch {
+        MachineSetupSheet.presentFailure(
+          "远端 Agent 探测失败：\(RemoteSetupDescription.text(for: error))", in: window)
+        return
+      }
+      guard !catalog.isEmpty else {
+        MachineSetupSheet.presentNotice(
+          "远端 PATH 上没有发现任何已知 Agent CLI（claude、codex、grok、gemini…）。",
+          title: "没有可启动的 Agent", in: window)
+        return
+      }
+      guard let provider = MachineSetupSheet.promptForRemoteAgent(catalog, machineLabel: label, in: window)
+      else { return }
+      // 目标机器不是活动机器时先切过去：结构事务只对活动机器提交。
+      if self.machineFleet.activeMachineID != id {
+        if let failure = self.machineFleet.selectMachine(id) {
+          MachineSetupSheet.presentFailure(failure, in: window)
+          return
+        }
+        self.scheduleRefresh()
+        await self.remoteWorkspaces.activate(machineProfileID: id)
+      }
+      self.remoteWorkspaces.createAgentTab(provider: provider, workingDirectory: nil)
     }
   }
 

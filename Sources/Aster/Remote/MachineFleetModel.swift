@@ -103,6 +103,14 @@ protocol MachineFleetServices: Sendable {
   /// 远端 Agent 集成：`install` 为 nil 只探测；否则上传 hook 脚本并为这些 provider 合并配置。
   func agentIntegration(for profile: MachineProfile, install: [AgentProvider]?) async throws
     -> RemoteAgentIntegrationReport
+  /// 远端已安装的 Agent CLI 清单（一次 SSH 往返）。「新建远端 Agent」的选择列表来源。
+  func remoteAgentCatalog(for profile: MachineProfile) async throws -> RemoteAgentProbeResult
+}
+
+/// 「新建远端 Agent」列表里的一项。
+struct RemoteAgentCatalogEntry: Equatable, Sendable {
+  var provider: AgentProvider
+  var version: String?
 }
 
 /// 安装/替换的默认实现：不提供产物、不执行任何远端写动作。
@@ -126,6 +134,9 @@ extension MachineFleetServices {
     -> RemoteAgentIntegrationReport
   {
     throw ManagedSessionError.runtimeUnavailable("本服务实现不支持远端 Agent 集成。")
+  }
+  func remoteAgentCatalog(for profile: MachineProfile) async throws -> RemoteAgentProbeResult {
+    throw ManagedSessionError.runtimeUnavailable("本服务实现不支持远端 Agent 探测。")
   }
 }
 
@@ -555,6 +566,18 @@ final class MachineFleetModel: ObservableObject {
       return .installed(installed)
     } catch {
       return .failed("远端 Agent 集成安装失败：\(RemoteSetupDescription.text(for: error))")
+    }
+  }
+
+  /// 远端已安装的 Agent CLI，按 `AgentProvider.allCases` 顺序。空数组表示远端 PATH 上一个都没有。
+  func remoteAgentCatalog(_ id: UUID) async throws -> [RemoteAgentCatalogEntry] {
+    guard let profile = profiles.first(where: { $0.id == id }), profile.sshTarget != nil else {
+      throw MachineFleetError.machineNotFound
+    }
+    let probe = try await services.remoteAgentCatalog(for: profile)
+    return AgentProvider.allCases.compactMap { provider in
+      guard let entry = probe.entries[provider], entry.installed else { return nil }
+      return RemoteAgentCatalogEntry(provider: provider, version: entry.version)
     }
   }
 
@@ -1011,6 +1034,20 @@ struct RemoteMachineFleetServices: MachineFleetServices {
     return try await Task.detached(priority: .userInitiated) {
       if let install { return try installer.install(providers: install) }
       return try installer.inspect()
+    }.value
+  }
+
+  func remoteAgentCatalog(for profile: MachineProfile) async throws -> RemoteAgentProbeResult {
+    guard let rawTarget = profile.sshTarget else { throw MachineFleetError.machineNotFound }
+    let transport = try makeTransport(rawTarget)
+    return try await Task.detached(priority: .userInitiated) {
+      let result = try RemoteSSHProcessRunner().run(
+        arguments: transport.sshArguments(remoteCommand: RemoteAgentProbe.probeCommand()),
+        timeout: 30)
+      guard let probe = RemoteAgentProbe.parse(result.standardOutput) else {
+        throw ManagedSessionError.malformedReply("Agent 探测输出缺少标记")
+      }
+      return probe
     }.value
   }
 

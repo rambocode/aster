@@ -134,6 +134,12 @@ struct MachineFleetTests {
       remoteDigest
     }
 
+    var catalog: RemoteAgentProbeResult?
+    func remoteAgentCatalog(for profile: MachineProfile) async throws -> RemoteAgentProbeResult {
+      guard let catalog else { throw ManagedSessionError.runtimeUnavailable("测试未提供清单") }
+      return catalog
+    }
+
     var integrationReport: RemoteAgentIntegrationReport?
     private(set) var integrationInstallCalls: [[AgentProvider]] = []
 
@@ -460,6 +466,30 @@ struct MachineFleetTests {
     else {
       Issue.record("Local 应拒绝")
       return
+    }
+  }
+
+  @Test("远端 Agent 清单：只列远端已安装的 CLI，按 provider 固定顺序；Local 不适用")
+  func remoteAgentCatalogListsInstalledProviders() async throws {
+    let services = FakeServices()
+    services.catalog = RemoteAgentProbeResult(entries: [
+      .grokBuild: .init(installed: true, version: "grok 1.0.30"),
+      .claudeCode: .init(installed: true, version: "2.1.0"),
+      .codex: .init(installed: false),
+    ])
+    let (fleet, url, _) = makeFleet(services)
+    defer { cleanUp(fleet, url) }
+    guard case .added(let profile) = await fleet.addMachine(
+      label: "orb", sshTarget: "root@ubuntu@orb", sessionName: "work", confirm: { _ in true })
+    else {
+      Issue.record("前置添加失败")
+      return
+    }
+    let catalog = try await fleet.remoteAgentCatalog(profile.id)
+    #expect(catalog.map(\.provider) == [.claudeCode, .grokBuild])
+    #expect(catalog.map(\.version) == ["2.1.0", "grok 1.0.30"])
+    await #expect(throws: MachineFleetError.machineNotFound) {
+      try await fleet.remoteAgentCatalog(MachineProfile.localProfileID)
     }
   }
 

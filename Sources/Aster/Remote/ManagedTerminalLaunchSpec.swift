@@ -53,6 +53,18 @@ enum ManagedTerminalLaunchSpec {
     return ["/bin/sh", "-lc", landsInHome ? "cd \"$HOME\" 2>/dev/null; \(launch)" : launch]
   }
 
+  /// 远端「以 Agent 身份开标签」的 argv：登录 Shell 里 `exec` 该 CLI。
+  ///
+  /// 走登录 Shell 而不是直接 exec 绝对路径：CLI 的位置（`~/.local/bin`、nvm、brew）只有远端
+  /// 的 rc 文件知道，服务端也不该替用户猜 PATH。命令名按 POSIX 单引号编码，不经二次解释。
+  static func remoteAgentArgv(command: String, arguments: [String] = [], landsInHome: Bool)
+    -> [String]
+  {
+    let quoted = ([command] + arguments).map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+    let launch = "exec " + quoted.joined(separator: " ")
+    return ["/bin/sh", "-lc", landsInHome ? "cd \"$HOME\" 2>/dev/null; \(launch)" : launch]
+  }
+
   /// 机器侧栏事务用的规格：cwd 一定来自服务端快照，因此不再 `cd $HOME`。
   static func remoteSpec(cwd: String) -> RemoteTerminalSpec {
     RemoteTerminalSpec(cwd: cwd, argv: remoteArgv(landsInHome: false))

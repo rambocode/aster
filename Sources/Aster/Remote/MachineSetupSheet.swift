@@ -131,6 +131,30 @@ enum MachineSetupSheet {
     return run(alert, in: window) == .alertSecondButtonReturn
   }
 
+  /// 「新建远端 Agent」选择面板：只列远端真实探测到的 CLI（对齐 herdrm 的 New Agent）。
+  static func promptForRemoteAgent(
+    _ catalog: [RemoteAgentCatalogEntry], machineLabel: String, in window: NSWindow?
+  ) -> AgentProvider? {
+    let alert = NSAlert()
+    alert.messageText = "在「\(machineLabel)」上新建 Agent"
+    alert.informativeText = "在远端以 Agent 身份开一个标签：登录 Shell 直接启动所选 CLI，退出即关闭标签。"
+    alert.addButton(withTitle: "启动")
+    alert.addButton(withTitle: "取消")
+    let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26), pullsDown: false)
+    popup.identifier = NSUserInterfaceItemIdentifier("machine-agent-picker")
+    for entry in catalog {
+      let title = entry.version.map { "\(entry.provider.displayName) — \($0)" } ?? entry.provider.displayName
+      popup.addItem(withTitle: title)
+      popup.lastItem?.representedObject = entry.provider.rawValue
+    }
+    alert.accessoryView = popup
+    alert.window.initialFirstResponder = popup
+    guard run(alert, in: window) == .alertFirstButtonReturn,
+      let raw = popup.selectedItem?.representedObject as? String
+    else { return nil }
+    return AgentProvider(rawValue: raw)
+  }
+
   /// 远端 Agent 集成的结果说明。
   static func presentAgentIntegration(_ report: RemoteAgentIntegrationReport, in window: NSWindow?) {
     let alert = NSAlert()

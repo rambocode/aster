@@ -126,6 +126,46 @@ struct RemoteEmptySessionWorkspaceTests {
     #expect(model.tabs.first?.remoteTabID == "tab-1")
   }
 
+  @Test("以 Agent 身份新建标签：登录 Shell exec 该 CLI，标题是 provider 名，PATH 交给远端")
+  func createAgentTabExecsProviderInLoginShell() async throws {
+    let machineID = UUID()
+    let (coordinator, client, model) = makeCoordinator(
+      scripted: [
+        Self.filledSnapshot(revision: 4),
+        // tab create 结果 + 事后快照
+        "{\"type\":\"result\",\"revision\":5,\(Self.target),\"result\":{\"tabID\":\"tab-2\",\"title\":\"Grok Build\",\"layout\":{\"kind\":\"leaf\",\"pane\":{\"paneID\":\"\(Self.paneA)\",\"terminalID\":\"term-b\"}}}}",
+        Self.filledSnapshot(revision: 5),
+      ],
+      machineID: machineID, active: true)
+    #expect(await coordinator.refresh(machineProfileID: machineID))
+    #expect(model.tabs.count == 1)
+
+    // 命令面板 / 菜单都走 AppModel.launchAgent：活动机器是远端时必须转成服务端事务。
+    // 真实流程里 `remoteStructureHandler` 由 beginActivation 挂上；这里直接注入协调器。
+    model.remoteStructureHandler = coordinator
+    model.launchAgent(.grokBuild)
+    await waitForInvocations(client, count: 3)
+
+    let create = try #require(client.invocations.dropFirst().first)
+    #expect(Array(create.prefix(2)) == ["tab", "create"])
+    #expect(create.firstIndex(of: "--title").map { create[$0 + 1] } == "Grok Build")
+    // cwd 来自服务端快照里的工作区目录，不是本机目录。
+    #expect(create.firstIndex(of: "--cwd").map { create[$0 + 1] } == "/")
+    let separator = try #require(create.firstIndex(of: "--"))
+    #expect(Array(create[(separator + 1)...]) == ["/bin/sh", "-lc", "exec 'grok'"])
+  }
+
+  @Test("远端 Agent argv：命令名按单引号编码；没有服务端 cwd 时先 cd \"$HOME\"")
+  func remoteAgentArgvQuotesAndLandsInHome() {
+    #expect(
+      ManagedTerminalLaunchSpec.remoteAgentArgv(command: "claude", landsInHome: false)
+        == ["/bin/sh", "-lc", "exec 'claude'"])
+    #expect(
+      ManagedTerminalLaunchSpec.remoteAgentArgv(
+        command: "it's", arguments: ["--flag", "a b"], landsInHome: true)
+        == ["/bin/sh", "-lc", "cd \"$HOME\" 2>/dev/null; exec 'it'\\''s' '--flag' 'a b'"])
+  }
+
   @Test("后台机器的空会话不自动创建工作区")
   func backgroundMachineEmptySessionDoesNotCreateWorkspace() async throws {
     let machineID = UUID()

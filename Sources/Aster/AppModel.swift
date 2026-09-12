@@ -2516,6 +2516,13 @@ final class AppModel: ObservableObject {
   /// 从命令面板或 Open Quickly 启动新的 Agent。自定义前缀按 argv 保存并由统一 Shell
   /// 编码器转义；这里只预填并执行用户明确选择的 Agent，不执行历史文件内容。
   func launchAgent(_ provider: AgentProvider) {
+    // 活动机器是远端时，Agent 在执行机器上启动：服务端事务直接 exec 该 CLI，
+    // 不能在本地新建标签再把命令文本敲进去（那会启动本机的同名程序）。
+    if let remoteStructureHandler {
+      remoteStructureHandler.createAgentTab(
+        provider: provider, workingDirectory: selectedTab?.workingDirectory)
+      return
+    }
     let directory = selectedTab?.workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser.path
     let components = launchComponents(for: provider)
     guard !components.isEmpty else { return }

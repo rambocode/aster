@@ -9,6 +9,8 @@ import Foundation
 @MainActor
 protocol RemoteStructureHandling: AnyObject {
   func createTab(workingDirectory: String?)
+  /// 以 Agent 身份新建标签：远端登录 Shell 直接 exec 该 CLI，不先开 Shell 再敲命令。
+  func createAgentTab(provider: AgentProvider, workingDirectory: String?)
   func splitPane(tabID: UUID, paneID: UUID, direction: SplitDirection)
   func closeTab(tabID: UUID)
   func closePane(tabID: UUID, paneID: UUID)
@@ -609,6 +611,28 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
       _ = try await controller.createTab(
         workspaceID: workspaceID, title: TerminalTabItem.displayName(forDirectory: cwd),
         terminal: self.terminalSpec(cwd: cwd))
+    }
+  }
+
+  /// 以 Agent 身份新建标签（对齐 herdrm「New Agent」）：标签标题是 provider 名，argv 由远端
+  /// 登录 Shell `exec` 该 CLI——PATH/rc 由远端决定，CLI 退出即标签结束。
+  /// Agent 状态随后由远端 hook / 服务端检测上报，与本机启动的 Agent 走同一条通道。
+  func createAgentTab(provider: AgentProvider, workingDirectory: String?) {
+    guard let model, let workspace = workspaces[model.activeMachineID] else { return }
+    let cwd = workingDirectory ?? workspace.controller.projection?.workspaces.first?.cwd
+    let spec = RemoteTerminalSpec(
+      cwd: cwd ?? ManagedTerminalLaunchSpec.remoteRootDirectory,
+      argv: ManagedTerminalLaunchSpec.remoteAgentArgv(
+        command: provider.commandName, landsInHome: cwd == nil))
+    let title = provider.displayName
+    guard let workspaceID = workspace.workspaceID else {
+      submit(workspace) { controller in
+        _ = try await controller.createWorkspace(title: title, terminal: spec)
+      }
+      return
+    }
+    submit(workspace) { controller in
+      _ = try await controller.createTab(workspaceID: workspaceID, title: title, terminal: spec)
     }
   }
 

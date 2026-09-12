@@ -1017,6 +1017,12 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       machineID: MachineFleetModel.shared.activeMachineID)
   }
 
+  /// 「文件 ▸ 新建远端 Agent…」：从远端清单选一个 CLI，以 Agent 身份开标签。
+  @objc private func newRemoteMachineAgent(_ sender: Any?) {
+    activeWorkspaceViewController?.presentNewRemoteAgent(
+      machineID: MachineFleetModel.shared.activeMachineID)
+  }
+
   /// 「文件 ▸ 远端 Agent 集成…」：为当前活动远端机器安装 Aster Agent hook。
   @objc private func configureRemoteMachineAgents(_ sender: Any?) {
     activeWorkspaceViewController?.presentAgentIntegration(
@@ -1373,6 +1379,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     // 用键盘/辅助功能操作时也能到达。Local 活动时由 validateMenuItem 置灰。
     submenu.addItem(
       menuItem("更新远端服务…", #selector(updateRemoteMachineService(_:)), "", modifiers: []))
+    submenu.addItem(
+      menuItem("新建远端 Agent…", #selector(newRemoteMachineAgent(_:)), "", modifiers: []))
     submenu.addItem(
       menuItem("远端 Agent 集成…", #selector(configureRemoteMachineAgents(_:)), "", modifiers: []))
     submenu.addItem(.separator())
@@ -1901,6 +1909,7 @@ extension AsterAppDelegate: NSMenuItemValidation {
     // 只有远端机器才有可更新的服务；Local 的服务随 App 一起更新。
     if action == #selector(updateRemoteMachineService(_:))
       || action == #selector(configureRemoteMachineAgents(_:))
+      || action == #selector(newRemoteMachineAgent(_:))
     {
       return MachineFleetModel.shared.activeMachineID != MachineProfile.localProfileID
     }
