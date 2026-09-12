@@ -268,4 +268,121 @@ public struct RemoteManagedSessionClient: ManagedSessionClient {
     let json = try ManagedSessionReplyDecoder.envelope(output)
     return (json["result"] as? [String: Any])?["ok"] as? Bool ?? false
   }
+
+  // MARK: - 图片上传（P7）
+
+  /// 通过 SSH 管道传输图片数据到远端 `aster-session upload`。
+  ///
+  /// 与 `executeStructured` 的区别是 stdin 不是 /dev/null，而是管道写入图片数据。
+  /// 上传超时比控制命令更长（图片可达 20 MiB），用独立的超时值。
+  public func uploadImage(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String,
+    contentType: String,
+    data: Data
+  ) throws -> String {
+    let remoteCommand = [endpoint.binaryPath]
+      + ManagedSessionCommand.upload(
+        endpoint, terminalID: terminalID, contentType: contentType)
+    let sshArgs = transport.sshArguments(remoteCommand: remoteCommand)
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: RemoteSSHInvocation.executablePath)
+    process.arguments = sshArgs
+    var environment = ProcessInfo.processInfo.environment
+    environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    environment["LC_ALL"] = "C"
+    process.environment = environment
+
+    // stdin 管道传入图片数据
+    let stdinPipe = Pipe()
+    process.standardInput = stdinPipe
+    let out = Pipe()
+    let err = Pipe()
+    process.standardOutput = out
+    process.standardError = err
+
+    do { try process.run() } catch {
+      throw ManagedSessionError.launchFailed("ssh upload: \(error)")
+    }
+
+    // 异步写入 stdin 避免管道阻塞
+    let writeHandle = stdinPipe.fileHandleForWriting
+    DispatchQueue.global(qos: .userInitiated).async {
+      writeHandle.write(data)
+      try? writeHandle.close()
+    }
+
+    let buffer = UploadOutputBuffer()
+    out.fileHandleForReading.readabilityHandler = { buffer.appendOutput($0.availableData) }
+    err.fileHandleForReading.readabilityHandler = { buffer.appendDiagnostics($0.availableData) }
+
+    // 上传超时比控制命令长
+    let uploadTimeout = max(timeout, 60)
+    let deadline = Date().addingTimeInterval(uploadTimeout)
+    while process.isRunning && Date() < deadline { usleep(20_000) }
+    if process.isRunning {
+      process.terminate()
+      process.waitUntilExit()
+      out.fileHandleForReading.readabilityHandler = nil
+      err.fileHandleForReading.readabilityHandler = nil
+      throw ManagedSessionError.commandFailed(status: -1, output: "ssh upload timeout")
+    }
+    process.waitUntilExit()
+    buffer.appendOutput(out.fileHandleForReading.availableData)
+    buffer.appendDiagnostics(err.fileHandleForReading.availableData)
+    out.fileHandleForReading.readabilityHandler = nil
+    err.fileHandleForReading.readabilityHandler = nil
+
+    if process.terminationStatus != 0,
+       buffer.outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+      let kind = RemoteSSHDiagnostics.classify(
+        standardError: buffer.diagnosticsText, exitStatus: process.terminationStatus)
+      let detail = RemoteSSHDiagnostics.redact(buffer.diagnosticsText)
+      throw ManagedSessionError.runtimeUnavailable(
+        "ssh upload \(kind.rawValue): \(transport.target.rawText)"
+        + (detail.isEmpty ? "" : " (\(detail))"))
+    }
+
+    return try ManagedSessionUploadDecoder.path(from: buffer.outputText)
+  }
+}
+
+
+/// 上传子进程的线程安全输出缓冲。readabilityHandler 在任意队列回调。
+private final class UploadOutputBuffer: @unchecked Sendable {
+  private let lock = NSLock()
+  private var output = Data()
+  private var diagnostics = Data()
+
+  /// 追加 stdout 数据。
+  func appendOutput(_ chunk: Data) {
+    guard !chunk.isEmpty else { return }
+    lock.lock()
+    output.append(chunk)
+    lock.unlock()
+  }
+
+  /// 追加 stderr 数据。
+  func appendDiagnostics(_ chunk: Data) {
+    guard !chunk.isEmpty else { return }
+    lock.lock()
+    diagnostics.append(chunk)
+    lock.unlock()
+  }
+
+  /// stdout 文本。
+  var outputText: String {
+    lock.lock()
+    defer { lock.unlock() }
+    return String(decoding: output, as: UTF8.self)
+  }
+
+  /// stderr 文本。
+  var diagnosticsText: String {
+    lock.lock()
+    defer { lock.unlock() }
+    return String(decoding: diagnostics, as: UTF8.self)
+  }
 }

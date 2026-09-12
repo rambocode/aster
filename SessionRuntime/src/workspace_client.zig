@@ -30,6 +30,14 @@ pub const Command = union(enum) {
     agent_explain: struct { terminal_id: []const u8 },
     /// Agent 完成确认（按 terminalID）
     agent_acknowledge: struct { terminal_id: []const u8 },
+    /// 获取当前服务端配置
+    config_get,
+    /// 重载服务端 config.json（不重启服务）
+    config_reload,
+    /// 列出可用的自定义命令
+    custom_command_list,
+    /// 执行一条自定义命令（按名称查找）
+    custom_command_run: struct { name: []const u8 },
 };
 
 /// Single-threaded CLI client for session-scope workspace operations.
@@ -134,12 +142,16 @@ fn kind(command: Command) Operation {
         .agent_report => .@"agent.report",
         .agent_explain => .@"agent.explain",
         .agent_acknowledge => .@"agent.acknowledge",
+        .config_get => .@"config.get",
+        .config_reload => .@"config.reload",
+        .custom_command_list => .@"custom_command.list",
+        .custom_command_run => .@"custom_command.run",
     };
 }
 
 fn revision(command: Command) u64 {
     return switch (command) {
-        .snapshot, .workspace_list, .agent_list, .agent_report, .agent_explain, .agent_acknowledge => 0,
+        .snapshot, .workspace_list, .agent_list, .agent_report, .agent_explain, .agent_acknowledge, .config_get, .config_reload, .custom_command_list, .custom_command_run => 0,
         .workspace_create => |value| value.revision,
         .workspace_update => |value| value.revision,
         .workspace_close => |value| value.revision,
@@ -155,7 +167,7 @@ fn revision(command: Command) u64 {
 fn parameters(a: std.mem.Allocator, command: Command) !std.json.Value {
     var result = std.json.ObjectMap.init(a);
     switch (command) {
-        .snapshot, .workspace_list, .agent_list => {},
+        .snapshot, .workspace_list, .agent_list, .config_get, .config_reload, .custom_command_list => {},
         .agent_report => |value| {
             // agent.report 的 body 是预编码的 JSON，直接嵌入参数对象
             const parsed = std.json.parseFromSlice(std.json.Value, a, value.body, .{}) catch return error.InvalidAgentBody;
@@ -168,6 +180,7 @@ fn parameters(a: std.mem.Allocator, command: Command) !std.json.Value {
         },
         .agent_explain => |value| try result.put("terminalID", .{ .string = try validated(value.terminal_id) }),
         .agent_acknowledge => |value| try result.put("terminalID", .{ .string = try validated(value.terminal_id) }),
+        .custom_command_run => |value| try result.put("name", .{ .string = value.name }),
         .workspace_create => |value| {
             try result.put("title", .{ .string = try shortText(value.title) });
             try result.put("terminal", try terminalSpec(a, value.spec));

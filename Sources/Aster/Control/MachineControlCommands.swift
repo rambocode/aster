@@ -222,11 +222,19 @@ extension AsterControlDispatcher {
     guard !selector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw AsterControlError.invalidParams("machine 不能为空；跨机器动作必须显式指定机器。")
     }
-    guard let profile = fleet.resolve(idOrLabel: selector) else {
-      throw AsterControlError(
-        code: .notFound, message: "找不到机器（或标签不唯一）：\(selector)")
+    // 先尝试精确解析（UUID 或唯一标签）
+    if let profile = fleet.resolve(idOrLabel: selector) {
+      return profile
     }
-    return profile
+    // 区分「找不到」和「标签歧义」：多于一个匹配时返回 ambiguous_target
+    let ambiguousCount = fleet.rows.filter { $0.label == selector }.count
+    if ambiguousCount > 1 {
+      throw AsterControlError(
+        code: .ambiguousTarget,
+        message: "标签 '\(selector)' 对应 \(ambiguousCount) 台机器；请使用 UUID 显式定位。")
+    }
+    throw AsterControlError(
+      code: .notFound, message: "找不到机器：\(selector)")
   }
 
   private func machineRow(_ id: UUID, fleet: MachineFleetModel) throws -> MachineControlRow {

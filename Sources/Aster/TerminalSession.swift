@@ -2463,6 +2463,32 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     return ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal).remoteMachineLabel
   }
 
+  /// 构造远端图片粘贴处理闭包。非远端受管终端时返回 nil，paste 走既有逻辑。
+  private func makeRemoteImagePasteHandler() -> ((Data) async -> RemoteImageUploader.Result)? {
+    guard let managedTerminal, remoteManagedMachineLabel != nil else { return nil }
+    let coordinator = ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal)
+    guard coordinator.endpoint != nil else { return nil }
+    let terminalID = managedTerminal.terminalID
+    return { [weak self] imageData in
+      guard let self, self.managedTerminal != nil else { return .cancelled }
+      do {
+        let path = try await coordinator.uploadImageAsync(
+          terminalID: terminalID, contentType: "image/png", data: imageData)
+        // 上传完成后再次验证终端仍绑定且 ID 一致——
+        // 粘贴期间用户可能切换终端或另一客户端接管租约。
+        guard let currentManaged = self.managedTerminal,
+              currentManaged.terminalID == terminalID else {
+          return .cancelled
+        }
+        let cleaned = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return .failed("server returned empty path") }
+        return .success(remotePath: cleaned)
+      } catch {
+        return .failed(String(describing: error))
+      }
+    }
+  }
+
   func bindManagedTerminal(_ reference: ManagedTerminalReference?) {
     managedTerminal = reference
     managedFailure = nil
@@ -3027,6 +3053,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.pasteBracketedSafe = preferences.configuration.controls.resolvedPasteBracketedSafe
     view.onPasteIntoComposer = onPasteIntoComposer
     view.onSendSelectionToChat = onSendSelectionToChat
+    view.onRemoteImagePaste = makeRemoteImagePasteHandler()
     view.onAuthorizeClipboard = { operation in
       switch operation {
       case .read: clipboardCoordinator.allows(.read)

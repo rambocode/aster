@@ -81,6 +81,15 @@ public protocol ManagedSessionClient: Sendable {
   /// `ssh`。会话作用域动作与注册表作用域动作（`ManagedRegistryEndpoint`，没有
   /// sessionName）都建立在它之上，因此参数只取 `binaryPath`，不取整个会话端点。
   func executeStructured(binaryPath: String, arguments: [String]) throws -> String
+  /// 上传图片数据到远端临时目录，返回远端路径。
+  ///
+  /// 图片通过 stdin 管道传入 `aster-session upload`，由 CLI 完成分块与 RPC。
+  func uploadImage(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String,
+    contentType: String,
+    data: Data
+  ) throws -> String
 }
 
 extension ManagedSessionClient {
@@ -96,6 +105,16 @@ extension ManagedSessionClient {
     ManagedSessionInvocation(
       executablePath: endpoint.binaryPath,
       arguments: ManagedSessionCommand.eventSubscribe(endpoint))
+  }
+
+  /// 默认实现：抛出不支持错误。本地与远端客户端各自覆写。
+  public func uploadImage(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String,
+    contentType: String,
+    data: Data
+  ) throws -> String {
+    throw ManagedSessionError.serviceError(code: "not_supported", message: "upload not available")
   }
 }
 
@@ -185,6 +204,17 @@ public enum ManagedSessionCommand {
     terminalID: String
   ) -> [String] {
     ["agent", "ack", endpoint.stateParentPath, endpoint.sessionName, terminalID]
+  }
+
+  /// `upload <state-parent> <name> --terminal-id <id> --content-type <type>`：
+  /// 从 stdin 读取图片数据并上传到会话。
+  public static func upload(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String,
+    contentType: String
+  ) -> [String] {
+    ["upload", endpoint.stateParentPath, endpoint.sessionName,
+     "--terminal-id", terminalID, "--content-type", contentType]
   }
 }
 
@@ -450,6 +480,77 @@ public struct LocalManagedSessionClient: ManagedSessionClient {
     }
     return text
   }
+
+  /// 通过 `aster-session upload` 子进程上传图片到本地受管会话。
+  ///
+  /// 图片数据通过 stdin 管道传入，CLI 完成分块、SHA256 校验与 socket RPC。
+  /// 返回服务端输出的路径（已去除换行）。
+  public func uploadImage(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String,
+    contentType: String,
+    data: Data
+  ) throws -> String {
+    guard FileManager.default.isExecutableFile(atPath: endpoint.binaryPath) else {
+      throw ManagedSessionError.runtimeUnavailable(endpoint.binaryPath)
+    }
+    let arguments = ManagedSessionCommand.upload(
+      endpoint, terminalID: terminalID, contentType: contentType)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: endpoint.binaryPath)
+    process.arguments = arguments
+
+    // stdin 管道传入图片数据
+    let stdinPipe = Pipe()
+    process.standardInput = stdinPipe
+    let out = Pipe()
+    let err = Pipe()
+    process.standardOutput = out
+    process.standardError = err
+
+    do { try process.run() } catch {
+      throw ManagedSessionError.launchFailed(String(describing: error))
+    }
+
+    // 异步写入 stdin 避免管道阻塞
+    let writeHandle = stdinPipe.fileHandleForWriting
+    DispatchQueue.global(qos: .userInitiated).async {
+      writeHandle.write(data)
+      try? writeHandle.close()
+    }
+
+    let buffer = ManagedSessionOutputBuffer()
+    out.fileHandleForReading.readabilityHandler = { buffer.appendOutput($0.availableData) }
+    err.fileHandleForReading.readabilityHandler = { buffer.appendDiagnostics($0.availableData) }
+
+    // 上传超时比控制命令长（图片可达 20 MiB）
+    let uploadTimeout = max(timeout, 60)
+    let deadline = Date().addingTimeInterval(uploadTimeout)
+    while process.isRunning && Date() < deadline { usleep(20_000) }
+    if process.isRunning {
+      process.terminate()
+      process.waitUntilExit()
+      out.fileHandleForReading.readabilityHandler = nil
+      err.fileHandleForReading.readabilityHandler = nil
+      throw ManagedSessionError.commandFailed(status: -1, output: "upload timeout")
+    }
+    process.waitUntilExit()
+    buffer.appendOutput(out.fileHandleForReading.availableData)
+    buffer.appendDiagnostics(err.fileHandleForReading.availableData)
+    out.fileHandleForReading.readabilityHandler = nil
+    err.fileHandleForReading.readabilityHandler = nil
+
+    let text = buffer.outputText
+
+    if process.terminationStatus != 0 {
+      throw ManagedSessionError.commandFailed(
+        status: process.terminationStatus,
+        output: String(buffer.diagnosticsText.prefix(512)))
+    }
+
+    // 解析 JSON 输出中的 path
+    return try ManagedSessionUploadDecoder.path(from: text)
+  }
 }
 
 /// 子进程管道输出的线程安全缓冲。readability handler 在任意队列回调，必须自带锁。
@@ -482,5 +583,26 @@ private final class ManagedSessionOutputBuffer: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     return String(decoding: diagnostics, as: UTF8.self)
+  }
+}
+
+
+/// `aster-session upload` CLI 输出的解码层。
+enum ManagedSessionUploadDecoder {
+  /// 从 upload CLI 的 JSON 输出中提取远端路径。
+  static func path(from output: String) throws -> String {
+    let line = output.split(separator: "\n").last.map(String.init) ?? output
+    guard let data = line.data(using: .utf8),
+      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { throw ManagedSessionError.malformedReply("upload: \(String(line.prefix(256)))") }
+    // 错误信封
+    if let type = json["type"] as? String, type == "error" || type == "client_error" {
+      let code = (json["code"] as? String) ?? "unknown"
+      throw ManagedSessionError.serviceError(code: code, message: nil)
+    }
+    guard let path = json["path"] as? String, !path.isEmpty else {
+      throw ManagedSessionError.malformedReply("upload: missing path")
+    }
+    return path
   }
 }

@@ -126,6 +126,8 @@ Preview 支持 Markdown（含 GFM 表格、任务列表等）、reStructuredText
 - 任何时候都可以点击某项左侧的 ↳ 图标立即插队提交，右侧垃圾桶可移除尚未发送的项。关闭输入条不会取消队列，展开按钮可输入多行，队列仍受只读和终端输入模式限制。
 - “编辑 → 发送到聊天…”以及终端右键“发送选区到 Chat”会打开确认面板。可同时选择当前选区与当前终端 transcript，并从当前工作区所有运行中的 Claude Code/Codex Pane 选择接收端；点击 Send 会以普通键入预填 Comment 和清理、脱敏后的上下文，不会自动回车。
 
+- 远端受管终端粘贴图片：当剪贴板包含图片（PNG 或 TIFF）且当前终端是远端受管终端时，`⌘V` 会自动上传图片到远端临时目录，然后仅在终端粘贴远端文件路径（不含换行），不发送图片内容本身。上传失败、取消或粘贴期间终端切换/租约丢失时不粘贴任何内容，远端不留半文件。单张图片最大 20 MiB。图片内容不进入诊断日志。
+
 终端程序可用 OSC 52 请求访问系统剪贴板。“设置 → 控制 → 复制与粘贴”分别提供“允许 / 每次询问 / 拒绝”：写入默认允许，读取默认每次询问。每次询问只授权当前请求，不会记住；连续请求在提示后有 5 秒安全冷却。导入配置不能把读取权限静默改成“允许”；拒绝或超限请求不会读取剪贴板。
 
 ### 选择终端文本
@@ -329,6 +331,37 @@ aster notification show "构建完成" --body "全部通过"
 aster session terminals                      # 后台受管终端及其真实状态
 aster session detach --current               # 分离：后台任务继续运行
 aster session end w1:p3                      # 结束：终止该受管终端的后台进程
+
+### 远程 TUI 客户端
+
+在远端 SSH shell 中运行完整终端客户端（需要远端已安装 `aster-session`）：
+
+```
+aster-session ui <state-parent> <session-name>              # 交互模式
+aster-session ui <state-parent> <session-name> --observe    # 只读观察
+aster-session ui --remote <ssh-target> --session <name>     # 远端入口（通过 SSH）
+aster-session ui --remote <ssh-target> --session <name> --observe  # 远端只读
+```
+
+`--remote` 模式从本机 SSH 到远端运行 TUI，无需手动 `ssh` 再执行命令。目标以 `--` 隔离、远端命令做 POSIX 引用，防止 Shell 二次解释。
+
+快捷键（Ctrl+B 前缀）：
+
+| 按键 | 动作 |
+| --- | --- |
+| Ctrl+B q / d | 分离（退出 TUI，后台任务继续） |
+| Ctrl+B n | 下一个标签 |
+| Ctrl+B p | 上一个标签 |
+| Ctrl+B o | 下一个窗格 |
+| Ctrl+B w | 下一个工作区 |
+| Ctrl+B c | 新建标签 |
+| Ctrl+B % | 水平分屏 |
+| Ctrl+B " | 垂直分屏 |
+| Ctrl+B x | 关闭当前窗格 |
+| Ctrl+B Ctrl+B | 发送字面 Ctrl+B |
+| Ctrl+B ? | 显示帮助 |
+
+TUI 底部状态栏显示当前位置（工作区 > 标签 [窗格/总数]）。40×20 以下的窄屏使用缩略布局。
 ```
 
 `session terminals/detach/end` 只对**受管终端**有效。受管终端是运行在后台会话服务里的终端：关闭窗口或退出 Aster 只是「分离」，里面的任务继续运行，下次打开会重新附加到同一个进程；只有「结束」才会终止它。这项能力目前默认关闭，仅在同时设置了 `ASTER_SESSION_BINARY` 与 `ASTER_SESSION_STATE_DIR` 的专用测试配置里可用；普通本地终端不受影响，对普通 pane 执行这两个命令会直接报错，不会结束它的 Shell。菜单「文件 → 分离受管终端 / 结束受管终端 / 把布局托管到后台…」提供同样的动作。

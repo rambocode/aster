@@ -37,6 +37,8 @@ final class GhosttySurfaceView: NSView {
   var onAutocompleteKeyDown: ((NSEvent) -> Bool)?
   var onRequestViSearch: ((TerminalViSearchDirection) -> Void)?
   var onRepeatViSearch: ((Bool) -> Void)?
+  /// 远端受管终端图片粘贴回调。设置后 paste 会先检查剪贴板图片并走上传流程。
+  var onRemoteImagePaste: ((Data) async -> RemoteImageUploader.Result)?
   var onPaneModeActivated: (() -> Void)?
   var onRequestOpenTarget: ((String, DetectedTargetSource) -> Void)?
   var onResolveHintCopyTarget: ((String, DetectedTargetSource) -> String?)?
@@ -463,6 +465,7 @@ final class GhosttySurfaceView: NSView {
     onRequestFocus = nil
     onPasteIntoComposer = nil
     onSendSelectionToChat = nil
+    onRemoteImagePaste = nil
     onAuthorizeClipboard = nil
     onSurfaceCreated = nil
     onPTYRead = nil

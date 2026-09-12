@@ -69,6 +69,41 @@ pub fn main() !void {
             try @import("service_server.zig").run(allocator, parent, name, null, null);
             return;
         }
+        // P7 TUI 入口：完整终端客户端，工作区/标签/窗格导航、单终端交互、分离。
+        // 支持本地模式（positional args）和远端模式（--remote 走 SSH exec）。
+        if (@import("build_options").with_vt and std.mem.eql(u8, arg, "ui")) {
+            var observe = false;
+            var remote_target: ?[]const u8 = null;
+            var session_name: ?[]const u8 = null;
+            var positional: [2]?[]const u8 = .{ null, null };
+            var pos_count: usize = 0;
+            while (args.next()) |opt| {
+                if (std.mem.eql(u8, opt, "--observe")) { observe = true; }
+                else if (std.mem.eql(u8, opt, "--remote")) { remote_target = args.next() orelse return error.MissingRemoteTarget; }
+                else if (std.mem.eql(u8, opt, "--session")) { session_name = args.next() orelse return error.MissingSessionName; }
+                else if (opt.len > 0 and opt[0] == '-') { return error.UnexpectedArgument; }
+                else { if (pos_count < 2) { positional[pos_count] = opt; pos_count += 1; } else return error.UnexpectedArgument; }
+            }
+            if (remote_target) |target| {
+                // 远端模式：exec ssh 到目标机器运行 TUI。
+                // argv 隔离：target 放在 -- 之后，远端命令做 shell 引用。
+                remoteExec(allocator, target, session_name orelse "default", observe) catch |err| {
+                    try std.fs.File.stderr().writeAll(@errorName(err));
+                    try std.fs.File.stderr().writeAll("\n");
+                    std.process.exit(1);
+                };
+                return;
+            }
+            // 本地模式：positional args 是 state-parent 和 name
+            const parent_path = positional[0] orelse return error.MissingStateParent;
+            const name = positional[1] orelse session_name orelse return error.MissingStateName;
+            @import("tui.zig").run(allocator, parent_path, name, if (observe) .observe else .interactive) catch |err| {
+                try std.fs.File.stderr().writeAll(@errorName(err));
+                try std.fs.File.stderr().writeAll("\n");
+                std.process.exit(1);
+            };
+            return;
+        }
         // Streaming subscription entry point. Unlike every other CLI verb this
         // one never terminates on its own: it holds a control connection open
         // and relays events until the peer or a signal ends it.
@@ -83,6 +118,68 @@ pub fn main() !void {
                 try std.fs.File.stderr().writeAll("\n");
                 std.process.exit(1);
             };
+            return;
+        }
+        // Upload CLI: reads image from stdin and sends to session via RPC.
+        if (@import("build_options").with_vt and std.mem.eql(u8, arg, "upload")) {
+            const parent_path = args.next() orelse return error.MissingStateParent;
+            const name = args.next() orelse return error.MissingStateName;
+            var terminal_id: []const u8 = "00000000-0000-4000-8000-000000000000";
+            var content_type: []const u8 = "application/octet-stream";
+            while (args.next()) |opt| {
+                if (std.mem.eql(u8, opt, "--terminal-id")) {
+                    terminal_id = args.next() orelse return error.MissingTerminalID;
+                } else if (std.mem.eql(u8, opt, "--content-type")) {
+                    content_type = args.next() orelse return error.MissingContentType;
+                } else return error.UnexpectedArgument;
+            }
+            @import("upload_cli.zig").run(allocator, parent_path, name, terminal_id, content_type) catch |err| {
+                const encoded = try std.json.Stringify.valueAlloc(allocator, .{ .type = "client_error", .code = @errorName(err) }, .{});
+                defer allocator.free(encoded);
+                try std.fs.File.stdout().writeAll(encoded);
+                try std.fs.File.stdout().writeAll("\n");
+                std.process.exit(1);
+            };
+            return;
+        }
+        // P7 配置 CLI：config get|reload <state-parent> <name>
+        if (@import("build_options").with_vt and std.mem.eql(u8, arg, "config")) {
+            const action = args.next() orelse return error.MissingAction;
+            const parent_path = args.next() orelse return error.MissingStateParent;
+            const name = args.next() orelse return error.MissingStateName;
+            if (args.next() != null) return error.UnexpectedArgument;
+            const command: @import("workspace_client.zig").Command = if (std.mem.eql(u8, action, "get"))
+                .config_get
+            else if (std.mem.eql(u8, action, "reload"))
+                .config_reload
+            else
+                return error.UnsupportedConfigAction;
+            const reply = try @import("workspace_client.zig").execute(allocator, parent_path, name, command, 15000);
+            defer allocator.free(reply.bytes);
+            try std.fs.File.stdout().writeAll(reply.bytes);
+            try std.fs.File.stdout().writeAll("\n");
+            if (reply.is_error) std.process.exit(1);
+            return;
+        }
+        // P7 自定义命令 CLI：custom-command list|run <state-parent> <name> [command-name]
+        if (@import("build_options").with_vt and std.mem.eql(u8, arg, "custom-command")) {
+            const action = args.next() orelse return error.MissingAction;
+            const parent_path = args.next() orelse return error.MissingStateParent;
+            const name = args.next() orelse return error.MissingStateName;
+            const command: @import("workspace_client.zig").Command = if (std.mem.eql(u8, action, "list")) blk: {
+                if (args.next() != null) return error.UnexpectedArgument;
+                break :blk .custom_command_list;
+            } else if (std.mem.eql(u8, action, "run")) blk: {
+                const cmd_name = args.next() orelse return error.MissingCommandName;
+                if (args.next() != null) return error.UnexpectedArgument;
+                break :blk .{ .custom_command_run = .{ .name = cmd_name } };
+            } else
+                return error.UnsupportedCustomCommandAction;
+            const reply = try @import("workspace_client.zig").execute(allocator, parent_path, name, command, 30000);
+            defer allocator.free(reply.bytes);
+            try std.fs.File.stdout().writeAll(reply.bytes);
+            try std.fs.File.stdout().writeAll("\n");
+            if (reply.is_error) std.process.exit(1);
             return;
         }
         if (@import("build_options").with_vt and std.mem.eql(u8, arg, "probe-bridge")) {
@@ -110,9 +207,34 @@ pub fn main() !void {
     }
     try std.fs.File.stderr().writeAll("usage: aster-session --version\n");
     if (@import("build_options").with_vt) {
-        try std.fs.File.stderr().writeAll("P1 service commands:\n  aster-session server serve <existing-state-parent> <name>\n  aster-session server status <existing-state-parent> <name>\n  aster-session server start <existing-state-parent> <name>\n  aster-session server stop <existing-state-parent> <name>\nP1 terminal commands:\n  aster-session terminal create <state-parent> <name> <cwd> <program> [args...]\n  aster-session terminal list <state-parent> <name>\n  aster-session terminal terminate <state-parent> <name> <terminal-id>\n  aster-session terminal attach <state-parent> <name> <terminal-id> [--takeover]\n  aster-session terminal observe <state-parent> <name> <terminal-id>\n  Ctrl+B q: detach; Ctrl+B Ctrl+B: literal Ctrl+B\nP4 registry and workspace commands:\n  aster-session session list <state-parent>\n  aster-session session create <state-parent> <name>\n  aster-session session attach|stop|delete <state-parent> <name-or-id>\n  aster-session session snapshot <state-parent> <name>\n  aster-session workspace list <state-parent> <name>\n  aster-session workspace create <state-parent> <name> --expected-revision <n> --title <t> --cwd <abs> -- <argv...>\n  aster-session workspace update <state-parent> <name> --workspace <id> --expected-revision <n> --title <t>\n  aster-session workspace close <state-parent> <name> --workspace <id> --expected-revision <n>\n  aster-session tab create <state-parent> <name> --workspace <id> --expected-revision <n> --title <t> --cwd <abs> -- <argv...>\n  aster-session tab update <state-parent> <name> --tab <id> --expected-revision <n> --title <t>\n  aster-session tab close <state-parent> <name> --tab <id> --expected-revision <n>\n  aster-session pane split <state-parent> <name> --pane <id> --direction <left|right|up|down> --expected-revision <n> --cwd <abs> -- <argv...>\n  aster-session pane update <state-parent> <name> --pane <id> --expected-revision <n> --title <t>\n  aster-session pane close <state-parent> <name> --pane <id> --expected-revision <n>\nP4 event stream:\n  aster-session event subscribe <state-parent> <name>\nP0 integration only:\n  aster-session probe-serve <private-socket> <cwd> <executable> [args...]\n  aster-session probe-bridge <private-socket>\n");
+        try std.fs.File.stderr().writeAll("P1 service commands:\n  aster-session server serve <existing-state-parent> <name>\n  aster-session server status <existing-state-parent> <name>\n  aster-session server start <existing-state-parent> <name>\n  aster-session server stop <existing-state-parent> <name>\nP1 terminal commands:\n  aster-session terminal create <state-parent> <name> <cwd> <program> [args...]\n  aster-session terminal list <state-parent> <name>\n  aster-session terminal terminate <state-parent> <name> <terminal-id>\n  aster-session terminal attach <state-parent> <name> <terminal-id> [--takeover]\n  aster-session terminal observe <state-parent> <name> <terminal-id>\n  Ctrl+B q: detach; Ctrl+B Ctrl+B: literal Ctrl+B\nP4 registry and workspace commands:\n  aster-session session list <state-parent>\n  aster-session session create <state-parent> <name>\n  aster-session session attach|stop|delete <state-parent> <name-or-id>\n  aster-session session snapshot <state-parent> <name>\n  aster-session workspace list <state-parent> <name>\n  aster-session workspace create <state-parent> <name> --expected-revision <n> --title <t> --cwd <abs> -- <argv...>\n  aster-session workspace update <state-parent> <name> --workspace <id> --expected-revision <n> --title <t>\n  aster-session workspace close <state-parent> <name> --workspace <id> --expected-revision <n>\n  aster-session tab create <state-parent> <name> --workspace <id> --expected-revision <n> --title <t> --cwd <abs> -- <argv...>\n  aster-session tab update <state-parent> <name> --tab <id> --expected-revision <n> --title <t>\n  aster-session tab close <state-parent> <name> --tab <id> --expected-revision <n>\n  aster-session pane split <state-parent> <name> --pane <id> --direction <left|right|up|down> --expected-revision <n> --cwd <abs> -- <argv...>\n  aster-session pane update <state-parent> <name> --pane <id> --expected-revision <n> --title <t>\n  aster-session pane close <state-parent> <name> --pane <id> --expected-revision <n>\nP7 TUI client:\n  aster-session ui <state-parent> <name> [--observe]\n  Ctrl+B q: detach; Ctrl+B n/p: next/prev tab; Ctrl+B o: next pane; Ctrl+B ?: help\nP4 event stream:\n  aster-session event subscribe <state-parent> <name>\nP0 integration only:\n  aster-session probe-serve <private-socket> <cwd> <executable> [args...]\n  aster-session probe-bridge <private-socket>\n");
     }
     std.process.exit(2);
+}
+
+/// 远端 TUI 入口：fork+exec ssh，在远端运行 aster-session ui。
+/// target 以 `--` 隔离（防止 SSH 把 target 当选项），远端命令在远端 shell 展开
+/// 状态目录变量以确定实际路径。
+fn remoteExec(a: std.mem.Allocator, target: []const u8, session_name: []const u8, observe: bool) !void {
+    // 远端状态目录：以 shell 表达式在远端解析
+    const remote_state = "${XDG_RUNTIME_DIR:-$HOME/.local/state}/aster";
+    const observe_flag: []const u8 = if (observe) " --observe" else "";
+    // 构造远端命令行：单引号保护 session_name 防止 shell 解释
+    const remote_cmd = try std.fmt.allocPrint(a, "exec aster-session ui {s} '{s}'{s}", .{ remote_state, session_name, observe_flag });
+    defer a.free(remote_cmd);
+    // 用 Child 等价 exec：继承 stdio，等待完成后以 ssh 退出码退出
+    var child = std.process.Child.init(&.{ "/usr/bin/ssh", "-tt", "--", target, remote_cmd }, a);
+    child.stdin_behavior = .Inherit;
+    child.stdout_behavior = .Inherit;
+    child.stderr_behavior = .Inherit;
+    try child.spawn();
+    const term = try child.wait();
+    const code: u8 = switch (term) {
+        .Exited => |c| c,
+        .Signal => 128,
+        else => 1,
+    };
+    std.process.exit(code);
 }
 
 fn terminalCommand(allocator: std.mem.Allocator, args: *std.process.ArgIterator) !void {

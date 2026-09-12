@@ -170,6 +170,7 @@ public enum AsterControlErrorCode: String, Codable, CaseIterable, Sendable {
   case writeNotAllowed = "write_not_allowed"
   case sensitiveSessionNotAllowed = "sensitive_session_not_allowed"
   case writeRejected = "write_rejected"
+  case ambiguousTarget = "ambiguous_target"
   case timeout = "timeout"
   case tooManyWaits = "too_many_waits"
   case agentNameTaken = "agent_name_taken"

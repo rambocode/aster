@@ -9,7 +9,9 @@ const Store = @import("workspace_store.zig").Store;
 const RegistryEndpoint = @import("registry_service.zig").Endpoint;
 const Session = @import("session_registry.zig").Session;
 const screen_history = @import("screen_history.zig");
-const Domains = struct { terminals: *Terminals, surfaces: *Surfaces, workspaces: *Workspaces };
+const Uploads = @import("upload_service.zig").Service;
+const Configs = @import("config_service.zig").Service;
+const Domains = struct { terminals: *Terminals, surfaces: *Surfaces, workspaces: *Workspaces, uploads: *Uploads, configs: *Configs };
 const Request = @import("operation_request.zig").Request;
 const ids = @import("service_identity.zig");
 const Report = @import("startup_report.zig").Writer;
@@ -78,11 +80,15 @@ fn runInitialized(allocator: std.mem.Allocator, instance: *Instance, name: []con
     var workspaces = try Workspaces.init(allocator, &store, &terminals, &pool, instance.state.dir);
     defer workspaces.deinit();
     workspaces.screen_history_writer = &history_writer;
+    var uploads = Uploads.init(allocator, instance.state.dir);
+    defer uploads.deinit();
+    var configs = Configs.init(allocator, instance.state.dir);
+    defer configs.deinit();
     terminals.structure_hook = workspaces.hook();
     defer terminals.structure_hook = null;
     var surfaces = try Surfaces.init(allocator, &terminals, &reactor);
     defer surfaces.deinit();
-    var domains = Domains{ .terminals = &terminals, .surfaces = &surfaces, .workspaces = &workspaces };
+    var domains = Domains{ .terminals = &terminals, .surfaces = &surfaces, .workspaces = &workspaces, .uploads = &uploads, .configs = &configs };
     reactor.control.handler = .{ .context = &domains, .respond = terminalRespond, .disconnect = terminalDisconnect, .input_closed = terminalInputClosed };
     // Reactor's original teardown occurs after domain teardown; clear callback
     // borrowing first. Domain deinit already owns attachment cleanup on exit.
@@ -100,7 +106,7 @@ fn runInitialized(allocator: std.mem.Allocator, instance: *Instance, name: []con
     };
     reactor.control.registry = .{ .context = &registry, .respond = registryRespond };
     defer reactor.control.registry = null;
-    reactor.control.advertised_capabilities = &.{ "health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation", "agent_state", "session_restore", "session_settings" };
+    reactor.control.advertised_capabilities = &.{ "health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation", "agent_state", "session_restore", "session_settings", "image_upload", "server_config", "custom_commands" };
     var clock = try std.time.Timer.start();
     if (try stopping()) return error.ServiceStartupCancelled;
     if (report) |writer| try writer.finish(.ready);
@@ -216,6 +222,8 @@ fn terminalRespond(context: *anyopaque, allocator: std.mem.Allocator, request: R
     return switch (request.operation) {
         .@"surface.subscribe", .@"surface.unsubscribe", .@"surface.snapshot" => domains.surfaces.respond(allocator, request, generation),
         .@"session.snapshot", .@"session.restore", .@"session.settings.get", .@"session.settings.update", .@"workspace.list", .@"workspace.create", .@"workspace.update", .@"workspace.close", .@"tab.create", .@"tab.update", .@"tab.close", .@"pane.split", .@"pane.update", .@"pane.close" => domains.workspaces.respond(allocator, request, generation),
+        .@"upload.begin", .@"upload.chunk", .@"upload.commit", .@"upload.abort", .@"upload.clear", .@"upload.status" => domains.uploads.respond(allocator, request, generation),
+        .@"config.get", .@"config.reload", .@"custom_command.list", .@"custom_command.run" => domains.configs.respond(allocator, request, generation),
         else => domains.terminals.respond(allocator, request, generation),
     };
 }
@@ -223,6 +231,8 @@ fn terminalDisconnect(context: *anyopaque, generation: u64) void {
     const domains: *Domains = @ptrCast(@alignCast(context));
     domains.surfaces.disconnect(generation);
     domains.workspaces.disconnect(generation);
+    // 断线时清理该连接发起的上传，删除临时文件防止半文件残留
+    domains.uploads.disconnectByGeneration(generation);
     domains.terminals.disconnect(generation);
 }
 

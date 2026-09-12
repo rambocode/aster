@@ -285,4 +285,23 @@ final class ManagedTerminalCoordinator {
     return GhosttyConfiguration.launchCommand(
       shell: client.bridgeExecutablePath(endpoint), arguments: arguments)
   }
+
+  /// 异步上传图片到远端受管会话（P7）。
+  ///
+  /// 在后台线程执行阻塞的上传调用，返回服务端路径。
+  /// 受管模式未开启或 endpoint 缺失时返回 nil。
+  func uploadImageAsync(
+    terminalID: String,
+    contentType: String,
+    data: Data
+  ) async throws -> String {
+    guard let endpoint else {
+      throw ManagedSessionError.runtimeUnavailable("managed mode disabled")
+    }
+    let client = self.client
+    return try await Task.detached(priority: .userInitiated) {
+      try client.uploadImage(
+        endpoint, terminalID: terminalID, contentType: contentType, data: data)
+    }.value
+  }
 }
