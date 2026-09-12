@@ -152,18 +152,21 @@ struct RemoteEmptySessionWorkspaceTests {
     // cwd 来自服务端快照里的工作区目录，不是本机目录。
     #expect(create.firstIndex(of: "--cwd").map { create[$0 + 1] } == "/")
     let separator = try #require(create.firstIndex(of: "--"))
-    #expect(Array(create[(separator + 1)...]) == ["/bin/sh", "-lc", "exec 'grok'"])
+    #expect(
+      Array(create[(separator + 1)...])
+        == ["/bin/sh", "-lc", "'grok'; exec \"${SHELL:-/bin/sh}\" -l -i"])
   }
 
   @Test("远端 Agent argv：命令名按单引号编码；没有服务端 cwd 时先 cd \"$HOME\"")
   func remoteAgentArgvQuotesAndLandsInHome() {
+    let tail = "; exec \"${SHELL:-/bin/sh}\" -l -i"
     #expect(
       ManagedTerminalLaunchSpec.remoteAgentArgv(command: "claude", landsInHome: false)
-        == ["/bin/sh", "-lc", "exec 'claude'"])
+        == ["/bin/sh", "-lc", "'claude'" + tail])
     #expect(
       ManagedTerminalLaunchSpec.remoteAgentArgv(
         command: "it's", arguments: ["--flag", "a b"], landsInHome: true)
-        == ["/bin/sh", "-lc", "cd \"$HOME\" 2>/dev/null; exec 'it'\\''s' '--flag' 'a b'"])
+        == ["/bin/sh", "-lc", "cd \"$HOME\" 2>/dev/null; 'it'\\''s' '--flag' 'a b'" + tail])
   }
 
   @Test("后台机器的空会话不自动创建工作区")

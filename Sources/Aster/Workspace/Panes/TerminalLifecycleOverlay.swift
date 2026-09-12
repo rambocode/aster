@@ -7,9 +7,9 @@ import Darwin
 @MainActor
 final class TerminalLifecycleOverlayView: NSView {
   private struct Presentation {
-    let title: String
-    let detail: String
-    let symbol: String
+    var title: String
+    var detail: String
+    var symbol: String
 
     init?(state: TerminalSessionLifecycleState, startupError: String?) {
       switch state {
@@ -63,9 +63,9 @@ final class TerminalLifecycleOverlayView: NSView {
 
   /// 冷恢复路径对应的状态卡展示。
   private struct RecoveryPresentation {
-    let title: String
-    let detail: String
-    let symbol: String
+    var title: String
+    var detail: String
+    var symbol: String
 
     /// 将 PaneRecoveryPath 映射为状态卡文案与图标。
     init(_ path: PaneRecoveryPath) {
@@ -95,10 +95,19 @@ final class TerminalLifecycleOverlayView: NSView {
   }
 
   init?(session: TerminalSession) {
-    guard let presentation = Presentation(
+    guard var presentation = Presentation(
       state: session.lifecycleState,
       startupError: session.startupError
     ) else { return nil }
+    // 受管（远端）Pane：显示桥的退出码对用户没有意义，说远端发生了什么、能做什么。
+    let isManaged = session.managedTerminal != nil
+    if isManaged, case .ended = session.lifecycleState {
+      presentation.title = "远端进程已结束"
+      presentation.detail =
+        (session.managedExitSummary ?? "远端进程已退出。")
+        + " 可以在此 Pane 重新启动一个远端 Shell，或关闭这个标签。"
+      presentation.symbol = "server.rack"
+    }
     super.init(frame: .zero)
     identifier = NSUserInterfaceItemIdentifier("terminal-ended-overlay-\(session.id.uuidString)")
 
@@ -152,7 +161,17 @@ final class TerminalLifecycleOverlayView: NSView {
     text.orientation = .vertical
     text.alignment = .leading
     text.spacing = 3
-    let row = NSStackView(views: [icon, text, restart])
+    var trailing: [NSView] = [restart]
+    // 远端 Pane 结束后多一个「关闭标签」：Agent 退出后用户要么继续用远端 Shell，要么关掉。
+    if isManaged, case .ended = session.lifecycleState {
+      let close = ActionButton(title: "关闭标签", symbol: "xmark.circle") { [weak session] in
+        session?.requestManagedClose()
+      }
+      close.identifier = NSUserInterfaceItemIdentifier(
+        "terminal-close-managed-\(session.id.uuidString)")
+      trailing.append(close)
+    }
+    let row = NSStackView(views: [icon, text] + trailing)
     row.orientation = .horizontal
     row.alignment = .centerY
     row.spacing = 10

@@ -3257,9 +3257,23 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         guard let self else { return }
         let resolution = await ManagedTerminalCoordinatorRegistry.coordinator(for: reference)
           .reconcileAsync(references: [reference], persistedServerEpoch: nil)[reference]
-        if case .attached = resolution {
+        // 桥的退出码只是显示桥的，不是远端进程的。结束卡要说的是远端发生了什么：
+        // 进程退出（带服务端记录的退出码）、终端已被回收、还是服务不可达。
+        switch resolution {
+        case .attached?:
           self.applyManagedBridgeExit(reference)
-        } else {
+        case .exited(let status)?:
+          let exit = status.exitCode ?? code
+          self.managedExitSummary =
+            "远端进程已退出" + (exit.map { "（状态码 \($0)）" } ?? "") + "。"
+          self.applyProcessExit(code: exit)
+        case .missing?, .serverRestarted?:
+          self.managedExitSummary = "远端进程已结束，服务端已回收该终端。"
+          self.applyProcessExit(code: code)
+        case .unreachable(_, let reason)?:
+          self.managedExitSummary = "远端服务暂时不可达：\(reason)"
+          self.applyProcessExit(code: code)
+        case nil:
           self.applyProcessExit(code: code)
         }
       }
@@ -3447,7 +3461,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     guard canRestart, !statusIsRunning else { return false }
     // 受管终端失败不是本地进程问题：重建 surface 只会再次渲染同一错误（`managedFailure`
     // 仍在）。交给协调器重新对账 / 冷恢复，恢复后的新 terminalID 会经布局对齐换掉本 Pane。
-    if managedFailure != nil {
+    // 受管终端结束（远端进程退出、终端被回收）同理：本地重建 surface 只会让显示桥再次
+    // 报 terminal_not_found；要新的远端 Shell 必须由协调器发 session.restore。
+    if managedFailure != nil || managedTerminal != nil {
       diagnostics.record(
         "terminal.managed_retry_requested",
         level: .notice,
@@ -3953,6 +3969,14 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     let outputTail: String
   }
   private(set) var lastManagedBridgeExit: ManagedBridgeExit?
+  /// 受管终端结束后给结束卡的远端语义说明（进程退出 / 已回收 / 不可达）；新进程启动时清空。
+  private(set) var managedExitSummary: String?
+
+  /// 用户在结束卡上点「关闭标签」：受管 Pane 的关闭是服务端事务，由协调器收到通知后执行。
+  static let managedCloseRequested = Notification.Name("TerminalSession.managedCloseRequested")
+  func requestManagedClose() {
+    NotificationCenter.default.post(name: Self.managedCloseRequested, object: self)
+  }
 
   // MARK: - 远端 Agent 状态桥接（P5）
 
@@ -4352,6 +4376,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     isRunning = false
     exitCode = nil
     startupError = nil
+    managedExitSummary = nil
     terminalTitle = "Shell"
     terminalIconTitle = ""
     shellIntegrationDetected = false

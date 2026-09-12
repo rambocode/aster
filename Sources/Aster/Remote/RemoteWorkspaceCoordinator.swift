@@ -96,6 +96,8 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
   /// 「重新启动 Shell」对受管失败窗格的转发观察者（见 `retryStalePanes`）。
   /// `nonisolated(unsafe)`：只在 init 写入、deinit 读取，两处都不会与主线程并发。
   nonisolated(unsafe) private var managedRetryObserver: (any NSObjectProtocol)?
+  /// 结束卡「关闭标签」的转发观察者：受管 Pane 的关闭是服务端事务。
+  nonisolated(unsafe) private var managedCloseObserver: (any NSObjectProtocol)?
 
   init(model: AppModel, clientID: String = RemoteClientIdentity.clientID()) {
     self.model = model
@@ -107,12 +109,31 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
     ) { [weak self] _ in
       Task { @MainActor [weak self] in await self?.retryStalePanes() }
     }
+    managedCloseObserver = NotificationCenter.default.addObserver(
+      forName: TerminalSession.managedCloseRequested, object: nil, queue: .main
+    ) { [weak self] notification in
+      guard let session = notification.object as? TerminalSession else { return }
+      Task { @MainActor [weak self] in self?.closeTab(containing: session) }
+    }
+  }
+
+  /// 关闭包含该会话的远端标签（结束卡「关闭标签」）。只在活动机器的标签里找。
+  private func closeTab(containing session: TerminalSession) {
+    guard !isStopped, let model else { return }
+    for tab in model.tabs {
+      for pane in tab.layout.allPanes
+      where tab.runtime(for: pane.id)?.terminalSession === session {
+        closeTab(tabID: tab.id)
+        return
+      }
+    }
   }
 
   deinit {
     // 窗口销毁：订阅子进程必须跟着结束，否则会留下孤儿 ssh/aster-session。
     for client in subscriptions.values { client.stop() }
     if let managedRetryObserver { NotificationCenter.default.removeObserver(managedRetryObserver) }
+    if let managedCloseObserver { NotificationCenter.default.removeObserver(managedCloseObserver) }
   }
 
   /// 停止全部事件订阅并让协调器整体失效（窗口关闭、App 退出、验收收尾）。
