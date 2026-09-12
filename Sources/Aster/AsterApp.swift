@@ -1017,6 +1017,12 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       machineID: MachineFleetModel.shared.activeMachineID)
   }
 
+  /// 「文件 ▸ 远端 Agent 集成…」：为当前活动远端机器安装 Aster Agent hook。
+  @objc private func configureRemoteMachineAgents(_ sender: Any?) {
+    activeWorkspaceViewController?.presentAgentIntegration(
+      machineID: MachineFleetModel.shared.activeMachineID, automatic: false)
+  }
+
   @objc private func detachManagedTerminal(_ sender: Any?) {
     _ = activeWorkspaceModel.detachActiveManagedTerminal()
   }
@@ -1367,6 +1373,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     // 用键盘/辅助功能操作时也能到达。Local 活动时由 validateMenuItem 置灰。
     submenu.addItem(
       menuItem("更新远端服务…", #selector(updateRemoteMachineService(_:)), "", modifiers: []))
+    submenu.addItem(
+      menuItem("远端 Agent 集成…", #selector(configureRemoteMachineAgents(_:)), "", modifiers: []))
     submenu.addItem(.separator())
     submenu.addItem(menuItem("分离受管终端", #selector(detachManagedTerminal(_:)), "", modifiers: []))
     submenu.addItem(menuItem("结束受管终端", #selector(endManagedTerminal(_:)), "", modifiers: []))
@@ -1891,7 +1899,9 @@ extension AsterAppDelegate: NSMenuItemValidation {
     guard let action = menuItem.action else { return true }
     if action == #selector(restartQuickTerminal(_:)) { return quickTerminalController.canRestart }
     // 只有远端机器才有可更新的服务；Local 的服务随 App 一起更新。
-    if action == #selector(updateRemoteMachineService(_:)) {
+    if action == #selector(updateRemoteMachineService(_:))
+      || action == #selector(configureRemoteMachineAgents(_:))
+    {
       return MachineFleetModel.shared.activeMachineID != MachineProfile.localProfileID
     }
     // 独立终端没有工作区分屏；不能把其菜单操作落到背后的普通工作区。

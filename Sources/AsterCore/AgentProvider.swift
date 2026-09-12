@@ -403,7 +403,8 @@ public enum AgentSetupPlanner {
 
 extension AgentProvider {
   /// Aster 受管集成的安装步骤；只有屏幕检测清单的 provider 返回 nil。
-  fileprivate var installationStep: AgentSetupStep? {
+  /// 该 provider 的受管集成安装步骤；nil 表示只能屏幕检测。远端安装器据此推导会改动的配置路径。
+  public var installationStep: AgentSetupStep? {
     switch self {
     case .claudeCode:
       .mergeManagedHooks(path: "~/.claude/settings.json", format: .json)

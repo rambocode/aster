@@ -105,11 +105,53 @@ enum MachineSetupSheet {
     return run(alert, in: window) == .alertSecondButtonReturn
   }
 
-  /// 展示一条信息性说明（例如"远端已是最新"）。不是错误，不用警告样式。
-  static func presentNotice(_ message: String, in window: NSWindow?) {
+  /// 远端 Agent 集成的确认：列出远端发现的 CLI、将改动的远端配置文件与 hook 脚本位置。
+  /// 改的是用户在远端 home 下的 Agent 配置，必须先看清楚再点。
+  static func confirmAgentIntegration(
+    _ report: RemoteAgentIntegrationReport, target: String, in window: NSWindow?
+  ) -> Bool {
     let alert = NSAlert()
     alert.alertStyle = .informational
-    alert.messageText = "无需更新"
+    alert.messageText = "在远端安装 Aster Agent 集成"
+    let pending = report.pending.map { entry in
+      "• \(entry.provider.displayName)\(entry.version.map { " \($0)" } ?? "") → \(entry.configurationPath ?? "")"
+    }
+    let done = report.candidates.filter(\.integrated).map { "• \($0.provider.displayName)（已就位）" }
+    let screenOnly = report.screenOnly.map(\.provider.displayName)
+    var lines = ["目标：\(target)", "hook 脚本：\(report.hookScriptPath)", "", "将写入远端配置："]
+    lines += pending
+    if !done.isEmpty { lines += ["", "无需改动："] + done }
+    if !screenOnly.isEmpty {
+      lines += ["", "只能屏幕检测（不改动）：\(screenOnly.joined(separator: "、"))"]
+    }
+    lines += ["", "只添加带 Aster 标记的 hook 条目，不覆盖你的其它配置；可随时在远端删除。"]
+    alert.informativeText = lines.joined(separator: "\n")
+    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: "安装")
+    return run(alert, in: window) == .alertSecondButtonReturn
+  }
+
+  /// 远端 Agent 集成的结果说明。
+  static func presentAgentIntegration(_ report: RemoteAgentIntegrationReport, in window: NSWindow?) {
+    let alert = NSAlert()
+    let failures = report.entries.filter { $0.failure != nil }
+    alert.alertStyle = failures.isEmpty ? .informational : .warning
+    alert.messageText = failures.isEmpty ? "远端 Agent 集成已就位" : "远端 Agent 集成部分失败"
+    var lines = report.candidates.map { entry -> String in
+      if let failure = entry.failure { return "• \(entry.provider.displayName)：失败——\(failure)" }
+      return "• \(entry.provider.displayName)：\(entry.integrated ? "已集成" : "未集成")"
+    }
+    lines += ["", "远端 Agent 需要重新启动才会加载 hook。之后它的状态、等待输入与完成通知会出现在侧栏与 Dock。"]
+    alert.informativeText = lines.joined(separator: "\n")
+    alert.addButton(withTitle: "好")
+    _ = run(alert, in: window)
+  }
+
+  /// 展示一条信息性说明（例如"远端已是最新"）。不是错误，不用警告样式。
+  static func presentNotice(_ message: String, title: String = "无需更新", in window: NSWindow?) {
+    let alert = NSAlert()
+    alert.alertStyle = .informational
+    alert.messageText = title
     alert.informativeText = message
     alert.addButton(withTitle: "好")
     _ = run(alert, in: window)

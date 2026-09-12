@@ -100,6 +100,9 @@ protocol MachineFleetServices: Sendable {
   ) async throws -> RemoteReplacementOutcome
   /// 远端某个文件的 SHA256（小写 hex），用于判断是否已是同一份二进制；拿不到返回 nil。
   func remoteBinaryDigest(rawTarget: String, path: String) async throws -> String?
+  /// 远端 Agent 集成：`install` 为 nil 只探测；否则上传 hook 脚本并为这些 provider 合并配置。
+  func agentIntegration(for profile: MachineProfile, install: [AgentProvider]?) async throws
+    -> RemoteAgentIntegrationReport
 }
 
 /// 安装/替换的默认实现：不提供产物、不执行任何远端写动作。
@@ -119,6 +122,21 @@ extension MachineFleetServices {
     throw ManagedSessionError.runtimeUnavailable("本服务实现不支持远端服务替换。")
   }
   func remoteBinaryDigest(rawTarget: String, path: String) async throws -> String? { nil }
+  func agentIntegration(for profile: MachineProfile, install: [AgentProvider]?) async throws
+    -> RemoteAgentIntegrationReport
+  {
+    throw ManagedSessionError.runtimeUnavailable("本服务实现不支持远端 Agent 集成。")
+  }
+}
+
+/// 远端 Agent 集成动作的结果。
+enum AgentIntegrationResult: Equatable {
+  /// 已安装（或全部早已就位）；报告里有每个 provider 的最终状态与失败原因。
+  case installed(RemoteAgentIntegrationReport)
+  /// 远端没有任何可集成的 Agent CLI；文案说明发现了什么。
+  case nothingToInstall(String)
+  case cancelled
+  case failed(String)
 }
 
 /// 机器与 Local 的统一编排（P4.3 / P4.4 / P4.5 / P4.7）。
@@ -505,6 +523,39 @@ final class MachineFleetModel: ObservableObject {
     if updated.enabled { await supervisor.start(profile: updated) }
     await refreshStatuses()
     return .updated(updated)
+  }
+
+  /// 远端 Agent 集成：探测 → 确认（列出会改动的远端配置）→ 上传 hook 并合并配置。
+  ///
+  /// 只对远端已装且有受管集成的 provider 动手；只有屏幕检测的 CLI 原样运行不伪造状态。
+  /// 已全部就位时不弹确认直接返回，供添加机器后的自动调用静默通过。
+  func configureAgentIntegration(
+    _ id: UUID, confirm: (RemoteAgentIntegrationReport) -> Bool
+  ) async -> AgentIntegrationResult {
+    guard id != MachineProfile.localProfileID else {
+      return .failed("本机 Agent 集成请在「设置 ▸ 智能体」里安装。")
+    }
+    guard let profile = profiles.first(where: { $0.id == id }) else { return .failed("机器不存在。") }
+    let report: RemoteAgentIntegrationReport
+    do { report = try await services.agentIntegration(for: profile, install: nil) } catch {
+      return .failed("远端 Agent 探测失败：\(RemoteSetupDescription.text(for: error))")
+    }
+    guard !report.candidates.isEmpty else {
+      let screenOnly = report.screenOnly.map { $0.provider.displayName }
+      let detail = screenOnly.isEmpty
+        ? "远端 PATH 上没有发现任何已知 Agent CLI。"
+        : "远端只发现 \(screenOnly.joined(separator: "、"))，它们没有 Aster 受管集成，将按普通终端运行并依赖屏幕检测。"
+      return .nothingToInstall(detail)
+    }
+    guard !report.pending.isEmpty else { return .installed(report) }
+    guard confirm(report) else { return .cancelled }
+    do {
+      let installed = try await services.agentIntegration(
+        for: profile, install: report.pending.map(\.provider))
+      return .installed(installed)
+    } catch {
+      return .failed("远端 Agent 集成安装失败：\(RemoteSetupDescription.text(for: error))")
+    }
   }
 
   /// 跑一次设置事务并把两类错误统一成 `RemoteSetupFailure`。
@@ -942,6 +993,24 @@ struct RemoteMachineFleetServices: MachineFleetServices {
     return try await Task.detached(priority: .userInitiated) {
       try transaction.replace(
         plan: plan, manifest: artifact.manifest, localPath: artifact.localPath)
+    }.value
+  }
+
+  func agentIntegration(for profile: MachineProfile, install: [AgentProvider]?) async throws
+    -> RemoteAgentIntegrationReport
+  {
+    guard let rawTarget = profile.sshTarget else { throw MachineFleetError.machineNotFound }
+    guard
+      let script = AsterResourceLocations.resourcesDirectory(bundle: .main, fileManager: .default)?
+        .appendingPathComponent("agent-integration/aster-agent-hook.sh"),
+      FileManager.default.isReadableFile(atPath: script.path)
+    else { throw AgentSetupServiceError.integrationResourceUnavailable }
+    let installer = RemoteAgentIntegrationInstaller(
+      transport: try makeTransport(rawTarget), localHookScriptURL: script)
+    // 探测与安装都是多次阻塞的 SSH 往返，必须离开主线程。
+    return try await Task.detached(priority: .userInitiated) {
+      if let install { return try installer.install(providers: install) }
+      return try installer.inspect()
     }.value
   }
 

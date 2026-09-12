@@ -52,11 +52,25 @@ if [ -z "$session_id" ]; then
   payload="${payload_with_marker%?}"
   /bin/cat >/dev/null 2>&1 || true
   if [ "${#payload}" -le "$maximum_payload_bytes" ]; then
-    session_id=$(
-      /usr/bin/printf '%s' "$payload" \
-        | /usr/bin/plutil -extract session_id raw -expect string -o - - 2>/dev/null \
-        || true
-    )
+    # macOS 用 plutil；Linux 远端没有 plutil，退到 python3（Ubuntu 默认有）。两者都缺就不带 ID。
+    if [ -x /usr/bin/plutil ]; then
+      session_id=$(
+        /usr/bin/printf '%s' "$payload" \
+          | /usr/bin/plutil -extract session_id raw -expect string -o - - 2>/dev/null \
+          || true
+      )
+    elif command -v python3 >/dev/null 2>&1; then
+      session_id=$(
+        /usr/bin/printf '%s' "$payload" \
+          | python3 -c 'import json,sys
+try:
+    v = json.load(sys.stdin).get("session_id")
+    sys.stdout.write(v if isinstance(v, str) else "")
+except Exception:
+    pass' 2>/dev/null \
+          || true
+      )
+    fi
   fi
 else
   # 显式 ID 用于不提供 JSON session 字段的 provider；仍排空可能存在的 stdin。

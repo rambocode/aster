@@ -41,6 +41,24 @@ enum MachineFleetFixtures {
     versionedPath: "/root/.local/share/aster/versions/dev-0123456789ab/aster-session",
     version: "dev-0123456789ab", previousVersion: nil, artifactKind: .developmentBuild)
 
+  static func integrationReport(
+    claudeIntegrated: Bool, includeScreenOnly: Bool = true
+  ) -> RemoteAgentIntegrationReport {
+    RemoteAgentIntegrationReport(
+      homeDirectory: "/root",
+      hookScriptPath: "/root/.local/share/aster/agent-integration/aster-agent-hook.sh",
+      entries: [
+        .init(
+          provider: .claudeCode, installed: true, version: "2.1.0", supportsIntegration: true,
+          integrated: claudeIntegrated, configurationPath: "~/.claude/settings.json"),
+        .init(
+          provider: .gemini, installed: includeScreenOnly, supportsIntegration: false,
+          integrated: false),
+        .init(provider: .codex, installed: false, supportsIntegration: true, integrated: false,
+          configurationPath: "~/.codex/hooks.json"),
+      ])
+  }
+
   static let replaceOutcome = RemoteReplacementOutcome(
     affectedTerminalIDs: ["t1"], installOutcome: installOutcome, newServerIdentity: identity)
 }
@@ -114,6 +132,26 @@ struct MachineFleetTests {
 
     func remoteBinaryDigest(rawTarget: String, path: String) async throws -> String? {
       remoteDigest
+    }
+
+    var integrationReport: RemoteAgentIntegrationReport?
+    private(set) var integrationInstallCalls: [[AgentProvider]] = []
+
+    func agentIntegration(for profile: MachineProfile, install: [AgentProvider]?) async throws
+      -> RemoteAgentIntegrationReport
+    {
+      guard var report = integrationReport else {
+        throw ManagedSessionError.runtimeUnavailable("测试未提供集成报告")
+      }
+      if let install {
+        integrationInstallCalls.append(install)
+        report.entries = report.entries.map { entry in
+          var entry = entry
+          if install.contains(entry.provider) { entry.integrated = true }
+          return entry
+        }
+      }
+      return report
     }
   }
 
@@ -348,6 +386,79 @@ struct MachineFleetTests {
     guard case .failed = await fleet.updateService(MachineProfile.localProfileID, confirm: { _ in true })
     else {
       Issue.record("Local 应拒绝更新服务")
+      return
+    }
+  }
+
+  @Test("远端 Agent 集成：只对远端已装且有集成的 provider 确认并安装")
+  func agentIntegrationInstallsPendingProviders() async throws {
+    let services = FakeServices()
+    services.integrationReport = MachineFleetFixtures.integrationReport(claudeIntegrated: false)
+    let (fleet, url, _) = makeFleet(services)
+    defer { cleanUp(fleet, url) }
+    guard case .added(let profile) = await fleet.addMachine(
+      label: "orb", sshTarget: "root@ubuntu@orb", sessionName: "work", confirm: { _ in true })
+    else {
+      Issue.record("前置添加失败")
+      return
+    }
+
+    var shown: RemoteAgentIntegrationReport?
+    let result = await fleet.configureAgentIntegration(
+      profile.id,
+      confirm: { report in
+        shown = report
+        return true
+      })
+    guard case .installed(let report) = result else {
+      Issue.record("应安装成功，实际：\(result)")
+      return
+    }
+    // 确认框只列 claude；gemini 没有集成、codex 没装。
+    #expect(shown?.pending.map(\.provider) == [.claudeCode])
+    #expect(shown?.screenOnly.map(\.provider) == [.gemini])
+    #expect(services.integrationInstallCalls == [[.claudeCode]])
+    #expect(report.entries.first { $0.provider == .claudeCode }?.integrated == true)
+  }
+
+  @Test("远端 Agent 集成：全部就位时不弹确认；没有可集成 CLI 时说明原因；Local 拒绝")
+  func agentIntegrationSkipsWhenNothingPending() async throws {
+    let services = FakeServices()
+    services.integrationReport = MachineFleetFixtures.integrationReport(claudeIntegrated: true)
+    let (fleet, url, _) = makeFleet(services)
+    defer { cleanUp(fleet, url) }
+    guard case .added(let profile) = await fleet.addMachine(
+      label: "orb", sshTarget: "root@ubuntu@orb", sessionName: "work", confirm: { _ in true })
+    else {
+      Issue.record("前置添加失败")
+      return
+    }
+    var confirmations = 0
+    guard case .installed = await fleet.configureAgentIntegration(
+      profile.id, confirm: { _ in confirmations += 1; return true })
+    else {
+      Issue.record("全部就位应直接返回 installed")
+      return
+    }
+    #expect(confirmations == 0)
+    #expect(services.integrationInstallCalls.isEmpty)
+
+    services.integrationReport = RemoteAgentIntegrationReport(
+      homeDirectory: "/root", hookScriptPath: "/root/hook.sh",
+      entries: [.init(provider: .gemini, installed: true, supportsIntegration: false, integrated: false)])
+    guard case .nothingToInstall(let message) = await fleet.configureAgentIntegration(
+      profile.id, confirm: { _ in true })
+    else {
+      Issue.record("只有屏幕检测 CLI 时应报 nothingToInstall")
+      return
+    }
+    #expect(message.contains("Gemini") || message.contains("gemini"))
+    #expect(confirmations == 0)
+
+    guard case .failed = await fleet.configureAgentIntegration(
+      MachineProfile.localProfileID, confirm: { _ in true })
+    else {
+      Issue.record("Local 应拒绝")
       return
     }
   }

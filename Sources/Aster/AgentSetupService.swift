@@ -4,6 +4,8 @@ import Foundation
 
 enum AgentSetupServiceError: Error, Equatable, LocalizedError {
   case executableUnavailable(String)
+  /// 远端文件系统原语（SSH）失败；文本已脱敏。
+  case remoteCommandFailed(String)
   case unsafePath(String)
   case unsupportedFile(String)
   case fileTooLarge(String)
@@ -18,6 +20,8 @@ enum AgentSetupServiceError: Error, Equatable, LocalizedError {
     switch self {
     case .executableUnavailable(let command):
       "未在 PATH 中检测到 \(command)，请先安装对应 Agent。"
+    case .remoteCommandFailed(let detail):
+      "远端命令失败：\(detail)"
     case .unsafePath(let path):
       "Agent 集成目标不在当前用户目录内：\(path)"
     case .unsupportedFile(let path):
@@ -90,8 +94,10 @@ struct AgentSetupService {
   }
 
   let homeDirectory: URL
-  private let executableLocator: AgentExecutableLocator
-  private let fileManager: FileManager
+  /// 各 provider 可执行文件的定位。本机用 PATH 搜索；远端由探测结果注入。
+  private let executableResolver: @Sendable (AgentProvider) -> String?
+  /// 文件系统原语：本机 `FileManager`，远端 SSH。规则层不区分两者。
+  private let fileSystem: any AgentSetupFileSystem
   private let integrationScriptURL: URL?
 
   init(
@@ -101,26 +107,40 @@ struct AgentSetupService {
     fileManager: FileManager = .default,
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) {
-    self.homeDirectory = homeDirectory.standardizedFileURL
-    self.fileManager = fileManager
-    self.integrationScriptURL = integrationScriptURL?.standardizedFileURL
-      ?? AsterResourceLocations.resourcesDirectory(bundle: .main, fileManager: fileManager)?
-        .appendingPathComponent("agent-integration/aster-agent-hook.sh")
+    let home = homeDirectory.standardizedFileURL
+    let locator: AgentExecutableLocator
     if let executableSearchDirectories {
-      self.executableLocator = AgentExecutableLocator(searchDirectories: executableSearchDirectories)
+      locator = AgentExecutableLocator(searchDirectories: executableSearchDirectories)
     } else {
-      self.executableLocator = AgentExecutableLocator(
-        homeDirectory: self.homeDirectory,
-        environment: environment,
-        fileManager: fileManager
-      )
+      locator = AgentExecutableLocator(
+        homeDirectory: home, environment: environment, fileManager: fileManager)
     }
+    self.init(
+      homeDirectory: home,
+      integrationScriptURL: integrationScriptURL?.standardizedFileURL
+        ?? AsterResourceLocations.resourcesDirectory(bundle: .main, fileManager: fileManager)?
+          .appendingPathComponent("agent-integration/aster-agent-hook.sh"),
+      fileSystem: LocalAgentSetupFileSystem(fileManager: fileManager),
+      executableResolver: { locator.path(for: $0.commandName) })
+  }
+
+  /// 通用构造：远端安装用它注入 SSH 文件系统、远端 home、远端 hook 脚本路径与探测结果。
+  init(
+    homeDirectory: URL,
+    integrationScriptURL: URL?,
+    fileSystem: any AgentSetupFileSystem,
+    executableResolver: @escaping @Sendable (AgentProvider) -> String?
+  ) {
+    self.homeDirectory = homeDirectory
+    self.integrationScriptURL = integrationScriptURL
+    self.fileSystem = fileSystem
+    self.executableResolver = executableResolver
   }
 
   /// 只读检测既不创建目录，也不“仅凭文件存在”判定安装完成。受管 JSON/TOML
   /// 内容和独立 artifact 都必须带精确 Aster 标识；伪造的同名用户内容不会被接管。
   func status(for provider: AgentProvider) throws -> AgentSetupStatus {
-    let executablePath = executableLocator.path(for: provider.commandName)
+    let executablePath = executableResolver(provider)
     let managedIntegrationInstalled = try detectsManagedIntegration(for: provider)
     let requiredFeatureEnabled = try detectsRequiredFeature(for: provider)
     let evidence = AgentSetupEvidence(
@@ -283,7 +303,7 @@ struct AgentSetupService {
     guard try readExistingRegularFile(at: target)?.data == original.data else {
       throw AgentSetupServiceError.configurationChanged(target.path)
     }
-    try fileManager.removeItem(at: target)
+    try fileSystem.removeFile(atPath: target.path)
   }
 
   private func detectsManagedIntegration(for provider: AgentProvider) throws -> Bool {
@@ -649,11 +669,8 @@ struct AgentSetupService {
   /// hook 脚本必须是 bundle 内的普通文件（非 symlink），否则视为集成资源缺失。
   private func validatedIntegrationScriptPath() throws -> String {
     guard let integrationScriptURL,
-      let values = try? integrationScriptURL.resourceValues(forKeys: [
-        .isRegularFileKey, .isSymbolicLinkKey,
-      ]),
-      values.isRegularFile == true,
-      values.isSymbolicLink != true
+      let node = try? fileSystem.node(atPath: integrationScriptURL.path),
+      node.kind == .regularFile
     else { throw AgentSetupServiceError.integrationResourceUnavailable }
     return integrationScriptURL.path
   }
@@ -945,27 +962,19 @@ struct AgentSetupService {
 
   private func readExistingRegularFile(at url: URL) throws -> ExistingFile? {
     try validateExistingAncestors(of: url, includeTarget: false, targetMayBeDirectory: false)
-    var info = stat()
-    guard lstat(url.path, &info) == 0 else {
-      if errno == ENOENT { return nil }
-      throw CocoaError(.fileReadUnknown)
-    }
-    guard info.st_mode & S_IFMT == S_IFREG else {
+    guard let node = try fileSystem.node(atPath: url.path) else { return nil }
+    guard node.kind == .regularFile else {
       throw AgentSetupServiceError.unsupportedFile(url.path)
     }
-    guard info.st_size <= Self.maximumConfigurationBytes else {
+    guard node.size <= Self.maximumConfigurationBytes else {
       throw AgentSetupServiceError.fileTooLarge(url.path)
     }
-    let data = try Data(contentsOf: url)
+    let data = try fileSystem.readFile(atPath: url.path)
     guard data.count <= Self.maximumConfigurationBytes else {
       // lstat 与 read 之间若文件增长，读取后的二次限制阻止竞争条件绕过上限。
       throw AgentSetupServiceError.fileTooLarge(url.path)
     }
-    let attributes = try fileManager.attributesOfItem(atPath: url.path)
-    return ExistingFile(
-      data: data,
-      permissions: attributes[.posixPermissions] as? NSNumber
-    )
+    return ExistingFile(data: data, permissions: try fileSystem.permissions(atPath: url.path))
   }
 
   /// 检查 home 到目标之间所有已存在组件。任何 symlink 都拒绝，即使最终解析到
@@ -975,10 +984,7 @@ struct AgentSetupService {
     includeTarget: Bool,
     targetMayBeDirectory: Bool
   ) throws {
-    var homeInfo = stat()
-    guard lstat(homeDirectory.path, &homeInfo) == 0,
-      homeInfo.st_mode & S_IFMT == S_IFDIR
-    else {
+    guard try fileSystem.node(atPath: homeDirectory.path)?.kind == .directory else {
       // 注入的测试 home 与真实用户 home 使用同一规则：根本身也不能是 symlink。
       // 否则后续 lstat 只检查最终分量，会在路径解析时悄悄跟随这个根链接。
       throw AgentSetupServiceError.unsupportedFile(homeDirectory.path)
@@ -993,14 +999,11 @@ struct AgentSetupService {
     var current = homeDirectory
     for component in targetComponents[homeComponents.count..<lastIndex] {
       current.appendPathComponent(component)
-      var info = stat()
-      guard lstat(current.path, &info) == 0 else {
-        if errno == ENOENT { continue }
-        throw CocoaError(.fileReadUnknown)
-      }
-      let kind = info.st_mode & S_IFMT
+      guard let node = try fileSystem.node(atPath: current.path) else { continue }
       let isFinal = current.standardizedFileURL == target.standardizedFileURL
-      let accepted = kind == S_IFDIR || (isFinal && !targetMayBeDirectory && kind == S_IFREG)
+      let accepted =
+        node.kind == .directory
+        || (isFinal && !targetMayBeDirectory && node.kind == .regularFile)
       guard accepted else { throw AgentSetupServiceError.unsupportedFile(current.path) }
     }
   }
@@ -1008,7 +1011,7 @@ struct AgentSetupService {
   private func apply(_ edit: PreparedEdit) throws {
     let parent = edit.target.deletingLastPathComponent()
     try validateDirectoryPath(parent)
-    try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+    try fileSystem.createDirectory(atPath: parent.path)
     // 创建缺失目录后再检查一次，缩小预检与写入之间被替换成 symlink 的窗口。
     try validateDirectoryPath(parent)
     let current = try readExistingRegularFile(at: edit.target)
@@ -1018,14 +1021,10 @@ struct AgentSetupService {
 
     var wroteContents = false
     do {
-      try edit.contents.write(to: edit.target, options: .atomic)
+      // 权限位随内容一次写入；远端实现里 chmod 与 rename 同属一条命令，失败即整体失败。
+      try fileSystem.writeFile(
+        edit.contents, atPath: edit.target.path, permissions: edit.original?.permissions)
       wroteContents = true
-      if let permissions = edit.original?.permissions {
-        try fileManager.setAttributes(
-          [.posixPermissions: permissions],
-          ofItemAtPath: edit.target.path
-        )
-      }
     } catch {
       // 权限恢复等后置操作可能在原子替换成功后失败；这种情况下由当前目标自行
       // 恢复，再交给外层回滚更早的 edit，避免把未写目标误认为本次产物。
@@ -1047,15 +1046,10 @@ struct AgentSetupService {
       throw AgentSetupServiceError.configurationChanged(edit.target.path)
     }
     if let original = edit.original {
-      try original.data.write(to: edit.target, options: .atomic)
-      if let permissions = original.permissions {
-        try fileManager.setAttributes(
-          [.posixPermissions: permissions],
-          ofItemAtPath: edit.target.path
-        )
-      }
+      try fileSystem.writeFile(
+        original.data, atPath: edit.target.path, permissions: original.permissions)
     } else if current != nil {
-      try fileManager.removeItem(at: edit.target)
+      try fileSystem.removeFile(atPath: edit.target.path)
     }
   }
 }

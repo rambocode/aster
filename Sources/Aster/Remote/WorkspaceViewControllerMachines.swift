@@ -156,6 +156,13 @@ extension WorkspaceViewController {
     update.identifier = NSUserInterfaceItemIdentifier("machine-menu-update-service")
     menu.addItem(update)
 
+    let agents = NSMenuItem(
+      title: "远端 Agent 集成…", action: #selector(configureMachineAgents(_:)), keyEquivalent: "")
+    agents.target = self
+    agents.representedObject = row.id
+    agents.identifier = NSUserInterfaceItemIdentifier("machine-menu-agent-integration")
+    menu.addItem(agents)
+
     menu.addItem(.separator())
     let remove = NSMenuItem(title: "移除…", action: #selector(removeMachine(_:)), keyEquivalent: "")
     remove.target = self
@@ -180,6 +187,38 @@ extension WorkspaceViewController {
     }
   }
 
+  /// 侧栏右键「远端 Agent 集成…」。
+  @objc private func configureMachineAgents(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? UUID else { return }
+    presentAgentIntegration(machineID: id, automatic: false)
+  }
+
+  /// 远端 Agent 集成：探测 → 确认 → 安装 → 结果。
+  /// `automatic` 是添加机器成功后的自动调用：远端没有可集成 CLI 时静默，不打扰用户。
+  func presentAgentIntegration(machineID id: UUID, automatic: Bool) {
+    let window = view.window
+    let target = machineFleet.rows.first { $0.id == id }?.sshTarget ?? ""
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      let result = await self.machineFleet.configureAgentIntegration(
+        id, confirm: { MachineSetupSheet.confirmAgentIntegration($0, target: target, in: window) })
+      switch result {
+      case .installed(let report):
+        // 自动调用且早已全部就位：什么也不说。
+        if automatic, report.pending.isEmpty, report.entries.allSatisfy({ $0.failure == nil }) {
+          return
+        }
+        MachineSetupSheet.presentAgentIntegration(report, in: window)
+      case .nothingToInstall(let message):
+        if !automatic { MachineSetupSheet.presentNotice(message, title: "没有可集成的 Agent", in: window) }
+      case .cancelled:
+        break
+      case .failed(let message):
+        MachineSetupSheet.presentFailure(message, in: window)
+      }
+    }
+  }
+
   /// 侧栏右键「更新远端服务…」。
   @objc private func updateMachineService(_ sender: NSMenuItem) {
     guard let id = sender.representedObject as? UUID else { return }
@@ -201,8 +240,11 @@ extension WorkspaceViewController {
   /// 添加 / 更新结果的统一呈现。
   private func present(_ result: MachineSetupResult, in window: NSWindow?) {
     switch result {
-    case .added:
+    case .added(let profile):
       scheduleRefresh()
+      // 连上机器只得到一个 Shell 和 SSH 没区别：接着把 Agent 集成装到远端，
+      // 远端 Agent 的状态与通知才会像本机一样出现。没有可集成 CLI 时静默。
+      presentAgentIntegration(machineID: profile.id, automatic: true)
     case .updated(let profile):
       // 服务已换成新实例：丢掉这台机器的旧投影，活动机器会立即重新握手并冷恢复失效窗格。
       scheduleRefresh()
