@@ -435,7 +435,9 @@ final class MachineFleetModel: ObservableObject {
     switch outcome {
     case .ready(let fresh, _, let freshReport):
       report = freshReport
-      runningBinaryPath = fresh.remoteBinaryPath
+      // 已保存的运行时路径优先：探测按 PATH → 私有安装目录的顺序挑候选，机器上若还留着
+      // 旧的 /usr/local/bin/aster-session，新探测会一直指回它，"已是最新"就永远判不出来。
+      runningBinaryPath = profile.remoteBinaryPath ?? fresh.remoteBinaryPath
     case .incompatibleServerRunning(let freshReport, _):
       report = freshReport
       runningBinaryPath = freshReport.candidates.first { $0.protocolMajor != nil }?.path
