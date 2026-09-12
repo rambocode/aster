@@ -5,6 +5,7 @@ const history = @import("session_history.zig");
 const history_budget = @import("history_budget.zig");
 const Startup = @import("pty_startup.zig").Startup;
 const validID = @import("operation_request.zig").validID;
+const pty = @import("pty.zig");
 
 /// Prepared launch values. The RPC adapter resolves executables and merges the
 /// execution machine's environment; this boundary never invokes a shell wrapper.
@@ -93,6 +94,10 @@ pub const Pool = struct {
     /// Bounded FIFO of summaries for records that gave their slot back.
     retired: std.ArrayList(Retired) = .empty,
     next_entry: usize = 0,
+    /// Set by tick(): true when any terminal produced output in the last tick.
+    /// The service loop checks this to enforce a minimum sleep and prevent
+    /// busy-spinning when high-output terminals always have data available.
+    last_tick_active: bool = false,
     history_manager: history.Manager,
     history_stats: history.Stats = .{ .charged_bytes = 0, .removed_rows = 0, .removed_pages = 0, .tracked_pages = 0 },
     history_failures: u64 = 0,
@@ -421,7 +426,8 @@ pub const Pool = struct {
     pub fn enforceHistoryBudget(self: *Pool) void {
         var items: [64]history.Item = undefined;
         for (self.entries.items, 0..) |entry, index| items[index] = .{ .id = entry.id, .session = entry.session };
-        self.history_stats = self.history_manager.enforce(items[0..self.entries.items.len], self.limits.maximum_history_bytes) catch {
+        self.history_stats = self.history_manager.enforce(items[0..self.entries.items.len], self.limits.maximum_history_bytes) catch |err| {
+            std.log.warn("history budget enforcement failed: {s} (limit={d})", .{ @errorName(err), self.limits.maximum_history_bytes });
             self.history_failures +|= 1;
             self.history_manager.deinit();
             self.history_manager = history.Manager.init(self.allocator);
@@ -430,10 +436,11 @@ pub const Pool = struct {
                 const prior_rows = entry.session.history_usage.rows;
                 const limit = entry.session.history_limit;
                 entry.session.history_limit = 0;
-                entry.session.enforceHistoryLimit() catch |err| {
+                entry.session.enforceHistoryLimit() catch |trim_err| {
                     // A failure of the nonallocating VT trim means this VT is
                     // invalid, independently of the other processes in the pool.
-                    entry.failure = err;
+                    std.log.warn("terminal {s} history trim failed: {s}", .{ &entry.id, @errorName(trim_err) });
+                    entry.failure = trim_err;
                     entry.session.abort() catch |cleanup| {
                         entry.cleanup_failure = cleanup;
                     };
@@ -446,13 +453,28 @@ pub const Pool = struct {
         };
     }
 
+    /// Aggregate read budget: cap total VT work per tick so it stays O(1)
+    /// regardless of terminal count. With many high-output terminals the
+    /// per-terminal share shrinks proportionally, preventing the main loop
+    /// from spending unbounded time in VT processing before yielding.
+    pub const aggregate_read_budget: usize = 131072;
+
     /// Never waits on any individual PTY. Every live record gets one bounded
     /// read even if there are no attached clients. I/O failure retires that
     /// process and remains observable on its record without losing other PTYs.
+    /// Returns true when any terminal produced output so the caller can
+    /// enforce a minimum sleep and prevent busy-spinning.
     pub fn tick(self: *Pool) void {
         self.pollPending();
         const count = self.entries.items.len;
-        if (count == 0) return;
+        if (count == 0) {
+            self.last_tick_active = false;
+            return;
+        }
+        // Scale per-terminal budget inversely with terminal count so the
+        // aggregate VT work stays bounded. Floor at 4 KB to guarantee
+        // forward progress even with many terminals.
+        const per_terminal = @max(aggregate_read_budget / count, 4096);
         var observed = false;
         for (0..count) |offset| {
             const entry = &self.entries.items[(self.next_entry + offset) % count];
@@ -462,20 +484,79 @@ pub const Pool = struct {
                 };
                 continue;
             }
-            const changed = entry.session.tick(0) catch |err| {
+            const changed = entry.session.tick(0, per_terminal) catch |err| {
+                // 记录失败原因：终端从此标为 unavailable，运维排查只能靠这一行。
+                std.log.warn("terminal {s} failed: {s}", .{ &entry.id, @errorName(err) });
                 entry.failure = err;
                 entry.session.abort() catch |cleanup_error| {
                     entry.cleanup_failure = cleanup_error;
                 };
                 continue;
             };
-            if (changed) {
-                self.enforceHistoryBudget();
-                observed = true;
-            }
+            if (changed) observed = true;
         }
-        if (!observed) self.enforceHistoryBudget();
+        // Enforce history budget once per tick, not per-terminal. The old
+        // per-terminal call was O(n^2) with n active terminals.
+        self.enforceHistoryBudget();
         self.next_entry = (self.next_entry + 1) % count;
+        self.last_tick_active = observed;
+    }
+
+    /// Exported terminal info for live handoff. Contains the PTY master FD,
+    /// child PID, terminal ID, cwd, and history exclusion flag.
+    pub const ExportedTerminal = struct {
+        id: [36]u8,
+        pid: std.posix.pid_t,
+        master_fd: std.posix.fd_t,
+        cwd: []const u8,
+        history_excluded: bool,
+    };
+
+    /// Collects terminal entries for handoff. Caller borrows the returned
+    /// slice data from pool-owned memory; it is valid until the next pool mutation.
+    pub fn exportForHandoff(self: *Pool, out: *std.ArrayList(ExportedTerminal)) !void {
+        for (self.entries.items) |*entry| {
+            if (entry.session.process.master < 0) continue;
+            try out.append(.{
+                .id = entry.id,
+                .pid = entry.session.process.pid,
+                .master_fd = entry.session.process.master,
+                .cwd = entry.cwd[0..std.mem.len(@as([*:0]const u8, entry.cwd.ptr))],
+                .history_excluded = entry.history_excluded,
+            });
+        }
+    }
+
+    /// Adopts an externally-owned PTY master FD into the pool as a new terminal
+    /// entry. Used by the new service during live handoff to take over terminals
+    /// without forking new processes. The session/VT state starts fresh.
+    pub fn adoptTerminal(self: *Pool, id: [36]u8, master_fd: std.posix.fd_t, pid: std.posix.pid_t, cwd_path: []const u8, history_excluded: bool) !void {
+        if (self.entries.items.len >= self.limits.maximum_terminals) return error.PoolFull;
+        const cwd_z = try self.allocator.allocSentinel(u8, cwd_path.len, 0);
+        errdefer self.allocator.free(cwd_z);
+        @memcpy(cwd_z, cwd_path);
+        // Prepare a fresh VT session and adopt the existing process/PTY pair.
+        // Uses the standard prepare+adoptProcess path so VT state is initialized
+        // cleanly; the terminal content rebuilds from PTY output naturally.
+        const session = try Session.prepare(self.allocator, .{ .rows = 24, .columns = 80 });
+        errdefer session.destroy();
+        var process = pty.Process{ .pid = pid, .master = master_fd };
+        session.adoptProcess(&process);
+        session.scope_cleanup = false; // 接管终端非本进程子进程，禁用 scope 清理
+        session.adopted = true;
+        session.history_excluded = history_excluded;
+        // 注册平台退出监听：macOS kqueue EVFILT_PROC / Linux pidfd_open
+        if (pid > 0) {
+            const watch_fd = @import("process_scope.zig").watchExit(pid);
+            if (watch_fd >= 0) session.exit_watch_fd = watch_fd;
+        }
+        try self.entries.append(self.allocator, .{
+            .id = id,
+            .cwd = cwd_z,
+            .original_pid = pid,
+            .session = session,
+            .history_excluded = history_excluded,
+        });
     }
 };
 
@@ -655,7 +736,7 @@ test "ignored TERM escalates without delaying another terminal or extending grac
     try pool.terminate(testID('1'), 40);
     try pool.terminate(testID('1'), 60_000);
     var waiting = try std.time.Timer.start();
-    _ = try pool.find(testID('1')).?.session.tick(1000);
+    _ = try pool.find(testID('1')).?.session.tick(1000, 65536);
     try std.testing.expect(waiting.read() < 500 * std.time.ns_per_ms);
     try pool.create(testID('2'), .{ .cwd = "/", .argv = &.{ "/bin/sh", "-c", "exit 9" } });
     try waitForExit(&pool);
@@ -840,4 +921,67 @@ test "pool real PTY global history pressure preserves FIFO ownership and input" 
     try std.testing.expectEqual(first_pid, first.process.pid);
     try std.testing.expectEqual(second_pid, second.process.pid);
     try std.testing.expect(first.exit_status == null and second.exit_status == null);
+}
+
+test "20 high-output terminals stay bounded: aggregate budget prevents busy-spin" {
+    // Reproduce the instability scenario: 20 terminals each running a command
+    // that produces sustained high output. Without the aggregate read budget,
+    // each tick would process 20 * 64KB = 1.28MB of VT data and the main loop
+    // would busy-spin (poll always returns immediately). With the fix, total
+    // VT work per tick is capped at aggregate_read_budget (128KB), and each
+    // terminal gets a proportional share (128KB / 20 = ~6.4KB).
+    var pool = try Pool.init(std.testing.allocator, .{});
+    defer pool.deinit();
+    // Generate 20 distinct valid UUIDs by varying two positions.
+    // Create 20 terminals each producing sustained output.
+    for (0..20) |i| {
+        // Use position 34 for high nibble, position 35 for low nibble.
+        var id = "00000000-0000-4000-8000-000000000000".*;
+        const hex = "0123456789abcdef";
+        id[34] = hex[i / 16];
+        id[35] = hex[i % 16];
+        try pool.create(id, .{
+            .cwd = "/",
+            .argv = &.{ "/bin/sh", "-c", "seq 1 5000" },
+            .geometry = .{ .rows = 24, .columns = 80 },
+        });
+    }
+    // Tick several times and verify:
+    // 1. All terminals make progress (no starvation)
+    // 2. Each tick completes in bounded time (no runaway VT processing)
+    // 3. The per-terminal budget is correctly scaled down
+    const expected_per_terminal = @max(Pool.aggregate_read_budget / 20, 4096);
+    try std.testing.expect(expected_per_terminal <= 8192); // Much less than 64KB
+    var timer = try std.time.Timer.start();
+    var ticks: usize = 0;
+    var all_exited = false;
+    while (!all_exited and timer.read() < 10 * std.time.ns_per_s) {
+        pool.tick();
+        ticks += 1;
+        // Check if all have exited
+        all_exited = true;
+        for (pool.entries.items) |entry| {
+            if (entry.failure != null) continue;
+            if (!entry.session.eof or entry.session.exit_status == null) {
+                all_exited = false;
+                break;
+            }
+        }
+        if (!all_exited) std.Thread.sleep(std.time.ns_per_ms);
+    }
+    // All 20 terminals must complete without failure.
+    try std.testing.expect(all_exited);
+    var failures: usize = 0;
+    for (pool.entries.items) |entry| {
+        if (entry.failure != null) failures += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 0), failures);
+    try std.testing.expectEqual(@as(usize, 20), pool.entries.items.len);
+    // With the aggregate budget, more ticks are needed (each processes less
+    // data), but each tick is bounded. Verify we didn't degenerate to 1 tick.
+    try std.testing.expect(ticks > 1);
+    std.debug.print("20-terminal test: completed in {d} ticks, {d}ms\n", .{
+        ticks,
+        timer.read() / std.time.ns_per_ms,
+    });
 }

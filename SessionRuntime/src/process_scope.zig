@@ -40,6 +40,27 @@ pub const Context = struct {
         return .{ .complete = complete != 0, .status = if (complete != 0) @bitCast(status) else null };
     }
 };
+/// Create a watcher FD for a non-child process exit. Returns -1 on failure.
+/// macOS: kqueue EVFILT_PROC NOTE_EXIT; Linux: pidfd_open.
+pub fn watchExit(pid: std.posix.pid_t) std.posix.fd_t {
+    return c.session_scope_watch_exit(pid);
+}
+
+/// Non-blocking check: did the watched process exit?
+/// Returns exit status (waitpid-form on macOS, 0 on Linux), or null if still running.
+pub fn pollExit(watch_fd: std.posix.fd_t) ?u32 {
+    if (watch_fd < 0) return null;
+    var exited: c_int = 0;
+    var status: c_int = 0;
+    if (c.session_scope_poll_exit(watch_fd, &exited, &status) != 0) return null;
+    return if (exited != 0) @bitCast(status) else null;
+}
+
+/// Close a watcher FD.
+pub fn closeWatch(watch_fd: std.posix.fd_t) void {
+    c.session_scope_close_watch(watch_fd);
+}
+
 fn check(code: c_int) !void {
     if (code == 0) return;
     return switch (code) {

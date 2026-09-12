@@ -63,7 +63,7 @@ pub fn serve(allocator: std.mem.Allocator, socket_path: [:0]const u8, cwd: [:0]c
                 client.?.needs_screen = true;
             }
         }
-        const changed = try session.tick(20);
+        const changed = try session.tick(20, 65536);
         if (session.eof) std.Thread.sleep(20 * std.time.ns_per_ms);
         if (client) |*value| {
             const action = value.receive(session) catch .disconnect;

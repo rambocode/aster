@@ -40,6 +40,11 @@ cp "$BUILD_DIR/release/aster-memory-mcp" "$CONTENTS_DIR/MacOS/aster-memory-mcp"
 # aster-cli 与主程序同目录：CLI 由可执行路径上溯三层推导 bundle 来 `open -gj` 拉起 App，
 # 设置页安装的 /usr/local/bin/aster 也只是指向这里的 symlink。
 cp "$BUILD_DIR/release/aster-cli" "$CONTENTS_DIR/MacOS/aster-cli"
+# P8.8: 受管终端默认开启后，App 必须内含 aster-session 二进制。
+# ManagedTerminalCoordinator 自动从 Contents/MacOS/ 解析路径。
+if [[ -f "$BUILD_DIR/release/aster-session" ]]; then
+  cp "$BUILD_DIR/release/aster-session" "$CONTENTS_DIR/MacOS/aster-session"
+fi
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$PROJECT_DIR/THIRD-PARTY-NOTICES.md" "$RESOURCES_DIR/THIRD-PARTY-NOTICES.md"
 cp -R "$PROJECT_DIR/Resources/shell-integration" "$RESOURCES_DIR/shell-integration"

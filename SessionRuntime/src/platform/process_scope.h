@@ -20,4 +20,18 @@ void session_scope_context_destroy(struct session_scope_context *context);
 /* Context binds one root transaction; successful TERM is sent once per process
  * identity, while newly discovered/adopted members are still scanned. */
 int session_scope_context_step(struct session_scope_context *context, pid_t root, int force, int *complete, int *status);
+
+/* Monitor a non-child process for exit. Used by adopted terminals whose
+ * processes are NOT children of this service (siblings after handoff).
+ * macOS: kqueue EVFILT_PROC NOTE_EXIT — exit status available.
+ * Linux: pidfd_open — exit notification only, no status for non-children.
+ * Returns a pollable FD (>= 0) or -1 on failure (errno set). */
+int session_scope_watch_exit(pid_t pid);
+/* Non-blocking check: did the watched process exit?
+ * exited=1 means yes; status is waitpid-form on macOS, 0 on Linux.
+ * Returns 0 on success, errno on error. The FD stays valid after exit. */
+int session_scope_poll_exit(int watch_fd, int *exited, int *status);
+/* Close the watcher FD. */
+void session_scope_close_watch(int watch_fd);
 #endif
+

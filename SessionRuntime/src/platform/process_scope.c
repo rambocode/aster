@@ -225,3 +225,86 @@ int session_scope_context_step(struct session_scope_context *context, pid_t root
     }
     return 0;
 }
+
+/* ─── Non-child process exit monitoring ─────────────────────────────────── */
+
+#if defined(__APPLE__)
+#include <sys/event.h>
+
+int session_scope_watch_exit(pid_t pid) {
+    /* Create a kqueue and register EVFILT_PROC NOTE_EXIT for the target PID.
+     * Works for any visible process, not just children. */
+    if (pid <= 0) { errno = EINVAL; return -1; }
+    int kq = kqueue();
+    if (kq < 0) return -1;
+    struct kevent change;
+    EV_SET(&change, (uintptr_t)pid, EVFILT_PROC, EV_ADD | EV_ONESHOT, NOTE_EXIT, 0, NULL);
+    if (kevent(kq, &change, 1, NULL, 0, NULL) < 0) {
+        int saved = errno;
+        close(kq);
+        errno = saved;
+        return -1;
+    }
+    return kq;
+}
+
+int session_scope_poll_exit(int watch_fd, int *exited, int *status) {
+    /* Non-blocking kevent check. NOTE_EXIT fires when the process exits,
+     * but event.data is NOT a reliable exit status for non-child processes:
+     * macOS returns 0 regardless of the actual exit code. Use -1 to signal
+     * "exit detected but status unavailable". */
+    if (watch_fd < 0 || !exited || !status) return EINVAL;
+    *exited = 0;
+    struct kevent event;
+    struct timespec zero = {0, 0};
+    int n = kevent(watch_fd, NULL, 0, &event, 1, &zero);
+    if (n < 0) return errno;
+    if (n > 0 && (event.fflags & NOTE_EXIT)) {
+        *exited = 1;
+        /* Non-child: exit code unavailable via kqueue. Signal with -1. */
+        *status = -1;
+    }
+    return 0;
+}
+
+void session_scope_close_watch(int watch_fd) {
+    if (watch_fd >= 0) close(watch_fd);
+}
+
+#else /* Linux */
+#include <sys/syscall.h>
+#include <poll.h>
+
+int session_scope_watch_exit(pid_t pid) {
+    /* pidfd_open: returns a file descriptor that becomes readable when
+     * the target process exits. Works for any visible process. */
+    if (pid <= 0) { errno = EINVAL; return -1; }
+#ifdef SYS_pidfd_open
+    int fd = (int)syscall(SYS_pidfd_open, pid, 0);
+    return fd; /* -1 on failure, errno set by kernel */
+#else
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+int session_scope_poll_exit(int watch_fd, int *exited, int *status) {
+    /* Poll the pidfd with zero timeout. POLLIN means process exited.
+     * Exit status is NOT available for non-child processes on Linux. */
+    if (watch_fd < 0 || !exited || !status) return EINVAL;
+    *exited = 0;
+    struct pollfd pfd = { .fd = watch_fd, .events = POLLIN, .revents = 0 };
+    int n = poll(&pfd, 1, 0);
+    if (n < 0) return errno;
+    if (n > 0 && (pfd.revents & POLLIN)) {
+        *exited = 1;
+        *status = -1; /* 接管后两平台均无法获取非子进程的退出码 */
+    }
+    return 0;
+}
+
+void session_scope_close_watch(int watch_fd) {
+    if (watch_fd >= 0) close(watch_fd);
+}
+
+#endif

@@ -38,6 +38,10 @@ public struct RemoteReleaseManifest: Codable, Equatable, Sendable {
   public var signature: String?
   /// 产物类型。
   public var artifactKind: RemoteArtifactKind
+  /// 协议主版本号，用于客户端兼容性预检。nil 表示未知（旧清单）。
+  public var protocolMajor: Int?
+  /// 协议次版本号。次版本不同不等于不兼容。
+  public var protocolMinor: Int?
 
   public init(
     version: String,
@@ -46,7 +50,9 @@ public struct RemoteReleaseManifest: Codable, Equatable, Sendable {
     sha256: String,
     sizeBytes: Int,
     signature: String? = nil,
-    artifactKind: RemoteArtifactKind
+    artifactKind: RemoteArtifactKind,
+    protocolMajor: Int? = nil,
+    protocolMinor: Int? = nil
   ) {
     self.version = version
     self.platform = platform
@@ -55,6 +61,8 @@ public struct RemoteReleaseManifest: Codable, Equatable, Sendable {
     self.sizeBytes = sizeBytes
     self.signature = signature
     self.artifactKind = artifactKind
+    self.protocolMajor = protocolMajor
+    self.protocolMinor = protocolMinor
   }
 
   /// 是否为正式受管发行。界面据此决定是否展示“非正式产物”的告警。
@@ -595,5 +603,232 @@ public struct RemoteInstallTransaction: Sendable {
   static func fileSize(at path: String) throws -> Int {
     let attributes = try FileManager.default.attributesOfItem(atPath: path)
     return (attributes[.size] as? NSNumber)?.intValue ?? 0
+  }
+}
+
+
+// MARK: - Ed25519 测试签名链
+
+/// Ed25519 测试签名验证器。
+///
+/// **测试签名链**（test signing chain）：用于在没有真实 Sparkle/公证签名
+/// 基础设施的阶段跑通完整安装事务。密钥对仅存于代码常量与测试 fixture 中，
+/// 生产发布的真实签名属于后续正式 release 基础设施建设。
+///
+/// 签名对象是清单 SHA256 摘要的 raw bytes（32 字节），而不是二进制本身，
+/// 因为校验发生在本地产物摘要已经算好之后，不需要再读一遍完整文件。
+public enum RemoteInstallSignature {
+
+  /// 测试公钥（Ed25519，raw 32 bytes，base64 编码）。
+  /// 对应的私钥只存在于测试 fixture 中，不编译进 release 产物。
+  public static let testPublicKeyBase64 = "s++Bgv7qejFPU8HGMxgAt5bkX9V89YdsRgCMCAN3SgU="
+
+  /// 用 Ed25519 私钥对清单摘要签名。返回签名的 base64 编码。
+  ///
+  /// 仅用于测试——生产签名由构建管线在打包阶段完成，不经过客户端代码。
+  public static func sign(
+    sha256Hex: String,
+    privateKeyRaw: Data
+  ) throws -> String {
+    guard let digestBytes = hexToBytes(sha256Hex), digestBytes.count == 32 else {
+      throw RemoteInstallValidationError.malformedManifest("sha256")
+    }
+    let privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyRaw)
+    let signature = try privateKey.signature(for: digestBytes)
+    return Data(signature).base64EncodedString()
+  }
+
+  /// 验证清单签名。对 `managedRelease` 产物是强制的，`testArtifact` 跳过。
+  public static func verify(
+    manifest: RemoteReleaseManifest,
+    publicKeyBase64: String
+  ) -> Bool {
+    guard let signatureBase64 = manifest.signature,
+          let signatureData = Data(base64Encoded: signatureBase64),
+          let publicKeyData = Data(base64Encoded: publicKeyBase64),
+          let digestBytes = hexToBytes(manifest.sha256),
+          digestBytes.count == 32
+    else { return false }
+    do {
+      let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData)
+      return publicKey.isValidSignature(signatureData, for: digestBytes)
+    } catch {
+      return false
+    }
+  }
+
+  /// 创建一个使用测试公钥验签的闭包，可直接注入 `RemoteInstallTransaction`。
+  public static func testVerifier() -> @Sendable (RemoteReleaseManifest) -> Bool {
+    { manifest in verify(manifest: manifest, publicKeyBase64: testPublicKeyBase64) }
+  }
+
+  /// 十六进制字符串转字节数组。返回 nil 如果长度不是偶数或含非法字符。
+  private static func hexToBytes(_ hex: String) -> [UInt8]? {
+    guard hex.count % 2 == 0 else { return nil }
+    var bytes: [UInt8] = []
+    bytes.reserveCapacity(hex.count / 2)
+    var index = hex.startIndex
+    while index < hex.endIndex {
+      let nextIndex = hex.index(index, offsetBy: 2)
+      guard let byte = UInt8(hex[index..<nextIndex], radix: 16) else { return nil }
+      bytes.append(byte)
+      index = nextIndex
+    }
+    return bytes
+  }
+}
+
+// MARK: - 服务替换编排
+
+/// 服务替换事务的阶段。
+public enum RemoteReplacementStage: String, Sendable {
+  case listTerminals
+  case stopService
+  case installBinary
+  case startService
+  case rollback
+}
+
+/// 服务替换事务的结果。
+public struct RemoteReplacementOutcome: Equatable, Sendable {
+  /// 受影响的终端 ID 列表（替换前活跃的终端）。
+  public var affectedTerminalIDs: [String]
+  /// 安装结果。
+  public var installOutcome: RemoteInstallOutcome
+  /// 新服务身份。
+  public var newServerIdentity: SessionServerIdentity
+  /// 附加诊断。
+  public var diagnostics: [String]
+
+  public init(
+    affectedTerminalIDs: [String],
+    installOutcome: RemoteInstallOutcome,
+    newServerIdentity: SessionServerIdentity,
+    diagnostics: [String] = []
+  ) {
+    self.affectedTerminalIDs = affectedTerminalIDs
+    self.installOutcome = installOutcome
+    self.newServerIdentity = newServerIdentity
+    self.diagnostics = diagnostics
+  }
+}
+
+/// 服务替换失败原因。
+public enum RemoteReplacementError: Error, Equatable, Sendable {
+  /// 列出终端失败。
+  case listTerminalsFailed(String)
+  /// 停止旧服务失败。
+  case stopServiceFailed(String)
+  /// 安装新版本失败；旧版本仍可用。
+  case installFailed(String)
+  /// 启动新服务失败；已尝试回退。
+  case startServiceFailed(String)
+  /// 回退也失败了，需要手动干预。
+  case rollbackFailed(original: String, rollback: String)
+}
+
+/// 服务替换编排器。
+///
+/// 编排顺序（docs/developer/remote-work.md §7）：
+/// 1. `terminal.list` → 获取受影响终端列表
+/// 2. `server.stop` → 停止旧服务（排空并退出）
+/// 3. `RemoteInstallTransaction.install` → 安装新版本二进制
+/// 4. `ensureSession` → 启动新服务（冷启动，P6 恢复）
+///
+/// 安装失败时旧版本目录完好，可手动重启旧版本。
+/// 启动新服务失败时尝试把 symlink 指回旧版本。
+public protocol RemoteReplacementExecuting: Sendable {
+  /// 列出当前会话的所有终端。
+  func listTerminals() throws -> [ManagedTerminalStatus]
+  /// 停止当前运行的服务（排空并退出）。
+  func stopServer() throws
+  /// 启动新的服务实例。
+  func startServer(binaryPath: String) throws -> SessionServerIdentity
+}
+
+/// 服务替换事务。客户端侧编排，不依赖服务端的 `server.replace` 原子操作。
+public struct RemoteReplacementTransaction: Sendable {
+  private let executor: any RemoteReplacementExecuting
+  private let installTransaction: RemoteInstallTransaction
+
+  public init(
+    executor: any RemoteReplacementExecuting,
+    installTransaction: RemoteInstallTransaction
+  ) {
+    self.executor = executor
+    self.installTransaction = installTransaction
+  }
+
+  /// 执行完整的服务替换。
+  ///
+  /// 调用方必须在调用前已获得用户确认。本方法不做交互。
+  ///
+  /// - Parameters:
+  ///   - plan: 安装计划（含版本化目录布局）。
+  ///   - manifest: 新版本的发行清单。
+  ///   - localPath: 新版本产物的本地路径。
+  ///   - localDigest: 本地产物摘要（可选，为 nil 时现算）。
+  ///   - localSize: 本地产物字节数（可选，为 nil 时现取）。
+  @discardableResult
+  public func replace(
+    plan: RemoteInstallPlan,
+    manifest: RemoteReleaseManifest,
+    localPath: String,
+    localDigest: String? = nil,
+    localSize: Int? = nil
+  ) throws -> RemoteReplacementOutcome {
+    // 1. 列出受影响终端
+    let terminals: [ManagedTerminalStatus]
+    do {
+      terminals = try executor.listTerminals()
+    } catch {
+      throw RemoteReplacementError.listTerminalsFailed(String(describing: error))
+    }
+    let affectedIDs = terminals.filter { $0.state == .running }
+      .map(\.reference.terminalID)
+
+    // 2. 停止旧服务
+    do {
+      try executor.stopServer()
+    } catch {
+      throw RemoteReplacementError.stopServiceFailed(String(describing: error))
+    }
+
+    // 3. 安装新版本
+    let installOutcome: RemoteInstallOutcome
+    do {
+      installOutcome = try installTransaction.install(
+        plan: plan,
+        manifest: manifest,
+        localPath: localPath,
+        localDigest: localDigest,
+        localSize: localSize)
+    } catch {
+      // 安装失败时旧版本目录仍完好，不需要额外回退。
+      throw RemoteReplacementError.installFailed(String(describing: error))
+    }
+
+    // 4. 启动新服务
+    let newIdentity: SessionServerIdentity
+    do {
+      newIdentity = try executor.startServer(binaryPath: installOutcome.installedPath)
+    } catch {
+      // 新服务启动失败，尝试把 symlink 指回旧版本并重启
+      let startError = String(describing: error)
+      if let previousPath = plan.previousVersionedPath {
+        do {
+          _ = try executor.startServer(binaryPath: previousPath)
+        } catch {
+          throw RemoteReplacementError.rollbackFailed(
+            original: startError, rollback: String(describing: error))
+        }
+      }
+      throw RemoteReplacementError.startServiceFailed(startError)
+    }
+
+    return RemoteReplacementOutcome(
+      affectedTerminalIDs: affectedIDs,
+      installOutcome: installOutcome,
+      newServerIdentity: newIdentity)
   }
 }

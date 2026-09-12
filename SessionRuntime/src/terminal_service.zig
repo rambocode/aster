@@ -778,8 +778,13 @@ pub fn terminal(entry: *pool_mod.Entry) Terminal {
         result.pid = null;
     }
     if (entry.session.exit_status) |status| {
-        if (std.posix.W.IFEXITED(status)) result.exitCode = std.posix.W.EXITSTATUS(status);
-        if (std.posix.W.IFSIGNALED(status)) result.signal = std.posix.W.TERMSIG(status);
+        // 接管终端的 exit_status 为 0xFFFFFFFF（-1 as u32）时表示退出码不可得，
+        // 两平台均无法获取非子进程的退出码。此时 exitCode 保持 null。
+        const status_i32: i32 = @bitCast(status);
+        if (status_i32 >= 0) {
+            if (std.posix.W.IFEXITED(status)) result.exitCode = std.posix.W.EXITSTATUS(status);
+            if (std.posix.W.IFSIGNALED(status)) result.signal = std.posix.W.TERMSIG(status);
+        }
     }
     return result;
 }
@@ -789,8 +794,11 @@ pub fn terminal(entry: *pool_mod.Entry) Terminal {
 pub fn retiredTerminal(record: *const pool_mod.Retired) Terminal {
     var result = Terminal{ .terminalID = &record.id, .cwd = record.cwd, .state = if (record.unavailable) .unavailable else .exited };
     if (record.exit_status) |status| {
-        if (std.posix.W.IFEXITED(status)) result.exitCode = std.posix.W.EXITSTATUS(status);
-        if (std.posix.W.IFSIGNALED(status)) result.signal = std.posix.W.TERMSIG(status);
+        const status_i32: i32 = @bitCast(status);
+        if (status_i32 >= 0) {
+            if (std.posix.W.IFEXITED(status)) result.exitCode = std.posix.W.EXITSTATUS(status);
+            if (std.posix.W.IFSIGNALED(status)) result.signal = std.posix.W.TERMSIG(status);
+        }
     }
     return result;
 }

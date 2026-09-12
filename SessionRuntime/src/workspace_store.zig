@@ -520,6 +520,17 @@ pub const Store = struct {
         try self.loadNamed(dir, file_name);
     }
 
+    /// Loads layout from a JSON string (used during live handoff to restore
+    /// the workspace structure from the serialized envelope).
+    pub fn loadFromJson(self: *Store, json_bytes: []const u8) !void {
+        const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, json_bytes, .{}) catch return error.CorruptLayout;
+        defer parsed.deinit();
+        self.decode(parsed.value) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return error.CorruptLayout,
+        };
+    }
+
     pub const LoadResult = enum { loaded_primary, loaded_backup, empty };
 
     /// Loads the committed layout, recovering from `layout.json.bak` (written
@@ -650,6 +661,21 @@ pub const Store = struct {
         // Non-fatal: a backup failure must not block the primary commit that
         // already succeeded.
         dir.copyFile(file_name, dir, backup_name, .{}) catch {};
+    }
+
+    /// Serializes the current layout to a JSON string for live handoff.
+    /// Caller owns the returned slice.
+    pub fn serializeJson(self: *Store, allocator: std.mem.Allocator) !?[]u8 {
+        if (self.workspaces.items.len == 0) return null;
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const temporary = arena.allocator();
+        var object = std.json.ObjectMap.init(temporary);
+        try object.put("version", .{ .integer = layout_version });
+        try object.put("revision", .{ .integer = @intCast(self.revision) });
+        try object.put("screenHistoryEnabled", .{ .bool = self.screen_history_enabled });
+        try object.put("workspaces", try self.workspacesValue(temporary));
+        return try std.json.Stringify.valueAlloc(allocator, std.json.Value{ .object = object }, .{});
     }
 };
 

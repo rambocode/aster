@@ -27,6 +27,7 @@ pub fn build(b: *std.Build) void {
         exe.root_module.addCSourceFile(.{ .file = b.path("src/platform/pty.c"), .flags = &.{ "-std=c11", "-D_DEFAULT_SOURCE" } });
         exe.root_module.addCSourceFile(.{ .file = b.path("src/platform/process_scope.c"), .flags = &.{ "-std=c11", "-D_DEFAULT_SOURCE" } });
         exe.root_module.addCSourceFile(.{ .file = b.path("src/platform/pty_startup.c"), .flags = &.{ "-std=c11", "-D_DEFAULT_SOURCE" } });
+        exe.root_module.addCSourceFile(.{ .file = b.path("src/platform/scm_rights.c"), .flags = &.{ "-std=c11", "-D_DEFAULT_SOURCE" } });
     }
     b.installArtifact(exe);
     for ([_]struct { name: []const u8, source: []const u8, filter: []const u8 }{

@@ -32,7 +32,15 @@ pub fn main() !void {
             if (!std.mem.eql(u8, action, "serve") and !std.mem.eql(u8, action, "status") and !std.mem.eql(u8, action, "start") and !std.mem.eql(u8, action, "stop")) return error.UnsupportedServerAction;
             const parent_path = args.next() orelse return error.MissingStateParent;
             const name = args.next() orelse return error.MissingStateName;
-            if (args.next() != null) return error.UnexpectedArgument;
+            // Parse optional --takeover-fd for live handoff (P8.4).
+            var takeover_fd: ?std.posix.fd_t = null;
+            if (args.next()) |extra| {
+                if (std.mem.eql(u8, extra, "--takeover-fd")) {
+                    const fd_str = args.next() orelse return error.MissingTakeoverFD;
+                    takeover_fd = std.fmt.parseInt(std.posix.fd_t, fd_str, 10) catch return error.InvalidTakeoverFD;
+                    if (args.next() != null) return error.UnexpectedArgument;
+                } else return error.UnexpectedArgument;
+            }
             if (std.mem.eql(u8, action, "start")) {
                 const result = @import("service_launch.zig").start(allocator, parent_path, name) catch |err| {
                     const encoded = try std.json.Stringify.valueAlloc(allocator, .{ .type = "client_error", .code = @errorName(err) }, .{});
@@ -66,7 +74,12 @@ pub fn main() !void {
             defer parent.close();
             const info = try std.posix.fstat(parent.fd);
             if (info.uid != std.posix.geteuid() or info.mode & 0o077 != 0) return error.UnsafeStateParent;
-            try @import("service_server.zig").run(allocator, parent, name, null, null);
+            // Live handoff mode: receive state from old service via private FD.
+            if (takeover_fd) |tfd| {
+                try @import("service_server.zig").runTakeover(allocator, parent, name, tfd);
+            } else {
+                try @import("service_server.zig").run(allocator, parent, name, null, null);
+            }
             return;
         }
         // P7 TUI 入口：完整终端客户端，工作区/标签/窗格导航、单终端交互、分离。

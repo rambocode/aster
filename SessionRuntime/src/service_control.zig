@@ -23,7 +23,7 @@ pub const RegistryHandler = struct {
 };
 
 pub const version = "0.1.0-dev";
-pub const capabilities = [_][]const u8{ "health_check", "server_lifecycle" };
+pub const capabilities = [_][]const u8{ "health_check", "server_lifecycle", "server_replace", "live_handoff" };
 pub const Status = struct {
     version: []const u8 = version,
     protocolMajor: u16 = protocol.major,
@@ -40,6 +40,8 @@ pub const Control = struct {
     epoch: [36]u8,
     revision: u64 = 0,
     stop_requested: bool = false,
+    /// Set by server.handoff handler; main loop reads and clears to trigger performHandoff.
+    handoff_requested: bool = false,
     handler: ?Handler = null,
     registry: ?RegistryHandler = null,
     advertised_capabilities: []const []const u8 = &capabilities,
@@ -104,6 +106,19 @@ pub const Control = struct {
                 if (request.operation == .@"server.status")
                     return try self.success(allocator, request, Status{ .capabilities = self.advertised_capabilities });
                 return try self.success(allocator, request, .{ .alive = true });
+            },
+            // P8.3: server.replace (cold) dispatched to domain handler.
+            .@"server.replace" => {
+                if (self.handler) |handler| return handler.respond(handler.context, allocator, request, generation);
+                return try failure(allocator, request, "capability_not_available", "This install does not support live handoff.", .never);
+            },
+            // P8.4: server.handoff (live) sets flag for main loop to trigger performHandoff.
+            .@"server.handoff" => {
+                if (self.handler == null)
+                    return try failure(allocator, request, "capability_not_available", "This install does not support live handoff.", .never);
+                const response = try self.success(allocator, request, .{ .accepted = true });
+                self.handoff_requested = true;
+                return response;
             },
             else => {
                 if (self.handler) |handler| return handler.respond(handler.context, allocator, request, generation);
@@ -183,7 +198,7 @@ test "handshake advertises implemented capabilities and borrows stable identity"
     try hello.negotiateRequired(&.{"health_check"});
     try std.testing.expectError(error.MissingCapabilities, hello.negotiate());
     try std.testing.expectEqualStrings(&control.server_id, hello.serverID);
-    try std.testing.expectEqual(@as(usize, 2), hello.capabilities.len);
+    try std.testing.expectEqual(@as(usize, 4), hello.capabilities.len);
 }
 
 test "status and health replies satisfy the shared response envelope" {

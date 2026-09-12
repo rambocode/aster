@@ -42,6 +42,14 @@ pub const Session = struct {
     history_usage: history.Usage = .{},
     /// If true, this terminal is excluded from disk screen history.
     history_excluded: bool = false,
+    /// True for terminals adopted from another service via live handoff.
+    /// Adopted processes are NOT children of this service, so waitpid/waitid
+    /// would return ECHILD. Exit detection uses kill(pid,0) + PTY EOF instead.
+    adopted: bool = false,
+    /// FD from session_scope_watch_exit for adopted process exit monitoring.
+    /// macOS: kqueue with EVFILT_PROC NOTE_EXIT (provides exit status).
+    /// Linux: pidfd_open (exit notification only, no status for non-children).
+    exit_watch_fd: std.posix.fd_t = -1,
     /// Agent lifecycle hooks (Aster's `aster-agent-hook.sh`) announce state with
     /// a private OSC 6974 written to the terminal. Ghostty's VT drops OSCs it
     /// does not know, and a display bridge replays *screen state*, so the
@@ -145,7 +153,23 @@ pub const Session = struct {
                 self.cleanup_error = error.ProcessCleanupTimedOut;
                 return error.ProcessCleanupTimedOut;
             }
-        } else if (!self.scope_cleanup) self.process.destroy();
+        } else if (!self.scope_cleanup) {
+            if (self.adopted) {
+                // 接管终端非本进程子进程，kill + close master 但跳过 waitpid
+                if (self.process.pid > 0) {
+                    std.posix.kill(self.process.pid, std.posix.SIG.KILL) catch {};
+                    self.process.pid = -1;
+                }
+                self.process.closeMaster();
+                // 关闭退出监听 FD（kqueue/pidfd）
+                if (self.exit_watch_fd >= 0) {
+                    scope.closeWatch(self.exit_watch_fd);
+                    self.exit_watch_fd = -1;
+                }
+            } else {
+                self.process.destroy();
+            }
+        }
         if (self.scope_cleanup) self.process.closeMaster();
         if (self.cleanup_context) |*context| context.deinit();
         self.terminal.deinit();
@@ -218,6 +242,30 @@ pub const Session = struct {
 
     fn pollExit(self: *Session) !void {
         if (self.process.pid <= 0) return;
+        // Adopted processes are not children of this service: waitpid/waitid
+        // return ECHILD. Detect exit via PTY EOF (slave side closed) combined
+        // with kill(pid,0). Zombies stay visible to kill until reaped by
+        // init, so EOF on the master is the reliable death signal.
+        if (self.adopted) {
+            // 接管终端的退出检测：优先使用平台 watcher（macOS kqueue / Linux pidfd），
+            // PTY EOF 作为兜底。macOS 可从 kqueue 获取退出码，Linux 无法获取非子进程退出码。
+            const watched = scope.pollExit(self.exit_watch_fd);
+            if (watched != null or self.eof) {
+                // 接管终端退出：平台 watcher 返回 -1 表示退出码不可得（非子进程），
+                // 用 null 传递给 terminal.list/terminal.exited，不伪造 0。
+                const raw = watched orelse @as(u32, @bitCast(@as(i32, -1)));
+                self.exit_status = raw;
+                self.process.pid = -1;
+                self.termination_timer = null;
+                self.pending_input.clearRetainingCapacity();
+                self.input_offset = 0;
+                if (self.exit_watch_fd >= 0) {
+                    scope.closeWatch(self.exit_watch_fd);
+                    self.exit_watch_fd = -1;
+                }
+            }
+            return;
+        }
         if (self.scope_cleanup) {
             self.pollScope() catch |err| {
                 self.cleanup_error = err;
@@ -268,7 +316,9 @@ pub const Session = struct {
 
     /// One bounded event-loop tick. Always drains PTY output even without viewers.
     /// Returns whether visible terminal state changed. Call regularly until EOF.
-    pub fn tick(self: *Session, timeout_ms: i32) !bool {
+    /// `read_budget` caps bytes read per tick; the pool scales it so aggregate
+    /// VT work stays O(1) regardless of terminal count.
+    pub fn tick(self: *Session, timeout_ms: i32, read_budget: usize) !bool {
         if (!self.started) return error.TerminalStarting;
         try self.pollExit();
         if (!self.scope_cleanup) if (self.termination_timer) |*timer| {
@@ -305,7 +355,7 @@ pub const Session = struct {
             }
             if (descriptors[0].revents & (std.posix.POLL.IN | std.posix.POLL.HUP) != 0) {
                 // Limit work per tick so a high-output terminal cannot starve peers.
-                var budget: usize = 65536;
+                var budget: usize = read_budget;
                 while (budget > 0) {
                     var buffer: [8192]u8 = undefined;
                     const n = std.posix.read(self.process.master, buffer[0..@min(buffer.len, budget)]) catch |err| switch (err) {
@@ -473,7 +523,7 @@ test "real PTY output reaches VT and continues without any viewer" {
     const session = try Session.create(std.testing.allocator, "/", "/bin/sh", &argv, &env, 24, 80);
     defer session.destroy();
     var timer = try std.time.Timer.start();
-    while (!(session.eof and session.exit_status != null) and timer.read() < 3 * std.time.ns_per_s) _ = try session.tick(50);
+    while (!(session.eof and session.exit_status != null) and timer.read() < 3 * std.time.ns_per_s) _ = try session.tick(50, 65536);
     try std.testing.expect(session.eof and session.exit_status != null);
     try std.testing.expectEqual(@as(u32, 0), session.exit_status.?);
     const screen = try session.terminal.formatActiveScreen(std.testing.allocator, false, 32768);
@@ -491,7 +541,7 @@ test "real child receives queued input and reports terminal resize" {
     try session.resize(32, 100);
     try session.send("hello\n");
     var timer = try std.time.Timer.start();
-    while (!(session.eof and session.exit_status != null) and timer.read() < 3 * std.time.ns_per_s) _ = try session.tick(50);
+    while (!(session.eof and session.exit_status != null) and timer.read() < 3 * std.time.ns_per_s) _ = try session.tick(50, 65536);
     const screen = try session.terminal.formatActiveScreen(std.testing.allocator, false, 32768);
     defer std.testing.allocator.free(screen);
     try std.testing.expect(std.mem.indexOf(u8, screen, "RECEIVED:hello:32 100") != null);
@@ -620,14 +670,14 @@ test "scope session root exit preserves cleanup until resistant descendants fini
     var clock = try std.time.Timer.start();
     var ready = false;
     while (!ready and clock.read() < 3 * std.time.ns_per_s) {
-        _ = try session.tick(10);
+        _ = try session.tick(10, 65536);
         const text = try session.terminal.formatActiveScreen(a, false, 65536);
         defer a.free(text);
         ready = std.mem.indexOf(u8, text, "CHILD_READY") != null;
     }
     try std.testing.expect(ready);
     try session.requestTermination(100);
-    while ((!session.cleanupComplete() or !session.eof) and clock.read() < 5 * std.time.ns_per_s) _ = try session.tick(10);
+    while ((!session.cleanupComplete() or !session.eof) and clock.read() < 5 * std.time.ns_per_s) _ = try session.tick(10, 65536);
     try std.testing.expect(session.cleanupComplete());
     try std.testing.expect(session.eof);
     try std.testing.expectEqual(@as(std.posix.pid_t, -1), session.process.pid);
@@ -645,7 +695,7 @@ test "scope session natural root exit drives cleanup without terminate request" 
     session.scope_cleanup = true;
     defer session.destroy();
     var clock = try std.time.Timer.start();
-    while ((!session.cleanupComplete() or !session.eof) and clock.read() < 3 * std.time.ns_per_s) _ = try session.tick(10);
+    while ((!session.cleanupComplete() or !session.eof) and clock.read() < 3 * std.time.ns_per_s) _ = try session.tick(10, 65536);
     try std.testing.expect(session.cleanupComplete() and session.eof);
     try std.testing.expectEqual(@as(u8, 9), std.posix.W.EXITSTATUS(session.exit_status.?));
     const text = try session.terminal.formatActiveScreen(std.testing.allocator, false, 65536);
@@ -668,14 +718,14 @@ test "scope session handles foreground and background job control groups" {
         var clock = try std.time.Timer.start();
         var ready = false;
         while (!ready and clock.read() < 3 * std.time.ns_per_s) {
-            _ = try session.tick(10);
+            _ = try session.tick(10, 65536);
             const bytes = try session.terminal.formatActiveScreen(std.testing.allocator, false, 65536);
             defer std.testing.allocator.free(bytes);
             ready = std.mem.indexOf(u8, bytes, "JOB_READY") != null;
         }
         try std.testing.expect(ready);
         try session.requestTermination(100);
-        while ((!session.cleanupComplete() or !session.eof) and clock.read() < 5 * std.time.ns_per_s) _ = try session.tick(10);
+        while ((!session.cleanupComplete() or !session.eof) and clock.read() < 5 * std.time.ns_per_s) _ = try session.tick(10, 65536);
         try std.testing.expect(session.cleanupComplete() and session.eof);
         try std.testing.expect(session.cleanup_error == null);
     }
@@ -703,7 +753,7 @@ test "scope session delayed TERM handler runs once across cleanup polling" {
     var clock = try std.time.Timer.start();
     var ready = false;
     while (!ready and clock.read() < 3 * std.time.ns_per_s) {
-        _ = try session.tick(10);
+        _ = try session.tick(10, 65536);
         const bytes = try session.terminal.formatActiveScreen(std.testing.allocator, false, 65536);
         defer std.testing.allocator.free(bytes);
         ready = std.mem.indexOf(u8, bytes, "HANDLER_READY") != null;
@@ -713,7 +763,7 @@ test "scope session delayed TERM handler runs once across cleanup polling" {
     try session.requestTermination(1000);
     while ((!session.cleanupComplete() or !session.eof) and clock.read() < 3 * std.time.ns_per_s) {
         try session.requestTermination(1000);
-        _ = try session.tick(10);
+        _ = try session.tick(10, 65536);
     }
     try std.testing.expect(session.cleanupComplete() and session.eof);
     try std.testing.expect(clock.read() >= 150 * std.time.ns_per_ms);

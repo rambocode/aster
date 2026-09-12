@@ -92,6 +92,11 @@ public struct RemoteManagedSessionClient: ManagedSessionClient {
     )
   }
 
+  /// 请求服务排空并退出。成功返回时服务进程已退出。
+  public func stopServer(_ endpoint: ManagedSessionEndpoint) throws {
+    _ = try run(endpoint, ManagedSessionCommand.serverStop(endpoint))
+  }
+
   public func createTerminal(
     _ endpoint: ManagedSessionEndpoint,
     workingDirectory: String,

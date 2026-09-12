@@ -7,8 +7,9 @@ import Foundation
 /// 编排和会话投影；服务协议细节留在 `AsterCore` 的会话客户端里，`TerminalSession`
 /// 只看到“引用 + 桥命令”。
 ///
-/// P2 退出门槛要求默认终端策略保持不变，所以受管模式必须显式开启：需要同时提供
-/// 运行时二进制路径与私有状态父目录，缺一即保持关闭，不做任何隐式回退。
+/// P8.8 起，全新终端默认走受管路径（Local 后台服务）。打包 App 自动从 Bundle 内
+/// 解析 aster-session 二进制并使用 ~/Library/Application Support/Aster/Sessions/
+/// 作为状态父目录。环境变量仍可覆盖（测试与开发场景）。升级用户保留旧终端直至显式迁移。
 @MainActor
 final class ManagedTerminalCoordinator {
   /// 进程级共享实例。测试用独立配置替换它，避免污染用户默认终端策略。
@@ -86,18 +87,56 @@ final class ManagedTerminalCoordinator {
     return RemoteCompatibilityCheck.unavailableActionMessage(missingOptional: missing)
   }
 
-  /// 受管模式是否可用。缺少显式配置时返回 nil，调用方保持既有本地终端行为。
+  /// 受管模式端点。环境变量优先；缺失时 Local 从 App Bundle 自动解析。
+  ///
+  /// 自动解析仅在打包 App 中生效（Bundle 含 aster-session）。状态目录
+  /// 自动创建在 ~/Library/Application Support/Aster/Sessions/，权限 0700。
   var endpoint: ManagedSessionEndpoint? {
-    guard let binary = environment[Self.binaryEnvironmentKey], !binary.isEmpty,
+    // 环境变量显式指定时直接使用（测试、开发、远端协调器）。
+    if let binary = environment[Self.binaryEnvironmentKey], !binary.isEmpty,
       let stateParent = environment[Self.stateDirectoryEnvironmentKey], !stateParent.isEmpty
-    else { return nil }
+    {
+      return ManagedSessionEndpoint(
+        machineProfileID: machineProfileID,
+        binaryPath: binary,
+        stateParentPath: stateParent,
+        sessionName: environment[Self.sessionNameEnvironmentKey] ?? "default"
+      )
+    }
+    // Local 模式下从 App Bundle 自动发现 aster-session。
+    guard machineProfileID == MachineProfile.localProfileID else { return nil }
+    guard let resolved = Self.resolvedLocalEndpoint else { return nil }
+    return resolved
+  }
+
+  /// 从 App Bundle 自动解析的 Local 端点。仅在打包 App 内且二进制存在时返回非 nil。
+  private static let resolvedLocalEndpoint: ManagedSessionEndpoint? = {
+    // aster-session 必须在 Contents/MacOS/ 里，和 Aster 主程序同目录。
+    let bundle = Bundle.main.bundleURL
+    guard bundle.pathExtension == "app" else { return nil }
+    let binary = bundle.appendingPathComponent("Contents/MacOS/aster-session").path
+    guard FileManager.default.isExecutableFile(atPath: binary) else { return nil }
+    // 状态目录：~/Library/Application Support/Aster/Sessions/
+    let appSupport = FileManager.default.urls(
+      for: .applicationSupportDirectory, in: .userDomainMask).first
+    guard let appSupport else { return nil }
+    let stateParent = appSupport.appendingPathComponent("Aster/Sessions").path
+    // 确保目录存在且权限正确（0700）。
+    do {
+      try FileManager.default.createDirectory(
+        atPath: stateParent, withIntermediateDirectories: true)
+      try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700], ofItemAtPath: stateParent)
+    } catch {
+      return nil
+    }
     return ManagedSessionEndpoint(
-      machineProfileID: machineProfileID,
+      machineProfileID: MachineProfile.localProfileID,
       binaryPath: binary,
       stateParentPath: stateParent,
-      sessionName: environment[Self.sessionNameEnvironmentKey] ?? "default"
+      sessionName: "default"
     )
-  }
+  }()
 
   var isEnabled: Bool { endpoint != nil }
 

@@ -15,6 +15,7 @@ const Domains = struct { terminals: *Terminals, surfaces: *Surfaces, workspaces:
 const Request = @import("operation_request.zig").Request;
 const ids = @import("service_identity.zig");
 const Report = @import("startup_report.zig").Writer;
+const handoff = @import("handoff.zig");
 const c = @cImport({
     @cInclude("bridge_signals.h");
     @cInclude("signal.h");
@@ -106,7 +107,7 @@ fn runInitialized(allocator: std.mem.Allocator, instance: *Instance, name: []con
     };
     reactor.control.registry = .{ .context = &registry, .respond = registryRespond };
     defer reactor.control.registry = null;
-    reactor.control.advertised_capabilities = &.{ "health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation", "agent_state", "session_restore", "session_settings", "image_upload", "server_config", "custom_commands" };
+    reactor.control.advertised_capabilities = &.{ "health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation", "agent_state", "session_restore", "session_settings", "image_upload", "server_config", "custom_commands", "server_replace", "live_handoff" };
     var clock = try std.time.Timer.start();
     if (try stopping()) return error.ServiceStartupCancelled;
     if (report) |writer| try writer.finish(.ready);
@@ -131,6 +132,53 @@ fn runInitialized(allocator: std.mem.Allocator, instance: *Instance, name: []con
         workspaces.maybeSyncAgentBindings();
         persistScreenHistory(&history_writer, &store, &pool, clock.read());
         reactor.control.revision = store.revision;
+        // P8.4: main loop trigger for live handoff. When the control handler
+        // accepts server.handoff, the flag is set; we freeze control writes,
+        // fork/exec the new binary, transfer PTY FDs via SCM_RIGHTS, and
+        // exit if the new service confirms takeover.
+        if (reactor.control.handoff_requested) {
+            reactor.control.handoff_requested = false;
+            const binary_path = std.posix.getenv("ASTER_SESSION_BINARY") orelse blk: {
+                // Default: re-exec ourselves from /proc/self/exe (Linux) or argv[0].
+                var self_buf: [std.fs.max_path_bytes]u8 = undefined;
+                break :blk std.fs.selfExePath(&self_buf) catch null;
+            };
+            if (binary_path) |bp| {
+                const parent_path = instance.parent.realpathAlloc(allocator, ".") catch null;
+                defer if (parent_path) |pp| allocator.free(pp);
+                if (parent_path) |pp| {
+                    const success = handoff.performHandoff(
+                        allocator,
+                        &pool,
+                        &store,
+                        &terminals.agent_store,
+                        instance.epoch,
+                        bp,
+                        pp,
+                        name,
+                    ) catch false;
+                    if (success) {
+                        // Handoff confirmed. Drain pending responses (including
+                        // the server.handoff accepted reply) before exiting.
+                        {
+                            var drain_clock = std.time.Timer.start() catch null;
+                            while (drain_clock) |*dc| {
+                                if (dc.read() > 250 * std.time.ns_per_ms or reactor.drain()) break;
+                                reactor.waitWithWake(instance, dc.read(), 5, wake) catch break;
+                            }
+                        }
+                        // Invalidate pool entries so deinit won't double-close them.
+                        // Also don't kill the child processes — they belong to the new service.
+                        for (pool.entries.items) |*entry| {
+                            entry.session.process.master = -1;
+                            entry.session.process.pid = -1;
+                        }
+                        return;
+                    }
+                    // Handoff failed or was rejected; continue serving.
+                }
+            }
+        }
         if (reactor.control.stop_requested and !shutdown_started) {
             pool.beginShutdown();
             shutdown_started = true;
@@ -141,19 +189,255 @@ fn runInitialized(allocator: std.mem.Allocator, instance: *Instance, name: []con
                 try reactor.waitWithWake(instance, clock.read(), 10, wake);
             return;
         }
-        try waitResources(&reactor, instance, &pool, clock.read(), 1000, wake);
+        // When terminals produced output, poll() would return immediately
+        // (data always available), creating a CPU-bound busy loop. Cap the
+        // maximum wait to 1 ms so the loop yields briefly between ticks.
+        const max_wait: u32 = if (pool.last_tick_active) 1 else 1000;
+        try waitResources(&reactor, instance, &pool, clock.read(), max_wait, wake);
+    }
+}
+
+/// Runs the new service in takeover mode: receives state from an old service
+/// via the private socket FD, adopts terminals, and starts serving. The old
+/// service blocks until we send confirmation or timeout.
+pub fn runTakeover(allocator: std.mem.Allocator, parent: std.fs.Dir, name: []const u8, takeover_fd: std.posix.fd_t) !void {
+    // 30s receive timeout: if old service dies before sending state, exit
+    // instead of blocking forever. Also ensures SIGTERM produces an error
+    // return from recvmsg rather than silently restarting the syscall.
+    const timeout = std.posix.timeval{ .sec = 30, .usec = 0 };
+    std.posix.setsockopt(takeover_fd, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&timeout)) catch {};
+
+    // Receive state (PTY FDs + envelope) from old service via SCM_RIGHTS.
+    var received = try handoff.receiveState(allocator, takeover_fd);
+    defer received.deinit();
+
+    // Verify FDs are readable and child processes alive.
+    const valid = try handoff.verifyReceivedState(&received);
+    _ = valid;
+
+    // Generate new epoch for this incarnation.
+    const new_epoch = ids.newUUID();
+
+    // Do NOT confirm yet: the old service must keep serving until we have
+    // acquired the lock and adopted terminals. Confirmation moves into
+    // runWithAdoptedState after lock + pool setup succeed.
+    try runWithAdoptedState(allocator, parent, name, new_epoch, &received, takeover_fd);
+}
+
+/// Starts the service loop with terminals adopted from a live handoff.
+/// Mirrors runInitialized but pre-populates the pool and agent store from
+/// the received handoff state before entering the main loop.
+fn runWithAdoptedState(allocator: std.mem.Allocator, parent: std.fs.Dir, name: []const u8, new_epoch: [16]u8, received: *handoff.ReceivedState, takeover_fd: ?std.posix.fd_t) !void {
+    const wake = c.session_bridge_signals_start();
+    if (wake < 0) return error.ServiceSignalSetupFailed;
+    defer c.session_bridge_signals_stop();
+    // The old service still holds the lock while cleaning up. Retry with
+    // a short backoff until it releases (typically <100ms).
+    var instance: Instance = undefined;
+    {
+        var attempt: u32 = 0;
+        while (attempt < 50) : (attempt += 1) {
+            instance = Instance.open(parent, name) catch |err| {
+                if (err == error.AlreadyRunning) {
+                    std.Thread.sleep(100 * std.time.ns_per_ms);
+                    continue;
+                }
+                return err;
+            };
+            break;
+        } else {
+            return error.HandoffLockTimeout;
+        }
+    }
+    instance.epoch = new_epoch;
+    defer {
+        const cleanup = instance.close();
+        cleanup catch {};
+    }
+
+    var reactor = try Reactor.init(allocator, &instance, .{});
+    defer reactor.deinit();
+    var pool = try Pool.init(allocator, .{ .scope_cleanup = true });
+    defer pool.deinit();
+
+    // Adopt terminals from the old service: each PTY FD + PID pair becomes
+    // a pool entry with the same terminalID. VT state rebuilds from PTY output.
+    const envelope = received.envelope.value;
+    for (received.fds, envelope.terminals) |fd, terminal| {
+        var id_buf: [36]u8 = undefined;
+        @memcpy(&id_buf, terminal.id[0..36]);
+        pool.adoptTerminal(id_buf, fd, terminal.pid, terminal.cwd, terminal.history_excluded) catch |err| {
+            std.log.err("adoptTerminal failed for {s}: {}", .{ terminal.id, err });
+            continue;
+        };
+    }
+
+    // All terminals adopted and lock acquired. NOW confirm takeover to old
+    // service so it closes its FD copies and exits. If we crash before this
+    // point, the old service times out (5s) and continues serving — no data
+    // loss, no double-ownership.
+    if (takeover_fd) |tfd| {
+        handoff.sendConfirmation(tfd, true, new_epoch) catch |err| {
+            std.log.err("handoff confirmation failed: {}", .{err});
+        };
+        std.posix.close(tfd);
+    }
+
+    var store = Store.init(allocator);
+    defer store.deinit();
+    // Restore layout from handoff envelope if available; otherwise load from disk.
+    if (envelope.layout_json) |layout_json| {
+        store.loadFromJson(layout_json) catch {
+            store.load(instance.state.dir) catch {};
+        };
+    } else {
+        store.load(instance.state.dir) catch {};
+    }
+
+    var history_config = screen_history.Config{ .enabled = store.screen_history_enabled };
+    if (std.posix.getenv("ASTER_HISTORY_SESSION_LIMIT")) |val| {
+        history_config.session_limit = std.fmt.parseInt(usize, val, 10) catch history_config.session_limit;
+    }
+    if (std.posix.getenv("ASTER_HISTORY_PER_TERMINAL_LIMIT")) |val| {
+        history_config.per_terminal_limit = std.fmt.parseInt(usize, val, 10) catch history_config.per_terminal_limit;
+    }
+    if (std.posix.getenv("ASTER_HISTORY_SNAPSHOT_INTERVAL_MS")) |val| {
+        history_config.snapshot_interval_ms = std.fmt.parseInt(u64, val, 10) catch history_config.snapshot_interval_ms;
+    }
+    var history_writer = try screen_history.Writer.init(allocator, instance.state.dir, history_config);
+    defer history_writer.deinit();
+    var terminals = try Terminals.init(allocator, &pool, &instance.state, instance.identity, new_epoch);
+    defer terminals.deinit();
+    terminals.shared_revision = &store.revision;
+
+    // Restore agent metadata from the handoff envelope. The agent store
+    // uses the same JSON array format as serializeAgents in handoff.zig.
+    if (envelope.agents_json) |agents_json| {
+        restoreAgentStore(&terminals.agent_store, allocator, agents_json);
+    }
+
+    var workspaces = try Workspaces.init(allocator, &store, &terminals, &pool, instance.state.dir);
+    defer workspaces.deinit();
+    workspaces.screen_history_writer = &history_writer;
+    var uploads = Uploads.init(allocator, instance.state.dir);
+    defer uploads.deinit();
+    var configs = Configs.init(allocator, instance.state.dir);
+    defer configs.deinit();
+    terminals.structure_hook = workspaces.hook();
+    defer terminals.structure_hook = null;
+    var surfaces = try Surfaces.init(allocator, &terminals, &reactor);
+    defer surfaces.deinit();
+    var domains = Domains{ .terminals = &terminals, .surfaces = &surfaces, .workspaces = &workspaces, .uploads = &uploads, .configs = &configs };
+    reactor.control.handler = .{ .context = &domains, .respond = terminalRespond, .disconnect = terminalDisconnect, .input_closed = terminalInputClosed };
+    defer reactor.control.handler = null;
+    var registry = RegistryEndpoint{
+        .registry = .{
+            .parent = instance.parent,
+            .launcher = .child_process,
+            .live = Session.withKnown(ids.uuidText(instance.identity.session_id), ids.uuidText(instance.identity.server_id), ids.uuidText(new_epoch), name),
+        },
+        .log = &terminals.log,
+        .epoch = new_epoch,
+    };
+    reactor.control.registry = .{ .context = &registry, .respond = registryRespond };
+    defer reactor.control.registry = null;
+    reactor.control.advertised_capabilities = &.{ "health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation", "agent_state", "session_restore", "session_settings", "image_upload", "server_config", "custom_commands", "server_replace", "live_handoff" };
+    var clock = try std.time.Timer.start();
+    if (try stopping()) return error.ServiceStartupCancelled;
+    // Lease state for adopted terminals: clients reconnecting with the old
+    // epoch get stale_server_epoch and must re-acquire leases. Existing lease
+    // state is intentionally empty so old holders see lease_lost on reconnect.
+    var shutdown_started = false;
+    while (true) {
+        if (try stopping()) reactor.control.stop_requested = true;
+        if (reactor.control.stop_requested and !shutdown_started) {
+            pool.beginShutdown();
+            shutdown_started = true;
+        }
+        pool.tick();
+        try terminals.tick();
+        try workspaces.tick();
+        try deliverTerminalMessages(allocator, &reactor, &terminals);
+        try deliverWorkspaceMessages(allocator, &reactor, &terminals, &workspaces);
+        try reactor.step(&instance, clock.read());
+        try terminals.tick();
+        try workspaces.tick();
+        try deliverTerminalMessages(allocator, &reactor, &terminals);
+        try deliverWorkspaceMessages(allocator, &reactor, &terminals, &workspaces);
+        try surfaces.tick(clock.read() / std.time.ns_per_ms);
+        workspaces.maybeSyncAgentBindings();
+        persistScreenHistory(&history_writer, &store, &pool, clock.read());
+        reactor.control.revision = store.revision;
+        if (reactor.control.handoff_requested) {
+            reactor.control.handoff_requested = false;
+            const binary_path = std.posix.getenv("ASTER_SESSION_BINARY") orelse blk: {
+                var self_buf: [std.fs.max_path_bytes]u8 = undefined;
+                break :blk std.fs.selfExePath(&self_buf) catch null;
+            };
+            if (binary_path) |bp| {
+                const parent_path = instance.parent.realpathAlloc(allocator, ".") catch null;
+                defer if (parent_path) |pp| allocator.free(pp);
+                if (parent_path) |pp| {
+                    const success = handoff.performHandoff(
+                        allocator,
+                        &pool,
+                        &store,
+                        &terminals.agent_store,
+                        instance.epoch,
+                        bp,
+                        pp,
+                        name,
+                    ) catch false;
+                    if (success) {
+                        // Drain pending responses before exit.
+                        {
+                            var drain_clock = std.time.Timer.start() catch null;
+                            while (drain_clock) |*dc| {
+                                if (dc.read() > 250 * std.time.ns_per_ms or reactor.drain()) break;
+                                reactor.waitWithWake(&instance, dc.read(), 5, wake) catch break;
+                            }
+                        }
+                        for (pool.entries.items) |*entry| {
+                            entry.session.process.master = -1;
+                            entry.session.process.pid = -1;
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+        if (reactor.control.stop_requested and !shutdown_started) {
+            pool.beginShutdown();
+            shutdown_started = true;
+        }
+        if (reactor.control.stop_requested and pool.quiescent()) {
+            const deadline = clock.read() + 250 * std.time.ns_per_ms;
+            while (clock.read() < deadline and !reactor.drain())
+                try reactor.waitWithWake(&instance, clock.read(), 10, wake);
+            return;
+        }
+        const max_wait: u32 = if (pool.last_tick_active) 1 else 1000;
+        try waitResources(&reactor, &instance, &pool, clock.read(), max_wait, wake);
     }
 }
 
 /// Snapshot each terminal's visible screen to disk if the interval has elapsed.
 /// Syncs the writer's enabled flag with the store so settings.update takes
-/// effect without a server restart. Errors are caught and silently ignored:
-/// screen history is best-effort and must never crash the service main loop.
+/// effect without a server restart. Checks the interval before iterating
+/// terminals so expensive snapshotForClient calls are skipped entirely when
+/// the cadence has not elapsed. Errors are silently ignored: screen history
+/// is best-effort and must never crash the service main loop.
 fn persistScreenHistory(writer: *screen_history.Writer, store: *Store, pool: *Pool, now_ns: u64) void {
     // Dynamic toggle: track the store's flag each tick.
     writer.config.enabled = store.screen_history_enabled;
     if (!writer.config.enabled) return;
     const now_ms = now_ns / std.time.ns_per_ms;
+    // Skip the entire snapshot pass when the interval has not elapsed yet.
+    // Previously the interval check was inside maybePersist, but
+    // snapshotForClient had already allocated and captured each terminal's
+    // screen -- wasted work under high-output load.
+    if (writer.last_snapshot_ms != 0 and now_ms >= writer.last_snapshot_ms and
+        now_ms - writer.last_snapshot_ms < writer.config.snapshot_interval_ms) return;
     for (pool.entries.items) |*entry| {
         const screen_text = entry.session.snapshotForClient(writer.config.per_terminal_limit) catch continue;
         const text = screen_text orelse continue;
@@ -166,6 +450,44 @@ fn stopping() !bool {
     const signal = c.session_bridge_signals_take();
     if (signal < 0) return error.ServiceSignalReadFailed;
     return signal == c.SIGTERM or signal == c.SIGINT or signal == c.SIGHUP;
+}
+
+/// Restores agent metadata from the handoff envelope's agents_json into
+/// the terminal service's agent store. Best-effort: malformed entries are
+/// silently skipped so handoff is not blocked by agent state corruption.
+fn restoreAgentStore(store: *@import("agent_store.zig").Store, allocator: std.mem.Allocator, json_bytes: []const u8) void {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{}) catch return;
+    defer parsed.deinit();
+    const array = switch (parsed.value) {
+        .array => |a| a,
+        else => return,
+    };
+    for (array.items) |item| {
+        const obj = switch (item) {
+            .object => |o| o,
+            else => continue,
+        };
+        const tid_str = if (obj.get("terminalID")) |v| switch (v) {
+            .string => |s| s,
+            else => continue,
+        } else continue;
+        if (tid_str.len != 36) continue;
+        var tid: [36]u8 = undefined;
+        @memcpy(&tid, tid_str[0..36]);
+        const provider = if (obj.get("provider")) |v| switch (v) {
+            .string => |s| s,
+            else => continue,
+        } else continue;
+        const state_str = if (obj.get("state")) |v| switch (v) {
+            .string => |s| s,
+            else => "unknown",
+        } else "unknown";
+        const state = @import("agent_store.zig").State.fromString(state_str) orelse .unknown;
+        const name_val = if (obj.get("name")) |v| switch (v) { .string => |s| @as(?[]const u8, s), else => null } else null;
+        const native_session = if (obj.get("nativeSession")) |v| switch (v) { .string => |s| @as(?[]const u8, s), else => null } else null;
+        const source = if (obj.get("source")) |v| switch (v) { .string => |s| @as(?[]const u8, s), else => null } else null;
+        _ = store.report(tid, provider, state, name_val, native_session, source) catch continue;
+    }
 }
 
 fn waitResources(reactor: *Reactor, instance: *Instance, pool: *Pool, now: u64, maximum_ms: u32, wake: ?std.posix.fd_t) !void {
@@ -224,6 +546,22 @@ fn terminalRespond(context: *anyopaque, allocator: std.mem.Allocator, request: R
         .@"session.snapshot", .@"session.restore", .@"session.settings.get", .@"session.settings.update", .@"workspace.list", .@"workspace.create", .@"workspace.update", .@"workspace.close", .@"tab.create", .@"tab.update", .@"tab.close", .@"pane.split", .@"pane.update", .@"pane.close" => domains.workspaces.respond(allocator, request, generation),
         .@"upload.begin", .@"upload.chunk", .@"upload.commit", .@"upload.abort", .@"upload.clear", .@"upload.status" => domains.uploads.respond(allocator, request, generation),
         .@"config.get", .@"config.reload", .@"custom_command.list", .@"custom_command.run" => domains.configs.respond(allocator, request, generation),
+        // P8.3: server.replace returns accepted; orchestration is deferred.
+        // server.handoff is handled at the Control level (sets handoff_requested flag).
+        .@"server.replace" => {
+            const Accepted = struct { accepted: bool };
+            const replies = @import("operation_response.zig");
+            const response = replies.Response(Accepted){
+                .type = "response",
+                .requestID = request.requestID,
+                .operation = request.operation,
+                .scope = request.scope,
+                .target = request.target,
+                .revision = 0,
+                .result = .{ .accepted = true },
+            };
+            return try std.json.Stringify.valueAlloc(allocator, response, .{ .emit_null_optional_fields = false });
+        },
         else => domains.terminals.respond(allocator, request, generation),
     };
 }

@@ -142,6 +142,17 @@ public enum ManagedSessionCommand {
     ["server", "status", endpoint.stateParentPath, endpoint.sessionName]
   }
 
+  /// `server stop <state-parent> <name>`：请求服务排空并退出。
+  public static func serverStop(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["server", "stop", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
+  /// `server replace <state-parent> <name>`：查询替换影响（受影响终端列表）。
+  /// 真正的替换由客户端编排（stop → install → start），不是服务端原子操作。
+  public static func serverReplace(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["server", "replace", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
   public static func terminalCreate(
     _ endpoint: ManagedSessionEndpoint,
     workingDirectory: String,
