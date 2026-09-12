@@ -106,8 +106,9 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
     // 真正能救回它的是重新对账 + 冷恢复，这件事只有协调器能做。
     managedRetryObserver = NotificationCenter.default.addObserver(
       forName: TerminalSession.managedRetryRequested, object: nil, queue: .main
-    ) { [weak self] _ in
-      Task { @MainActor [weak self] in await self?.retryStalePanes() }
+    ) { [weak self] notification in
+      let session = notification.object as? TerminalSession
+      Task { @MainActor [weak self] in await self?.retryStalePanes(for: session) }
     }
     managedCloseObserver = NotificationCenter.default.addObserver(
       forName: TerminalSession.managedCloseRequested, object: nil, queue: .main
@@ -255,12 +256,44 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
 
   /// 用户对受管失败窗格点了「重新启动 Shell」：清掉去重记录后重新刷新活动机器，
   /// 让 `restoreStalePanesIfNeeded` 再请求一次冷恢复。
-  func retryStalePanes() async {
+  func retryStalePanes(for session: TerminalSession? = nil) async {
     guard !isStopped, let model else { return }
     let machineProfileID = model.activeMachineID
     guard let workspace = workspaces[machineProfileID] else { return }
+    // 先按失效集合走一遍常规冷恢复（终端在快照里不存在的情况）。
     workspace.restoreAttemptedForStale = []
     await refresh(machineProfileID: machineProfileID)
+    // 刷新后该窗格仍绑着同一个已结束的会话：终端是"已退出但还在快照里"，不算失效，常规
+    // 路径不会碰它。用户既然点了重启，就只对这一个窗格 force 恢复——已退出的终端已从活动池
+    // 退休，服务端可以直接替换成新 Shell（或 Agent 原生恢复），并绕过"每次冷启动只恢复一次"。
+    guard !isStopped, let session, session.lifecycleState.isEndedOrFailed,
+      let paneID = paneID(of: session)
+    else { return }
+    do {
+      let result = try await workspace.controller.restoreStalePanes(
+        rows: Self.restoreGeometry.rows, columns: Self.restoreGeometry.columns,
+        force: true, paneID: paneID)
+      if let failed = result.entries.first(where: { $0.path == "failed" }) {
+        lastError = "远端终端重启失败：\(failed.failureReason ?? "未知原因")"
+        workspace.lastError = lastError
+      }
+    } catch {
+      lastError = "远端终端重启失败：\(RemoteSetupDescription.text(for: error))"
+      workspace.lastError = lastError
+    }
+    await refresh(machineProfileID: machineProfileID)
+  }
+
+  /// 该会话在活动机器标签里对应的远端 paneID（小写 UUID）。
+  private func paneID(of session: TerminalSession) -> String? {
+    guard let model else { return nil }
+    for tab in model.tabs {
+      for pane in tab.layout.allPanes
+      where tab.runtime(for: pane.id)?.terminalSession === session {
+        return pane.id.uuidString.lowercased()
+      }
+    }
+    return nil
   }
 
   /// 消费一条服务端事件（`workspace.changed` / `tab.changed` / `pane.changed` / `terminal.*`）。

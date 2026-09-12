@@ -85,10 +85,12 @@ final class RemoteWorkspaceController: ObservableObject {
   /// 请求服务端冷恢复失效窗格（P6.4），随后调用方必须重新 `synchronize()`。
   ///
   /// 与快照一样是阻塞的 SSH 往返，必须离开主线程。
-  func restoreStalePanes(rows: Int, columns: Int) async throws -> RemoteSessionRestoreResult {
+  func restoreStalePanes(
+    rows: Int, columns: Int, force: Bool = false, paneID: String? = nil
+  ) async throws -> RemoteSessionRestoreResult {
     let client = transactions
     return try await Task.detached(priority: .userInitiated) {
-      try client.restoreSession(rows: rows, columns: columns)
+      try client.restoreSession(rows: rows, columns: columns, force: force, paneID: paneID)
     }.value
   }
 

@@ -364,6 +364,8 @@ fn structuralCommand(allocator: std.mem.Allocator, domain: []const u8, args: *st
         .{ .session_restore = .{
             .rows = options.rows orelse return error.MissingRows,
             .columns = options.columns orelse return error.MissingColumns,
+            .force = options.force,
+            .pane_id = options.pane,
         } }
     else if (std.mem.eql(u8, domain, "session"))
         .snapshot
@@ -444,6 +446,8 @@ const Options = struct {
     /// `session restore` 的初始终端尺寸（行/列）。
     rows: ?u16 = null,
     columns: ?u16 = null,
+    /// `session restore --force`：绕过每次冷启动只恢复一次的守卫。
+    force: bool = false,
 
     fn parse(self: *Options, allocator: std.mem.Allocator, args: *std.process.ArgIterator, argv: *std.ArrayList([]const u8)) !void {
         while (args.next()) |flag| {
@@ -453,6 +457,10 @@ const Options = struct {
                     try argv.append(allocator, value);
                 }
                 return;
+            }
+            if (std.mem.eql(u8, flag, "--force")) {
+                self.force = true;
+                continue;
             }
             const value = args.next() orelse return error.MissingFlagValue;
             if (std.mem.eql(u8, flag, "--expected-revision")) {

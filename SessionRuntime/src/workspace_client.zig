@@ -14,7 +14,8 @@ pub const Command = union(enum) {
     snapshot,
     /// 冷恢复（P6.4）：让服务端为持久化布局里已失效的窗格创建新终端。
     /// 客户端只提供初始尺寸；服务端按 `restore_completed` 保证每次冷启动只恢复一次。
-    session_restore: struct { rows: u16, columns: u16 },
+    /// `force` 绕过一次性守卫（用户显式重启已退出的窗格）；`pane_id` 只恢复该窗格。
+    session_restore: struct { rows: u16, columns: u16, force: bool = false, pane_id: ?[]const u8 = null },
     workspace_list,
     workspace_create: struct { title: []const u8, spec: Spec, revision: u64 },
     workspace_update: struct { workspace_id: []const u8, title: []const u8, revision: u64 },
@@ -180,6 +181,8 @@ fn parameters(a: std.mem.Allocator, command: Command) !std.json.Value {
             try geometry.put("rows", .{ .integer = value.rows });
             try geometry.put("columns", .{ .integer = value.columns });
             try result.put("geometry", .{ .object = geometry });
+            if (value.force) try result.put("force", .{ .bool = true });
+            if (value.pane_id) |pane_id| try result.put("paneID", .{ .string = try validated(pane_id) });
         },
         .agent_report => |value| {
             // agent.report 的 body 是预编码的 JSON，直接嵌入参数对象

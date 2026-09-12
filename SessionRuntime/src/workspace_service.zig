@@ -654,8 +654,14 @@ pub const Service = struct {
     /// start asynchronously and completions are claimed by this service's
     /// structure hook. Prevents duplicate restore across clients.
     fn restore(self: *Service, a: std.mem.Allocator, r: Request) ![]u8 {
-        try only(r.params, &.{ "geometry", "theme" });
-        if (self.restore_completed) {
+        try only(r.params, &.{ "geometry", "theme", "force", "paneID" });
+        // `force`：用户显式点「重新启动 Shell」时绕过"每次冷启动只恢复一次"的守卫——
+        // 已退出的终端已从活动池退休，等同失效，可以被替换成新 Shell（或 Agent 原生恢复）。
+        // `paneID`：只恢复这一个窗格，不把会话里其它已退出的窗格一起拉起来。
+        const force = if (r.params.object.get("force")) |v| (v == .bool and v.bool) else false;
+        var only_pane: ?[36]u8 = null;
+        if (r.params.object.get("paneID")) |_| only_pane = try idParam(r.params, "paneID");
+        if (self.restore_completed and !force) {
             return self.success(a, r, .{ .entries = &[0]std.json.Value{}, .alreadyRestored = true });
         }
         // Parse client-provided geometry for new terminal creation
@@ -676,7 +682,7 @@ pub const Service = struct {
 
         for (self.store.workspaces.items) |*workspace| {
             for (workspace.tabs.items) |*tab| {
-                try self.collectRestorePanes(temporary, tab, tab.root, workspace.cwd, geometry, &entries);
+                try self.collectRestorePanes(temporary, tab, tab.root, workspace.cwd, geometry, only_pane, &entries);
             }
         }
 
@@ -691,10 +697,11 @@ pub const Service = struct {
     /// Walk layout nodes, assign new terminal IDs to stale panes, and enqueue
     /// each as a workspace-service Pending (so structure_hook claims the
     /// completion). Agent references produce resume argv instead of /bin/sh.
-    fn collectRestorePanes(self: *Service, arena: std.mem.Allocator, tab: *store_mod.Tab, index: usize, cwd: []const u8, geometry: @import("geometry.zig").Geometry, entries: *std.json.Array) !void {
+    fn collectRestorePanes(self: *Service, arena: std.mem.Allocator, tab: *store_mod.Tab, index: usize, cwd: []const u8, geometry: @import("geometry.zig").Geometry, only_pane: ?[36]u8, entries: *std.json.Array) !void {
         if (index >= tab.nodes.items.len) return;
         switch (tab.nodes.items[index]) {
             .leaf => |*pane| {
+                if (only_pane) |wanted| if (!std.mem.eql(u8, &wanted, &pane.pane_id)) return;
                 const old_terminal_id = pane.terminal_id;
                 // Skip terminals that are already running (detach-reattach)
                 if (self.pool.find(old_terminal_id) != null) return;
@@ -780,8 +787,8 @@ pub const Service = struct {
                 try entries.append(.{ .object = entry });
             },
             .split => |split| {
-                try self.collectRestorePanes(arena, tab, split.first, cwd, geometry, entries);
-                try self.collectRestorePanes(arena, tab, split.second, cwd, geometry, entries);
+                try self.collectRestorePanes(arena, tab, split.first, cwd, geometry, only_pane, entries);
+                try self.collectRestorePanes(arena, tab, split.second, cwd, geometry, only_pane, entries);
             },
             .free => {},
         }

@@ -169,6 +169,36 @@ struct RemoteEmptySessionWorkspaceTests {
         == ["/bin/sh", "-lc", "cd \"$HOME\" 2>/dev/null; 'it'\\''s' '--flag' 'a b'" + tail])
   }
 
+  @Test("对已结束的受管窗格点「重新启动 Shell」：只重启该窗格，并用 --force 绕过一次性守卫")
+  func retryEndedManagedPaneRestoresOnlyThatPane() async throws {
+    let machineID = UUID()
+    let restoreResult =
+      "{\"type\":\"result\",\"revision\":5,\(Self.target),\"result\":{\"entries\":[{\"paneID\":\"\(Self.paneA)\",\"oldTerminalID\":\"term-a\",\"newTerminalID\":\"term-c\",\"path\":\"new_shell\"}],\"alreadyRestored\":false}}"
+    // 终端"已退出但仍在快照里"（state=exited）：常规冷恢复不算它失效。
+    let exitedSnapshot = Self.filledSnapshot(revision: 4)
+      .replacingOccurrences(of: "\"state\":\"running\"", with: "\"state\":\"exited\",\"exitCode\":0")
+    let (coordinator, client, model) = makeCoordinator(
+      scripted: [exitedSnapshot, exitedSnapshot, restoreResult, Self.filledSnapshot(revision: 5)],
+      machineID: machineID, active: true)
+    #expect(await coordinator.refresh(machineProfileID: machineID))
+    let tab = try #require(model.tabs.first)
+    let pane = try #require(tab.layout.allPanes.first)
+    let session = try #require(tab.runtime(for: pane.id)?.terminalSession)
+    // 模拟远端进程结束后的本地状态：结束卡就是在这个状态下出现的。
+    session.markManagedFailure("受管终端已退出（exit 0）。")
+    session.simulateManagedExitForTesting(code: 0)
+
+    await coordinator.retryStalePanes(for: session)
+
+    // 顺序：常规刷新（快照）→ 只对该窗格 force 恢复 → 再取快照。
+    #expect(client.invocations.count == 4)
+    let restore = client.invocations[2]
+    #expect(Array(restore.prefix(2)) == ["session", "restore"])
+    #expect(restore.contains("--force"))
+    #expect(restore.firstIndex(of: "--pane").map { restore[$0 + 1] } == Self.paneA)
+    #expect(coordinator.lastError == nil)
+  }
+
   @Test("后台机器的空会话不自动创建工作区")
   func backgroundMachineEmptySessionDoesNotCreateWorkspace() async throws {
     let machineID = UUID()

@@ -100,11 +100,12 @@ final class TerminalLifecycleOverlayView: NSView {
       startupError: session.startupError
     ) else { return nil }
     // 受管（远端）Pane：显示桥的退出码对用户没有意义，说远端发生了什么、能做什么。
-    let isManaged = session.managedTerminal != nil
+    // 附加前就已退出的受管终端走 markManagedFailure（引用被清掉、只留 managedFailure），同样算受管。
+    let isManaged = session.managedTerminal != nil || session.managedFailure != nil
     if isManaged, case .ended = session.lifecycleState {
       presentation.title = "远端进程已结束"
       presentation.detail =
-        (session.managedExitSummary ?? "远端进程已退出。")
+        (session.managedExitSummary ?? session.managedFailure ?? "远端进程已退出。")
         + " 可以在此 Pane 重新启动一个远端 Shell，或关闭这个标签。"
       presentation.symbol = "server.rack"
     }

@@ -3309,6 +3309,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   /// 终端进程真实结束：写结束事件并收敛全部运行态。
+  /// 测试用：不起真实进程，直接把会话置为"远端进程已结束"。生产代码不调用。
+  func simulateManagedExitForTesting(code: Int32?) {
+    managedExitSummary = "远端进程已退出" + (code.map { "（状态码 \($0)）" } ?? "") + "。"
+    applyProcessExit(code: code)
+  }
+
   private func applyProcessExit(code: Int32?) {
     eventRecorder?.sessionEnded(id: id, exitCode: code)
     let termination = TerminalProcessTermination(rawWaitStatus: code.map { $0 << 8 })
@@ -5611,6 +5617,16 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
         category: .terminal,
         attributes: self.terminationDiagnosticAttributes(termination, rawWaitStatus: exitCode)
       )
+    }
+  }
+}
+
+extension TerminalSessionLifecycleState {
+  /// 已结束或启动失败：受管窗格上「重新启动 Shell」只在这两种状态下才该替换远端终端。
+  var isEndedOrFailed: Bool {
+    switch self {
+    case .ended, .startFailed: true
+    case .notStarted, .starting, .running, .stopping, .detached: false
     }
   }
 }

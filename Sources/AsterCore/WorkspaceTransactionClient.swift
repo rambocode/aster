@@ -121,13 +121,20 @@ extension ManagedSessionCommand {
   ///
   /// 冷恢复（P6.4）：服务端为持久化布局里已失效的窗格创建新终端。尺寸只是初始值，
   /// 显示桥附加后会按真实画面重新调整。
+  ///
+  /// `force` 绕过服务端"每次冷启动只恢复一次"的守卫，供用户显式重启已退出的窗格；
+  /// `paneID` 只恢复该窗格，不把会话里其它已退出窗格一起拉起。
   public static func sessionRestore(
-    _ endpoint: ManagedSessionEndpoint, rows: Int, columns: Int
+    _ endpoint: ManagedSessionEndpoint, rows: Int, columns: Int, force: Bool = false,
+    paneID: String? = nil
   ) -> [String] {
-    [
+    var arguments = [
       "session", "restore", endpoint.stateParentPath, endpoint.sessionName,
       "--rows", String(rows), "--columns", String(columns),
     ]
+    if force { arguments.append("--force") }
+    if let paneID { arguments += ["--pane", paneID] }
+    return arguments
   }
 
   /// `workspace list <state-parent> <name>`
@@ -321,9 +328,13 @@ public struct WorkspaceTransactionClient: Sendable {
   ///
   /// 触发时机由调用方判断（快照中有窗格引用了不在 `terminals` 里的 terminalID）。
   /// 结果只是映射表，权威结构仍要重新取快照。
-  public func restoreSession(rows: Int, columns: Int) throws -> RemoteSessionRestoreResult {
+  public func restoreSession(
+    rows: Int, columns: Int, force: Bool = false, paneID: String? = nil
+  ) throws -> RemoteSessionRestoreResult {
     let json = try WorkspaceTransactionDecoder.envelope(
-      try execute(ManagedSessionCommand.sessionRestore(endpoint, rows: rows, columns: columns)))
+      try execute(
+        ManagedSessionCommand.sessionRestore(
+          endpoint, rows: rows, columns: columns, force: force, paneID: paneID)))
     let result = try WorkspaceTransactionDecoder.result(json)
     let rawEntries = result["entries"] as? [[String: Any]] ?? []
     let entries = try rawEntries.map { raw -> RemoteSessionRestoreEntry in
