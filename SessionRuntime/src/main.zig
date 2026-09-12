@@ -301,7 +301,10 @@ fn structuralCommand(allocator: std.mem.Allocator, domain: []const u8, args: *st
     const registry = @import("registry_service.zig");
     const client = @import("workspace_client.zig");
     const action = args.next() orelse return error.MissingAction;
-    if (std.mem.eql(u8, domain, "session") and !std.mem.eql(u8, action, "snapshot")) {
+    // `session snapshot` / `session restore` 是对该会话控制套接字的 RPC，其余 session
+    // 动作是注册表操作；两者参数形状不同，必须在这里分流。
+    const session_rpc = std.mem.eql(u8, action, "snapshot") or std.mem.eql(u8, action, "restore");
+    if (std.mem.eql(u8, domain, "session") and !session_rpc) {
         const parent = args.next() orelse return error.MissingStateParent;
         const selector: ?[]const u8 = if (std.mem.eql(u8, action, "list")) null else args.next() orelse return error.MissingSessionName;
         if (args.next() != null) return error.UnexpectedArgument;
@@ -357,7 +360,12 @@ fn structuralCommand(allocator: std.mem.Allocator, domain: []const u8, args: *st
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
     try options.parse(allocator, args, &argv);
-    const command: client.Command = if (std.mem.eql(u8, domain, "session"))
+    const command: client.Command = if (std.mem.eql(u8, domain, "session") and std.mem.eql(u8, action, "restore"))
+        .{ .session_restore = .{
+            .rows = options.rows orelse return error.MissingRows,
+            .columns = options.columns orelse return error.MissingColumns,
+        } }
+    else if (std.mem.eql(u8, domain, "session"))
         .snapshot
     else if (std.mem.eql(u8, domain, "workspace") and std.mem.eql(u8, action, "list"))
         .workspace_list
@@ -433,6 +441,9 @@ const Options = struct {
     tab: ?[]const u8 = null,
     pane: ?[]const u8 = null,
     direction: ?[]const u8 = null,
+    /// `session restore` 的初始终端尺寸（行/列）。
+    rows: ?u16 = null,
+    columns: ?u16 = null,
 
     fn parse(self: *Options, allocator: std.mem.Allocator, args: *std.process.ArgIterator, argv: *std.ArrayList([]const u8)) !void {
         while (args.next()) |flag| {
@@ -458,6 +469,10 @@ const Options = struct {
                 self.pane = value;
             } else if (std.mem.eql(u8, flag, "--direction")) {
                 self.direction = value;
+            } else if (std.mem.eql(u8, flag, "--rows")) {
+                self.rows = std.fmt.parseInt(u16, value, 10) catch return error.InvalidRestoreGeometry;
+            } else if (std.mem.eql(u8, flag, "--columns")) {
+                self.columns = std.fmt.parseInt(u16, value, 10) catch return error.InvalidRestoreGeometry;
             } else return error.UnknownOption;
         }
     }

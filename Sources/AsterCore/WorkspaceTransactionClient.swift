@@ -59,6 +59,43 @@ public struct RemoteTerminalSpec: Equatable, Sendable {
   }
 }
 
+/// `session.restore` 里单个窗格的恢复记录（P6.4）。
+public struct RemoteSessionRestoreEntry: Equatable, Sendable {
+  public var paneID: String
+  public var oldTerminalID: String
+  public var newTerminalID: String
+  /// 服务端选择的恢复路径：`new_shell` / `history_replay` / `agent_restore` / `failed`。
+  public var path: String
+  public var failureReason: String?
+
+  public init(
+    paneID: String, oldTerminalID: String, newTerminalID: String, path: String,
+    failureReason: String? = nil
+  ) {
+    self.paneID = paneID
+    self.oldTerminalID = oldTerminalID
+    self.newTerminalID = newTerminalID
+    self.path = path
+    self.failureReason = failureReason
+  }
+}
+
+/// `session.restore` 的完整结果：每个失效窗格的新旧 terminalID 映射，以及是否早已恢复过。
+///
+/// 服务端每次冷启动只允许恢复一次；`alreadyRestored == true` 时 `entries` 为空，
+/// 调用方应重新取快照而不是再次请求。
+public struct RemoteSessionRestoreResult: Equatable, Sendable {
+  public var revision: UInt64
+  public var entries: [RemoteSessionRestoreEntry]
+  public var alreadyRestored: Bool
+
+  public init(revision: UInt64, entries: [RemoteSessionRestoreEntry], alreadyRestored: Bool) {
+    self.revision = revision
+    self.entries = entries
+    self.alreadyRestored = alreadyRestored
+  }
+}
+
 extension ManagedSessionCommand {
   /// 结构变更共用的前缀与 `--expected-revision`。
   ///
@@ -78,6 +115,19 @@ extension ManagedSessionCommand {
   /// `session snapshot <state-parent> <name>`
   public static func sessionSnapshot(_ endpoint: ManagedSessionEndpoint) -> [String] {
     ["session", "snapshot", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
+  /// `session restore <state-parent> <name> --rows <r> --columns <c>`
+  ///
+  /// 冷恢复（P6.4）：服务端为持久化布局里已失效的窗格创建新终端。尺寸只是初始值，
+  /// 显示桥附加后会按真实画面重新调整。
+  public static func sessionRestore(
+    _ endpoint: ManagedSessionEndpoint, rows: Int, columns: Int
+  ) -> [String] {
+    [
+      "session", "restore", endpoint.stateParentPath, endpoint.sessionName,
+      "--rows", String(rows), "--columns", String(columns),
+    ]
   }
 
   /// `workspace list <state-parent> <name>`
@@ -265,6 +315,31 @@ public struct WorkspaceTransactionClient: Sendable {
       revision: try WorkspaceTransactionDecoder.revision(json),
       value: try raw.map { try RemoteSnapshotDecoder.workspace($0) }
     )
+  }
+
+  /// 请求服务端冷恢复：为快照里终端已不存在的窗格创建新终端（P6.4）。
+  ///
+  /// 触发时机由调用方判断（快照中有窗格引用了不在 `terminals` 里的 terminalID）。
+  /// 结果只是映射表，权威结构仍要重新取快照。
+  public func restoreSession(rows: Int, columns: Int) throws -> RemoteSessionRestoreResult {
+    let json = try WorkspaceTransactionDecoder.envelope(
+      try execute(ManagedSessionCommand.sessionRestore(endpoint, rows: rows, columns: columns)))
+    let result = try WorkspaceTransactionDecoder.result(json)
+    let rawEntries = result["entries"] as? [[String: Any]] ?? []
+    let entries = try rawEntries.map { raw -> RemoteSessionRestoreEntry in
+      guard let paneID = raw["paneID"] as? String,
+        let oldID = raw["oldTerminalID"] as? String,
+        let newID = raw["newTerminalID"] as? String,
+        let path = raw["path"] as? String
+      else { throw WorkspaceTransactionError.malformedReply("malformed restore entry") }
+      return RemoteSessionRestoreEntry(
+        paneID: paneID, oldTerminalID: oldID, newTerminalID: newID, path: path,
+        failureReason: raw["failureReason"] as? String)
+    }
+    return RemoteSessionRestoreResult(
+      revision: try WorkspaceTransactionDecoder.revision(json),
+      entries: entries,
+      alreadyRestored: result["alreadyRestored"] as? Bool ?? false)
   }
 
   // MARK: - 结构变更

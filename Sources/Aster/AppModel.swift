@@ -690,7 +690,13 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// `isRestored: true` 建运行态，避免 binder 为已有受管引用再创建一个新终端。
   func applyRemoteLayout(_ newLayout: PaneLayout, title newTitle: String) {
     let incoming = Set(newLayout.allPanes.map(\.id))
-    for removed in runtimes.keys.filter({ !incoming.contains($0) }) {
+    // 同一 paneID 换了受管终端（服务端冷恢复分配了新 terminalID）时，旧运行态绑定的是
+    // 已失效的引用，必须按分离语义拆掉重建，否则窗格会永远停在「找不到该终端」的错误卡上。
+    let rebound = newLayout.allPanes.filter { pane in
+      guard let runtime = runtimes[pane.id] else { return false }
+      return runtime.descriptor.managedTerminal?.terminalID != pane.managedTerminal?.terminalID
+    }.map(\.id)
+    for removed in runtimes.keys.filter({ !incoming.contains($0) }) + rebound {
       runtimes.removeValue(forKey: removed)?.stop(disposition: .detached)
       paneTitleStates.removeValue(forKey: removed)
       paneAgentSessionTitles.removeValue(forKey: removed)

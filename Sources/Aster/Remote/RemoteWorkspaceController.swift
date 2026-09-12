@@ -63,6 +63,35 @@ final class RemoteWorkspaceController: ObservableObject {
     return try apply(snapshot: snapshot)
   }
 
+  /// 投影里引用了已不存在终端的窗格（服务端冷重启后的典型状态）。
+  ///
+  /// 判定依据只有快照本身：窗格带 terminalID，但 `terminals` 里没有它的实测状态。
+  /// 返回失效的 terminalID 集合，供调用方决定是否请求 `session.restore`。
+  static func staleTerminalIDs(in projection: ProjectedRemoteSession) -> Set<String> {
+    var stale: Set<String> = []
+    for workspace in projection.workspaces {
+      for tab in workspace.tabs {
+        for pane in tab.layout.allPanes {
+          guard let terminalID = pane.managedTerminal?.terminalID,
+            projection.terminalStatusByPaneID[pane.id] == nil
+          else { continue }
+          stale.insert(terminalID)
+        }
+      }
+    }
+    return stale
+  }
+
+  /// 请求服务端冷恢复失效窗格（P6.4），随后调用方必须重新 `synchronize()`。
+  ///
+  /// 与快照一样是阻塞的 SSH 往返，必须离开主线程。
+  func restoreStalePanes(rows: Int, columns: Int) async throws -> RemoteSessionRestoreResult {
+    let client = transactions
+    return try await Task.detached(priority: .userInitiated) {
+      try client.restoreSession(rows: rows, columns: columns)
+    }.value
+  }
+
   /// 应用一份已取回的快照。
   @discardableResult
   func apply(snapshot: RemoteSessionSnapshot) throws -> ProjectedRemoteSession {

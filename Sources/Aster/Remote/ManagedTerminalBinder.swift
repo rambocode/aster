@@ -74,9 +74,9 @@ enum ManagedTerminalBinder {
         session.markManagedFailure(
           "受管终端已退出（exit \(status.exitCode.map(String.init) ?? "未知")）。")
       case .serverRestarted:
-        session.markManagedFailure("后台会话服务已重启，原终端实例不再有效。")
+        session.markManagedFailure("后台会话服务已重启，原终端实例不再有效。点击「重新启动 Shell」恢复。")
       case .missing:
-        session.markManagedFailure("后台会话服务中找不到该终端。")
+        session.markManagedFailure("后台会话服务中找不到该终端（服务可能已重启）。点击「重新启动 Shell」恢复。")
       case .unreachable(_, let reason):
         session.markManagedFailure("无法连接后台会话服务：\(reason)")
       case nil:

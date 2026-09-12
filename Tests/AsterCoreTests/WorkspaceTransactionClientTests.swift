@@ -195,3 +195,50 @@ private func emptySnapshot(revision: UInt64) throws -> String {
   let (client, _) = transactionClient([.output(try emptySnapshot(revision: 64))])
   #expect(try client.snapshot().revision == 64)
 }
+
+/// P6.4 客户端半边：`session restore` 的 argv 形状与结果解码（冷重启后失效窗格的恢复映射）。
+@Test func remoteWorkSessionRestoreArgvAndDecoding() throws {
+  #expect(
+    ManagedSessionCommand.sessionRestore(P4Fixtures.endpoint, rows: 40, columns: 120)
+      == ["session", "restore", "/tmp/aster-p4", "work", "--rows", "40", "--columns", "120"])
+
+  let (client, scripted) = transactionClient([
+    .output(
+      try P4Fixtures.sessionResponse(
+        operation: "session.restore", revision: 9,
+        result: [
+          "alreadyRestored": false,
+          "entries": [
+            [
+              "paneID": conflictPaneID, "oldTerminalID": "old-1", "newTerminalID": "new-1",
+              "path": "new_shell",
+            ],
+            [
+              "paneID": "pane-2", "oldTerminalID": "old-2", "newTerminalID": "new-2",
+              "path": "failed", "failureReason": "DirectoryUnavailable",
+            ],
+          ],
+        ]))
+  ])
+  let result = try client.restoreSession(rows: 40, columns: 120)
+  #expect(result.revision == 9)
+  #expect(result.alreadyRestored == false)
+  #expect(result.entries.count == 2)
+  #expect(result.entries.first?.newTerminalID == "new-1")
+  #expect(result.entries.last?.path == "failed")
+  #expect(result.entries.last?.failureReason == "DirectoryUnavailable")
+  #expect(scripted.invocations.last?.prefix(2) == ["session", "restore"])
+}
+
+/// 另一客户端已经恢复过：服务端只回 `alreadyRestored=true` 且 entries 为空，解码不得报错。
+@Test func remoteWorkSessionRestoreAlreadyRestoredDecodes() throws {
+  let (client, _) = transactionClient([
+    .output(
+      try P4Fixtures.sessionResponse(
+        operation: "session.restore", revision: 10,
+        result: ["alreadyRestored": true, "entries": []]))
+  ])
+  let result = try client.restoreSession(rows: 24, columns: 80)
+  #expect(result.alreadyRestored)
+  #expect(result.entries.isEmpty)
+}

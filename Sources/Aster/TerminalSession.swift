@@ -3437,11 +3437,26 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     return host
   }
 
+  /// 受管失败窗格请求重试时发出；由远端协调器接手重新对账与冷恢复。
+  static let managedRetryRequested = Notification.Name("TerminalSession.managedRetryRequested")
+
   /// 丢弃已结束的 Ghostty surface，使用同一 Session、Pane ID 和最近可靠本地目录创建
   /// 全新 PTY。旧 surface 不原地复用，避免迟到 callback 穿过进程代次。
   @discardableResult
   func restart() -> Bool {
     guard canRestart, !statusIsRunning else { return false }
+    // 受管终端失败不是本地进程问题：重建 surface 只会再次渲染同一错误（`managedFailure`
+    // 仍在）。交给协调器重新对账 / 冷恢复，恢复后的新 terminalID 会经布局对齐换掉本 Pane。
+    if managedFailure != nil {
+      diagnostics.record(
+        "terminal.managed_retry_requested",
+        level: .notice,
+        category: .terminal,
+        attributes: processDiagnosticAttributes(extra: ["previous_reason": lifecycleState.diagnosticReason])
+      )
+      NotificationCenter.default.post(name: Self.managedRetryRequested, object: self)
+      return false
+    }
     guard let preferences else {
       diagnostics.record(
         "terminal.process_restart_failed",

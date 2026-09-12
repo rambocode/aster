@@ -45,6 +45,9 @@ final class RemoteMachineWorkspace {
   var lastError: String?
   /// 空会话的首个工作区是否已经请求过。失败后不自动重试，避免「刷新 → 建 → 失败 → 刷新」循环。
   var initialWorkspaceRequested = false
+  /// 最近一次已请求过冷恢复的失效终端集合。同一批失效终端只请求一次 `session.restore`：
+  /// 恢复失败、或服务端已恢复过却仍失效时不再自旋，窗格保持明确的错误卡等待用户重试。
+  var restoreAttemptedForStale: Set<String> = []
 
   init(machineProfileID: UUID, controller: RemoteWorkspaceController) {
     self.machineProfileID = machineProfileID
@@ -88,14 +91,26 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
   /// （`os_unfair_lock is corrupt`）。所以收尾之后一律让它们变成空操作。
   private var isStopped = false
 
+  /// 「重新启动 Shell」对受管失败窗格的转发观察者（见 `retryStalePanes`）。
+  /// `nonisolated(unsafe)`：只在 init 写入、deinit 读取，两处都不会与主线程并发。
+  nonisolated(unsafe) private var managedRetryObserver: (any NSObjectProtocol)?
+
   init(model: AppModel, clientID: String = RemoteClientIdentity.clientID()) {
     self.model = model
     self.clientID = clientID
+    // 受管终端失败的窗格点「重新启动 Shell」时，重启本地 surface 只会再次渲染同一错误；
+    // 真正能救回它的是重新对账 + 冷恢复，这件事只有协调器能做。
+    managedRetryObserver = NotificationCenter.default.addObserver(
+      forName: TerminalSession.managedRetryRequested, object: nil, queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in await self?.retryStalePanes() }
+    }
   }
 
   deinit {
     // 窗口销毁：订阅子进程必须跟着结束，否则会留下孤儿 ssh/aster-session。
     for client in subscriptions.values { client.stop() }
+    if let managedRetryObserver { NotificationCenter.default.removeObserver(managedRetryObserver) }
   }
 
   /// 停止全部事件订阅并让协调器整体失效（窗口关闭、App 退出、验收收尾）。
@@ -160,13 +175,16 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
       return false
     }
     do {
-      let projection = try await workspace.controller.synchronize()
+      var projection = try await workspace.controller.synchronize()
+      let restoreError = await restoreStalePanesIfNeeded(&projection, workspace: workspace)
+      guard !isStopped else { return false }
       apply(projection: projection, to: workspace)
-      lastError = nil
-      workspace.lastError = nil
+      // 冷恢复失败不掩盖快照本身：结构照常显示，失效窗格保持错误卡，原因进入 lastError。
+      lastError = restoreError
+      workspace.lastError = restoreError
       onDidRefresh?()
       ensureInitialWorkspace(projection: projection, workspace: workspace)
-      return true
+      return restoreError == nil
     } catch {
       let message = RemoteSetupDescription.text(for: error)
       lastError = message
@@ -174,6 +192,52 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
       onDidRefresh?()
       return false
     }
+  }
+
+  /// `session.restore` 的初始终端尺寸。只是新进程的起始值：显示桥附加后会按真实画面
+  /// 重新调整，因此不需要从某个 Pane 里去猜。
+  static let restoreGeometry = (rows: 40, columns: 120)
+
+  /// 快照里有窗格引用了已不存在的终端（服务端冷重启 / 二进制替换后的典型状态）时，
+  /// 请求一次 `session.restore`（P6.4）并重新取快照，把 `projection` 换成恢复后的结构。
+  ///
+  /// 返回恢复失败的原因；nil 表示无需恢复或已成功。恢复只按「失效终端集合」去重：
+  /// 集合不变就不再请求，否则恢复失败会变成「刷新 → 恢复 → 失败 → 事件 → 刷新」的循环。
+  private func restoreStalePanesIfNeeded(
+    _ projection: inout ProjectedRemoteSession, workspace: RemoteMachineWorkspace
+  ) async -> String? {
+    let stale = RemoteWorkspaceController.staleTerminalIDs(in: projection)
+    guard !stale.isEmpty else {
+      workspace.restoreAttemptedForStale = []
+      return nil
+    }
+    guard workspace.restoreAttemptedForStale != stale else { return nil }
+    workspace.restoreAttemptedForStale = stale
+    do {
+      let result = try await workspace.controller.restoreStalePanes(
+        rows: Self.restoreGeometry.rows, columns: Self.restoreGeometry.columns)
+      guard !isStopped else { return nil }
+      // 服务端只回映射表，权威结构仍以快照为准；`alreadyRestored` 同样要重取快照——
+      // 说明另一个客户端刚恢复过，本地缓存的引用已经过期。
+      projection = try await workspace.controller.synchronize()
+      let failed = result.entries.filter { $0.path == "failed" }
+      guard failed.isEmpty else {
+        return "远端有 \(failed.count) 个终端恢复失败：\(failed.first?.failureReason ?? "未知原因")"
+      }
+      return nil
+    } catch {
+      return "远端终端冷恢复失败：\(RemoteSetupDescription.text(for: error))"
+    }
+  }
+
+  /// 用户对受管失败窗格点了「重新启动 Shell」：清掉去重记录后重新刷新活动机器，
+  /// 让 `restoreStalePanesIfNeeded` 再请求一次冷恢复。
+  func retryStalePanes() async {
+    guard !isStopped, let model else { return }
+    let machineProfileID = model.activeMachineID
+    guard let workspace = workspaces[machineProfileID] else { return }
+    workspace.restoreAttemptedForStale = []
+    await refresh(machineProfileID: machineProfileID)
   }
 
   /// 消费一条服务端事件（`workspace.changed` / `tab.changed` / `pane.changed` / `terminal.*`）。

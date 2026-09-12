@@ -12,6 +12,9 @@ pub const Spec = struct { cwd: []const u8, argv: []const []const u8 };
 
 pub const Command = union(enum) {
     snapshot,
+    /// 冷恢复（P6.4）：让服务端为持久化布局里已失效的窗格创建新终端。
+    /// 客户端只提供初始尺寸；服务端按 `restore_completed` 保证每次冷启动只恢复一次。
+    session_restore: struct { rows: u16, columns: u16 },
     workspace_list,
     workspace_create: struct { title: []const u8, spec: Spec, revision: u64 },
     workspace_update: struct { workspace_id: []const u8, title: []const u8, revision: u64 },
@@ -128,6 +131,7 @@ fn transact(a: std.mem.Allocator, parent_path: []const u8, name: []const u8, com
 fn kind(command: Command) Operation {
     return switch (command) {
         .snapshot => .@"session.snapshot",
+        .session_restore => .@"session.restore",
         .workspace_list => .@"workspace.list",
         .workspace_create => .@"workspace.create",
         .workspace_update => .@"workspace.update",
@@ -151,7 +155,7 @@ fn kind(command: Command) Operation {
 
 fn revision(command: Command) u64 {
     return switch (command) {
-        .snapshot, .workspace_list, .agent_list, .agent_report, .agent_explain, .agent_acknowledge, .config_get, .config_reload, .custom_command_list, .custom_command_run => 0,
+        .snapshot, .session_restore, .workspace_list, .agent_list, .agent_report, .agent_explain, .agent_acknowledge, .config_get, .config_reload, .custom_command_list, .custom_command_run => 0,
         .workspace_create => |value| value.revision,
         .workspace_update => |value| value.revision,
         .workspace_close => |value| value.revision,
@@ -168,6 +172,15 @@ fn parameters(a: std.mem.Allocator, command: Command) !std.json.Value {
     var result = std.json.ObjectMap.init(a);
     switch (command) {
         .snapshot, .workspace_list, .agent_list, .config_get, .config_reload, .custom_command_list => {},
+        .session_restore => |value| {
+            // 服务端 `session.restore` 只接受 geometry/theme 两个键；尺寸为 0 会被服务端拒绝，
+            // 这里提前挡下，避免一次无意义的往返。
+            if (value.rows == 0 or value.columns == 0) return error.InvalidRestoreGeometry;
+            var geometry = std.json.ObjectMap.init(a);
+            try geometry.put("rows", .{ .integer = value.rows });
+            try geometry.put("columns", .{ .integer = value.columns });
+            try result.put("geometry", .{ .object = geometry });
+        },
         .agent_report => |value| {
             // agent.report 的 body 是预编码的 JSON，直接嵌入参数对象
             const parsed = std.json.parseFromSlice(std.json.Value, a, value.body, .{}) catch return error.InvalidAgentBody;
