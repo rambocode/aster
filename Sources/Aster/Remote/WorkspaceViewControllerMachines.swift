@@ -180,9 +180,15 @@ extension WorkspaceViewController {
     }
   }
 
-  /// 更新远端服务：探测 → 确认（含受影响终端数）→ 停止/安装/重启 → 更新配置。
+  /// 侧栏右键「更新远端服务…」。
   @objc private func updateMachineService(_ sender: NSMenuItem) {
     guard let id = sender.representedObject as? UUID else { return }
+    presentUpdateService(machineID: id)
+  }
+
+  /// 更新远端服务：探测 → 确认（含受影响终端数）→ 停止/安装/重启 → 更新配置。
+  /// 侧栏右键与「文件 ▸ 更新远端服务…」共用这一入口。
+  func presentUpdateService(machineID id: UUID) {
     let window = view.window
     Task { @MainActor [weak self] in
       guard let self else { return }

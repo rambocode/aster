@@ -1011,6 +1011,12 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     activeWorkspaceViewController?.presentAddMachine()
   }
 
+  /// 「文件 ▸ 更新远端服务…」：对当前活动机器执行显式服务替换事务。
+  @objc private func updateRemoteMachineService(_ sender: Any?) {
+    activeWorkspaceViewController?.presentUpdateService(
+      machineID: MachineFleetModel.shared.activeMachineID)
+  }
+
   @objc private func detachManagedTerminal(_ sender: Any?) {
     _ = activeWorkspaceModel.detachActiveManagedTerminal()
   }
@@ -1357,6 +1363,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     // 机器管理的主菜单入口。侧栏「MACHINES」分区的「+」是同一个动作的第二条路径；
     // 两条都必须存在：侧栏折叠时主菜单仍要能添加机器。
     submenu.addItem(menuItem("添加机器…", #selector(addRemoteMachine(_:)), "", modifiers: []))
+    // 更新当前活动远端机器的服务。与侧栏右键菜单同一事务；主菜单入口保证侧栏折叠或
+    // 用键盘/辅助功能操作时也能到达。Local 活动时由 validateMenuItem 置灰。
+    submenu.addItem(
+      menuItem("更新远端服务…", #selector(updateRemoteMachineService(_:)), "", modifiers: []))
     submenu.addItem(.separator())
     submenu.addItem(menuItem("分离受管终端", #selector(detachManagedTerminal(_:)), "", modifiers: []))
     submenu.addItem(menuItem("结束受管终端", #selector(endManagedTerminal(_:)), "", modifiers: []))
@@ -1880,6 +1890,10 @@ extension AsterAppDelegate: NSMenuItemValidation {
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     guard let action = menuItem.action else { return true }
     if action == #selector(restartQuickTerminal(_:)) { return quickTerminalController.canRestart }
+    // 只有远端机器才有可更新的服务；Local 的服务随 App 一起更新。
+    if action == #selector(updateRemoteMachineService(_:)) {
+      return MachineFleetModel.shared.activeMachineID != MachineProfile.localProfileID
+    }
     // 独立终端没有工作区分屏；不能把其菜单操作落到背后的普通工作区。
     if quickTerminalController.ownsKeyWindow,
       Self.splitOnlySelectors.contains(action)
