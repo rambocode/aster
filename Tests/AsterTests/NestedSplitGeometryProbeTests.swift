@@ -65,7 +65,7 @@ func nestedSplitFromFirstPaneShowsNewPane() async throws {
     #expect(host.frame.width > 100, "Pane \(host.paneID) 宽度塌陷: \(host.frame)")
     #expect(host.frame.height > 100, "Pane \(host.paneID) 高度塌陷: \(host.frame)")
   }
-  let terminals = deepViews(controller.view).compactMap { $0 as? AsterTerminalView }
+  let terminals = deepViews(controller.view).compactMap { $0 as? GhosttySurfaceView }
   #expect(terminals.count == 3)
   for terminal in terminals {
     #expect(terminal.frame.width > 100, "终端宽度塌陷: \(terminal.frame)")

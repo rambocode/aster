@@ -82,7 +82,7 @@ private func paneHostViews(in view: NSView) -> [ActivePaneHostView] {
 @MainActor
 private func terminalViews(in view: NSView) -> [NSView] {
   var found: [NSView] = []
-  if String(describing: type(of: view)).contains("AsterTerminalView") { found.append(view) }
+  if view is GhosttySurfaceView { found.append(view) }
   for sub in view.subviews { found += terminalViews(in: sub) }
   return found
 }

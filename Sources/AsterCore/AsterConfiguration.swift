@@ -354,6 +354,9 @@ public struct ShellConfiguration: Codable, Equatable, Sendable {
   }
   public var resolvedTitleShellControlled: Bool { titleShellControlled ?? true }
   public var resolvedTitleReport: Bool { titleReport ?? false }
+
+  /// 远端 Agent 通知用的默认配置，所有字段取结构体声明中的初始值。
+  public static let agentNotificationDefault = ShellConfiguration()
 }
 
 public struct ControlConfiguration: Codable, Equatable, Sendable {

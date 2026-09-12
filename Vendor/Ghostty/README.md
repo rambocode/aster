@@ -45,3 +45,16 @@ debug map 只保存 member basename，`dsymutil` 会选错对象并误报 ImGui 
 在 GPU 完成前编码 synchronizeResource。回调在 swap-chain 槽释放前深复制像素，不允许
 异步借用会被 GPU 重写的源。未实现 selector 的宿主保持原行为，C ABI v1 布局不变。
 线程、生命周期与测试契约见 `docs/developer/picture-in-picture.md`。
+
+## Aster 子进程启动
+
+Pinned patch 提供默认关闭的 `aster-direct-child` 配置，不改变 C ABI v1 布局。
+Aster 显式启用后跳过 macOS `login(1)` 包装，使用现有环境构造器和 Shell 登录/交互
+参数；其他 Ghostty 宿主保持默认行为。macOS 的 login 包装会把子 Shell 的非零退出码
+变成 0，直接等待启动命令才能使异常退出卡片和进程事件反映真实结果。
+
+C surface 的 `command` 仍是 Shell 文本，不支持 `direct:` 前缀。Aster 使用
+`GhosttyConfiguration.launchCommand` 对每个路径和参数作双引号转义，兼容 Ghostty 的
+Shell 检测，同时保留空格、引号、美元符号和反引号的字面值。`/bin/sh -c` 的受控启动
+命令保留子命令退出状态；不会用历史命令文本推测退出码。该路径不创建额外的 login(1)
+登录记账，登录 rc 仍通过 Shell 的显式登录参数加载。

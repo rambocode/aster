@@ -163,9 +163,9 @@ func agentSetupPreservesUserJSONConfiguration() throws {
   #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o640)
 }
 
-@Test("Claude 与 Grok 共用 settings.json 时互不覆盖且可独立卸载")
-func claudeAndGrokShareSettingsWithoutClobberingEachOther() throws {
-  let root = try agentSetupTemporaryDirectory(named: "aster-agent-setup-claude-grok")
+@Test("Claude JSON 安装/卸载保留用户 hook 且可独立操作")
+func claudeJSONInstallUninstallPreservesUserHooks() throws {
+  let root = try agentSetupTemporaryDirectory(named: "aster-agent-setup-claude-json")
   defer { try? FileManager.default.removeItem(at: root) }
   let home = root.appendingPathComponent("home", isDirectory: true)
   let bin = root.appendingPathComponent("bin", isDirectory: true)
@@ -175,7 +175,6 @@ func claudeAndGrokShareSettingsWithoutClobberingEachOther() throws {
   )
   try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
   try makeExecutable(named: AgentProvider.claudeCode.commandName, in: bin)
-  try makeExecutable(named: AgentProvider.grokBuild.commandName, in: bin)
   let settings = home.appendingPathComponent(".claude/settings.json")
   let original: [String: Any] = [
     "theme": "user-dark",
@@ -192,50 +191,26 @@ func claudeAndGrokShareSettingsWithoutClobberingEachOther() throws {
     executableSearchDirectories: [bin]
   )
 
+  // 安装 Claude
   #expect(try service.install(.claudeCode).integrationInstalled)
-  #expect(try service.install(.grokBuild).integrationInstalled)
   #expect(try service.status(for: .claudeCode).integrationInstalled)
-  #expect(try service.status(for: .grokBuild).integrationInstalled)
 
-  let both = try #require(
+  let installed = try #require(
     JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any]
   )
-  #expect(both["theme"] as? String == "user-dark")
-  let bothHooks = try #require(both["hooks"] as? [String: Any])
-  let stop = try #require(bothHooks["Stop"] as? [[String: Any]])
+  #expect(installed["theme"] as? String == "user-dark")
+  let installedHooks = try #require(installed["hooks"] as? [String: Any])
+  let stop = try #require(installedHooks["Stop"] as? [[String: Any]])
   #expect(stop.contains { $0["_asterProvider"] as? String == AgentProvider.claudeCode.rawValue })
-  #expect(stop.contains { $0["_asterProvider"] as? String == AgentProvider.grokBuild.rawValue })
+  // 用户原有 Stop hook 保留
   #expect(stop.contains { entry in
     let commands = entry["hooks"] as? [[String: Any]]
     return commands?.first?["command"] as? String == "user-stop"
   })
-  #expect(bothHooks["PermissionRequest"] != nil)
-  let grokStop = try #require(
-    stop.first { $0["_asterProvider"] as? String == AgentProvider.grokBuild.rawValue }
-  )
-  let grokCommands = try #require(grokStop["hooks"] as? [[String: Any]])
-  #expect((grokCommands.first?["command"] as? String)?.contains("idle grokBuild") == true)
 
-  let uninstalledGrok = try service.uninstall(.grokBuild)
-  #expect(!uninstalledGrok.integrationInstalled)
-  #expect(try service.status(for: .claudeCode).integrationInstalled)
-  #expect(try service.status(for: .grokBuild).managedIntegrationInstalled == false)
-
-  let afterGrok = try #require(
-    JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any]
-  )
-  let afterGrokHooks = try #require(afterGrok["hooks"] as? [String: Any])
-  let afterGrokStop = try #require(afterGrokHooks["Stop"] as? [[String: Any]])
-  #expect(
-    afterGrokStop.contains { $0["_asterProvider"] as? String == AgentProvider.claudeCode.rawValue }
-  )
-  #expect(
-    !afterGrokStop.contains { $0["_asterProvider"] as? String == AgentProvider.grokBuild.rawValue }
-  )
-  #expect(afterGrok["theme"] as? String == "user-dark")
-
-  let uninstalledClaude = try service.uninstall(.claudeCode)
-  #expect(!uninstalledClaude.integrationInstalled)
+  // 卸载 Claude 后用户配置完整保留
+  let uninstalled = try service.uninstall(.claudeCode)
+  #expect(!uninstalled.integrationInstalled)
   let leftover = try #require(
     JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any]
   )
@@ -245,6 +220,73 @@ func claudeAndGrokShareSettingsWithoutClobberingEachOther() throws {
   #expect(leftoverStop.count == 1)
   let leftoverCommands = try #require(leftoverStop.first?["hooks"] as? [[String: Any]])
   #expect(leftoverCommands.first?["command"] as? String == "user-stop")
+}
+
+@Test("Grok TOML 安装/卸载写入 ~/.grok/config.toml 且保留用户配置")
+func grokTOMLInstallUninstallPreservesUserContent() throws {
+  let root = try agentSetupTemporaryDirectory(named: "aster-agent-setup-grok-toml")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let home = root.appendingPathComponent("home", isDirectory: true)
+  let bin = root.appendingPathComponent("bin", isDirectory: true)
+  let grokDirectory = home.appendingPathComponent(".grok", isDirectory: true)
+  try FileManager.default.createDirectory(at: grokDirectory, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+  try makeExecutable(named: AgentProvider.grokBuild.commandName, in: bin)
+  let config = grokDirectory.appendingPathComponent("config.toml")
+  // 预填用户配置
+  try "# user preference\nmodel = \"grok-user\"\n".write(
+    to: config,
+    atomically: true,
+    encoding: .utf8
+  )
+  let service = AgentSetupService(
+    homeDirectory: home,
+    executableSearchDirectories: [bin]
+  )
+
+  // 安装 → 检测通过，TOML 受管区块存在
+  let installed = try service.install(.grokBuild)
+  #expect(installed.integrationInstalled)
+  #expect(installed.managedIntegrationInstalled)
+  #expect(try service.status(for: .grokBuild).integrationInstalled)
+
+  let afterInstall = try String(contentsOf: config, encoding: .utf8)
+  #expect(afterInstall.contains(AgentSetupService.managedTOMLStartMarker))
+  #expect(afterInstall.contains(AgentSetupService.managedTOMLEndMarker))
+  // grok 专用嵌套格式：[[hooks.Event]] + [[hooks.Event.hooks]]
+  #expect(afterInstall.contains("[[hooks.SessionStart]]"))
+  #expect(afterInstall.contains("[[hooks.SessionStart.hooks]]"))
+  #expect(afterInstall.contains("[[hooks.PreToolUse]]"))
+  #expect(afterInstall.contains("[[hooks.PreToolUse.hooks]]"))
+  #expect(afterInstall.contains("[[hooks.PostToolUse]]"))
+  #expect(afterInstall.contains("[[hooks.PostToolUse.hooks]]"))
+  #expect(afterInstall.contains("[[hooks.SessionEnd]]"))
+  #expect(afterInstall.contains("[[hooks.SessionEnd.hooks]]"))
+  // 用户内容保留
+  #expect(afterInstall.contains("# user preference"))
+  #expect(afterInstall.contains("model = \"grok-user\""))
+  // 受管区块只出现一次
+  #expect(
+    afterInstall.components(separatedBy: AgentSetupService.managedTOMLStartMarker).count == 2
+  )
+
+  // 幂等：再次安装结果不变
+  let installedAgain = try service.install(.grokBuild)
+  #expect(installedAgain == installed)
+  let afterSecondInstall = try String(contentsOf: config, encoding: .utf8)
+  #expect(afterSecondInstall == afterInstall)
+
+  // 卸载 → 受管区块移除，用户内容保留，检测不通过
+  let uninstalled = try service.uninstall(.grokBuild)
+  #expect(!uninstalled.managedIntegrationInstalled)
+  #expect(!uninstalled.integrationInstalled)
+  #expect(try service.status(for: .grokBuild).managedIntegrationInstalled == false)
+
+  let afterUninstall = try String(contentsOf: config, encoding: .utf8)
+  #expect(!afterUninstall.contains(AgentSetupService.managedTOMLStartMarker))
+  #expect(!afterUninstall.contains(AgentSetupService.managedTOMLEndMarker))
+  #expect(afterUninstall.contains("# user preference"))
+  #expect(afterUninstall.contains("model = \"grok-user\""))
 }
 
 @Test("Codex Hook 安装保留已有 Otty lifecycle 条目")

@@ -1,0 +1,7908 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:aster:session:operations:1",
+  "title": "Aster operation protocol v1",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "u64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^/[^\\x00]*$"
+    },
+    "geometry": {
+      "type": "object",
+      "properties": {
+        "rows": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "pixelWidth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "pixelHeight": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      },
+      "required": [
+        "rows",
+        "columns"
+      ],
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "serverID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "serverEpoch": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "sessionID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "serverID",
+        "serverEpoch",
+        "sessionID"
+      ],
+      "additionalProperties": false
+    },
+    "lease": {
+      "type": "object",
+      "properties": {
+        "leaseID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "leaseEpoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "leaseID",
+        "leaseEpoch"
+      ],
+      "additionalProperties": false
+    },
+    "terminalSpec": {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\x00]*$"
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "maxItems": 128,
+          "minItems": 1
+        },
+        "environment": {
+          "type": "object",
+          "maxProperties": 128,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 8192
+          }
+        },
+        "geometry": {
+          "$ref": "#/$defs/geometry"
+        }
+      },
+      "required": [
+        "cwd",
+        "argv"
+      ],
+      "additionalProperties": false
+    },
+    "terminal": {
+      "type": "object",
+      "properties": {
+        "terminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\x00]*$"
+        },
+        "state": {
+          "enum": [
+            "running",
+            "terminating",
+            "exited",
+            "unavailable"
+          ]
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "exitCode": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "signal": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "geometry": {
+          "$ref": "#/$defs/geometry"
+        }
+      },
+      "required": [
+        "terminalID",
+        "cwd",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "session": {
+      "type": "object",
+      "properties": {
+        "sessionID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "state": {
+          "enum": [
+            "running",
+            "stopped",
+            "attention"
+          ]
+        },
+        "serverID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "serverEpoch": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "sessionID",
+        "name",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "pane": {
+      "type": "object",
+      "properties": {
+        "paneID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "terminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "paneID",
+        "terminalID"
+      ],
+      "additionalProperties": false
+    },
+    "tab": {
+      "type": "object",
+      "properties": {
+        "tabID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "layout": {
+          "$ref": "#/$defs/layout16"
+        }
+      },
+      "required": [
+        "tabID",
+        "title",
+        "layout"
+      ],
+      "additionalProperties": false
+    },
+    "workspace": {
+      "type": "object",
+      "properties": {
+        "workspaceID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\x00]*$"
+        },
+        "tabs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tab"
+          },
+          "maxItems": 128,
+          "minItems": 0
+        }
+      },
+      "required": [
+        "workspaceID",
+        "title",
+        "cwd",
+        "tabs"
+      ],
+      "additionalProperties": false
+    },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "paneHistory": {
+          "type": "boolean"
+        },
+        "resumeAgentsOnRestore": {
+          "type": "boolean"
+        },
+        "historyBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 268435456
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "agent": {
+      "type": "object",
+      "properties": {
+        "terminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "state": {
+          "enum": [
+            "idle",
+            "working",
+            "blocked",
+            "done",
+            "unknown"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "nativeSession": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "unread": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "terminalID",
+        "provider",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "upload": {
+      "type": "object",
+      "properties": {
+        "uploadID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "maximumBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20971520
+        },
+        "receivedBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20971520
+        }
+      },
+      "required": [
+        "uploadID",
+        "maximumBytes",
+        "receivedBytes"
+      ],
+      "additionalProperties": false
+    },
+    "attachment": {
+      "type": "object",
+      "properties": {
+        "attachmentID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "terminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "readOnly": {
+          "type": "boolean"
+        },
+        "lease": {
+          "$ref": "#/$defs/lease"
+        }
+      },
+      "required": [
+        "attachmentID",
+        "terminalID",
+        "readOnly"
+      ],
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "retry": {
+          "enum": [
+            "never",
+            "after_query",
+            "after_reconnect",
+            "backoff"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retry"
+      ],
+      "additionalProperties": false
+    },
+    "restoreEntry": {
+      "type": "object",
+      "properties": {
+        "paneID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "oldTerminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "newTerminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "path": {
+          "enum": [
+            "new_shell",
+            "agent_restore",
+            "history_replay",
+            "failed"
+          ]
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "agentProvider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "agentNativeSession": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "failureReason": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "historyAvailable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "paneID",
+        "oldTerminalID",
+        "newTerminalID",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "writeAttachment": {
+      "type": "object",
+      "properties": {
+        "attachmentID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "terminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "readOnly": {
+          "enum": [
+            false
+          ]
+        },
+        "lease": {
+          "$ref": "#/$defs/lease"
+        }
+      },
+      "required": [
+        "attachmentID",
+        "terminalID",
+        "readOnly",
+        "lease"
+      ],
+      "additionalProperties": false
+    },
+    "readAttachment": {
+      "type": "object",
+      "properties": {
+        "attachmentID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "terminalID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "readOnly": {
+          "enum": [
+            true
+          ]
+        },
+        "currentLeaseEpoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "attachmentID",
+        "terminalID",
+        "readOnly",
+        "currentLeaseEpoch"
+      ],
+      "additionalProperties": false
+    },
+    "layout0": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "leaf"
+          ]
+        },
+        "pane": {
+          "$ref": "#/$defs/pane"
+        }
+      },
+      "required": [
+        "kind",
+        "pane"
+      ],
+      "additionalProperties": false
+    },
+    "layout1": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout0"
+            },
+            "second": {
+              "$ref": "#/$defs/layout0"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout2": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout1"
+            },
+            "second": {
+              "$ref": "#/$defs/layout1"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout3": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout2"
+            },
+            "second": {
+              "$ref": "#/$defs/layout2"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout4": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout3"
+            },
+            "second": {
+              "$ref": "#/$defs/layout3"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout5": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout4"
+            },
+            "second": {
+              "$ref": "#/$defs/layout4"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout6": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout5"
+            },
+            "second": {
+              "$ref": "#/$defs/layout5"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout7": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout6"
+            },
+            "second": {
+              "$ref": "#/$defs/layout6"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout8": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout7"
+            },
+            "second": {
+              "$ref": "#/$defs/layout7"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout9": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout8"
+            },
+            "second": {
+              "$ref": "#/$defs/layout8"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout10": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout9"
+            },
+            "second": {
+              "$ref": "#/$defs/layout9"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout11": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout10"
+            },
+            "second": {
+              "$ref": "#/$defs/layout10"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout12": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout11"
+            },
+            "second": {
+              "$ref": "#/$defs/layout11"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout13": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout12"
+            },
+            "second": {
+              "$ref": "#/$defs/layout12"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout14": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout13"
+            },
+            "second": {
+              "$ref": "#/$defs/layout13"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout15": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout14"
+            },
+            "second": {
+              "$ref": "#/$defs/layout14"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout16": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layout0"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "split"
+              ]
+            },
+            "axis": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "first": {
+              "$ref": "#/$defs/layout15"
+            },
+            "second": {
+              "$ref": "#/$defs/layout15"
+            }
+          },
+          "required": [
+            "kind",
+            "axis",
+            "ratio",
+            "first",
+            "second"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "health.check"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "registry"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "session.list"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "registry"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "session.create"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "registry"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "session.attach"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "sessionID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "sessionID"
+          ],
+          "additionalProperties": false
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "registry"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "session.stop"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "sessionID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "sessionID"
+          ],
+          "additionalProperties": false
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "registry"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "session.delete"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "sessionID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "sessionID"
+          ],
+          "additionalProperties": false
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "session.snapshot"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "session.settings.get"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "session.settings.update"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/settings"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target",
+        "expectedRevision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "session.restore"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "geometry": {
+              "$ref": "#/$defs/geometry"
+            },
+            "theme": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "geometry"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "workspace.list"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "workspace.create"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "terminal": {
+              "$ref": "#/$defs/terminalSpec"
+            }
+          },
+          "required": [
+            "title",
+            "terminal"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target",
+        "expectedRevision",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "workspace.update"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "workspaceID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "workspaceID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target",
+        "expectedRevision",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "workspace.close"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "workspaceID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "workspaceID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target",
+        "expectedRevision",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "tab.create"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "workspaceID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "terminal": {
+              "$ref": "#/$defs/terminalSpec"
+            }
+          },
+          "required": [
+            "workspaceID",
+            "title",
+            "terminal"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target",
+        "expectedRevision",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "tab.update"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "tabID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "layout": {
+              "$ref": "#/$defs/layout16"
+            }
+          },
+          "required": [
+            "tabID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target",
+        "expectedRevision",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "tab.close"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "tabID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "tabID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target",
+        "expectedRevision",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "pane.split"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "paneID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "direction": {
+              "enum": [
+                "left",
+                "right",
+                "up",
+                "down"
+              ]
+            },
+            "terminal": {
+              "$ref": "#/$defs/terminalSpec"
+            }
+          },
+          "required": [
+            "paneID",
+            "direction",
+            "terminal"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target",
+        "expectedRevision",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "pane.update"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "paneID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "paneID",
+            "title"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target",
+        "expectedRevision",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "pane.close"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "paneID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "paneID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target",
+        "expectedRevision",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "terminal.create"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/terminalSpec"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "terminal.list"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "terminal.attach"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "terminalID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "takeover": {
+              "type": "boolean"
+            },
+            "expectedLeaseEpoch": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            }
+          },
+          "required": [
+            "terminalID"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "takeover": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "takeover"
+                ]
+              },
+              "then": {
+                "required": [
+                  "expectedLeaseEpoch"
+                ]
+              }
+            }
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "terminal.observe"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "terminalID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "terminalID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "terminal.control"
+          ]
+        },
+        "params": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "terminalID": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
+                "action": {
+                  "enum": [
+                    "input"
+                  ]
+                },
+                "data": {
+                  "type": "string",
+                  "maxLength": 87384,
+                  "contentEncoding": "base64"
+                }
+              },
+              "required": [
+                "terminalID",
+                "action",
+                "data"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "terminalID": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
+                "action": {
+                  "enum": [
+                    "resize"
+                  ]
+                },
+                "geometry": {
+                  "$ref": "#/$defs/geometry"
+                }
+              },
+              "required": [
+                "terminalID",
+                "action",
+                "geometry"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "terminalID": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
+                "action": {
+                  "enum": [
+                    "scroll"
+                  ]
+                },
+                "rows": {
+                  "type": "integer",
+                  "minimum": -2147483648,
+                  "maximum": 2147483647
+                }
+              },
+              "required": [
+                "terminalID",
+                "action",
+                "rows"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "lease": {
+          "$ref": "#/$defs/lease"
+        },
+        "controlSequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target",
+        "lease",
+        "controlSequence"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "terminal.release"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "attachmentID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "attachmentID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "terminal.terminate"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "terminalID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "terminalID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "createdAtUnixMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target",
+        "createdAtUnixMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "surface.subscribe"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "attachmentID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "geometry": {
+              "$ref": "#/$defs/geometry"
+            }
+          },
+          "required": [
+            "attachmentID",
+            "geometry"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "surface.unsubscribe"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "streamID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "streamID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "surface.snapshot"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "streamID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "streamID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "agent.list"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "agent.report"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/agent"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "agent.explain"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "terminalID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "terminalID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "agent.rename"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "terminalID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "terminalID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "agent.acknowledge"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "terminalID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "terminalID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "upload.begin"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "mimeType": {
+              "enum": [
+                "image/png",
+                "image/jpeg",
+                "image/webp"
+              ]
+            },
+            "length": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20971520
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "mimeType",
+            "length",
+            "sha256"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "upload.chunk"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "uploadID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 20971520
+            },
+            "data": {
+              "type": "string",
+              "maxLength": 349528,
+              "contentEncoding": "base64"
+            }
+          },
+          "required": [
+            "uploadID",
+            "offset",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "upload.commit"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "uploadID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "uploadID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "upload.abort"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "uploadID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "uploadID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "upload.clear"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "config.get"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "config.reload"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "custom_command.list"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "custom_command.run"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "commandID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "cwd": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "pattern": "^/[^\\x00]*$"
+            }
+          },
+          "required": [
+            "commandID",
+            "cwd"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "integration.list"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "integration.install"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "provider"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "integration.remove"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "provider"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "bootstrap"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "server.prepare"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "sessionName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "allowStart": {
+              "type": "boolean"
+            },
+            "requiredCapabilities": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "maxItems": 128,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "sessionName",
+            "allowStart",
+            "requiredCapabilities"
+          ],
+          "additionalProperties": false
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "server.status"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "server.stop"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "server.replace"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "installedVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "expectedServerEpoch": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "stopRunningTerminals": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "installedVersion",
+            "expectedServerEpoch",
+            "stopRunningTerminals"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "server.handoff"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "installedVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "expectedServerEpoch": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "installedVersion",
+            "expectedServerEpoch"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "request.status"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "queriedRequestID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "queriedRequestID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "upload.status"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "uploadID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "uploadID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "request"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "clientID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "scope": {
+          "enum": [
+            "registry"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "server.operation_status"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "operationID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "operationID"
+          ],
+          "additionalProperties": false
+        },
+        "extensions": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "clientID",
+        "scope",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "health.check"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "alive": {
+              "enum": [
+                true
+              ]
+            }
+          },
+          "required": [
+            "alive"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "session.list"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "registry"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "sessions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/session"
+              },
+              "maxItems": 1024,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "sessions"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "session.create"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "registry"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/session"
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "session.attach"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "registry"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/session"
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "session.stop"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "registry"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/session"
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "session.delete"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "registry"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "deleted": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "deleted"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "session.snapshot"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "workspaces": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/workspace"
+              },
+              "maxItems": 1024,
+              "minItems": 0
+            },
+            "terminals": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/terminal"
+              },
+              "maxItems": 1024,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "workspaces",
+            "terminals"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "session.settings.get"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/settings"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "session.settings.update"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/settings"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "session.restore"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/restoreEntry"
+              },
+              "maxItems": 64,
+              "minItems": 0
+            },
+            "alreadyRestored": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "entries",
+            "alreadyRestored"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "workspace.list"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "workspaces": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/workspace"
+              },
+              "maxItems": 1024,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "workspaces"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "workspace.create"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/workspace"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "workspace.update"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/workspace"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "workspace.close"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "closed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "closed"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "tab.create"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/tab"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "tab.update"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/tab"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "tab.close"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "closed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "closed"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "pane.split"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "pane": {
+              "$ref": "#/$defs/pane"
+            },
+            "terminal": {
+              "$ref": "#/$defs/terminal"
+            }
+          },
+          "required": [
+            "pane",
+            "terminal"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "pane.update"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/pane"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "pane.close"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "closed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "closed"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "terminal.create"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/terminal"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "terminal.list"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "terminals": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/terminal"
+              },
+              "maxItems": 1024,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "terminals"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "terminal.attach"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/writeAttachment"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "terminal.observe"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/readAttachment"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "terminal.control"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "accepted": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "accepted"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "terminal.release"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "released": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "released"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "terminal.terminate"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/terminal"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "surface.subscribe"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "streamID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "terminalID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "streamID",
+            "terminalID"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "surface.unsubscribe"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "unsubscribed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "unsubscribed"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "surface.snapshot"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "scheduled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "scheduled"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "agent.list"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "agents": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/agent"
+              },
+              "maxItems": 1024,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "agents"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "agent.report"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "accepted": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "accepted"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "agent.explain"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "agent": {
+              "$ref": "#/$defs/agent"
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "agent",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "agent.rename"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/agent"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "agent.acknowledge"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "acknowledged": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "acknowledged"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "upload.begin"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/upload"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "upload.chunk"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/upload"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "upload.commit"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "pattern": "^/[^\\x00]*$"
+            },
+            "expiresAt": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "path",
+            "expiresAt"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "upload.abort"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "aborted": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "aborted"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "upload.clear"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "removedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            }
+          },
+          "required": [
+            "removedCount"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "config.get"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "keybindings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "action": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "key",
+                  "action"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 1024,
+              "minItems": 0
+            },
+            "settings": {
+              "$ref": "#/$defs/settings"
+            }
+          },
+          "required": [
+            "keybindings",
+            "settings"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "config.reload"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "reloaded": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "reloaded"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "custom_command.list"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "commands": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "commandID": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "commandID",
+                  "label"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 1024,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "commands"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "custom_command.run"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/terminal"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "integration.list"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "integrations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "installed": {
+                    "type": "boolean"
+                  },
+                  "version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "provider",
+                  "installed",
+                  "version"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 1024,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "integrations"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "integration.install"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "installed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "installed"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "integration.remove"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "removed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "removed"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "server.prepare"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "bootstrap"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "session": {
+              "$ref": "#/$defs/session"
+            },
+            "protocolMajor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "protocolMinor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "maxItems": 128,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "session",
+            "protocolMajor",
+            "protocolMinor",
+            "capabilities"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "server.status"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "protocolMajor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "protocolMinor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "maxItems": 128,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "version",
+            "protocolMajor",
+            "protocolMinor",
+            "capabilities"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "server.stop"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "stopping": {
+              "enum": [
+                true
+              ]
+            }
+          },
+          "required": [
+            "stopping"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "server.replace"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "operationID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "state": {
+              "enum": [
+                "prepared",
+                "replacing",
+                "completed"
+              ]
+            }
+          },
+          "required": [
+            "operationID",
+            "state"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "server.handoff"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "operationID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "state": {
+              "enum": [
+                "prepared",
+                "transferring",
+                "committed",
+                "rolled_back"
+              ]
+            }
+          },
+          "required": [
+            "operationID",
+            "state"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "request.status"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "queriedRequestID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "operation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "state": {
+              "enum": [
+                "pending",
+                "committed",
+                "failed",
+                "unknown",
+                "expired"
+              ]
+            },
+            "resourceIDs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "maxItems": 64,
+              "minItems": 0
+            },
+            "resourcesInvalidated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "queriedRequestID",
+            "operation",
+            "state",
+            "resourceIDs"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "upload.status"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "session"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/upload"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result",
+        "target",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "response"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "enum": [
+            "server.operation_status"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "registry"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "operationID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "sessionID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "state": {
+              "enum": [
+                "prepared",
+                "transferring",
+                "committed",
+                "rolled_back",
+                "failed"
+              ]
+            },
+            "serverID": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "serverEpoch": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "error": {
+              "$ref": "#/$defs/error"
+            }
+          },
+          "required": [
+            "operationID",
+            "sessionID",
+            "state"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "error"
+          ]
+        },
+        "requestID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "operation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "scope": {
+          "enum": [
+            "session",
+            "registry",
+            "bootstrap"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "currentRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "type",
+        "requestID",
+        "operation",
+        "scope",
+        "error"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

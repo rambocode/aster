@@ -1,0 +1,2258 @@
+{
+  "protocolMajor": 1,
+  "commonErrors": [
+    "invalid_request",
+    "wrong_scope",
+    "unsupported_operation",
+    "missing_capability",
+    "permission_denied",
+    "stale_server_epoch",
+    "service_stopping",
+    "revision_conflict",
+    "resource_limit",
+    "request_expired",
+    "outcome_unknown",
+    "internal_error"
+  ],
+  "operations": [
+    {
+      "name": "health.check",
+      "scope": "session",
+      "capability": "health_check",
+      "phase": "P1",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "alive": {
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "alive"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "session.list",
+      "scope": "registry",
+      "capability": null,
+      "phase": "P4",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/session"
+            },
+            "maxItems": 1024,
+            "minItems": 0
+          }
+        },
+        "required": [
+          "sessions"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "session.create",
+      "scope": "registry",
+      "capability": null,
+      "phase": "P4",
+      "mutation": "create",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/session"
+      },
+      "errors": [
+        "session_exists"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "session.attach",
+      "scope": "registry",
+      "capability": null,
+      "phase": "P4",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sessionID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "sessionID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/session"
+      },
+      "errors": [
+        "session_not_found"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "session.stop",
+      "scope": "registry",
+      "capability": null,
+      "phase": "P4",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sessionID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "sessionID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/session"
+      },
+      "errors": [
+        "session_not_found"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "session.delete",
+      "scope": "registry",
+      "capability": null,
+      "phase": "P4",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sessionID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "sessionID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "session_running"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "session.snapshot",
+      "scope": "session",
+      "capability": "session_snapshot",
+      "phase": "P1",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/workspace"
+            },
+            "maxItems": 1024,
+            "minItems": 0
+          },
+          "terminals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/terminal"
+            },
+            "maxItems": 1024,
+            "minItems": 0
+          }
+        },
+        "required": [
+          "workspaces",
+          "terminals"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "session.settings.get",
+      "scope": "session",
+      "capability": "session_settings",
+      "phase": "P6",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/settings"
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "session.settings.update",
+      "scope": "session",
+      "capability": "session_settings",
+      "phase": "P6",
+      "mutation": "structure",
+      "params": {
+        "$ref": "#/$defs/settings"
+      },
+      "result": {
+        "$ref": "#/$defs/settings"
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "session.restore",
+      "scope": "session",
+      "capability": "session_restore",
+      "phase": "P6",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "geometry": {
+            "$ref": "#/$defs/geometry"
+          },
+          "theme": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "geometry"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/restoreEntry"
+            },
+            "maxItems": 64,
+            "minItems": 0
+          },
+          "alreadyRestored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entries",
+          "alreadyRestored"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "restore_already_completed",
+        "corrupt_layout",
+        "incompatible_version"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "workspace.list",
+      "scope": "session",
+      "capability": "session_snapshot",
+      "phase": "P4",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/workspace"
+            },
+            "maxItems": 1024,
+            "minItems": 0
+          }
+        },
+        "required": [
+          "workspaces"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "workspace.create",
+      "scope": "session",
+      "capability": "workspace_mutation",
+      "phase": "P4",
+      "mutation": "structure",
+      "params": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "terminal": {
+            "$ref": "#/$defs/terminalSpec"
+          }
+        },
+        "required": [
+          "title",
+          "terminal"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/workspace"
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "workspace.update",
+      "scope": "session",
+      "capability": "workspace_mutation",
+      "phase": "P4",
+      "mutation": "structure",
+      "params": {
+        "type": "object",
+        "properties": {
+          "workspaceID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "workspaceID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/workspace"
+      },
+      "errors": [
+        "workspace_not_found"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "workspace.close",
+      "scope": "session",
+      "capability": "workspace_mutation",
+      "phase": "P4",
+      "mutation": "structure",
+      "params": {
+        "type": "object",
+        "properties": {
+          "workspaceID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "workspaceID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "closed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "closed"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "workspace_not_found"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "tab.create",
+      "scope": "session",
+      "capability": "workspace_mutation",
+      "phase": "P4",
+      "mutation": "structure",
+      "params": {
+        "type": "object",
+        "properties": {
+          "workspaceID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "terminal": {
+            "$ref": "#/$defs/terminalSpec"
+          }
+        },
+        "required": [
+          "workspaceID",
+          "title",
+          "terminal"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/tab"
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "tab.update",
+      "scope": "session",
+      "capability": "workspace_mutation",
+      "phase": "P4",
+      "mutation": "structure",
+      "params": {
+        "type": "object",
+        "properties": {
+          "tabID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "layout": {
+            "$ref": "#/$defs/layout16"
+          }
+        },
+        "required": [
+          "tabID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/tab"
+      },
+      "errors": [
+        "tab_not_found"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "tab.close",
+      "scope": "session",
+      "capability": "workspace_mutation",
+      "phase": "P4",
+      "mutation": "structure",
+      "params": {
+        "type": "object",
+        "properties": {
+          "tabID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "tabID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "closed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "closed"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "tab_not_found"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "pane.split",
+      "scope": "session",
+      "capability": "workspace_mutation",
+      "phase": "P4",
+      "mutation": "structure",
+      "params": {
+        "type": "object",
+        "properties": {
+          "paneID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "direction": {
+            "enum": [
+              "left",
+              "right",
+              "up",
+              "down"
+            ]
+          },
+          "terminal": {
+            "$ref": "#/$defs/terminalSpec"
+          }
+        },
+        "required": [
+          "paneID",
+          "direction",
+          "terminal"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "pane": {
+            "$ref": "#/$defs/pane"
+          },
+          "terminal": {
+            "$ref": "#/$defs/terminal"
+          }
+        },
+        "required": [
+          "pane",
+          "terminal"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "pane.update",
+      "scope": "session",
+      "capability": "workspace_mutation",
+      "phase": "P4",
+      "mutation": "structure",
+      "params": {
+        "type": "object",
+        "properties": {
+          "paneID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "paneID",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/pane"
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "pane.close",
+      "scope": "session",
+      "capability": "workspace_mutation",
+      "phase": "P4",
+      "mutation": "structure",
+      "params": {
+        "type": "object",
+        "properties": {
+          "paneID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "paneID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "closed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "closed"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "terminal.create",
+      "scope": "session",
+      "capability": "terminal_control",
+      "phase": "P1",
+      "mutation": "create",
+      "params": {
+        "$ref": "#/$defs/terminalSpec"
+      },
+      "result": {
+        "$ref": "#/$defs/terminal"
+      },
+      "errors": [
+        "cwd_unavailable",
+        "executable_unavailable",
+        "outcome_unknown"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "terminal.list",
+      "scope": "session",
+      "capability": "terminal_control",
+      "phase": "P1",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "terminals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/terminal"
+            },
+            "maxItems": 1024,
+            "minItems": 0
+          }
+        },
+        "required": [
+          "terminals"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "terminal.attach",
+      "scope": "session",
+      "capability": "terminal_control",
+      "phase": "P1",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "terminalID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "takeover": {
+            "type": "boolean"
+          },
+          "expectedLeaseEpoch": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          }
+        },
+        "required": [
+          "terminalID"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "takeover": {
+                  "const": true
+                }
+              },
+              "required": [
+                "takeover"
+              ]
+            },
+            "then": {
+              "required": [
+                "expectedLeaseEpoch"
+              ]
+            }
+          }
+        ]
+      },
+      "result": {
+        "$ref": "#/$defs/writeAttachment"
+      },
+      "errors": [
+        "terminal_not_found",
+        "lease_busy",
+        "lease_lost"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "terminal.observe",
+      "scope": "session",
+      "capability": "terminal_observe",
+      "phase": "P1",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {
+          "terminalID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "terminalID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/readAttachment"
+      },
+      "errors": [
+        "terminal_not_found"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "terminal.control",
+      "scope": "session",
+      "capability": "terminal_control",
+      "phase": "P1",
+      "mutation": "input",
+      "params": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "terminalID": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "action": {
+                "enum": [
+                  "input"
+                ]
+              },
+              "data": {
+                "type": "string",
+                "maxLength": 87384,
+                "contentEncoding": "base64"
+              }
+            },
+            "required": [
+              "terminalID",
+              "action",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "terminalID": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "action": {
+                "enum": [
+                  "resize"
+                ]
+              },
+              "geometry": {
+                "$ref": "#/$defs/geometry"
+              }
+            },
+            "required": [
+              "terminalID",
+              "action",
+              "geometry"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "terminalID": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "action": {
+                "enum": [
+                  "scroll"
+                ]
+              },
+              "rows": {
+                "type": "integer",
+                "minimum": -2147483648,
+                "maximum": 2147483647
+              }
+            },
+            "required": [
+              "terminalID",
+              "action",
+              "rows"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "lease_lost",
+        "terminal_exited",
+        "delivery_unknown"
+      ],
+      "lease": true,
+      "controlSequence": true,
+      "durable": false
+    },
+    {
+      "name": "terminal.release",
+      "scope": "session",
+      "capability": "terminal_control",
+      "phase": "P1",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "attachmentID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "attachmentID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "released": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "released"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "terminal.terminate",
+      "scope": "session",
+      "capability": "terminal_control",
+      "phase": "P1",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "terminalID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "terminalID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/terminal"
+      },
+      "errors": [
+        "terminal_not_found"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": true
+    },
+    {
+      "name": "surface.subscribe",
+      "scope": "session",
+      "capability": "surface_interest",
+      "phase": "P1",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {
+          "attachmentID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "geometry": {
+            "$ref": "#/$defs/geometry"
+          }
+        },
+        "required": [
+          "attachmentID",
+          "geometry"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "streamID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "terminalID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "streamID",
+          "terminalID"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "surface.unsubscribe",
+      "scope": "session",
+      "capability": "surface_interest",
+      "phase": "P1",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {
+          "streamID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "streamID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "unsubscribed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "unsubscribed"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "surface.snapshot",
+      "scope": "session",
+      "capability": "surface_interest",
+      "phase": "P1",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {
+          "streamID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "streamID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "scheduled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "scheduled"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "agent.list",
+      "scope": "session",
+      "capability": "agent_state",
+      "phase": "P5",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/agent"
+            },
+            "maxItems": 1024,
+            "minItems": 0
+          }
+        },
+        "required": [
+          "agents"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "agent.report",
+      "scope": "session",
+      "capability": "agent_state",
+      "phase": "P5",
+      "mutation": "mutation",
+      "params": {
+        "$ref": "#/$defs/agent"
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "provider_mismatch",
+        "stale_agent_instance"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "agent.explain",
+      "scope": "session",
+      "capability": "agent_state",
+      "phase": "P5",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {
+          "terminalID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "terminalID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "$ref": "#/$defs/agent"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "agent",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "agent.rename",
+      "scope": "session",
+      "capability": "agent_state",
+      "phase": "P5",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "terminalID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "terminalID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/agent"
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "agent.acknowledge",
+      "scope": "session",
+      "capability": "agent_state",
+      "phase": "P5",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "terminalID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "terminalID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "acknowledged": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "acknowledged"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "upload.begin",
+      "scope": "session",
+      "capability": "image_upload",
+      "phase": "P7",
+      "mutation": "create",
+      "params": {
+        "type": "object",
+        "properties": {
+          "mimeType": {
+            "enum": [
+              "image/png",
+              "image/jpeg",
+              "image/webp"
+            ]
+          },
+          "length": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20971520
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "mimeType",
+          "length",
+          "sha256"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/upload"
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "upload.chunk",
+      "scope": "session",
+      "capability": "image_upload",
+      "phase": "P7",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "uploadID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20971520
+          },
+          "data": {
+            "type": "string",
+            "maxLength": 349528,
+            "contentEncoding": "base64"
+          }
+        },
+        "required": [
+          "uploadID",
+          "offset",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/upload"
+      },
+      "errors": [
+        "upload_offset_mismatch"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "upload.commit",
+      "scope": "session",
+      "capability": "image_upload",
+      "phase": "P7",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "uploadID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "uploadID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^/[^\\x00]*$"
+          },
+          "expiresAt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "path",
+          "expiresAt"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "upload_incomplete",
+        "checksum_mismatch"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "upload.abort",
+      "scope": "session",
+      "capability": "image_upload",
+      "phase": "P7",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "uploadID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "uploadID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "aborted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "aborted"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "upload.clear",
+      "scope": "session",
+      "capability": "image_upload",
+      "phase": "P7",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "removedCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          }
+        },
+        "required": [
+          "removedCount"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "config.get",
+      "scope": "session",
+      "capability": "server_config",
+      "phase": "P7",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "keybindings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "action": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "required": [
+                "key",
+                "action"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 1024,
+            "minItems": 0
+          },
+          "settings": {
+            "$ref": "#/$defs/settings"
+          }
+        },
+        "required": [
+          "keybindings",
+          "settings"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "config.reload",
+      "scope": "session",
+      "capability": "server_config",
+      "phase": "P7",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "reloaded": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reloaded"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "configuration_invalid"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "custom_command.list",
+      "scope": "session",
+      "capability": "custom_commands",
+      "phase": "P7",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "commandID": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "required": [
+                "commandID",
+                "label"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 1024,
+            "minItems": 0
+          }
+        },
+        "required": [
+          "commands"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "custom_command.run",
+      "scope": "session",
+      "capability": "custom_commands",
+      "phase": "P7",
+      "mutation": "create",
+      "params": {
+        "type": "object",
+        "properties": {
+          "commandID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "cwd": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^/[^\\x00]*$"
+          }
+        },
+        "required": [
+          "commandID",
+          "cwd"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/terminal"
+      },
+      "errors": [
+        "command_not_found"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "integration.list",
+      "scope": "session",
+      "capability": "agent_integration",
+      "phase": "P5",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "integrations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "installed": {
+                  "type": "boolean"
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "required": [
+                "provider",
+                "installed",
+                "version"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 1024,
+            "minItems": 0
+          }
+        },
+        "required": [
+          "integrations"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "integration.install",
+      "scope": "session",
+      "capability": "agent_integration",
+      "phase": "P5",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "installed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "installed"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "provider_unsupported"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "integration.remove",
+      "scope": "session",
+      "capability": "agent_integration",
+      "phase": "P5",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "removed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "removed"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "server.prepare",
+      "scope": "bootstrap",
+      "capability": null,
+      "phase": "P3",
+      "mutation": "create",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sessionName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "allowStart": {
+            "type": "boolean"
+          },
+          "requiredCapabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "maxItems": 128,
+            "minItems": 0
+          }
+        },
+        "required": [
+          "sessionName",
+          "allowStart",
+          "requiredCapabilities"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "$ref": "#/$defs/session"
+          },
+          "protocolMajor": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "protocolMinor": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "maxItems": 128,
+            "minItems": 0
+          }
+        },
+        "required": [
+          "session",
+          "protocolMajor",
+          "protocolMinor",
+          "capabilities"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "setup_required",
+        "incompatible_protocol"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "server.status",
+      "scope": "session",
+      "capability": "health_check",
+      "phase": "P1",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "protocolMajor": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "protocolMinor": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "maxItems": 128,
+            "minItems": 0
+          }
+        },
+        "required": [
+          "version",
+          "protocolMajor",
+          "protocolMinor",
+          "capabilities"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "server.stop",
+      "scope": "session",
+      "capability": "server_lifecycle",
+      "phase": "P1",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "stopping": {
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "stopping"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "server.replace",
+      "scope": "session",
+      "capability": "server_replace",
+      "phase": "P8",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "installedVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "expectedServerEpoch": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "stopRunningTerminals": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "installedVersion",
+          "expectedServerEpoch",
+          "stopRunningTerminals"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "operationID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "state": {
+            "enum": [
+              "prepared",
+              "replacing",
+              "completed"
+            ]
+          }
+        },
+        "required": [
+          "operationID",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "replacement_not_authorized",
+        "version_unavailable"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "server.handoff",
+      "scope": "session",
+      "capability": "live_handoff",
+      "phase": "P8",
+      "mutation": "mutation",
+      "params": {
+        "type": "object",
+        "properties": {
+          "installedVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "expectedServerEpoch": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "installedVersion",
+          "expectedServerEpoch"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "operationID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "state": {
+            "enum": [
+              "prepared",
+              "transferring",
+              "committed",
+              "rolled_back"
+            ]
+          }
+        },
+        "required": [
+          "operationID",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "handoff_unsupported",
+        "handoff_failed"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "request.status",
+      "scope": "session",
+      "capability": "terminal_control",
+      "phase": "P1",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {
+          "queriedRequestID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "queriedRequestID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "queriedRequestID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "operation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "committed",
+              "failed",
+              "unknown",
+              "expired"
+            ]
+          },
+          "resourceIDs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "maxItems": 64,
+            "minItems": 0
+          },
+          "resourcesInvalidated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "queriedRequestID",
+          "operation",
+          "state",
+          "resourceIDs"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "upload.status",
+      "scope": "session",
+      "capability": "image_upload",
+      "phase": "P7",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {
+          "uploadID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "uploadID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "$ref": "#/$defs/upload"
+      },
+      "errors": [
+        "upload_not_found"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    },
+    {
+      "name": "server.operation_status",
+      "scope": "registry",
+      "capability": null,
+      "phase": "P8",
+      "mutation": "read",
+      "params": {
+        "type": "object",
+        "properties": {
+          "operationID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "operationID"
+        ],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "operationID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "sessionID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "state": {
+            "enum": [
+              "prepared",
+              "transferring",
+              "committed",
+              "rolled_back",
+              "failed"
+            ]
+          },
+          "serverID": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "serverEpoch": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "error": {
+            "$ref": "#/$defs/error"
+          }
+        },
+        "required": [
+          "operationID",
+          "sessionID",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "errors": [
+        "operation_not_found"
+      ],
+      "lease": false,
+      "controlSequence": false,
+      "durable": false
+    }
+  ],
+  "semanticLimits": {
+    "maximumPanes": 64,
+    "maximumLayoutDepth": 16,
+    "maximumInputBytes": 65536,
+    "maximumImageBytes": 20971520,
+    "maximumImageChunkBytes": 262144
+  }
+}

@@ -68,17 +68,16 @@ func restoredSplitWorkspaceFirstPaneAcceptsInput() async throws {
   #expect(tab.activePaneID == firstPane)
 
   let firstSession = try #require(tab.runtime(for: firstPane)?.terminalSession)
-  let firstTerminal = try #require(
-    firstSession.makeTerminalView(preferences: preferences) as? AsterTerminalView
-  )
+  let firstTerminal = try liveGhosttyView(for: firstSession, preferences: preferences)
 
   // 1) 恢复完成后键盘焦点应落在活动(第一个)Pane 的终端上。
   #expect(window.firstResponder === firstTerminal)
 
   // 2) 按键必须编码进 PTY 发送路径。
   var encoded: [[UInt8]] = []
-  firstTerminal.onEncodedInput = { encoded.append(Array($0)) }
+  observeTestPTYWrites(firstTerminal) { encoded.append($0) }
   firstTerminal.keyDown(with: try keyEvent("a"))
+  try await Task.sleep(for: .milliseconds(50))
   #expect(encoded == [Array("a".utf8)])
 
   // 3) 焦点切到第二个 Pane 再回到第一个,输入仍然可用。
@@ -90,6 +89,7 @@ func restoredSplitWorkspaceFirstPaneAcceptsInput() async throws {
   #expect(window.firstResponder === firstTerminal)
   encoded.removeAll()
   firstTerminal.keyDown(with: try keyEvent("b"))
+  try await Task.sleep(for: .milliseconds(50))
   #expect(encoded == [Array("b".utf8)])
 
   // 4) 键盘焦点丢到别处(浮层关闭、恢复时序等)后,点击「已经是活动态」的 Pane
@@ -166,14 +166,13 @@ func restoredPaneRecoversInputAfterShellExit() async throws {
   #expect(await waitUntil(timeout: 5) { session.isRunning })
   try await Task.sleep(for: .milliseconds(200))
   controller.routePaneClick(firstPane, in: tab)
-  let terminal = try #require(
-    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
-  )
+  let terminal = try liveGhosttyView(for: session, preferences: preferences)
   #expect(terminal.window === window, "重启后的终端视图必须挂回窗口")
   #expect(window.firstResponder === terminal)
   var encoded: [[UInt8]] = []
-  terminal.onEncodedInput = { encoded.append(Array($0)) }
+  observeTestPTYWrites(terminal) { encoded.append($0) }
   terminal.keyDown(with: try keyEvent("x"))
+  try await Task.sleep(for: .milliseconds(50))
   #expect(encoded == [Array("x".utf8)])
 }
 

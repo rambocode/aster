@@ -1,0 +1,417 @@
+[
+  {
+    "name": "session.changed",
+    "valid": true,
+    "value": {
+      "type": "event",
+      "event": "session.changed",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "sessionID": "12345678-1234-1234-1234-123456789abc",
+        "name": "sample",
+        "state": "running"
+      }
+    }
+  },
+  {
+    "name": "session.changed missing target",
+    "valid": false,
+    "value": {
+      "type": "event",
+      "event": "session.changed",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "sessionID": "12345678-1234-1234-1234-123456789abc",
+        "name": "sample",
+        "state": "running"
+      }
+    }
+  },
+  {
+    "name": "workspace.changed",
+    "valid": true,
+    "value": {
+      "type": "event",
+      "event": "workspace.changed",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "workspaceID": "12345678-1234-1234-1234-123456789abc",
+        "title": "sample",
+        "cwd": "/tmp/aster-protocol",
+        "tabs": []
+      }
+    }
+  },
+  {
+    "name": "workspace.changed missing target",
+    "valid": false,
+    "value": {
+      "type": "event",
+      "event": "workspace.changed",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "workspaceID": "12345678-1234-1234-1234-123456789abc",
+        "title": "sample",
+        "cwd": "/tmp/aster-protocol",
+        "tabs": []
+      }
+    }
+  },
+  {
+    "name": "tab.changed",
+    "valid": true,
+    "value": {
+      "type": "event",
+      "event": "tab.changed",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "tabID": "12345678-1234-1234-1234-123456789abc",
+        "title": "sample",
+        "layout": {
+          "kind": "leaf",
+          "pane": {
+            "paneID": "12345678-1234-1234-1234-123456789abc",
+            "terminalID": "12345678-1234-1234-1234-123456789abc"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "tab.changed missing target",
+    "valid": false,
+    "value": {
+      "type": "event",
+      "event": "tab.changed",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "tabID": "12345678-1234-1234-1234-123456789abc",
+        "title": "sample",
+        "layout": {
+          "kind": "leaf",
+          "pane": {
+            "paneID": "12345678-1234-1234-1234-123456789abc",
+            "terminalID": "12345678-1234-1234-1234-123456789abc"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "pane.changed",
+    "valid": true,
+    "value": {
+      "type": "event",
+      "event": "pane.changed",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "paneID": "12345678-1234-1234-1234-123456789abc",
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "pane.changed missing target",
+    "valid": false,
+    "value": {
+      "type": "event",
+      "event": "pane.changed",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "paneID": "12345678-1234-1234-1234-123456789abc",
+        "terminalID": "12345678-1234-1234-1234-123456789abc"
+      }
+    }
+  },
+  {
+    "name": "terminal.created",
+    "valid": true,
+    "value": {
+      "type": "event",
+      "event": "terminal.created",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "cwd": "/tmp/aster-protocol",
+        "state": "running"
+      }
+    }
+  },
+  {
+    "name": "terminal.created missing target",
+    "valid": false,
+    "value": {
+      "type": "event",
+      "event": "terminal.created",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "cwd": "/tmp/aster-protocol",
+        "state": "running"
+      }
+    }
+  },
+  {
+    "name": "terminal.updated",
+    "valid": true,
+    "value": {
+      "type": "event",
+      "event": "terminal.updated",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "cwd": "/tmp/aster-protocol",
+        "state": "running"
+      }
+    }
+  },
+  {
+    "name": "terminal.updated missing target",
+    "valid": false,
+    "value": {
+      "type": "event",
+      "event": "terminal.updated",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "cwd": "/tmp/aster-protocol",
+        "state": "running"
+      }
+    }
+  },
+  {
+    "name": "terminal.exited",
+    "valid": true,
+    "value": {
+      "type": "event",
+      "event": "terminal.exited",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "cwd": "/tmp/aster-protocol",
+        "state": "running"
+      }
+    }
+  },
+  {
+    "name": "terminal.exited missing target",
+    "valid": false,
+    "value": {
+      "type": "event",
+      "event": "terminal.exited",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "cwd": "/tmp/aster-protocol",
+        "state": "running"
+      }
+    }
+  },
+  {
+    "name": "agent.changed",
+    "valid": true,
+    "value": {
+      "type": "event",
+      "event": "agent.changed",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "provider": "sample",
+        "state": "idle"
+      }
+    }
+  },
+  {
+    "name": "agent.changed missing target",
+    "valid": false,
+    "value": {
+      "type": "event",
+      "event": "agent.changed",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "provider": "sample",
+        "state": "idle"
+      }
+    }
+  },
+  {
+    "name": "lease.revoked",
+    "valid": true,
+    "value": {
+      "type": "event",
+      "event": "lease.revoked",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "leaseID": "12345678-1234-1234-1234-123456789abc",
+        "leaseEpoch": 0,
+        "reason": "sample"
+      }
+    }
+  },
+  {
+    "name": "lease.revoked missing target",
+    "valid": false,
+    "value": {
+      "type": "event",
+      "event": "lease.revoked",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "terminalID": "12345678-1234-1234-1234-123456789abc",
+        "leaseID": "12345678-1234-1234-1234-123456789abc",
+        "leaseEpoch": 0,
+        "reason": "sample"
+      }
+    }
+  },
+  {
+    "name": "server.replacing",
+    "valid": true,
+    "value": {
+      "type": "event",
+      "event": "server.replacing",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "operationID": "12345678-1234-1234-1234-123456789abc",
+        "state": "prepared"
+      }
+    }
+  },
+  {
+    "name": "server.replacing missing target",
+    "valid": false,
+    "value": {
+      "type": "event",
+      "event": "server.replacing",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "operationID": "12345678-1234-1234-1234-123456789abc",
+        "state": "prepared"
+      }
+    }
+  },
+  {
+    "name": "server.closed",
+    "valid": true,
+    "value": {
+      "type": "event",
+      "event": "server.closed",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "target": {
+        "serverID": "12345678-1234-1234-1234-123456789abc",
+        "serverEpoch": "12345678-1234-1234-1234-123456789abc",
+        "sessionID": "12345678-1234-1234-1234-123456789abc"
+      },
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "reason": "sample"
+      }
+    }
+  },
+  {
+    "name": "server.closed missing target",
+    "valid": false,
+    "value": {
+      "type": "event",
+      "event": "server.closed",
+      "eventID": "12345678-1234-1234-1234-123456789abc",
+      "sequence": 0,
+      "revision": 0,
+      "body": {
+        "reason": "sample"
+      }
+    }
+  }
+]

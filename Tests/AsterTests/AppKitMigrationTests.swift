@@ -583,18 +583,21 @@ func ghosttyExtensionCapabilitiesWorkOnRealSurface() async throws {
   #expect(stablePointAfterFurtherOutput.page_row == arbitraryOSC.point.page_row)
 }
 
-@Test("设置页由单一 WebKit 宿主构成并保留九个分类")
+@Test("设置页容器承载 WebKit 内容并包含编辑器分类")
 @MainActor
-func settingsUsesSingleWebKitHost() throws {
+func settingsUsesWebContainerAndEditorCategory() throws {
   let defaults = isolatedDefaults()
   let preferences = AppPreferences(defaults: defaults)
   let controller = SettingsViewController(preferences: preferences)
 
   controller.loadViewIfNeeded()
 
-  #expect(controller.sections.count == 9)
-  #expect(controller.view is WKWebView)
-  #expect(controller.view === controller.settingsWebViewForTesting)
+  #expect(controller.sections == [.general, .shell, .controls, .editor, .agents, .view,
+                                  .appearance, .recipes, .shortcuts, .advanced])
+  let webView = try #require(controller.settingsWebViewForTesting)
+  #expect(webView.superview === controller.view)
+  #expect(!webView.configuration.websiteDataStore.isPersistent)
+  #expect(controller.view.subviews.last is SettingsTitlebarDragStrip)
 }
 
 @Test("Dock 右键菜单不添加应用自定义入口")
@@ -636,9 +639,8 @@ func settingsUsesResizableIndependentWindow() throws {
   #expect(settingsWindow.minSize.height == settingsWindow.frame.height)
   #expect(settingsWindow.maxSize.height > settingsWindow.frame.height * 2)
   #expect(settingsWindow.styleMask.contains(.resizable))
-  // 设置页由 WKWebView 填满内容区域；内容不得延伸进系统标题栏，否则 WebKit 会吞掉
-  // 标题栏的 mouseDown，用户看得到窗口却无法拖动。
-  #expect(!settingsWindow.styleMask.contains(.fullSizeContentView))
+  // WebKit 延伸到透明标题栏，原生拖动条保留窗口拖动能力。
+  #expect(settingsWindow.styleMask.contains(.fullSizeContentView))
   #expect(settingsWindow.isMovable)
   #expect(settingsWindow.standardWindowButton(.miniaturizeButton)?.isEnabled == false)
   #expect(settingsWindow.isExcludedFromWindowsMenu)
@@ -1333,7 +1335,7 @@ func workspaceTitlebarMatchesOttyChrome() throws {
   // 标题只是中央 workspace 背景面上的内容，不能再建立一层独立 material；否则透明
   // 主题会在 28pt 高度处重复合成玻璃，和下面的 Pane 形成明显横向分割。
   #expect(titlebar is ThemeVisualEffectView == false)
-  #expect(titlebar?.layer?.backgroundColor == NSColor.clear.cgColor)
+  #expect(titlebar?.layer?.backgroundColor?.alpha == 0)
   // `none` 是真实透明语义，不允许再用截图采样出的灰色替代。
   #expect(
     HexColor(nsColor: preferences.terminalCanvasBackgroundColor)
@@ -1636,7 +1638,8 @@ func sidebarOrganizerAppliesGroupingAndOrdering() throws {
   }.map(\.stringValue)
   // 项目分组只显示末级目录名；完整路径仍作为不可见 identity 防止同名目录并组。
   #expect(Set(groupHeaders) == Set(["~", "tmp"]))
-  #expect(Set(primaryTabLabels(in: controller)) == Set(["~", "tmp"]))
+  // 分组行显示 ~ 缩写后的完整路径，避免与末级目录组头重复。
+  #expect(Set(primaryTabLabels(in: controller)) == Set(["~", "/tmp"]))
 }
 
 /// 复现真机链路：点击整理菜单项后，同一个窗口（不重建控制器）必须经
@@ -1673,7 +1676,7 @@ func sidebarOrganizerMenuTakesEffectLiveAndOrderSurvivesNewTab() async throws {
   #expect(NSApp.sendAction(try #require(byProject.action), to: byProject.target, from: byProject))
   // scheduleRefresh 走主队列 async；让主 actor 排空队列后断言同一控制器已重建侧栏。
   try await Task.sleep(for: .milliseconds(80))
-  #expect(Set(groupHeaders()) == Set(["~/", "/tmp/"]))
+  #expect(Set(groupHeaders()) == Set(["~", "tmp"]))
 
   menu = try organizerMenu()
   let updated = try #require(menu.item(withTitle: "Updated Time"))
@@ -2176,11 +2179,13 @@ func themePreviewRefreshesEveryRunningTerminalPane() async throws {
   try await Task.sleep(for: .milliseconds(50))
   window.contentView?.layoutSubtreeIfNeeded()
 
-  let terminals = controller.view.descendants.compactMap { $0 as? AsterTerminalView }
+  let terminals = controller.view.descendants.compactMap { $0 as? GhosttySurfaceView }
   #expect(terminals.count == 2)
+  defer { model.tabs.forEach { $0.stop(immediately: true) } }
   for terminal in terminals {
-    #expect(HexColor(nsColor: terminal.nativeBackgroundColor) == april.palette.windowBackground)
-    let backing = try #require(terminal.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)))
+    #expect(try await ghosttyRendersBackground(terminal, color: april.palette.windowBackground))
+    let host = try #require(terminal.superview)
+    let backing = try #require(host.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)))
     #expect(HexColor(nsColor: backing) == april.palette.windowBackground)
   }
 }
@@ -2197,13 +2202,18 @@ func displayFontCommandsRefreshExistingTerminalViews() async throws {
   let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
   window.contentView?.layoutSubtreeIfNeeded()
   let terminal = try #require(
-    controller.view.descendants.compactMap { $0 as? AsterTerminalView }.first)
-  let initialSize = terminal.font.pointSize
+    controller.view.descendants.compactMap { $0 as? GhosttySurfaceView }.first)
+  let surface = try #require(terminal.surface)
+  let initialSize = ghostty_surface_size(surface)
+  defer { model.selectedTab?.activeSession?.stop(immediately: true) }
 
-  preferences.adjustFontSize(by: 1)
+  preferences.adjustFontSize(by: 3)
   try await Task.sleep(for: .milliseconds(50))
 
-  #expect(terminal.font.pointSize == initialSize + 1)
+  let updated = ghostty_surface_size(surface)
+  #expect(updated.cell_height_px > initialSize.cell_height_px)
+  #expect(updated.cell_width_px >= initialSize.cell_width_px)
+  #expect(terminal.surface == surface)
 }
 
 @Test("Shell 异常退出会显示可恢复状态并重启同一 Pane")
@@ -2221,12 +2231,18 @@ func abnormalShellExitShowsRecoveryInsteadOfZombiePane() async throws {
   let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
   window.contentView?.layoutSubtreeIfNeeded()
   let originalTerminal = try #require(
-    controller.view.descendants.compactMap { $0 as? AsterTerminalView }.first)
+    controller.view.descendants.compactMap { $0 as? GhosttySurfaceView }.first)
 
   // 使用真实登录 Shell 退出路径，而不是直接改 Session 标志。该路径覆盖 PTY 尾部输出、
   // waitpid 状态转换、工作区刷新和用户最终看到的 Pane，能稳定抓住“旧画面仍在但无法
   // 输入，也没有任何结束提示”的僵尸终端缺陷。
-  session.send("exit 7")
+  let readyDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+  while !session.shellIntegrationDetected, ContinuousClock.now < readyDeadline {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  try #require(session.shellIntegrationDetected)
+  let retiredExitCallback = originalTerminal.onProcessExit
+  #expect(session.sendAutomationBytes(Array("exit 7\n".utf8)))
   for _ in 0..<100 where session.statusIsRunning {
     try await Task.sleep(for: .milliseconds(20))
   }
@@ -2244,7 +2260,7 @@ func abnormalShellExitShowsRecoveryInsteadOfZombiePane() async throws {
   }
   let overlay = try #require(endedOverlay)
   let labels = overlay.descendants.compactMap { ($0 as? NSTextField)?.stringValue }
-  #expect(labels.contains { $0.contains("Shell 异常退出") })
+  #expect(labels.contains { $0.contains("Shell 异常退出") }, "实际文案: \(labels), 状态: \(session.lifecycleState)")
   #expect(labels.contains { $0.contains("状态码 7") })
 
   let restartIdentifier = "terminal-restart-shell-\(session.id.uuidString)"
@@ -2266,7 +2282,7 @@ func abnormalShellExitShowsRecoveryInsteadOfZombiePane() async throws {
   }
 
   let restartedTerminal = try #require(
-    controller.view.descendants.compactMap { $0 as? AsterTerminalView }.first)
+    controller.view.descendants.compactMap { $0 as? GhosttySurfaceView }.first)
   #expect(restartedTerminal !== originalTerminal)
   #expect(controller.view.descendants.contains {
     $0.identifier?.rawValue == overlayIdentifier
@@ -2274,7 +2290,7 @@ func abnormalShellExitShowsRecoveryInsteadOfZombiePane() async throws {
 
   // 模拟上一代输出总线/进程 monitor 在新 PTY 已启动后才送达的迟到通知。该通知必须
   // 按 View 身份被忽略，否则刚恢复的终端会再次落入“屏幕存在但输入无效”的僵尸状态。
-  session.processTerminated(source: originalTerminal, exitCode: 9)
+  retiredExitCallback?(9)
   try await Task.sleep(for: .milliseconds(20))
   #expect(session.statusIsRunning)
   #expect(session.lifecycleState == .running)
@@ -2401,7 +2417,14 @@ struct AllThemeRenderParityTests {
     let titlebar = try identifiedView("workspace-titlebar", in: controller)
     // 中央标题只浮在统一 workspace surface 上，不再重复创建一层 Window material。
     #expect(titlebar is ThemeVisualEffectView == false, "\(theme.name) Titlebar shared surface")
-    #expect(titlebar.layer?.backgroundColor == NSColor.clear.cgColor)
+    let headerColor = try #require(titlebar.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)))
+    let margin = activeTheme.style.container.margin
+    if activeTheme.style.titlebarBackground != nil || margin.top != 0 || margin.leading != 0 || margin.trailing != 0 {
+      #expect(headerColor.alphaComponent == 0, "\(theme.name) Header exposes window background")
+    } else {
+      #expect(HexColor(nsColor: headerColor) == (try slot("container.background", in: activeTheme)),
+              "\(theme.name) Header continues pane background")
+    }
     let titleButton = try #require(
       identifiedView("workspace-title-button", in: controller) as? WorkspaceTitleButton
     )
@@ -2522,7 +2545,7 @@ struct AllThemeRenderParityTests {
     let mappings: [(ThemeRuntime.Role, String)] = [
       (.panel, "panel.background"),
       (.surface, "panel.surface"),
-      (.border, "panel.border"),
+      (.border, "interface.border"),
       (.accent, "interface.accent"),
       (.foreground, "interface.foreground"),
       (.secondary, "interface.secondaryForeground"),

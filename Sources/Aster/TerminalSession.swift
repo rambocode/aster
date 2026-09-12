@@ -85,6 +85,9 @@ enum TerminalSessionLifecycleState: Equatable {
   case ended(TerminalProcessTermination)
   case startFailed
   case stopping
+  /// 受管终端已分离：后台进程与布局继续保留，只是本客户端不再显示画面。
+  /// 与 `ended` 严格区分——分离不是结束。
+  case detached
 }
 
 extension TerminalSessionLifecycleState {
@@ -98,6 +101,7 @@ extension TerminalSessionLifecycleState {
     case .ended(.ioFailure): "io_failure"
     case .startFailed: "start_failed"
     case .stopping: "stopping"
+    case .detached: "detached"
     }
   }
 }
@@ -2187,6 +2191,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @Published private(set) var lifecycleState = TerminalSessionLifecycleState.notStarted
   @Published private(set) var exitCode: Int32?
   @Published private(set) var startupError: String?
+  /// 冷恢复路径，仅在远端冷恢复后设置。nil 表示未经历冷恢复。
+  @Published private(set) var recoveryPath: PaneRecoveryPath?
   /// Shell Integration 已观察到至少一个合法 OSC 133 标记；用于停用进程轮询回退。
   @Published private(set) var shellIntegrationDetected = false
   /// 最近一条完整命令的退出状态。nil 表示尚无完整记录或 Shell 未提供状态。
@@ -2432,9 +2438,80 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     return foreground > 0 && foreground != process.shellPid
   }
 
+  /// 受管终端引用；nil 表示这是本地非受管终端，全部既有行为保持不变。
+  private(set) var managedTerminal: ManagedTerminalReference?
+  /// 受管终端创建失败原因。非空时不启动任何本地 Shell，只显示明确错误，
+  /// 避免用一个未经标识的新本地 Shell 冒充受管终端。
+  private(set) var managedFailure: String?
+  /// 本次关闭的语义。分离只释放客户端资源并保留服务端进程；结束才终止远端进程。
+  var managedDisposition: ManagedTerminalDisposition = .terminated
+  /// 是否为受管终端。
+  var isManagedTerminal: Bool { managedTerminal != nil }
+  /// 受管终端交互闸门（P4.2 §4.2）。默认 true：本地非受管终端与 Local 受管终端
+  /// 永远不会被关闸，既有行为一个字节都不变。
+  private(set) var managedInputGateOpen = true
+  /// 当前是否接受键盘输入。远端 Pane 在服务端完整快照确认到达之前为 false。
+  var allowsInput: Bool { managedInputGateOpen }
+
+  /// 绑定受管终端引用。必须在首次挂载（创建 surface）前调用。
+  /// 该终端所属远端执行机器的显示名；本机终端或非受管终端为 nil。
+  ///
+  /// 界面用它决定是否禁用本机文件类动作（P3.7）。判断依据是「受管引用 + 当前传输是
+  /// SSH」，不能只看引用存在：本机受管终端的文件动作仍然合法。
+  var remoteManagedMachineLabel: String? {
+    guard managedTerminal != nil else { return nil }
+    return ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal).remoteMachineLabel
+  }
+
+  /// 构造远端图片粘贴处理闭包。非远端受管终端时返回 nil，paste 走既有逻辑。
+  private func makeRemoteImagePasteHandler() -> ((Data) async -> RemoteImageUploader.Result)? {
+    guard let managedTerminal, remoteManagedMachineLabel != nil else { return nil }
+    let coordinator = ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal)
+    guard coordinator.endpoint != nil else { return nil }
+    let terminalID = managedTerminal.terminalID
+    return { [weak self] imageData in
+      guard let self, self.managedTerminal != nil else { return .cancelled }
+      do {
+        let path = try await coordinator.uploadImageAsync(
+          terminalID: terminalID, contentType: "image/png", data: imageData)
+        // 上传完成后再次验证终端仍绑定且 ID 一致——
+        // 粘贴期间用户可能切换终端或另一客户端接管租约。
+        guard let currentManaged = self.managedTerminal,
+              currentManaged.terminalID == terminalID else {
+          return .cancelled
+        }
+        let cleaned = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return .failed("server returned empty path") }
+        return .success(remotePath: cleaned)
+      } catch {
+        return .failed(String(describing: error))
+      }
+    }
+  }
+
+  func bindManagedTerminal(_ reference: ManagedTerminalReference?) {
+    managedTerminal = reference
+    managedFailure = nil
+  }
+
+  /// 标记受管终端创建/对账失败；该 Pane 只显示错误，不启动本地 Shell。
+  func markManagedFailure(_ message: String) {
+    managedTerminal = nil
+    managedFailure = message
+  }
+
+  /// 记录「服务端缺少可选能力」的非致命提示（P3.7）。
+  ///
+  /// 复用既有的 `startupError` 警告条：`lifecycleState` 不是 `.startFailed` 时它按
+  /// 警告显示而不是失败卡，正好符合「缺失可选能力只禁用对应动作，不阻断连接」。
+  func noteManagedCapabilityLimitation(_ message: String) {
+    guard managedFailure == nil else { return }
+    startupError = message
+  }
+
   var canRestart: Bool {
     switch lifecycleState {
-    case .ended, .startFailed: true
+    case .ended, .startFailed, .detached: true
     case .notStarted, .starting, .running, .stopping: false
     }
   }
@@ -2573,7 +2650,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
           rawValue,
           source: source,
           currentDirectory: self.currentWorkingDirectoryIsLocal
-            ? self.currentWorkingDirectory : ""
+            ? self.currentWorkingDirectory : "",
+          remoteMachineLabel: self.remoteManagedMachineLabel
         )
       }
     }
@@ -2822,6 +2900,18 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       environment: environment,
       configurationText: GhosttyConfiguration.make(preferences: preferences)
     )
+    // C surface 入口接收 Shell 文本；逐参数转义保留路径和登录参数，避免注入。
+    // aster-direct-child 绕过 login(1)，由 Ghostty 等待受控启动命令的真实退出状态。
+    view.command = GhosttyConfiguration.launchCommand(
+      shell: shell, arguments: Self.launchArguments(forShell: shell))
+    // 受管终端的 surface 子进程是显示桥，不是任务本身：关闭 surface 只结束桥，
+    // 后台服务持有的 PTY 与进程组继续运行。
+    if let managedTerminal,
+      let bridge = ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal)
+        .bridgeCommandText(for: managedTerminal)
+    {
+      view.command = bridge
+    }
     // 先登记再创建 surface；极短命命令的退出 callback 可能在 createSurface 返回前到达。
     ghosttyView = view
     processStartedAt = Date()
@@ -2896,7 +2986,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         rawValue,
         source: .osc8,
         currentDirectory: self.currentWorkingDirectoryIsLocal
-          ? self.currentWorkingDirectory : ""
+          ? self.currentWorkingDirectory : "",
+        remoteMachineLabel: self.remoteManagedMachineLabel
       )
     }
     view.onSecureInputChange = { [weak self, weak view] requested in
@@ -2942,7 +3033,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         rawValue,
         source: source,
         currentDirectory: self.currentWorkingDirectoryIsLocal
-          ? self.currentWorkingDirectory : ""
+          ? self.currentWorkingDirectory : "",
+        remoteMachineLabel: self.remoteManagedMachineLabel
       )
     }
     view.onResolveHintCopyTarget = { [weak self] rawValue, source in
@@ -2961,6 +3053,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.pasteBracketedSafe = preferences.configuration.controls.resolvedPasteBracketedSafe
     view.onPasteIntoComposer = onPasteIntoComposer
     view.onSendSelectionToChat = onSendSelectionToChat
+    view.onRemoteImagePaste = makeRemoteImagePasteHandler()
     view.onAuthorizeClipboard = { operation in
       switch operation {
       case .read: clipboardCoordinator.allows(.read)
@@ -3029,6 +3122,17 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       }
     }
     view.setReadOnly(readOnly)
+    // 重建显示桥（重新附加）时必须把闸门状态一起带过去，否则新 surface 默认放行，
+    // 快照还没确认就能打字。
+    view.setManagedInputGate(open: managedInputGateOpen)
+    // 受管终端创建失败时不落地任何进程：显示错误状态，等待用户重试或修复配置。
+    if let managedFailure {
+      view.surfaceCreationDisabled = true
+      isRunning = false
+      lifecycleState = .startFailed
+      startupError = "受管终端不可用：\(managedFailure)"
+      return view
+    }
     view.createSurface()
     return view
   }
@@ -3074,6 +3178,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       )
       guard signature != lastGhosttyShellMarker else { return }
       lastGhosttyShellMarker = signature
+      // surface 创建早于子进程就绪，首个回调可能还读不到前台 PID。
+      // 在真实提示符处补齐 Shell 身份，再停掉轮询；否则后续 cat/Agent 会被误认作 Shell。
+      if ghosttyShellProcessIdentifier == nil, event == .promptStart || event == .inputStart {
+        ghosttyShellProcessIdentifier = view.foregroundProcessIdentifier
+      }
       let token = recordGhosttyAnchor(point)
       ghosttyShellCommandTimeline.receive(
         event,
@@ -3127,6 +3236,62 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   private func handleGhosttyProcessExit(code: Int32?) {
     clearSSHRemoteEndpoint()
+    // 受管终端的 surface 子进程是显示桥。桥退出（例如用户在桥内按 Ctrl+B q）不等于
+    // 任务结束，必须先查服务端真实状态；否则会把仍在运行的任务写成 session ended。
+    //
+    // P3 起这条查询可能是一次 SSH 往返，绝不能在 MainActor 上同步等待，否则整个界面
+    // 会随远端网络延迟卡住。因此这里立刻返回，真实状态回来后再决定走分离还是结束；
+    // 在结果到达之前保持既有状态，不预先写任何结束事件。
+    if let reference = managedTerminal {
+      // 必须在这里同步抓取：surface 会在分离路径里被销毁，之后读不到桥打出的拒绝原因。
+      let tail = ghosttyView?.readText(includeScrollback: true).map { text -> String in
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(trimmed.suffix(600))
+      } ?? ""
+      lastManagedBridgeExit = ManagedBridgeExit(code: code, outputTail: tail)
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        let resolution = await ManagedTerminalCoordinatorRegistry.coordinator(for: reference)
+          .reconcileAsync(references: [reference], persistedServerEpoch: nil)[reference]
+        if case .attached = resolution {
+          self.applyManagedBridgeExit(reference)
+        } else {
+          self.applyProcessExit(code: code)
+        }
+      }
+      return
+    }
+    applyProcessExit(code: code)
+  }
+
+  /// 显示桥退出但服务端任务仍在运行：按分离处理，不写任何结束事件。
+  private func applyManagedBridgeExit(_ reference: ManagedTerminalReference) {
+    ManagedTerminalCoordinatorRegistry.coordinator(for: reference).detach(reference)
+    lifecycleState = .detached
+    isRunning = false
+    hasRunningCommand = false
+    awaitingInput = false
+    stopAgentScreenMonitor()
+    clearFallbackAgentActivity()
+    foregroundPollTask?.cancel()
+    foregroundPollTask = nil
+    awaitingInputTask?.cancel()
+    awaitingInputTask = nil
+    SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
+    diagnostics.record(
+      "terminal.managed_bridge_exited",
+      level: .info,
+      category: .terminal,
+      attributes: processDiagnosticAttributes(extra: [
+        "mode": "bridge_exit",
+        "exitCode": lastManagedBridgeExit?.code.map(String.init) ?? "nil",
+        "outputTail": lastManagedBridgeExit?.outputTail ?? "",
+      ])
+    )
+  }
+
+  /// 终端进程真实结束：写结束事件并收敛全部运行态。
+  private func applyProcessExit(code: Int32?) {
     eventRecorder?.sessionEnded(id: id, exitCode: code)
     let termination = TerminalProcessTermination(rawWaitStatus: code.map { $0 << 8 })
     lifecycleState = .ended(termination)
@@ -3165,7 +3330,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     foregroundPollTask = Task { @MainActor [weak self] in
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(1))
-        guard let self else { return }
+        // Shell 集成接管会取消休眠；取消后不能再用旧采样覆盖刚到达的 C/D 状态。
+        guard !Task.isCancelled, let self else { return }
         if let ghosttyView = self.ghosttyView {
           guard ghosttyView.isProcessRunning else {
             if self.hasRunningCommand { self.hasRunningCommand = false }
@@ -3227,6 +3393,22 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 返回长期存活的 AppKit 容器。容器和终端的父子关系在 Session 生命周期内保持不变，
   /// 标签切换、主题刷新或递归分屏只会重新安放最外层容器。
   func makeTerminalHost(preferences: AppPreferences) -> NSView {
+    // 受管终端的分离态刻意不持有 surface。视图树在分离后还会重建若干次（布局写回、
+    // 标签切换、主题刷新），此时绝不能顺手新建 surface：那会立刻拉起一个新的显示桥，
+    // 让刚刚经 CLI 或菜单完成的“分离”被自动重新附加，分离形同无效。重新附加只走
+    // 用户显式的 `reattachManagedTerminal()`。
+    if isManagedTerminal, lifecycleState == .detached {
+      self.preferences = preferences
+      if let terminalHostView {
+        terminalHostView.layer?.backgroundColor = preferences.terminalCanvasBackgroundColor.cgColor
+        return terminalHostView
+      }
+      let placeholder = NSView()
+      placeholder.wantsLayer = true
+      placeholder.layer?.backgroundColor = preferences.terminalCanvasBackgroundColor.cgColor
+      terminalHostView = placeholder
+      return placeholder
+    }
     let terminal = makeGhosttyTerminalView(preferences: preferences)
     if let terminalHostView {
       terminalHostView.layer?.backgroundColor = preferences.terminalCanvasBackgroundColor.cgColor
@@ -3717,6 +3899,115 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalView?.setReadOnly(value)
   }
 
+  /// 开关受管终端的交互闸门（P4.2 §4.2「可见后先同步快照再允许交互」）。
+  ///
+  /// 关闸期间按键被**丢弃**，不排队、不在开闸后重放——§4.1 第 6 条要求清空旧代输入，
+  /// 缓存断线期间的键入会在恢复瞬间把整串命令灌进远端 Shell。
+  /// 刻意不复用 `setReadOnly`：那是用户显式的 Pane 只读模式，会改 Ghostty 终端模式、
+  /// 点亮 READ ONLY 角标并回写用户设置，用它当闸门会在开闸时把用户的只读设置抹掉。
+  func setManagedInputGate(open: Bool) {
+    guard managedInputGateOpen != open else { return }
+    managedInputGateOpen = open
+    ghosttyView?.setManagedInputGate(open: open)
+    updateManagedInputGateNotice()
+  }
+
+  /// 关闸时给出可见提示，开闸时只清掉自己这条，不动别人写的错误。
+  private func updateManagedInputGateNotice() {
+    if managedInputGateOpen {
+      if startupError == Self.managedInputGateNotice { startupError = nil }
+    } else if startupError == nil {
+      startupError = Self.managedInputGateNotice
+    }
+  }
+
+  /// 关闸提示文案。复用 `startupError` 警告条（`lifecycleState` 非 `.startFailed` 时
+  /// 它按警告显示），不新增一套提示位。
+  static let managedInputGateNotice = "正在同步远端会话快照，暂时不接受键盘输入。"
+
+  /// 显示桥最近一次非正常退出的诊断：退出码与退出瞬间的画面尾部。
+  /// 桥进程（`aster-session terminal attach`）把服务端拒绝码打在 stderr，也就是
+  /// surface 本身；分离路径随后会销毁 surface，这里在销毁前把它留住，否则
+  /// "桥为什么退出"在事后无从查证。
+  struct ManagedBridgeExit: Equatable {
+    let code: Int32?
+    let outputTail: String
+  }
+  private(set) var lastManagedBridgeExit: ManagedBridgeExit?
+
+  // MARK: - 远端 Agent 状态桥接（P5）
+
+  /// 服务端权威的 Agent 状态是否已接管本 Pane 的 agentTaskState。
+  /// 一旦为 true，本地屏幕检测与 hook 不再竞争。
+  private(set) var remoteAgentStateIsAuthoritative = false
+
+  /// 接收服务端权威的 Agent 状态（P5.5 agentChanged 事件）。
+  ///
+  /// 远端受管终端的状态由服务端决定，本地屏幕检测对远端 Pane 不得与服务端竞争。
+  /// 状态映射：working→processing, blocked→awaitingInput, done(unread)→idle+completionUnread,
+  /// idle→idle, unknown→不变（stale 不伪造完成）。
+  func applyRemoteAgentState(_ info: RemoteAgentInfo) {
+    // 与本地 hook 指令相同的 provider 关联规则：已识别 provider 后拒绝其它 provider 改写。
+    if let activeAgentProvider, activeAgentProvider != info.provider { return }
+    if activeAgentProvider == nil {
+      activeAgentProvider = info.provider
+      agentProviderIsTitleEvidenceOnly = false
+      if agentCommandStartedAt == nil { agentCommandStartedAt = Date() }
+    }
+    if let nativeSession = info.nativeSession, !nativeSession.isEmpty {
+      activeAgentSessionID = nativeSession
+    }
+    if info.state == .working || info.state == .blocked {
+      agentHasWorkEvidence = true
+    }
+
+    switch RemoteAgentStateAuthority.resolve(for: info.provider) {
+    case .hook:
+      // 完整生命周期 hook：服务端上报单独裁决，本地不再扫屏。
+      remoteAgentStateIsAuthoritative = true
+      stopAgentScreenMonitor()
+    case .screen, .heuristic:
+      // 部分 hook（Grok/Claude）：屏幕才看得到"等待批准"与"回到空闲"。hook 上报只用来
+      // 识别 provider 并启动对应清单的屏幕轮询；画面在（可见且桥已附加）时由屏幕裁决，
+      // 没有画面（隐藏/分离）时才退回下面的 hook 状态映射，后台仍能更新。
+      remoteAgentStateIsAuthoritative = false
+      syncAgentScreenMonitor()
+      if agentScreenMonitor != nil {
+        updateAgentTaskState()
+        return
+      }
+    }
+
+    let newState: AgentTaskState
+    switch info.state {
+    case .working:
+      newState = .processing
+    case .blocked:
+      newState = .awaitingInput
+    case .done:
+      newState = .idle
+    case .idle:
+      newState = .idle
+    case .unknown:
+      // stale：保持当前状态，不伪造转换
+      return
+    }
+    if agentTaskState != newState {
+      agentTaskState = newState
+    }
+    // done + unread → 标记完成未读
+    if info.state == .done, info.unread {
+      agentTaskCompletionUnread = true
+    } else if info.state != .done {
+      agentTaskCompletionUnread = false
+    }
+  }
+
+  /// 清除远端权威状态（断线/机器切走时）。
+  func clearRemoteAgentState() {
+    remoteAgentStateIsAuthoritative = false
+  }
+
   func toggleReadOnly() { setReadOnly(!readOnly) }
   func enterViMode() {
     if let ghosttyView { ghosttyView.enterViMode(); return }
@@ -3846,6 +4137,23 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 立即结束进程组，因为主事件循环不会继续存活到延迟升级任务执行。
   func stop(immediately: Bool = false) {
     clearSSHRemoteEndpoint()
+    // 受管终端先按语义处理服务端资源：分离保留进程与布局，结束才终止远端进程。
+    // 分离路径不写 Agent 结束和 `session ended`，否则会把一个仍在运行的任务
+    // 记成已结束（A08 明确禁止）。
+    if let managedTerminal {
+      switch managedDisposition {
+      case .detached:
+        ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal).detach(managedTerminal)
+        finishManagedDetach(immediately: immediately)
+        return
+      case .terminated:
+        if let status = ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal)
+          .terminate(managedTerminal)
+        {
+          eventRecorder?.sessionEnded(id: id, exitCode: status.exitCode)
+        }
+      }
+    }
     // 用户直接关 Pane/标签/退出 App 时 Agent 还在跑，不会有 commandFinished；
     // 这是最常见的「结束」方式，必须在拆 surface 前登记会话，否则下次无从 resume。
     reportAgentSessionEndedIfNeeded()
@@ -3916,6 +4224,105 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // 后保留旧 PID。托管器只接受仍运行的 View，并在 Session 释放后继续负责升级
     // 信号及等待 monitor 回收，避免僵尸进程和 PID 复用后的误杀。
     TerminalRetirementCoordinator.shared.retire(view, immediately: immediately)
+  }
+
+  /// 显式“分离”入口：保留后台进程与布局，只结束本客户端的显示桥。
+  ///
+  /// 与“结束”是两个独立动作；界面必须分别提供，不能复用关闭语义（R01/A08）。
+  @discardableResult
+  func detachManagedTerminal() -> Bool {
+    guard managedTerminal != nil, lifecycleState != .detached else { return false }
+    managedDisposition = .detached
+    stop(immediately: false)
+    managedDisposition = .terminated
+    return true
+  }
+
+  /// 显式“结束”入口：终止后台受管进程并保留结束状态与最后画面。
+  ///
+  /// 与分离互斥。这里写一次结束事件；服务端重复上报由协调器去重。
+  @discardableResult
+  func terminateManagedTerminal() -> Bool {
+    guard let reference = managedTerminal else { return false }
+    let status = ManagedTerminalCoordinatorRegistry.coordinator(for: reference).terminate(reference)
+    // 进程已在服务端结束，剩下的只是拆本地桥；用分离路径拆桥可避免重复 terminate。
+    managedDisposition = .detached
+    stop(immediately: false)
+    managedDisposition = .terminated
+    lifecycleState = .ended(.exited(code: status?.exitCode ?? 0))
+    eventRecorder?.sessionEnded(id: id, exitCode: status?.exitCode)
+    return true
+  }
+
+  /// 重新附加到仍在后台运行的受管终端；在原 Pane 容器内重建显示桥。
+  @discardableResult
+  func reattachManagedTerminal() -> Bool {
+    guard managedTerminal != nil, lifecycleState == .detached else { return false }
+    return restart()
+  }
+
+  /// 受管终端的“分离”：只拆本客户端的显示桥与订阅，不写结束事件、不动远端进程。
+  ///
+  /// 与 `stop()` 的结束路径共享视图清理，但刻意不调用 `reportAgentSessionEndedIfNeeded`
+  /// 和 `eventRecorder.sessionEnded`；服务端进程仍在运行，写结束事件会污染录制与
+  /// Agent 状态。
+  private func finishManagedDetach(immediately: Bool) {
+    lifecycleState = .detached
+    diagnostics.record(
+      "terminal.managed_detached",
+      level: .info,
+      category: .terminal,
+      attributes: processDiagnosticAttributes(extra: [
+        "mode": immediately ? "immediate" : "graceful"
+      ])
+    )
+    let ghostty = ghosttyView
+    ghosttyView = nil
+    ghosttyShellProcessIdentifier = nil
+    // 刻意保留 terminalHostView：重新附加时 `restart()` 在原容器里重建 surface，
+    // 不需要工作区重建整棵视图树。
+    targetOpenCoordinator = nil
+    autocompleteController = nil
+    isRunning = false
+    foregroundPollTask?.cancel()
+    foregroundPollTask = nil
+    stopAgentScreenMonitor()
+    clearFallbackAgentActivity()
+    awaitingInputTask?.cancel()
+    completedFlashTask?.cancel()
+    progressExpiryTask?.cancel()
+    SecureInputCoordinator.shared.releaseAutomaticRequest(for: id)
+    shutDownManagedBridge(ghostty, immediately: immediately)
+  }
+
+  /// 显示桥的分离转义：Ctrl-B（0x02）后跟 `q`，由 `terminal attach` 的 Prefix 解析。
+  private static let managedBridgeDetachEscape: [UInt8] = [0x02, 0x71]
+
+  /// 结束显示桥：先请桥**自己**退出，桥没在期限内退出才强拆 surface。
+  ///
+  /// 为什么不能直接 `destroySurface()`：那只杀本机进程。桥退出时会向服务端发
+  /// `terminal.release` 释放写租约，而强杀走的是传输断开路径——服务端要等连接真的
+  /// 断掉才回收 attachment 与租约（SSH 桥实测约 2 秒）。这期间用户点「重新附加」，
+  /// 新桥必被 `lease_busy retry=never` 拒绝，画面停在错误文本上。发一次分离转义
+  /// 让旧桥走正常退出路径，租约在本机进程结束之前就已经释放（实测 1 秒内）。
+  ///
+  /// `immediately`（App 即将退出）不走这条路：主事件循环不再运转，等不到桥的退出，
+  /// 而且此时没有「随后重新附加」这回事。
+  private func shutDownManagedBridge(_ ghostty: GhosttySurfaceView?, immediately: Bool) {
+    guard let ghostty else { return }
+    guard !immediately, ghostty.isProcessRunning,
+      ghostty.sendProtocolBytes(Self.managedBridgeDetachEscape)
+    else {
+      ghostty.destroySurface()
+      return
+    }
+    Task { @MainActor in
+      let deadline = ContinuousClock.now + .seconds(2)
+      while ContinuousClock.now < deadline, ghostty.isProcessRunning {
+        try? await Task.sleep(for: .milliseconds(50))
+      }
+      ghostty.destroySurface()
+    }
   }
 
   /// 新进程不能继承上一代 Shell/TUI 的瞬态状态。Pane 的稳定身份、只读开关、回调和

@@ -1,0 +1,619 @@
+import Foundation
+
+/// 受管会话客户端接口与本地后台实现。
+///
+/// 设计约束（`docs/developer/remote-work.md` §3.1/§3.2）：调用方只看到会话动作，
+/// 不接触服务协议帧；`aster-session` 的结构化输出是本实现唯一的传输面。解码逻辑
+/// 与进程调用分开，保证在不启动服务的情况下也能对回复格式做定向测试。
+
+/// 一个可连接的后台会话实例的定位信息。
+///
+/// `stateParent` 必须已存在且只对当前用户开放（服务端会再次校验），`sessionName`
+/// 决定命名会话；两者共同决定 socket 路径，不通过 PID 或显示名定位服务。
+public struct ManagedSessionEndpoint: Equatable, Sendable {
+  public var machineProfileID: UUID
+  public var binaryPath: String
+  public var stateParentPath: String
+  public var sessionName: String
+
+  public init(
+    machineProfileID: UUID = MachineProfile.localProfileID,
+    binaryPath: String,
+    stateParentPath: String,
+    sessionName: String = "default"
+  ) {
+    self.machineProfileID = machineProfileID
+    self.binaryPath = binaryPath
+    self.stateParentPath = stateParentPath
+    self.sessionName = sessionName
+  }
+}
+
+/// 会话客户端错误。失败必须显式暴露，不允许静默回退成未标识的本地 Shell。
+public enum ManagedSessionError: Error, Equatable, Sendable {
+  /// 运行时可执行文件缺失或不可执行。
+  case runtimeUnavailable(String)
+  /// 进程启动失败（fork/exec 层面）。
+  case launchFailed(String)
+  /// 服务端返回结构化 error 回复。
+  case serviceError(code: String, message: String?)
+  /// 回复不是合法的协议信封。
+  case malformedReply(String)
+  /// 命令以非零码退出且没有可解析的错误信封。
+  case commandFailed(status: Int32, output: String)
+}
+
+/// 受管会话客户端接口。App 与 CLI 使用同一套动作语义。
+public protocol ManagedSessionClient: Sendable {
+  /// 确保命名会话的后台服务已运行；已存在时不重启、不替换。
+  func ensureServer(_ endpoint: ManagedSessionEndpoint) throws -> SessionServerReference
+  /// 只读查询服务实例身份与 epoch；服务不存在时抛错，不隐式启动。
+  func serverStatus(_ endpoint: ManagedSessionEndpoint) throws -> SessionServerIdentity
+  /// 在服务端创建受管终端；返回的 terminalID 与该进程生命周期绑定。
+  func createTerminal(
+    _ endpoint: ManagedSessionEndpoint,
+    workingDirectory: String,
+    argv: [String]
+  ) throws -> ManagedTerminalStatus
+  /// 列出该会话全部受管终端的真实状态。
+  func listTerminals(_ endpoint: ManagedSessionEndpoint) throws -> [ManagedTerminalStatus]
+  /// 结束指定受管终端并等待进程回收。
+  func terminateTerminal(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String
+  ) throws -> ManagedTerminalStatus
+  /// 生成显示桥 argv：Ghostty surface 以此为子进程附加到受管终端。
+  func bridgeArguments(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String,
+    readOnly: Bool
+  ) -> [String]
+  /// 显示桥的本地可执行文件。本机实现是 `aster-session` 自身，SSH 实现是 `ssh`。
+  func bridgeExecutablePath(_ endpoint: ManagedSessionEndpoint) -> String
+  /// 事件流订阅的完整本地调用形状（可执行文件 + argv）。
+  ///
+  /// 与显示桥同理：argv 由 `ManagedSessionCommand.eventSubscribe` 集中生成，
+  /// 这里只决定由谁执行——本机是运行时自身，SSH 实现覆写成 `ssh` 转发。
+  func eventSubscribeInvocation(_ endpoint: ManagedSessionEndpoint) -> ManagedSessionInvocation
+  /// 执行一次结构化 CLI 调用并返回 stdout（只承载协议输出，诊断在 stderr）。
+  ///
+  /// 这是两条传输面唯一的差异点：本机直接执行 `binaryPath`，SSH 把同一份 argv 交给
+  /// `ssh`。会话作用域动作与注册表作用域动作（`ManagedRegistryEndpoint`，没有
+  /// sessionName）都建立在它之上，因此参数只取 `binaryPath`，不取整个会话端点。
+  func executeStructured(binaryPath: String, arguments: [String]) throws -> String
+  /// 上传图片数据到远端临时目录，返回远端路径。
+  ///
+  /// 图片通过 stdin 管道传入 `aster-session upload`，由 CLI 完成分块与 RPC。
+  func uploadImage(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String,
+    contentType: String,
+    data: Data
+  ) throws -> String
+}
+
+extension ManagedSessionClient {
+  /// 默认按本机语义：桥直接执行受管运行时二进制。
+  public func bridgeExecutablePath(_ endpoint: ManagedSessionEndpoint) -> String {
+    endpoint.binaryPath
+  }
+
+  /// 默认按本机语义：直接执行受管运行时二进制。
+  public func eventSubscribeInvocation(_ endpoint: ManagedSessionEndpoint)
+    -> ManagedSessionInvocation
+  {
+    ManagedSessionInvocation(
+      executablePath: endpoint.binaryPath,
+      arguments: ManagedSessionCommand.eventSubscribe(endpoint))
+  }
+
+  /// 默认实现：抛出不支持错误。本地与远端客户端各自覆写。
+  public func uploadImage(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String,
+    contentType: String,
+    data: Data
+  ) throws -> String {
+    throw ManagedSessionError.serviceError(code: "not_supported", message: "upload not available")
+  }
+}
+
+/// 一次长命子进程调用的完整形状。用具名结构而不是元组，便于跨模块传递与比较。
+public struct ManagedSessionInvocation: Equatable, Sendable {
+  public var executablePath: String
+  public var arguments: [String]
+
+  public init(executablePath: String, arguments: [String]) {
+    self.executablePath = executablePath
+    self.arguments = arguments
+  }
+}
+
+/// `aster-session` 结构化 CLI 的参数形状。
+///
+/// 本机实现与 SSH 实现必须使用**同一份**参数形状，否则两条传输会各自漂移；
+/// 因此集中在这里生成，不在各实现内重复拼装。
+public enum ManagedSessionCommand {
+  public static func serverStart(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["server", "start", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
+  public static func serverStatus(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["server", "status", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
+  /// `server stop <state-parent> <name>`：请求服务排空并退出。
+  public static func serverStop(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["server", "stop", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
+  /// `server replace <state-parent> <name>`：查询替换影响（受影响终端列表）。
+  /// 真正的替换由客户端编排（stop → install → start），不是服务端原子操作。
+  public static func serverReplace(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["server", "replace", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
+  public static func terminalCreate(
+    _ endpoint: ManagedSessionEndpoint,
+    workingDirectory: String,
+    argv: [String]
+  ) -> [String] {
+    ["terminal", "create", endpoint.stateParentPath, endpoint.sessionName, workingDirectory] + argv
+  }
+
+  public static func terminalList(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["terminal", "list", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
+  public static func terminalTerminate(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String
+  ) -> [String] {
+    ["terminal", "terminate", endpoint.stateParentPath, endpoint.sessionName, terminalID]
+  }
+
+  /// `event subscribe <state-parent> <name>`：流式事件订阅，进程不会自行退出。
+  public static func eventSubscribe(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["event", "subscribe", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
+  public static func bridge(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String,
+    readOnly: Bool
+  ) -> [String] {
+    [
+      "terminal", readOnly ? "observe" : "attach", endpoint.stateParentPath,
+      endpoint.sessionName, terminalID,
+    ]
+  }
+
+  /// `agent list <state-parent> <name>`：列出该会话中所有 Agent 的状态。
+  public static func agentList(_ endpoint: ManagedSessionEndpoint) -> [String] {
+    ["agent", "list", endpoint.stateParentPath, endpoint.sessionName]
+  }
+
+  /// `agent report <state-parent> <name> <terminalID>`：上报 Agent 状态变更。
+  public static func agentReport(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String
+  ) -> [String] {
+    ["agent", "report", endpoint.stateParentPath, endpoint.sessionName, terminalID]
+  }
+
+  /// `agent explain <state-parent> <name> <terminalID>`：获取 Agent 详情与诊断。
+  public static func agentExplain(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String
+  ) -> [String] {
+    ["agent", "explain", endpoint.stateParentPath, endpoint.sessionName, terminalID]
+  }
+
+  /// `agent ack <state-parent> <name> <terminalID>`：确认 Agent 完成通知。
+  public static func agentAcknowledge(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String
+  ) -> [String] {
+    ["agent", "ack", endpoint.stateParentPath, endpoint.sessionName, terminalID]
+  }
+
+  /// `upload <state-parent> <name> --terminal-id <id> --content-type <type>`：
+  /// 从 stdin 读取图片数据并上传到会话。
+  public static func upload(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String,
+    contentType: String
+  ) -> [String] {
+    ["upload", endpoint.stateParentPath, endpoint.sessionName,
+     "--terminal-id", terminalID, "--content-type", contentType]
+  }
+}
+
+/// 服务实例身份。`serverEpoch` 每次启动重新生成，用于识别冷重启。
+public struct SessionServerIdentity: Equatable, Sendable {
+  public var reference: SessionServerReference
+  public var serverEpoch: String
+  public var capabilities: [String]
+  public var version: String
+
+  public init(
+    reference: SessionServerReference,
+    serverEpoch: String,
+    capabilities: [String],
+    version: String
+  ) {
+    self.reference = reference
+    self.serverEpoch = serverEpoch
+    self.capabilities = capabilities
+    self.version = version
+  }
+}
+
+/// `aster-session` 结构化输出的纯解码层，不触碰进程或文件系统。
+public enum ManagedSessionReplyDecoder {
+  /// 解析协议信封的 `target` 段，得到稳定服务身份。
+  public static func serverIdentity(
+    machineProfileID: UUID,
+    from json: [String: Any]
+  ) throws -> SessionServerIdentity {
+    guard let target = json["target"] as? [String: Any],
+      let serverID = target["serverID"] as? String,
+      let serverEpoch = target["serverEpoch"] as? String,
+      let sessionID = target["sessionID"] as? String
+    else { throw ManagedSessionError.malformedReply("missing target identity") }
+    let result = json["result"] as? [String: Any] ?? [:]
+    return SessionServerIdentity(
+      reference: SessionServerReference(
+        machineProfileID: machineProfileID,
+        serverID: serverID,
+        sessionID: sessionID
+      ),
+      serverEpoch: serverEpoch,
+      capabilities: (result["capabilities"] as? [String]) ?? [],
+      version: (result["version"] as? String) ?? ""
+    )
+  }
+
+  /// 解析单个终端描述。`state` 未知时按 `unavailable` 处理，不臆测仍在运行。
+  public static func terminal(
+    _ raw: [String: Any],
+    server: SessionServerReference,
+    serverEpoch: String?
+  ) throws -> ManagedTerminalStatus {
+    guard let terminalID = raw["terminalID"] as? String, !terminalID.isEmpty else {
+      throw ManagedSessionError.malformedReply("missing terminalID")
+    }
+    let stateText = (raw["state"] as? String) ?? ""
+    // `terminating` 表示仍在结束和清理，不能当作已退出。
+    let state: ManagedTerminalState =
+      switch stateText {
+      case "running", "terminating": .running
+      case "exited": .exited
+      default: .unavailable
+      }
+    var exitCode: Int32?
+    if let value = raw["exitCode"] as? NSNumber { exitCode = value.int32Value }
+    if let exit = raw["exit"] as? [String: Any], let value = exit["code"] as? NSNumber {
+      exitCode = value.int32Value
+    }
+    return ManagedTerminalStatus(
+      reference: ManagedTerminalReference(server: server, terminalID: terminalID),
+      state: state,
+      pid: (raw["pid"] as? NSNumber)?.int32Value,
+      cwd: raw["cwd"] as? String,
+      exitCode: exitCode,
+      serverEpoch: serverEpoch
+    )
+  }
+
+  /// 解析单个 Agent 信息。字段缺失时返回 nil，不抛错。
+  public static func agentInfo(_ raw: [String: Any]) -> RemoteAgentInfo? {
+    guard let terminalID = raw["terminalID"] as? String,
+      let providerValue = raw["provider"] as? String,
+      let provider = AgentProvider(rawValue: providerValue)
+    else { return nil }
+    let stateText = (raw["state"] as? String) ?? "unknown"
+    let state = RemoteAgentStatus(rawValue: stateText) ?? .unknown
+    let sourceText = (raw["source"] as? String) ?? "heuristic"
+    let source = RemoteAgentAuthority(rawValue: sourceText) ?? .heuristic
+    return RemoteAgentInfo(
+      terminalID: terminalID,
+      provider: provider,
+      state: state,
+      name: raw["name"] as? String,
+      nativeSession: raw["nativeSession"] as? String,
+      source: source,
+      unread: (raw["unread"] as? Bool) ?? false
+    )
+  }
+
+  /// 把一行 JSON 输出解析成信封；`error` 类型转成 `serviceError`。
+  public static func envelope(_ text: String) throws -> [String: Any] {
+    let line = text.split(separator: "\n").last.map(String.init) ?? text
+    guard let data = line.data(using: .utf8),
+      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { throw ManagedSessionError.malformedReply(String(line.prefix(256))) }
+    if let type = json["type"] as? String, type == "error" || type == "client_error" {
+      let error = json["error"] as? [String: Any]
+      let code = (error?["code"] as? String) ?? (json["code"] as? String) ?? "unknown"
+      throw ManagedSessionError.serviceError(code: code, message: error?["message"] as? String)
+    }
+    return json
+  }
+}
+
+/// 本地后台实现：通过 `aster-session` 可执行文件与同机命名会话服务通信。
+///
+/// 每个动作都是短命进程调用，不持有长连接；显示桥另由 Ghostty surface 的子进程承担，
+/// 因此桥的生命周期与受管进程生命周期天然分离。
+public struct LocalManagedSessionClient: ManagedSessionClient {
+  /// 单次控制命令的最大等待时间；超时按结果未知处理，不重复创建资源。
+  public var timeout: TimeInterval
+
+  public init(timeout: TimeInterval = 15) { self.timeout = timeout }
+
+  public func ensureServer(_ endpoint: ManagedSessionEndpoint) throws -> SessionServerReference {
+    let output = try run(endpoint, ManagedSessionCommand.serverStart(endpoint))
+    let json = try ManagedSessionReplyDecoder.envelope(output)
+    // server start 的信封把已校验状态嵌在 status 字段里；直接启动与 already_running
+    // 两条路径都必须走同一份已验证身份，不能用启动进程的 PID 代替身份。
+    guard let status = json["status"] as? [String: Any] else {
+      throw ManagedSessionError.malformedReply("missing verified status")
+    }
+    return try ManagedSessionReplyDecoder.serverIdentity(
+      machineProfileID: endpoint.machineProfileID,
+      from: status
+    ).reference
+  }
+
+  public func serverStatus(_ endpoint: ManagedSessionEndpoint) throws -> SessionServerIdentity {
+    let output = try run(endpoint, ManagedSessionCommand.serverStatus(endpoint))
+    return try ManagedSessionReplyDecoder.serverIdentity(
+      machineProfileID: endpoint.machineProfileID,
+      from: try ManagedSessionReplyDecoder.envelope(output)
+    )
+  }
+
+  public func createTerminal(
+    _ endpoint: ManagedSessionEndpoint,
+    workingDirectory: String,
+    argv: [String]
+  ) throws -> ManagedTerminalStatus {
+    guard !argv.isEmpty else { throw ManagedSessionError.malformedReply("empty argv") }
+    let output = try run(
+      endpoint,
+      ManagedSessionCommand.terminalCreate(
+        endpoint, workingDirectory: workingDirectory, argv: argv)
+    )
+    let json = try ManagedSessionReplyDecoder.envelope(output)
+    let identity = try ManagedSessionReplyDecoder.serverIdentity(
+      machineProfileID: endpoint.machineProfileID, from: json)
+    guard let result = json["result"] as? [String: Any] else {
+      throw ManagedSessionError.malformedReply("missing result")
+    }
+    return try ManagedSessionReplyDecoder.terminal(
+      result, server: identity.reference, serverEpoch: identity.serverEpoch)
+  }
+
+  public func listTerminals(_ endpoint: ManagedSessionEndpoint) throws -> [ManagedTerminalStatus] {
+    let output = try run(endpoint, ManagedSessionCommand.terminalList(endpoint))
+    let json = try ManagedSessionReplyDecoder.envelope(output)
+    let identity = try ManagedSessionReplyDecoder.serverIdentity(
+      machineProfileID: endpoint.machineProfileID, from: json)
+    let result = json["result"] as? [String: Any] ?? [:]
+    let raw = result["terminals"] as? [[String: Any]] ?? []
+    return try raw.map {
+      try ManagedSessionReplyDecoder.terminal(
+        $0, server: identity.reference, serverEpoch: identity.serverEpoch)
+    }
+  }
+
+  public func terminateTerminal(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String
+  ) throws -> ManagedTerminalStatus {
+    let output = try run(
+      endpoint, ManagedSessionCommand.terminalTerminate(endpoint, terminalID: terminalID))
+    let json = try ManagedSessionReplyDecoder.envelope(output)
+    let identity = try ManagedSessionReplyDecoder.serverIdentity(
+      machineProfileID: endpoint.machineProfileID, from: json)
+    let result = json["result"] as? [String: Any] ?? ["terminalID": terminalID]
+    return try ManagedSessionReplyDecoder.terminal(
+      result, server: identity.reference, serverEpoch: identity.serverEpoch)
+  }
+
+  public func bridgeArguments(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String,
+    readOnly: Bool
+  ) -> [String] {
+    ManagedSessionCommand.bridge(endpoint, terminalID: terminalID, readOnly: readOnly)
+  }
+
+  /// 会话作用域动作的传输入口；只是把端点里的二进制路径转交给共用原语。
+  private func run(_ endpoint: ManagedSessionEndpoint, _ arguments: [String]) throws -> String {
+    try executeStructured(binaryPath: endpoint.binaryPath, arguments: arguments)
+  }
+
+  /// 执行一次结构化命令并返回 stdout；超时会终止子进程并按结果未知报错。
+  ///
+  /// stdout 只承载协议输出，诊断在 stderr；两者分开读取避免互相污染，也避免管道
+  /// 写满导致子进程阻塞。
+  public func executeStructured(binaryPath: String, arguments: [String]) throws -> String {
+    guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
+      throw ManagedSessionError.runtimeUnavailable(binaryPath)
+    }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: binaryPath)
+    process.arguments = arguments
+    let out = Pipe()
+    let err = Pipe()
+    process.standardOutput = out
+    process.standardError = err
+    process.standardInput = FileHandle.nullDevice
+    do { try process.run() } catch {
+      throw ManagedSessionError.launchFailed(String(describing: error))
+    }
+
+    let buffer = ManagedSessionOutputBuffer()
+    out.fileHandleForReading.readabilityHandler = { handle in
+      buffer.appendOutput(handle.availableData)
+    }
+    err.fileHandleForReading.readabilityHandler = { handle in
+      buffer.appendDiagnostics(handle.availableData)
+    }
+
+    let deadline = Date().addingTimeInterval(timeout)
+    while process.isRunning && Date() < deadline {
+      usleep(20_000)
+    }
+    if process.isRunning {
+      process.terminate()
+      process.waitUntilExit()
+      out.fileHandleForReading.readabilityHandler = nil
+      err.fileHandleForReading.readabilityHandler = nil
+      throw ManagedSessionError.commandFailed(status: -1, output: "timeout")
+    }
+    process.waitUntilExit()
+    // 结束后再清理 handler，并补读管道里的残余数据。
+    buffer.appendOutput(out.fileHandleForReading.availableData)
+    buffer.appendDiagnostics(err.fileHandleForReading.availableData)
+    out.fileHandleForReading.readabilityHandler = nil
+    err.fileHandleForReading.readabilityHandler = nil
+
+    let text = buffer.outputText
+    let diagnostics = buffer.diagnosticsText
+
+    if process.terminationStatus != 0 && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+      throw ManagedSessionError.commandFailed(
+        status: process.terminationStatus, output: String(diagnostics.prefix(512)))
+    }
+    return text
+  }
+
+  /// 通过 `aster-session upload` 子进程上传图片到本地受管会话。
+  ///
+  /// 图片数据通过 stdin 管道传入，CLI 完成分块、SHA256 校验与 socket RPC。
+  /// 返回服务端输出的路径（已去除换行）。
+  public func uploadImage(
+    _ endpoint: ManagedSessionEndpoint,
+    terminalID: String,
+    contentType: String,
+    data: Data
+  ) throws -> String {
+    guard FileManager.default.isExecutableFile(atPath: endpoint.binaryPath) else {
+      throw ManagedSessionError.runtimeUnavailable(endpoint.binaryPath)
+    }
+    let arguments = ManagedSessionCommand.upload(
+      endpoint, terminalID: terminalID, contentType: contentType)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: endpoint.binaryPath)
+    process.arguments = arguments
+
+    // stdin 管道传入图片数据
+    let stdinPipe = Pipe()
+    process.standardInput = stdinPipe
+    let out = Pipe()
+    let err = Pipe()
+    process.standardOutput = out
+    process.standardError = err
+
+    do { try process.run() } catch {
+      throw ManagedSessionError.launchFailed(String(describing: error))
+    }
+
+    // 异步写入 stdin 避免管道阻塞
+    let writeHandle = stdinPipe.fileHandleForWriting
+    DispatchQueue.global(qos: .userInitiated).async {
+      writeHandle.write(data)
+      try? writeHandle.close()
+    }
+
+    let buffer = ManagedSessionOutputBuffer()
+    out.fileHandleForReading.readabilityHandler = { buffer.appendOutput($0.availableData) }
+    err.fileHandleForReading.readabilityHandler = { buffer.appendDiagnostics($0.availableData) }
+
+    // 上传超时比控制命令长（图片可达 20 MiB）
+    let uploadTimeout = max(timeout, 60)
+    let deadline = Date().addingTimeInterval(uploadTimeout)
+    while process.isRunning && Date() < deadline { usleep(20_000) }
+    if process.isRunning {
+      process.terminate()
+      process.waitUntilExit()
+      out.fileHandleForReading.readabilityHandler = nil
+      err.fileHandleForReading.readabilityHandler = nil
+      throw ManagedSessionError.commandFailed(status: -1, output: "upload timeout")
+    }
+    process.waitUntilExit()
+    buffer.appendOutput(out.fileHandleForReading.availableData)
+    buffer.appendDiagnostics(err.fileHandleForReading.availableData)
+    out.fileHandleForReading.readabilityHandler = nil
+    err.fileHandleForReading.readabilityHandler = nil
+
+    let text = buffer.outputText
+
+    if process.terminationStatus != 0 {
+      throw ManagedSessionError.commandFailed(
+        status: process.terminationStatus,
+        output: String(buffer.diagnosticsText.prefix(512)))
+    }
+
+    // 解析 JSON 输出中的 path
+    return try ManagedSessionUploadDecoder.path(from: text)
+  }
+}
+
+/// 子进程管道输出的线程安全缓冲。readability handler 在任意队列回调，必须自带锁。
+private final class ManagedSessionOutputBuffer: @unchecked Sendable {
+  private let lock = NSLock()
+  private var output = Data()
+  private var diagnostics = Data()
+
+  func appendOutput(_ chunk: Data) {
+    guard !chunk.isEmpty else { return }
+    lock.lock()
+    output.append(chunk)
+    lock.unlock()
+  }
+
+  func appendDiagnostics(_ chunk: Data) {
+    guard !chunk.isEmpty else { return }
+    lock.lock()
+    diagnostics.append(chunk)
+    lock.unlock()
+  }
+
+  var outputText: String {
+    lock.lock()
+    defer { lock.unlock() }
+    return String(decoding: output, as: UTF8.self)
+  }
+
+  var diagnosticsText: String {
+    lock.lock()
+    defer { lock.unlock() }
+    return String(decoding: diagnostics, as: UTF8.self)
+  }
+}
+
+
+/// `aster-session upload` CLI 输出的解码层。
+enum ManagedSessionUploadDecoder {
+  /// 从 upload CLI 的 JSON 输出中提取远端路径。
+  static func path(from output: String) throws -> String {
+    let line = output.split(separator: "\n").last.map(String.init) ?? output
+    guard let data = line.data(using: .utf8),
+      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { throw ManagedSessionError.malformedReply("upload: \(String(line.prefix(256)))") }
+    // 错误信封
+    if let type = json["type"] as? String, type == "error" || type == "client_error" {
+      let code = (json["code"] as? String) ?? "unknown"
+      throw ManagedSessionError.serviceError(code: code, message: nil)
+    }
+    guard let path = json["path"] as? String, !path.isEmpty else {
+      throw ManagedSessionError.malformedReply("upload: missing path")
+    }
+    return path
+  }
+}

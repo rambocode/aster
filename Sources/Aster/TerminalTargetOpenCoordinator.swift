@@ -58,11 +58,15 @@ final class TerminalTargetOpenCoordinator {
   ///
   /// - Returns: 只有系统打开调用成功时才返回 `true`；取消、拒绝、解析失败和系统打开
   ///   失败均返回 `false`，且不会把失败选择写入安全例外。
+  /// - Parameter remoteMachineLabel: 该终端属于远端执行机器时的机器名；本机终端为 nil。
+  ///   远端 Pane 必须禁用本机文件类打开（`docs/developer/remote-work.md` §1、§4.2）：
+  ///   远端路径与本机同名路径可能都存在，按本机语义打开会静默操作错误的文件。
   @discardableResult
   func open(
     _ rawValue: String,
     source: DetectedTargetSource,
-    currentDirectory: String
+    currentDirectory: String,
+    remoteMachineLabel: String? = nil
   ) -> Bool {
     guard preferences.configuration.controls.resolvedLinkDetectionEnabled else { return false }
 
@@ -76,6 +80,13 @@ final class TerminalTargetOpenCoordinator {
       )
     } catch {
       reportError("无法识别该链接或文件路径。")
+      return false
+    }
+
+    // 远端终端里的文件路径属于执行机器，本机不得打开；URL/scheme 类目标不受影响。
+    if let remoteMachineLabel, case .file = target {
+      reportError(
+        RemoteWorkspaceBoundary.disabledReason(.openLocalPath, machineLabel: remoteMachineLabel))
       return false
     }
 

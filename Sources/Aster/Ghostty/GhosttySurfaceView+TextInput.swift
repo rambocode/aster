@@ -29,7 +29,7 @@ extension GhosttySurfaceView: @preconcurrency NSTextInputClient {
 
   func insertText(_ string: Any, replacementRange: NSRange) {
     let text = (string as? String) ?? (string as? NSAttributedString)?.string ?? ""
-    guard !text.isEmpty, !readOnly else { return }
+    guard !text.isEmpty, !readOnly, managedInputGateOpen else { return }
     markedTextRange = NSRange(location: NSNotFound, length: 0)
     if let surface { ghostty_surface_preedit(surface, nil, 0) }
 
@@ -47,7 +47,7 @@ extension GhosttySurfaceView: @preconcurrency NSTextInputClient {
   }
 
   func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-    guard let surface, !readOnly else { return }
+    guard let surface, !readOnly, managedInputGateOpen else { return }
     let text = (string as? String) ?? (string as? NSAttributedString)?.string ?? ""
     markedTextRange =
       text.isEmpty

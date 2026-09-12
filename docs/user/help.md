@@ -126,6 +126,8 @@ Preview 支持 Markdown（含 GFM 表格、任务列表等）、reStructuredText
 - 任何时候都可以点击某项左侧的 ↳ 图标立即插队提交，右侧垃圾桶可移除尚未发送的项。关闭输入条不会取消队列，展开按钮可输入多行，队列仍受只读和终端输入模式限制。
 - “编辑 → 发送到聊天…”以及终端右键“发送选区到 Chat”会打开确认面板。可同时选择当前选区与当前终端 transcript，并从当前工作区所有运行中的 Claude Code/Codex Pane 选择接收端；点击 Send 会以普通键入预填 Comment 和清理、脱敏后的上下文，不会自动回车。
 
+- 远端受管终端粘贴图片：当剪贴板包含图片（PNG 或 TIFF）且当前终端是远端受管终端时，`⌘V` 会自动上传图片到远端临时目录，然后仅在终端粘贴远端文件路径（不含换行），不发送图片内容本身。上传失败、取消或粘贴期间终端切换/租约丢失时不粘贴任何内容，远端不留半文件。单张图片最大 20 MiB。图片内容不进入诊断日志。
+
 终端程序可用 OSC 52 请求访问系统剪贴板。“设置 → 控制 → 复制与粘贴”分别提供“允许 / 每次询问 / 拒绝”：写入默认允许，读取默认每次询问。每次询问只授权当前请求，不会记住；连续请求在提示后有 5 秒安全冷却。导入配置不能把读取权限静默改成“允许”；拒绝或超限请求不会读取剪贴板。
 
 ### 选择终端文本
@@ -326,13 +328,49 @@ aster pane send-text --pane w1:p3 'npm test' --enter
 aster pane wait-output w1:p3 --match "passed" --timeout 60000
 aster events subscribe --kind pane.agent_status_changed
 aster notification show "构建完成" --body "全部通过"
+aster session terminals                      # 后台受管终端及其真实状态
+aster session detach --current               # 分离：后台任务继续运行
+aster session end w1:p3                      # 结束：终止该受管终端的后台进程
+
+### 远程 TUI 客户端
+
+在远端 SSH shell 中运行完整终端客户端（需要远端已安装 `aster-session`）：
+
 ```
+aster-session ui <state-parent> <session-name>              # 交互模式
+aster-session ui <state-parent> <session-name> --observe    # 只读观察
+aster-session ui --remote <ssh-target> --session <name>     # 远端入口（通过 SSH）
+aster-session ui --remote <ssh-target> --session <name> --observe  # 远端只读
+```
+
+`--remote` 模式从本机 SSH 到远端运行 TUI，无需手动 `ssh` 再执行命令。目标以 `--` 隔离、远端命令做 POSIX 引用，防止 Shell 二次解释。
+
+快捷键（Ctrl+B 前缀）：
+
+| 按键 | 动作 |
+| --- | --- |
+| Ctrl+B q / d | 分离（退出 TUI，后台任务继续） |
+| Ctrl+B n | 下一个标签 |
+| Ctrl+B p | 上一个标签 |
+| Ctrl+B o | 下一个窗格 |
+| Ctrl+B w | 下一个工作区 |
+| Ctrl+B c | 新建标签 |
+| Ctrl+B % | 水平分屏 |
+| Ctrl+B " | 垂直分屏 |
+| Ctrl+B x | 关闭当前窗格 |
+| Ctrl+B Ctrl+B | 发送字面 Ctrl+B |
+| Ctrl+B ? | 显示帮助 |
+
+TUI 底部状态栏显示当前位置（工作区 > 标签 [窗格/总数]）。40×20 以下的窄屏使用缩略布局。
+```
+
+`session terminals/detach/end` 只对**受管终端**有效。受管终端是运行在后台会话服务里的终端：关闭窗口或退出 Aster 只是「分离」，里面的任务继续运行，下次打开会重新附加到同一个进程；只有「结束」才会终止它。从打包 App 启动时，全新终端默认走受管路径（后台 `aster-session` 服务）；环境变量 `ASTER_SESSION_BINARY` 与 `ASTER_SESSION_STATE_DIR` 可覆盖二进制位置和状态目录。旧布局中未迁移的非受管终端保持原样。普通本地终端不受影响，对普通 pane 执行这两个命令会直接报错，不会结束它的 Shell。菜单「文件 → 分离受管终端 / 结束受管终端 / 把布局托管到后台…」提供同样的动作。后台服务更新时，普通替换会先停止服务再冷恢复；实验性 live handoff（实时交接）可在不终止终端进程的情况下传递 PTY 所有权，但该功能仍处于实验阶段，暂不通过用户界面暴露。
 
 pane 与 Agent 用短 ID 引用（`w1` 窗口、`w1:t2` 标签、`w1:p5` pane），也可用 Agent 名或 `--current`（当前 pane，来自环境变量 `ASTER_PANE_ID`）。`agent`、`events`、`notification` 命令只在 Aster 自己的终端里可用（环境变量 `ASTER_ENV=1`），在别的终端里需要显式加 `--allow-outside`。写入类命令与 `pane send/run/exec` 受同一套 IPC 开关约束；`--json` 输出原始结果，出错时 stderr 打印 `{"code":"…","message":"…"}` 并以退出码 1 结束。
 
 ## Working with Agents
 
-Aster 支持 Claude Code、Codex、OpenCode、Cursor CLI、Kimi Code、Pi、omp 和 Grok Build。在“设置 → 智能体”中，每个 provider 会显示图标与检测到的 CLI 绝对路径；从 Finder 或 Dock 启动 Aster 时，也会识别 `~/.local/bin`、Homebrew 及常见 Node 版本管理器里的安装。右侧“已安装 / 关闭”和开关专指 Aster 受管 lifecycle 集成，与 CLI 路径是独立状态；展开一行后可另行控制它是否出现在快速启动入口，并为 wrapper、环境配置或自定义可执行文件设置结构化启动命令。安装和卸载只改动带 Aster 标识的 hook/plugin；用户自己的配置保持不变，变更后应重启对应 Agent。Grok Build 的用户级 hook 写在 `~/.claude/settings.json`（Grok 把它当 Claude 兼容层读取），与 Claude Code 的 Aster 条目并排、互不覆盖；两边的 hook 会先确认调用方再上报状态，避免把 Grok 标签标成 Claude。Grok 首次在某个项目跑 hook 时可能要 `/hooks-trust`。Grok 会话暂时不会出现在 Agent 历史浮层或 Open Quickly。
+Aster 支持 Claude Code、Codex、OpenCode、Cursor CLI、Kimi Code、Pi、omp 和 Grok Build。在“设置 → 智能体”中，每个 provider 会显示图标与检测到的 CLI 绝对路径；从 Finder 或 Dock 启动 Aster 时，也会识别 `~/.local/bin`、Homebrew 及常见 Node 版本管理器里的安装。右侧“已安装 / 关闭”和开关专指 Aster 受管 lifecycle 集成，与 CLI 路径是独立状态；展开一行后可另行控制它是否出现在快速启动入口，并为 wrapper、环境配置或自定义可执行文件设置结构化启动命令。安装和卸载只改动带 Aster 标识的 hook/plugin；用户自己的配置保持不变，变更后应重启对应 Agent。Grok Build 的用户级 hook 写在 `~/.grok/config.toml`（Grok 原生 `[[hooks.Event]]` 格式），与 Claude Code 的配置互不影响；需要 Grok ≥ 1.0.25，旧版本不读取 config.toml 里的 hooks。用户级 config.toml 的 hook 不需要 `/hooks-trust`（那只针对项目目录 `.grok/hooks/`）。Grok 会话暂时不会出现在 Agent 历史浮层或 Open Quickly。
 
 - lifecycle hook 把 `processing / idle / awaiting-input` 归一到所属 PTY，驱动标签徽章、完成/等待通知和“处理期间阻止睡眠”。不会读取或保存 prompt 正文。hook 先尝试写 `/dev/tty`；Claude Code 2.1.x 启动 hook 时没有控制终端，此时会沿父进程链找到 Pane 的终端设备再写入，因此无需改动 Claude 配置。
 - “Shell”菜单对齐 Otty 的完整结构：顶部是“重命名标签页…”“设置标签页前缀…”（共用同一原生对话框，后者预选动态前缀模式）与“清屏”（`⌘K`）；随后是围绕当前工作目录的“拷贝路径”“在访达中显示”“打开方式”（无可靠 CWD 时置灰）；中段保留 Vi/Mark/Hint、只读模式与 Composer；底部是“Git”子菜单（图形客户端入口 + Commit/Push/Pull/Fetch/Merge…/Rebase…，全部只预填命令到终端，由你回车执行）与“通知与权限…”（跳到设置的 Shell 分类）。“打开方式”与“Git”和窗口标题胶囊弹层显示完全相同的条目。
@@ -506,3 +544,15 @@ Codex、Claude Code 等 Agent 正在输出内容时，输入位置保留你的�
 
 Shell 退出后，可选“窗口 → 重新启动 Quick Terminal”。退出 Aster 会结束该终端，
 下次启动不会恢复此临时会话。若提示快捷键被占用，请选择另一组合，或使用窗口菜单。
+
+## 远端会话恢复
+
+远端服务重启后，Aster 会自动恢复窗格状态。每个窗格会显示以下恢复路径之一：
+
+- **继续运行**：后台任务未中断，重新连接后恢复画面。
+- **新 Shell**：服务重启后创建了新的 Shell 进程，旧进程已结束。
+- **历史回放**：使用磁盘上保存的屏幕快照回放，非实时状态。需要在设置中开启"屏幕历史"。
+- **Agent 对话恢复**：通过 Agent CLI 的 --resume 参数恢复之前的对话。
+- **恢复失败**：无法恢复，已创建新 Shell 替代。常见原因：布局损坏、磁盘已满、版本不兼容。
+
+恢复状态会在窗格顶部显示状态卡片，包含恢复类型和详细信息。

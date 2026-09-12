@@ -88,6 +88,8 @@ func silentAgentCLIStopsShowingProcessingBadge() async throws {
   defer { defaults.removePersistentDomain(forName: suiteName) }
   let preferences = AppPreferences(defaults: defaults)
   preferences.configuration.agents.badgeProcessing = true
+  // 本用例验证无 hook / 无屏幕规则时的静默回退；屏幕权威另有独立覆盖。
+  preferences.configuration.agents.screenDetectionEnabled = false
 
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
     "aster-silent-agent-\(UUID().uuidString)",
@@ -96,7 +98,16 @@ func silentAgentCLIStopsShowingProcessingBadge() async throws {
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
   defer { try? FileManager.default.removeItem(at: directory) }
   let executable = directory.appendingPathComponent("codex", isDirectory: false)
-  try Data("#!/bin/sh\n/bin/sleep 2\n".utf8).write(to: executable, options: .atomic)
+  // 保持 CLI 存活直到 session.stop 清理；固定两秒会与启动/检测等待竞争。
+  let hookTrigger = directory.appendingPathComponent("emit-hook")
+  let script = """
+    #!/bin/sh
+    echo $$ > started.pid
+    while [ ! -f emit-hook ]; do /bin/sleep 0.05; done
+    printf '\\033]6974;AgentState=processing;Provider=codex\\007'
+    while :; do /bin/sleep 1; done
+    """
+  try Data(script.utf8).write(to: executable, options: .atomic)
   try FileManager.default.setAttributes(
     [.posixPermissions: 0o700],
     ofItemAtPath: executable.path
@@ -106,10 +117,23 @@ func silentAgentCLIStopsShowingProcessingBadge() async throws {
     workingDirectory: directory.path,
     fallbackAgentIdleDelay: .milliseconds(100)
   )
-  let terminalView = try #require(
-    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
-  )
-  defer { session.stop(immediately: true) }
+  let terminalView = try liveGhosttyView(for: session, preferences: preferences)
+  var shellMarkers: [String] = []
+  let previousOSC = terminalView.onOSC
+  terminalView.onOSC = { code, payload, point in
+    if code == 133 { shellMarkers.append(String(decoding: payload, as: UTF8.self)) }
+    previousOSC?(code, payload, point)
+  }
+  let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500),
+                        styleMask: [.titled], backing: .buffered, defer: false)
+  window.contentView = terminalView.superview
+  window.makeKeyAndOrderFront(nil)
+  defer { session.stop(immediately: true); window.orderOut(nil) }
+  let promptDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+  while !shellMarkers.contains("B"), ContinuousClock.now < promptDeadline {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  try #require(shellMarkers.contains("B"), "等待 OSC 133 B 确认输入区就绪，A 只代表 prompt 开始")
   session.send(executable.path)
 
   let startDeadline = ContinuousClock.now.advanced(by: .seconds(2))
@@ -124,17 +148,25 @@ func silentAgentCLIStopsShowingProcessingBadge() async throws {
 
   // CLI 进程仍在前台，但连续无输出表示已停在输入界面；不应因
   // 为长寿命 TUI 进程未退出，让侧栏 tab 的 spinner 永久运行。
+  let runningDeadline = ContinuousClock.now.advanced(by: .seconds(4))
+  while (!session.hasRunningCommand
+         || !FileManager.default.fileExists(atPath: directory.appendingPathComponent("started.pid").path)),
+        ContinuousClock.now < runningDeadline {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("started.pid").path))
   try await Task.sleep(for: .milliseconds(250))
-  #expect(session.hasRunningCommand)
+  #expect(session.hasRunningCommand, "Shell markers: \(shellMarkers)")
   #expect(session.agentTaskState == .idle)
   #expect(session.agentActivityBadge == TerminalBadgeState.none)
 
   // 后续 PTY 输出会重新进入回退 processing；若同时收到权威 hook，
   // 超时任务必须取消，不得把真实的静默推理误清为 idle。
-  terminalView.onTerminalOutputActivity?("thinking")
-  terminalView.onAgentTerminalDirective?(
-    AgentTerminalDirective(provider: .codex, signal: .processing)
-  )
+  try Data().write(to: hookTrigger)
+  let hookDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+  while !session.hasAuthoritativeAgentLifecycle, ContinuousClock.now < hookDeadline {
+    try await Task.sleep(for: .milliseconds(20))
+  }
   try await Task.sleep(for: .milliseconds(250))
   #expect(session.hasAuthoritativeAgentLifecycle)
   #expect(session.agentTaskState == .processing)
@@ -574,7 +606,8 @@ func fullLifecycleHookStopsMonitorAndManifestlessProviderKeepsFallback() async t
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
   defer { try? FileManager.default.removeItem(at: directory) }
   let executable = directory.appendingPathComponent("omp", isDirectory: false)
-  try Data("#!/bin/sh\n/bin/sleep 2\n".utf8).write(to: executable, options: .atomic)
+  // 保持 CLI 存活直到 session.stop 清理；固定两秒会与启动/检测等待竞争。
+  try Data("#!/bin/sh\nwhile :; do /bin/sleep 1; done\n".utf8).write(to: executable, options: .atomic)
   try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
   let ompScreen = FakeAgentScreen()
   let omp = TerminalSession(

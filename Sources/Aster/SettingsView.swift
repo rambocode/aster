@@ -41,7 +41,7 @@ final class SettingsSearchField: NSSearchField {
   }
 }
 
-/// 与 Otty 信息架构一致的九类纯 AppKit 设置页。控件直接写入 `AppPreferences`，
+/// 采用 Otty 信息架构并包含编辑器的十类纯 AppKit 设置页。控件直接写入 `AppPreferences`，
 /// 当前终端会话通过其 Combine 订阅即时获得字体、配色、Meta 键和鼠标设置变化。
 @MainActor
 final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
@@ -3486,7 +3486,7 @@ extension SettingsViewController: WKNavigationDelegate {
     case .kimiCode: "把 Aster hooks 写入 ~/.kimi-code/config.toml，实时同步任务状态。"
     case .pi: "把 Aster 扩展写入 ~/.pi/agent/extensions/，实时同步任务状态。"
     case .omp: "把 Aster 扩展写入 ~/.omp/agent/extensions/，实时同步任务状态。"
-    case .grokBuild: "把 Aster hooks 写入 ~/.claude/settings.json（Grok 作为 Claude 兼容层读取），与 Claude 条目并排、互不覆盖。"
+    case .grokBuild: "把 Aster hooks 写入 ~/.grok/config.toml（Grok 原生 hooks 格式，需要 Grok ≥ 1.0.25），实时同步任务状态。"
     case .gemini, .githubCopilot, .amp, .droid, .devin, .kiro, .qoder, .qwen, .hermes,
       .antigravity, .maki, .muse, .cline, .kilo:
       "该 Agent 没有 Aster hook 集成，任务状态依赖屏幕检测，无需写入任何配置。"

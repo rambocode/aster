@@ -170,6 +170,7 @@ public enum AsterControlErrorCode: String, Codable, CaseIterable, Sendable {
   case writeNotAllowed = "write_not_allowed"
   case sensitiveSessionNotAllowed = "sensitive_session_not_allowed"
   case writeRejected = "write_rejected"
+  case ambiguousTarget = "ambiguous_target"
   case timeout = "timeout"
   case tooManyWaits = "too_many_waits"
   case agentNameTaken = "agent_name_taken"
@@ -216,16 +217,25 @@ public enum AsterControlMethod: String, CaseIterable, Codable, Sendable {
   case eventsWait = "events.wait"
   case notificationShow = "notification.show"
   case workflowExecute = "workflow.execute"
+  /// 只读列出 App 可见的受管终端（远程工作模式 P2.8）。
+  case sessionTerminals = "session.terminals"
+  /// 分离受管终端：只拆本客户端的显示桥，后台进程继续运行。
+  case sessionDetach = "session.detach"
+  /// 显式结束受管终端的后台进程。
+  case sessionEnd = "session.end"
 
   /// 写方法：向 PTY 写字节或启动进程，需要 IPC 写门禁。focus / notification 按 herdr 语义
   /// 不算写（只改 UI，不进 PTY）；`workflow.execute` 内部由旧 WorkflowCLI 自行做门禁。
+  /// `session.detach` / `session.end` 改变受管终端的显示桥与进程生命周期，必须与
+  /// `pane.send_text` 走同一道写门禁；`session.terminals` 只查询状态，保持只读。
   public var isWrite: Bool {
     switch self {
     case .serverPing, .sessionSnapshot, .agentList, .agentGet, .agentRead, .paneRead,
       .paneWaitForOutput, .eventsSubscribe, .eventsWait, .agentWait, .agentFocus, .paneFocus,
-      .notificationShow, .workflowExecute:
+      .notificationShow, .workflowExecute, .sessionTerminals:
       return false
-    case .agentPrompt, .agentSendKeys, .agentStart, .paneSendText, .paneSendKeys:
+    case .agentPrompt, .agentSendKeys, .agentStart, .paneSendText, .paneSendKeys, .sessionDetach,
+      .sessionEnd:
       return true
     }
   }
@@ -676,6 +686,17 @@ public struct NotificationShowParams: Codable, Equatable, Sendable, AsterControl
   }
 }
 
+/// session.detach / session.end：目标 pane 必须是受管终端，否则服务端返回 `invalid_params`。
+public struct ManagedTerminalTargetParams: Codable, Equatable, Sendable, AsterControlValidatable {
+  public var pane: String
+
+  public init(pane: String) { self.pane = pane }
+
+  public func validate() throws {
+    try ControlSelectorValidation.validateSelector(pane, field: "pane")
+  }
+}
+
 /// workflow.execute：把旧 `aster` sh 脚本语法（open/view/watch/pane run …）原样转交 WorkflowCLIParser。
 public struct WorkflowExecuteParams: Codable, Equatable, Sendable, AsterControlValidatable {
   public var argv: [String]
@@ -974,6 +995,65 @@ public struct EventsSubscribeResult: Codable, Equatable, Sendable {
   public init(kinds: [AsterControlEventKind], sequence: UInt64) {
     self.kinds = kinds
     self.sequence = sequence
+  }
+}
+
+/// 控制协议里的受管终端状态。比 `ManagedTerminalState` 多一个 `detached`：
+/// 「客户端已分离」与「进程已退出」必须能被自动化区分，否则分离会被误读成结束（R01/A08）。
+public enum ManagedTerminalControlState: String, Codable, CaseIterable, Equatable, Sendable {
+  case running
+  case exited
+  case unavailable
+  case detached
+}
+
+/// session.terminals 的条目：pane 短 ID 是 selector，其余字段是跨机器稳定引用与实测状态。
+public struct ManagedTerminalInfo: Codable, Equatable, Sendable {
+  public var paneID: String
+  public var terminalID: String
+  public var serverID: String
+  public var sessionID: String
+  public var state: ManagedTerminalControlState
+  /// 服务端上报的受管进程 PID；只用于诊断与验收证据，不作为资源身份。
+  public var pid: Int32?
+
+  private enum CodingKeys: String, CodingKey {
+    case paneID = "pane_id"
+    case terminalID = "terminal_id"
+    case serverID = "server_id"
+    case sessionID = "session_id"
+    case state, pid
+  }
+
+  public init(
+    paneID: String, terminalID: String, serverID: String, sessionID: String,
+    state: ManagedTerminalControlState, pid: Int32? = nil
+  ) {
+    self.paneID = paneID
+    self.terminalID = terminalID
+    self.serverID = serverID
+    self.sessionID = sessionID
+    self.state = state
+    self.pid = pid
+  }
+}
+
+/// session.terminals 结果。
+public struct ManagedTerminalListResult: Codable, Equatable, Sendable {
+  public var terminals: [ManagedTerminalInfo]
+
+  public init(terminals: [ManagedTerminalInfo]) { self.terminals = terminals }
+}
+
+/// session.detach / session.end 结果：动作后的终端快照 + 本次动作语义。
+/// `disposition` 显式回传，调用方不必从 state 反推分离还是结束。
+public struct ManagedTerminalActionResult: Codable, Equatable, Sendable {
+  public var terminal: ManagedTerminalInfo
+  public var disposition: ManagedTerminalDisposition
+
+  public init(terminal: ManagedTerminalInfo, disposition: ManagedTerminalDisposition) {
+    self.terminal = terminal
+    self.disposition = disposition
   }
 }
 

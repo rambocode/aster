@@ -58,6 +58,11 @@ final class AsterControlDispatcher {
           code: .protocolMismatch,
           message: "协议版本 \(protocolVersion) 不受支持，服务端为 \(AsterControlProtocol.version)")
       }
+      // 机器/会话方法先于 `resolvedMethod()` 处理：`AsterControlMethod` 是 AsterCore 的
+      // 封闭枚举，未知方法名会被它直接判成 method_not_found。
+      if let response = await handleMachineMethod(request, fleet: MachineFleetModel.shared) {
+        return response
+      }
       let method = try request.resolvedMethod()
       let result = try await dispatch(method, request: request, client: client)
       return AsterControlResponse(id: request.id, result: result)
@@ -154,10 +159,126 @@ final class AsterControlDispatcher {
     case .agentStart:
       let params = try decode(AgentStartParams.self, request)
       return try await withWaitSlot(client) { try await self.startAgent(params) }
+    case .sessionTerminals:
+      return try encode(ManagedTerminalListResult(terminals: managedTerminals()))
+    case .sessionDetach:
+      let params = try decode(ManagedTerminalTargetParams.self, request)
+      return try encode(try detachManagedTerminal(params.pane))
+    case .sessionEnd:
+      let params = try decode(ManagedTerminalTargetParams.self, request)
+      return try encode(try endManagedTerminal(params.pane))
     case .workflowExecute:
       let params = try decode(WorkflowExecuteParams.self, request)
       return try encode(try await executeWorkflow(params))
     }
+  }
+
+  // MARK: - 受管终端（远程工作模式）
+
+  /// 列出 App 可见的受管终端。状态以服务端实测结果为准，查询不到时按 `unavailable`，
+  /// 不用本地最后一次视图冒充「仍在运行」；本客户端已分离的 pane 单独标记 `detached`。
+  private func managedTerminals() -> [ManagedTerminalInfo] {
+    let live = liveManagedStatuses()
+    return bridge.allPanes().compactMap { record in
+      guard let session = record.session, let reference = session.managedTerminal else { return nil }
+      return managedInfo(record, reference: reference, session: session, live: live[reference.terminalID])
+    }
+  }
+
+  /// 向后台服务查询一次真实状态；受管模式未开启或服务不可达时返回空表，列表仍可输出本地引用。
+  private func liveManagedStatuses() -> [String: ManagedTerminalStatus] {
+    let coordinator = ManagedTerminalCoordinatorRegistry.coordinator(forMachine: MachineProfile.localProfileID)
+    guard coordinator.isEnabled, let statuses = try? coordinator.liveTerminals() else { return [:] }
+    return Dictionary(statuses.map { ($0.reference.terminalID, $0) }, uniquingKeysWith: { first, _ in first })
+  }
+
+  /// 投影单个受管终端。`stateOverride` 用于动作后立即回传确定结果（分离/结束）。
+  private func managedInfo(
+    _ record: AsterControlBridge.PaneRecord, reference: ManagedTerminalReference,
+    session: TerminalSession, live: ManagedTerminalStatus?,
+    stateOverride: ManagedTerminalControlState? = nil
+  ) -> ManagedTerminalInfo {
+    ManagedTerminalInfo(
+      paneID: record.paneID.description,
+      terminalID: reference.terminalID,
+      serverID: reference.server.serverID,
+      sessionID: reference.server.sessionID,
+      state: stateOverride ?? managedState(session: session, live: live),
+      pid: live?.pid)
+  }
+
+  /// 本地分离状态优先：客户端已分离时后台进程仍可能在跑，绝不能报成 `exited`。
+  private func managedState(
+    session: TerminalSession, live: ManagedTerminalStatus?
+  ) -> ManagedTerminalControlState {
+    if session.lifecycleState == .detached { return .detached }
+    switch live?.state {
+    case .running: return .running
+    case .exited: return .exited
+    case .unavailable, nil: return .unavailable
+    }
+  }
+
+  /// 解析 detach/end 的目标：必须是受管终端，并通过与 `pane.send_text` 相同的 IPC 权限门禁。
+  /// 非受管的普通本地 pane 在这里就被拒绝，绝不会被静默分离或杀掉。
+  ///
+  /// 门禁只取 `policyBlocker`（Allow Send Keys + 敏感会话），不取 surface 可写性：显示桥
+  /// 退出后本地无法键入，但服务端进程仍在跑，仍必须能被 CLI 分离/结束（P2.5 以服务端真实
+  /// 状态为准）。是否真的已结束，由服务端上报的 `live` 状态回答。
+  private func resolveManagedTarget(
+    _ selector: String
+  ) throws -> (
+    AsterControlBridge.PaneRecord, TerminalSession, ManagedTerminalReference,
+    ManagedTerminalStatus?
+  ) {
+    let record = try bridge.resolve(selector: selector)
+    guard let session = record.session else {
+      throw AsterControlError(code: .paneNotTerminal, message: "\(record.paneID) 不是终端 pane")
+    }
+    guard let reference = session.managedTerminal else {
+      throw AsterControlError.invalidParams("\(record.paneID) 不是受管终端，session detach/end 不适用")
+    }
+    let policy = policyProvider()
+    if let blocker = AsterControlWriteGate.policyBlocker(
+      session: session, allowSendKeys: policy.allowSendKeys,
+      allowSensitiveSessions: policy.allowSensitiveSessions)
+    {
+      throw blocker
+    }
+    let live = liveManagedStatuses()[reference.terminalID]
+    if live?.state == .exited {
+      throw AsterControlError(
+        code: .paneNotRunning, message: "\(record.paneID) 的受管终端已在服务端结束")
+    }
+    return (record, session, reference, live)
+  }
+
+  /// session.detach：拆本客户端显示桥，后台进程与布局保留。
+  ///
+  /// 桥先前已自行退出（例如桥内 `Ctrl+B q`）时本地已是分离态，服务端进程仍在运行；
+  /// 这属于“已达成”而不是失败，按幂等成功返回，不再报 `write_rejected`。
+  private func detachManagedTerminal(_ selector: String) throws -> ManagedTerminalActionResult {
+    // PID 在动作前取：分离后服务端仍持有该进程，这里保留证据字段。
+    let (record, session, reference, live) = try resolveManagedTarget(selector)
+    if !session.detachManagedTerminal(), session.lifecycleState != .detached {
+      throw AsterControlError(code: .writeRejected, message: "\(record.paneID) 无法分离")
+    }
+    return ManagedTerminalActionResult(
+      terminal: managedInfo(
+        record, reference: reference, session: session, live: live, stateOverride: .detached),
+      disposition: .detached)
+  }
+
+  /// session.end：显式结束后台受管进程，与分离互斥。
+  private func endManagedTerminal(_ selector: String) throws -> ManagedTerminalActionResult {
+    let (record, session, reference, live) = try resolveManagedTarget(selector)
+    guard session.terminateManagedTerminal() else {
+      throw AsterControlError(code: .writeRejected, message: "\(record.paneID) 无法结束受管终端")
+    }
+    return ManagedTerminalActionResult(
+      terminal: managedInfo(
+        record, reference: reference, session: session, live: live, stateOverride: .exited),
+      disposition: .terminated)
   }
 
   // MARK: - 辅助

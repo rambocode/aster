@@ -14,9 +14,41 @@ func writeStandardError(_ text: String) {
 signal(SIGPIPE, SIG_IGN)
 
 let environment = ProcessInfo.processInfo.environment
+let rawArguments = Array(CommandLine.arguments.dropFirst())
+
+// 机器与命名会话命令在旧解析器之前拦截：它们的作用域是客户端配置与某台机器上的
+// 注册表，与 agent/pane/events 的「当前工作区」作用域不同，参数规则也不一样。
+if MachineCommands.matches(rawArguments) {
+  do {
+    // 先摘掉输出格式开关，再交给本模块的解析器；否则 `--format json` 的取值会被
+    // 当成位置参数。摘取按「标志 + 取值」成对进行，不做全局字符串过滤。
+    let (commandArguments, wantsJSON) = MachineCommands.extractOutputFormat(rawArguments)
+    let invocation = try MachineCommands.parse(commandArguments)
+    let client = ControlClient(
+      socketPath: try ControlClient.resolveSocketPath(explicit: nil, environment: environment),
+      environment: environment)
+    let result = try client.call(invocation.method, params: invocation.params)
+    printLine(wantsJSON ? try prettyJSON(result) : try invocation.render(result))
+    exit(AsterCLIExitCode.success)
+  } catch let error as AsterControlError {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let payload = (try? encoder.encode(error)).map { String(decoding: $0, as: UTF8.self) }
+      ?? "{\"code\":\"\(error.code.rawValue)\",\"message\":\"\(error.message)\"}"
+    writeStandardError(payload + "\n")
+    exit(AsterCLIExitCode.serverError)
+  } catch let error as ControlClientError {
+    writeStandardError(error.message + "\n")
+    exit(error.exitCode)
+  } catch {
+    writeStandardError("aster: \(error)\n")
+    exit(AsterCLIExitCode.serverError)
+  }
+}
+
 let parsed: AsterCLIArguments
 do {
-  parsed = try AsterCLIArguments.parse(Array(CommandLine.arguments.dropFirst()))
+  parsed = try AsterCLIArguments.parse(rawArguments)
 } catch let error as AsterCLIArgumentError {
   writeStandardError("aster: \(error.message)\n")
   exit(AsterCLIExitCode.usage)

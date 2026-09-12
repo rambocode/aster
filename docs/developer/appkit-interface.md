@@ -139,7 +139,7 @@ Open Quickly 使用独立 `openQuicklyPresentationChanged` 事件局部挂载，
 
 ## 测试与验收
 
-`AppKitMigrationTests` 静态确认主工作区和设置页不包含 SwiftUI Hosting，并检查 `NSSplitView`、九类设置、Dock 菜单边界、设置窗口排除标记、Glass 原生材质、整宽侧栏行、标签整理菜单、分组/排序/分隔线行为、28pt 标题区与设置页顶部锚定。`SettingsResponsivenessTests` 锁定设置窗口宽高记忆、默认无搜索焦点、搜索灰底，以及 `700 / 940 / 1400 pt` 下侧栏固定和右侧内容填充；也继续覆盖切换分类后侧栏实例不变、搜索不重建内容区、普通控件不重建内容区。`SettingsWindowGeometryTests`（AsterCoreTests）覆盖 `clampWidth` / `clampHeight` 的下界、屏幕上界与非法值。`WorkspacePanelLayoutTests`、`WorkspacePanelLayoutStoreTests` 与 `WorkspacePanelSplitViewTests` 覆盖纯宽度策略、窗口隔离、活动设置绑定、语义 divider、动态显隐和视图身份。完整测试还覆盖 24 套主题真值、终端、Recipe、文件安全与进程生命周期。发布前运行：
+`AppKitMigrationTests` 静态确认主工作区和设置页不包含 SwiftUI Hosting，并检查 `NSSplitView`、十类设置、Dock 菜单边界、设置窗口排除标记、Glass 原生材质、整宽侧栏行、标签整理菜单、分组/排序/分隔线行为、28pt 标题区与设置页顶部锚定。`SettingsResponsivenessTests` 锁定设置窗口宽高记忆、默认无搜索焦点、搜索灰底，以及 `700 / 940 / 1400 pt` 下侧栏固定和右侧内容填充；也继续覆盖切换分类后侧栏实例不变、搜索不重建内容区、普通控件不重建内容区。`SettingsWindowGeometryTests`（AsterCoreTests）覆盖 `clampWidth` / `clampHeight` 的下界、屏幕上界与非法值。`WorkspacePanelLayoutTests`、`WorkspacePanelLayoutStoreTests` 与 `WorkspacePanelSplitViewTests` 覆盖纯宽度策略、窗口隔离、活动设置绑定、语义 divider、动态显隐和视图身份。完整测试还覆盖 24 套主题真值、终端、Recipe、文件安全与进程生命周期。发布前运行：
 
 ```bash
 swift test --no-parallel

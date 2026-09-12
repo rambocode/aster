@@ -286,7 +286,7 @@ import Testing
   )
   #expect(
     grok.steps == [
-      .mergeManagedHooks(path: "~/.claude/settings.json", format: .json)
+      .mergeManagedHooks(path: "~/.grok/config.toml", format: .toml)
     ]
   )
   #expect(!grok.linksAfterNextLifecycleEvent)

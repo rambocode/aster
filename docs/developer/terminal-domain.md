@@ -45,7 +45,7 @@ Aster 是原生 macOS 终端工作区，面向同时使用 Shell、全屏 TUI、
 16. 鼠标报告开启时，本地选择只由“绕过鼠标上报”配置的完整修饰键组合接管；手势在 mouseDown 锁定 owner，不能向前台 TUI 泄漏半组 press/release。
 17. 平滑滚动只改变 normal buffer 的视口；alternate screen 不允许首尾越界，手势结束必须回到完整字符行。
 18. Shell Integration 资源必须来自签名 Bundle；受管 rc 区块必须幂等、可卸载并保留区块外内容、权限与符号链接。所有目标先预检，后续写入失败时回滚已改目标。
-19. OSC 133 只接受 A/B/C/D 与非负退出码，不接收或持久化命令正文；命令位置使用包含已裁剪行数的绝对坐标。时间线变化通过专用 `outlineChanged` 事件局部刷新 Outline，不提升为通用工作区重建。
+19. OSC 133 只接受 A/B/C/D、已知提示符扩展 A;cl=line / P;k=i 与非负退出码，不接收或持久化命令正文；命令位置使用包含已裁剪行数的绝对坐标。时间线变化通过专用 `outlineChanged` 事件局部刷新 Outline，不提升为通用工作区重建。
 20. `TERM=auto` 优先解析为内置的 `xterm-ghostty`（产品引擎即 GhosttyKit，能力集一致，不算冒充），缺条目时静默回退 `xterm-256color`；自定义名称只有真实 terminfo 存在时才能进入子进程，终端不得冒充能力不符的其它产品。
 21. Autocomplete 只在 OSC 133 确认的可靠 prompt 中工作；接受候选只发送尚未输入的后缀，不自动发送回车。Ghostty 的 PTY write 与 OSC observer 可能跨队列交付：若 `commandStart` 抢在本轮最后一个回车前到达，状态机只保留一次“补齐已排队提交”的窗口，恢复完整命令后立即关闭；运行中 TUI 的后续按键不得进入 Shell 命令跟踪器。
 22. 命令学习必须先脱敏并遵守忽略模式；关闭本机学习时不得读取历史/README、运行 help 探测或生成纠错。
@@ -314,3 +314,11 @@ ASTER_NOTARY_PROFILE=<notarytool keychain profile> \
 （notarytool 各版本 Invalid 时退出码不一致），并在结尾对 DMG 与 App 各跑一次 `spctl`
 终验，两项都必须返回 `Notarized Developer ID`。不带 `ASTER_NOTARY_PROFILE` 时跳过
 公证（本地/ad-hoc 构建路径不受影响）；只带 profile 不带签名身份会被提前拦截。
+
+### Ghostty 提示符补报
+
+提示符插件改写 PS1 后，锁定版本的 Ghostty zsh integration 在 line-init 发送
+`P;k=i → B`，随后用 `C/D` 标记命令生命周期。`P;k=i` 在应用的时间线中映射为
+promptStart，保证运行状态、Outline 和 Agent 回退不依赖 PS1 包含 A 标记。
+只接受此固定扩展；未知 P 属性和附带命令文本仍被拒绝。集成测试等待 B 和测试
+进程的启动文件，再验证静默状态；仅收到提示符开始不能证明输入区已经就绪。

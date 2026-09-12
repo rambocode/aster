@@ -371,6 +371,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
   func applicationWillTerminate(_ notification: Notification) {
     isTerminating = true
+    // 事件订阅是长命子进程（本机 aster-session / 远端 ssh）。App 退出时必须真的把它们
+    // 结束掉，否则每退出一次就留下一条孤儿连接。它只是一条只读控制连接，结束它不会
+    // 结束远端任何终端进程，也不影响 A08 的保活语义。
+    stopRemoteEventSubscriptionsInAllWorkspaceWindows()
     quickTerminalController.shutdown()
     themeSwitcherPanelController?.dismiss(commit: false)
     themeSwitcherPanelController = nil
@@ -656,6 +660,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     guard let record = additionalWorkspaceWindows.removeValue(forKey: identifier) else {
       return
     }
+    // 附加窗口是真的没了：它自己那条事件订阅必须跟着结束，不能留孤儿 ssh，
+    // 也不能让在途的事件刷新回调再去动这个已经拆掉的窗口。
+    (record.controller.window?.contentViewController as? WorkspaceViewController)?
+      .loadedRemoteWorkspaces?.stopAllEventSubscriptions()
     // 应用整体退出已在两阶段事务中统一提交；用户单独关窗则在可取消确认成功后，
     // 到这里才执行不可逆的快照和 PTY 终止。
     if !isTerminating { record.model.commitTermination() }
@@ -748,6 +756,18 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       }
     for controller in controllers.compactMap({ $0 }) {
       controller.setSettingsPresentationActive(active)
+    }
+  }
+
+  /// 停掉全部工作区窗口的远端事件订阅。只碰**已经构造过**协调器的窗口，不会现造。
+  private func stopRemoteEventSubscriptionsInAllWorkspaceWindows() {
+    let controllers =
+      [mainWindowController?.window?.contentViewController as? WorkspaceViewController]
+      + additionalWorkspaceWindows.values.map {
+        $0.controller.window?.contentViewController as? WorkspaceViewController
+      }
+    for controller in controllers.compactMap({ $0 }) {
+      controller.loadedRemoteWorkspaces?.stopAllEventSubscriptions()
     }
   }
 
@@ -985,6 +1005,27 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   @objc private func splitDown(_ sender: Any?) { activeWorkspaceModel.splitSelectedTab(.down) }
   @objc private func splitUp(_ sender: Any?) { activeWorkspaceModel.splitSelectedTab(.up) }
   @objc private func closePane(_ sender: Any?) { activeWorkspaceModel.closeActivePane() }
+  /// 「分离」与「结束受管终端」是两个独立入口：分离保留后台任务，结束才终止进程。
+  /// 「文件 ▸ 添加机器…」：转交当前工作区窗口的机器分区动作，两条入口共用同一事务。
+  @objc private func addRemoteMachine(_ sender: Any?) {
+    activeWorkspaceViewController?.presentAddMachine()
+  }
+
+  @objc private func detachManagedTerminal(_ sender: Any?) {
+    _ = activeWorkspaceModel.detachActiveManagedTerminal()
+  }
+  @objc private func endManagedTerminal(_ sender: Any?) {
+    _ = activeWorkspaceModel.terminateActiveManagedTerminal()
+  }
+  @objc private func migrateWorkspaceToManagedSession(_ sender: Any?) {
+    guard let outcome = activeWorkspaceModel.migrateWorkspaceToManagedSession() else { return }
+    guard let failure = outcome.failure else { return }
+    let alert = NSAlert()
+    alert.messageText = "托管到后台失败"
+    alert.informativeText = "\(failure)。已回滚，现有终端未受影响。"
+    alert.alertStyle = .warning
+    alert.runModal()
+  }
   @objc private func zoomSplit(_ sender: Any?) { activeWorkspaceModel.toggleZoomActivePane() }
   @objc private func equalizeSplits(_ sender: Any?) { activeWorkspaceModel.equalizeSplits() }
   @objc private func moveDividerUp(_ sender: Any?) { activeWorkspaceModel.moveDivider(.up) }
@@ -1312,6 +1353,16 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(menuItem("关闭标签页", #selector(closeTab(_:)), "", modifiers: []))
     submenu.addItem(
       menuItem("关闭窗口", #selector(closeActiveWindow(_:)), "w", modifiers: [.command, .shift]))
+    submenu.addItem(.separator())
+    // 机器管理的主菜单入口。侧栏「MACHINES」分区的「+」是同一个动作的第二条路径；
+    // 两条都必须存在：侧栏折叠时主菜单仍要能添加机器。
+    submenu.addItem(menuItem("添加机器…", #selector(addRemoteMachine(_:)), "", modifiers: []))
+    submenu.addItem(.separator())
+    submenu.addItem(menuItem("分离受管终端", #selector(detachManagedTerminal(_:)), "", modifiers: []))
+    submenu.addItem(menuItem("结束受管终端", #selector(endManagedTerminal(_:)), "", modifiers: []))
+    submenu.addItem(
+      menuItem(
+        "把布局托管到后台…", #selector(migrateWorkspaceToManagedSession(_:)), "", modifiers: []))
     item.submenu = submenu
     return item
   }

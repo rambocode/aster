@@ -67,6 +67,13 @@ final class ControlSocketClient {
   init?(path: String) {
     fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { return nil }
+    // 拒绝对端用例会在 write 前关闭连接，不能依赖其他测试全局忽略 SIGPIPE。
+    var noSigpipe: Int32 = 1
+    guard setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe,
+                     socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+      Darwin.close(fd)
+      return nil
+    }
     var address = AsterControlServer.makeAddress(path)
     let connected = withUnsafePointer(to: &address) { pointer in
       pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
@@ -127,4 +134,30 @@ final class ControlSocketClient {
 func temporaryControlSocketPath() -> String {
   let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("aster-ctl-\(UUID().uuidString.prefix(8))")
   return (directory as NSString).appendingPathComponent("aster.sock")
+}
+
+extension ControlTestWorkspace {
+  /// 端到端输入测试使用实际 Ghostty，并等待 Shell 的输入区标记；调用方负责关闭窗口。
+  func makeReadyGhosttyTerminal() async throws -> (TerminalSession, GhosttySurfaceView, NSWindow) {
+    let session = try #require(model.selectedTab?.activeSession)
+    let view = try liveGhosttyView(for: session, preferences: preferences)
+    var inputReady = false
+    let previousOSC = view.onOSC
+    view.onOSC = { code, payload, point in
+      previousOSC?(code, payload, point)
+      if code == 133, String(decoding: payload, as: UTF8.self) == "B" { inputReady = true }
+    }
+    defer { view.onOSC = previousOSC }
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500),
+                          styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = view.superview
+    window.makeKeyAndOrderFront(nil)
+    let readyDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+    while !inputReady, ContinuousClock.now < readyDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    if !inputReady { window.orderOut(nil) }
+    try #require(inputReady, "PTY 创建不等于 Shell 输入区已就绪")
+    return (session, view, window)
+  }
 }

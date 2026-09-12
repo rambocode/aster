@@ -9,6 +9,13 @@ extension GhosttySurfaceView {
       handleGhosttyPaneModeKeyDown(event)
       return
     }
+    // 受管终端闸门（P4.2 §4.2）：远端完整快照确认之前丢弃键入，且**不缓存、不重放**。
+    // 放行带 Command 的事件：它们是 App 级快捷键（切机器、关标签），拦下来会让用户在
+    // 关闸期间连退路都没有；它们不会把字符送进远端 PTY。
+    if !managedInputGateOpen, !event.modifierFlags.contains(.command) {
+      NSSound.beep()
+      return
+    }
     if onAutocompleteKeyDown?(event) == true { return }
     guard let surface, !readOnly else {
       if readOnly { NSSound.beep() } else { super.keyDown(with: event) }

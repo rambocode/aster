@@ -29,6 +29,20 @@ struct CommandRunner {
       let result = try client.call(.sessionSnapshot, params: nil)
       try emit(result, text: renderSnapshot)
 
+    case .sessionTerminals:
+      let result = try client.call(.sessionTerminals, params: nil)
+      try emit(result, text: renderManagedTerminals)
+
+    case .sessionDetach(var params):
+      params.pane = resolveTarget(params.pane)
+      let result = try client.call(.sessionDetach, params: try encode(params))
+      try emit(result, text: renderManagedAction)
+
+    case .sessionEnd(var params):
+      params.pane = resolveTarget(params.pane)
+      let result = try client.call(.sessionEnd, params: try encode(params))
+      try emit(result, text: renderManagedAction)
+
     case .agentList:
       let result = try client.call(.agentList, params: nil)
       try emit(result, text: renderAgentList)
@@ -246,6 +260,27 @@ struct CommandRunner {
       ])
     }
     return table(rows)
+  }
+
+  /// `session terminals` 的表格：pane 短 ID 可直接当作 detach/end 的 selector。
+  private func renderManagedTerminals(_ result: JSONValue) throws -> String {
+    let terminals = try result.decoded(as: ManagedTerminalListResult.self).terminals
+    guard !terminals.isEmpty else { return "(no managed terminals)" }
+    var rows = [["PANE", "TERMINAL", "SERVER", "SESSION", "STATE", "PID"]]
+    for terminal in terminals {
+      rows.append([
+        terminal.paneID, terminal.terminalID, terminal.serverID, terminal.sessionID,
+        terminal.state.rawValue, terminal.pid.map(String.init) ?? "-",
+      ])
+    }
+    return table(rows)
+  }
+
+  /// `session detach` / `session end` 的确认行：动作语义 + 目标终端与结果状态。
+  private func renderManagedAction(_ result: JSONValue) throws -> String {
+    let outcome = try result.decoded(as: ManagedTerminalActionResult.self)
+    let terminal = outcome.terminal
+    return "\(outcome.disposition.rawValue) \(terminal.paneID) terminal=\(terminal.terminalID) state=\(terminal.state.rawValue)"
   }
 
   private func renderAgentGet(_ result: JSONValue) throws -> String {

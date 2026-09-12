@@ -37,6 +37,8 @@ final class GhosttySurfaceView: NSView {
   var onAutocompleteKeyDown: ((NSEvent) -> Bool)?
   var onRequestViSearch: ((TerminalViSearchDirection) -> Void)?
   var onRepeatViSearch: ((Bool) -> Void)?
+  /// 远端受管终端图片粘贴回调。设置后 paste 会先检查剪贴板图片并走上传流程。
+  var onRemoteImagePaste: ((Data) async -> RemoteImageUploader.Result)?
   var onPaneModeActivated: (() -> Void)?
   var onRequestOpenTarget: ((String, DetectedTargetSource) -> Void)?
   var onResolveHintCopyTarget: ((String, DetectedTargetSource) -> String?)?
@@ -63,6 +65,14 @@ final class GhosttySurfaceView: NSView {
   /// 主线程，避免大输出为 Autocomplete/活动检测制造无界 DispatchQueue backlog。
   nonisolated(unsafe) private var outputMessageBus: TerminalOutputMessageBus!
   private(set) var readOnly = false
+  /// 受管终端的交互闸门（P4.2 §4.2）。false = 关闸，键入被直接丢弃。
+  ///
+  /// 与 `readOnly` 是两件事，绝不能复用：`readOnly` 是用户显式切换的 Pane 模式，会走
+  /// Ghostty 的 `toggle_readonly` 绑定、点亮 READ ONLY 角标、并经 `onReadOnlyChange`
+  /// 回写 Session。闸门只是「远端完整快照尚未确认」这段窗口期的临时拦截，不该改动
+  /// 用户的只读设置，也不该让终端进入只读模式。
+  /// 默认打开：本地非受管终端与 Local 受管终端永远不碰它，行为不变。
+  private(set) var managedInputGateOpen = true
   var searchTotal = 0
   var searchSelected = 0
   var searchNeedle = ""
@@ -286,6 +296,11 @@ final class GhosttySurfaceView: NSView {
     }
   }
 
+  /// 开关受管终端的交互闸门。只拦截「本次键入」，不缓存、不重放（§4.1 第 6 条）。
+  func setManagedInputGate(open: Bool) {
+    managedInputGateOpen = open
+  }
+
   func handleReadOnly(_ enabled: Bool) {
     readOnly = enabled
     onReadOnlyChange?(enabled)
@@ -323,7 +338,12 @@ final class GhosttySurfaceView: NSView {
 
   // MARK: - Surface lifecycle
 
+  /// 受管终端不可用时禁止落地任何本地进程：surface 创建被彻底阻断，
+  /// 包括 `viewDidMoveToWindow` 的自动创建路径。
+  var surfaceCreationDisabled = false
+
   func createSurface() {
+    guard !surfaceCreationDisabled else { return }
     guard !isDestroyed, surface == nil else { return }
     // macOS Ghostty surface 创建需要 NSView 已进入真实窗口；工作区先组装离屏视图树时
     // 只记录待创建，不能把正常的 AppKit 挂载顺序误报成启动失败。
@@ -445,6 +465,7 @@ final class GhosttySurfaceView: NSView {
     onRequestFocus = nil
     onPasteIntoComposer = nil
     onSendSelectionToChat = nil
+    onRemoteImagePaste = nil
     onAuthorizeClipboard = nil
     onSurfaceCreated = nil
     onPTYRead = nil

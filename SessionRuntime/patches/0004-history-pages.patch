@@ -1,0 +1,65 @@
+diff --git a/src/terminal/c/formatter.zig b/src/terminal/c/formatter.zig
+--- a/src/terminal/c/formatter.zig
++++ b/src/terminal/c/formatter.zig
+@@ -877,3 +877,39 @@
+     removed.* = before.rows - out.rows;
+     return .success;
+ }
++
++/// Serial is stable within this Screen's PageList lifetime and changes when a
++/// pooled node is reused. Consumers must clear identities on screen replacement
++/// and must never compare serials belonging to different terminals/screens.
++pub const AsterHistoryPage = extern struct {
++    serial: u64,
++    first_row: usize,
++    rows: usize,
++    charged_bytes: usize,
++};
++
++pub fn aster_history_pages(terminal_: terminal_c.Terminal, screen_id: u32, out: ?[*]AsterHistoryPage, capacity: usize, written: *usize) callconv(lib.calling_conv) Result {
++    written.* = 0;
++    const terminal = (terminal_ orelse return .invalid_value).terminal;
++    const key: @import("../ScreenSet.zig").Key = switch (screen_id) {
++        0 => .primary, 1 => .alternate, else => return .invalid_value,
++    };
++    const screen = terminal.screens.get(key) orelse return .no_value;
++    if (screen.pages.total_rows == screen.pages.rows) return .success;
++    var row: usize = 0;
++    var it = screen.pages.pageIterator(.right_down, .{ .history = .{} }, null);
++    while (it.next()) |chunk| {
++        const rows: usize = chunk.end - chunk.start;
++        if (out) |buffer| {
++            if (written.* < capacity) buffer[written.*] = .{
++                .serial = chunk.node.serial,
++                .first_row = row,
++                .rows = rows,
++                .charged_bytes = chunk.node.data.memory.len,
++            };
++        }
++        written.* += 1;
++        row += rows;
++    }
++    return if (out == null or written.* > capacity) .out_of_space else .success;
++}
+diff --git a/src/terminal/c/main.zig b/src/terminal/c/main.zig
+--- a/src/terminal/c/main.zig
++++ b/src/terminal/c/main.zig
+@@ -68,6 +68,7 @@
+ pub const aster_screen_total_rows = formatter.aster_screen_total_rows;
+ pub const aster_history_usage = formatter.aster_history_usage;
+ pub const aster_history_trim = formatter.aster_history_trim;
++pub const aster_history_pages = formatter.aster_history_pages;
+ pub const aster_screen_state_buf = formatter.aster_screen_state_buf;
+ pub const aster_placement_render_info = formatter.aster_placement_render_info;
+ pub const aster_placement_anchor = formatter.aster_placement_anchor;
+diff --git a/src/lib_vt.zig b/src/lib_vt.zig
+--- a/src/lib_vt.zig
++++ b/src/lib_vt.zig
+@@ -211,6 +211,7 @@
+         @export(&c.aster_screen_total_rows, .{ .name = "ghostty_aster_screen_total_rows" });
+         @export(&c.aster_history_usage, .{ .name = "ghostty_aster_history_usage" });
+         @export(&c.aster_history_trim, .{ .name = "ghostty_aster_history_trim" });
++        @export(&c.aster_history_pages, .{ .name = "ghostty_aster_history_pages" });
+         @export(&c.aster_placement_render_info, .{ .name = "ghostty_aster_placement_render_info" });
+         @export(&c.aster_graphics_for_screen, .{ .name = "ghostty_aster_graphics_for_screen" });
+         @export(&c.aster_image_ids, .{ .name = "ghostty_aster_image_ids" });

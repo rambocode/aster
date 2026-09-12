@@ -1,0 +1,107 @@
+[
+  {
+    "name": "maximum reply counters",
+    "kind": "response",
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.attach\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"response\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"operation\": \"terminal.attach\", \"scope\": \"session\", \"result\": {\"attachmentID\": \"12345678-1234-1234-1234-123456789abc\", \"terminalID\": \"12345678-1234-1234-1234-123456789abc\", \"readOnly\": false, \"lease\": {\"leaseID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseEpoch\": 18446744073709551615}}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}, \"revision\": 18446744073709551615}",
+    "afterSequence": null,
+    "result": "ok"
+  },
+  {
+    "name": "wrong request",
+    "kind": "response",
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.attach\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"response\", \"requestID\": \"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\", \"operation\": \"terminal.attach\", \"scope\": \"session\", \"result\": {\"attachmentID\": \"12345678-1234-1234-1234-123456789abc\", \"terminalID\": \"12345678-1234-1234-1234-123456789abc\", \"readOnly\": false, \"lease\": {\"leaseID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseEpoch\": 18446744073709551615}}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}, \"revision\": 18446744073709551615}",
+    "afterSequence": null,
+    "result": "requestMismatch"
+  },
+  {
+    "name": "wrong epoch",
+    "kind": "response",
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.attach\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"response\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"operation\": \"terminal.attach\", \"scope\": \"session\", \"result\": {\"attachmentID\": \"12345678-1234-1234-1234-123456789abc\", \"terminalID\": \"12345678-1234-1234-1234-123456789abc\", \"readOnly\": false, \"lease\": {\"leaseID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseEpoch\": 18446744073709551615}}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}, \"revision\": 18446744073709551615}",
+    "afterSequence": null,
+    "result": "targetMismatch"
+  },
+  {
+    "name": "missing revision",
+    "kind": "response",
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.attach\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"response\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"operation\": \"terminal.attach\", \"scope\": \"session\", \"result\": {\"attachmentID\": \"12345678-1234-1234-1234-123456789abc\", \"terminalID\": \"12345678-1234-1234-1234-123456789abc\", \"readOnly\": false, \"lease\": {\"leaseID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseEpoch\": 18446744073709551615}}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "afterSequence": null,
+    "result": "targetMismatch"
+  },
+  {
+    "name": "error without unauthorized target",
+    "kind": "error",
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.attach\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"error\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"operation\": \"terminal.attach\", \"scope\": \"session\", \"error\": {\"code\": \"lease_busy\", \"message\": \"Terminal is controlled by another client\", \"retry\": \"never\"}}",
+    "afterSequence": null,
+    "result": "ok"
+  },
+  {
+    "name": "invalid error code",
+    "kind": "error",
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.attach\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"error\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"operation\": \"terminal.attach\", \"scope\": \"session\", \"error\": {\"code\": \"7invalid\", \"message\": \"Terminal is controlled by another client\", \"retry\": \"never\"}}",
+    "afterSequence": null,
+    "result": "invalidError"
+  },
+  {
+    "name": "maximum event counters",
+    "kind": "event",
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.attach\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"event\", \"event\": \"lease.revoked\", \"eventID\": \"12345678-1234-1234-1234-123456789abc\", \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}, \"sequence\": 18446744073709551615, \"revision\": 18446744073709551615, \"body\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseEpoch\": 18446744073709551615, \"reason\": \"takeover\"}}",
+    "afterSequence": 18446744073709551614,
+    "result": "ok"
+  },
+  {
+    "name": "wrong event kind",
+    "kind": "event",
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.attach\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"event\", \"event\": \"terminal.updated\", \"eventID\": \"12345678-1234-1234-1234-123456789abc\", \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}, \"sequence\": 18446744073709551615, \"revision\": 18446744073709551615, \"body\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseEpoch\": 18446744073709551615, \"reason\": \"takeover\"}}",
+    "afterSequence": 18446744073709551614,
+    "result": "eventMismatch"
+  },
+  {
+    "name": "stale event",
+    "kind": "event",
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.attach\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"event\", \"event\": \"lease.revoked\", \"eventID\": \"12345678-1234-1234-1234-123456789abc\", \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}, \"sequence\": 2, \"revision\": 18446744073709551615, \"body\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseEpoch\": 18446744073709551615, \"reason\": \"takeover\"}}",
+    "afterSequence": 2,
+    "result": "staleEvent"
+  },
+  {
+    "name": "event gap",
+    "kind": "event",
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.attach\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"event\", \"event\": \"lease.revoked\", \"eventID\": \"12345678-1234-1234-1234-123456789abc\", \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}, \"sequence\": 4, \"revision\": 18446744073709551615, \"body\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseEpoch\": 18446744073709551615, \"reason\": \"takeover\"}}",
+    "afterSequence": 2,
+    "result": "sequenceGap"
+  },
+  {
+    "name": "event wrong instance",
+    "kind": "event",
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.attach\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"event\", \"event\": \"lease.revoked\", \"eventID\": \"12345678-1234-1234-1234-123456789abc\", \"target\": {\"serverID\": \"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}, \"sequence\": 18446744073709551615, \"revision\": 18446744073709551615, \"body\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseEpoch\": 18446744073709551615, \"reason\": \"takeover\"}}",
+    "afterSequence": 18446744073709551614,
+    "result": "targetMismatch"
+  },
+  {
+    "name": "invalid event identity",
+    "kind": "event",
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.attach\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"event\", \"event\": \"lease.revoked\", \"eventID\": \"invalid\", \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}, \"sequence\": 18446744073709551615, \"revision\": 18446744073709551615, \"body\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseEpoch\": 18446744073709551615, \"reason\": \"takeover\"}}",
+    "afterSequence": 18446744073709551614,
+    "result": "invalidEventID"
+  },
+  {
+    "name": "stale revision",
+    "kind": "event",
+    "requestJSON": "{\"type\": \"request\", \"requestID\": \"12345678-1234-1234-1234-123456789abc\", \"clientID\": \"12345678-1234-1234-1234-123456789abc\", \"scope\": \"session\", \"operation\": \"terminal.attach\", \"params\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\"}, \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}}",
+    "valueJSON": "{\"type\": \"event\", \"event\": \"lease.revoked\", \"eventID\": \"12345678-1234-1234-1234-123456789abc\", \"target\": {\"serverID\": \"12345678-1234-1234-1234-123456789abc\", \"serverEpoch\": \"12345678-1234-1234-1234-123456789abc\", \"sessionID\": \"12345678-1234-1234-1234-123456789abc\"}, \"sequence\": 3, \"revision\": 1, \"body\": {\"terminalID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseID\": \"12345678-1234-1234-1234-123456789abc\", \"leaseEpoch\": 18446744073709551615, \"reason\": \"takeover\"}}",
+    "afterSequence": 2,
+    "result": "staleRevision",
+    "minimumRevision": 2
+  }
+]

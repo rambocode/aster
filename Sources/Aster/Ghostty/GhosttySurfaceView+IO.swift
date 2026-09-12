@@ -6,7 +6,9 @@ extension GhosttySurfaceView: NSMenuItemValidation {
   /// 以键盘文本事件写入前台程序；换行被转换为真实 Return，适用于命令与自动化输入。
   @discardableResult
   func typeText(_ text: String) -> Bool {
-    guard let surface, isProcessRunning, !readOnly, navigationMode == .normal, !text.isEmpty else {
+    guard let surface, isProcessRunning, !readOnly, managedInputGateOpen,
+      navigationMode == .normal, !text.isEmpty
+    else {
       return false
     }
     onUserInput?()
@@ -35,8 +37,8 @@ extension GhosttySurfaceView: NSMenuItemValidation {
   /// 内嵌 NUL 不能表达为终端键入，明确拒绝而不是截断并报告假成功。
   @discardableResult
   func sendBytes(_ bytes: [UInt8]) -> Bool {
-    guard let surface, isProcessRunning, !readOnly, navigationMode == .normal,
-      !bytes.isEmpty, !bytes.contains(0)
+    guard let surface, isProcessRunning, !readOnly, managedInputGateOpen,
+      navigationMode == .normal, !bytes.isEmpty, !bytes.contains(0)
     else {
       return false
     }
@@ -70,7 +72,9 @@ extension GhosttySurfaceView: NSMenuItemValidation {
   }
 
   func sendInterrupt() {
-    guard let surface, isProcessRunning, !readOnly, navigationMode == .normal else { return }
+    guard let surface, isProcessRunning, !readOnly, managedInputGateOpen,
+      navigationMode == .normal
+    else { return }
     onUserInput?()
     var key = ghostty_input_key_s()
     key.action = GHOSTTY_ACTION_PRESS
@@ -85,7 +89,9 @@ extension GhosttySurfaceView: NSMenuItemValidation {
   /// 自动包裹。Aster 仍在发送前做保守风险确认，控制字符永远不会静默放行。
   @discardableResult
   func pasteText(_ text: String) -> Bool {
-    guard let surface, isProcessRunning, !readOnly, navigationMode == .normal, !text.isEmpty else {
+    guard let surface, isProcessRunning, !readOnly, managedInputGateOpen,
+      navigationMode == .normal, !text.isEmpty
+    else {
       return false
     }
     let analysis = PasteRiskAnalyzer.analyze(text)
@@ -269,6 +275,28 @@ extension GhosttySurfaceView: NSMenuItemValidation {
   @objc func copy(_ sender: Any?) { _ = performBindingAction("copy_to_clipboard") }
 
   @objc func paste(_ sender: Any?) {
+    // 远端受管终端：剪贴板含图片时走上传流程，粘贴远端路径而不是图片内容
+    let pb = NSPasteboard.general
+    if let handler = onRemoteImagePaste,
+       RemoteImageUploader.pasteboardHasImage(pb),
+       let imageData = RemoteImageUploader.extractImageData(from: pb)
+    {
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        let result = await handler(imageData)
+        switch result {
+        case .success(let remotePath):
+          // 粘贴远端路径，不带换行
+          _ = self.pasteText(remotePath)
+        case .cancelled:
+          break
+        case .failed:
+          // 失败时不粘贴任何内容，避免残留
+          break
+        }
+      }
+      return
+    }
     guard let text = readSystemClipboard() else { return }
     _ = pasteText(text)
   }

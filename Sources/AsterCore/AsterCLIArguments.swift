@@ -17,6 +17,12 @@ public enum AsterCLICommand: Equatable, Sendable {
   /// 打印内置 SKILL.md。
   case skill
   case sessionSnapshot
+  /// 列出 App 可见的受管终端（远程工作模式）。
+  case sessionTerminals
+  /// 分离指定 pane 的受管终端：后台进程继续运行。
+  case sessionDetach(ManagedTerminalTargetParams)
+  /// 结束指定 pane 的受管终端后台进程。
+  case sessionEnd(ManagedTerminalTargetParams)
   case agentList
   case agentGet(AgentTargetParams)
   case agentRead(AgentReadParams)
@@ -75,12 +81,14 @@ public struct AsterCLIArguments: Equatable, Sendable {
   /// agent.* / events.* / notification.* 只对运行在 Aster 内的进程开放（需 `ASTER_ENV=1`），
   /// 其余命令（open/view/pane read 等）任意终端可用。
   public var requiresAsterEnv: Bool {
+    // `session detach` / `session end` 会结束或拆掉后台受管终端，属于生命周期动作：
+    // 与 agent.* 同级，只对 Aster 内进程开放；只读的 `session terminals` 保持任意终端可用。
     switch command {
     case .agentList, .agentGet, .agentRead, .agentPrompt, .agentWait, .agentSendKeys, .agentFocus,
-      .agentStart, .eventsSubscribe, .eventsWait, .notificationShow:
+      .agentStart, .eventsSubscribe, .eventsWait, .notificationShow, .sessionDetach, .sessionEnd:
       return true
-    case .help, .version, .skill, .sessionSnapshot, .paneRead, .paneSendText, .paneSendKeys,
-      .paneFocus, .paneWaitForOutput, .legacy:
+    case .help, .version, .skill, .sessionSnapshot, .sessionTerminals, .paneRead, .paneSendText,
+      .paneSendKeys, .paneFocus, .paneWaitForOutput, .legacy:
       return false
     }
   }
@@ -201,10 +209,7 @@ public struct AsterCLIArguments: Equatable, Sendable {
     case "notification":
       return make(try parseNotification(arguments))
     case "session":
-      guard arguments == ["snapshot"] else {
-        throw AsterCLIArgumentError("session 只支持子命令 snapshot")
-      }
-      return make(.sessionSnapshot)
+      return make(try parseSession(arguments))
     default:
       if legacyTopLevelCommands.contains(group) { return legacy }
       throw AsterCLIArgumentError("未知命令: \(group)。运行 `aster --help` 查看用法")
@@ -395,6 +400,38 @@ public struct AsterCLIArguments: Equatable, Sendable {
         lines: try parsed.int("--lines"), timeoutMs: try parsed.int("--timeout"))
     default:
       throw AsterCLIArgumentError("未知子命令: pane \(subcommand)")
+    }
+  }
+
+  // MARK: session
+
+  /// `session snapshot | terminals | detach <selector> | end <selector>`。
+  /// detach/end 必须显式指定目标（或 `--current`）：这两个动作会拆桥或结束后台进程，
+  /// 不允许在没有目标时猜一个 pane。
+  private static func parseSession(_ input: [String]) throws -> AsterCLICommand {
+    guard let subcommand = input.first else {
+      throw AsterCLIArgumentError("session 需要子命令：snapshot | terminals | detach | end")
+    }
+    let arguments = Array(input.dropFirst())
+    switch subcommand {
+    case "snapshot":
+      try expectNoArguments(arguments, command: "session snapshot")
+      return .sessionSnapshot
+    case "terminals":
+      try expectNoArguments(arguments, command: "session terminals")
+      return .sessionTerminals
+    case "detach", "end":
+      let command = "session \(subcommand)"
+      let parsed = try parseOptions(arguments, command: command, flags: ["--current"], valued: [])
+      guard parsed.positionals.count <= 1 else {
+        throw AsterCLIArgumentError("\(command) 只接受一个 <pane>")
+      }
+      let target = try requiredTarget(parsed, command: command)
+      let params = ManagedTerminalTargetParams(pane: target)
+      try mapValidation { try params.validate() }
+      return subcommand == "detach" ? .sessionDetach(params) : .sessionEnd(params)
+    default:
+      throw AsterCLIArgumentError("未知子命令: session \(subcommand)")
     }
   }
 
@@ -716,6 +753,11 @@ public struct AsterCLIArguments: Equatable, Sendable {
       events subscribe [--kind <kind>]...
       events wait [--kind <kind>] [--pane <id>|--current] [--after-sequence N] [--timeout ms]
       notification show <title> [--body <text>] [--urgency low|normal|critical]
+
+    受管终端（detach/end 需 ASTER_ENV=1）:
+      session terminals
+      session detach <pane>|--current
+      session end <pane>|--current
 
     其它:
       session snapshot

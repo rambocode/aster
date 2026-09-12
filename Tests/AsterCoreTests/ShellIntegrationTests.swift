@@ -3,10 +3,13 @@ import Testing
 
 @testable import AsterCore
 
-@Test("OSC 133 只接受 A B C D 及合法退出码")
+@Test("OSC 133 只接受已知提示符标记及合法退出码")
 func shellIntegrationEventParsesStrictFTCSMarkers() {
   #expect(ShellIntegrationEvent(payload: "A") == .promptStart)
   #expect(ShellIntegrationEvent(payload: "A;cl=line") == .promptStart)
+  #expect(ShellIntegrationEvent(payload: "P;k=i") == .promptStart)
+  #expect(ShellIntegrationEvent(payload: "P;k=c") == nil)
+  #expect(ShellIntegrationEvent(payload: "P;k=i;command=secret") == nil)
   #expect(ShellIntegrationEvent(payload: "B") == .inputStart)
   #expect(ShellIntegrationEvent(payload: "C") == .commandStart)
   #expect(ShellIntegrationEvent(payload: "D;0") == .commandFinished(exitStatus: 0))
@@ -238,4 +241,20 @@ func shellCommandTimelineStampsFinishedAt() {
   let finishedAt = timeline.marks.last?.finishedAt
   #expect(finishedAt != nil)
   #expect(finishedAt.map { $0 >= before && $0 <= after } == true)
+}
+
+@Test("Ghostty 补报提示符后命令运行态持续至退出标记")
+func ghosttyFallbackPromptTracksCommandLifecycle() throws {
+  var timeline = ShellCommandTimeline()
+  for (row, payload) in ["P;k=i", "B", "C"].enumerated() {
+    timeline.receive(try #require(ShellIntegrationEvent(payload: payload)),
+                     at: TerminalGridPoint(column: 0, row: row))
+  }
+  #expect(timeline.isCommandRunning)
+  #expect(timeline.runningCommand != nil)
+  timeline.receive(try #require(ShellIntegrationEvent(payload: "D;7")),
+                   at: TerminalGridPoint(column: 0, row: 3))
+  #expect(!timeline.isCommandRunning)
+  #expect(timeline.marks.count == 1)
+  #expect(timeline.marks.first?.exitStatus == 7)
 }
