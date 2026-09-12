@@ -493,6 +493,38 @@ struct MachineFleetTests {
     }
   }
 
+  @Test("远端 Agent 清单写回侧栏行：探测前为 nil，探测后带版本；悬停提示与文案一致")
+  func agentCatalogAppearsOnSidebarRow() async throws {
+    let services = FakeServices()
+    services.catalog = RemoteAgentProbeResult(entries: [
+      .grokBuild: .init(installed: true, version: "grok 1.0.30 (04b7ffed98c6) [stable]"),
+      .claudeCode: .init(installed: true, version: "2.1.0"),
+    ])
+    let (fleet, url, _) = makeFleet(services)
+    defer { cleanUp(fleet, url) }
+    guard case .added(let profile) = await fleet.addMachine(
+      label: "orb", sshTarget: "root@ubuntu@orb", sessionName: "work", confirm: { _ in true })
+    else {
+      Issue.record("前置添加失败")
+      return
+    }
+    let before = try #require(fleet.rows.first { $0.id == profile.id })
+    #expect(before.agents == nil)
+    #expect(MachineRowButton.toolTip(before).contains("Agent：尚未探测"))
+
+    _ = try await fleet.refreshAgentCatalog(profile.id)
+    let after = try #require(fleet.rows.first { $0.id == profile.id })
+    #expect(after.agents?.map(\.provider) == [.claudeCode, .grokBuild])
+    // 版本去掉命令名前缀，只留数字部分；provider 用显示名。
+    let text = MachineRowButton.agentsText(after.agents ?? [])
+    #expect(text == "Claude Code 2.1.0、Grok Build 1.0.30 (04b7ffed98c6) [stable]")
+    #expect(MachineRowButton.toolTip(after).contains("Agent：" + text))
+    // Local 行不显示 Agent 探测信息。
+    let local = try #require(fleet.rows.first)
+    #expect(local.isLocal && local.agents == nil)
+    #expect(!MachineRowButton.toolTip(local).contains("Agent"))
+  }
+
   @Test("添加机器：设置事务失败不保存配置")
   func addMachineFailureLeavesNothing() async throws {
     let services = FakeServices()

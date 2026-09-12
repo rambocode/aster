@@ -156,11 +156,33 @@ extension WorkspaceViewController {
     update.identifier = NSUserInterfaceItemIdentifier("machine-menu-update-service")
     menu.addItem(update)
 
-    let newAgent = NSMenuItem(
-      title: "新建 Agent…", action: #selector(newMachineAgent(_:)), keyEquivalent: "")
-    newAgent.target = self
-    newAgent.representedObject = row.id
+    // 已探测到清单时直接列成子菜单，一步启动；未探测/为空时保留弹窗入口（弹窗会现探）。
+    let newAgent = NSMenuItem(title: "新建 Agent", action: nil, keyEquivalent: "")
     newAgent.identifier = NSUserInterfaceItemIdentifier("machine-menu-new-agent")
+    if let agents = row.agents, !agents.isEmpty {
+      let submenu = NSMenu(title: "新建 Agent")
+      submenu.autoenablesItems = false
+      for entry in agents {
+        let item = NSMenuItem(
+          title: MachineRowButton.agentsText([entry]), action: #selector(newMachineAgentDirect(_:)),
+          keyEquivalent: "")
+        item.target = self
+        item.representedObject = [row.id.uuidString, entry.provider.rawValue]
+        item.identifier = NSUserInterfaceItemIdentifier("machine-menu-agent-\(entry.provider.rawValue)")
+        submenu.addItem(item)
+      }
+      submenu.addItem(.separator())
+      let rescan = NSMenuItem(title: "重新探测…", action: #selector(rescanMachineAgents(_:)), keyEquivalent: "")
+      rescan.target = self
+      rescan.representedObject = row.id
+      submenu.addItem(rescan)
+      newAgent.submenu = submenu
+    } else {
+      newAgent.title = "新建 Agent…"
+      newAgent.action = #selector(newMachineAgent(_:))
+      newAgent.target = self
+      newAgent.representedObject = row.id
+    }
     menu.addItem(newAgent)
 
     let agents = NSMenuItem(
@@ -191,6 +213,42 @@ extension WorkspaceViewController {
         label: draft.label, sshTarget: draft.sshTarget, sessionName: draft.sessionName,
         confirm: { MachineSetupSheet.confirm($0, in: window) })
       self.present(result, in: window)
+    }
+  }
+
+  /// 子菜单直接选中某个已探测到的 Agent：跳过弹窗，切到该机器后立即开标签。
+  @objc private func newMachineAgentDirect(_ sender: NSMenuItem) {
+    guard let pair = sender.representedObject as? [String], pair.count == 2,
+      let id = UUID(uuidString: pair[0]), let provider = AgentProvider(rawValue: pair[1])
+    else { return }
+    let window = view.window
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      if self.machineFleet.activeMachineID != id {
+        if let failure = self.machineFleet.selectMachine(id) {
+          MachineSetupSheet.presentFailure(failure, in: window)
+          return
+        }
+        self.scheduleRefresh()
+        await self.remoteWorkspaces.activate(machineProfileID: id)
+      }
+      self.remoteWorkspaces.createAgentTab(provider: provider, workingDirectory: nil)
+    }
+  }
+
+  /// 重新探测远端 Agent 清单并刷新侧栏。
+  @objc private func rescanMachineAgents(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? UUID else { return }
+    let window = view.window
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      do {
+        _ = try await self.machineFleet.refreshAgentCatalog(id)
+        self.scheduleRefresh()
+      } catch {
+        MachineSetupSheet.presentFailure(
+          "远端 Agent 探测失败：\(RemoteSetupDescription.text(for: error))", in: window)
+      }
     }
   }
 

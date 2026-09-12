@@ -85,6 +85,19 @@ final class MachineRowButton: NSButton {
     text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     row_.addArrangedSubview(text)
 
+    // 远端探测到的 Agent：在线时把命令名列在行尾（herdrm 的做法是画图标；这里先用文字，
+    // 一眼能看到"这台机器上有 grok / claude"），详情在悬停提示与右键菜单。
+    if let agents = row.agents, row.state == .online {
+      let names = agents.map(\.provider.commandName).joined(separator: " ")
+      let label = makeLabel(
+        names.isEmpty ? "无 agent" : names, size: 9.5, weight: .medium,
+        color: tint.withAlphaComponent(names.isEmpty ? 0.45 : 0.75))
+      label.identifier = NSUserInterfaceItemIdentifier("machine-agents")
+      label.lineBreakMode = .byTruncatingTail
+      label.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+      label.setContentHuggingPriority(.required, for: .horizontal)
+      row_.addArrangedSubview(label)
+    }
     if let accessory = Self.makeStateAccessory(row: row, tint: tint) {
       row_.addArrangedSubview(accessory)
     }
@@ -159,7 +172,24 @@ final class MachineRowButton: NSButton {
   static func toolTip(_ row: MachineFleetRow) -> String {
     var lines = ["状态：\(stateText(row.state))", lastUpdatedText(row.lastUpdatedAt)]
     if let error = row.lastError, !error.isEmpty { lines.append(error) }
+    if let agents = row.agents {
+      lines.append(agents.isEmpty ? "Agent：远端未发现已知 CLI" : "Agent：" + agentsText(agents))
+    } else if !row.isLocal {
+      lines.append("Agent：尚未探测")
+    }
     return lines.joined(separator: "\n")
+  }
+
+  /// 「Grok Build 1.0.30、Claude Code 2.1.0」。版本取 `--version` 首行去掉命令名前缀。
+  static func agentsText(_ agents: [RemoteAgentCatalogEntry]) -> String {
+    agents.map { entry in
+      guard let version = entry.version?.trimmingCharacters(in: .whitespacesAndNewlines),
+        !version.isEmpty
+      else { return entry.provider.displayName }
+      let trimmed = version.hasPrefix(entry.provider.commandName + " ")
+        ? String(version.dropFirst(entry.provider.commandName.count + 1)) : version
+      return "\(entry.provider.displayName) \(trimmed)"
+    }.joined(separator: "、")
   }
 
   /// 「最后更新」文案。从未连上时明确说明，不显示一个假的时间。

@@ -18,6 +18,8 @@ struct MachineFleetRow: Equatable, Identifiable {
   var state: SessionConnectionState
   var lastUpdatedAt: Date?
   var lastError: String?
+  /// 远端探测到的已安装 Agent CLI；nil 表示尚未探测（Local 恒为 nil，本机 Agent 走设置页）。
+  var agents: [RemoteAgentCatalogEntry]? = nil
 
   /// 侧栏副标题：会话名 +（远端时）target。不显示 PID 或 hostname 作为身份。
   var subtitle: String {
@@ -186,6 +188,10 @@ final class MachineFleetModel: ObservableObject {
   private(set) var profiles: [MachineProfile] = []
   /// 编排器状态的本地缓存；`refreshStatuses()` 从 actor 拉过来后重建行。
   private(set) var statuses: [UUID: MachineConnectionStatus] = [:]
+  /// 远端 Agent 清单缓存与已探测过的连接代次：每次连上（新代次）只探一次，不随状态轮询反复 SSH。
+  private var agentCatalogs: [UUID: [RemoteAgentCatalogEntry]] = [:]
+  private var agentCatalogGenerations: [UUID: UInt64] = [:]
+  private var agentCatalogTasks: [UUID: Task<Void, Never>] = [:]
   private var watcher: FileSystemDirectoryWatcher?
   private var statusPollTask: Task<Void, Never>?
   private var hasStarted = false
@@ -343,6 +349,32 @@ final class MachineFleetModel: ObservableObject {
     let all = await supervisor.allStatuses()
     statuses = Dictionary(uniqueKeysWithValues: all.map { ($0.profileID, $0) })
     rebuildRows()
+    // 机器刚连上（新代次）时探一次远端 Agent 清单，侧栏行才能直接显示"这台机器有哪些 Agent"。
+    for status in all where status.state == .online {
+      guard agentCatalogGenerations[status.profileID] != status.generation,
+        agentCatalogTasks[status.profileID] == nil
+      else { continue }
+      agentCatalogGenerations[status.profileID] = status.generation
+      scheduleAgentCatalogRefresh(status.profileID)
+    }
+  }
+
+  /// 后台探测一台机器的 Agent 清单并写回行模型。失败只清掉本次探测记录，下次连上再试。
+  private func scheduleAgentCatalogRefresh(_ id: UUID) {
+    agentCatalogTasks[id] = Task { @MainActor [weak self] in
+      guard let self else { return }
+      defer { self.agentCatalogTasks[id] = nil }
+      do {
+        _ = try await self.remoteAgentCatalog(id)
+      } catch {
+        self.agentCatalogGenerations.removeValue(forKey: id)
+      }
+    }
+  }
+
+  /// 手动重新探测一台机器的 Agent 清单（右键菜单）。
+  func refreshAgentCatalog(_ id: UUID) async throws -> [RemoteAgentCatalogEntry] {
+    try await remoteAgentCatalog(id)
   }
 
   // MARK: - 动作
@@ -575,10 +607,13 @@ final class MachineFleetModel: ObservableObject {
       throw MachineFleetError.machineNotFound
     }
     let probe = try await services.remoteAgentCatalog(for: profile)
-    return AgentProvider.allCases.compactMap { provider in
+    let catalog = AgentProvider.allCases.compactMap { provider -> RemoteAgentCatalogEntry? in
       guard let entry = probe.entries[provider], entry.installed else { return nil }
       return RemoteAgentCatalogEntry(provider: provider, version: entry.version)
     }
+    agentCatalogs[id] = catalog
+    rebuildRows()
+    return catalog
   }
 
   /// 跑一次设置事务并把两类错误统一成 `RemoteSetupFailure`。
@@ -711,6 +746,8 @@ final class MachineFleetModel: ObservableObject {
     do { try store.save(updated) } catch { return "配置删除失败：\(Self.describe(error))" }
     profiles = updated
     statuses.removeValue(forKey: id)
+    agentCatalogs.removeValue(forKey: id)
+    agentCatalogGenerations.removeValue(forKey: id)
     Task { [supervisor] in await supervisor.remove(profileID: id) }
     resolveActiveMachine(after: id)
     rebuildRows()
@@ -843,7 +880,8 @@ final class MachineFleetModel: ObservableObject {
           enabled: profile.enabled,
           state: profile.enabled ? (status?.state ?? .disconnected) : .disabled,
           lastUpdatedAt: status?.lastUpdatedAt,
-          lastError: status?.reason))
+          lastError: status?.reason,
+          agents: agentCatalogs[profile.id]))
     }
     // 内容没变就不写回：`rows` 是 @Published，每次赋值都会让工作区整树刷新，
     // 而状态轮询是高频调用。没有这道判断，侧栏会被每一轮空轮询重建一次，
