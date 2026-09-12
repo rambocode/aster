@@ -201,8 +201,14 @@ extension WorkspaceViewController {
   /// 添加 / 更新结果的统一呈现。
   private func present(_ result: MachineSetupResult, in window: NSWindow?) {
     switch result {
-    case .added, .updated:
+    case .added:
       scheduleRefresh()
+    case .updated(let profile):
+      // 服务已换成新实例：丢掉这台机器的旧投影，活动机器会立即重新握手并冷恢复失效窗格。
+      scheduleRefresh()
+      Task { @MainActor [weak self] in
+        await self?.remoteWorkspaces.discard(machineProfileID: profile.id)
+      }
     case .upToDate(let message):
       MachineSetupSheet.presentNotice(message, in: window)
     case .cancelled:

@@ -756,6 +756,20 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
     return workspace
   }
 
+  /// 丢掉一台机器的投影状态并（若它是活动机器）立刻重新握手取快照。
+  ///
+  /// 远端服务被显式替换后 serverID/epoch 与二进制路径都变了：旧控制器的事务客户端、
+  /// 事件订阅和冷恢复去重集合全部作废。不丢掉就会一直拿旧端点刷新，失效窗格永远不会
+  /// 触发新一轮 `session.restore`。
+  func discard(machineProfileID: UUID) async {
+    guard !isStopped, machineProfileID != MachineProfile.localProfileID else { return }
+    stopEventSubscription(forMachine: machineProfileID)
+    workspaces.removeValue(forKey: machineProfileID)
+    guard let model, model.activeMachineID == machineProfileID else { return }
+    closeInputGates(forMachine: machineProfileID)
+    await refresh(machineProfileID: machineProfileID)
+  }
+
   /// 测试注入入口：直接登记一台机器的投影控制器，不走真实握手。
   func register(controller: RemoteWorkspaceController, forMachine machineProfileID: UUID) {
     workspaces[machineProfileID] = RemoteMachineWorkspace(
