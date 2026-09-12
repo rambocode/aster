@@ -183,14 +183,15 @@ private let compatibleVersionLine = "aster-session 0.1.0-dev protocol=1.0"
 
 @Test func remoteCompatibilityAllowsConnectWithMissingOptionalCapabilities() {
   let capabilities = RemoteProtocolContract.requiredCapabilities + [
-    "server_lifecycle", "terminal_observe", "session_snapshot", "screen_history", "agent_recovery",
+    "server_lifecycle", "terminal_observe", "session_snapshot", "workspace_mutation",
+    "session_restore",
   ]
   let result = RemoteCompatibilityCheck.evaluate(protocolMajor: 1, capabilities: capabilities)
   guard case .compatible(let missingOptional) = result else {
     Issue.record("期望 compatible，实际 \(result)")
     return
   }
-  #expect(missingOptional.sorted() == ["handoff", "upload"])
+  #expect(missingOptional.sorted() == ["image_upload", "live_handoff"])
   #expect(result.allowsBackgroundConnect)
 }
 
@@ -207,9 +208,22 @@ private let compatibleVersionLine = "aster-session 0.1.0-dev protocol=1.0"
 @Test func remoteCompatibilityDescribesDisabledActions() {
   #expect(RemoteCompatibilityCheck.unavailableActionMessage(missingOptional: []) == nil)
   let message = try? #require(
-    RemoteCompatibilityCheck.unavailableActionMessage(missingOptional: ["handoff", "upload"]))
+    RemoteCompatibilityCheck.unavailableActionMessage(missingOptional: ["live_handoff", "image_upload"]))
   #expect(message?.contains("实时交接") == true)
   #expect(message?.contains("图片上传") == true)
+}
+
+/// 可选能力名必须是服务端真实广播的字面量：最新服务的完整能力集合下不能再报"缺少可选能力"。
+@Test func remoteCompatibilityReportsNothingMissingForCurrentServer() {
+  // 与 SessionRuntime/src/service_server.zig 的 advertised_capabilities 同步。
+  let advertised = [
+    "health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest",
+    "session_snapshot", "workspace_mutation", "agent_state", "session_restore", "session_settings",
+    "image_upload", "server_config", "custom_commands", "server_replace", "live_handoff",
+  ]
+  let result = RemoteCompatibilityCheck.evaluate(protocolMajor: 1, capabilities: advertised)
+  #expect(result == .compatible(missingOptional: []))
+  #expect(RemoteCompatibilityCheck.unavailableActionMessage(missingOptional: []) == nil)
 }
 
 // MARK: - 设置事务

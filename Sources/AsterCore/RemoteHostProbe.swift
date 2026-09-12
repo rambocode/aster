@@ -99,9 +99,14 @@ public enum RemoteProtocolContract {
     "terminal_control", "surface_interest", "health_check",
   ]
   /// 可选能力：缺失只禁用对应动作，不阻断连接。
+  ///
+  /// 名字必须与服务端 `SessionRuntime/src/service_server.zig` 广播的字面量一致：
+  /// 这里曾写成 `upload`/`agent_recovery`/`handoff`/`screen_history`，服务端从未广播过
+  /// 这些名字，结果最新服务也一直显示"缺少可选能力"。屏幕历史没有独立能力位
+  /// （走 surface 快照），不在此列。
   public static let optionalCapabilities = [
-    "server_lifecycle", "terminal_observe", "session_snapshot", "screen_history", "upload",
-    "agent_recovery", "handoff",
+    "server_lifecycle", "terminal_observe", "session_snapshot", "workspace_mutation",
+    "image_upload", "session_restore", "live_handoff",
   ]
 }
 
@@ -158,10 +163,10 @@ public enum RemoteCompatibilityCheck {
     case "server_lifecycle": "显式停止/替换服务"
     case "terminal_observe": "只读观察"
     case "session_snapshot": "共享工作区结构"
-    case "screen_history": "屏幕历史"
-    case "upload": "图片上传"
-    case "agent_recovery": "Agent 原生恢复"
-    case "handoff": "实时交接"
+    case "workspace_mutation": "共享工作区编辑"
+    case "image_upload": "图片上传"
+    case "session_restore": "Agent 原生恢复"
+    case "live_handoff": "实时交接"
     default: capability
     }
   }
