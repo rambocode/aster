@@ -713,7 +713,10 @@ pub const Service = struct {
                 // Build the terminal spec for pool.beginCreate
                 const spec_cwd = try self.allocator.dupeZ(u8, cwd);
                 errdefer self.allocator.free(spec_cwd);
-                var default_argv = [_][]const u8{"/bin/sh"};
+                // 冷恢复的新 Shell 必须是用户的登录交互 Shell，与客户端新建标签一致
+                // （ManagedTerminalLaunchSpec.remoteArgv）：裸 /bin/sh 没有 PATH、提示符和
+                // rc 文件，用户看到的是 `grok: not found` 这种"坏掉的终端"。
+                var default_argv = [_][]const u8{ "/bin/sh", "-lc", "exec \"${SHELL:-/bin/sh}\" -l -i" };
                 var actual_argv: []const []const u8 = &default_argv;
                 var restore_argv_buf: [8][]const u8 = undefined;
                 if (pane.agent_provider) |provider| {
