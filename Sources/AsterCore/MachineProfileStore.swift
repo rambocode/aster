@@ -56,7 +56,9 @@ public enum MachineProfileChange: Equatable, Hashable, Sendable {
 /// 线程安全：内部用锁保护「最后有效快照」，因为 FSEvents 回调与 UI 写入可能并发到达。
 public final class MachineProfileStore: @unchecked Sendable {
   /// 配置文件里允许出现的键。写出与读入都以它为准，多一个键就说明有东西不该被保存。
-  public static let allowedKeys: Set<String> = ["id", "label", "sshTarget", "sessionName", "enabled"]
+  public static let allowedKeys: Set<String> = [
+    "id", "label", "sshTarget", "sessionName", "enabled", "remoteBinaryPath", "stateParentPath",
+  ]
 
   /// 默认配置路径：`~/Library/Application Support/Aster/machines.json`。
   public static func defaultFileURL(
@@ -179,13 +181,28 @@ public final class MachineProfileStore: @unchecked Sendable {
         }
         sshTarget = text
       }
+      // 远端运行时位置：可选，但一旦出现必须是非空绝对路径，否则整份拒绝。
+      var runtimePaths: [String: String] = [:]
+      var runtimeInvalid = false
+      for key in ["remoteBinaryPath", "stateParentPath"] {
+        guard let value = object[key] else { continue }
+        guard let text = value as? String, text.hasPrefix("/") else {
+          reasons.append("[\(index)] invalid \(key)")
+          runtimeInvalid = true
+          break
+        }
+        runtimePaths[key] = text
+      }
+      if runtimeInvalid { continue }
       guard seenIDs.insert(id).inserted else {
         reasons.append("[\(index)] duplicate id")
         continue
       }
       profiles.append(
         MachineProfile(
-          id: id, label: label, sshTarget: sshTarget, sessionName: sessionName, enabled: enabled))
+          id: id, label: label, sshTarget: sshTarget, sessionName: sessionName, enabled: enabled,
+          remoteBinaryPath: runtimePaths["remoteBinaryPath"],
+          stateParentPath: runtimePaths["stateParentPath"]))
     }
     guard reasons.isEmpty else {
       throw MachineProfileStoreError.invalidProfiles(reasons: reasons)
@@ -243,6 +260,8 @@ public final class MachineProfileStore: @unchecked Sendable {
         "enabled": profile.enabled,
       ]
       if let target = profile.sshTarget { object["sshTarget"] = target }
+      if let binary = profile.remoteBinaryPath { object["remoteBinaryPath"] = binary }
+      if let stateParent = profile.stateParentPath { object["stateParentPath"] = stateParent }
       return object
     }
     do {

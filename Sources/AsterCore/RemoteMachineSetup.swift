@@ -57,7 +57,8 @@ public protocol RemoteSetupExecuting: Sendable {
   /// 执行远端探测脚本并返回 stdout。
   func probe(explicitPath: String?) throws -> String
   /// 确保命名会话服务已运行；已存在时不重启、不替换。
-  func ensureSession(binaryPath: String) throws -> SessionServerIdentity
+  /// `stateParentPath` 是本次设置确定的远端私有状态父目录，实现负责保证它存在且只有本人可访问。
+  func ensureSession(binaryPath: String, stateParentPath: String) throws -> SessionServerIdentity
 }
 
 /// 基于 SSH 的真实执行器。
@@ -107,12 +108,32 @@ public struct RemoteSSHSetupExecutor: RemoteSetupExecuting {
     return result.standardOutput
   }
 
-  public func ensureSession(binaryPath: String) throws -> SessionServerIdentity {
+  public func ensureSession(binaryPath: String, stateParentPath: String) throws
+    -> SessionServerIdentity
+  {
+    try prepareStateParent(stateParentPath)
     var endpoint = endpointTemplate
     endpoint.binaryPath = binaryPath
+    endpoint.stateParentPath = stateParentPath
     let client = RemoteManagedSessionClient(transport: transport, runner: runner)
     _ = try client.ensureServer(endpoint)
     return try client.serverStatus(endpoint)
+  }
+
+  /// 在远端创建状态父目录并收紧为 0700。
+  ///
+  /// `aster-session` 只接受「已存在且 group/other 无任何权限」的父目录（否则报
+  /// UnsafeStateParent），而默认目录在新机器上不存在，所以必须由设置事务先建好。
+  /// 路径作为 `$1` 传给 sh，不做二次 Shell 拼接，含空格等字符也安全。
+  private func prepareStateParent(_ path: String) throws {
+    let result = try runner.run(
+      arguments: transport.sshArguments(
+        remoteCommand: ["/bin/sh", "-c", "mkdir -p \"$1\" && chmod 700 \"$1\"", "sh", path]),
+      timeout: TimeInterval(transport.policy.connectTimeout + 5))
+    guard result.exitStatus == 0 else {
+      throw ManagedSessionError.runtimeUnavailable(
+        "无法在远端准备状态目录 \(path)：\(RemoteSSHDiagnostics.redact(result.standardError))")
+    }
   }
 }
 
@@ -121,10 +142,24 @@ public struct RemoteMachineSetup: Sendable {
   public var executor: any RemoteSetupExecuting
   /// `ASTER_REMOTE_BINARY` 指定的本地自定义产物；只影响候选发现顺序与安装事务。
   public var explicitRemoteBinaryPath: String?
+  /// `ASTER_SESSION_STATE_DIR` 指定的远端状态父目录；nil 时按远端 `$HOME` 推导默认值。
+  public var explicitStateParentPath: String?
 
-  public init(executor: any RemoteSetupExecuting, explicitRemoteBinaryPath: String? = nil) {
+  public init(
+    executor: any RemoteSetupExecuting,
+    explicitRemoteBinaryPath: String? = nil,
+    explicitStateParentPath: String? = nil
+  ) {
     self.executor = executor
     self.explicitRemoteBinaryPath = explicitRemoteBinaryPath
+    self.explicitStateParentPath = explicitStateParentPath
+  }
+
+  /// 本次设置使用的状态父目录：显式指定优先，否则 `<远端 $HOME>/.local/state/aster`。
+  /// 远端没报出 `$HOME` 又没有显式指定时无法推导，返回 nil 由调用方报错。
+  func resolveStateParentPath(homeDirectory: String) -> String? {
+    if let explicit = explicitStateParentPath, !explicit.isEmpty { return explicit }
+    return RemoteHostProbe.privateStateParentPath(homeDirectory: homeDirectory)
   }
 
   /// 执行完整设置。
@@ -199,8 +234,19 @@ public struct RemoteMachineSetup: Sendable {
     }
 
     // 5. 准备目标命名会话。只有到这一步成功才谈得上保存配置。
+    //    状态目录按远端 $HOME 推导（或取显式覆盖），由执行器负责创建并收紧权限。
+    guard let stateParentPath = resolveStateParentPath(homeDirectory: report.platform.homeDirectory)
+    else {
+      throw RemoteSetupFailure(
+        stage: .sessionPreparation,
+        requiresExplicitSetup: true,
+        message: "远端未报告 $HOME，无法推导状态目录；请设置 ASTER_SESSION_STATE_DIR 后重试。")
+    }
     let identity: SessionServerIdentity
-    do { identity = try executor.ensureSession(binaryPath: candidate.path) } catch {
+    do {
+      identity = try executor.ensureSession(
+        binaryPath: candidate.path, stateParentPath: stateParentPath)
+    } catch {
       throw RemoteSetupFailure(
         stage: .sessionPreparation,
         requiresExplicitSetup: true,
@@ -234,12 +280,15 @@ public struct RemoteMachineSetup: Sendable {
     report.runningCompatibility = RemoteCompatibilityCheck.evaluate(
       protocolMajor: candidate.protocolMajor, capabilities: identity.capabilities)
 
+    // 运行时位置随配置一起保存：后台连接与受管终端直接用它，不再依赖启动环境变量。
     let profile = MachineProfile(
       id: profileID,
       label: label,
       sshTarget: target.rawText,
       sessionName: sessionName,
-      enabled: true
+      enabled: true,
+      remoteBinaryPath: candidate.path,
+      stateParentPath: stateParentPath
     )
     return .ready(profile: profile, identity: identity, report: report)
   }

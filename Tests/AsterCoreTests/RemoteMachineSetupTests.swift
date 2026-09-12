@@ -58,10 +58,13 @@ private final class FakeSetupExecutor: RemoteSetupExecuting, @unchecked Sendable
     return probeOutput
   }
 
-  func ensureSession(binaryPath: String) throws -> SessionServerIdentity {
+  private(set) var ensureSessionStateParentPaths: [String] = []
+
+  func ensureSession(binaryPath: String, stateParentPath: String) throws -> SessionServerIdentity {
     lock.lock()
     ensureSessionCalls += 1
     ensureSessionBinaryPaths.append(binaryPath)
+    ensureSessionStateParentPaths.append(stateParentPath)
     lock.unlock()
     if let ensureSessionError { throw ensureSessionError }
     return identity
@@ -328,6 +331,53 @@ private let compatibleVersionLine = "aster-session 0.1.0-dev protocol=1.0"
   // 候选记录的是握手实测能力，而不是探测阶段的空集合。
   #expect(report.candidates.first?.capabilities == identity.capabilities)
   #expect(executor.ensureSessionBinaryPaths == ["/usr/local/bin/aster-session"])
+  // 运行时位置随配置落盘：二进制取实测候选，状态目录默认按远端 $HOME 推导，
+  // 后台连接与受管终端不再依赖 App 启动时的环境变量。
+  #expect(executor.ensureSessionStateParentPaths == ["/root/.local/state/aster"])
+  #expect(profile.remoteBinaryPath == "/usr/local/bin/aster-session")
+  #expect(profile.stateParentPath == "/root/.local/state/aster")
+}
+
+@Test func remoteMachineSetupHonoursExplicitStateParentPath() throws {
+  let executor = FakeSetupExecutor()
+  executor.probeOutput = probeOutput(
+    candidates: [("/usr/local/bin/aster-session", compatibleVersionLine)])
+  executor.identity = FakeSetupExecutor.makeIdentity(
+    capabilities: RemoteProtocolContract.requiredCapabilities)
+  let setup = RemoteMachineSetup(
+    executor: executor, explicitStateParentPath: "/srv/aster-state")
+  let outcome = try setup.run(rawTarget: "root@ubuntu@orb", label: "OrbStack", sessionName: "p3")
+  guard case .ready(let profile, _, _) = outcome else {
+    Issue.record("期望 ready，实际 \(outcome)")
+    return
+  }
+  #expect(executor.ensureSessionStateParentPaths == ["/srv/aster-state"])
+  #expect(profile.stateParentPath == "/srv/aster-state")
+}
+
+@Test func remoteMachineSetupFailsWhenHomeUnknownAndNoExplicitStateParent() {
+  let executor = FakeSetupExecutor()
+  // 远端没报出 $HOME：不能猜一个相对路径当状态目录。
+  executor.probeOutput = probeOutput(
+    home: "", candidates: [("/usr/local/bin/aster-session", compatibleVersionLine)])
+  let setup = RemoteMachineSetup(executor: executor)
+  do {
+    _ = try setup.run(rawTarget: "root@ubuntu@orb", label: "OrbStack", sessionName: "p3")
+    Issue.record("期望失败")
+  } catch let failure as RemoteSetupFailure {
+    #expect(failure.stage == .sessionPreparation)
+    #expect(failure.message.contains("ASTER_SESSION_STATE_DIR"))
+    #expect(executor.ensureSessionCalls == 0)
+  } catch {
+    Issue.record("期望 RemoteSetupFailure，实际 \(error)")
+  }
+}
+
+@Test func remoteHostProbeDerivesPrivateStateParentPath() {
+  #expect(RemoteHostProbe.privateStateParentPath(homeDirectory: "/root") == "/root/.local/state/aster")
+  #expect(RemoteHostProbe.privateStateParentPath(homeDirectory: "/home/u/") == "/home/u/.local/state/aster")
+  #expect(RemoteHostProbe.privateStateParentPath(homeDirectory: "") == nil)
+  #expect(RemoteHostProbe.privateStateParentPath(homeDirectory: "relative") == nil)
 }
 
 // MARK: - 远端工作区边界（A12）

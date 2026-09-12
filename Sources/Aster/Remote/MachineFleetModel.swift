@@ -574,30 +574,28 @@ struct RemoteMachineFleetServices: MachineFleetServices {
     -> RemoteSetupOutcome
   {
     let transport = try makeTransport(rawTarget)
-    guard let stateParent else {
-      throw RemoteSetupFailure(
-        stage: .sessionPreparation, requiresExplicitSetup: true,
-        message: "未配置远端状态目录（\(RemoteEnvironmentKeys.stateDirectory)），无法准备命名会话。")
-    }
+    // 状态目录不再是前置条件：环境变量只作覆盖，缺省由设置事务按远端 $HOME 推导并创建。
+    // 模板里的路径只是占位，`ensureSession` 会用最终确定的目录覆盖它。
     let setup = RemoteMachineSetup(
       executor: RemoteSSHSetupExecutor(
         transport: transport,
         endpointTemplate: ManagedSessionEndpoint(
           machineProfileID: profileID,
           binaryPath: explicitBinary ?? "aster-session",
-          stateParentPath: stateParent,
+          stateParentPath: stateParent ?? "",
           sessionName: sessionName)),
-      explicitRemoteBinaryPath: explicitBinary)
+      explicitRemoteBinaryPath: explicitBinary,
+      explicitStateParentPath: stateParent)
     return try setup.run(
       rawTarget: rawTarget, label: label, sessionName: sessionName, profileID: profileID)
   }
 
   func registry(for profile: MachineProfile) throws -> MachineRegistryAccess {
-    guard let stateParent, !stateParent.isEmpty else {
-      throw ManagedSessionError.runtimeUnavailable(
-        "未配置 \(RemoteEnvironmentKeys.stateDirectory)，无法访问命名会话注册表。")
-    }
     guard let rawTarget = profile.sshTarget else {
+      guard let stateParent, !stateParent.isEmpty else {
+        throw ManagedSessionError.runtimeUnavailable(
+          "未配置 \(RemoteEnvironmentKeys.stateDirectory)，无法访问命名会话注册表。")
+      }
       guard let binary = localBinary, !binary.isEmpty else {
         throw ManagedSessionError.runtimeUnavailable(
           "未配置 \(RemoteEnvironmentKeys.binary)，无法访问本机命名会话注册表。")
@@ -607,14 +605,12 @@ struct RemoteMachineFleetServices: MachineFleetServices {
         endpoint: ManagedRegistryEndpoint(
           machineProfileID: profile.id, binaryPath: binary, stateParentPath: stateParent))
     }
-    guard let binary = explicitBinary, !binary.isEmpty else {
-      throw ManagedSessionError.runtimeUnavailable(
-        "未配置 \(RemoteEnvironmentKeys.remoteBinary)，无法访问远端命名会话注册表。")
-    }
+    let runtime = try RemoteRuntimeLocation.resolve(profile: profile, environment: environment)
     return MachineRegistryAccess(
       client: RemoteManagedSessionClient(transport: try makeTransport(rawTarget)),
       endpoint: ManagedRegistryEndpoint(
-        machineProfileID: profile.id, binaryPath: binary, stateParentPath: stateParent))
+        machineProfileID: profile.id, binaryPath: runtime.binaryPath,
+        stateParentPath: runtime.stateParentPath))
   }
 
   /// 构造 SSH 传输。私有临时配置只在 `manage_ssh_config` 开启时创建。
@@ -676,17 +672,45 @@ struct RemoteMachineConnectionDriver: MachineConnectionDriving {
 
   private func identity(for profile: MachineProfile) throws -> SessionServerIdentity {
     guard let rawTarget = profile.sshTarget else { throw MachineFleetError.machineNotFound }
-    guard let stateParent = environment[RemoteEnvironmentKeys.stateDirectory],
-      let binary = environment[RemoteEnvironmentKeys.remoteBinary]
-    else {
+    let runtime: RemoteRuntimeLocation
+    do { runtime = try RemoteRuntimeLocation.resolve(profile: profile, environment: environment) }
+    catch {
       throw RemoteSetupFailure(
         stage: .sessionPreparation, requiresExplicitSetup: true,
-        message: "远端受管模式未配置运行时二进制或状态目录。")
+        message: RemoteSetupDescription.text(for: error))
     }
     let client = RemoteManagedSessionClient(transport: try services.makeTransport(rawTarget))
     return try client.serverStatus(
       ManagedSessionEndpoint(
-        machineProfileID: profile.id, binaryPath: binary, stateParentPath: stateParent,
-        sessionName: profile.sessionName))
+        machineProfileID: profile.id, binaryPath: runtime.binaryPath,
+        stateParentPath: runtime.stateParentPath, sessionName: profile.sessionName))
+  }
+}
+
+/// 一台远端机器的受管运行时位置（二进制 + 状态父目录）。
+///
+/// 来源优先级固定：环境变量（开发/测试覆盖）→ 设置事务写进配置的实测值。两者都没有
+/// 只可能是 P8 之前保存的旧配置，此时提示用户重新添加机器，而不是要求设置环境变量。
+struct RemoteRuntimeLocation: Equatable, Sendable {
+  var binaryPath: String
+  var stateParentPath: String
+
+  static func resolve(profile: MachineProfile, environment: [String: String]) throws
+    -> RemoteRuntimeLocation
+  {
+    let binary = Self.nonEmpty(environment[RemoteEnvironmentKeys.remoteBinary])
+      ?? Self.nonEmpty(profile.remoteBinaryPath)
+    let stateParent = Self.nonEmpty(environment[RemoteEnvironmentKeys.stateDirectory])
+      ?? Self.nonEmpty(profile.stateParentPath)
+    guard let binary, let stateParent else {
+      throw ManagedSessionError.runtimeUnavailable(
+        "机器「\(profile.label)」缺少远端运行时位置（旧版本保存的配置）。请移除后重新添加该机器。")
+    }
+    return RemoteRuntimeLocation(binaryPath: binary, stateParentPath: stateParent)
+  }
+
+  private static func nonEmpty(_ value: String?) -> String? {
+    guard let value, !value.isEmpty else { return nil }
+    return value
   }
 }

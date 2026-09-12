@@ -198,3 +198,38 @@ private func sampleProfiles() -> [MachineProfile] {
   let added = original + [MachineProfile(label: "New", sshTarget: "n", sessionName: "s")]
   #expect(MachineProfileStore.reconnectRequiredProfileIDs(old: original, new: added).count == 1)
 }
+
+/// 设置事务实测的远端运行时位置必须随配置落盘并原样读回；旧文件没有这两个键时读成 nil，
+/// 出现但不是绝对路径时整份拒绝。
+@Test func remoteWorkStorePersistsRemoteRuntimeLocation() throws {
+  let url = temporaryStoreURL()
+  let store = MachineProfileStore(fileURL: url)
+  defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+  let profile = MachineProfile(
+    label: "Build box", sshTarget: "root@ubuntu@orb", sessionName: "work", enabled: true,
+    remoteBinaryPath: "/root/.local/share/aster/bin/aster-session",
+    stateParentPath: "/root/.local/state/aster")
+  try store.save([profile])
+  guard case .loaded(let loaded) = try store.load() else {
+    Issue.record("期望 loaded")
+    return
+  }
+  #expect(loaded == [profile])
+
+  // 旧版本文件：没有运行时键，读成 nil 而不是报错。
+  let legacy = Data(
+    """
+    [{"id":"\(UUID().uuidString)","label":"Old","sshTarget":"root@ubuntu@orb","sessionName":"default","enabled":true}]
+    """.utf8)
+  let decoded = try MachineProfileStore.decode(legacy)
+  #expect(decoded.first?.remoteBinaryPath == nil)
+  #expect(decoded.first?.stateParentPath == nil)
+
+  // 相对路径不接受：状态目录与二进制都必须是远端绝对路径。
+  let relative = Data(
+    """
+    [{"id":"\(UUID().uuidString)","label":"Bad","sshTarget":"root@ubuntu@orb","sessionName":"default","enabled":true,"stateParentPath":"state"}]
+    """.utf8)
+  #expect(throws: MachineProfileStoreError.self) { try MachineProfileStore.decode(relative) }
+}

@@ -123,22 +123,39 @@ final class GhosttyApp {
     ghostty_config_load_recursive_files(config)
     ghostty_config_finalize(config)
 
+    // 诊断只是“某些条目未生效”的警告，不是致命错误：finalize 已把无法解析的条目回退为
+    // 默认值，配置对象仍完整可用，这与 Ghostty 官方 App 的处理一致——记录并交给界面提示，
+    // 但继续启动。若在这里判失败，Aster 侧新增的扩展字段一旦遇到尚未重建的旧 libghostty
+    // （unknown field），整个终端都无法启动，且「重新启动 Shell」用同一份配置也永远救不回来。
     let diagnosticCount = ghostty_config_diagnostics_count(config)
-    if diagnosticCount > 0 {
-      for index in 0..<diagnosticCount {
-        let diagnostic = ghostty_config_get_diagnostic(config, index)
-        if let message = diagnostic.message {
-          let value = String(cString: message)
-          configurationDiagnostics.append(value)
-          ghosttyLogger.warning("config: \(value, privacy: .public)")
-        }
+    for index in 0..<diagnosticCount {
+      let diagnostic = ghostty_config_get_diagnostic(config, index)
+      if let message = diagnostic.message {
+        let value = String(cString: message)
+        configurationDiagnostics.append(value)
+        ghosttyLogger.warning("config: \(value, privacy: .public)")
       }
-      ghostty_config_free(config)
-      startupError = "libghostty 配置校验失败。"
-      return nil
     }
     startupError = nil
     return config
+  }
+
+  /// 面向界面的单行配置警告：没有诊断时为 nil，否则给出条数与第一条去掉临时路径后的摘要。
+  var configurationWarning: String? {
+    guard let first = configurationDiagnostics.first else { return nil }
+    let summary = Self.stripConfigurationFilePrefix(first)
+    return "libghostty 配置有 \(configurationDiagnostics.count) 处未生效：\(summary)"
+  }
+
+  /// 诊断原文形如 `<临时文件路径>.conf:<行号>:<字段>: <原因>`；临时路径每次随机、对用户没有
+  /// 意义，也不该出现在界面上，这里只保留 `<字段>: <原因>`。非文件型诊断原样返回。
+  static func stripConfigurationFilePrefix(_ message: String) -> String {
+    guard let marker = message.range(of: ".conf:") else { return message }
+    let rest = message[marker.upperBound...]
+    guard let colon = rest.firstIndex(of: ":"),
+      !rest[..<colon].isEmpty, rest[..<colon].allSatisfy(\.isNumber)
+    else { return String(rest) }
+    return rest[rest.index(after: colon)...].trimmingCharacters(in: .whitespaces)
   }
 
   private func resolveResources() -> Bool {

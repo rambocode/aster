@@ -3091,6 +3091,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         self.lifecycleState = self.isRunning ? .running : .startFailed
         self.ghosttyShellProcessIdentifier = view.foregroundProcessIdentifier
         if self.isRunning {
+          // 配置诊断不阻断启动，但必须让用户看见：复用运行态的 startupError 警告条。
+          if let warning = GhosttyApp.shared.configurationWarning {
+            self.appendStartupWarning(warning)
+          }
           // 记录层按 Session UUID 幂等；surface 重启复用同一 Session 继续记录。
           self.eventRecorder?.sessionStarted(
             id: self.id,

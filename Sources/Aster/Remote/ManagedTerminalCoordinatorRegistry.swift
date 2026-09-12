@@ -56,11 +56,12 @@ enum ManagedTerminalCoordinatorRegistry {
       let target = profile.sshTarget, !target.isEmpty
     else { return nil }
     var environment = ProcessInfo.processInfo.environment
-    guard let binary = environment[RemoteEnvironmentKeys.remoteBinary], !binary.isEmpty,
-      let stateParent = environment[RemoteEnvironmentKeys.stateDirectory], !stateParent.isEmpty
+    // 运行时位置：环境变量覆盖优先，否则用设置事务写进机器配置的实测值。
+    guard
+      let runtime = try? RemoteRuntimeLocation.resolve(profile: profile, environment: environment)
     else { return nil }
-    environment[ManagedTerminalCoordinator.binaryEnvironmentKey] = binary
-    environment[ManagedTerminalCoordinator.stateDirectoryEnvironmentKey] = stateParent
+    environment[ManagedTerminalCoordinator.binaryEnvironmentKey] = runtime.binaryPath
+    environment[ManagedTerminalCoordinator.stateDirectoryEnvironmentKey] = runtime.stateParentPath
     environment[ManagedTerminalCoordinator.sessionNameEnvironmentKey] = profile.sessionName
     environment[ManagedTerminalCoordinator.remoteTargetEnvironmentKey] = target
     return ManagedTerminalCoordinator(

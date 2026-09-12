@@ -210,6 +210,15 @@ public enum RemoteHostProbe {
     "\(homeDirectory)/.local/share/aster/bin/aster-session"
   }
 
+  /// 默认的远端私有状态父目录（`<home>/.local/state/aster`）。
+  /// `$HOME` 未知或不是绝对路径时返回 nil：状态目录不能落在相对路径或猜测的位置。
+  public static func privateStateParentPath(homeDirectory: String) -> String? {
+    let home = homeDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard home.hasPrefix("/") else { return nil }
+    let trimmed = home.count > 1 && home.hasSuffix("/") ? String(home.dropLast()) : home
+    return trimmed + "/.local/state/aster"
+  }
+
   /// 已知包管理器目录。顺序固定，便于证据复查。
   public static let packageManagerPaths = [
     "/usr/local/bin/aster-session",

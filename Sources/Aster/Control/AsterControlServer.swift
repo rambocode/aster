@@ -123,8 +123,10 @@ final class AsterControlServer: @unchecked Sendable {
       let connection = AsterControlConnection(
         fd: client, ioQueue: ioQueue, onRequest: onRequest,
         onClose: { [weak self] connection in
-          self?.ioQueue.async { self?.connections[connection.id] = nil }
-          self?.onDisconnect(connection)
+          // 同 AsterControlConnection.track：先解包 weak self，避免内层闭包捕获可变的 weak 变量。
+          guard let self else { return }
+          self.ioQueue.async { self.connections[connection.id] = nil }
+          self.onDisconnect(connection)
         })
       connections[connection.id] = connection
       connection.start()

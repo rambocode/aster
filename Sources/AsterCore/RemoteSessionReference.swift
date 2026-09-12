@@ -22,19 +22,31 @@ public struct MachineProfile: Codable, Equatable, Sendable, Identifiable {
   /// 该配置绑定的命名会话；一个配置只绑定一个会话，不隐式汇总主机上全部会话。
   public var sessionName: String
   public var enabled: Bool
+  /// 设置事务实测到的远端 `aster-session` 绝对路径；Local 与旧数据为 nil。
+  ///
+  /// 之所以随配置落盘：后台连接、注册表与受管终端都要用它，不能再要求用户
+  /// 用 `ASTER_REMOTE_BINARY` 环境变量启动 App。环境变量仍可覆盖（开发/测试）。
+  public var remoteBinaryPath: String?
+  /// 设置事务确定的远端私有状态父目录（默认 `<远端 $HOME>/.local/state/aster`）；
+  /// 同上，Local 与旧数据为 nil，`ASTER_SESSION_STATE_DIR` 可覆盖。
+  public var stateParentPath: String?
 
   public init(
     id: UUID = UUID(),
     label: String,
     sshTarget: String? = nil,
     sessionName: String = "default",
-    enabled: Bool = true
+    enabled: Bool = true,
+    remoteBinaryPath: String? = nil,
+    stateParentPath: String? = nil
   ) {
     self.id = id
     self.label = label
     self.sshTarget = sshTarget
     self.sessionName = sessionName
     self.enabled = enabled
+    self.remoteBinaryPath = remoteBinaryPath
+    self.stateParentPath = stateParentPath
   }
 
   /// 本地默认配置。P2 只向专用测试配置开放受管终端，默认终端策略保持不变。

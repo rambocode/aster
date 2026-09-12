@@ -75,7 +75,10 @@ final class AsterControlConnection: @unchecked Sendable {
     let taskID = UUID()
     let task = Task { [weak self] in
       await make()
-      self?.ioQueue.async { self?.tasks[taskID] = nil }
+      // 弱引用先解包成常量再进入内层闭包：直接在内层闭包里引用 `self?` 会捕获一个
+      // 可变的 weak 变量，Swift 6 会报 SendableClosureCaptures 告警。
+      guard let self else { return }
+      self.ioQueue.async { self.tasks[taskID] = nil }
     }
     ioQueue.async { [weak self] in
       guard let self, !self.closed else {
