@@ -3,6 +3,22 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.6.1</title>
+            <pubDate>Sun, 13 Sep 2026 11:53:18 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>20</sparkle:version>
+            <sparkle:shortVersionString>0.6.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 界面语言
+
+- 在设置里切换语言后会立刻提示“界面语言将在重新启动 Aster 后生效”，可以选择“立即重启”或“稍后”；此前切换后没有任何反馈，容易以为设置没生效。
+- “立即重启”走正常退出流程：有需要确认的终端会先询问，退出后 Aster 自动重新打开。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.1/Aster-0.6.1.dmg" length="41123448" type="application/octet-stream" sparkle:edSignature="7JL27lubk7xFCPL0Rw3BgR4gzJ49bpfxp+POrDAVYw41uXk6BwrB6MojfKs/C+lVc72412xJzt9vsxUnJs5cDQ=="/>
+        </item>
+        <item>
             <title>0.6.0</title>
             <pubDate>Sun, 13 Sep 2026 11:29:08 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -101,27 +117,6 @@
 - 修复 Command 点击 `.app`、可执行文件或二进制文件路径时被错误送进编辑器并报错的问题：这些目标现在直接交给系统打开，目录与文本文件仍按设置在 Aster 内打开。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.11/Aster-0.4.11.dmg" length="27428991" type="application/octet-stream" sparkle:edSignature="syUU8AA7pc/Y6mq8vXeZLBsxk3CggcTsVay437jmkEL+SLvXLyD1r/47dmf3SKV88sz0wcckSYgLyY/RqG57Aw=="/>
-        </item>
-        <item>
-            <title>0.4.10</title>
-            <pubDate>Sat, 05 Sep 2026 15:13:39 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>15</sparkle:version>
-            <sparkle:shortVersionString>0.4.10</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## Quick Terminal
-
-- 新增独立快速终端，通过“窗口 → Quick Terminal”随时呼出或收起。
-- 在“设置 → 通用 → Quick Terminal”启用全局快捷键：Control + ` 或 Control + Option + Space。
-- 隐藏后保留 Shell、工作目录和滚屏内容；Command + W 只收起快速终端，不会关闭普通工作区标签。
-- 支持顶部、底部、左侧、右侧和居中显示，可调整尺寸、显示器、动画时长、失焦隐藏及跟随桌面空间。
-- 快捷键冲突时显示提示，仍可通过窗口菜单打开；Shell 结束后可从窗口菜单重新启动。
-
-全局快捷键默认关闭，需要 Aster 保持运行。退出应用会结束快速终端会话，下次启动不恢复该临时会话。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.10/Aster-0.4.10.dmg" length="27876400" type="application/octet-stream" sparkle:edSignature="w6RbapsfRei3F23Q9VPBcokRh38MCjiawyRVlQ2PHOAgr8ehmcuaQ179BCI8d0NEJrsf8m5EPKJqSMK35ycYCA=="/>
         </item>
     </channel>
 </rss>
