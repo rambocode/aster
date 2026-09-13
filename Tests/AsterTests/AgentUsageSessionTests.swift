@@ -272,3 +272,42 @@ func claudeQuotaServiceRestoresRecentCacheAcrossLaunches() async throws {
     fetch: { _ in .rateLimited(retryAfter: nil) }, readToken: { "token" }, defaults: defaults)
   #expect(third.windows == nil)
 }
+
+@Test("只敲 claude 回车不显示用量条；标题证实 TUI 已起来才显示；命令结束即消失")
+@MainActor
+func usageBarWaitsForAgentRuntimeEvidence() async throws {
+  let (suiteName, defaults) = try agentUsageDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  let service = offlineClaudeQuotaService()
+  // 账号配额已有共享缓存：以前只要首词识别出 claude 就会立刻把条挂上。
+  service.injectForTesting(try #require(ClaudeAccountQuotaParser.windows(
+    fromUsageResponse: Data(#"{"five_hour":{"utilization":33}}"#.utf8))))
+  let session = TerminalSession(workingDirectory: "/tmp")
+  session.claudeAccountQuota = service
+  let terminalView = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+
+  // 用户敲 `claude` 回车：只有命令首词，TUI 还没起来（也可能只是 `claude --version`）。
+  terminalView.onShellIntegrationEvent?(.promptStart)
+  terminalView.onShellIntegrationEvent?(.inputStart)
+  terminalView.onAutocompleteInput?(Array("claude\n".utf8)[...])
+  terminalView.onShellIntegrationEvent?(.commandStart)
+  #expect(session.activeAgentProvider == .claudeCode)
+  try await Task.sleep(for: .milliseconds(100))
+  #expect(session.agentUsage == nil)
+
+  // Claude 的标题出现：进程确实在跑，条立刻用共享缓存显示。
+  terminalView.onObservedTitleUpdate?(0, "✳ Claude Code")
+  try await waitUntil { session.agentUsage?.window(.fiveHour)?.usedPercent == 33 }
+
+  // 命令结束：条消失；再敲一次 claude 又要重新等证据。
+  terminalView.onShellIntegrationEvent?(.commandFinished(exitStatus: 0))
+  #expect(session.agentUsage == nil)
+  terminalView.onShellIntegrationEvent?(.promptStart)
+  terminalView.onShellIntegrationEvent?(.inputStart)
+  terminalView.onAutocompleteInput?(Array("claude --version\n".utf8)[...])
+  terminalView.onShellIntegrationEvent?(.commandStart)
+  try await Task.sleep(for: .milliseconds(100))
+  #expect(session.agentUsage == nil)
+}

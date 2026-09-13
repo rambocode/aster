@@ -2292,6 +2292,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// provider 只由标题补识别得出（弱证据）。命令结束、标题不再匹配且没有 hook /
   /// 屏幕 working·blocked 证据时要撤销，避免普通 shell 标题把 Pane 永久标成 Agent。
   private var agentProviderIsTitleEvidenceOnly = false
+  /// 本轮是否已确认 Agent 进程真的在跑：hook 指令、屏幕检测发布、标题匹配、会话文件绑定
+  /// 或服务端状态任一到达即为 true。命令首词识别只是「用户敲了 claude/codex」，此时 TUI
+  /// 还没起来（也可能只是 `claude --version`），用量条不能凭这点就显示。随 provider 生命周期重置。
+  private var agentRuntimeConfirmed = false
 
   private var foregroundPollTask: Task<Void, Never>?
   /// 诊断 seam：true 仅表示尚未取得权威 Shell Integration、仍需周期探测前台进程。
@@ -4009,6 +4013,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       agentProviderIsTitleEvidenceOnly = false
       if agentCommandStartedAt == nil { agentCommandStartedAt = Date() }
     }
+    confirmAgentRuntime()
     if let nativeSession = info.nativeSession, !nativeSession.isEmpty {
       activeAgentSessionID = nativeSession
     }
@@ -4640,6 +4645,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private func detectAgentProviderFromTitle(_ title: String) {
     let detected = Self.agentProvider(fromTitle: title)
     if let activeAgentProvider {
+      // 标题与已识别的 provider 一致：TUI 已经起来，可以显示用量。
+      if detected == activeAgentProvider { confirmAgentRuntime() }
       guard agentProviderIsTitleEvidenceOnly, detected != activeAgentProvider,
         !agentLifecycleIsAuthoritative, !agentHasWorkEvidence
       else { return }
@@ -4649,6 +4656,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     guard hasRunningCommand, let detected else { return }
     activeAgentProvider = detected
     agentProviderIsTitleEvidenceOnly = true
+    confirmAgentRuntime()
     if agentCommandStartedAt == nil { agentCommandStartedAt = Date() }
     syncAgentSessionFileBinding()
     syncAgentScreenMonitor()
@@ -5136,6 +5144,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       if state.state == .working || state.state == .blocked {
         self.agentHasWorkEvidence = true
       }
+      // 屏幕上认出了 Agent 的界面（哪怕是 idle 提示）就是进程在跑的证据。
+      if state.state != .unknown { self.confirmAgentRuntime() }
       self.updateAgentTaskState()
     }
     monitor.onStartupGraceEnded = { [weak self, weak monitor] in
@@ -5305,7 +5315,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     agentSessionFileBindingTask = nil
     activeAgentSessionID = sessionID
     eventRecorder?.agentChanged(id: id, provider: provider.rawValue, agentSessionID: sessionID)
-    syncCodexUsageMonitor()
+    // 会话文件只会由 Agent 自己写出：找到它就等于进程在跑。
+    confirmAgentRuntime()
   }
 
   /// 用户在 prompt 出现前接管终端（输入任何内容）时放弃自动重连。
@@ -5386,7 +5397,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     if let sessionID = directive.sessionID { activeAgentSessionID = sessionID }
     if agentCommandStartedAt == nil { agentCommandStartedAt = Date() }
     syncAgentSessionFileBinding()
-    syncCodexUsageMonitor()
+    confirmAgentRuntime()
     agentLifecycleIsAuthoritative = true
     clearFallbackAgentActivity()
     eventRecorder?.agentChanged(
@@ -5433,7 +5444,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   /// Claude 快照 = 账号级 5h / 周窗口；还没拿到数据时不显示条。
   private func recomputeClaudeUsage() {
-    guard activeAgentProvider == .claudeCode, claudeAccountQuotaRetained else { return }
+    guard activeAgentProvider == .claudeCode, claudeAccountQuotaRetained, agentRuntimeConfirmed
+    else { return }
     let snapshot = claudeAccountQuota.windows.map {
       AgentUsageSnapshot(
         provider: .claudeCode, windows: $0, updatedAt: claudeAccountQuota.fetchedAt ?? Date())
@@ -5444,7 +5456,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   /// Codex 绑定 session 后监听其 rollout；session 变化时重建，非 Codex 或无 session 时停止。
   private func syncCodexUsageMonitor() {
-    guard activeAgentProvider == .codex, let sessionID = activeAgentSessionID else {
+    guard activeAgentProvider == .codex, agentRuntimeConfirmed, let sessionID = activeAgentSessionID
+    else {
       stopCodexUsageMonitor()
       return
     }
@@ -5468,10 +5481,20 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     codexUsageMonitorSessionID = nil
   }
 
-  /// provider 生命周期结束：停掉 Codex 监听并让用量条消失。
+  /// provider 生命周期结束：停掉 Codex 监听并让用量条消失；下一轮要重新取得运行证据。
   private func clearAgentUsage() {
+    agentRuntimeConfirmed = false
     stopCodexUsageMonitor()
     if agentUsage != nil { agentUsage = nil }
+  }
+
+  /// 首次拿到「Agent 进程在跑」的证据：放行用量条——Claude 立刻用账号配额的共享结果
+  /// 重算，Codex 开始监听 rollout。重复调用是 no-op。
+  private func confirmAgentRuntime() {
+    guard !agentRuntimeConfirmed, activeAgentProvider != nil else { return }
+    agentRuntimeConfirmed = true
+    recomputeClaudeUsage()
+    syncCodexUsageMonitor()
   }
 
   private func showCompletedFlash() {
