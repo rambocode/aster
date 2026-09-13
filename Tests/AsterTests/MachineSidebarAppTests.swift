@@ -166,6 +166,13 @@ func machineSidebarRendersSavedMachineWithMenu() async throws {
   // 离线的机器整体灰显，明确表示这是缓存结构。
   #expect(remote.alphaValue < 1)
   #expect(remote.toolTip?.contains("需要处理") == true || remote.toolTip?.contains("未连接") == true)
+
+  // 在弹出层里点某台机器：切换活动机器，并关闭弹出层（切换会重建侧栏与切换器）。
+  remote.performClick(nil)
+  try await Task.sleep(for: .milliseconds(150))
+  #expect(fixture.fleet.activeMachineID == profile.id)
+  let switcher = try #require(fixture.controller.machineSwitcher)
+  #expect(switcher.accessibilityLabel()?.contains("orb") == true)
 }
 
 @Test("机器侧栏：主菜单「文件 ▸ 添加机器…」与侧栏按钮指向同一个动作")

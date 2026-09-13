@@ -323,7 +323,14 @@ final class MachineSwitcherButton: NSButton {
     controller.view = content
     popover.contentViewController = controller
     popover.contentSize = content.fittingSize
-    popover.show(relativeTo: bounds, of: self, preferredEdge: .maxY)
+    // 按钮在侧栏最底部，弹出层必须朝上展开：AppKit 视图坐标 y 向上，minY 是按钮的下边
+    // 沿……但 NSPopover 的 edge 按屏幕方向解释——实测 .maxY 会贴到窗口下方（屏幕外），
+    // .minY 才是"从按钮顶部向上弹"。
+    // NSPopover 以定位矩形的中心对齐：按钮比弹出层窄，直接用 bounds 会让弹出层左半截
+    // 伸出窗口外。把定位矩形放在"弹出层宽度一半"处，弹出层左沿就与按钮左沿对齐。
+    let anchorX = min(popover.contentSize.width / 2, bounds.maxX - 8)
+    let anchor = NSRect(x: anchorX - 1, y: bounds.minY, width: 2, height: bounds.height)
+    popover.show(relativeTo: anchor, of: self, preferredEdge: .minY)
   }
 
   func dismissPopover() { popover.performClose(nil) }
