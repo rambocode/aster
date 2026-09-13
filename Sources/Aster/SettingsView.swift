@@ -622,7 +622,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
             $0.value == preferences.configuration.general.language
           } ?? 0
         ) { [weak self] index in
-          self?.preferences.configuration.general.language = Self.languageOptions[index].value
+          guard let self else { return }
+          let setting = Self.languageOptions[index].value
+          self.preferences.configuration.general.language = setting
+          AppLocalization.promptRelaunchIfNeeded(forSetting: setting, in: self.view.window)
         },
         enumPopupRow(
           L("启动时"), L("打开 Aster 时的初始窗口行为"),
@@ -3557,6 +3560,7 @@ extension SettingsViewController: WKNavigationDelegate {
     }
 
     do {
+      let languageBefore = preferences.configuration.general.language
       for change in changes {
         guard let key = change["key"] as? String,
           key.count <= 128,
@@ -3566,6 +3570,11 @@ extension SettingsViewController: WKNavigationDelegate {
       }
       message = nil
       pushWebSnapshot()
+      // 语言只有重启才能整体切换：写入成功后立刻问用户是否现在重启，而不是静默保存。
+      let languageAfter = preferences.configuration.general.language
+      if languageAfter != languageBefore {
+        AppLocalization.promptRelaunchIfNeeded(forSetting: languageAfter, in: view.window)
+      }
     } catch {
       sendWebToast(L("设置值无效，未应用：\(error.localizedDescription)"), level: "error")
       pushWebSnapshot()

@@ -1199,6 +1199,7 @@
 "状态未知" = "Statut inconnu";
 "状态：%@" = "État : %@";
 "状态：%@　项目：%@" = "Statut : %1$@  Projet : %2$@";
+"现在重新启动 Aster？打开的终端与标签会按你的关闭确认设置处理，稍后也可以手动退出再打开。" = "Redémarrer Aster maintenant ? Les terminaux et onglets ouverts suivent vos réglages de confirmation de fermeture. Vous pouvez aussi quitter et rouvrir plus tard.";
 "现有运行中服务继续使用自己的二进制实例，不会被本次安装停止。" = "Les services en cours d'exécution continueront d'utiliser leurs propres instances binaires et ne seront pas arrêtés par cette installation.";
 "生成诊断包失败：%@" = "Échec de la génération du paquet de diagnostic : %@";
 "生效中" = "Actif";
@@ -1211,6 +1212,7 @@
 "界面显示语言，更改后重新启动 Aster 生效" = "Langue d'affichage de l'interface ; prend effet après le redémarrage d'Aster";
 "界面框架" = "Cadre d'interface";
 "界面窗口" = "Fenêtre d'interface";
+"界面语言将在重新启动 Aster 后生效" = "La langue de l’interface prendra effet après le redémarrage d’Aster";
 "登录 Shell" = "Shell de connexion";
 "目录" = "Répertoire";
 "目录为空或不可读取。" = "Le répertoire est vide ou illisible.";
@@ -1233,6 +1235,7 @@
 "移除…" = "Supprimer…";
 "移除机器「%@」？" = "Supprimer la Machine « %@ » ?";
 "程序已协商 bracketed paste 时跳过危险内容确认" = "Ignorer la confirmation de contenu dangereux quand le programme a négocié le collage entre crochets";
+"稍后" = "Plus tard";
 "稳定显示" = "Affichage stable";
 "空心方块" = "Bloc creux";
 "空标签进入当前分组末尾；带内容标签可紧跟当前标签" = "Les onglets vides vont à la fin du groupe actuel ; les onglets avec contenu peuvent suivre directement l'onglet actuel";
@@ -1244,6 +1247,7 @@
 "立即发送" = "Envoyer maintenant";
 "立即发送此命令" = "Envoyer cette commande maintenant";
 "立即更新" = "Mettre à jour maintenant";
+"立即重启" = "Redémarrer maintenant";
 "竖线" = "Barre";
 "端口非法：%@，必须是 1–65535。" = "Port invalide : %@, doit être compris entre 1 et 65535.";
 "第 %@ 行" = "Ligne %@";

@@ -257,6 +257,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   private var additionalWorkspaceWindows: [ObjectIdentifier: WorkspaceWindowRecord] = [:]
   private let additionalWorkspaceSuitesKey = "aster.workspace.additional-window-suites.v1"
   private var isTerminating = false
+  /// 用户在语言提示里选了「立即重启」：退出流程走完后由 `applicationWillTerminate` 重新拉起。
+  private var relaunchAfterTerminate = false
   private var cancellables: Set<AnyCancellable> = []
   private lazy var dockActivityCoordinator = DockActivityCoordinator(
     model: model, preferences: preferences)
@@ -373,6 +375,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
   func applicationWillTerminate(_ notification: Notification) {
     isTerminating = true
+    if relaunchAfterTerminate { Self.spawnRelauncher() }
     // 事件订阅是长命子进程（本机 aster-session / 远端 ssh）。App 退出时必须真的把它们
     // 结束掉，否则每退出一次就留下一条孤儿连接。它只是一条只读控制连接，结束它不会
     // 结束远端任何终端进程，也不影响 A08 的保活语义。
@@ -408,10 +411,37 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     let models: [any WorkspaceTerminationParticipant] =
       [quickTerminalController, model] + additionalWorkspaceWindows.values.map { $0.model }
-    guard WorkspaceTerminationTransaction.commit(models) else { return .terminateCancel }
+    guard WorkspaceTerminationTransaction.commit(models) else {
+      // 用户在关闭确认里取消了退出，重启请求随之作废，避免下次普通退出时莫名再开一个实例。
+      relaunchAfterTerminate = false
+      return .terminateCancel
+    }
     isTerminating = true
     persistAdditionalWorkspaceSuites()
     return .terminateNow
+  }
+
+  /// 走正常退出流程（含关闭确认），退出成功后重新启动同一份 App。
+  func relaunchApplication() {
+    relaunchAfterTerminate = true
+    NSApp.terminate(nil)
+  }
+
+  /// 起一个独立的 sh 等本进程真正退出后再拉起：打包 App 用 `open -n`，开发二进制直接执行。
+  /// 不能在退出前直接 open：LaunchServices 会把请求路由给还活着的本实例，等于什么都没发生。
+  private static func spawnRelauncher() {
+    let bundleURL = Bundle.main.bundleURL
+    let isPackaged = bundleURL.pathExtension == "app"
+    let target = isPackaged ? bundleURL.path : (Bundle.main.executableURL?.path ?? "")
+    guard !target.isEmpty else { return }
+    let launch = isPackaged ? "open -n \"$1\"" : "\"$1\" >/dev/null 2>&1 &"
+    let script = "while kill -0 \"$2\" 2>/dev/null; do sleep 0.2; done; \(launch)"
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-c", script, "relaunch", target, String(ProcessInfo.processInfo.processIdentifier)]
+    process.standardOutput = nil
+    process.standardError = nil
+    try? process.run()
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

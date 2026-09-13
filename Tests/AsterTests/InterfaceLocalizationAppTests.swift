@@ -54,3 +54,14 @@ func everyLanguageTranslatesTheSameKey() {
   }
   #expect(seen.count == 5)
 }
+
+@Test("语言设置解析结果与当前语言不同时才需要重启")
+func relaunchRequiredOnlyWhenResolvedLanguageChanges() {
+  defer { AppLocalization.install(.source) }
+  AppLocalization.install(.source)
+  #expect(!AppLocalization.relaunchRequired(forSetting: "zh-Hans"))
+  #expect(!AppLocalization.relaunchRequired(forSetting: "system", preferredLanguages: ["zh-Hans-CN"]))
+  #expect(AppLocalization.relaunchRequired(forSetting: "en"))
+  #expect(AppLocalization.relaunchRequired(forSetting: "system", preferredLanguages: ["ja-JP"]))
+  #expect(AppLocalization.relaunchRequired(forSetting: "not-a-language", preferredLanguages: ["fr"]))
+}
