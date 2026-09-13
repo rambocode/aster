@@ -3469,7 +3469,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // 仍在）。交给协调器重新对账 / 冷恢复，恢复后的新 terminalID 会经布局对齐换掉本 Pane。
     // 受管终端结束（远端进程退出、终端被回收）同理：本地重建 surface 只会让显示桥再次
     // 报 terminal_not_found；要新的远端 Shell 必须由协调器发 session.restore。
-    if managedFailure != nil || managedTerminal != nil {
+    // 「分离」不算结束：远端进程还在，重新附加就是在本地重建显示桥，必须走下面的重建路径。
+    if managedFailure != nil || (managedTerminal != nil && lifecycleState != .detached) {
       diagnostics.record(
         "terminal.managed_retry_requested",
         level: .notice,
