@@ -132,7 +132,7 @@ final class ThemeSwitcherViewController: NSViewController, NSSearchFieldDelegate
     icon.contentTintColor = SettingsTheme.tertiaryInk
     icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
 
-    search.placeholderString = "搜索主题…"
+    search.placeholderString = L("搜索主题…")
     // 左侧已有自绘放大镜；藏掉 NSSearchField 内建的那颗，避免双图标（与其它 overlay 一致）。
     (search.cell as? NSSearchFieldCell)?.searchButtonCell = nil
     search.isBordered = false
@@ -287,7 +287,7 @@ final class ThemeSwitcherViewController: NSViewController, NSSearchFieldDelegate
       $0.removeFromSuperview()
     }
     if visibleThemes.isEmpty {
-      let empty = makeLabel("没有匹配的主题", size: 12, color: SettingsTheme.secondaryInk)
+      let empty = makeLabel(L("没有匹配的主题"), size: 12, color: SettingsTheme.secondaryInk)
       empty.alignment = .center
       rowsStack.addArrangedSubview(empty)
       empty.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true

@@ -682,7 +682,7 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
     let webView = WKWebView(frame: .zero, configuration: configuration)
     webView.navigationDelegate = self
     webView.loadHTMLString(
-      AgentTranscriptHTML.document(body: "<p class=\"notice\">正在渲染会话…</p>"), baseURL: nil)
+      AgentTranscriptHTML.document(body: "<p class=\"notice\">" + L("正在渲染会话…") + "</p>"), baseURL: nil)
     let entries = history.transcript.entries
     Task.detached(priority: .userInitiated) {
       let document = AgentTranscriptHTML.document(body: AgentTranscriptHTML.body(entries: entries))

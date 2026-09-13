@@ -134,7 +134,7 @@ final class AsterSettingsWindowController: NSWindowController {
       backing: .buffered,
       defer: false
     )
-    window.title = "Aster 设置"
+    window.title = L("Aster 设置")
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     // fullSizeContentView 下窗口没有可点的标题栏留白，拖拽全靠顶部那条透明拖拽条把
@@ -266,6 +266,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   override init() {
     model = AppModel()
     preferences = AppPreferences()
+    // 界面语言必须在任何菜单、窗口创建之前装好，否则先建的视图会停留在源语言。
+    AppLocalization.apply(setting: preferences.configuration.general.language)
     // Aster 自有主题目录在窗口构建前先就位，避免启动时先按内置表渲染再闪一次。
     preferences.reloadDiskThemes()
     softwareUpdateController = SoftwareUpdateService.shared
@@ -1039,8 +1041,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     guard let outcome = activeWorkspaceModel.migrateWorkspaceToManagedSession() else { return }
     guard let failure = outcome.failure else { return }
     let alert = NSAlert()
-    alert.messageText = "托管到后台失败"
-    alert.informativeText = "\(failure)。已回滚，现有终端未受影响。"
+    alert.messageText = L("托管到后台失败")
+    alert.informativeText = L("\(failure)。已回滚，现有终端未受影响。")
     alert.alertStyle = .warning
     alert.runModal()
   }
@@ -1160,10 +1162,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 用只读文本视图弹出 explain JSON；nil 表示该 provider 没有清单或当前引擎不支持读屏。
   private func presentAgentDetectionExplain(_ explain: AgentDetectionExplain?, provider: AgentProvider) {
     let alert = NSAlert()
-    alert.messageText = "Agent 状态检测"
+    alert.messageText = L("Agent 状态检测")
     guard let explain else {
       alert.informativeText =
-        "\(provider.displayName) 没有可用的屏幕检测结果：该 Agent 没有检测清单，或当前终端不支持读屏。"
+        L("\(provider.displayName) 没有可用的屏幕检测结果：该 Agent 没有检测清单，或当前终端不支持读屏。")
       alert.runModal()
       return
     }
@@ -1188,9 +1190,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       json = String(describing: explain)
     }
     alert.informativeText =
-      "\(provider.displayName)：\(explain.state.rawValue)"
-      + (explain.matchedRule.map { " · 命中 \($0.id)（优先级 \($0.priority)，区域 \($0.region)）" }
-        ?? " · 未命中任何规则（\(explain.fallbackReason ?? "-")）")
+      L("\(provider.displayName)：\(explain.state.rawValue)")
+      + (explain.matchedRule.map { L(" · 命中 \($0.id)（优先级 \(String($0.priority))，区域 \($0.region)）") }
+        ?? L(" · 未命中任何规则（\(explain.fallbackReason ?? "-")）"))
     let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
     scrollView.hasVerticalScroller = true
     scrollView.borderType = .bezelBorder
@@ -1204,8 +1206,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     textView.textContainer?.widthTracksTextView = true
     scrollView.documentView = textView
     alert.accessoryView = scrollView
-    alert.addButton(withTitle: "好")
-    alert.addButton(withTitle: "拷贝 JSON")
+    alert.addButton(withTitle: L("好"))
+    alert.addButton(withTitle: L("拷贝 JSON"))
     if alert.runModal() == .alertSecondButtonReturn {
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(json, forType: .string)
@@ -1276,7 +1278,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       model: workspaceModel, preferences: preferences, mode: mode)
     controller.onFailure = { message in
       let alert = NSAlert()
-      alert.messageText = "无法打开画中画"
+      alert.messageText = L("无法打开画中画")
       alert.informativeText = message
       alert.runModal()
     }
@@ -1330,26 +1332,26 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   private func appMenuItem() -> NSMenuItem {
     let item = NSMenuItem()
     let submenu = NSMenu(title: "Aster")
-    submenu.addItem(withTitle: "关于 Aster", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+    submenu.addItem(withTitle: L("关于 Aster"), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
     // macOS 标准位：紧跟「关于」。动作留在 AppDelegate 而不是直接指向 Sparkle 的
     // updater controller —— 开发构建里 updater 为 nil，target 为 nil 的菜单项会沿
     // responder chain 找不到实现而永远置灰，用户分不清是「没配置」还是「坏了」。
-    submenu.addItem(menuItem("检查更新…", #selector(checkForUpdates(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("检查更新…"), #selector(checkForUpdates(_:)), "", modifiers: []))
     submenu.addItem(.separator())
-    let settings = NSMenuItem(title: "设置…", action: #selector(showSettings(_:)), keyEquivalent: ",")
+    let settings = NSMenuItem(title: L("设置…"), action: #selector(showSettings(_:)), keyEquivalent: ",")
     settings.target = self
     submenu.addItem(settings)
     submenu.addItem(.separator())
-    submenu.addItem(withTitle: "隐藏 Aster", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-    submenu.addItem(withTitle: "退出 Aster", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+    submenu.addItem(withTitle: L("隐藏 Aster"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+    submenu.addItem(withTitle: L("退出 Aster"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     item.submenu = submenu
     return item
   }
 
   private func helpMenuItem() -> NSMenuItem {
     let item = NSMenuItem()
-    let submenu = NSMenu(title: "帮助")
-    submenu.addItem(menuItem("反馈问题…", #selector(showFeedback(_:)), "", modifiers: []))
+    let submenu = NSMenu(title: L("帮助"))
+    submenu.addItem(menuItem(L("反馈问题…"), #selector(showFeedback(_:)), "", modifiers: []))
     NSApp.helpMenu = submenu
     item.submenu = submenu
     return item
@@ -1357,77 +1359,77 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
   private func fileMenuItem() -> NSMenuItem {
     let item = NSMenuItem()
-    let submenu = NSMenu(title: "文件")
-    submenu.addItem(menuItem("新建窗口", #selector(newWindow(_:)), "n"))
-    submenu.addItem(menuItem("新建标签页", #selector(newTab(_:)), "t"))
+    let submenu = NSMenu(title: L("文件"))
+    submenu.addItem(menuItem(L("新建窗口"), #selector(newWindow(_:)), "n"))
+    submenu.addItem(menuItem(L("新建标签页"), #selector(newTab(_:)), "t"))
     submenu.addItem(
-      menuItem("重新打开最近关闭的标签页", #selector(reopenLastClosedTab(_:)), "t", modifiers: [.command, .shift]))
-    submenu.addItem(menuItem("打开文件…", #selector(openFile(_:)), "o"))
-    submenu.addItem(menuItem("打开文件夹…", #selector(openFolder(_:)), "", modifiers: []))
+      menuItem(L("重新打开最近关闭的标签页"), #selector(reopenLastClosedTab(_:)), "t", modifiers: [.command, .shift]))
+    submenu.addItem(menuItem(L("打开文件…"), #selector(openFile(_:)), "o"))
+    submenu.addItem(menuItem(L("打开文件夹…"), #selector(openFolder(_:)), "", modifiers: []))
     submenu.addItem(.separator())
-    submenu.addItem(menuItem("保存", #selector(saveDocument(_:)), "s"))
-    submenu.addItem(menuItem("重命名标签页…", #selector(renameTab(_:)), "", modifiers: []))
-    submenu.addItem(menuItem("关闭", #selector(closePaneOrTab(_:)), "w"))
-    submenu.addItem(menuItem("关闭标签页", #selector(closeTab(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("保存"), #selector(saveDocument(_:)), "s"))
+    submenu.addItem(menuItem(L("重命名标签页…"), #selector(renameTab(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("关闭"), #selector(closePaneOrTab(_:)), "w"))
+    submenu.addItem(menuItem(L("关闭标签页"), #selector(closeTab(_:)), "", modifiers: []))
     submenu.addItem(
-      menuItem("关闭窗口", #selector(closeActiveWindow(_:)), "w", modifiers: [.command, .shift]))
+      menuItem(L("关闭窗口"), #selector(closeActiveWindow(_:)), "w", modifiers: [.command, .shift]))
     submenu.addItem(.separator())
     // 机器管理的主菜单入口。侧栏「MACHINES」分区的「+」是同一个动作的第二条路径；
     // 两条都必须存在：侧栏折叠时主菜单仍要能添加机器。
     // 「切换机器」子菜单在打开时按当前机器列表动态填充（menuNeedsUpdate）：侧栏切换器折叠
     // 或用键盘/辅助功能时也能切机器，与侧栏弹出层是同一个动作。
-    let switchMachine = NSMenuItem(title: "切换机器", action: nil, keyEquivalent: "")
-    let switchMenu = NSMenu(title: "切换机器")
+    let switchMachine = NSMenuItem(title: L("切换机器"), action: nil, keyEquivalent: "")
+    let switchMenu = NSMenu(title: L("切换机器"))
     switchMenu.identifier = Self.machineSwitchMenuIdentifier
     switchMenu.delegate = self
     switchMachine.submenu = switchMenu
     submenu.addItem(switchMachine)
-    submenu.addItem(menuItem("添加机器…", #selector(addRemoteMachine(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("添加机器…"), #selector(addRemoteMachine(_:)), "", modifiers: []))
     // 更新当前活动远端机器的服务。与侧栏右键菜单同一事务；主菜单入口保证侧栏折叠或
     // 用键盘/辅助功能操作时也能到达。Local 活动时由 validateMenuItem 置灰。
     submenu.addItem(
-      menuItem("更新远端服务…", #selector(updateRemoteMachineService(_:)), "", modifiers: []))
+      menuItem(L("更新远端服务…"), #selector(updateRemoteMachineService(_:)), "", modifiers: []))
     submenu.addItem(
-      menuItem("新建远端 Agent…", #selector(newRemoteMachineAgent(_:)), "", modifiers: []))
+      menuItem(L("新建远端 Agent…"), #selector(newRemoteMachineAgent(_:)), "", modifiers: []))
     submenu.addItem(
-      menuItem("远端 Agent 集成…", #selector(configureRemoteMachineAgents(_:)), "", modifiers: []))
+      menuItem(L("远端 Agent 集成…"), #selector(configureRemoteMachineAgents(_:)), "", modifiers: []))
     submenu.addItem(.separator())
-    submenu.addItem(menuItem("分离受管终端", #selector(detachManagedTerminal(_:)), "", modifiers: []))
-    submenu.addItem(menuItem("结束受管终端", #selector(endManagedTerminal(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("分离受管终端"), #selector(detachManagedTerminal(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("结束受管终端"), #selector(endManagedTerminal(_:)), "", modifiers: []))
     submenu.addItem(
       menuItem(
-        "把布局托管到后台…", #selector(migrateWorkspaceToManagedSession(_:)), "", modifiers: []))
+        L("把布局托管到后台…"), #selector(migrateWorkspaceToManagedSession(_:)), "", modifiers: []))
     item.submenu = submenu
     return item
   }
 
   func editMenuItem() -> NSMenuItem {
     let item = NSMenuItem()
-    let submenu = NSMenu(title: "编辑")
-    submenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
-    submenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+    let submenu = NSMenu(title: L("编辑"))
+    submenu.addItem(withTitle: L("撤销"), action: Selector(("undo:")), keyEquivalent: "z")
+    submenu.addItem(withTitle: L("重做"), action: Selector(("redo:")), keyEquivalent: "Z")
     submenu.addItem(textEditingMenuItem())
     submenu.addItem(.separator())
-    submenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-    submenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-    submenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-    let pasteAsItem = NSMenuItem(title: "粘贴为", action: nil, keyEquivalent: "")
-    let pasteAsMenu = NSMenu(title: "粘贴为")
+    submenu.addItem(withTitle: L("剪切"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+    submenu.addItem(withTitle: L("复制"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    submenu.addItem(withTitle: L("粘贴"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    let pasteAsItem = NSMenuItem(title: L("粘贴为"), action: nil, keyEquivalent: "")
+    let pasteAsMenu = NSMenu(title: L("粘贴为"))
     pasteAsMenu.addItem(
-      withTitle: "粘贴选区", action: #selector(AsterTerminalView.pasteSelection(_:)),
+      withTitle: L("粘贴选区"), action: #selector(AsterTerminalView.pasteSelection(_:)),
       keyEquivalent: "")
     pasteAsMenu.addItem(
-      withTitle: "粘贴 Base64 编码文件…",
+      withTitle: L("粘贴 Base64 编码文件…"),
       action: #selector(AsterTerminalView.pasteFileBase64Encoded(_:)),
       keyEquivalent: "")
     pasteAsMenu.addItem(
-      withTitle: "转义特殊字符后粘贴",
+      withTitle: L("转义特殊字符后粘贴"),
       action: #selector(AsterTerminalView.pasteEscapingSpecialCharacters(_:)), keyEquivalent: "")
     pasteAsMenu.addItem(
-      withTitle: "括号粘贴", action: #selector(GhosttySurfaceView.pasteBracketed(_:)),
+      withTitle: L("括号粘贴"), action: #selector(GhosttySurfaceView.pasteBracketed(_:)),
       keyEquivalent: "")
     pasteAsMenu.addItem(
-      withTitle: "粘贴并在 Composer 中继续",
+      withTitle: L("粘贴并在 Composer 中继续"),
       action: #selector(GhosttySurfaceView.pasteAndContinueInComposer(_:)), keyEquivalent: "")
     pasteAsItem.submenu = pasteAsMenu
     submenu.addItem(pasteAsItem)
@@ -1442,25 +1444,25 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(importFromDevice)
     submenu.addItem(
       menuItem(
-        "编辑器", #selector(toggleComposer(_:)), "e", modifiers: [.command, .shift],
+        L("编辑器"), #selector(toggleComposer(_:)), "e", modifiers: [.command, .shift],
         symbol: "rectangle.and.pencil.and.ellipsis"))
     submenu.addItem(
       menuItem(
-        "Prompt 队列…", #selector(togglePromptQueue(_:)), "m", modifiers: [.command, .shift],
+        L("Prompt 队列…"), #selector(togglePromptQueue(_:)), "m", modifiers: [.command, .shift],
         symbol: "list.bullet"))
     submenu.addItem(
       menuItem(
-        "发送到聊天…", #selector(sendToChat(_:)), "", modifiers: [], symbol: "message"))
+        L("发送到聊天…"), #selector(sendToChat(_:)), "", modifiers: [], symbol: "message"))
     submenu.addItem(.separator())
-    submenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    submenu.addItem(withTitle: L("全选"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     submenu.addItem(.separator())
-    submenu.addItem(menuItem("查找", #selector(find(_:)), "f"))
+    submenu.addItem(menuItem(L("查找"), #selector(find(_:)), "f"))
     submenu.addItem(
-      menuItem("在全部 Pane 中查找", #selector(globalFind(_:)), "f", modifiers: [.command, .shift]))
+      menuItem(L("在全部 Pane 中查找"), #selector(globalFind(_:)), "f", modifiers: [.command, .shift]))
     submenu.addItem(.separator())
     submenu.addItem(
       menuItem(
-        "安全键盘输入", #selector(toggleSecureKeyboardEntry(_:)), "", modifiers: []))
+        L("安全键盘输入"), #selector(toggleSecureKeyboardEntry(_:)), "", modifiers: []))
     item.submenu = submenu
     return item
   }
@@ -1468,14 +1470,14 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// Otty 的“插入”只预填路径，不自动回车。文件选择和截屏都通过 responder chain
   /// 定位当前终端，因此编辑器 Pane 或只读终端会由真实接收者自动置灰。
   private func insertMenuItem() -> NSMenuItem {
-    let item = NSMenuItem(title: "插入", action: nil, keyEquivalent: "")
-    let submenu = NSMenu(title: "插入")
+    let item = NSMenuItem(title: L("插入"), action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: L("插入"))
     submenu.addItem(
       responderMenuItem(
-        "文件路径…", #selector(AsterTerminalView.insertFilePath(_:)), "", modifiers: []))
+        L("文件路径…"), #selector(AsterTerminalView.insertFilePath(_:)), "", modifiers: []))
     submenu.addItem(
       responderMenuItem(
-        "截屏", #selector(AsterTerminalView.insertScreenshot(_:)), "", modifiers: []))
+        L("截屏"), #selector(AsterTerminalView.insertScreenshot(_:)), "", modifiers: []))
     item.submenu = submenu
     return item
   }
@@ -1502,25 +1504,25 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     let workingDirectory = tab?.workingDirectory
 
     // 标签命名（对齐 Otty：重命名 + 前缀两个显式入口，共用同一原生对话框）。
-    submenu.addItem(menuItem("重命名标签页…", #selector(renameTab(_:)), "", modifiers: []))
-    submenu.addItem(menuItem("设置标签页前缀…", #selector(setTabPrefix(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("重命名标签页…"), #selector(renameTab(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("设置标签页前缀…"), #selector(setTabPrefix(_:)), "", modifiers: []))
     submenu.addItem(.separator())
-    submenu.addItem(menuItem("清屏", #selector(clearActivePaneScreen(_:)), "k"))
+    submenu.addItem(menuItem(L("清屏"), #selector(clearActivePaneScreen(_:)), "k"))
     submenu.addItem(.separator())
 
     // 工作目录动作依赖聚焦标签最近一次可靠的 OSC 7 CWD；缺失时禁用而不是隐藏，
     // 让用户能感知能力存在（对齐 Otty 的置灰行为）。
-    submenu.addItem(menuItem("拷贝路径", #selector(copyActivePanePath(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("拷贝路径"), #selector(copyActivePanePath(_:)), "", modifiers: []))
     submenu.addItem(
-      menuItem("在访达中显示", #selector(revealActivePaneInFinder(_:)), "", modifiers: []))
-    let openIn = NSMenuItem(title: "打开方式", action: nil, keyEquivalent: "")
+      menuItem(L("在访达中显示"), #selector(revealActivePaneInFinder(_:)), "", modifiers: []))
+    let openIn = NSMenuItem(title: L("打开方式"), action: nil, keyEquivalent: "")
     if let workingDirectory {
       openIn.submenu = ShellDirectoryMenuBuilder.openInMenu(
         directory: workingDirectory, model: workspaceModel, tab: tab, preferences: preferences)
     } else {
       // 无可靠 CWD 时保留入口但置灰，与拷贝路径/访达的 validate 行为一致。
-      let unavailable = NSMenu(title: "打开方式")
-      let placeholder = NSMenuItem(title: "无可用工作目录", action: nil, keyEquivalent: "")
+      let unavailable = NSMenu(title: L("打开方式"))
+      let placeholder = NSMenuItem(title: L("无可用工作目录"), action: nil, keyEquivalent: "")
       placeholder.isEnabled = false
       unavailable.autoenablesItems = false
       unavailable.addItem(placeholder)
@@ -1538,10 +1540,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         "Mark Mode", #selector(AsterTerminalView.enterMarkMode(_:)), "", modifiers: []))
     submenu.addItem(
       responderMenuItem(
-        "打开链接（Hint Mode）", #selector(AsterTerminalView.openHintMode(_:)), "",
+        L("打开链接（Hint Mode）"), #selector(AsterTerminalView.openHintMode(_:)), "",
         modifiers: []))
     submenu.addItem(
-      menuItem("只读模式", #selector(toggleActivePaneReadOnly(_:)), "", modifiers: []))
+      menuItem(L("只读模式"), #selector(toggleActivePaneReadOnly(_:)), "", modifiers: []))
     submenu.addItem(
       menuItem("Composer", #selector(toggleComposer(_:)), "\r", modifiers: [.command, .shift]))
     submenu.addItem(.separator())
@@ -1554,10 +1556,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
     submenu.addItem(.separator())
     submenu.addItem(
-      menuItem("通知与权限…", #selector(showShellNotificationSettings(_:)), "", modifiers: []))
+      menuItem(L("通知与权限…"), #selector(showShellNotificationSettings(_:)), "", modifiers: []))
     submenu.addItem(
       responderMenuItem(
-        "显示/隐藏 Vi 按键提示", #selector(AsterTerminalView.toggleViKeyHints(_:)), "/",
+        L("显示/隐藏 Vi 按键提示"), #selector(AsterTerminalView.toggleViKeyHints(_:)), "/",
         modifiers: [.command]))
   }
 
@@ -1574,7 +1576,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.autoenablesItems = false
 
     let copySessionID = menuItem(
-      "拷贝会话 ID", #selector(copyActiveAgentSessionID(_:)), "", modifiers: [])
+      L("拷贝会话 ID"), #selector(copyActiveAgentSessionID(_:)), "", modifiers: [])
     copySessionID.representedObject = AgentMenuActionContext(
       session: context,
       workspaceModel: workspaceModel
@@ -1584,7 +1586,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     // 历史入口按同一份 pane 级快照过滤到当前项目；无 session ID 时仍可用（退回
     // Pane 工作目录判定项目），因此不像 Copy/Fork 那样禁用。
     let sessionHistory = menuItem(
-      "查看会话历史", #selector(showActiveAgentSessionHistory(_:)), "", modifiers: [])
+      L("查看会话历史"), #selector(showActiveAgentSessionHistory(_:)), "", modifiers: [])
     sessionHistory.representedObject = AgentMenuActionContext(
       session: context,
       workspaceModel: workspaceModel
@@ -1593,7 +1595,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     // 调试入口：只对有屏幕检测清单的 provider 显示。
     if context.provider.capabilities.contains(.screenDetection) {
       let explain = menuItem(
-        "解释 Agent 状态检测…", #selector(explainActiveAgentDetection(_:)), "", modifiers: [])
+        L("解释 Agent 状态检测…"), #selector(explainActiveAgentDetection(_:)), "", modifiers: [])
       explain.representedObject = AgentMenuActionContext(
         session: context,
         workspaceModel: workspaceModel
@@ -1607,10 +1609,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
     submenu.addItem(.separator())
     let directions: [(String, SplitDirection)] = [
-      ("Fork 到 向右拆分", .right),
-      ("Fork 到 向左拆分", .left),
-      ("Fork 到 向下拆分", .down),
-      ("Fork 到 向上拆分", .up),
+      (L("Fork 到 向右拆分"), .right),
+      (L("Fork 到 向左拆分"), .left),
+      (L("Fork 到 向下拆分"), .down),
+      (L("Fork 到 向上拆分"), .up),
     ]
     for (title, direction) in directions {
       let fork = menuItem(title, #selector(forkActiveAgentToSplit(_:)), "", modifiers: [])
@@ -1624,7 +1626,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
     submenu.addItem(.separator())
     let newTab = menuItem(
-      "Fork 到 新建标签页", #selector(forkActiveAgentToNewTab(_:)), "", modifiers: [])
+      L("Fork 到 新建标签页"), #selector(forkActiveAgentToNewTab(_:)), "", modifiers: [])
     newTab.representedObject = AgentMenuActionContext(
       session: context,
       workspaceModel: workspaceModel
@@ -1632,7 +1634,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     newTab.isEnabled = context.sessionID != nil
     submenu.addItem(newTab)
     let newWindow = menuItem(
-      "Fork 到 新建窗口", #selector(forkActiveAgentToNewWindow(_:)), "", modifiers: [])
+      L("Fork 到 新建窗口"), #selector(forkActiveAgentToNewWindow(_:)), "", modifiers: [])
     newWindow.representedObject = AgentMenuActionContext(
       session: context,
       workspaceModel: workspaceModel
@@ -1646,40 +1648,40 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 这些菜单项既公开原生编辑能力，也让 AppKit 在进入 SwiftTerm 的不可覆写 keyDown
   /// 前通过 responder chain 分发默认快捷键。终端视图会按普通屏/增强协议动态校验。
   private func textEditingMenuItem() -> NSMenuItem {
-    let item = NSMenuItem(title: "文本编辑", action: nil, keyEquivalent: "")
-    let submenu = NSMenu(title: "文本编辑")
+    let item = NSMenuItem(title: L("文本编辑"), action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: L("文本编辑"))
     submenu.addItem(
       responderMenuItem(
-        "移到行首", #selector(AsterTerminalView.movePromptToBeginningOfLine(_:)),
+        L("移到行首"), #selector(AsterTerminalView.movePromptToBeginningOfLine(_:)),
         Self.functionKey(NSLeftArrowFunctionKey), modifiers: [.command]))
     submenu.addItem(
       responderMenuItem(
-        "移到行尾", #selector(AsterTerminalView.movePromptToEndOfLine(_:)),
+        L("移到行尾"), #selector(AsterTerminalView.movePromptToEndOfLine(_:)),
         Self.functionKey(NSRightArrowFunctionKey), modifiers: [.command]))
     submenu.addItem(
       responderMenuItem(
-        "向左移动一个词", #selector(AsterTerminalView.movePromptWordLeft(_:)),
+        L("向左移动一个词"), #selector(AsterTerminalView.movePromptWordLeft(_:)),
         Self.functionKey(NSLeftArrowFunctionKey), modifiers: [.option]))
     submenu.addItem(
       responderMenuItem(
-        "向右移动一个词", #selector(AsterTerminalView.movePromptWordRight(_:)),
+        L("向右移动一个词"), #selector(AsterTerminalView.movePromptWordRight(_:)),
         Self.functionKey(NSRightArrowFunctionKey), modifiers: [.option]))
     submenu.addItem(.separator())
     submenu.addItem(
       responderMenuItem(
-        "删除到行首", #selector(AsterTerminalView.deletePromptToBeginningOfLine(_:)),
+        L("删除到行首"), #selector(AsterTerminalView.deletePromptToBeginningOfLine(_:)),
         "\u{8}", modifiers: [.command]))
     submenu.addItem(
       responderMenuItem(
-        "删除到行尾", #selector(AsterTerminalView.deletePromptToEndOfLine(_:)),
+        L("删除到行尾"), #selector(AsterTerminalView.deletePromptToEndOfLine(_:)),
         Self.functionKey(NSDeleteFunctionKey), modifiers: [.command]))
     submenu.addItem(
       responderMenuItem(
-        "删除左侧词", #selector(AsterTerminalView.deletePromptWordLeft(_:)),
+        L("删除左侧词"), #selector(AsterTerminalView.deletePromptWordLeft(_:)),
         "\u{8}", modifiers: [.option]))
     submenu.addItem(
       responderMenuItem(
-        "删除右侧词", #selector(AsterTerminalView.deletePromptWordRight(_:)),
+        L("删除右侧词"), #selector(AsterTerminalView.deletePromptWordRight(_:)),
         Self.functionKey(NSDeleteFunctionKey), modifiers: [.option]))
     submenu.addItem(.separator())
     submenu.addItem(selectionMenuItem())
@@ -1690,16 +1692,16 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// Shift+Arrow 默认进入原生终端选区；Option 版本保持矩形列。没有注册 Command
   /// 组合，因此 Shift+Command+Arrow 会继续原样交给终端程序。
   func selectionMenuItem() -> NSMenuItem {
-    let item = NSMenuItem(title: "扩展选区", action: nil, keyEquivalent: "")
-    let submenu = NSMenu(title: "扩展选区")
+    let item = NSMenuItem(title: L("扩展选区"), action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: L("扩展选区"))
     let directions: [(String, Selector, Selector, Int)] = [
-      ("向左扩展", #selector(AsterTerminalView.extendSelectionLeft(_:)),
+      (L("向左扩展"), #selector(AsterTerminalView.extendSelectionLeft(_:)),
         #selector(AsterTerminalView.extendRectangularSelectionLeft(_:)), NSLeftArrowFunctionKey),
-      ("向右扩展", #selector(AsterTerminalView.extendSelectionRight(_:)),
+      (L("向右扩展"), #selector(AsterTerminalView.extendSelectionRight(_:)),
         #selector(AsterTerminalView.extendRectangularSelectionRight(_:)), NSRightArrowFunctionKey),
-      ("向上扩展", #selector(AsterTerminalView.extendSelectionUp(_:)),
+      (L("向上扩展"), #selector(AsterTerminalView.extendSelectionUp(_:)),
         #selector(AsterTerminalView.extendRectangularSelectionUp(_:)), NSUpArrowFunctionKey),
-      ("向下扩展", #selector(AsterTerminalView.extendSelectionDown(_:)),
+      (L("向下扩展"), #selector(AsterTerminalView.extendSelectionDown(_:)),
         #selector(AsterTerminalView.extendRectangularSelectionDown(_:)), NSDownArrowFunctionKey),
     ]
     for (title, linearAction, rectangularAction, key) in directions {
@@ -1707,7 +1709,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         responderMenuItem(title, linearAction, Self.functionKey(key), modifiers: [.shift]))
       submenu.addItem(
         responderMenuItem(
-          "\(title)（矩形）", rectangularAction, Self.functionKey(key),
+          L("\(title)（矩形）"), rectangularAction, Self.functionKey(key),
           modifiers: [.shift, .option]))
     }
     item.submenu = submenu
@@ -1729,50 +1731,50 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 按参考应用的分组组织，两个子菜单分别对应「调整拆分大小」和「聚焦面板」。
   func workspaceMenuItem() -> NSMenuItem {
     let item = NSMenuItem()
-    let submenu = NSMenu(title: "显示")
-    submenu.addItem(menuItem("向右拆分", #selector(splitRight(_:)), "d"))
-    submenu.addItem(menuItem("向左拆分", #selector(splitLeft(_:)), "d", modifiers: [.command, .option]))
-    submenu.addItem(menuItem("向下拆分", #selector(splitDown(_:)), "d", modifiers: [.command, .shift]))
+    let submenu = NSMenu(title: L("显示"))
+    submenu.addItem(menuItem(L("向右拆分"), #selector(splitRight(_:)), "d"))
+    submenu.addItem(menuItem(L("向左拆分"), #selector(splitLeft(_:)), "d", modifiers: [.command, .option]))
+    submenu.addItem(menuItem(L("向下拆分"), #selector(splitDown(_:)), "d", modifiers: [.command, .shift]))
     submenu.addItem(
-      menuItem("向上拆分", #selector(splitUp(_:)), "d", modifiers: [.command, .option, .shift]))
+      menuItem(L("向上拆分"), #selector(splitUp(_:)), "d", modifiers: [.command, .option, .shift]))
     submenu.addItem(.separator())
     submenu.addItem(
-      menuItem("缩放拆分", #selector(zoomSplit(_:)), "\r", modifiers: [.command, .shift]))
+      menuItem(L("缩放拆分"), #selector(zoomSplit(_:)), "\r", modifiers: [.command, .shift]))
     submenu.addItem(splitSizeMenuItem())
     submenu.addItem(focusPaneMenuItem())
-    submenu.addItem(menuItem("关闭当前面板", #selector(closePane(_:)), "w", modifiers: [.command, .option]))
+    submenu.addItem(menuItem(L("关闭当前面板"), #selector(closePane(_:)), "w", modifiers: [.command, .option]))
     submenu.addItem(.separator())
-    submenu.addItem(menuItem("主题", #selector(showThemeSwitcher(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("主题"), #selector(showThemeSwitcher(_:)), "", modifiers: []))
     submenu.addItem(
-      menuItem("命令面板", #selector(commandPalette(_:)), "p", modifiers: [.command, .shift]))
+      menuItem(L("命令面板"), #selector(commandPalette(_:)), "p", modifiers: [.command, .shift]))
     submenu.addItem(
       menuItem("Open Quickly", #selector(openQuickly(_:)), "o", modifiers: [.command, .shift]))
-    submenu.addItem(menuItem("Open Quickly · 当前", #selector(openQuicklyCurrent(_:)), "j"))
-    submenu.addItem(menuItem("显示/隐藏详情面板", #selector(toggleInspector(_:)), "", modifiers: []))
-    submenu.addItem(menuItem("显示/隐藏标签栏", #selector(toggleTabBarVisibility(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("Open Quickly · 当前"), #selector(openQuicklyCurrent(_:)), "j"))
+    submenu.addItem(menuItem(L("显示/隐藏详情面板"), #selector(toggleInspector(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("显示/隐藏标签栏"), #selector(toggleTabBarVisibility(_:)), "", modifiers: []))
     submenu.addItem(.separator())
-    submenu.addItem(menuItem("增大字号", #selector(increaseFontSize(_:)), "="))
-    submenu.addItem(menuItem("减小字号", #selector(decreaseFontSize(_:)), "-"))
-    submenu.addItem(menuItem("重置字号", #selector(resetFontSize(_:)), "0"))
+    submenu.addItem(menuItem(L("增大字号"), #selector(increaseFontSize(_:)), "="))
+    submenu.addItem(menuItem(L("减小字号"), #selector(decreaseFontSize(_:)), "-"))
+    submenu.addItem(menuItem(L("重置字号"), #selector(resetFontSize(_:)), "0"))
     submenu.addItem(.separator())
     submenu.addItem(menuItem("Pin Window", #selector(togglePinWindow(_:)), "", modifiers: []))
     let pip = NSMenuItem(title: "Picture in Picture", action: nil, keyEquivalent: "")
     let pipMenu = NSMenu(title: "Picture in Picture")
-    pipMenu.addItem(menuItem("当前 Pane", #selector(pictureInPictureCurrentPane(_:)), "", modifiers: []))
-    pipMenu.addItem(menuItem("跟随活动 Pane", #selector(pictureInPictureFollowActivePane(_:)), "", modifiers: []))
+    pipMenu.addItem(menuItem(L("当前 Pane"), #selector(pictureInPictureCurrentPane(_:)), "", modifiers: []))
+    pipMenu.addItem(menuItem(L("跟随活动 Pane"), #selector(pictureInPictureFollowActivePane(_:)), "", modifiers: []))
     pipMenu.addItem(.separator())
-    pipMenu.addItem(menuItem("关闭 Picture in Picture", #selector(closePictureInPicture(_:)), "", modifiers: []))
+    pipMenu.addItem(menuItem(L("关闭 Picture in Picture"), #selector(closePictureInPicture(_:)), "", modifiers: []))
     pip.submenu = pipMenu
     submenu.addItem(pip)
     submenu.addItem(.separator())
     submenu.addItem(terminalScrollMenuItem())
     submenu.addItem(.separator())
-    submenu.addItem(menuItem("打开 Recipe…", #selector(openRecipe(_:)), "", modifiers: []))
-    submenu.addItem(menuItem("保存为 Recipe…", #selector(saveRecipe(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("打开 Recipe…"), #selector(openRecipe(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("保存为 Recipe…"), #selector(saveRecipe(_:)), "", modifiers: []))
     submenu.addItem(.separator())
     submenu.addItem(
       menuItem(
-        "进入全屏幕", #selector(toggleFullScreen(_:)), "f", modifiers: [.function]))
+        L("进入全屏幕"), #selector(toggleFullScreen(_:)), "f", modifiers: [.function]))
     item.submenu = submenu
     return item
   }
@@ -1780,79 +1782,79 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 滚动命令由 responder chain 定位到当前终端，避免应用层保存第二份“活动终端”状态。
   /// Command+Page Up/Down 留给后续 Shell Integration 的上一/下一命令导航。
   func terminalScrollMenuItem() -> NSMenuItem {
-    let item = NSMenuItem(title: "终端滚动", action: nil, keyEquivalent: "")
-    let submenu = NSMenu(title: "终端滚动")
+    let item = NSMenuItem(title: L("终端滚动"), action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: L("终端滚动"))
     submenu.addItem(
       responderMenuItem(
-        "向上翻页", #selector(GhosttySurfaceView.scrollTerminalPageUp(_:)),
+        L("向上翻页"), #selector(GhosttySurfaceView.scrollTerminalPageUp(_:)),
         Self.functionKey(NSPageUpFunctionKey), modifiers: [.shift]))
     submenu.addItem(
       responderMenuItem(
-        "向下翻页", #selector(GhosttySurfaceView.scrollTerminalPageDown(_:)),
+        L("向下翻页"), #selector(GhosttySurfaceView.scrollTerminalPageDown(_:)),
         Self.functionKey(NSPageDownFunctionKey), modifiers: [.shift]))
     submenu.addItem(.separator())
     submenu.addItem(
       responderMenuItem(
-        "滚动到顶部", #selector(GhosttySurfaceView.scrollTerminalToTop(_:)),
+        L("滚动到顶部"), #selector(GhosttySurfaceView.scrollTerminalToTop(_:)),
         Self.functionKey(NSHomeFunctionKey), modifiers: [.shift]))
     submenu.addItem(
       responderMenuItem(
-        "滚动到底部", #selector(GhosttySurfaceView.scrollTerminalToBottom(_:)),
+        L("滚动到底部"), #selector(GhosttySurfaceView.scrollTerminalToBottom(_:)),
         Self.functionKey(NSEndFunctionKey), modifiers: [.shift]))
     submenu.addItem(.separator())
     submenu.addItem(
       responderMenuItem(
-        "上一条命令", #selector(GhosttySurfaceView.scrollToPreviousCommand(_:)),
+        L("上一条命令"), #selector(GhosttySurfaceView.scrollToPreviousCommand(_:)),
         Self.functionKey(NSPageUpFunctionKey), modifiers: [.command]))
     submenu.addItem(
       responderMenuItem(
-        "下一条命令", #selector(GhosttySurfaceView.scrollToNextCommand(_:)),
+        L("下一条命令"), #selector(GhosttySurfaceView.scrollToNextCommand(_:)),
         Self.functionKey(NSPageDownFunctionKey), modifiers: [.command]))
     item.submenu = submenu
     return item
   }
 
   private func splitSizeMenuItem() -> NSMenuItem {
-    let item = NSMenuItem(title: "调整拆分大小", action: nil, keyEquivalent: "")
-    let submenu = NSMenu(title: "调整拆分大小")
+    let item = NSMenuItem(title: L("调整拆分大小"), action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: L("调整拆分大小"))
     submenu.addItem(
-      menuItem("等分拆分", #selector(equalizeSplits(_:)), "=", modifiers: [.command, .control]))
+      menuItem(L("等分拆分"), #selector(equalizeSplits(_:)), "=", modifiers: [.command, .control]))
     submenu.addItem(.separator())
     // 方向语义跟随分隔条本身：上移即让上方面板变小，与聚焦面板在哪一侧无关。
     submenu.addItem(
-      menuItem("上移分隔条", #selector(moveDividerUp(_:)), Self.functionKey(NSUpArrowFunctionKey),
+      menuItem(L("上移分隔条"), #selector(moveDividerUp(_:)), Self.functionKey(NSUpArrowFunctionKey),
         modifiers: [.command, .control]))
     submenu.addItem(
-      menuItem("下移分隔条", #selector(moveDividerDown(_:)), Self.functionKey(NSDownArrowFunctionKey),
+      menuItem(L("下移分隔条"), #selector(moveDividerDown(_:)), Self.functionKey(NSDownArrowFunctionKey),
         modifiers: [.command, .control]))
     submenu.addItem(
-      menuItem("左移分隔条", #selector(moveDividerLeft(_:)), Self.functionKey(NSLeftArrowFunctionKey),
+      menuItem(L("左移分隔条"), #selector(moveDividerLeft(_:)), Self.functionKey(NSLeftArrowFunctionKey),
         modifiers: [.command, .control]))
     submenu.addItem(
-      menuItem("右移分隔条", #selector(moveDividerRight(_:)), Self.functionKey(NSRightArrowFunctionKey),
+      menuItem(L("右移分隔条"), #selector(moveDividerRight(_:)), Self.functionKey(NSRightArrowFunctionKey),
         modifiers: [.command, .control]))
     item.submenu = submenu
     return item
   }
 
   private func focusPaneMenuItem() -> NSMenuItem {
-    let item = NSMenuItem(title: "聚焦面板", action: nil, keyEquivalent: "")
-    let submenu = NSMenu(title: "聚焦面板")
+    let item = NSMenuItem(title: L("聚焦面板"), action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: L("聚焦面板"))
     submenu.addItem(
-      menuItem("聚焦上方面板", #selector(focusPaneUp(_:)), Self.functionKey(NSUpArrowFunctionKey),
+      menuItem(L("聚焦上方面板"), #selector(focusPaneUp(_:)), Self.functionKey(NSUpArrowFunctionKey),
         modifiers: [.command, .option]))
     submenu.addItem(
-      menuItem("聚焦下方面板", #selector(focusPaneDown(_:)), Self.functionKey(NSDownArrowFunctionKey),
+      menuItem(L("聚焦下方面板"), #selector(focusPaneDown(_:)), Self.functionKey(NSDownArrowFunctionKey),
         modifiers: [.command, .option]))
     submenu.addItem(
-      menuItem("聚焦左侧面板", #selector(focusPaneLeft(_:)), Self.functionKey(NSLeftArrowFunctionKey),
+      menuItem(L("聚焦左侧面板"), #selector(focusPaneLeft(_:)), Self.functionKey(NSLeftArrowFunctionKey),
         modifiers: [.command, .option]))
     submenu.addItem(
-      menuItem("聚焦右侧面板", #selector(focusPaneRight(_:)), Self.functionKey(NSRightArrowFunctionKey),
+      menuItem(L("聚焦右侧面板"), #selector(focusPaneRight(_:)), Self.functionKey(NSRightArrowFunctionKey),
         modifiers: [.command, .option]))
     submenu.addItem(.separator())
-    submenu.addItem(menuItem("聚焦下一个面板", #selector(focusNextPane(_:)), "]"))
-    submenu.addItem(menuItem("聚焦上一个面板", #selector(focusPreviousPane(_:)), "["))
+    submenu.addItem(menuItem(L("聚焦下一个面板"), #selector(focusNextPane(_:)), "]"))
+    submenu.addItem(menuItem(L("聚焦上一个面板"), #selector(focusPreviousPane(_:)), "["))
     item.submenu = submenu
     return item
   }
@@ -1868,16 +1870,16 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
   private func windowMenuItem() -> NSMenuItem {
     let item = NSMenuItem()
-    let submenu = NSMenu(title: "窗口")
+    let submenu = NSMenu(title: L("窗口"))
     submenu.addItem(menuItem("Quick Terminal", #selector(toggleQuickTerminal(_:)), "", modifiers: []))
-    submenu.addItem(menuItem("重新启动 Quick Terminal", #selector(restartQuickTerminal(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("重新启动 Quick Terminal"), #selector(restartQuickTerminal(_:)), "", modifiers: []))
     submenu.addItem(.separator())
-    submenu.addItem(menuItem("新建窗口", #selector(newWindow(_:)), "n"))
-    submenu.addItem(menuItem("关闭窗口", #selector(closeActiveWindow(_:)), "w", modifiers: [.command, .shift]))
+    submenu.addItem(menuItem(L("新建窗口"), #selector(newWindow(_:)), "n"))
+    submenu.addItem(menuItem(L("关闭窗口"), #selector(closeActiveWindow(_:)), "w", modifiers: [.command, .shift]))
     submenu.addItem(.separator())
-    submenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-    submenu.addItem(withTitle: "缩放", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-    submenu.addItem(withTitle: "前置全部窗口", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+    submenu.addItem(withTitle: L("最小化"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+    submenu.addItem(withTitle: L("缩放"), action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+    submenu.addItem(withTitle: L("前置全部窗口"), action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
     NSApp.windowsMenu = submenu
     item.submenu = submenu
     return item
@@ -1949,7 +1951,7 @@ extension AsterAppDelegate: NSMenuItemValidation {
     }
     if action == #selector(toggleFullScreen(_:)) {
       guard let window = workspaceWindow(for: activeWorkspaceModel) else { return false }
-      menuItem.title = window.styleMask.contains(.fullScreen) ? "退出全屏幕" : "进入全屏幕"
+      menuItem.title = window.styleMask.contains(.fullScreen) ? L("退出全屏幕") : L("进入全屏幕")
       return true
     }
     if action == #selector(toggleActivePaneReadOnly(_:)) {

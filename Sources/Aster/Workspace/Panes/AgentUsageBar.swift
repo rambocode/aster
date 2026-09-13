@@ -70,7 +70,7 @@ final class AgentUsageBarView: NSView {
   func apply(_ snapshot: AgentUsageSnapshot) {
     self.snapshot = snapshot
     providerLabel.stringValue = snapshot.provider.displayName
-    providerLabel.toolTip = statsCommand.map { "点击在 \(snapshot.provider.displayName) 中运行 \($0) 查看统计" }
+    providerLabel.toolTip = statsCommand.map { L("点击在 \(snapshot.provider.displayName) 中运行 \($0) 查看统计") }
     window?.invalidateCursorRects(for: self)
     for (kind, meter) in meters {
       if let window = snapshot.window(kind) {
@@ -81,7 +81,7 @@ final class AgentUsageBarView: NSView {
       }
     }
     setAccessibilityLabel(
-      "\(snapshot.provider.displayName) 用量 "
+      L("\(snapshot.provider.displayName) 用量 ")
         + snapshot.windows.map { "\($0.displayLabel) \(Int($0.usedPercent))%" }.joined(separator: "，"))
   }
 }
@@ -151,15 +151,15 @@ final class AgentUsageMeterView: NSView {
   static func tooltip(
     for window: AgentUsageWindow, updatedAt: Date? = nil, now: Date = Date()
   ) -> String {
-    var parts = ["\(window.displayLabel) 已用 \(Int(window.usedPercent.rounded()))%"]
+    var parts = [L("\(window.displayLabel) 已用 \(String(Int(window.usedPercent.rounded())))%%")]
     if let updatedAt, now.timeIntervalSince(updatedAt) > 120 {
-      parts.append("数据更新于 \(RelativeTime.string(since: updatedAt, relativeTo: now))")
+      parts.append(L("数据更新于 \(RelativeTime.string(since: updatedAt, relativeTo: now))"))
     }
     if let resetsAt = window.resetsAt {
       let formatter = DateFormatter()
       formatter.dateStyle = .short
       formatter.timeStyle = .short
-      parts.append("重置于 \(formatter.string(from: resetsAt))（\(RelativeTime.string(since: resetsAt, relativeTo: now))）")
+      parts.append(L("重置于 \(formatter.string(from: resetsAt))（\(RelativeTime.string(since: resetsAt, relativeTo: now))）"))
     }
     if let detail = window.detail { parts.append(detail) }
     return parts.joined(separator: "\n")

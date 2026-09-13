@@ -14,7 +14,7 @@ enum ShellDirectoryMenuBuilder {
     preferences: AppPreferences
   ) -> NSMenu {
     let url = URL(fileURLWithPath: directory)
-    let menu = NSMenu(title: "打开方式")
+    let menu = NSMenu(title: L("打开方式"))
     menu.addItem(ActionMenuItem(title: "New Terminal Tab") { [weak model] in
       model?.newTab(workingDirectory: directory)
     })
@@ -38,7 +38,7 @@ enum ShellDirectoryMenuBuilder {
       })
     }
     if editors.isEmpty && preferences.configuration.controls.resolvedOpenWithApplications.isEmpty {
-      let unavailable = NSMenuItem(title: "未检测到受支持的编辑器", action: nil, keyEquivalent: "")
+      let unavailable = NSMenuItem(title: L("未检测到受支持的编辑器"), action: nil, keyEquivalent: "")
       unavailable.isEnabled = false
       menu.addItem(unavailable)
     }
@@ -50,7 +50,7 @@ enum ShellDirectoryMenuBuilder {
   static func gitMenu(tab: TerminalTabItem?, preferences: AppPreferences) -> NSMenu {
     let menu = NSMenu(title: "Git")
     if let directory = tab?.workingDirectory, let client = resolvedGitClient(preferences: preferences) {
-      menu.addItem(ActionMenuItem(title: "在 \(client.name) 中打开") {
+      menu.addItem(ActionMenuItem(title: L("在 \(client.name) 中打开")) {
         open(URL(fileURLWithPath: directory), withBundleIdentifier: client.bundleIdentifier)
       })
       menu.addItem(.separator())
@@ -64,12 +64,12 @@ enum ShellDirectoryMenuBuilder {
     }
     menu.addItem(.separator())
     menu.addItem(ActionMenuItem(title: "Merge…") { [weak tab] in
-      promptBranch(title: "Merge 分支", action: "Merge") { branch in
+      promptBranch(title: L("Merge 分支"), action: "Merge") { branch in
         inject(.merge(branch: branch), into: tab)
       }
     })
     menu.addItem(ActionMenuItem(title: "Rebase…") { [weak tab] in
-      promptBranch(title: "Rebase 到分支", action: "Rebase") { branch in
+      promptBranch(title: L("Rebase 到分支"), action: "Rebase") { branch in
         inject(.rebase(branch: branch), into: tab)
       }
     })
@@ -120,13 +120,13 @@ enum ShellDirectoryMenuBuilder {
     title: String, action: String, completion: @escaping (String) -> Void
   ) {
     let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-    field.placeholderString = "分支名"
+    field.placeholderString = L("分支名")
     let alert = NSAlert()
     alert.messageText = title
-    alert.informativeText = "命令会预填到终端输入行，确认后回车执行。"
+    alert.informativeText = L("命令会预填到终端输入行，确认后回车执行。")
     alert.accessoryView = field
     alert.addButton(withTitle: action)
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: L("取消"))
     alert.window.initialFirstResponder = field
     guard alert.runModal() == .alertFirstButtonReturn,
       let branch = GitCommand.sanitizedBranch(field.stringValue)

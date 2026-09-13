@@ -65,9 +65,9 @@ enum WorkflowCLIOutputReadError: Error, Equatable, LocalizedError {
   var errorDescription: String? {
     switch self {
     case .invalidOutputFile:
-      "CLI 输出缓冲不存在、不是普通文件或读取期间发生变化。"
+      L("CLI 输出缓冲不存在、不是普通文件或读取期间发生变化。")
     case .outputTooLarge(let maximumBytes):
-      "CLI 输出超过大小上限（\(maximumBytes) bytes）。"
+      L("CLI 输出超过大小上限（\(String(maximumBytes)) bytes）。")
     }
   }
 }

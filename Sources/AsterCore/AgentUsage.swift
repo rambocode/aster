@@ -14,9 +14,9 @@ public enum AgentUsageWindowKind: String, Codable, Equatable, Sendable, CaseIter
   public var shortLabel: String {
     switch self {
     case .fiveHour: "5h"
-    case .weekly: "周"
-    case .modelWeekly: "模型周"
-    case .session: "会话"
+    case .weekly: L("周")
+    case .modelWeekly: L("模型周")
+    case .session: L("会话")
     }
   }
 }

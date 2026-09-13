@@ -193,11 +193,11 @@ public enum SessionTimelineProjection {
     guard let end else { return nil }
     let seconds = Int(end.timeIntervalSince(start).rounded())
     guard seconds >= 0 else { return nil }
-    if seconds < 60 { return "\(seconds) 秒" }
-    if seconds < 3_600 { return "\(seconds / 60) 分钟" }
+    if seconds < 60 { return L("\(String(seconds)) 秒") }
+    if seconds < 3_600 { return L("\(String(seconds / 60)) 分钟") }
     let hours = seconds / 3_600
     let minutes = (seconds % 3_600) / 60
-    return minutes == 0 ? "\(hours) 小时" : "\(hours) 小时 \(minutes) 分"
+    return minutes == 0 ? L("\(String(hours)) 小时") : L("\(String(hours)) 小时 \(String(minutes)) 分")
   }
 
   // MARK: - 单行构造
@@ -216,7 +216,7 @@ public enum SessionTimelineProjection {
       sequence: anchor.sequence,
       timestamp: anchor.timestamp,
       kind: .command,
-      title: text.isEmpty ? "(未知命令)" : text,
+      title: text.isEmpty ? L("(未知命令)") : text,
       subtitle: sanitized(anchor.workingDirectory),
       status: status(for: finished, hasCommand: command != nil),
       source: anchor.source ?? .terminal,
@@ -243,7 +243,7 @@ public enum SessionTimelineProjection {
       sequence: event.sequence,
       timestamp: event.timestamp,
       kind: .output,
-      title: "输出摘录",
+      title: L("输出摘录"),
       subtitle: firstLine(of: content?.excerpt ?? ""),
       source: event.source ?? .terminal,
       detail: content
@@ -258,7 +258,7 @@ public enum SessionTimelineProjection {
       sequence: event.sequence,
       timestamp: event.timestamp,
       kind: .agentState,
-      title: provider.isEmpty ? "Agent 状态更新" : provider,
+      title: provider.isEmpty ? L("Agent 状态更新") : provider,
       subtitle: sessionID.map { "session \($0)" } ?? "",
       source: event.source ?? .agentHook
     )
@@ -275,7 +275,7 @@ public enum SessionTimelineProjection {
       sequence: event.sequence,
       timestamp: event.timestamp,
       kind: .toolCall,
-      title: tool.isEmpty ? "工具调用" : tool,
+      title: tool.isEmpty ? L("工具调用") : tool,
       subtitle: target.map(sanitized) ?? "",
       source: event.source ?? .transcript
     )
@@ -291,7 +291,7 @@ public enum SessionTimelineProjection {
       sequence: event.sequence,
       timestamp: event.timestamp,
       kind: event.kind == .fileModified ? .fileModified : .fileRead,
-      title: name.isEmpty ? "(未知文件)" : name,
+      title: name.isEmpty ? L("(未知文件)") : name,
       subtitle: cleaned,
       source: event.source ?? .transcript
     )
@@ -304,7 +304,7 @@ public enum SessionTimelineProjection {
     if let commit = snapshot?.commit, !commit.isEmpty {
       parts.append(String(sanitized(commit).prefix(7)))
     }
-    if let dirty = snapshot?.dirtyFileCount, dirty > 0 { parts.append("\(dirty) 处改动") }
+    if let dirty = snapshot?.dirtyFileCount, dirty > 0 { parts.append(L("\(String(dirty)) 处改动")) }
     return SessionTimelineRow(
       id: rowIdentifier(event),
       sequence: event.sequence,

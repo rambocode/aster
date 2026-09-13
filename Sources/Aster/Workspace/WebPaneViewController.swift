@@ -1,4 +1,5 @@
 import AppKit
+import AsterCore
 import WebKit
 
 /// Web Pane 的唯一 URL 边界。恢复快照、Recipe 和页面导航都必须再次通过这里，避免
@@ -89,19 +90,19 @@ final class WebPaneViewController: NSViewController, WKNavigationDelegate, WKUID
     backButton.target = self
     backButton.action = #selector(goBack)
     backButton.bezelStyle = .inline
-    backButton.toolTip = "后退"
+    backButton.toolTip = L("后退")
     forwardButton.target = self
     forwardButton.action = #selector(goForward)
     forwardButton.bezelStyle = .inline
-    forwardButton.toolTip = "前进"
+    forwardButton.toolTip = L("前进")
     let reloadButton = NSButton(title: "↻", target: self, action: #selector(reload))
     reloadButton.bezelStyle = .inline
-    reloadButton.toolTip = "重新加载"
+    reloadButton.toolTip = L("重新加载")
 
     locationLabel.lineBreakMode = .byTruncatingMiddle
     locationLabel.font = .systemFont(ofSize: 11)
     locationLabel.textColor = .secondaryLabelColor
-    locationLabel.stringValue = initialURL?.absoluteString ?? "无法打开该网页"
+    locationLabel.stringValue = initialURL?.absoluteString ?? L("无法打开该网页")
     let controls = NSStackView(views: [backButton, forwardButton, reloadButton, locationLabel])
     controls.orientation = .horizontal
     controls.alignment = .centerY
@@ -165,7 +166,7 @@ final class WebPaneViewController: NSViewController, WKNavigationDelegate, WKUID
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-    locationLabel.stringValue = webView.url?.absoluteString ?? initialURL?.absoluteString ?? "网页"
+    locationLabel.stringValue = webView.url?.absoluteString ?? initialURL?.absoluteString ?? L("网页")
     updateNavigationButtons()
   }
 
@@ -174,7 +175,7 @@ final class WebPaneViewController: NSViewController, WKNavigationDelegate, WKUID
     didFail navigation: WKNavigation!,
     withError error: Error
   ) {
-    locationLabel.stringValue = "加载失败：\(error.localizedDescription)"
+    locationLabel.stringValue = L("加载失败：\(error.localizedDescription)")
     updateNavigationButtons()
   }
 

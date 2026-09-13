@@ -96,7 +96,7 @@ enum WorkspaceInspectionService {
       return WorkspaceInformationSnapshot(
         processes: [],
         listeningPorts: [],
-        state: .unavailable("此 Pane 没有终端进程。")
+        state: .unavailable(L("此 Pane 没有终端进程。"))
       )
     }
     return await detachedValue {
@@ -108,19 +108,19 @@ enum WorkspaceInspectionService {
       )
       guard processRun.failure == nil else {
         return WorkspaceInformationSnapshot(
-          processes: [], listeningPorts: [], state: .failed("无法读取当前终端进程。"))
+          processes: [], listeningPorts: [], state: .failed(L("无法读取当前终端进程。")))
       }
       let processes = WorkspaceProcessParser.processTree(
         from: processRun.output, rootProcessIdentifier: shellProcessIdentifier)
       guard !currentTaskIsCancelled() else {
         return WorkspaceInformationSnapshot(
-          processes: [], listeningPorts: [], state: .unavailable("检查已取消。"))
+          processes: [], listeningPorts: [], state: .unavailable(L("检查已取消。")))
       }
       guard !processes.isEmpty else {
         return WorkspaceInformationSnapshot(
           processes: [],
           listeningPorts: [],
-          state: .failed("无法读取当前终端进程。")
+          state: .failed(L("无法读取当前终端进程。"))
         )
       }
       let inspectedPIDs = processes.map(\.processIdentifier)
@@ -138,7 +138,7 @@ enum WorkspaceInspectionService {
         return WorkspaceInformationSnapshot(
           processes: processes,
           listeningPorts: [],
-          state: .failed("无法读取监听端口。")
+          state: .failed(L("无法读取监听端口。"))
         )
       }
       return WorkspaceInformationSnapshot(

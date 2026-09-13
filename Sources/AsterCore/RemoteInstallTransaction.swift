@@ -73,11 +73,11 @@ public struct RemoteReleaseManifest: Codable, Equatable, Sendable {
     let base = "\(version) (\(platform)/\(architecture))"
     switch artifactKind {
     case .managedRelease:
-      return "受管发布 \(base)"
+      return L("受管发布 \(base)")
     case .testArtifact:
-      return "测试产物 \(base)，隔离测试 manifest，不是正式发行"
+      return L("测试产物 \(base)，隔离测试 manifest，不是正式发行")
     case .developmentBuild:
-      return "开发产物，未签名 \(base)，来自自定义构建"
+      return L("开发产物，未签名 \(base)，来自自定义构建")
     }
   }
 }
@@ -259,26 +259,26 @@ public struct RemoteInstallPlan: Sendable, Equatable {
   /// 安装前展示给用户的影响说明。必须让用户在确认之前看清会动哪台机器的哪个路径。
   public var impactSummary: String {
     var lines: [String] = []
-    lines.append("目标机器：\(targetDescription)")
-    lines.append("安装路径：\(versionedPath)")
-    lines.append("启用路径：\(activePath)（原子切换的 symlink）")
-    lines.append("版本：\(version)")
-    lines.append("产物类型：\(RemoteInstallPlan.artifactKindDescription(artifactKind))")
+    lines.append(L("目标机器：\(targetDescription)"))
+    lines.append(L("安装路径：\(versionedPath)"))
+    lines.append(L("启用路径：\(activePath)（原子切换的 symlink）"))
+    lines.append(L("版本：\(version)"))
+    lines.append(L("产物类型：\(RemoteInstallPlan.artifactKindDescription(artifactKind))"))
     if let previousVersion {
-      lines.append("替换现有版本：是（原版本 \(previousVersion) 保留，可回退）")
+      lines.append(L("替换现有版本：是（原版本 \(previousVersion) 保留，可回退）"))
     } else {
-      lines.append("替换现有版本：否（首次安装）")
+      lines.append(L("替换现有版本：否（首次安装）"))
     }
-    lines.append("现有运行中服务继续使用自己的二进制实例，不会被本次安装停止。")
+    lines.append(L("现有运行中服务继续使用自己的二进制实例，不会被本次安装停止。"))
     return lines.joined(separator: "\n")
   }
 
   /// 产物类型的中文描述，测试与界面共用同一份文案。
   public static func artifactKindDescription(_ kind: RemoteArtifactKind) -> String {
     switch kind {
-    case .managedRelease: "受管发布"
-    case .testArtifact: "测试产物（隔离测试 manifest，不是正式发行）"
-    case .developmentBuild: "开发产物，未签名（自定义构建）"
+    case .managedRelease: L("受管发布")
+    case .testArtifact: L("测试产物（隔离测试 manifest，不是正式发行）")
+    case .developmentBuild: L("开发产物，未签名（自定义构建）")
     }
   }
 

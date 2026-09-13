@@ -401,7 +401,7 @@ public struct TerminalTheme: Identifiable, Codable, Equatable, Sendable {
   public func duplicated(name: String? = nil) -> TerminalTheme {
     var result = self
     result.id = UUID().uuidString
-    result.name = name ?? "\(self.name) 副本"
+    result.name = name ?? L("\(self.name) 副本")
     result.isBuiltIn = false
     return result
   }
@@ -498,13 +498,13 @@ public enum TerminalThemeStoreError: Error, Equatable {
 extension TerminalThemeStoreError: LocalizedError {
   public var errorDescription: String? {
     switch self {
-    case .invalidFileExtension: "主题文件必须使用 .astertheme 后缀。"
-    case .notRegularFile: "主题必须是普通文件。"
-    case .fileTooLarge: "主题文件超过 256 KiB。"
+    case .invalidFileExtension: L("主题文件必须使用 .astertheme 后缀。")
+    case .notRegularFile: L("主题必须是普通文件。")
+    case .fileTooLarge: L("主题文件超过 256 KiB。")
     case .invalidFormat(let message): message
-    case .invalidName: "主题名称不能为空且不能超过 128 字节。"
-    case .invalidIdentifier: "主题标识无效。"
-    case .invalidPalette: "主题必须包含完整的 16 色 ANSI 调色板。"
+    case .invalidName: L("主题名称不能为空且不能超过 128 字节。")
+    case .invalidIdentifier: L("主题标识无效。")
+    case .invalidPalette: L("主题必须包含完整的 16 色 ANSI 调色板。")
     }
   }
 }

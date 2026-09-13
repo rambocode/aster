@@ -10,12 +10,12 @@ enum RemoteSetupDescription {
   static func text(for error: any Error) -> String {
     if let failure = error as? RemoteSetupFailure { return failure.message }
     if let target = error as? RemoteSSHTargetError { return targetText(target) }
-    if let ssh = error as? RemoteSSHError { return "ssh \(ssh.kind.rawValue)：\(ssh.target)" }
+    if let ssh = error as? RemoteSSHError { return L("ssh \(ssh.kind.rawValue)：\(ssh.target)") }
     if let managed = error as? ManagedSessionError { return managedText(managed) }
     if let fleet = error as? MachineFleetError {
       switch fleet {
-      case .machineNotFound: return "机器配置不存在。"
-      case .localNotRemovable: return "Local 不能移除。"
+      case .machineNotFound: return L("机器配置不存在。")
+      case .localNotRemovable: return L("Local 不能移除。")
       }
     }
     return String(describing: error)
@@ -24,24 +24,26 @@ enum RemoteSetupDescription {
   /// target 校验失败的说明。全部发生在建立连接之前。
   static func targetText(_ error: RemoteSSHTargetError) -> String {
     switch error {
-    case .empty: "SSH target 不能为空。"
-    case .optionLike(let text): "SSH target «\(text)» 以 - 开头，会被当成 ssh 选项，已在连接前拒绝。"
+    case .empty: L("SSH target 不能为空。")
+    case .optionLike(let text): L("SSH target «\(text)» 以 - 开头，会被当成 ssh 选项，已在连接前拒绝。")
     case .unsupportedCharacter(let character):
-      "SSH target 含不允许的字符 «\(character)»，已在连接前拒绝。"
-    case .invalidURI(let text): "ssh:// URI 结构非法：\(text)"
-    case .invalidPort(let text): "端口非法：\(text)，必须是 1–65535。"
-    case .missingHost: "SSH target 缺少主机段。"
+      L("SSH target 含不允许的字符 «\(character)»，已在连接前拒绝。")
+    case .invalidURI(let text): L("ssh:// URI 结构非法：\(text)")
+    case .invalidPort(let text): L("端口非法：\(text)，必须是 1–65535。")
+    case .missingHost: L("SSH target 缺少主机段。")
     }
   }
 
   /// 会话客户端错误的说明。
   static func managedText(_ error: ManagedSessionError) -> String {
     switch error {
-    case .runtimeUnavailable(let text): text
-    case .serviceError(let code, let message): "\(code)\(message.map { "：\($0)" } ?? "")"
-    case .malformedReply(let text): "回复格式非法：\(text)"
-    case .commandFailed(let status, let output): "命令失败（\(status)）：\(output)"
-    case .launchFailed(let text): "启动失败：\(text)"
+    case .runtimeUnavailable(let text): return text
+    case .serviceError(let code, let message):
+      let suffix = message.map { "：\($0)" } ?? ""
+      return L("\(String(code))\(suffix)")
+    case .malformedReply(let text): return L("回复格式非法：\(text)")
+    case .commandFailed(let status, let output): return L("命令失败（\(String(status))）：\(output)")
+    case .launchFailed(let text): return L("启动失败：\(text)")
     }
   }
 }

@@ -551,7 +551,7 @@ final class TerminalAutocompleteController {
     {
       let candidate = AutocompleteCandidate(
         insertText: correction,
-        description: "修正上一条命令",
+        description: L("修正上一条命令"),
         kind: .correction,
         score: Double.greatestFiniteMagnitude,
         replacement: .fullLine

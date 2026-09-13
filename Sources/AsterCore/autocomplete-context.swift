@@ -149,7 +149,7 @@ extension AutocompleteLearningDatabase {
           frecency: entry.frecency, sessionBoost: entry.isSessionMatch ? 1 : 0)
         if score > (candidates[value]?.score ?? -.infinity) {
           candidates[value] = AutocompleteCandidate(
-            insertText: insert, displayText: value, description: "最近使用的参数", kind: .argument,
+            insertText: insert, displayText: value, description: L("最近使用的参数"), kind: .argument,
             score: score, replacement: .currentToken(start: parsed.currentTokenStart))
         }
       }

@@ -154,7 +154,7 @@ func settingsWebAssetsAreBundledAndSelfContained() throws {
   let controlGroupTitles = ["自动补全", "选择", "滚动", "打开方式", "链接协议", "键盘", "鼠标", "安全输入", "剪贴板"]
   var previousGroupOffset = script.startIndex
   for title in controlGroupTitles {
-    let offset = try #require(script.range(of: "{ title: \"\(title)\"", range: previousGroupOffset..<script.endIndex))
+    let offset = try #require(script.range(of: "{ title: t(\"\(title)\")", range: previousGroupOffset..<script.endIndex))
     previousGroupOffset = offset.upperBound
   }
   #expect(style.contains("grid-template-columns: 200px minmax(0, 1fr)"))
@@ -556,7 +556,7 @@ func settingsUpdateSectionMatchesBridge() throws {
       .appendingPathComponent("Resources/settings-ui/settings.js"),
     encoding: .utf8)
 
-  #expect(script.contains("{ title: \"更新\", rows: ["))
+  #expect(script.contains("{ title: t(\"更新\"), rows: ["))
   #expect(script.contains("action(\"checkForUpdates\""))
   #expect(script.contains("update.automaticallyChecks"))
   #expect(script.contains("update.automaticallyDownloads"))
@@ -567,8 +567,8 @@ func settingsUpdateSectionMatchesBridge() throws {
   #expect(script.contains("disabledWhen: \"update.automaticChecksDisabled\""))
   #expect(script.contains("capability: \"softwareUpdate\""))
 
-  let updateGroup = try #require(script.range(of: "{ title: \"更新\", rows: ["))
-  let aboutGroup = try #require(script.range(of: "{ title: \"关于\", rows: ["))
+  let updateGroup = try #require(script.range(of: "{ title: t(\"更新\"), rows: ["))
+  let aboutGroup = try #require(script.range(of: "{ title: t(\"关于\"), rows: ["))
   #expect(updateGroup.lowerBound < aboutGroup.lowerBound)
 
   // 状态键加了但颜色规则漏了的话，状态点会静默变成中性灰而不会报错。

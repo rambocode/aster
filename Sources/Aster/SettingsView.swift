@@ -132,7 +132,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private var webReady = false
   /// Session Memory 目录的已用空间文本。目录遍历是磁盘 IO，绝不能落在快照构建里
   /// （每次设置改动都会重建快照）；这里只缓存后台算好的结果。
-  private var memoryStoreSizeText = "计算中…"
+  private var memoryStoreSizeText = L("计算中…")
   private var memoryStoreSizeTaskRunning = false
   /// 提炼器重装读取的 defaults。生产固定 `.standard`：提炼与记录都是进程级通道，
   /// `CLIAgentMemoryExtractor` 与 `SessionRecordingService` 都从 `.standard` 取真值，
@@ -148,10 +148,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   /// 它不是 `Sendable`，从后台任务返回主线程会被 Swift 6 拒绝。
   struct MemoryMCPStatus: Sendable {
     var projectPath = ""
-    var status = "没有可注册的项目"
-    var detail = "先在工作区里打开一个项目目录，再回到这里注册。"
+    var status = L("没有可注册的项目")
+    var detail = L("先在工作区里打开一个项目目录，再回到这里注册。")
     var installed = false
-    var actionTitle = "安装"
+    var actionTitle = L("安装")
     var canInstall = false
     var codex = ""
 
@@ -175,10 +175,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   struct AgentControlStatus: Sendable {
     /// 单个安装项（CLI 或某个 provider 的 skill）的展示状态。
     struct Item: Sendable {
-      var status = "未安装"
+      var status = L("未安装")
       var detail = ""
       var installed = false
-      var actionTitle = "安装"
+      var actionTitle = L("安装")
       var canInstall = true
 
       var jsonValue: [String: Any] {
@@ -214,10 +214,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
     var label: String {
       switch self {
-      case .computed: "计算值"
-      case .global: "全局"
-      case .theme: "主题"
-      case .fallback: "回退"
+      case .computed: L("计算值")
+      case .global: L("全局")
+      case .theme: L("主题")
+      case .fallback: L("回退")
       }
     }
   }
@@ -243,6 +243,13 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     configuration.defaultWebpagePreferences.allowsContentJavaScript = true
     let proxy = SettingsScriptMessageProxy(controller: self)
     configuration.userContentController.add(proxy, name: SettingsWebBridge.messageHandlerName)
+    // 设置页脚本在模块初始化时就构造全部文案，所以语言必须在页面脚本之前注入：
+    // 用文档起始阶段的 user script 写 `window.AsterUILanguage`，settings.js 据此挑翻译表。
+    configuration.userContentController.addUserScript(
+      WKUserScript(
+        source: SettingsWebBridge.uiLanguageScript(AppLocalization.current),
+        injectionTime: .atDocumentStart,
+        forMainFrameOnly: true))
 
     let webView = WKWebView(
       frame: NSRect(origin: .zero, size: Self.defaultContentSize),
@@ -435,7 +442,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
     let search = SettingsSearchField()
     search.identifier = Self.searchIdentifier
-    search.placeholderString = "搜索"
+    search.placeholderString = L("搜索")
     search.stringValue = searchText
     search.delegate = self
     search.controlSize = .large
@@ -606,10 +613,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   private func generalViews() -> [NSView] {
     [
-      sectionTitle("通用"),
+      sectionTitle(L("通用")),
       card([
         popupRow(
-          "语言", "界面显示语言",
+          L("语言"), L("界面显示语言，更改后重新启动 Aster 生效"),
           items: Self.languageOptions.map(\.label),
           selected: Self.languageOptions.firstIndex {
             $0.value == preferences.configuration.general.language
@@ -618,64 +625,64 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.general.language = Self.languageOptions[index].value
         },
         enumPopupRow(
-          "启动时", "打开 Aster 时的初始窗口行为",
+          L("启动时"), L("打开 Aster 时的初始窗口行为"),
           value: preferences.configuration.launchBehavior
         ) { [weak self] value in
           self?.preferences.configuration.launchBehavior = value
         },
         toggleRow(
-          "最后一个窗口关闭后退出", "关闭全部窗口时同时退出应用",
+          L("最后一个窗口关闭后退出"), L("关闭全部窗口时同时退出应用"),
           value: preferences.configuration.general.quitAfterLastWindowClosed
         ) { [weak self] value in
           self?.preferences.configuration.general.quitAfterLastWindowClosed = value
         },
         toggleRow(
-          "全部关闭后新建窗口", "点按 Dock 图标时，若没有窗口则自动新建",
+          L("全部关闭后新建窗口"), L("点按 Dock 图标时，若没有窗口则自动新建"),
           value: preferences.configuration.general.newWindowWhenAllClosed
         ) { [weak self] value in
           self?.preferences.configuration.general.newWindowWhenAllClosed = value
         },
       ]),
-      sectionTitle("关闭确认"),
+      sectionTitle(L("关闭确认")),
       card([
         enumPopupRow(
-          "关闭标签页", "何时在关闭标签页前询问",
+          L("关闭标签页"), L("何时在关闭标签页前询问"),
           value: preferences.configuration.general.closeTabConfirmation
         ) { [weak self] value in
           self?.preferences.configuration.general.closeTabConfirmation = value
         },
         enumPopupRow(
-          "关闭窗口", "何时在关闭窗口前询问",
+          L("关闭窗口"), L("何时在关闭窗口前询问"),
           value: preferences.configuration.general.closeWindowConfirmation
         ) { [weak self] value in
           self?.preferences.configuration.general.closeWindowConfirmation = value
         },
         enumPopupRow(
-          "关闭面板", "何时在关闭分屏面板前询问",
+          L("关闭面板"), L("何时在关闭分屏面板前询问"),
           value: preferences.configuration.general.closePaneConfirmation
         ) { [weak self] value in
           self?.preferences.configuration.general.closePaneConfirmation = value
         },
       ]),
-      sectionTitle("系统集成"),
+      sectionTitle(L("系统集成")),
       card([
         actionRow(
-          "默认终端", "将 Aster 注册为 ssh:// 链接的默认打开方式（macOS 以链接处理器代替全局默认终端）",
-          title: "设为默认终端"
+          L("默认终端"), L("将 Aster 注册为 ssh:// 链接的默认打开方式（macOS 以链接处理器代替全局默认终端）"),
+          title: L("设为默认终端")
         ) { [weak self] in self?.registerAsDefaultTerminal() },
         actionRow(
-          "安装 CLI", "把 `aster` 命令安装到 PATH（指向 App 内 aster-cli 的符号链接），可在终端里打开目录、Recipe 或控制 Agent",
-          title: "安装 CLI"
+          L("安装 CLI"), L("把 `aster` 命令安装到 PATH（指向 App 内 aster-cli 的符号链接），可在终端里打开目录、Recipe 或控制 Agent"),
+          title: L("安装 CLI")
         ) { [weak self] in self?.installCLI() },
         actionRow(
-          "Finder 集成", "Finder 右键菜单「服务」中的「在 Aster 中打开」；可在「系统设置 → 键盘快捷键 → 服务」中重新绑定",
-          title: "打开系统设置"
+          L("Finder 集成"), L("Finder 右键菜单「服务」中的「在 Aster 中打开」；可在「系统设置 → 键盘快捷键 → 服务」中重新绑定"),
+          title: L("打开系统设置")
         ) { [weak self] in
           self?.openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts")
         },
         actionRow(
-          "完全磁盘访问权限", "当终端中的命令需要读写受保护目录时才需要；没有它 Aster 也能工作",
-          title: "打开系统设置"
+          L("完全磁盘访问权限"), L("当终端中的命令需要读写受保护目录时才需要；没有它 Aster 也能工作"),
+          title: L("打开系统设置")
         ) { [weak self] in
           self?.openSystemSettingsPane("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
         },
@@ -689,7 +696,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private func registerAsDefaultTerminal() {
     let bundleURL = Bundle.main.bundleURL
     guard bundleURL.pathExtension == "app" else {
-      message = "需要以 Aster.app 方式运行才能设为默认终端"
+      message = L("需要以 Aster.app 方式运行才能设为默认终端")
       refresh()
       return
     }
@@ -697,8 +704,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       Task { @MainActor [weak self] in
         guard let self else { return }
         self.message = error == nil
-          ? "已将 Aster 设为 ssh:// 链接的默认终端"
-          : "设置失败：\(error!.localizedDescription)"
+          ? L("已将 Aster 设为 ssh:// 链接的默认终端")
+          : L("设置失败：\(error!.localizedDescription)")
         self.refresh()
       }
     }
@@ -719,10 +726,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       case .success(let path):
         if install {
           let inUserBin = path.hasPrefix((NSHomeDirectory() as NSString).appendingPathComponent(".local/bin"))
-          let pathHint = inUserBin ? "；如 PATH 未包含 ~/.local/bin 请自行加入" : ""
-          self.message = "已安装 aster 命令到 \(path)\(pathHint)"
+          let pathHint = inUserBin ? L("；如 PATH 未包含 ~/.local/bin 请自行加入") : ""
+          self.message = L("已安装 aster 命令到 \(path)\(pathHint)")
         } else {
-          self.message = "已移除 aster 命令。"
+          self.message = L("已移除 aster 命令。")
         }
       case .failure(let failure):
         self.sendWebToast(failure.message, level: "error")
@@ -772,27 +779,27 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     status.cli.canInstall = cliAvailable
     switch AsterCLIInstaller.state() {
     case .notInstalled:
-      status.cli.status = "未安装"
+      status.cli.status = L("未安装")
       status.cli.detail =
         cliAvailable
-        ? "在 PATH 里放一个指向 Aster 内置 aster-cli 的 aster 命令。"
-        : "找不到 aster-cli 可执行文件，请重新构建 Aster.app。"
-      status.cli.actionTitle = "安装"
+        ? L("在 PATH 里放一个指向 Aster 内置 aster-cli 的 aster 命令。")
+        : L("找不到 aster-cli 可执行文件，请重新构建 Aster.app。")
+      status.cli.actionTitle = L("安装")
     case .installed(let path):
-      status.cli.status = "已安装"
+      status.cli.status = L("已安装")
       status.cli.detail = path
       status.cli.installed = true
-      status.cli.actionTitle = "已安装"
+      status.cli.actionTitle = L("已安装")
     case .outdated(let path, let expected):
-      status.cli.status = "需要修复"
-      status.cli.detail = "\(path) 指向的可执行文件已失效\n当前应指向：\(expected)"
+      status.cli.status = L("需要修复")
+      status.cli.detail = L("\(path) 指向的可执行文件已失效\n当前应指向：\(expected)")
       status.cli.installed = true
-      status.cli.actionTitle = "修复"
+      status.cli.actionTitle = L("修复")
     case .legacyScript(let path):
-      status.cli.status = "旧版脚本"
-      status.cli.detail = "\(path) 是旧版 sh 启动器，更新后才能使用 agent/pane 等新命令。"
+      status.cli.status = L("旧版脚本")
+      status.cli.detail = L("\(path) 是旧版 sh 启动器，更新后才能使用 agent/pane 等新命令。")
       status.cli.installed = true
-      status.cli.actionTitle = "更新"
+      status.cli.actionTitle = L("更新")
     }
 
     let skillAvailable = AgentSkillInstallService.sourceDirectory() != nil
@@ -802,22 +809,22 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       let destination = AgentSkillInstallService.destination(for: target).path
       switch AgentSkillInstallService.state(for: target) {
       case .notInstalled:
-        item.status = "未安装"
-        item.detail = skillAvailable ? "复制到 \(destination)" : "找不到 Aster 附带的 skill 资源，请重新构建 Aster.app。"
-        item.actionTitle = "安装"
+        item.status = L("未安装")
+        item.detail = skillAvailable ? L("复制到 \(destination)") : L("找不到 Aster 附带的 skill 资源，请重新构建 Aster.app。")
+        item.actionTitle = L("安装")
       case .installed(let version):
-        item.status = "已安装 \(version)"
+        item.status = L("已安装 \(version)")
         item.detail = destination
         item.installed = true
-        item.actionTitle = "已安装"
+        item.actionTitle = L("已安装")
       case .outdated(let installed, let expected):
-        item.status = "需要更新"
-        item.detail = "已安装 \(installed)，当前 Aster 附带 \(expected)。"
+        item.status = L("需要更新")
+        item.detail = L("已安装 \(installed)，当前 Aster 附带 \(expected)。")
         item.installed = true
-        item.actionTitle = "更新"
+        item.actionTitle = L("更新")
       case .foreign(let path):
-        item.status = "无法接管"
-        item.detail = "\(path) 不是 Aster 安装的目录（或是符号链接），请先手动处理。"
+        item.status = L("无法接管")
+        item.detail = L("\(path) 不是 Aster 安装的目录（或是符号链接），请先手动处理。")
         item.canInstall = false
       }
       status.skills[target.rawValue] = item
@@ -829,7 +836,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   /// 关闭时装了也只能读，因此先询问是否一并开启；用户拒绝仍照常安装。
   private func installAgentSkill(providerRawValue: String?) {
     guard let target = providerRawValue.flatMap(AgentSkillInstallService.Target.init(rawValue:)) else {
-      sendWebToast("未知的 Agent：\(providerRawValue ?? "")", level: "error")
+      sendWebToast(L("未知的 Agent：\(providerRawValue ?? "")"), level: "error")
       return
     }
     if !preferences.configuration.controls.resolvedIPCAllowSendKeys, confirmEnablingIPCSendKeys() {
@@ -840,7 +847,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   private func uninstallAgentSkill(providerRawValue: String?) {
     guard let target = providerRawValue.flatMap(AgentSkillInstallService.Target.init(rawValue:)) else {
-      sendWebToast("未知的 Agent：\(providerRawValue ?? "")", level: "error")
+      sendWebToast(L("未知的 Agent：\(providerRawValue ?? "")"), level: "error")
       return
     }
     performAgentSkillInstall(target: target, install: false)
@@ -850,11 +857,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private func confirmEnablingIPCSendKeys() -> Bool {
     guard view.window != nil else { return false }
     let alert = NSAlert()
-    alert.messageText = "同时开启「允许发送输入」？"
-    alert.informativeText =
-      "Aster skill 让 Agent 通过 aster 命令向其它 pane 提交 prompt 或发送文本，这需要「设置 → 控制 → IPC → 允许发送输入」。不开启的话 skill 只能读取屏幕。"
-    alert.addButton(withTitle: "开启并安装")
-    alert.addButton(withTitle: "仅安装")
+    alert.messageText = L("同时开启「允许发送输入」？")
+    alert.informativeText = L("Aster skill 让 Agent 通过 aster 命令向其它 pane 提交 prompt 或发送文本，这需要「设置 → 控制 → IPC → 允许发送输入」。不开启的话 skill 只能读取屏幕。")
+    alert.addButton(withTitle: L("开启并安装"))
+    alert.addButton(withTitle: L("仅安装"))
     return alert.runModal() == .alertFirstButtonReturn
   }
 
@@ -866,7 +872,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         self.sendWebToast(failure, level: "error")
       } else {
         let destination = AgentSkillInstallService.destination(for: target).path
-        self.message = install ? "已安装 Aster skill 到 \(destination)。" : "已移除 \(destination)。"
+        self.message = install ? L("已安装 Aster skill 到 \(destination)。") : L("已移除 \(destination)。")
       }
       self.refresh()
       self.refreshAgentControlState()
@@ -894,16 +900,16 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private func configureExternalTerminalApps() {
     let installed = ExternalTerminalIntegration.installedEditors()
     guard !installed.isEmpty else {
-      message = "未检测到 VS Code、Cursor、Windsurf、VSCodium、Trae 或 Sublime Text"
+      message = L("未检测到 VS Code、Cursor、Windsurf、VSCodium、Trae 或 Sublime Text")
       refresh()
       return
     }
     let alert = NSAlert()
-    alert.messageText = "为常用应用设为默认终端"
-    alert.informativeText = "将把 Aster 写入以下应用的外部终端设置（terminal.external.osxExec）：\n"
+    alert.messageText = L("为常用应用设为默认终端")
+    alert.informativeText = L("将把 Aster 写入以下应用的外部终端设置（terminal.external.osxExec）：") + "\n"
       + installed.map(\.name).joined(separator: "、")
-    alert.addButton(withTitle: "配置")
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: L("配置"))
+    alert.addButton(withTitle: L("取消"))
     guard alert.runModal() == .alertFirstButtonReturn else { return }
     message = ExternalTerminalIntegration.summary(ExternalTerminalIntegration.configure(installed))
     refresh()
@@ -926,140 +932,140 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   private func shellViews() -> [NSView] {
     [
-      sectionTitle("通用"),
+      sectionTitle(L("通用")),
       card([
-        infoRow("登录 Shell", ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh", "系统默认"),
-        textRow("终端类型", "auto 优先使用内置 xterm-ghostty，缺条目回退 xterm-256color；自定义名称必须已安装 terminfo", value: preferences.configuration.appearance.terminalIdentity) { [weak self] value in
+        infoRow(L("登录 Shell"), ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh", L("系统默认")),
+        textRow(L("终端类型"), L("auto 优先使用内置 xterm-ghostty，缺条目回退 xterm-256color；自定义名称必须已安装 terminfo"), value: preferences.configuration.appearance.terminalIdentity) { [weak self] value in
           self?.preferences.configuration.appearance.terminalIdentity = value
         },
       ]),
-      sectionTitle("Shell 集成"),
+      sectionTitle(L("Shell 集成")),
       card([
         toggleRow(
-          "Shell 集成", "通过终端 OSC 标记跟踪当前目录、标题与命令状态",
+          L("Shell 集成"), L("通过终端 OSC 标记跟踪当前目录、标题与命令状态"),
           value: preferences.configuration.shell.shellIntegration
         ) { [weak self] value in
           self?.setShellIntegrationEnabled(value)
         },
         toggleRow(
-          "SSH 集成", "在 SSH 会话中保持目录与标题跟踪",
+          L("SSH 集成"), L("在 SSH 会话中保持目录与标题跟踪"),
           value: preferences.configuration.shell.sshIntegration
         ) { [weak self] value in
           self?.preferences.configuration.shell.sshIntegration = value
         },
       ]),
-      sectionTitle("常用目录"),
+      sectionTitle(L("常用目录")),
       card([
         toggleRow(
-          "自动记录访问目录", "根据 OSC 7 目录变化更新本机 frecency 排名；忽略列表中的目录不会重新出现",
+          L("自动记录访问目录"), L("根据 OSC 7 目录变化更新本机 frecency 排名；忽略列表中的目录不会重新出现"),
           value: preferences.configuration.shell.resolvedFrecencyAutoRecord
         ) { [weak self] value in
           self?.preferences.configuration.shell.frecencyAutoRecord = value
         },
       ]),
-      sectionTitle("会话恢复"),
+      sectionTitle(L("会话恢复")),
       card([
         toggleRow(
-          "恢复 tmux / screen 会话", "恢复工作区时重新附着多路复用器会话",
+          L("恢复 tmux / screen 会话"), L("恢复工作区时重新附着多路复用器会话"),
           value: preferences.configuration.shell.restoreMultiplexerSessions
         ) { [weak self] value in
           self?.preferences.configuration.shell.restoreMultiplexerSessions = value
         },
         // 与智能体页「恢复时重连会话」是同一个开关的双入口；真值统一在 agents.resumeSessions。
         toggleRow(
-          "恢复智能体会话", "恢复工作区时继续之前的智能体 CLI 会话",
+          L("恢复智能体会话"), L("恢复工作区时继续之前的智能体 CLI 会话"),
           value: preferences.configuration.agents.resumeSessions
         ) { [weak self] value in
           self?.preferences.configuration.agents.resumeSessions = value
         },
         toggleRow(
-          "恢复运行中的进程", "恢复工作区时重新启动之前运行的命令",
+          L("恢复运行中的进程"), L("恢复工作区时重新启动之前运行的命令"),
           value: preferences.configuration.shell.restoreProcesses
         ) { [weak self] value in
           self?.preferences.configuration.shell.restoreProcesses = value
         },
       ]),
-      sectionTitle("通知"),
+      sectionTitle(L("通知")),
       card([
         actionRow(
-          "系统权限",
-          "当前状态：\(TerminalNotificationService.shared.authorizationSummary)",
-          title: "打开系统设置"
+          L("系统权限"),
+          L("当前状态：\(TerminalNotificationService.shared.authorizationSummary)"),
+          title: L("打开系统设置")
         ) {
           TerminalNotificationService.shared.openSystemSettings()
         },
         toggleRow(
-          "命令完成时通知", "长时间命令结束后发送系统通知",
+          L("命令完成时通知"), L("长时间命令结束后发送系统通知"),
           value: preferences.configuration.shell.notifyOnFinish
         ) { [weak self] value in
           self?.preferences.configuration.shell.notifyOnFinish = value
         },
         toggleRow(
-          "命令出错时通知", "命令以非零状态退出时发送系统通知",
+          L("命令出错时通知"), L("命令以非零状态退出时发送系统通知"),
           value: preferences.configuration.shell.notifyOnError
         ) { [weak self] value in
           self?.preferences.configuration.shell.notifyOnError = value
         },
         toggleRow(
-          "Watch 完成时通知", "aster watch 包装的命令结束后发送系统通知",
+          L("Watch 完成时通知"), L("aster watch 包装的命令结束后发送系统通知"),
           value: preferences.configuration.shell.resolvedNotifyOnWatchFinish
         ) { [weak self] value in
           self?.preferences.configuration.shell.notifyOnWatchFinish = value
         },
         toggleRow(
-          "通知 — Shell Controlled", "允许终端程序通过 OSC 9、777 或 99 发送通知",
+          L("通知 — Shell Controlled"), L("允许终端程序通过 OSC 9、777 或 99 发送通知"),
           value: preferences.configuration.shell.resolvedNotificationShellControlled
         ) { [weak self] value in
           self?.preferences.configuration.shell.notificationShellControlled = value
         },
         enumPopupRow(
-          "前台通知", "应用位于前台时是否仍显示横幅",
+          L("前台通知"), L("应用位于前台时是否仍显示横幅"),
           value: preferences.configuration.shell.resolvedNotifyWhileForeground
         ) { [weak self] value in
           self?.preferences.configuration.shell.notifyWhileForeground = value
         },
         toggleRow(
-          "通知时弹跳 Dock 图标", "应用不活跃且收到通知时请求用户注意",
+          L("通知时弹跳 Dock 图标"), L("应用不活跃且收到通知时请求用户注意"),
           value: preferences.configuration.shell.resolvedBounceDockIcon
         ) { [weak self] value in
           self?.preferences.configuration.shell.bounceDockIcon = value
         },
         toggleRow(
-          "错误退出时播放声音", "命令以非零状态退出时直接播放系统提示音",
+          L("错误退出时播放声音"), L("命令以非零状态退出时直接播放系统提示音"),
           value: preferences.configuration.shell.resolvedSoundOnErrorExit
         ) { [weak self] value in
           self?.preferences.configuration.shell.soundOnErrorExit = value
         },
         toggleRow(
-          "声音 — Shell Controlled", "允许终端 BEL 字符播放系统提示音",
+          L("声音 — Shell Controlled"), L("允许终端 BEL 字符播放系统提示音"),
           value: preferences.configuration.shell.terminalBell
         ) { [weak self] value in
           self?.preferences.configuration.shell.terminalBell = value
         },
       ]),
-      sectionTitle("通知声音"),
+      sectionTitle(L("通知声音")),
       card([
-        notificationSoundToggle("错误退出", category: .errorExit),
-        notificationSoundToggle("命令完成", category: .commandFinish),
-        notificationSoundToggle("应用通知", category: .application),
+        notificationSoundToggle(L("错误退出"), category: .errorExit),
+        notificationSoundToggle(L("命令完成"), category: .commandFinish),
+        notificationSoundToggle(L("应用通知"), category: .application),
       ]),
-      sectionTitle("标签徽章"),
+      sectionTitle(L("标签徽章")),
       card([
         toggleRow(
-          "命令完成徽章", "成功退出后在标签上显示强调色圆点",
+          L("命令完成徽章"), L("成功退出后在标签上显示强调色圆点"),
           value: preferences.configuration.shell.resolvedBadgeCommandFinish
         ) { [weak self] value in
           self?.preferences.configuration.shell.badgeCommandFinish = value
         },
         toggleRow(
-          "命令失败徽章", "非零退出或 OSC 进度错误时显示警告",
+          L("命令失败徽章"), L("非零退出或 OSC 进度错误时显示警告"),
           value: preferences.configuration.shell.resolvedBadgeCommandFailure
         ) { [weak self] value in
           self?.preferences.configuration.shell.badgeCommandFailure = value
           self?.preferences.configuration.shell.badgeExitStatus = value
         },
         toggleRow(
-          "等待输入徽章", "命令等待输入时在标签上显示标记",
+          L("等待输入徽章"), L("命令等待输入时在标签上显示标记"),
           value: preferences.configuration.shell.badgeAwaitingInput
         ) { [weak self] value in
           self?.preferences.configuration.shell.badgeAwaitingInput = value
@@ -1073,7 +1079,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     category: TerminalNotificationCategory
   ) -> NSView {
     toggleRow(
-      title, "仅控制系统通知附带的声音，不影响通知是否显示",
+      title, L("仅控制系统通知附带的声音，不影响通知是否显示"),
       value: preferences.configuration.shell.resolvedNotificationSoundCategories.contains(category)
     ) { [weak self] enabled in
       guard let self else { return }
@@ -1089,67 +1095,67 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     guard enabled != preferences.configuration.shell.shellIntegration else { return }
     if !enabled {
       let alert = NSAlert()
-      alert.messageText = "关闭 Shell 集成？"
-      alert.informativeText = "命令导航、退出状态和精确目录跟踪将停用；相关设置会保留。"
+      alert.messageText = L("关闭 Shell 集成？")
+      alert.informativeText = L("命令导航、退出状态和精确目录跟踪将停用；相关设置会保留。")
       alert.alertStyle = .warning
-      alert.addButton(withTitle: "关闭")
-      alert.addButton(withTitle: "取消")
+      alert.addButton(withTitle: L("关闭"))
+      alert.addButton(withTitle: L("取消"))
       guard alert.runModal() == .alertFirstButtonReturn else {
         refresh()
         return
       }
     }
     guard let installer = AsterResourceLocations.shellIntegrationInstaller() else {
-      message = "找不到签名的 Shell 集成资源，设置未更改。"
+      message = L("找不到签名的 Shell 集成资源，设置未更改。")
       refresh()
       return
     }
     do {
       try installer.reconcile(enabled: enabled)
       preferences.configuration.shell.shellIntegration = enabled
-      message = enabled ? "Shell 集成已启用，新 Pane 将立即生效。" : "Shell 集成已关闭。"
+      message = enabled ? L("Shell 集成已启用，新 Pane 将立即生效。") : L("Shell 集成已关闭。")
     } catch {
-      message = "Shell 集成设置失败：\(error.localizedDescription)"
+      message = L("Shell 集成设置失败：\(error.localizedDescription)")
     }
     refresh()
   }
 
   private func controlViews() -> [NSView] {
     [
-      sectionTitle("键盘"),
+      sectionTitle(L("键盘")),
       card([
-        toggleRow("Option 作为 Meta", "发送 Esc 前缀，兼容 Emacs 和 Shell 快捷键", value: preferences.configuration.controls.optionAsMeta) { [weak self] value in
+        toggleRow(L("Option 作为 Meta"), L("发送 Esc 前缀，兼容 Emacs 和 Shell 快捷键"), value: preferences.configuration.controls.optionAsMeta) { [weak self] value in
           self?.preferences.configuration.controls.optionAsMeta = value
         },
       ]),
       sectionTitle("Autocomplete"),
       card([
         enumPopupRow(
-          "接受候选", "选择用于接受 inline suggestion 的快捷键",
+          L("接受候选"), L("选择用于接受 inline suggestion 的快捷键"),
           value: preferences.configuration.controls.resolvedAutocompleteShortcut
         ) { [weak self] value in
           self?.preferences.configuration.controls.autocompleteShortcut = value
         },
         enumPopupRow(
-          "候选面板", "自动显示或使用快捷键打开；面板最多显示 8 项",
+          L("候选面板"), L("自动显示或使用快捷键打开；面板最多显示 8 项"),
           value: preferences.configuration.controls.resolvedAutocompleteCandidatePanel
         ) { [weak self] value in
           self?.preferences.configuration.controls.autocompleteCandidatePanel = value
         },
         toggleRow(
-          "Inline suggestion", "在终端光标后显示最高排名候选的灰色后缀",
+          L("Inline suggestion"), L("在终端光标后显示最高排名候选的灰色后缀"),
           value: preferences.configuration.controls.resolvedAutocompleteInlineSuggestion
         ) { [weak self] value in
           self?.preferences.configuration.controls.autocompleteInlineSuggestion = value
         },
         toggleRow(
-          "本机学习", "在本机脱敏记录命令，并允许 README 与沙箱 help 规格学习",
+          L("本机学习"), L("在本机脱敏记录命令，并允许 README 与沙箱 help 规格学习"),
           value: preferences.configuration.controls.resolvedAutocompleteOnDeviceLearning
         ) { [weak self] value in
           self?.preferences.configuration.controls.autocompleteOnDeviceLearning = value
         },
         textRow(
-          "历史忽略模式", "逗号分隔的 glob，例如 ssh *,mysql *；匹配命令不会保存",
+          L("历史忽略模式"), L("逗号分隔的 glob，例如 ssh *,mysql *；匹配命令不会保存"),
           value: preferences.configuration.controls.resolvedAutocompleteHistoryIgnore
             .joined(separator: ",")
         ) { [weak self] value in
@@ -1158,138 +1164,138 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         },
         enumPopupRow(
-          "描述语言", "候选面板中的命令说明语言",
+          L("描述语言"), L("候选面板中的命令说明语言"),
           value: preferences.configuration.controls.resolvedAutocompleteDescriptionLanguage
         ) { [weak self] value in
           self?.preferences.configuration.controls.autocompleteDescriptionLanguage = value
         },
         infoRow(
-          "补全数据库", "内置 Fig 命令规格（含子命令、选项与参数）；只在手动操作时联网",
-          AutocompleteService.shared.map(Self.autocompleteDatabaseStatus) ?? "不可用"
+          L("补全数据库"), L("内置 Fig 命令规格（含子命令、选项与参数）；只在手动操作时联网"),
+          AutocompleteService.shared.map(Self.autocompleteDatabaseStatus) ?? L("不可用")
         ),
         actionRow(
-          "更新命令规格", "从 Aster 仓库拉取最新规格文件；不会覆盖本地 help 规格",
-          title: "立即更新"
+          L("更新命令规格"), L("从 Aster 仓库拉取最新规格文件；不会覆盖本地 help 规格"),
+          title: L("立即更新")
         ) { [weak self] in self?.updateAutocompleteSpecs() },
         actionRow(
-          "本机学习数据", "清除历史、固定命令及 frecency；内置和本地规格保留",
-          title: "清除"
+          L("本机学习数据"), L("清除历史、固定命令及 frecency；内置和本地规格保留"),
+          title: L("清除")
         ) { [weak self] in self?.clearAutocompleteLearning() },
       ]),
-      sectionTitle("鼠标"),
+      sectionTitle(L("鼠标")),
       card([
-        toggleRow("允许鼠标报告", "供 vim、tmux、htop 等 TUI 使用", value: preferences.configuration.controls.allowMouseReporting) { [weak self] value in
+        toggleRow(L("允许鼠标报告"), L("供 vim、tmux、htop 等 TUI 使用"), value: preferences.configuration.controls.allowMouseReporting) { [weak self] value in
           self?.preferences.configuration.controls.allowMouseReporting = value
         },
         toggleRow(
-          "焦点跟随鼠标", "指针悬停的分屏面板自动获得键盘焦点",
+          L("焦点跟随鼠标"), L("指针悬停的分屏面板自动获得键盘焦点"),
           value: preferences.configuration.controls.focusFollowsMouse
         ) { [weak self] value in
           self?.preferences.configuration.controls.focusFollowsMouse = value
         },
       ]),
-      sectionTitle("CLI 与 IPC"),
+      sectionTitle(L("CLI 与 IPC")),
       card([
         toggleRow(
-          "允许发送输入", "允许已鉴权的本机 aster CLI 向终端 Pane 发送文本、按键或命令",
+          L("允许发送输入"), L("允许已鉴权的本机 aster CLI 向终端 Pane 发送文本、按键或命令"),
           value: preferences.configuration.controls.resolvedIPCAllowSendKeys
         ) { [weak self] value in
           self?.preferences.configuration.controls.ipcAllowSendKeys = value
         },
         toggleRow(
-          "允许敏感会话", "额外允许 CLI 写入正在运行 ssh 或 sudo 的 Pane；需要先开启发送输入",
+          L("允许敏感会话"), L("额外允许 CLI 写入正在运行 ssh 或 sudo 的 Pane；需要先开启发送输入"),
           value: preferences.configuration.controls.resolvedIPCAllowSensitiveSessions
         ) { [weak self] value in
           self?.preferences.configuration.controls.ipcAllowSensitiveSessions = value
         },
       ]),
-      sectionTitle("选择"),
+      sectionTitle(L("选择")),
       card([
         toggleRow(
-          "Shift+方向键扩展选区", "关闭后把 Shift+方向键原样发送给终端程序",
+          L("Shift+方向键扩展选区"), L("关闭后把 Shift+方向键原样发送给终端程序"),
           value: preferences.configuration.controls.resolvedShiftArrowSelection
         ) { [weak self] value in
           self?.preferences.configuration.controls.shiftArrowSelection = value
         },
         toggleRow(
-          "输入时清除选区", "向终端发送文字、导航键、Tab 或 IME 文本时取消选中",
+          L("输入时清除选区"), L("向终端发送文字、导航键、Tab 或 IME 文本时取消选中"),
           value: preferences.configuration.controls.resolvedClearSelectionOnTyping
         ) { [weak self] value in
           self?.preferences.configuration.controls.clearSelectionOnTyping = value
         },
         toggleRow(
-          "复制后清除选区", "显式复制后取消选中；选中即复制始终保留选区",
+          L("复制后清除选区"), L("显式复制后取消选中；选中即复制始终保留选区"),
           value: preferences.configuration.controls.resolvedClearSelectionOnCopy
         ) { [weak self] value in
           self?.preferences.configuration.controls.clearSelectionOnCopy = value
         },
       ]),
-      sectionTitle("复制与粘贴"),
+      sectionTitle(L("复制与粘贴")),
       card([
         toggleRow(
-          "选中即复制", "选中文本后自动写入剪贴板",
+          L("选中即复制"), L("选中文本后自动写入剪贴板"),
           value: preferences.configuration.controls.copyOnSelect
         ) { [weak self] value in
           self?.preferences.configuration.controls.copyOnSelect = value
         },
         toggleRow(
-          "复制时去除行尾空格", "复制的每行去掉末尾的空白字符",
+          L("复制时去除行尾空格"), L("复制的每行去掉末尾的空白字符"),
           value: preferences.configuration.controls.trimTrailingSpaces
         ) { [weak self] value in
           self?.preferences.configuration.controls.trimTrailingSpaces = value
         },
         toggleRow(
-          "粘贴保护", "粘贴多行或含控制字符的内容前先确认",
+          L("粘贴保护"), L("粘贴多行或含控制字符的内容前先确认"),
           value: preferences.configuration.controls.pasteProtection
         ) { [weak self] value in
           self?.preferences.configuration.controls.pasteProtection = value
         },
         toggleRow(
-          "信任括号粘贴", "程序已协商 bracketed paste 时跳过危险内容确认",
+          L("信任括号粘贴"), L("程序已协商 bracketed paste 时跳过危险内容确认"),
           value: preferences.configuration.controls.resolvedPasteBracketedSafe
         ) { [weak self] value in
           self?.preferences.configuration.controls.pasteBracketedSafe = value
         },
         enumPopupRow(
-          "OSC 52 写入剪贴板", "终端程序请求替换系统剪贴板时的权限",
+          L("OSC 52 写入剪贴板"), L("终端程序请求替换系统剪贴板时的权限"),
           value: preferences.configuration.controls.resolvedClipboardWriteAccess
         ) { [weak self] value in
           self?.preferences.configuration.controls.clipboardWriteAccess = value
         },
         enumPopupRow(
-          "OSC 52 读取剪贴板", "终端程序请求读取系统剪贴板时的权限",
+          L("OSC 52 读取剪贴板"), L("终端程序请求读取系统剪贴板时的权限"),
           value: preferences.configuration.controls.resolvedClipboardReadAccess
         ) { [weak self] value in
           self?.preferences.configuration.controls.clipboardReadAccess = value
         },
       ]),
-      sectionTitle("链接协议"),
+      sectionTitle(L("链接协议")),
       card(linkSchemeRows()),
-      sectionTitle("滚动"),
+      sectionTitle(L("滚动")),
       card([
         toggleRow(
-          "平滑滚动", "触控板按像素滚动，并在手势结束时对齐字符行",
+          L("平滑滚动"), L("触控板按像素滚动，并在手势结束时对齐字符行"),
           value: preferences.configuration.controls.smoothScrolling
         ) { [weak self] value in
           self?.preferences.configuration.controls.smoothScrolling = value
         },
         enumPopupRow(
-          "滚过末尾", "选择最新内容或光标滚到视口中的停靠位置",
+          L("滚过末尾"), L("选择最新内容或光标滚到视口中的停靠位置"),
           value: preferences.configuration.controls.resolvedScrollPastLastLine
         ) { [weak self] value in
           self?.preferences.configuration.controls.scrollPastLastLine = value
         },
         enumPopupRow(
-          "滚过开头", "选择最早内容滚到视口中的停靠位置",
+          L("滚过开头"), L("选择最早内容滚到视口中的停靠位置"),
           value: preferences.configuration.controls.resolvedScrollPastFirstLine
         ) { [weak self] value in
           self?.preferences.configuration.controls.scrollPastFirstLine = value
         },
       ]),
-      sectionTitle("安全"),
+      sectionTitle(L("安全")),
       card([
         toggleRow(
-          "自动安全输入", "检测到密码输入时启用系统安全键盘",
+          L("自动安全输入"), L("检测到密码输入时启用系统安全键盘"),
           value: preferences.configuration.controls.secureInputAutomatically
         ) { [weak self] value in
           self?.preferences.configuration.controls.secureInputAutomatically = value
@@ -1305,16 +1311,16 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   /// 可能持续数分钟，设置页不能挂在上面。
   private func checkForUpdatesNow() {
     guard let updateController else {
-      message = "此构建未启用自动更新。请从项目发布页下载最新版本。"
+      message = L("此构建未启用自动更新。请从项目发布页下载最新版本。")
       refresh()
       return
     }
     guard updateController.canCheckForUpdates else {
-      message = "已有一次更新检查正在进行中。"
+      message = L("已有一次更新检查正在进行中。")
       refresh()
       return
     }
-    message = "正在检查更新…"
+    message = L("正在检查更新…")
     refresh()
     updateController.checkForUpdates()
   }
@@ -1327,30 +1333,30 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     else { return status.statusText }
     let formatter = RelativeDateTimeFormatter()
     formatter.unitsStyle = .short
-    return "\(status.statusText) · 上次检查 \(formatter.localizedString(for: date, relativeTo: Date()))"
+    return L("\(status.statusText) · 上次检查 \(formatter.localizedString(for: date, relativeTo: Date()))")
   }
 
   /// 与 Otty 对齐的状态文案:`v<上游日期> · N 条命令`;没有日期时退回版本标识。
   static func autocompleteDatabaseStatus(_ service: AutocompleteService) -> String {
     let database = service.specDatabase
     let version = database.sourceDate ?? String(database.sourceRevision.prefix(12))
-    return "v\(version) · \(database.commands.count) 条命令"
+    return L("v\(version) · \(String(database.commands.count)) 条命令")
   }
 
   private func updateAutocompleteSpecs() {
     guard let service = AutocompleteService.shared else {
-      message = "Autocomplete 规格服务不可用。"
+      message = L("Autocomplete 规格服务不可用。")
       refresh()
       return
     }
-    message = "正在更新补全数据库…"
+    message = L("正在更新补全数据库…")
     refresh()
     Task { @MainActor [weak self, service] in
       do {
         _ = try await service.updateNow()
-        self?.message = "补全数据库已更新：\(Self.autocompleteDatabaseStatus(service))。"
+        self?.message = L("补全数据库已更新：\(Self.autocompleteDatabaseStatus(service))。")
       } catch {
-        self?.message = "命令规格更新失败：\(error.localizedDescription)"
+        self?.message = L("命令规格更新失败：\(error.localizedDescription)")
       }
       self?.refresh()
     }
@@ -1358,13 +1364,13 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   private func clearAutocompleteLearning() {
     guard let service = AutocompleteService.shared else {
-      message = "Autocomplete 规格服务不可用。"
+      message = L("Autocomplete 规格服务不可用。")
       refresh()
       return
     }
-    let history = NSButton(checkboxWithTitle: "命令历史", target: nil, action: nil)
-    let pinned = NSButton(checkboxWithTitle: "固定命令", target: nil, action: nil)
-    let folders = NSButton(checkboxWithTitle: "目录频率数据", target: nil, action: nil)
+    let history = NSButton(checkboxWithTitle: L("命令历史"), target: nil, action: nil)
+    let pinned = NSButton(checkboxWithTitle: L("固定命令"), target: nil, action: nil)
+    let folders = NSButton(checkboxWithTitle: L("目录频率数据"), target: nil, action: nil)
     history.state = .on
     pinned.state = .on
     folders.state = .on
@@ -1374,11 +1380,11 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     stack.spacing = 7
     stack.frame.size = NSSize(width: 260, height: 72)
     let alert = NSAlert()
-    alert.messageText = "清除补全数据"
-    alert.informativeText = "内置规格和手动更新的命令数据库不会被删除。"
+    alert.messageText = L("清除补全数据")
+    alert.informativeText = L("内置规格和手动更新的命令数据库不会被删除。")
     alert.accessoryView = stack
-    alert.addButton(withTitle: "清除")
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: L("清除"))
+    alert.addButton(withTitle: L("取消"))
     guard alert.runModal() == .alertFirstButtonReturn else { return }
     var selection: AutocompleteService.LearningClearSelection = []
     if history.state == .on { selection.insert(.history) }
@@ -1389,58 +1395,58 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       if folders.state == .on {
         NotificationCenter.default.post(name: .asterClearFrequentFolders, object: nil)
       }
-      message = "已清除选中的本机补全数据。"
+      message = L("已清除选中的本机补全数据。")
     } catch {
-      message = "清除失败：\(error.localizedDescription)"
+      message = L("清除失败：\(error.localizedDescription)")
     }
     refresh()
   }
 
   private func editorViews() -> [NSView] {
     [
-      sectionTitle("编辑器"),
+      sectionTitle(L("编辑器")),
       card([
         toggleRow(
-          "自动换行", "对长行进行软换行，而不是水平滚动",
+          L("自动换行"), L("对长行进行软换行，而不是水平滚动"),
           value: preferences.configuration.editor.lineWrap
         ) { [weak self] value in
           self?.preferences.configuration.editor.lineWrap = value
         },
         toggleRow(
-          "显示行号", "在文本面板左侧显示行号侧栏",
+          L("显示行号"), L("在文本面板左侧显示行号侧栏"),
           value: preferences.configuration.editor.showLineNumbers
         ) { [weak self] value in
           self?.preferences.configuration.editor.showLineNumbers = value
         },
         toggleRow(
-          "显示不可见字符", "把空格、Tab、换行渲染为可见符号",
+          L("显示不可见字符"), L("把空格、Tab、换行渲染为可见符号"),
           value: preferences.configuration.editor.showVisibleWhitespace
         ) { [weak self] value in
           self?.preferences.configuration.editor.showVisibleWhitespace = value
         },
         stepperRow(
-          "Tab 宽度", "Tab 字符的视觉宽度（列数）",
+          L("Tab 宽度"), L("Tab 字符的视觉宽度（列数）"),
           value: Double(preferences.configuration.editor.tabSize), range: 2...8
         ) { [weak self] value in
           self?.preferences.configuration.editor.tabSize = Int(value)
         },
         toggleRow(
-          "滚动越过末尾", "允许继续向下滚动，使最后一行可位于视口顶部",
+          L("滚动越过末尾"), L("允许继续向下滚动，使最后一行可位于视口顶部"),
           value: preferences.configuration.editor.scrollPastEnd
         ) { [weak self] value in
           self?.preferences.configuration.editor.scrollPastEnd = value
         },
         toggleRow(
-          "Vim 按键", "在文件 / 编辑器面板中启用模态编辑",
+          L("Vim 按键"), L("在文件 / 编辑器面板中启用模态编辑"),
           value: preferences.configuration.editor.vimKeyBindings
         ) { [weak self] value in
           self?.preferences.configuration.editor.vimKeyBindings = value
         },
       ]),
-      sectionTitle("打开文件"),
+      sectionTitle(L("打开文件")),
       card([
         toggleRow(
-          "预览富文档", "双击 Markdown 等文件时在相邻面板渲染预览",
+          L("预览富文档"), L("双击 Markdown 等文件时在相邻面板渲染预览"),
           value: preferences.configuration.editor.previewRichDocuments
         ) { [weak self] value in
           self?.preferences.configuration.editor.previewRichDocuments = value
@@ -1465,7 +1471,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       let command = provider.commandName
       return toggleRow(
         name,
-        "\(command) · 是否启用 Aster 的 Agent 行为",
+        L("\(command) · 是否启用 Aster 的 Agent 行为"),
         value: preferences.configuration.agents.enabledAgents.contains(command)
       ) { [weak self] enabled in
         guard let self else { return }
@@ -1479,7 +1485,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let launchRows = providers.map { name, provider in
       textRow(
         name,
-        "启动命令；支持带引号参数，留空恢复 \(provider.commandName)",
+        L("启动命令；支持带引号参数，留空恢复 \(provider.commandName)"),
         value: WorkflowShellCommandEncoder.encode(
           preferences.configuration.agents.launchComponents(for: provider)
         )
@@ -1488,64 +1494,64 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       }
     }
     return [
-      sectionTitle("已启用的智能体"),
+      sectionTitle(L("已启用的智能体")),
       card(agentRows),
-      sectionTitle("Agent 集成"),
+      sectionTitle(L("Agent 集成")),
       card(setupRows),
-      sectionTitle("启动命令"),
+      sectionTitle(L("启动命令")),
       card(launchRows),
-      sectionTitle("标签徽章"),
+      sectionTitle(L("标签徽章")),
       card([
         toggleRow(
-          "处理中徽章", "智能体处理任务时在标签上显示标记",
+          L("处理中徽章"), L("智能体处理任务时在标签上显示标记"),
           value: preferences.configuration.agents.badgeProcessing
         ) { [weak self] value in
           self?.preferences.configuration.agents.badgeProcessing = value
         },
         toggleRow(
-          "任务完成徽章", "智能体完成任务时在标签上显示标记",
+          L("任务完成徽章"), L("智能体完成任务时在标签上显示标记"),
           value: preferences.configuration.agents.badgeTaskComplete
         ) { [weak self] value in
           self?.preferences.configuration.agents.badgeTaskComplete = value
         },
         toggleRow(
-          "等待输入徽章", "智能体等待确认时在标签上显示标记",
+          L("等待输入徽章"), L("智能体等待确认时在标签上显示标记"),
           value: preferences.configuration.agents.badgeAwaitingInput
         ) { [weak self] value in
           self?.preferences.configuration.agents.badgeAwaitingInput = value
         },
         toggleRow(
-          "Pane 底部用量条", "Claude Code 运行时显示 5 小时 / 每周配额，Codex 另含当前会话上下文占比",
+          L("Pane 底部用量条"), L("Claude Code 运行时显示 5 小时 / 每周配额，Codex 另含当前会话上下文占比"),
           value: preferences.configuration.agents.resolvedUsageBarEnabled
         ) { [weak self] value in
           self?.preferences.configuration.agents.usageBarEnabled = value
         },
       ]),
-      sectionTitle("通知"),
+      sectionTitle(L("通知")),
       card([
         toggleRow(
-          "任务完成时通知", "智能体完成任务后发送系统通知",
+          L("任务完成时通知"), L("智能体完成任务后发送系统通知"),
           value: preferences.configuration.agents.notifyTaskComplete
         ) { [weak self] value in
           self?.preferences.configuration.agents.notifyTaskComplete = value
         },
         toggleRow(
-          "等待输入时通知", "智能体等待确认时发送系统通知",
+          L("等待输入时通知"), L("智能体等待确认时发送系统通知"),
           value: preferences.configuration.agents.notifyAwaitingInput
         ) { [weak self] value in
           self?.preferences.configuration.agents.notifyAwaitingInput = value
         },
       ]),
-      sectionTitle("运行"),
+      sectionTitle(L("运行")),
       card([
         toggleRow(
-          "处理期间阻止睡眠", "智能体处理任务时阻止系统进入睡眠",
+          L("处理期间阻止睡眠"), L("智能体处理任务时阻止系统进入睡眠"),
           value: preferences.configuration.agents.preventSleepWhileProcessing
         ) { [weak self] value in
           self?.preferences.configuration.agents.preventSleepWhileProcessing = value
         },
         toggleRow(
-          "恢复智能体会话", "恢复工作区时继续之前的智能体会话",
+          L("恢复智能体会话"), L("恢复工作区时继续之前的智能体会话"),
           value: preferences.configuration.agents.resumeSessions
         ) { [weak self] value in
           self?.preferences.configuration.agents.resumeSessions = value
@@ -1578,7 +1584,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         arguments: Array(components.dropFirst())
       )) != nil
     else {
-      message = "\(displayName) 启动命令无效，已保留原设置。"
+      message = L("\(displayName) 启动命令无效，已保留原设置。")
       refresh()
       return
     }
@@ -1594,14 +1600,14 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       let detail: String
       let buttonTitle: String
       if status.integrationInstalled {
-        detail = "\(provider.commandName) · 已安装集成"
-        buttonTitle = "卸载"
+        detail = L("\(provider.commandName) · 已安装集成")
+        buttonTitle = L("卸载")
       } else if status.executableAvailable {
         detail = agentSetupMissingDetail(status)
-        buttonTitle = "安装"
+        buttonTitle = L("安装")
       } else {
-        detail = "\(provider.commandName) · 未在 PATH 中检测到 CLI"
-        buttonTitle = "检测"
+        detail = L("\(provider.commandName) · 未在 PATH 中检测到 CLI")
+        buttonTitle = L("检测")
       }
       return actionRow(name, detail, title: buttonTitle) { [weak self] in
         self?.performAgentSetupAction(provider, displayName: name)
@@ -1609,8 +1615,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     } catch {
       return actionRow(
         name,
-        "\(provider.commandName) · 配置不可安全读取：\(error.localizedDescription)",
-        title: "检测"
+        L("\(provider.commandName) · 配置不可安全读取：\(error.localizedDescription)"),
+        title: L("检测")
       ) { [weak self] in
         self?.performAgentSetupAction(provider, displayName: name)
       }
@@ -1622,9 +1628,9 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       status.managedIntegrationInstalled,
       status.requiredFeatureEnabled != true
     {
-      return "codex · Hooks 已安装，但 config.toml 尚未启用 hooks"
+      return L("codex · Hooks 已安装，但 config.toml 尚未启用 hooks")
     }
-    return "\(status.provider.commandName) · 已检测到 CLI，集成尚未安装"
+    return L("\(status.provider.commandName) · 已检测到 CLI，集成尚未安装")
   }
 
   /// 完整安装状态执行精确卸载；hook 已写入但 feature 未启用或需要迁移时继续执行
@@ -1634,59 +1640,59 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       let current = try agentSetupService.status(for: provider)
       if current.integrationInstalled {
         _ = try agentSetupService.uninstall(provider)
-        message = "\(displayName) 集成已卸载；请重启该 Agent。"
+        message = L("\(displayName) 集成已卸载；请重启该 Agent。")
       } else if current.executableAvailable {
         let lifecycleHint: String
         if provider == .codex {
           // Codex 会按 hook 定义哈希要求用户首次信任；Aster 不能替用户绕过该安全门。
-          lifecycleHint = " 重启 Codex 后请运行 /hooks 审核并信任 Aster hook，再发送一条消息关联会话。"
+          lifecycleHint = L(" 重启 Codex 后请运行 /hooks 审核并信任 Aster hook，再发送一条消息关联会话。")
         } else {
           lifecycleHint = current.plan.linksAfterNextLifecycleEvent
-            ? " 启动后发送一条消息即可关联当前会话。"
+            ? L(" 启动后发送一条消息即可关联当前会话。")
             : ""
         }
         _ = try agentSetupService.install(provider)
-        message = "\(displayName) 集成已安装；请重启该 Agent。\(lifecycleHint)"
+        message = L("\(displayName) 集成已安装；请重启该 Agent。\(lifecycleHint)")
       } else {
-        message = "未检测到 \(provider.commandName)，请先安装 \(displayName) CLI。"
+        message = L("未检测到 \(provider.commandName)，请先安装 \(displayName) CLI。")
       }
     } catch {
-      message = "\(displayName) 集成失败：\(error.localizedDescription)"
+      message = L("\(displayName) 集成失败：\(error.localizedDescription)")
     }
     refresh()
   }
 
   private func recipeViews() -> [NSView] {
     [
-      sectionTitle("命令重放"),
+      sectionTitle(L("命令重放")),
       card([
         enumPopupRow(
-          "重放模式", "打开 Recipe 时如何处理其中保存的命令",
+          L("重放模式"), L("打开 Recipe 时如何处理其中保存的命令"),
           value: preferences.configuration.recipeReplayMode
         ) { [weak self] value in
           self?.preferences.configuration.recipeReplayMode = value
         },
       ]),
-      sectionTitle("格式"),
+      sectionTitle(L("格式")),
       card([
-        infoRow("Recipe 包含", "标签页、分屏方向、目录、文件和可选命令", ".asterrecipe"),
-        infoRow("安全边界", "不会保存 PID、文件描述符、令牌或临时焦点", "可移植"),
+        infoRow(L("Recipe 包含"), L("标签页、分屏方向、目录、文件和可选命令"), ".asterrecipe"),
+        infoRow(L("安全边界"), L("不会保存 PID、文件描述符、令牌或临时焦点"), L("可移植")),
       ]),
     ]
   }
 
   private func shortcutViews() -> [NSView] {
     [
-      sectionTitle("快捷键"),
+      sectionTitle(L("快捷键")),
       card([
-        infoRow("新建标签页", "", "⌘ T"),
-        infoRow("打开文件", "", "⌘ O"),
-        infoRow("关闭标签页", "", "⌘ W"),
-        infoRow("向右分屏", "", "⌘ D"),
-        infoRow("向下分屏", "", "⇧ ⌘ D"),
-        infoRow("关闭面板", "", "⌥ ⌘ W"),
-        infoRow("命令面板", "", "⌘ K"),
-        infoRow("设置", "", "⌘ ,"),
+        infoRow(L("新建标签页"), "", "⌘ T"),
+        infoRow(L("打开文件"), "", "⌘ O"),
+        infoRow(L("关闭标签页"), "", "⌘ W"),
+        infoRow(L("向右分屏"), "", "⌘ D"),
+        infoRow(L("向下分屏"), "", "⇧ ⌘ D"),
+        infoRow(L("关闭面板"), "", "⌥ ⌘ W"),
+        infoRow(L("命令面板"), "", "⌘ K"),
+        infoRow(L("设置"), "", "⌘ ,"),
       ]),
     ]
   }
@@ -1696,19 +1702,19 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let view = preferences.configuration.resolvedView
     return [
       card([
-        enumPopupRow("图标与角标", "合并：图标与状态角标共用一个指示位；分开：图标在左、角标在右", value: view.resolvedBadgePlacement) { [weak self] (value: TabBadgePlacement) in
+        enumPopupRow(L("图标与角标"), L("合并：图标与状态角标共用一个指示位；分开：图标在左、角标在右"), value: view.resolvedBadgePlacement) { [weak self] (value: TabBadgePlacement) in
           self?.preferences.configuration.view = {
             var next = self?.preferences.configuration.resolvedView ?? ViewConfiguration()
             next.badgePlacement = value
             return next
           }()
         },
-        toggleRow("保持登录状态", "把网页窗格的 cookie 和站点数据写到磁盘", value: view.resolvedWebPanePersistData) { [weak self] value in
+        toggleRow(L("保持登录状态"), L("把网页窗格的 cookie 和站点数据写到磁盘"), value: view.resolvedWebPanePersistData) { [weak self] value in
           var next = self?.preferences.configuration.resolvedView ?? ViewConfiguration()
           next.webPanePersistData = value
           self?.preferences.configuration.view = next
         },
-        actionRow("浏览数据", "清除所有网页窗格的 cookie、站点数据、缓存和历史", title: "清除数据") { [weak self] in
+        actionRow(L("浏览数据"), L("清除所有网页窗格的 cookie、站点数据、缓存和历史"), title: L("清除数据")) { [weak self] in
           self?.clearWebPaneBrowsingData()
         },
       ])
@@ -1737,16 +1743,16 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     }
 
     return [
-      sectionTitle("运行时"),
+      sectionTitle(L("运行时")),
       card([
-        infoRow("终端内核", "VT100 / xterm、真彩色、鼠标、超链接与本地 PTY", "SwiftTerm"),
-        infoRow("会话恢复", "保存可重建的标签与分屏结构", "已启用"),
-        infoRow("界面框架", "主窗口、设置和所有控件均为原生视图", "AppKit"),
+        infoRow(L("终端内核"), L("VT100 / xterm、真彩色、鼠标、超链接与本地 PTY"), "SwiftTerm"),
+        infoRow(L("会话恢复"), L("保存可重建的标签与分屏结构"), L("已启用")),
+        infoRow(L("界面框架"), L("主窗口、设置和所有控件均为原生视图"), "AppKit"),
       ]),
-      sectionTitle("终端任务"),
+      sectionTitle(L("终端任务")),
       card([
         textRow(
-          "自动进度命令", "用逗号分隔；每项按空白分词前缀匹配，留空即关闭",
+          L("自动进度命令"), L("用逗号分隔；每项按空白分词前缀匹配，留空即关闭"),
           value: preferences.configuration.shell.resolvedAutoProgressCommands.joined(separator: ", ")
         ) { [weak self] value in
           self?.preferences.configuration.shell.autoProgressCommands = value
@@ -1755,28 +1761,28 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
             .filter { !$0.isEmpty }
         },
       ]),
-      sectionTitle("标题权限"),
+      sectionTitle(L("标题权限")),
       card([
         toggleRow(
-          "标题 — Shell Controlled", "允许终端程序通过 OSC 0、1、2 修改标签与窗口标题",
+          L("标题 — Shell Controlled"), L("允许终端程序通过 OSC 0、1、2 修改标签与窗口标题"),
           value: preferences.configuration.shell.resolvedTitleShellControlled
         ) { [weak self] value in
           self?.preferences.configuration.shell.titleShellControlled = value
         },
         toggleRow(
-          "标题报告", "允许终端程序通过 XTWINOPS 读取当前标题；默认关闭以防数据外传",
+          L("标题报告"), L("允许终端程序通过 XTWINOPS 读取当前标题；默认关闭以防数据外传"),
           value: preferences.configuration.shell.resolvedTitleReport
         ) { [weak self] value in
           self?.preferences.configuration.shell.titleReport = value
         },
       ]),
-      sectionTitle("East Asian Ambiguous 宽度"),
+      sectionTitle(L("East Asian Ambiguous 宽度")),
       card(ambiguousBlockRows),
-      sectionTitle("配置"),
+      sectionTitle(L("配置")),
       card([
-        actionRow("导出配置", "保存为可备份的 JSON 文件", title: "导出") { [weak self] in self?.exportConfiguration() },
-        actionRow("导入配置", "从 JSON 文件替换当前设置", title: "导入") { [weak self] in self?.importConfiguration() },
-        actionRow("恢复默认设置", "不会删除 Recipe 和工作区文件", title: "重置") { [weak self] in self?.preferences.reset() },
+        actionRow(L("导出配置"), L("保存为可备份的 JSON 文件"), title: L("导出")) { [weak self] in self?.exportConfiguration() },
+        actionRow(L("导入配置"), L("从 JSON 文件替换当前设置"), title: L("导入")) { [weak self] in self?.importConfiguration() },
+        actionRow(L("恢复默认设置"), L("不会删除 Recipe 和工作区文件"), title: L("重置")) { [weak self] in self?.preferences.reset() },
       ]),
     ]
   }
@@ -1785,35 +1791,35 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   private func appearanceViews() -> [NSView] {
     var views: [NSView] = []
-    views.append(sectionTitle("布局"))
+    views.append(sectionTitle(L("布局")))
     views.append(makeLayoutChoices())
-    views.append(sectionTitle("标签栏"))
+    views.append(sectionTitle(L("标签栏")))
     views.append(card([
       toggleRow(
-        "显示标签栏", "关闭后隐藏标签面板，仅保留终端内容",
+        L("显示标签栏"), L("关闭后隐藏标签面板，仅保留终端内容"),
         value: preferences.configuration.appearance.showTabBar
       ) { [weak self] value in
         self?.preferences.configuration.appearance.showTabBar = value
       },
       enumPopupRow(
-        "新标签页位置", "空标签进入当前分组末尾；带内容标签可紧跟当前标签",
+        L("新标签页位置"), L("空标签进入当前分组末尾；带内容标签可紧跟当前标签"),
         value: preferences.configuration.appearance.resolvedNewTabPosition
       ) { [weak self] value in
         self?.preferences.configuration.appearance.newTabPosition = value
       },
       popupRow(
-        "自动隐藏标签面板", "控制侧边栏布局下，标签面板的显示方式",
-        items: ["默认", "仅单标签时隐藏"],
+        L("自动隐藏标签面板"), L("控制侧边栏布局下，标签面板的显示方式"),
+        items: [L("默认"), L("仅单标签时隐藏")],
         selected: preferences.configuration.appearance.autoHideTabs ? 1 : 0
       ) { [weak self] index in
         self?.preferences.configuration.appearance.autoHideTabs = index == 1
       },
     ]))
-    views.append(sectionTitle("窗口"))
+    views.append(sectionTitle(L("窗口")))
     views.append(card([
       popupRow(
-        "窗口大小", "新窗口如何决定初始尺寸",
-        items: ["记住上次尺寸", "恢复默认尺寸"], selected: 0
+        L("窗口大小"), L("新窗口如何决定初始尺寸"),
+        items: [L("记住上次尺寸"), L("恢复默认尺寸")], selected: 0
       ) { [weak self] index in
         guard index == 1, let self else { return }
         self.preferences.configuration.appearance.windowWidth = 1180
@@ -1821,19 +1827,19 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         (NSApp.delegate as? AsterAppDelegate)?.applyDefaultMainWindowSize()
       },
       popupRow(
-        "窗口主题", "跟随系统、始终浅色或始终深色",
+        L("窗口主题"), L("跟随系统、始终浅色或始终深色"),
         items: AppPreferences.Appearance.allCases.map(\.label),
         selected: AppPreferences.Appearance.allCases.firstIndex(of: preferences.appearance) ?? 0
       ) { [weak self] index in
         self?.preferences.appearance = AppPreferences.Appearance.allCases[index]
       },
       panelWidthSliderRow(
-        "左侧 Panel 宽度",
+        L("左侧 Panel 宽度"),
         role: .sidebar,
         fallback: preferences.sidebarWidth
       ),
       panelWidthSliderRow(
-        "右侧 Panel 宽度",
+        L("右侧 Panel 宽度"),
         role: .inspector,
         fallback: WorkspacePanelLayoutPolicy.inspectorDefaultWidth
       ),
@@ -1842,30 +1848,30 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     views.append(sectionTitle("Dock"))
     views.append(card([
       toggleRow(
-        "任务进行时旋转", "会话运行时，图标中间的星芒持续旋转",
+        L("任务进行时旋转"), L("会话运行时，图标中间的星芒持续旋转"),
         value: preferences.configuration.appearance.resolvedAnimateDockIconOnProgress
       ) { [weak self] value in
         self?.preferences.configuration.appearance.animateDockIconOnProgress = value
       },
       toggleRow(
-        "出错时变红", "任一标签失败时 Dock 图标变红；点击图标跳转到出错的标签",
+        L("出错时变红"), L("任一标签失败时 Dock 图标变红；点击图标跳转到出错的标签"),
         value: preferences.configuration.appearance.resolvedRedDockIconOnError
       ) { [weak self] value in
         self?.preferences.configuration.appearance.redDockIconOnError = value
       },
       toggleRow(
-        "收到通知时跳动", "Aster 不在前台时，收到通知则让 Dock 图标持续跳动",
+        L("收到通知时跳动"), L("Aster 不在前台时，收到通知则让 Dock 图标持续跳动"),
         value: preferences.configuration.shell.resolvedBounceDockIcon
       ) { [weak self] value in
         self?.preferences.configuration.shell.bounceDockIcon = value
       },
     ]))
 
-    views.append(sectionTitle("主题"))
+    views.append(sectionTitle(L("主题")))
     views.append(makeThemeGrid(mode: .light))
     views.append(toggleRow(
-      "深色模式使用独立主题",
-      "跟随系统配色时，浅色与深色模式分别使用两套主题",
+      L("深色模式使用独立主题"),
+      L("跟随系统配色时，浅色与深色模式分别使用两套主题"),
       value: preferences.configuration.appearance.useSeparateDarkTheme,
       refreshAfterAction: true
     ) { [weak self] value in
@@ -1875,22 +1881,22 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       views.append(makeThemeGrid(mode: .dark))
     }
 
-    views.append(sectionTitle("详情"))
+    views.append(sectionTitle(L("详情")))
     views.append(
       ThemeDetailView(theme: focusedTheme) { [weak self] slot, anchor in
         self?.pickColor(for: slot, anchor: anchor)
       })
     let actions = NSStackView(views: [
-      contentActionButton(title: "复制") { [weak self] in self?.duplicateTheme() },
-      contentActionButton(title: "创建可编辑副本") { [weak self] in self?.beginEditingTheme() },
-      contentActionButton(title: "打开主题文件夹") { [weak self] in self?.openThemesFolder() },
-      contentActionButton(title: "导入主题…") { [weak self] in self?.importTheme() },
+      contentActionButton(title: L("复制")) { [weak self] in self?.duplicateTheme() },
+      contentActionButton(title: L("创建可编辑副本")) { [weak self] in self?.beginEditingTheme() },
+      contentActionButton(title: L("打开主题文件夹")) { [weak self] in self?.openThemesFolder() },
+      contentActionButton(title: L("导入主题…")) { [weak self] in self?.importTheme() },
       NSView(),
     ])
     // 覆盖是可撤销的：有覆盖时才给出入口，没改过就不要多一个永远点不动的按钮。
     if !preferences.themeOverrides(for: focusedTheme.id).isEmpty {
       actions.insertArrangedSubview(
-        contentActionButton(title: "恢复主题原始参数") { [weak self] in self?.resetThemeOverrides() },
+        contentActionButton(title: L("恢复主题原始参数")) { [weak self] in self?.resetThemeOverrides() },
         at: actions.arrangedSubviews.count - 1
       )
     }
@@ -1899,106 +1905,106 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     views.append(actions)
     if let themeDraft { views.append(makeThemeEditor(themeDraft)) }
 
-    views.append(sectionTitle("文本"))
+    views.append(sectionTitle(L("文本")))
     views.append(card([
-      stepperRow("字号", "终端字号", value: preferences.fontSize, range: 9...32) { [weak self] value in
+      stepperRow(L("字号"), L("终端字号"), value: preferences.fontSize, range: 9...32) { [weak self] value in
         self?.preferences.fontSize = value
       },
       enumPopupRow(
-        "加粗", "选择真实字形、主字体字形或 synthetic bold",
+        L("加粗"), L("选择真实字形、主字体字形或 synthetic bold"),
         value: preferences.configuration.appearance.resolvedBoldRendering
       ) { [weak self] value in
         self?.preferences.configuration.appearance.boldRendering = value
       },
       enumPopupRow(
-        "斜体", "选择真实字形、主字体字形或 synthetic italic",
+        L("斜体"), L("选择真实字形、主字体字形或 synthetic italic"),
         value: preferences.configuration.appearance.resolvedItalicRendering
       ) { [weak self] value in
         self?.preferences.configuration.appearance.italicRendering = value
       },
       toggleRow(
-        "下划线", "允许终端程序通过 SGR 显示下划线样式",
+        L("下划线"), L("允许终端程序通过 SGR 显示下划线样式"),
         value: preferences.configuration.appearance.resolvedUnderlineRendering
       ) { [weak self] value in
         self?.preferences.configuration.appearance.underlineRendering = value
       },
       toggleRow(
-        "闪烁", "允许 SGR 5/6 文本按节奏闪烁；关闭时文本保持可见",
+        L("闪烁"), L("允许 SGR 5/6 文本按节奏闪烁；关闭时文本保持可见"),
         value: preferences.configuration.appearance.resolvedBlinkRenderingPolicy == .animated
       ) { [weak self] value in
         self?.preferences.configuration.appearance.blinkRenderingPolicy = value ? .animated : .steady
       },
       enumPopupRow(
-        "连字", "控制 OpenType 标准、上下文和 discretionary ligatures",
+        L("连字"), L("控制 OpenType 标准、上下文和 discretionary ligatures"),
         value: preferences.configuration.appearance.resolvedLigatureLevel
       ) { [weak self] value in
         self?.preferences.configuration.appearance.ligatureLevel = value
       },
       popupRow(
-        "字体混合", "控制 macOS 字形平滑；默认使用系统抗锯齿",
-        items: ["默认", "关闭"],
+        L("字体混合"), L("控制 macOS 字形平滑；默认使用系统抗锯齿"),
+        items: [L("默认"), L("关闭")],
         selected: preferences.configuration.appearance.resolvedFontSmoothing ? 0 : 1
       ) { [weak self] index in
         self?.preferences.configuration.appearance.fontSmoothing = index == 0
       },
       popupRow(
-        "行高", "终端网格的垂直间距",
-        items: ["紧凑 (1.0)", "默认 (1.08)", "宽松 (1.2)"],
+        L("行高"), L("终端网格的垂直间距"),
+        items: [L("紧凑 (1.0)"), L("默认 (1.08)"), L("宽松 (1.2)")],
         selected: lineHeightSelection(preferences.configuration.appearance.lineHeight)
       ) { [weak self] index in
         self?.preferences.configuration.appearance.lineHeight = [1.0, 1.08, 1.2][index]
       },
     ]))
 
-    views.append(sectionTitle("字体"))
+    views.append(sectionTitle(L("字体")))
     views.append(makeFontSettings())
 
-    views.append(sectionTitle("光标"))
+    views.append(sectionTitle(L("光标")))
     views.append(card([
       ThemeCursorPreviewView(
         theme: focusedTheme,
         appearance: preferences.configuration.appearance
       ),
       rowShell(
-        "光标颜色", "覆盖主题光标颜色",
+        L("光标颜色"), L("覆盖主题光标颜色"),
         accessory: ClosureColorWell(color: preferences.cursorColor.withAlphaComponent(1)) {
           [weak self] color in
           self?.preferences.configuration.appearance.cursorColorOverride = HexColor(nsColor: color)
         }
       ),
       rowShell(
-        "光标下方文字颜色", "仅方块光标覆盖字符时使用",
+        L("光标下方文字颜色"), L("仅方块光标覆盖字符时使用"),
         accessory: ClosureColorWell(color: preferences.cursorTextColor) { [weak self] color in
           self?.preferences.configuration.appearance.cursorTextColorOverride = HexColor(nsColor: color)
         }
       ),
       sliderRow(
-        "光标不透明度", "颜色透明度实时同步到现有终端",
+        L("光标不透明度"), L("颜色透明度实时同步到现有终端"),
         value: preferences.configuration.appearance.resolvedCursorOpacity,
         range: 0.1...1, suffix: "", fractionDigits: 2
       ) { [weak self] value in
         self?.preferences.configuration.appearance.cursorOpacity = value
       },
       enumPopupRow(
-        "光标样式", "方块、竖线、下划线或空心方块",
+        L("光标样式"), L("方块、竖线、下划线或空心方块"),
         value: preferences.configuration.appearance.cursorStyle
       ) { [weak self] value in
         self?.preferences.configuration.appearance.cursorStyle = value
       },
       enumPopupRow(
-        "光标闪烁方式",
-        "默认模式允许程序覆盖；始终模式忽略 DECSCUSR 与 DEC mode 12",
+        L("光标闪烁方式"),
+        L("默认模式允许程序覆盖；始终模式忽略 DECSCUSR 与 DEC mode 12"),
         value: preferences.configuration.appearance.resolvedCursorBlinkMode
       ) { [weak self] value in
         self?.preferences.configuration.appearance.cursorBlinkMode = value
       },
       enumPopupRow(
-        "光标动画", "平滑模式只插值同一行内的短距离移动，并尊重减弱动态效果",
+        L("光标动画"), L("平滑模式只插值同一行内的短距离移动，并尊重减弱动态效果"),
         value: preferences.configuration.appearance.resolvedCursorAnimation
       ) { [weak self] value in
         self?.preferences.configuration.appearance.cursorAnimation = value
       },
-      actionRow("主题颜色", "清除覆盖并重新使用当前主题的光标与文字颜色", title: "跟随主题") {
+      actionRow(L("主题颜色"), L("清除覆盖并重新使用当前主题的光标与文字颜色"), title: L("跟随主题")) {
         [weak self] in
         self?.preferences.configuration.appearance.cursorColorOverride = nil
         self?.preferences.configuration.appearance.cursorTextColorOverride = nil
@@ -2027,7 +2033,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       self.refresh()
     }
     let scopeRow = NSStackView(views: [
-      makeLabel("设置范围", size: SettingsMetrics.controlTextSize, color: SettingsTheme.secondaryInk),
+      makeLabel(L("设置范围"), size: SettingsMetrics.controlTextSize, color: SettingsTheme.secondaryInk),
       scope,
       NSView(),
     ])
@@ -2039,12 +2045,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     case .computed:
       let fonts = preferences.terminalFontVariants
       rows = [
-        cardCaptionRow("由 全局 → 主题 → 回退 解析得到"),
+        cardCaptionRow(L("由 全局 → 主题 → 回退 解析得到")),
         globalAutomaticStyleToggleRow(),
-        infoRow("字体", "", Self.friendlyFontName(fonts.normal)),
-        infoRow("字体（粗体）", "", Self.friendlyFontName(fonts.bold)),
-        infoRow("字体（斜体）", "", Self.friendlyFontName(fonts.italic)),
-        infoRow("字体（粗斜体）", "", Self.friendlyFontName(fonts.boldItalic)),
+        infoRow(L("字体"), "", Self.friendlyFontName(fonts.normal)),
+        infoRow(L("字体（粗体）"), "", Self.friendlyFontName(fonts.bold)),
+        infoRow(L("字体（斜体）"), "", Self.friendlyFontName(fonts.italic)),
+        infoRow(L("字体（粗斜体）"), "", Self.friendlyFontName(fonts.boldItalic)),
       ]
     case .global:
       let appearance = preferences.configuration.appearance
@@ -2052,10 +2058,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         && appearance.fontFamilyItalic == nil
         && appearance.fontFamilyBoldItalic == nil
       var globalRows: [NSView] = [
-        cardCaptionRow("覆盖主题，全局优先"),
+        cardCaptionRow(L("覆盖主题，全局优先")),
         globalAutomaticStyleToggleRow(),
         fontPickerRow(
-          "字体", "取消设置则读取当前主题",
+          L("字体"), L("取消设置则读取当前主题"),
           entries: Self.installedFontFamilies(),
           selection: appearance.fontFamily.nilIfBlank
         ) { [weak self] value in
@@ -2067,17 +2073,17 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         let styles = Self.installedFontStyles()
         globalRows += [
           fontPickerRow(
-            "字体（粗体）", "", entries: styles, selection: appearance.fontFamilyBold
+            L("字体（粗体）"), "", entries: styles, selection: appearance.fontFamilyBold
           ) { [weak self] value in
             self?.preferences.configuration.appearance.fontFamilyBold = value
           },
           fontPickerRow(
-            "字体（斜体）", "", entries: styles, selection: appearance.fontFamilyItalic
+            L("字体（斜体）"), "", entries: styles, selection: appearance.fontFamilyItalic
           ) { [weak self] value in
             self?.preferences.configuration.appearance.fontFamilyItalic = value
           },
           fontPickerRow(
-            "字体（粗斜体）", "", entries: styles, selection: appearance.fontFamilyBoldItalic
+            L("字体（粗斜体）"), "", entries: styles, selection: appearance.fontFamilyBoldItalic
           ) { [weak self] value in
             self?.preferences.configuration.appearance.fontFamilyBoldItalic = value
           },
@@ -2090,26 +2096,26 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         && style.fontFamilyItalic == nil
         && style.fontFamilyBoldItalic == nil
       var themeRows: [NSView] = [
-        cardCaptionRow("写入当前主题的参数覆盖；不会自动创建主题副本"),
+        cardCaptionRow(L("写入当前主题的参数覆盖；不会自动创建主题副本")),
         toggleRow(
-          "自动匹配粗细与样式",
-          "关闭后可为该主题单独指定粗体与斜体字形",
+          L("自动匹配粗细与样式"),
+          L("关闭后可为该主题单独指定粗体与斜体字形"),
           value: themeAutomatic,
           refreshAfterAction: true
         ) { [weak self] enabled in
           guard let self, enabled != themeAutomatic else { return }
-          self.updateFocusedThemeStyle("已更新主题的字体样式") { theme in
+          self.updateFocusedThemeStyle(L("已更新主题的字体样式")) { theme in
             theme.style.fontFamilyBold = nil
             theme.style.fontFamilyItalic = nil
             theme.style.fontFamilyBoldItalic = nil
           }
         },
         fontPickerRow(
-          "字体", "写入主题字体栈首位，其余候选保留",
+          L("字体"), L("写入主题字体栈首位，其余候选保留"),
           entries: Self.installedFontFamilies(),
           selection: style.fontFamilies?.first
         ) { [weak self] value in
-          self?.updateFocusedThemeStyle("已更新主题字体") { theme in
+          self?.updateFocusedThemeStyle(L("已更新主题字体")) { theme in
             let tail = Array((theme.style.fontFamilies ?? []).dropFirst())
             let updated = (value.map { [$0] } ?? []) + tail
             theme.style.fontFamilies = updated.isEmpty ? nil : updated
@@ -2119,18 +2125,18 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       if !themeAutomatic {
         let styles = Self.installedFontStyles()
         themeRows += [
-          fontPickerRow("字体（粗体）", "", entries: styles, selection: style.fontFamilyBold) {
+          fontPickerRow(L("字体（粗体）"), "", entries: styles, selection: style.fontFamilyBold) {
             [weak self] value in
-            self?.updateFocusedThemeStyle("已更新主题粗体字体") { $0.style.fontFamilyBold = value }
+            self?.updateFocusedThemeStyle(L("已更新主题粗体字体")) { $0.style.fontFamilyBold = value }
           },
-          fontPickerRow("字体（斜体）", "", entries: styles, selection: style.fontFamilyItalic) {
+          fontPickerRow(L("字体（斜体）"), "", entries: styles, selection: style.fontFamilyItalic) {
             [weak self] value in
-            self?.updateFocusedThemeStyle("已更新主题斜体字体") { $0.style.fontFamilyItalic = value }
+            self?.updateFocusedThemeStyle(L("已更新主题斜体字体")) { $0.style.fontFamilyItalic = value }
           },
           fontPickerRow(
-            "字体（粗斜体）", "", entries: styles, selection: style.fontFamilyBoldItalic
+            L("字体（粗斜体）"), "", entries: styles, selection: style.fontFamilyBoldItalic
           ) { [weak self] value in
-            self?.updateFocusedThemeStyle("已更新主题粗斜体字体") {
+            self?.updateFocusedThemeStyle(L("已更新主题粗斜体字体")) {
               $0.style.fontFamilyBoldItalic = value
             }
           },
@@ -2138,20 +2144,20 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       }
       themeRows += [
         textRow(
-          "字体候选栈",
-          "逗号分隔；首项未安装时依序尝试后续候选",
+          L("字体候选栈"),
+          L("逗号分隔；首项未安装时依序尝试后续候选"),
           value: style.fontFamilies?.joined(separator: ", ") ?? ""
         ) { [weak self] value in
           self?.updateFocusedThemeFontFamilies(value)
         },
-        infoRow("当前主题", "字体设置保存到该主题", focusedTheme.name),
+        infoRow(L("当前主题"), L("字体设置保存到该主题"), focusedTheme.name),
       ]
       rows = themeRows
     case .fallback:
       rows = [
         textRow(
-          "字体回退",
-          "逗号分隔；内置 Nerd Symbols 始终位于首位",
+          L("字体回退"),
+          L("逗号分隔；内置 Nerd Symbols 始终位于首位"),
           value: preferences.configuration.appearance.resolvedFontFamilyFallback
             .joined(separator: ", ")
         ) { [weak self] value in
@@ -2165,8 +2171,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
     // 对齐 Otty:动作按钮位于卡片下方左侧。
     let actions = NSStackView(views: [
-      contentActionButton(title: "安装字体") { NSFontManager.shared.orderFrontFontPanel(nil) },
-      contentActionButton(title: "打开字体文件夹") { [weak self] in self?.openFontsFolder() },
+      contentActionButton(title: L("安装字体")) { NSFontManager.shared.orderFrontFontPanel(nil) },
+      contentActionButton(title: L("打开字体文件夹")) { [weak self] in self?.openFontsFolder() },
       NSView(),
     ])
     actions.orientation = .horizontal
@@ -2188,8 +2194,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       && appearance.fontFamilyItalic == nil
       && appearance.fontFamilyBoldItalic == nil
     return toggleRow(
-      "自动匹配粗细与样式",
-      "关闭后把当前匹配结果固定到全局设置",
+      L("自动匹配粗细与样式"),
+      L("关闭后把当前匹配结果固定到全局设置"),
       value: automatic,
       refreshAfterAction: true
     ) { [weak self] enabled in
@@ -2236,7 +2242,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   /// 计算值页展示的友好字体名:隐藏系统字体显示为语义名称,其余用本地化显示名。
   private static func friendlyFontName(_ font: NSFont) -> String {
-    font.fontName.hasPrefix(".") ? "系统等宽字体" : font.displayName ?? font.fontName
+    font.fontName.hasPrefix(".") ? L("系统等宽字体") : font.displayName ?? font.fontName
   }
 
   /// 枚举系统字体要遍历成百上千个字体名并逐个构造 `NSFont`，是外观页最贵的一步，
@@ -2340,7 +2346,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
       message = "\(successMessage)（\(original.name)）"
     } catch {
-      message = "主题字体已应用，但文件保存失败：\(error.localizedDescription)"
+      message = L("主题字体已应用，但文件保存失败：\(error.localizedDescription)")
     }
     refresh()
   }
@@ -2349,7 +2355,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let families = value.split(separator: ",").map {
       $0.trimmingCharacters(in: .whitespacesAndNewlines)
     }.filter { !$0.isEmpty }
-    updateFocusedThemeStyle("已更新主题字体候选栈") { theme in
+    updateFocusedThemeStyle(L("已更新主题字体候选栈")) { theme in
       theme.style.fontFamilies = families.isEmpty ? nil : families
     }
   }
@@ -2361,7 +2367,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       NSWorkspace.shared.open(directory)
     } catch {
-      message = "无法打开字体文件夹：\(error.localizedDescription)"
+      message = L("无法打开字体文件夹：\(error.localizedDescription)")
       refresh()
     }
   }
@@ -2445,8 +2451,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     focusedThemeID = copy.id
     do {
       _ = try preferences.saveThemeToLibraryFolder(copy)
-      message = "已复制并保存主题“\(copy.name)”"
-    } catch { message = "主题已复制，但文件保存失败：\(error.localizedDescription)" }
+      message = L("已复制并保存主题“\(copy.name)”")
+    } catch { message = L("主题已复制，但文件保存失败：\(error.localizedDescription)") }
     refresh()
   }
 
@@ -2506,9 +2512,9 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     if let target {
       do {
         _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: target.themeID)
-        message = "已更新主题“\(focusedTheme.name)”的颜色"
+        message = L("已更新主题“\(focusedTheme.name)”的颜色")
       } catch {
-        message = "颜色已生效，但主题文件写入失败：\(error.localizedDescription)"
+        message = L("颜色已生效，但主题文件写入失败：\(error.localizedDescription)")
       }
     }
     refresh()
@@ -2520,9 +2526,9 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     preferences.clearThemeOverrides(themeID: themeID)
     do {
       _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
-      message = "已恢复主题“\(focusedTheme.name)”的原始参数"
+      message = L("已恢复主题“\(focusedTheme.name)”的原始参数")
     } catch {
-      message = "已恢复原始参数，但主题文件写入失败：\(error.localizedDescription)"
+      message = L("已恢复原始参数，但主题文件写入失败：\(error.localizedDescription)")
     }
     refresh()
   }
@@ -2538,24 +2544,24 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let name = ClosureTextField(value: draft.name) { [weak self] value in
       self?.themeDraft?.name = value
     }
-    let nameRow = rowShell("主题名称", "自定义主题的显示名称", accessory: name)
+    let nameRow = rowShell(L("主题名称"), L("自定义主题的显示名称"), accessory: name)
     let modeRow = popupRow(
-      "配色模式",
-      "决定主题出现在浅色或深色主题列表",
-      items: ["浅色", "深色"],
+      L("配色模式"),
+      L("决定主题出现在浅色或深色主题列表"),
+      items: [L("浅色"), L("深色")],
       selected: draft.mode == .light ? 0 : 1
     ) { [weak self] index in
       self?.themeDraft?.mode = index == 0 ? .light : .dark
     }
     let colors: [(String, WritableKeyPath<TerminalThemePalette, HexColor>)] = [
-      ("终端背景", \.windowBackground),
-      ("容器背景", \.containerBackground),
-      ("面板背景", \.panelBackground),
-      ("终端文字", \.foreground),
-      ("次要文字", \.secondaryForeground),
-      ("强调色", \.accent),
-      ("光标", \.cursor),
-      ("选区", \.selection),
+      (L("终端背景"), \.windowBackground),
+      (L("容器背景"), \.containerBackground),
+      (L("面板背景"), \.panelBackground),
+      (L("终端文字"), \.foreground),
+      (L("次要文字"), \.secondaryForeground),
+      (L("强调色"), \.accent),
+      (L("光标"), \.cursor),
+      (L("选区"), \.selection),
     ]
     var rows: [NSView] = [nameRow, modeRow]
     let windowColor = draft.palette.interfaceWindowBackground ?? draft.palette.panelBackground
@@ -2564,7 +2570,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       current.palette.interfaceWindowBackground = HexColor(nsColor: color)
       self?.themeDraft = current
     }
-    rows.append(rowShell("界面窗口", "终端网格之外的窗口底色", accessory: windowWell))
+    rows.append(rowShell(L("界面窗口"), L("终端网格之外的窗口底色"), accessory: windowWell))
     for (title, keyPath) in colors {
       let well = ClosureColorWell(color: NSColor(draft.palette[keyPath: keyPath])) { [weak self] color in
         guard var current = self?.themeDraft else { return }
@@ -2574,13 +2580,13 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       rows.append(rowShell(title, "", accessory: well))
     }
     rows.append(rowShell(
-      "ANSI 16 色",
-      "上排标准色，下排高亮色",
+      L("ANSI 16 色"),
+      L("上排标准色，下排高亮色"),
       accessory: makeANSIColorEditor(draft.palette.ansiColors)
     ))
     let buttons = NSStackView(views: [
-      contentActionButton(title: "保存") { [weak self] in self?.saveThemeDraft() },
-      contentActionButton(title: "取消") { [weak self] in self?.themeDraft = nil; self?.refresh() },
+      contentActionButton(title: L("保存")) { [weak self] in self?.saveThemeDraft() },
+      contentActionButton(title: L("取消")) { [weak self] in self?.themeDraft = nil; self?.refresh() },
     ])
     buttons.orientation = .horizontal
     buttons.spacing = 8
@@ -2613,15 +2619,15 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     do {
       try TerminalThemeStore.validate(draft)
       guard preferences.updateTheme(draft) else {
-        message = "主题名称与现有主题重复，请换一个名称"
+        message = L("主题名称与现有主题重复，请换一个名称")
         refresh()
         return
       }
       _ = try preferences.saveThemeToLibraryFolder(draft)
       focusedThemeID = draft.id
       themeDraft = nil
-      message = "主题“\(draft.name)”已保存"
-    } catch { message = "主题保存失败：\(error.localizedDescription)" }
+      message = L("主题“\(draft.name)”已保存")
+    } catch { message = L("主题保存失败：\(error.localizedDescription)") }
     refresh()
   }
 
@@ -2636,20 +2642,20 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       let theme = try preferences.importTheme(from: url)
       focusedThemeID = theme.id
       _ = try preferences.saveThemeToLibraryFolder(theme)
-      message = "已导入主题“\(theme.name)”"
-    } catch { message = "主题导入失败：\(error.localizedDescription)" }
+      message = L("已导入主题“\(theme.name)”")
+    } catch { message = L("主题导入失败：\(error.localizedDescription)") }
     refresh()
   }
 
   private func openThemesFolder() {
     do { NSWorkspace.shared.open(try preferences.themesDirectory()) }
-    catch { message = "无法打开主题文件夹：\(error.localizedDescription)"; refresh() }
+    catch { message = L("无法打开主题文件夹：\(error.localizedDescription)"); refresh() }
   }
 
   /// 打开 `~/.config/aster/agent-detection`；用户把改过的 `<id>.json` 放进去即可覆盖内置清单。
   private func openAgentDetectionFolder() {
     do { NSWorkspace.shared.open(try preferences.agentDetectionOverrideDirectory()) }
-    catch { message = "无法打开清单目录：\(error.localizedDescription)"; refresh() }
+    catch { message = L("无法打开清单目录：\(error.localizedDescription)"); refresh() }
   }
 
   /// 重新读取覆盖目录。已在运行的 Agent 会话继续用旧清单，新识别的会话用新清单。
@@ -2659,8 +2665,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       summary.warning.map { "\(summary.id)：\($0)" }
     }
     message = warnings.isEmpty
-      ? "已重新加载 Agent 检测清单。"
-      : "已重新加载，但有清单被忽略：" + warnings.joined(separator: "；")
+      ? L("已重新加载 Agent 检测清单。")
+      : L("已重新加载，但有清单被忽略：") + warnings.joined(separator: "；")
     refresh()
   }
 
@@ -2676,15 +2682,15 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let detectsAll = controls.detectAllLinkSchemes ?? true
     var rows: [NSView] = [
       toggleRow(
-        "识别终端目标", "识别本地路径、URL 和 OSC 8 显式链接；关闭后不再显示下划线、预览，也不响应 Cmd 点击。",
+        L("识别终端目标"), L("识别本地路径、URL 和 OSC 8 显式链接；关闭后不再显示下划线、预览，也不响应 Cmd 点击。"),
         value: controls.resolvedLinkDetectionEnabled
       ) { [weak self] value in
         self?.preferences.configuration.controls.linkDetectionEnabled = value
       },
       popupRow(
-        "自动识别链接协议",
-        "终端输出里哪些 URL 协议在 Cmd 悬停时显示下划线并可点击。http(s)、file、mailto 始终识别；「自定义」可额外添加。",
-        items: ["全部", "自定义"],
+        L("自动识别链接协议"),
+        L("终端输出里哪些 URL 协议在 Cmd 悬停时显示下划线并可点击。http(s)、file、mailto 始终识别；「自定义」可额外添加。"),
+        items: [L("全部"), L("自定义")],
         selected: detectsAll ? 0 : 1
       ) { [weak self] index in
         self?.preferences.configuration.controls.detectAllLinkSchemes = index == 0
@@ -2693,7 +2699,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     if !detectsAll {
       rows.append(
         textRow(
-          "自定义协议", "用逗号分隔，例如 vscode,codex,ssh",
+          L("自定义协议"), L("用逗号分隔，例如 vscode,codex,ssh"),
           value: controls.resolvedCustomLinkSchemes.sorted().joined(separator: ",")
         ) { [weak self] value in
           let schemes = value.split(separator: ",", omittingEmptySubsequences: true)
@@ -2704,17 +2710,17 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     }
     rows.append(
       toggleRow(
-        "显示链接预览",
-        "按住 Cmd 悬停在链接上时，在底部角落显示该链接的完整路径或 URL。关闭后链接仍可点击，但不再显示预览。",
+        L("显示链接预览"),
+        L("按住 Cmd 悬停在链接上时，在底部角落显示该链接的完整路径或 URL。关闭后链接仍可点击，但不再显示预览。"),
         value: controls.showLinkPreviews
       ) { [weak self] value in
         self?.preferences.configuration.controls.showLinkPreviews = value
       })
     rows.append(
       actionRow(
-        "重置安全提示",
-        "清除所有「始终允许」记忆，下次打开外部链接、自定义协议或可执行文件时重新弹出确认对话框。",
-        title: "重置"
+        L("重置安全提示"),
+        L("清除所有「始终允许」记忆，下次打开外部链接、自定义协议或可执行文件时重新弹出确认对话框。"),
+        title: L("重置")
       ) { [weak self] in
         self?.preferences.configuration.controls.allowedNonStandardLinkSchemes = []
         self?.preferences.configuration.controls.allowedExternalLinkHosts = []
@@ -2851,11 +2857,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   }
 
   /// 语言下拉的取值表：value 写入配置持久化，label 只用于显示。
-  private static let languageOptions: [(label: String, value: String)] = [
-    ("跟随系统", "system"),
-    ("简体中文", "zh-Hans"),
-    ("English", "en"),
-  ]
+  /// 取值与 `InterfaceLanguage` 单一来源，新增语言只需加 case 与 `.lproj`。
+  private static var languageOptions: [(label: String, value: String)] {
+    InterfaceLanguage.allCases.map { ($0.nativeName, $0.rawValue) }
+  }
 
   /// 滑杆行；`fractionDigits` 控制数值标签的小数位（行高倍数等非整数设置需要）。
   private func sliderRow(
@@ -2907,7 +2912,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     let value = panelLayoutBinding.state?.preferredWidth(for: role) ?? fallback
     return sliderRow(
       title,
-      "控制最近活动的工作区窗口；也可直接拖动主窗口分隔线",
+      L("控制最近活动的工作区窗口；也可直接拖动主窗口分隔线"),
       value: value,
       range: range,
       suffix: "pt",
@@ -2972,8 +2977,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
       try encoder.encode(settingsExportEnvelope()).write(to: url, options: .atomic)
-      message = "配置已导出"
-    } catch { message = "导出失败：\(error.localizedDescription)" }
+      message = L("配置已导出")
+    } catch { message = L("导出失败：\(error.localizedDescription)") }
     refresh()
   }
 
@@ -2984,8 +2989,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     guard panel.runModal() == .OK, let url = panel.url else { return }
     do {
       try importSettingsData(Data(contentsOf: url))
-      message = "配置已导入"
-    } catch { message = "导入失败：\(error.localizedDescription)" }
+      message = L("配置已导入")
+    } catch { message = L("导入失败：\(error.localizedDescription)") }
     refresh()
   }
 }
@@ -2997,6 +3002,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 private enum SettingsWebBridge {
   static let messageHandlerName = "asterSettings"
   static let protocolVersion = 1
+
+  /// 文档起始阶段注入的界面语言：语言码来自 `InterfaceLanguage` 白名单，不含用户文本，
+  /// 直接拼进脚本源码是安全的。settings.js 读 `window.AsterUILanguage` 选翻译表。
+  static func uiLanguageScript(_ language: InterfaceLanguage) -> String {
+    "window.AsterUILanguage = \"\(language.rawValue)\";"
+  }
 
   /// 尚未进入强类型运行时配置的 Otty 兼容字段默认值。字段仍会持久化并跨平台往返；
   /// 其中唯一在 macOS 上禁用的是 Windows DirectWrite 渲染模式。
@@ -3088,7 +3099,7 @@ extension SettingsViewController: WKNavigationDelegate {
       (message["version"] as? NSNumber)?.intValue == SettingsWebBridge.protocolVersion,
       let kind = message["kind"] as? String
     else {
-      sendWebToast("设置消息格式无效", level: "error")
+      sendWebToast(L("设置消息格式无效"), level: "error")
       return
     }
 
@@ -3101,7 +3112,7 @@ extension SettingsViewController: WKNavigationDelegate {
     case "action":
       handleWebAction(message)
     default:
-      sendWebToast("不支持的设置操作", level: "error")
+      sendWebToast(L("不支持的设置操作"), level: "error")
     }
   }
 
@@ -3111,7 +3122,7 @@ extension SettingsViewController: WKNavigationDelegate {
       case let directory = resources.appendingPathComponent("settings-ui", isDirectory: true),
       FileManager.default.fileExists(atPath: directory.appendingPathComponent("index.html").path)
     else {
-      message = "找不到设置页资源，请重新构建 Aster.app。"
+      message = L("找不到设置页资源，请重新构建 Aster.app。")
       return
     }
     webView.loadFileURL(
@@ -3173,7 +3184,7 @@ extension SettingsViewController: WKNavigationDelegate {
     var values = SettingsWebBridge.compatibilityDefaults.mapValues(\.jsonValue)
     for (key, value) in preferences.settingsCompatibility { values[key] = value.jsonValue }
     let configuration = preferences.configuration
-    let autocompleteDatabaseStatus = AutocompleteService.shared.map(Self.autocompleteDatabaseStatus) ?? "不可用"
+    let autocompleteDatabaseStatus = AutocompleteService.shared.map(Self.autocompleteDatabaseStatus) ?? L("不可用")
     let valueGroups: [[String: Any]] = [[
       "general.language": configuration.general.language,
       "launchBehavior": configuration.launchBehavior.rawValue,
@@ -3444,7 +3455,7 @@ extension SettingsViewController: WKNavigationDelegate {
   private func makeWebComputedFonts() -> [String: String] {
     let fonts = preferences.terminalFontVariants
     func name(_ font: NSFont) -> String {
-      font.fontName.hasPrefix(".") ? "系统等宽字体" : font.displayName ?? font.fontName
+      font.fontName.hasPrefix(".") ? L("系统等宽字体") : font.displayName ?? font.fontName
     }
     return [
       "regular": name(fonts.normal),
@@ -3479,17 +3490,17 @@ extension SettingsViewController: WKNavigationDelegate {
   /// 安装目标保持一致（改安装路径时需同步这里）。
   private func agentHookDetail(_ provider: AgentProvider) -> String {
     switch provider {
-    case .claudeCode: "把 Aster hooks 写入 ~/.claude/settings.json，实时同步任务状态。"
-    case .codex: "把 Aster hooks 写入 ~/.codex/hooks.json，实时同步任务状态。"
-    case .openCode: "把 Aster 插件写入 ~/.config/opencode/plugins/，实时同步任务状态。"
-    case .cursorCLI: "把 Aster hooks 写入 ~/.cursor/hooks.json，实时同步任务状态。"
-    case .kimiCode: "把 Aster hooks 写入 ~/.kimi-code/config.toml，实时同步任务状态。"
-    case .pi: "把 Aster 扩展写入 ~/.pi/agent/extensions/，实时同步任务状态。"
-    case .omp: "把 Aster 扩展写入 ~/.omp/agent/extensions/，实时同步任务状态。"
-    case .grokBuild: "把 Aster hooks 写入 ~/.grok/config.toml（Grok 原生 hooks 格式，需要 Grok ≥ 1.0.25），实时同步任务状态。"
+    case .claudeCode: L("把 Aster hooks 写入 ~/.claude/settings.json，实时同步任务状态。")
+    case .codex: L("把 Aster hooks 写入 ~/.codex/hooks.json，实时同步任务状态。")
+    case .openCode: L("把 Aster 插件写入 ~/.config/opencode/plugins/，实时同步任务状态。")
+    case .cursorCLI: L("把 Aster hooks 写入 ~/.cursor/hooks.json，实时同步任务状态。")
+    case .kimiCode: L("把 Aster hooks 写入 ~/.kimi-code/config.toml，实时同步任务状态。")
+    case .pi: L("把 Aster 扩展写入 ~/.pi/agent/extensions/，实时同步任务状态。")
+    case .omp: L("把 Aster 扩展写入 ~/.omp/agent/extensions/，实时同步任务状态。")
+    case .grokBuild: L("把 Aster hooks 写入 ~/.grok/config.toml（Grok 原生 hooks 格式，需要 Grok ≥ 1.0.25），实时同步任务状态。")
     case .gemini, .githubCopilot, .amp, .droid, .devin, .kiro, .qoder, .qwen, .hermes,
       .antigravity, .maki, .muse, .cline, .kilo:
-      "该 Agent 没有 Aster hook 集成，任务状态依赖屏幕检测，无需写入任何配置。"
+      L("该 Agent 没有 Aster hook 集成，任务状态依赖屏幕检测，无需写入任何配置。")
     }
   }
 
@@ -3506,32 +3517,32 @@ extension SettingsViewController: WKNavigationDelegate {
         [
           "id": url.path,
           "name": url.deletingPathExtension().lastPathComponent,
-          "summary": "Aster Recipe 文件",
-          "shortcut": "查看",
+          "summary": L("Aster Recipe 文件"),
+          "shortcut": L("查看"),
         ]
       }
   }
 
   private func makeWebShortcuts() -> [[String: Any]] {
     let shortcuts: [(String, String, String, String)] = [
-      ("new-window", "窗口", "新建窗口", "⌘N"),
-      ("new-tab", "窗口", "新建标签页", "⌘T"),
-      ("close", "窗口", "关闭当前项", "⌘W"),
-      ("open-file", "文件", "打开文件", "⌘O"),
-      ("save", "文件", "保存", "⌘S"),
-      ("find", "编辑", "在当前 Pane 查找", "⌘F"),
-      ("global-find", "编辑", "全局查找", "⇧⌘F"),
-      ("command-palette", "工作区", "命令面板", "⇧⌘P"),
-      ("split-right", "Pane", "向右分屏", "⌘D"),
-      ("split-down", "Pane", "向下分屏", "⇧⌘D"),
-      ("zoom-pane", "Pane", "缩放当前分屏", "⇧⌘↩"),
-      ("open-recipe", "Recipes", "打开 Recipe", "⇧⌘R"),
-      ("save-recipe", "Recipes", "保存为 Recipe", "⌥⇧⌘R"),
-      ("settings", "应用", "打开设置", "⌘,"),
+      ("new-window", L("窗口"), L("新建窗口"), "⌘N"),
+      ("new-tab", L("窗口"), L("新建标签页"), "⌘T"),
+      ("close", L("窗口"), L("关闭当前项"), "⌘W"),
+      ("open-file", L("文件"), L("打开文件"), "⌘O"),
+      ("save", L("文件"), L("保存"), "⌘S"),
+      ("find", L("编辑"), L("在当前 Pane 查找"), "⌘F"),
+      ("global-find", L("编辑"), L("全局查找"), "⇧⌘F"),
+      ("command-palette", L("工作区"), L("命令面板"), "⇧⌘P"),
+      ("split-right", "Pane", L("向右分屏"), "⌘D"),
+      ("split-down", "Pane", L("向下分屏"), "⇧⌘D"),
+      ("zoom-pane", "Pane", L("缩放当前分屏"), "⇧⌘↩"),
+      ("open-recipe", "Recipes", L("打开 Recipe"), "⇧⌘R"),
+      ("save-recipe", "Recipes", L("保存为 Recipe"), "⌥⇧⌘R"),
+      ("settings", L("应用"), L("打开设置"), "⌘,"),
     ]
     return shortcuts.map { id, group, label, keys in
       let override = preferences.settingsCompatibility["shortcuts.\(id)"]?.jsonValue as? String
-      return ["id": id, "group": group, "label": label, "keys": override ?? keys, "detail": "点击修改快捷键"]
+      return ["id": id, "group": group, "label": label, "keys": override ?? keys, "detail": L("点击修改快捷键")]
     }
   }
 
@@ -3540,7 +3551,7 @@ extension SettingsViewController: WKNavigationDelegate {
       let changes = request["changes"] as? [[String: Any]],
       !changes.isEmpty, changes.count <= 32
     else {
-      sendWebToast("设置已变化，请重试", level: "error")
+      sendWebToast(L("设置已变化，请重试"), level: "error")
       pushWebSnapshot()
       return
     }
@@ -3556,7 +3567,7 @@ extension SettingsViewController: WKNavigationDelegate {
       message = nil
       pushWebSnapshot()
     } catch {
-      sendWebToast("设置值无效，未应用：\(error.localizedDescription)", level: "error")
+      sendWebToast(L("设置值无效，未应用：\(error.localizedDescription)"), level: "error")
       pushWebSnapshot()
     }
   }
@@ -4036,11 +4047,11 @@ extension SettingsViewController: WKNavigationDelegate {
       !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
       let source = allThemes.first(where: { $0.id == themeID })
     else {
-      sendWebToast("主题字体名称无效", level: "error")
+      sendWebToast(L("主题字体名称无效"), level: "error")
       return
     }
     guard let fontRole = ThemeFontRole(rawValue: role) else {
-      sendWebToast("未知主题字体样式", level: "error")
+      sendWebToast(L("未知主题字体样式"), level: "error")
       return
     }
     focusedThemeID = source.id
@@ -4056,9 +4067,9 @@ extension SettingsViewController: WKNavigationDelegate {
     preferences.setThemeFontFamilies(families, role: fontRole, themeID: themeID)
     do {
       _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
-      message = "已更新主题“\(source.name)”的字体参数。"
+      message = L("已更新主题“\(source.name)”的字体参数。")
     } catch {
-      message = "主题字体保存失败：\(error.localizedDescription)"
+      message = L("主题字体保存失败：\(error.localizedDescription)")
     }
     refresh()
   }
@@ -4069,16 +4080,16 @@ extension SettingsViewController: WKNavigationDelegate {
     guard let source = allThemes.first(where: { $0.id == themeID }),
       source.palette.ansiColors.indices.contains(index)
     else {
-      sendWebToast("ANSI 色位不存在", level: "error")
+      sendWebToast(L("ANSI 色位不存在"), level: "error")
       return
     }
     focusedThemeID = source.id
     preferences.setThemeANSIColor(color, index: index, themeID: themeID)
     do {
       _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
-      message = "已更新主题“\(source.name)”的 ANSI 参数。"
+      message = L("已更新主题“\(source.name)”的 ANSI 参数。")
     } catch {
-      message = "ANSI 调色板保存失败：\(error.localizedDescription)"
+      message = L("ANSI 调色板保存失败：\(error.localizedDescription)")
     }
     refresh()
   }
@@ -4088,7 +4099,7 @@ extension SettingsViewController: WKNavigationDelegate {
       let action = request["action"] as? String,
       let payload = request["payload"] as? [String: Any]
     else {
-      sendWebToast("操作已过期，请重试", level: "error")
+      sendWebToast(L("操作已过期，请重试"), level: "error")
       pushWebSnapshot()
       return
     }
@@ -4108,15 +4119,15 @@ extension SettingsViewController: WKNavigationDelegate {
     case "editCLIAliases":
       editCompatibilityText(
         key: "general.cliAliases",
-        title: "自定义 CLI 别名",
-        detail: "使用逗号分隔 alias=subcommand，例如 e=edit, v=view。"
+        title: L("自定义 CLI 别名"),
+        detail: L("使用逗号分隔 alias=subcommand，例如 e=edit, v=view。")
       )
     case "configureExternalApps": configureExternalTerminalApps()
     case "configureShells":
       editCompatibilityText(
         key: "shell.enabledShells",
-        title: "启用 Shell 集成",
-        detail: "以逗号分隔允许注入受管集成的 Shell：zsh、bash、fish。"
+        title: L("启用 Shell 集成"),
+        detail: L("以逗号分隔允许注入受管集成的 Shell：zsh、bash、fish。")
       )
     case "manageFolders": manageTrackedFolders()
     case "configureOpenWithApps": configureOpenWithApplication()
@@ -4124,38 +4135,38 @@ extension SettingsViewController: WKNavigationDelegate {
       preferences.configuration.controls.allowedNonStandardLinkSchemes = []
       preferences.configuration.controls.allowedExternalLinkHosts = []
       preferences.configuration.controls.allowedExecutableFileSignatures = []
-      message = "已清除链接安全授权。"
+      message = L("已清除链接安全授权。")
       refresh()
     case "updateAutocomplete": updateAutocompleteSpecs()
     case "checkForUpdates": checkForUpdatesNow()
     case "clearAutocomplete": clearAutocompleteLearning()
     case "installAgent", "uninstallAgent":
       guard let id = payload["provider"] as? String, let provider = AgentProvider(rawValue: id) else {
-        sendWebToast("智能体标识无效", level: "error"); return
+        sendWebToast(L("智能体标识无效"), level: "error"); return
       }
       performAgentSetupAction(provider, displayName: agentDisplayName(provider))
     case "selectTheme":
       guard let id = payload["id"] as? String, let theme = allThemes.first(where: { $0.id == id }) else {
-        sendWebToast("主题不存在", level: "error"); return
+        sendWebToast(L("主题不存在"), level: "error"); return
       }
       focusedThemeID = theme.id
       preferences.selectTheme(theme)
-      message = "已选择主题“\(theme.name)”。"
+      message = L("已选择主题“\(theme.name)”。")
       refresh()
     case "duplicateTheme":
       guard let id = payload["id"] as? String,
         let source = allThemes.first(where: { $0.id == id })
       else {
-        sendWebToast("主题不存在", level: "error")
+        sendWebToast(L("主题不存在"), level: "error")
         return
       }
       let duplicate = preferences.duplicateTheme(source)
       focusedThemeID = duplicate.id
       do {
         _ = try preferences.saveThemeToLibraryFolder(duplicate)
-        message = "已创建主题“\(duplicate.name)”。"
+        message = L("已创建主题“\(duplicate.name)”。")
       } catch {
-        message = "主题副本已创建，但文件保存失败：\(error.localizedDescription)"
+        message = L("主题副本已创建，但文件保存失败：\(error.localizedDescription)")
       }
       refresh()
     case "setThemeFont":
@@ -4163,7 +4174,7 @@ extension SettingsViewController: WKNavigationDelegate {
         let role = payload["role"] as? String,
         let value = payload["value"] as? String
       else {
-        sendWebToast("主题字体参数无效", level: "error")
+        sendWebToast(L("主题字体参数无效"), level: "error")
         return
       }
       updateWebThemeFont(themeID: themeID, role: role, value: value)
@@ -4173,7 +4184,7 @@ extension SettingsViewController: WKNavigationDelegate {
         let rawColor = payload["color"] as? String,
         let color = try? colorValue(rawColor)
       else {
-        sendWebToast("ANSI 颜色参数无效", level: "error")
+        sendWebToast(L("ANSI 颜色参数无效"), level: "error")
         return
       }
       updateWebThemeANSIColor(themeID: themeID, index: index, color: color)
@@ -4185,15 +4196,15 @@ extension SettingsViewController: WKNavigationDelegate {
         let rawColor = payload["color"] as? String,
         let color = try? colorValue(rawColor)
       else {
-        sendWebToast("主题颜色无效", level: "error")
+        sendWebToast(L("主题颜色无效"), level: "error")
         return
       }
       preferences.setThemeColor(color, slotID: slotID, themeID: themeID)
       do {
         _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
-        message = "已更新主题“\(theme.name)”的颜色。"
+        message = L("已更新主题“\(theme.name)”的颜色。")
       } catch {
-        message = "颜色已应用；主题文件同步失败：\(error.localizedDescription)"
+        message = L("颜色已应用；主题文件同步失败：\(error.localizedDescription)")
       }
       refresh()
     case "clearThemeColor":
@@ -4203,15 +4214,15 @@ extension SettingsViewController: WKNavigationDelegate {
         let slotID = payload["slotID"] as? String,
         theme.colorSlots.contains(where: { $0.id == slotID })
       else {
-        sendWebToast("主题颜色无效", level: "error")
+        sendWebToast(L("主题颜色无效"), level: "error")
         return
       }
       preferences.clearThemeColor(slotID: slotID, themeID: themeID)
       do {
         _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
-        message = "已恢复主题“\(theme.name)”的默认颜色。"
+        message = L("已恢复主题“\(theme.name)”的默认颜色。")
       } catch {
-        message = "颜色已恢复；主题文件同步失败：\(error.localizedDescription)"
+        message = L("颜色已恢复；主题文件同步失败：\(error.localizedDescription)")
       }
       refresh()
     case "clearThemeANSIColor":
@@ -4221,30 +4232,30 @@ extension SettingsViewController: WKNavigationDelegate {
         let index = (payload["index"] as? NSNumber)?.intValue,
         theme.palette.ansiColors.indices.contains(index)
       else {
-        sendWebToast("ANSI 色位不存在", level: "error")
+        sendWebToast(L("ANSI 色位不存在"), level: "error")
         return
       }
       preferences.clearThemeANSIColor(index: index, themeID: themeID)
       do {
         _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
-        message = "已恢复主题“\(theme.name)”的 ANSI 默认色。"
+        message = L("已恢复主题“\(theme.name)”的 ANSI 默认色。")
       } catch {
-        message = "颜色已恢复；主题文件同步失败：\(error.localizedDescription)"
+        message = L("颜色已恢复；主题文件同步失败：\(error.localizedDescription)")
       }
       refresh()
     case "resetThemeColors":
       guard let themeID = payload["themeID"] as? String,
         let theme = allThemes.first(where: { $0.id == themeID })
       else {
-        sendWebToast("主题不存在", level: "error")
+        sendWebToast(L("主题不存在"), level: "error")
         return
       }
       preferences.clearThemeOverrides(themeID: themeID)
       do {
         _ = try preferences.writeThemeOverridesToLibraryFolder(themeID: themeID)
-        message = "已恢复主题“\(theme.name)”的原始参数。"
+        message = L("已恢复主题“\(theme.name)”的原始参数。")
       } catch {
-        message = "已恢复原始参数；主题文件同步失败：\(error.localizedDescription)"
+        message = L("已恢复原始参数；主题文件同步失败：\(error.localizedDescription)")
       }
       refresh()
     case "importTheme": importTheme()
@@ -4255,14 +4266,14 @@ extension SettingsViewController: WKNavigationDelegate {
     case "openFontsFolder": openFontsFolder()
     case "openRecipesFolder":
       do { try FileManager.default.createDirectory(at: recipesDirectoryURL(), withIntermediateDirectories: true); NSWorkspace.shared.open(recipesDirectoryURL()) }
-      catch { sendWebToast("无法打开 Recipe 文件夹：\(error.localizedDescription)", level: "error") }
+      catch { sendWebToast(L("无法打开 Recipe 文件夹：\(error.localizedDescription)"), level: "error") }
     case "openRecipeDetail":
       guard let path = payload["id"] as? String, path.hasPrefix(recipesDirectoryURL().path) else { return }
       NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     case "createTextSnippet": createTextSnippetRecipe()
     case "openConfig":
       do { try writeEditableConfiguration(); NSWorkspace.shared.open(settingsConfigurationURL()) }
-      catch { sendWebToast("无法打开配置：\(error.localizedDescription)", level: "error") }
+      catch { sendWebToast(L("无法打开配置：\(error.localizedDescription)"), level: "error") }
     case "reloadConfig": reloadEditableConfiguration()
     case "exportConfiguration": exportConfiguration()
     case "importConfiguration": importConfiguration()
@@ -4284,21 +4295,21 @@ extension SettingsViewController: WKNavigationDelegate {
       for key in SettingsWebBridge.compatibilityDefaults.keys where key.hasPrefix("advanced.") {
         if let value = SettingsWebBridge.compatibilityDefaults[key] { preferences.setCompatibilityValue(value, forKey: key) }
       }
-      message = "高级设置已恢复默认值。"
+      message = L("高级设置已恢复默认值。")
       refresh()
     case "resetAll":
       preferences.reset()
       preferences.resetCompatibilityValues()
-      message = "所有设置已恢复默认值。"
+      message = L("所有设置已恢复默认值。")
       refresh()
     case "resetWarnings":
       preferences.configuration.controls.allowedNonStandardLinkSchemes = []
       preferences.configuration.controls.allowedExternalLinkHosts = []
       preferences.configuration.controls.allowedExecutableFileSignatures = []
-      message = "已重置所有警告和本机授权。"
+      message = L("已重置所有警告和本机授权。")
       refresh()
     default:
-      sendWebToast("“\(action)”尚无可用的 macOS 操作", level: "error")
+      sendWebToast(L("“\(action)”尚无可用的 macOS 操作"), level: "error")
     }
   }
 
@@ -4347,28 +4358,28 @@ extension SettingsViewController: WKNavigationDelegate {
     do {
       switch try MCPInstallService.state(projectDirectory: url) {
       case .notInstalled:
-        status.status = "未注册"
+        status.status = L("未注册")
         status.detail =
           executableAvailable
-          ? "注册后，在该项目里运行的 Claude Code 就能查到这个项目的历史记忆。"
-          : "找不到 aster-memory-mcp 可执行文件，请重新构建 Aster.app。"
-        status.actionTitle = "安装"
+          ? L("注册后，在该项目里运行的 Claude Code 就能查到这个项目的历史记忆。")
+          : L("找不到 aster-memory-mcp 可执行文件，请重新构建 Aster.app。")
+        status.actionTitle = L("安装")
       case .installed(let commandPath):
-        status.status = "已注册"
+        status.status = L("已注册")
         status.detail = commandPath
         status.installed = true
-        status.actionTitle = "已安装"
+        status.actionTitle = L("已安装")
       case .outdated(let commandPath, let expected):
-        status.status = "需要修复"
-        status.detail = "记录的路径已失效：\(commandPath)\n当前可执行文件：\(expected)"
+        status.status = L("需要修复")
+        status.detail = L("记录的路径已失效：\(commandPath)\n当前可执行文件：\(expected)")
         status.installed = true
-        status.actionTitle = "修复路径"
+        status.actionTitle = L("修复路径")
       }
     } catch {
       let message =
         (error as? MCPInstallService.ServiceError)?.localizedMessage
         ?? error.localizedDescription
-      status.status = "无法读取 .mcp.json"
+      status.status = L("无法读取 .mcp.json")
       status.detail = message
       status.canInstall = false
     }
@@ -4378,7 +4389,7 @@ extension SettingsViewController: WKNavigationDelegate {
   /// 安装或移除 `.mcp.json` 里的 `aster-memory` 注册项。写文件在后台完成。
   private func performMemoryMCPInstall(install: Bool) {
     guard let directory = activeWorkspaceDirectory(), !directory.isEmpty else {
-      sendWebToast("没有可注册的项目，请先在工作区打开一个目录", level: "error")
+      sendWebToast(L("没有可注册的项目，请先在工作区打开一个目录"), level: "error")
       return
     }
     let url = URL(fileURLWithPath: directory, isDirectory: true)
@@ -4390,8 +4401,8 @@ extension SettingsViewController: WKNavigationDelegate {
       } else {
         self.message =
           install
-          ? "已把 aster-memory 注册到该项目的 .mcp.json。重启 Claude Code 后生效。"
-          : "已从该项目的 .mcp.json 移除 aster-memory。"
+          ? L("已把 aster-memory 注册到该项目的 .mcp.json。重启 Claude Code 后生效。")
+          : L("已从该项目的 .mcp.json 移除 aster-memory。")
       }
       self.refresh()
       self.refreshMemoryMCPState()
@@ -4423,10 +4434,10 @@ extension SettingsViewController: WKNavigationDelegate {
       ? MCPInstallService.codexInstructions() : memoryMCPStatus.codex
     NSPasteboard.general.clearContents()
     guard NSPasteboard.general.setString(text, forType: .string) else {
-      sendWebToast("无法写入剪贴板", level: "error")
+      sendWebToast(L("无法写入剪贴板"), level: "error")
       return
     }
-    message = "已复制 Codex 配置片段。"
+    message = L("已复制 Codex 配置片段。")
     refresh()
   }
 
@@ -4477,7 +4488,7 @@ extension SettingsViewController: WKNavigationDelegate {
       return
     }
     guard let window = view.window else {
-      sendWebToast("请在设置窗口中确认数据外发提示", level: "error")
+      sendWebToast(L("请在设置窗口中确认数据外发提示"), level: "error")
       return
     }
     let provider =
@@ -4485,18 +4496,10 @@ extension SettingsViewController: WKNavigationDelegate {
       ?? .claudeCode
     let alert = NSAlert()
     alert.alertStyle = .warning
-    alert.messageText = "开启 CLI Agent 提炼会把会话摘要发送到云端"
-    alert.informativeText = """
-      每次终端会话结束后，Aster 会调用本机的 \(agentDisplayName(provider)) CLI，\
-      把该会话的命令、退出码与输出摘录整理成摘要交给它提炼。这些内容会离开本机，\
-      按该 Agent 自己的隐私策略处理。
-
-      不发送：prompt 正文、工具参数全文、环境变量、被排除目录与排除命令的任何内容。
-
-      关闭此开关时，Aster 仍会用完全本地的规则式提炼生成 Memory。
-      """
-    alert.addButton(withTitle: "开启并允许外发")
-    alert.addButton(withTitle: "取消")
+    alert.messageText = L("开启 CLI Agent 提炼会把会话摘要发送到云端")
+    alert.informativeText = L("每次终端会话结束后，Aster 会调用本机的 \(agentDisplayName(provider)) CLI，把该会话的命令、退出码与输出摘录整理成摘要交给它提炼。这些内容会离开本机，按该 Agent 自己的隐私策略处理。\n\n不发送：prompt 正文、工具参数全文、环境变量、被排除目录与排除命令的任何内容。\n\n关闭此开关时，Aster 仍会用完全本地的规则式提炼生成 Memory。")
+    alert.addButton(withTitle: L("开启并允许外发"))
+    alert.addButton(withTitle: L("取消"))
     alert.beginSheetModal(for: window) { [weak self] response in
       guard let self, response == .alertFirstButtonReturn else { return }
       self.preferences.memoryExtractionAcknowledged = true
@@ -4505,7 +4508,7 @@ extension SettingsViewController: WKNavigationDelegate {
         self.preferences.memoryExtractionProvider = provider.rawValue
       }
       self.reinstallMemoryExtractionProvider()
-      self.message = "已开启 CLI Agent 提炼。"
+      self.message = L("已开启 CLI Agent 提炼。")
       self.refresh()
     }
   }
@@ -4521,8 +4524,8 @@ extension SettingsViewController: WKNavigationDelegate {
   private func addMemoryExcludedPath() {
     guard let window = view.window else { return }
     let panel = NSOpenPanel()
-    panel.title = "选择不参与记录的目录"
-    panel.prompt = "排除"
+    panel.title = L("选择不参与记录的目录")
+    panel.prompt = L("排除")
     panel.canChooseFiles = false
     panel.canChooseDirectories = true
     panel.allowsMultipleSelection = true
@@ -4535,7 +4538,7 @@ extension SettingsViewController: WKNavigationDelegate {
         paths.append(path)
       }
       self.preferences.memoryExcludedPaths = Array(paths.prefix(128))
-      self.message = "已更新排除目录。"
+      self.message = L("已更新排除目录。")
       self.refresh()
     }
   }
@@ -4548,7 +4551,7 @@ extension SettingsViewController: WKNavigationDelegate {
       try location.prepareDirectory()
       NSWorkspace.shared.open(location.rootDirectory)
     } catch {
-      sendWebToast("无法打开存储目录：\(error.localizedDescription)", level: "error")
+      sendWebToast(L("无法打开存储目录：\(error.localizedDescription)"), level: "error")
     }
   }
 
@@ -4557,15 +4560,10 @@ extension SettingsViewController: WKNavigationDelegate {
     guard let window = view.window else { return }
     let alert = NSAlert()
     alert.alertStyle = .critical
-    alert.messageText = "清空全部 Session Memory 记录？"
-    alert.informativeText = """
-      将删除本机保存的全部 session、事件、命令输出正文与已提炼的 Memory。\
-      此操作不可撤销，也无法恢复已被 Agent 引用过的历史。
-
-      设置项本身（记录模式、排除规则）保持不变，之后新产生的活动会重新开始记录。
-      """
-    alert.addButton(withTitle: "清空")
-    alert.addButton(withTitle: "取消")
+    alert.messageText = L("清空全部 Session Memory 记录？")
+    alert.informativeText = L("将删除本机保存的全部 session、事件、命令输出正文与已提炼的 Memory。此操作不可撤销，也无法恢复已被 Agent 引用过的历史。\n\n设置项本身（记录模式、排除规则）保持不变，之后新产生的活动会重新开始记录。")
+    alert.addButton(withTitle: L("清空"))
+    alert.addButton(withTitle: L("取消"))
     alert.buttons.first?.hasDestructiveAction = true
     alert.beginSheetModal(for: window) { [weak self] response in
       guard let self, response == .alertFirstButtonReturn else { return }
@@ -4583,8 +4581,8 @@ extension SettingsViewController: WKNavigationDelegate {
     Task { [weak self] in
       await MemoryStoreAccess.writer.purgeAll()
       guard let self else { return }
-      self.message = "已清空全部记录。"
-      self.memoryStoreSizeText = "尚无记录"
+      self.message = L("已清空全部记录。")
+      self.memoryStoreSizeText = L("尚无记录")
       self.refresh()
       self.refreshMemoryStoreSize()
     }
@@ -4610,7 +4608,7 @@ extension SettingsViewController: WKNavigationDelegate {
 
   private nonisolated static func memoryStoreSizeDescription(at root: URL) async -> String {
     let total = memoryStoreByteCount(at: root)
-    guard total > 0 else { return "尚无记录" }
+    guard total > 0 else { return L("尚无记录") }
     return ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
   }
 
@@ -4643,13 +4641,13 @@ extension SettingsViewController: WKNavigationDelegate {
   private func presentMemoryExtractionPreview() {
     let provider =
       preferences.memoryExtractionProvider.flatMap(AgentProvider.init(rawValue:)) ?? .claudeCode
-    let header = "目标 Agent：\(agentDisplayName(provider))（本机 CLI，由它自行上传到其云端）"
+    let header = L("目标 Agent：\(agentDisplayName(provider))（本机 CLI，由它自行上传到其云端）")
     Task { [weak self] in
       let preview = await Self.loadExtractionPreview()
       guard let self else { return }
-      let notice = preview.isSample ? "以下为示例数据，不是你机器上的真实记录。\n" : ""
+      let notice = preview.isSample ? L("以下为示例数据，不是你机器上的真实记录。\n") : ""
       self.presentMemoryTextSheet(
-        title: "提炼时会发送的内容",
+        title: L("提炼时会发送的内容"),
         body: "\(header)\n\(notice)\n\(preview.text)"
       )
     }
@@ -4699,7 +4697,7 @@ extension SettingsViewController: WKNavigationDelegate {
     text.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
     text.string = body
     scroll.documentView = text
-    let close = NSButton(title: "完成", target: nil, action: nil)
+    let close = NSButton(title: L("完成"), target: nil, action: nil)
     close.keyEquivalent = "\r"
     close.bezelStyle = .rounded
     let host = NSView()
@@ -4730,8 +4728,8 @@ extension SettingsViewController: WKNavigationDelegate {
   /// LaunchServices 解析当前位置，因此应用移动或升级不会让绝对路径失效。
   private func configureOpenWithApplication() {
     let panel = NSOpenPanel()
-    panel.title = "添加打开方式"
-    panel.prompt = "添加"
+    panel.title = L("添加打开方式")
+    panel.prompt = L("添加")
     panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
     panel.canChooseFiles = true
     panel.canChooseDirectories = false
@@ -4749,7 +4747,7 @@ extension SettingsViewController: WKNavigationDelegate {
       applications.append(OpenWithApplication(name: name, bundleIdentifier: bundleIdentifier))
     }
     preferences.configuration.controls.openWithApplications = applications
-    message = "已添加打开方式“\(name)”。"
+    message = L("已添加打开方式“\(name)”。")
     refresh()
   }
 
@@ -4761,8 +4759,8 @@ extension SettingsViewController: WKNavigationDelegate {
     let alert = NSAlert()
     alert.messageText = title
     alert.informativeText = detail
-    alert.addButton(withTitle: "保存")
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: L("保存"))
+    alert.addButton(withTitle: L("取消"))
     let field = NSTextField(string: (preferences.settingsCompatibility[key]?.jsonValue as? String) ?? fallback)
     field.frame.size = NSSize(width: 360, height: 24)
     alert.accessoryView = field
@@ -4771,11 +4769,11 @@ extension SettingsViewController: WKNavigationDelegate {
     guard value.utf8.count <= 4_096,
       !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
     else {
-      sendWebToast("输入内容无效或过长", level: "error")
+      sendWebToast(L("输入内容无效或过长"), level: "error")
       return false
     }
     preferences.setCompatibilityValue(.string(value), forKey: key)
-    message = "“\(title)”已保存。"
+    message = L("“\(title)”已保存。")
     refresh()
     return true
   }
@@ -4783,32 +4781,32 @@ extension SettingsViewController: WKNavigationDelegate {
   private func manageTrackedFolders() {
     guard editCompatibilityText(
       key: "shell.trackedFolders",
-      title: "已跟踪文件夹",
-      detail: "输入绝对路径，以逗号分隔。清空表示只使用自动学习记录。"
+      title: L("已跟踪文件夹"),
+      detail: L("输入绝对路径，以逗号分隔。清空表示只使用自动学习记录。")
     ) else { return }
     editCompatibilityText(
       key: "shell.ignoredFolders",
-      title: "已忽略文件夹",
-      detail: "输入不应进入 frecency 的绝对路径，以逗号分隔。"
+      title: L("已忽略文件夹"),
+      detail: L("输入不应进入 frecency 的绝对路径，以逗号分隔。")
     )
   }
 
   private func createTextSnippetRecipe() {
     let nameAlert = NSAlert()
-    nameAlert.messageText = "新建文本片段"
-    nameAlert.informativeText = "片段将保存为命令型 .asterrecipe；打开时仍遵循 Recipe 重放确认策略。"
-    nameAlert.addButton(withTitle: "下一步")
-    nameAlert.addButton(withTitle: "取消")
+    nameAlert.messageText = L("新建文本片段")
+    nameAlert.informativeText = L("片段将保存为命令型 .asterrecipe；打开时仍遵循 Recipe 重放确认策略。")
+    nameAlert.addButton(withTitle: L("下一步"))
+    nameAlert.addButton(withTitle: L("取消"))
     let nameField = NSTextField(string: "Text Snippet")
     nameField.frame.size = NSSize(width: 360, height: 24)
     nameAlert.accessoryView = nameField
     guard nameAlert.runModal() == .alertFirstButtonReturn else { return }
 
     let textAlert = NSAlert()
-    textAlert.messageText = "片段内容"
-    textAlert.informativeText = "输入要在终端中重放的文本。"
-    textAlert.addButton(withTitle: "保存")
-    textAlert.addButton(withTitle: "取消")
+    textAlert.messageText = L("片段内容")
+    textAlert.informativeText = L("输入要在终端中重放的文本。")
+    textAlert.addButton(withTitle: L("保存"))
+    textAlert.addButton(withTitle: L("取消"))
     let textField = NSTextField(string: "")
     textField.frame.size = NSSize(width: 360, height: 24)
     textAlert.accessoryView = textField
@@ -4819,7 +4817,7 @@ extension SettingsViewController: WKNavigationDelegate {
     guard !name.isEmpty, name.utf8.count <= 128, !text.isEmpty, text.utf8.count <= 8_192,
       !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
     else {
-      sendWebToast("片段名称或内容无效", level: "error")
+      sendWebToast(L("片段名称或内容无效"), level: "error")
       return
     }
     do {
@@ -4839,9 +4837,9 @@ extension SettingsViewController: WKNavigationDelegate {
         commands: [text]
       )
       try WorkflowRecipeTOML.save(recipe, to: url)
-      message = "文本片段“\(name)”已保存。"
+      message = L("文本片段“\(name)”已保存。")
     } catch {
-      message = "文本片段保存失败：\(error.localizedDescription)"
+      message = L("文本片段保存失败：\(error.localizedDescription)")
     }
     refresh()
   }
@@ -4856,13 +4854,13 @@ extension SettingsViewController: WKNavigationDelegate {
       }
       NSWorkspace.shared.open(url)
     } catch {
-      sendWebToast("无法打开调试日志：\(error.localizedDescription)", level: "error")
+      sendWebToast(L("无法打开调试日志：\(error.localizedDescription)"), level: "error")
     }
   }
 
   private func importGhosttyConfiguration() {
     let panel = NSOpenPanel()
-    panel.message = "选择 Ghostty config 文件"
+    panel.message = L("选择 Ghostty config 文件")
     panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".config/ghostty", isDirectory: true)
     guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -4890,9 +4888,9 @@ extension SettingsViewController: WKNavigationDelegate {
         default: unsupported.append(key)
         }
       }
-      message = "已从 Ghostty 导入 \(imported) 项；\(Set(unsupported).count) 项当前无法映射。"
+      message = L("已从 Ghostty 导入 \(String(imported)) 项；\(String(Set(unsupported).count)) 项当前无法映射。")
     } catch {
-      message = "Ghostty 导入失败：\(error.localizedDescription)"
+      message = L("Ghostty 导入失败：\(error.localizedDescription)")
     }
     refresh()
   }
@@ -4912,9 +4910,9 @@ extension SettingsViewController: WKNavigationDelegate {
       """
     do {
       try text.write(to: url, atomically: true, encoding: .utf8)
-      message = "已导出 Ghostty 配置；无法映射的 Aster 界面、Agent 和 Recipe 设置已省略。"
+      message = L("已导出 Ghostty 配置；无法映射的 Aster 界面、Agent 和 Recipe 设置已省略。")
     } catch {
-      message = "Ghostty 导出失败：\(error.localizedDescription)"
+      message = L("Ghostty 导出失败：\(error.localizedDescription)")
     }
     refresh()
   }
@@ -4941,9 +4939,9 @@ extension SettingsViewController: WKNavigationDelegate {
   private func reloadEditableConfiguration() {
     do {
       try importSettingsData(Data(contentsOf: settingsConfigurationURL()))
-      message = "配置文件已重新加载。"
+      message = L("配置文件已重新加载。")
     } catch {
-      message = "配置文件加载失败，现有设置未变：\(error.localizedDescription)"
+      message = L("配置文件加载失败，现有设置未变：\(error.localizedDescription)")
     }
     refresh()
   }
@@ -5040,8 +5038,8 @@ extension SettingsViewController: WKNavigationDelegate {
   private func clearWebPaneBrowsingData() {
     Task { @MainActor [weak self] in
       let ok = await WebPaneDataStorePolicy.clearAllBrowsingData()
-      self?.sendWebToast(ok ? "浏览数据已清除。" : "没能全部清除——把网页窗格关掉再试一次。", level: ok ? "info" : "error")
-      self?.message = ok ? "浏览数据已清除。" : "没能全部清除——把网页窗格关掉再试一次。"
+      self?.sendWebToast(ok ? L("浏览数据已清除。") : L("没能全部清除——把网页窗格关掉再试一次。"), level: ok ? "info" : "error")
+      self?.message = ok ? L("浏览数据已清除。") : L("没能全部清除——把网页窗格关掉再试一次。")
     }
   }
 
@@ -5235,9 +5233,9 @@ private enum SettingsWebBridgeError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
-    case .invalidValue: "字段类型或范围不正确"
-    case .unknownKey: "字段不在允许列表中"
-    case .unsupportedSchema: "配置文件版本不受支持"
+    case .invalidValue: L("字段类型或范围不正确")
+    case .unknownKey: L("字段不在允许列表中")
+    case .unsupportedSchema: L("配置文件版本不受支持")
     }
   }
 }
@@ -5245,22 +5243,22 @@ private enum SettingsWebBridgeError: LocalizedError {
 /// 把网页录制的可读快捷键应用到现有 AppKit 菜单。菜单仍是命令的唯一执行入口；
 /// 设置页只修改 `keyEquivalent`，不会复制 selector 或绕过 responder chain。
 enum ShortcutOverrideApplier {
-  private static let menuTitles: [String: String] = [
-    "new-window": "新建窗口",
-    "new-tab": "新建标签页",
-    "close": "关闭",
-    "open-file": "打开文件…",
-    "save": "保存",
-    "find": "查找",
-    "global-find": "在全部 Pane 中查找",
-    "command-palette": "命令面板",
-    "split-right": "向右拆分",
-    "split-down": "向下拆分",
-    "zoom-pane": "缩放拆分",
-    "open-recipe": "打开 Recipe…",
-    "save-recipe": "保存为 Recipe…",
-    "settings": "设置…",
-  ]
+  private static var menuTitles: [String: String] { [
+    "new-window": L("新建窗口"),
+    "new-tab": L("新建标签页"),
+    "close": L("关闭"),
+    "open-file": L("打开文件…"),
+    "save": L("保存"),
+    "find": L("查找"),
+    "global-find": L("在全部 Pane 中查找"),
+    "command-palette": L("命令面板"),
+    "split-right": L("向右拆分"),
+    "split-down": L("向下拆分"),
+    "zoom-pane": L("缩放拆分"),
+    "open-recipe": L("打开 Recipe…"),
+    "save-recipe": L("保存为 Recipe…"),
+    "settings": L("设置…"),
+  ] }
 
   static func isValidDisplayShortcut(_ value: String) -> Bool {
     guard !value.isEmpty, value.utf8.count <= 32 else { return false }
@@ -5357,12 +5355,12 @@ private final class SettingsSidebarButton: NSButton {
     handler = action
     self.selected = selected
     icon = NSImageView(
-      image: NSImage(systemSymbolName: section.symbol, accessibilityDescription: section.rawValue) ?? NSImage()
+      image: NSImage(systemSymbolName: section.symbol, accessibilityDescription: L(String.LocalizationValue(section.rawValue))) ?? NSImage()
     )
-    sectionLabel = makeLabel(section.rawValue, size: 13, color: SettingsTheme.secondaryInk)
+    sectionLabel = makeLabel(L(String.LocalizationValue(section.rawValue)), size: 13, color: SettingsTheme.secondaryInk)
     super.init(frame: .zero)
     title = ""
-    setAccessibilityLabel(section.rawValue)
+    setAccessibilityLabel(L(String.LocalizationValue(section.rawValue)))
     isBordered = false
     wantsLayer = true
 
@@ -5471,7 +5469,7 @@ private final class FontComboBox: NSComboBox, NSComboBoxDelegate, NSComboBoxData
     handler = action
     super.init(frame: .zero)
     font = NSFont.systemFont(ofSize: SettingsMetrics.controlTextSize)
-    placeholderString = "字体"
+    placeholderString = L("字体")
     usesDataSource = true
     dataSource = self
     completes = true
@@ -5664,9 +5662,9 @@ private final class LayoutChoiceButton: NSButton {
     handler = action
     super.init(frame: .zero)
     let data: (String, String) = switch layout {
-    case .vertical: ("sidebar.left", "垂直标签栏")
-    case .top: ("rectangle.topthird.inset.filled", "顶部标签栏")
-    case .bottom: ("rectangle.bottomthird.inset.filled", "底部标签栏")
+    case .vertical: ("sidebar.left", L("垂直标签栏"))
+    case .top: ("rectangle.topthird.inset.filled", L("顶部标签栏"))
+    case .bottom: ("rectangle.bottomthird.inset.filled", L("底部标签栏"))
     }
     title = ""
     isBordered = false
@@ -5874,7 +5872,7 @@ private final class ThemeDetailView: NSView {
       color: SettingsTheme.ink
     )
     let mode = makeLabel(
-      theme.mode == .dark ? "深色" : "浅色", size: 10, color: SettingsTheme.secondaryInk)
+      theme.mode == .dark ? L("深色") : L("浅色"), size: 10, color: SettingsTheme.secondaryInk)
     let header = NSStackView(views: [title, NSView(), mode])
     header.orientation = .horizontal
     let sample = TerminalSampleView(theme: theme)
@@ -6203,10 +6201,10 @@ private protocol SettingsEnumOption: CaseIterable, Equatable {
 extension CloseConfirmation: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .always: "总是询问"
-    case .runningProcess: "有运行中的进程时"
-    case .multipleTabs: "有多个标签页时"
-    case .never: "从不"
+    case .always: L("总是询问")
+    case .runningProcess: L("有运行中的进程时")
+    case .multipleTabs: L("有多个标签页时")
+    case .never: L("从不")
     }
   }
 }
@@ -6214,8 +6212,8 @@ extension CloseConfirmation: SettingsEnumOption {
 extension LaunchBehavior: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .newWindow: "打开新窗口"
-    case .restoreLastSession: "恢复上次会话"
+    case .newWindow: L("打开新窗口")
+    case .restoreLastSession: L("恢复上次会话")
     }
   }
 }
@@ -6223,9 +6221,9 @@ extension LaunchBehavior: SettingsEnumOption {
 extension NewTabPosition: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .automatic: "自动"
-    case .end: "始终位于末尾"
-    case .afterCurrent: "始终紧跟当前标签"
+    case .automatic: L("自动")
+    case .end: L("始终位于末尾")
+    case .afterCurrent: L("始终紧跟当前标签")
     }
   }
 }
@@ -6233,10 +6231,10 @@ extension NewTabPosition: SettingsEnumOption {
 extension RecipeReplayMode: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .automatic: "自动执行"
-    case .confirmOnce: "执行前确认一次"
-    case .oneByOne: "逐条确认"
-    case .skip: "跳过命令"
+    case .automatic: L("自动执行")
+    case .confirmOnce: L("执行前确认一次")
+    case .oneByOne: L("逐条确认")
+    case .skip: L("跳过命令")
     }
   }
 }
@@ -6244,10 +6242,10 @@ extension RecipeReplayMode: SettingsEnumOption {
 extension CursorStyle: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .block: "方块"
-    case .bar: "竖线"
-    case .underline: "下划线"
-    case .hollowBlock: "空心方块"
+    case .block: L("方块")
+    case .bar: L("竖线")
+    case .underline: L("下划线")
+    case .hollowBlock: L("空心方块")
     }
   }
 }
@@ -6255,10 +6253,10 @@ extension CursorStyle: SettingsEnumOption {
 extension TerminalCursorBlinkMode: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .defaultOff: "默认关闭"
-    case .defaultOn: "默认开启"
-    case .alwaysOff: "始终关闭"
-    case .alwaysOn: "始终开启"
+    case .defaultOff: L("默认关闭")
+    case .defaultOn: L("默认开启")
+    case .alwaysOff: L("始终关闭")
+    case .alwaysOn: L("始终开启")
     }
   }
 }
@@ -6266,8 +6264,8 @@ extension TerminalCursorBlinkMode: SettingsEnumOption {
 extension TerminalCursorAnimation: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .off: "关闭"
-    case .smooth: "平滑"
+    case .off: L("关闭")
+    case .smooth: L("平滑")
     }
   }
 }
@@ -6275,9 +6273,9 @@ extension TerminalCursorAnimation: SettingsEnumOption {
 extension ClipboardAccess: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .allow: "允许"
-    case .ask: "每次询问"
-    case .deny: "拒绝"
+    case .allow: L("允许")
+    case .ask: L("每次询问")
+    case .deny: L("拒绝")
     }
   }
 }
@@ -6285,10 +6283,10 @@ extension ClipboardAccess: SettingsEnumOption {
 extension TerminalScrollPastLastLine: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .disabled: "关闭"
-    case .lastLineWithContent: "最后一行内容位于顶部"
-    case .lastLineInMiddle: "最后一行内容位于中部"
-    case .cursorLine: "光标行位于顶部"
+    case .disabled: L("关闭")
+    case .lastLineWithContent: L("最后一行内容位于顶部")
+    case .lastLineInMiddle: L("最后一行内容位于中部")
+    case .cursorLine: L("光标行位于顶部")
     }
   }
 }
@@ -6296,10 +6294,10 @@ extension TerminalScrollPastLastLine: SettingsEnumOption {
 extension TerminalScrollPastFirstLine: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .disabled: "关闭"
-    case .sameAsLastLine: "跟随末尾设置"
-    case .firstLineWithContent: "第一行内容位于底部"
-    case .firstLineInMiddle: "第一行内容位于中部"
+    case .disabled: L("关闭")
+    case .sameAsLastLine: L("跟随末尾设置")
+    case .firstLineWithContent: L("第一行内容位于底部")
+    case .firstLineInMiddle: L("第一行内容位于中部")
     }
   }
 }
@@ -6308,9 +6306,9 @@ extension AutocompleteShortcut: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
     case .tab: "Tab"
-    case .tabAndRightArrow: "Tab 或 →"
+    case .tabAndRightArrow: L("Tab 或 →")
     case .controlSpace: "Control-Space"
-    case .disabled: "关闭"
+    case .disabled: L("关闭")
     }
   }
 }
@@ -6318,8 +6316,8 @@ extension AutocompleteShortcut: SettingsEnumOption {
 extension AutocompleteCandidatePanel: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .disabled: "关闭"
-    case .automatic: "自动（至少 2 项）"
+    case .disabled: L("关闭")
+    case .automatic: L("自动（至少 2 项）")
     case .escape: "Escape"
     case .optionEscape: "Option-Escape / F5"
     }
@@ -6329,9 +6327,9 @@ extension AutocompleteCandidatePanel: SettingsEnumOption {
 extension AutocompleteDescriptionLanguage: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .system: "跟随系统"
+    case .system: L("跟随系统")
     case .english: "English"
-    case .chinese: "简体中文"
+    case .chinese: L("简体中文")
     }
   }
 }
@@ -6339,8 +6337,8 @@ extension AutocompleteDescriptionLanguage: SettingsEnumOption {
 extension TerminalLigatureLevel: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .none: "关闭"
-    case .standard: "标准与上下文"
+    case .none: L("关闭")
+    case .standard: L("标准与上下文")
     case .discretionary: "Discretionary"
     }
   }
@@ -6349,8 +6347,8 @@ extension TerminalLigatureLevel: SettingsEnumOption {
 extension TerminalBlinkRenderingPolicy: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .steady: "稳定显示"
-    case .animated: "按 SGR 闪烁"
+    case .steady: L("稳定显示")
+    case .animated: L("按 SGR 闪烁")
     }
   }
 }
@@ -6358,9 +6356,9 @@ extension TerminalBlinkRenderingPolicy: SettingsEnumOption {
 extension TerminalTextStyleRendering: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .automatic: "自动"
-    case .disabled: "忽略样式"
-    case .primaryFontOnly: "仅主字体"
+    case .automatic: L("自动")
+    case .disabled: L("忽略样式")
+    case .primaryFontOnly: L("仅主字体")
     case .synthetic: "Synthetic"
     }
   }
@@ -6383,15 +6381,15 @@ private extension EastAsianAmbiguousBlock {
 
   var settingsDetail: String {
     switch self {
-    case .enclosedAlphanumerics: "①、Ⓐ、ⓐ 等；默认按双宽显示"
-    case .numberForms: "分数与罗马数字等 Number Forms 字符"
-    case .mathematicalOperators: "数学运算符；仅在字体按双宽绘制时开启"
-    case .miscellaneousTechnical: "⌘、⌥ 等技术符号；仅在字体按双宽绘制时开启"
-    case .miscellaneousSymbols: "气象、星象等杂项符号"
-    case .dingbats: "装饰符号与标记字符"
-    case .arrows: "Unicode 箭头字符"
-    case .geometricShapes: "几何图形字符"
-    default: "未知 block 不会参与终端宽度计算"
+    case .enclosedAlphanumerics: L("①、Ⓐ、ⓐ 等；默认按双宽显示")
+    case .numberForms: L("分数与罗马数字等 Number Forms 字符")
+    case .mathematicalOperators: L("数学运算符；仅在字体按双宽绘制时开启")
+    case .miscellaneousTechnical: L("⌘、⌥ 等技术符号；仅在字体按双宽绘制时开启")
+    case .miscellaneousSymbols: L("气象、星象等杂项符号")
+    case .dingbats: L("装饰符号与标记字符")
+    case .arrows: L("Unicode 箭头字符")
+    case .geometricShapes: L("几何图形字符")
+    default: L("未知 block 不会参与终端宽度计算")
     }
   }
 }
@@ -6399,9 +6397,9 @@ private extension EastAsianAmbiguousBlock {
 extension NotificationForegroundPolicy: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .off: "关闭"
-    case .always: "始终显示"
-    case .tabUnfocused: "仅来源标签未聚焦时"
+    case .off: L("关闭")
+    case .always: L("始终显示")
+    case .tabUnfocused: L("仅来源标签未聚焦时")
     }
   }
 }
@@ -6409,8 +6407,8 @@ extension NotificationForegroundPolicy: SettingsEnumOption {
 extension TabBadgePlacement: SettingsEnumOption {
   fileprivate var settingsLabel: String {
     switch self {
-    case .combined: "合并"
-    case .separate: "分开"
+    case .combined: L("合并")
+    case .separate: L("分开")
     }
   }
 }

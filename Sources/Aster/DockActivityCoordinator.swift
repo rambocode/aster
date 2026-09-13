@@ -146,7 +146,7 @@ final class DockActivityCoordinator {
     if shouldPreventSleep, agentSleepActivity == nil {
       agentSleepActivity = ProcessInfo.processInfo.beginActivity(
         options: [.idleSystemSleepDisabled, .userInitiated],
-        reason: "Aster Agent 正在处理任务"
+        reason: L("Aster Agent 正在处理任务")
       )
     } else if !shouldPreventSleep, let activity = agentSleepActivity {
       ProcessInfo.processInfo.endActivity(activity)

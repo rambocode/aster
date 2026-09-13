@@ -485,13 +485,13 @@ final class WorkspaceViewController: NSViewController {
     let addTabButton = ActionButton(symbol: "plus", bezelStyle: .inline) { [weak self] in
       self?.model.newTab()
     }
-    addTabButton.toolTip = "新建标签页"
+    addTabButton.toolTip = L("新建标签页")
     let toggleButton = ActionButton(symbol: "sidebar.left", bezelStyle: .inline) { [weak self] in
       self?.preferences.configuration.appearance.showTabBar.toggle()
     }
     toggleButton.toolTip = sidebarVisible
-      ? "折叠标签栏（悬停顶部或从「显示」菜单恢复）"
-      : "展开标签栏"
+      ? L("折叠标签栏（悬停顶部或从「显示」菜单恢复）")
+      : L("展开标签栏")
     for button in [addTabButton, toggleButton] {
       button.isBordered = false
       button.contentTintColor = AsterTheme.secondaryInk
@@ -613,11 +613,11 @@ final class WorkspaceViewController: NSViewController {
   ) {
     guard let button = inspectorToggleButton else { return }
     if model.isInspectorPresented {
-      button.toolTip = "收起详情面板"
+      button.toolTip = L("收起详情面板")
       setHoverButtonVisible(button, true, animated: animated)
       return
     }
-    button.toolTip = "展开详情面板"
+    button.toolTip = L("展开详情面板")
 
     if let window = view.window,
       let titleBarRect = hoverRegionRectInWindow(inspectorTitleBarHoverRegion)
@@ -1518,7 +1518,7 @@ final class WorkspaceViewController: NSViewController {
       self.scheduleRefresh()
     }
     host.setAccessibilityRole(.button)
-    host.setAccessibilityLabel("\(collapsed ? "展开" : "折叠")分组 \(title)")
+    host.setAccessibilityLabel(collapsed ? L("展开分组 \(title)") : L("折叠分组 \(title)"))
     host.translatesAutoresizingMaskIntoConstraints = false
     host.heightAnchor.constraint(equalToConstant: 30).isActive = true
 
@@ -1558,7 +1558,7 @@ final class WorkspaceViewController: NSViewController {
 
   /// 菜单内容在每次展开时重建，勾选状态始终反映最新分组、排序和分隔线状态。
   private func makeSidebarOptionsMenu() -> NSMenu {
-    let menu = NSMenu(title: "整理标签")
+    let menu = NSMenu(title: L("整理标签"))
     menu.autoenablesItems = false
     menu.addItem(makeSidebarMenuHeader("GROUP"))
     menu.addItem(
@@ -1692,10 +1692,10 @@ final class WorkspaceViewController: NSViewController {
     }
     // 无边框图标按钮自带悬停底色反馈，与胶囊标签的视觉密度一致。横向标签条只保留
     // 「+」新建入口；命令面板走快捷键与菜单，不在标签行占一个图标位。
-    let newTab = IconHoverButton(symbol: "plus", accessibilityDescription: "新建标签页") {
+    let newTab = IconHoverButton(symbol: "plus", accessibilityDescription: L("新建标签页")) {
       [weak self] in self?.model.newTab()
     }
-    newTab.toolTip = "新建标签页"
+    newTab.toolTip = L("新建标签页")
     newTab.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
       newTab.widthAnchor.constraint(equalToConstant: 26),
@@ -1739,35 +1739,35 @@ final class WorkspaceViewController: NSViewController {
 
   private func makeTabContextMenu(_ tab: TerminalTabItem) -> NSMenu {
     let menu = NSMenu()
-    menu.addItem(ActionMenuItem(title: "重命名标签页…") { [weak self, weak tab] in
+    menu.addItem(ActionMenuItem(title: L("重命名标签页…")) { [weak self, weak tab] in
       guard let self, let tab else { return }
       model.select(tab)
       model.promptRenameSelectedTab()
     })
-    menu.addItem(ActionMenuItem(title: "恢复自动标题") { [weak self, weak tab] in
+    menu.addItem(ActionMenuItem(title: L("恢复自动标题")) { [weak self, weak tab] in
       guard let self, let tab else { return }
       tab.setTabTitleOverride(.automatic)
       model.persistWorkspace()
     })
     menu.addItem(.separator())
-    menu.addItem(ActionMenuItem(title: "向右分屏") { [weak self, weak tab] in
+    menu.addItem(ActionMenuItem(title: L("向右分屏")) { [weak self, weak tab] in
       guard let self, let tab else { return }
       model.select(tab)
       model.splitSelectedTab(.right)
     })
-    menu.addItem(ActionMenuItem(title: "向下分屏") { [weak self, weak tab] in
+    menu.addItem(ActionMenuItem(title: L("向下分屏")) { [weak self, weak tab] in
       guard let self, let tab else { return }
       model.select(tab)
       model.splitSelectedTab(.down)
     })
-    menu.addItem(ActionMenuItem(title: "打开文件浏览器") { [weak self, weak tab] in
+    menu.addItem(ActionMenuItem(title: L("打开文件浏览器")) { [weak self, weak tab] in
       guard let self, let tab else { return }
       model.select(tab)
       tab.openFileBrowser()
       model.persistWorkspace()
     })
     menu.addItem(.separator())
-    menu.addItem(ActionMenuItem(title: "关闭标签页") { [weak self, weak tab] in
+    menu.addItem(ActionMenuItem(title: L("关闭标签页")) { [weak self, weak tab] in
       guard let self, let tab else { return }
       model.select(tab)
       model.closeSelectedTab()
@@ -1989,7 +1989,7 @@ final class WorkspaceViewController: NSViewController {
     } else {
       button = IconHoverButton(
         symbol: InspectorToggleMetrics.symbol,
-        accessibilityDescription: "详情面板"
+        accessibilityDescription: L("详情面板")
       ) { [weak self] in
         self?.model.toggleInspector()
       }
@@ -2045,16 +2045,16 @@ final class WorkspaceViewController: NSViewController {
     bar.addBottomBorder(color: AsterTheme.hairline)
 
     let field = NSSearchField()
-    field.placeholderString = "在终端缓冲区中查找"
+    field.placeholderString = L("在终端缓冲区中查找")
     field.identifier = NSUserInterfaceItemIdentifier(tab.id.uuidString)
     let caseSensitive = NSButton(title: "Aa", target: nil, action: nil)
     caseSensitive.setButtonType(.toggle)
     caseSensitive.bezelStyle = .inline
-    caseSensitive.toolTip = "区分大小写"
+    caseSensitive.toolTip = L("区分大小写")
     let regularExpression = NSButton(title: ".*", target: nil, action: nil)
     regularExpression.setButtonType(.toggle)
     regularExpression.bezelStyle = .inline
-    regularExpression.toolTip = "正则表达式"
+    regularExpression.toolTip = L("正则表达式")
     let summary = makeLabel("0 / 0", size: 10, color: AsterTheme.secondaryInk, monospaced: true)
     summary.alignment = .right
     summary.translatesAutoresizingMaskIntoConstraints = false
@@ -2131,7 +2131,7 @@ final class WorkspaceViewController: NSViewController {
 
   private func makePaneLeaf(_ descriptor: PaneDescriptor, tab: TerminalTabItem) -> NSView {
     guard let runtime = tab.runtime(for: descriptor.id) else {
-      return makeCenteredMessage(title: "面板不可用", symbol: "exclamationmark.triangle")
+      return makeCenteredMessage(title: L("面板不可用"), symbol: "exclamationmark.triangle")
     }
     let host = ActivePaneHostView(
       paneID: descriptor.id,
@@ -2322,7 +2322,7 @@ final class WorkspaceViewController: NSViewController {
 
   private func presentAgentChatSheet(_ presentation: AgentChatPresentation) {
     guard let window = view.window else {
-      model.notice = "无法显示发送到聊天窗口。"
+      model.notice = L("无法显示发送到聊天窗口。")
       return
     }
     // 一个工作区窗口同时只允许一个确认面板，重复触发时保留已经填写的 Comment。
@@ -2337,7 +2337,7 @@ final class WorkspaceViewController: NSViewController {
 
   private func makeTerminalPane(_ runtime: WorkspacePaneRuntime, tab: TerminalTabItem) -> NSView {
     guard let session = runtime.terminalSession else {
-      return makeCenteredMessage(title: "终端不可用", symbol: "terminal")
+      return makeCenteredMessage(title: L("终端不可用"), symbol: "terminal")
     }
     session.onRequestFind = { [weak self] in
       self?.model.isFindPresented = true
@@ -2430,7 +2430,7 @@ final class WorkspaceViewController: NSViewController {
     let column = NSStackView()
     column.orientation = .vertical
     column.spacing = 0
-    column.addArrangedSubview(makePaneToolbar(title: "预览", symbol: "eye", save: nil))
+    column.addArrangedSubview(makePaneToolbar(title: L("预览"), symbol: "eye", save: nil))
     let textView = NSTextView()
     textView.isEditable = false
     textView.drawsBackground = false
@@ -2439,7 +2439,7 @@ final class WorkspaceViewController: NSViewController {
     textView.textContainerInset = NSSize(width: 28, height: 28)
     if let path = runtime.descriptor.resourcePath {
       do { textView.string = try String(contentsOfFile: path, encoding: .utf8) }
-      catch { textView.string = "无法预览：\(error.localizedDescription)" }
+      catch { textView.string = L("无法预览：\(error.localizedDescription)") }
     }
     let scroll = NSScrollView()
     scroll.drawsBackground = false
@@ -2487,20 +2487,20 @@ final class WorkspaceViewController: NSViewController {
     scroll.borderType = .noBorder
     scroll.documentView = textView
 
-    let provider = tab.activeSession?.activeAgentProvider?.commandName ?? "当前终端"
+    let provider = tab.activeSession?.activeAgentProvider?.commandName ?? L("当前终端")
     let stateLabel: String = switch tab.activeSession?.agentTaskState {
-    case .processing: "处理中"
-    case .awaitingInput: "等待输入"
-    case .idle, nil: "空闲"
+    case .processing: L("处理中")
+    case .awaitingInput: L("等待输入")
+    case .idle, nil: L("空闲")
     }
     let title = makeLabel(
       "Composer · \(provider) · \(stateLabel)",
       size: 10.5, weight: .semibold, color: AsterTheme.secondaryInk)
-    let pin = ActionButton(title: state.isPinned ? "取消 Pin" : "Pin", bezelStyle: .inline) {
+    let pin = ActionButton(title: state.isPinned ? L("取消 Pin") : "Pin", bezelStyle: .inline) {
       [weak self] in
       self?.model.setComposerPinned(!state.isPinned, paneID: paneID)
     }
-    let floatingTitle = state.presentation == .floating ? "停靠" : "浮动"
+    let floatingTitle = state.presentation == .floating ? L("停靠") : L("浮动")
     let floating = ActionButton(title: floatingTitle, bezelStyle: .inline) { [weak self] in
       if state.presentation == .floating {
         self?.model.dockComposer(paneID: paneID)
@@ -2529,7 +2529,7 @@ final class WorkspaceViewController: NSViewController {
     let queueLabel = makeLabel(
       "Queue \(queue.pending.count + (queue.inFlight == nil ? 0 : 1))",
       size: 10, color: AsterTheme.tertiaryInk, monospaced: true)
-    let attach = ActionButton(title: "附件…", bezelStyle: .rounded) { [weak self] in
+    let attach = ActionButton(title: L("附件…"), bezelStyle: .rounded) { [weak self] in
       let panel = NSOpenPanel()
       panel.canChooseFiles = true
       panel.canChooseDirectories = false
@@ -2540,7 +2540,7 @@ final class WorkspaceViewController: NSViewController {
     let enqueue = ActionButton(title: "Queue", bezelStyle: .rounded) { [weak self] in
       self?.model.queueComposer(paneID: paneID)
     }
-    let send = ActionButton(title: "发送", bezelStyle: .rounded) { [weak self, weak textView] in
+    let send = ActionButton(title: L("发送"), bezelStyle: .rounded) { [weak self, weak textView] in
       guard let self else { return }
       if let value = textView?.string { _ = model.updateComposerDraft(value, paneID: paneID) }
       model.submitComposer(paneID: paneID)
@@ -2579,7 +2579,7 @@ final class WorkspaceViewController: NSViewController {
   }
 
   private func makeEmptyWorkspace() -> NSView {
-    makeCenteredMessage(title: "新建标签页开始使用 Aster", symbol: "terminal")
+    makeCenteredMessage(title: L("新建标签页开始使用 Aster"), symbol: "terminal")
   }
 
   private func makeCenteredMessage(title: String, symbol: String) -> NSView {

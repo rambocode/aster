@@ -15,19 +15,19 @@ public enum PTYShellError: Error, LocalizedError, Sendable {
   public var errorDescription: String? {
     switch self {
     case .createFailed(let code):
-      "无法创建 PTY：\(String(cString: strerror(code)))"
+      L("无法创建 PTY：\(String(cString: strerror(code)))")
     case .workingDirectoryFailed(let code):
-      "无法进入会话工作目录：\(String(cString: strerror(code)))"
+      L("无法进入会话工作目录：\(String(cString: strerror(code)))")
     case .shellLaunchFailed(let code):
-      "无法执行已配置的 Shell：\(String(cString: strerror(code)))"
+      L("无法执行已配置的 Shell：\(String(cString: strerror(code)))")
     case .notRunning:
-      "PTY 会话未运行"
+      L("PTY 会话未运行")
     case .inputQueueFull:
-      "输入内容过大，请缩短后重试"
+      L("输入内容过大，请缩短后重试")
     case .writeFailed(let code):
-      "无法写入 PTY：\(String(cString: strerror(code)))"
+      L("无法写入 PTY：\(String(cString: strerror(code)))")
     case .resizeFailed(let code):
-      "无法调整 PTY 尺寸：\(String(cString: strerror(code)))"
+      L("无法调整 PTY 尺寸：\(String(cString: strerror(code)))")
     }
   }
 }

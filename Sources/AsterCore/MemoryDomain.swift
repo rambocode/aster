@@ -35,9 +35,9 @@ public enum TaskStatus: String, Codable, Sendable, CaseIterable {
 
   public var displayName: String {
     switch self {
-    case .open: "进行中"
-    case .completed: "已完成"
-    case .abandoned: "已放弃"
+    case .open: L("进行中")
+    case .completed: L("已完成")
+    case .abandoned: L("已放弃")
     }
   }
 }
@@ -127,8 +127,8 @@ public enum MemoryExtractorKind: Codable, Equatable, Sendable {
 
   public var displayName: String {
     switch self {
-    case .ruleBased: "规则提炼"
-    case .cliAgent(let provider): "\(provider) 提炼"
+    case .ruleBased: L("规则提炼")
+    case .cliAgent(let provider): L("\(provider) 提炼")
     }
   }
 }

@@ -139,7 +139,7 @@ enum TabIconArtwork {
       let label = NSTextField(labelWithString: emoji)
       label.font = .systemFont(ofSize: 12)
       label.alignment = .center
-      label.setAccessibilityLabel("标签图标 \(emoji)")
+      label.setAccessibilityLabel(L("标签图标 \(emoji)"))
       return label
     }
     guard let name = icon.name, let image = image(named: name) else { return nil }
@@ -147,7 +147,7 @@ enum TabIconArtwork {
     view.image = image
     view.contentTintColor = tint
     view.imageScaling = .scaleProportionallyDown
-    view.setAccessibilityLabel("标签图标 \(name)")
+    view.setAccessibilityLabel(L("标签图标 \(name)"))
     view.translatesAutoresizingMaskIntoConstraints = false
     view.widthAnchor.constraint(equalToConstant: 14).isActive = true
     view.heightAnchor.constraint(equalToConstant: 14).isActive = true

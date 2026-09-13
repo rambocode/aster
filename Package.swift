@@ -4,6 +4,8 @@ import PackageDescription
 
 let package = Package(
   name: "AsterTerminal",
+  // 界面文案源语言是简体中文；其它语言的 `.lproj/Localizable.strings` 放在 Sources/Aster/Localization。
+  defaultLocalization: "zh-Hans",
   platforms: [
     .macOS(.v14)
   ],
@@ -89,6 +91,9 @@ let package = Package(
         // 同级目录推导 terminfo。两个目录必须保持层级，不能使用 `.process` 扁平化。
         .copy("Ghostty/Resources/ghostty"),
         .copy("Ghostty/Resources/terminfo"),
+        // 界面翻译表：`<code>.lproj/Localizable.strings` 会落到资源 bundle 根目录，
+        // 运行时由 AppLocalization 按设置打开对应子 bundle 查表。
+        .process("Localization"),
       ],
       swiftSettings: [
         .unsafeFlags(["-Xcc", "-Wno-incomplete-umbrella"]),

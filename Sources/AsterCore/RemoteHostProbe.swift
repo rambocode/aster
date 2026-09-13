@@ -135,7 +135,7 @@ public enum RemoteCompatibilityCheck {
   /// 顺序重要：先判主版本，主版本不同就不该继续用它的能力集合下结论，
   /// 因为能力名在不同主版本之间没有可比性。
   public static func evaluate(protocolMajor: Int?, capabilities: [String]) -> RemoteCompatibility {
-    guard let protocolMajor else { return .unknown("协议版本未知") }
+    guard let protocolMajor else { return .unknown(L("协议版本未知")) }
     guard protocolMajor == RemoteProtocolContract.clientProtocolMajor else {
       return .incompatibleMajor(
         remote: protocolMajor, client: RemoteProtocolContract.clientProtocolMajor)
@@ -155,18 +155,18 @@ public enum RemoteCompatibilityCheck {
   public static func unavailableActionMessage(missingOptional: [String]) -> String? {
     guard !missingOptional.isEmpty else { return nil }
     let names = missingOptional.map(actionDescription).joined(separator: "、")
-    return "该远端服务缺少可选能力：\(names)。相关动作已禁用，其余终端功能不受影响。"
+    return L("该远端服务缺少可选能力：\(names)。相关动作已禁用，其余终端功能不受影响。")
   }
 
   private static func actionDescription(_ capability: String) -> String {
     switch capability {
-    case "server_lifecycle": "显式停止/替换服务"
-    case "terminal_observe": "只读观察"
-    case "session_snapshot": "共享工作区结构"
-    case "workspace_mutation": "共享工作区编辑"
-    case "image_upload": "图片上传"
-    case "session_restore": "Agent 原生恢复"
-    case "live_handoff": "实时交接"
+    case "server_lifecycle": L("显式停止/替换服务")
+    case "terminal_observe": L("只读观察")
+    case "session_snapshot": L("共享工作区结构")
+    case "workspace_mutation": L("共享工作区编辑")
+    case "image_upload": L("图片上传")
+    case "session_restore": L("Agent 原生恢复")
+    case "live_handoff": L("实时交接")
     default: capability
     }
   }
@@ -299,7 +299,7 @@ public enum RemoteHostProbe {
             protocolMajor: parsed.major,
             protocolMinor: parsed.minor,
             capabilities: [],
-            failure: parsed.release == nil ? "无法解析 --version 输出" : nil
+            failure: parsed.release == nil ? L("无法解析 --version 输出") : nil
           ))
       }
     }

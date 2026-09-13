@@ -39,8 +39,8 @@ final class QuickTerminalController: NSObject, NSWindowDelegate, WorkspaceTermin
     if status != noErr, reportedShortcutFailure != shortcut {
       reportedShortcutFailure = shortcut
       let alert = NSAlert()
-      alert.messageText = "Quick Terminal 快捷键无法注册"
-      alert.informativeText = "快捷键可能已被其他应用占用。请在设置中更换快捷键；仍可通过“窗口 → Quick Terminal”打开。"
+      alert.messageText = L("Quick Terminal 快捷键无法注册")
+      alert.informativeText = L("快捷键可能已被其他应用占用。请在设置中更换快捷键；仍可通过“窗口 → Quick Terminal”打开。")
       alert.runModal()
     } else if status == noErr {
       reportedShortcutFailure = nil
@@ -184,10 +184,10 @@ final class QuickTerminalController: NSObject, NSWindowDelegate, WorkspaceTermin
         hasRunningProcess: session?.hasRunningCommand == true, tabCount: 1)
     else { return true }
     let alert = NSAlert()
-    alert.messageText = "退出 Quick Terminal？"
-    alert.informativeText = "退出应用会结束 Quick Terminal 中的 Shell 和运行中的任务。"
-    alert.addButton(withTitle: "退出")
-    alert.addButton(withTitle: "取消")
+    alert.messageText = L("退出 Quick Terminal？")
+    alert.informativeText = L("退出应用会结束 Quick Terminal 中的 Shell 和运行中的任务。")
+    alert.addButton(withTitle: L("退出"))
+    alert.addButton(withTitle: L("取消"))
     return alert.runModal() == .alertFirstButtonReturn
   }
 

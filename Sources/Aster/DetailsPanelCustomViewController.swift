@@ -94,7 +94,7 @@ final class DetailsPanelCustomViewController: NSViewController, WKNavigationDele
     terminalView?.removeFromSuperview()
     terminalView = nil
     guard !command.isEmpty else {
-      showStatus("该视图还没有配置命令。")
+      showStatus(L("该视图还没有配置命令。"))
       return
     }
     let inherited = ProcessInfo.processInfo.environment
@@ -130,7 +130,7 @@ final class DetailsPanelCustomViewController: NSViewController, WKNavigationDele
     webView?.removeFromSuperview()
     webView = nil
     guard let url = WebPaneURLPolicy.allowedURL(from: urlString) else {
-      showStatus(urlString.isEmpty ? "该视图还没有配置网址。" : "网址必须是 http(s) 地址：\(urlString)")
+      showStatus(urlString.isEmpty ? L("该视图还没有配置网址。") : L("网址必须是 http(s) 地址：\(urlString)"))
       return
     }
     let configuration = WKWebViewConfiguration()
@@ -176,6 +176,6 @@ final class DetailsPanelCustomViewController: NSViewController, WKNavigationDele
   }
 
   func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-    showStatus("加载失败：\(error.localizedDescription)")
+    showStatus(L("加载失败：\(error.localizedDescription)"))
   }
 }

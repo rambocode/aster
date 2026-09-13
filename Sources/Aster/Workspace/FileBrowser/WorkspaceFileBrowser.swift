@@ -127,42 +127,42 @@ final class FileBrowserViewController: NSViewController, NSTableViewDataSource, 
     table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
     let url = entries[row]
     menu.addItem(
-      ActionMenuItem(title: isDirectory(url) ? "打开文件夹" : "打开") { [weak self] in
+      ActionMenuItem(title: isDirectory(url) ? L("打开文件夹") : L("打开")) { [weak self] in
         self?.openURL(url)
       })
     if !isDirectory(url) {
       menu.addItem(
-        ActionMenuItem(title: "在预览中打开") { [weak self] in
+        ActionMenuItem(title: L("在预览中打开")) { [weak self] in
           self?.tab?.openPreview(url)
         })
       menu.addItem(
-        ActionMenuItem(title: "发送到 Chat") { [weak self] in
+        ActionMenuItem(title: L("发送到 Chat")) { [weak self] in
           self?.model.sendFileToChat(url)
         })
     }
     menu.addItem(.separator())
     menu.addItem(
-      ActionMenuItem(title: "复制绝对路径") {
+      ActionMenuItem(title: L("复制绝对路径")) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.path, forType: .string)
       })
     menu.addItem(
-      ActionMenuItem(title: "在新终端中打开所在目录") { [weak tab] in
+      ActionMenuItem(title: L("在新终端中打开所在目录")) { [weak tab] in
         let directory = self.isDirectory(url) ? url.path : url.deletingLastPathComponent().path
         tab?.split(direction: .right, workingDirectory: directory)
       })
     menu.addItem(
-      ActionMenuItem(title: "在当前终端中 cd 到所在目录") { [weak tab] in
+      ActionMenuItem(title: L("在当前终端中 cd 到所在目录")) { [weak tab] in
         let directory = self.isDirectory(url) ? url.path : url.deletingLastPathComponent().path
         _ = tab?.openDirectoryInTerminal(directory)
       })
     menu.addItem(.separator())
     menu.addItem(
-      ActionMenuItem(title: "在 Finder 中显示") {
+      ActionMenuItem(title: L("在 Finder 中显示")) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
       })
     menu.addItem(
-      ActionMenuItem(title: "使用默认应用打开") {
+      ActionMenuItem(title: L("使用默认应用打开")) {
         NSWorkspace.shared.open(url)
       })
   }

@@ -19,27 +19,27 @@ enum AgentSetupServiceError: Error, Equatable, LocalizedError {
   var errorDescription: String? {
     switch self {
     case .executableUnavailable(let command):
-      "未在 PATH 中检测到 \(command)，请先安装对应 Agent。"
+      L("未在 PATH 中检测到 \(command)，请先安装对应 Agent。")
     case .remoteCommandFailed(let detail):
-      "远端命令失败：\(detail)"
+      L("远端命令失败：\(detail)")
     case .unsafePath(let path):
-      "Agent 集成目标不在当前用户目录内：\(path)"
+      L("Agent 集成目标不在当前用户目录内：\(path)")
     case .unsupportedFile(let path):
-      "Agent 配置必须是普通文件，且路径中不能包含符号链接：\(path)"
+      L("Agent 配置必须是普通文件，且路径中不能包含符号链接：\(path)")
     case .fileTooLarge(let path):
-      "Agent 配置超过安全大小限制：\(path)"
+      L("Agent 配置超过安全大小限制：\(path)")
     case .invalidConfiguration(let path):
-      "Agent 配置格式无效，Aster 未作任何修改：\(path)"
+      L("Agent 配置格式无效，Aster 未作任何修改：\(path)")
     case .managedEntryConflict(let path):
-      "Aster 预留的集成位置已被其它内容占用：\(path)"
+      L("Aster 预留的集成位置已被其它内容占用：\(path)")
     case .malformedManagedBlock(let path):
-      "Agent 配置中的 Aster 受管区块不完整：\(path)"
+      L("Agent 配置中的 Aster 受管区块不完整：\(path)")
     case .configurationChanged(let path):
-      "Agent 配置在安装期间被其它进程修改，Aster 已停止写入：\(path)"
+      L("Agent 配置在安装期间被其它进程修改，Aster 已停止写入：\(path)")
     case .integrationResourceUnavailable:
-      "找不到签名的 Agent lifecycle hook 资源。"
+      L("找不到签名的 Agent lifecycle hook 资源。")
     case .rollbackFailed(let path):
-      "Agent 集成安装失败且无法完整恢复，请检查：\(path)"
+      L("Agent 集成安装失败且无法完整恢复，请检查：\(path)")
     }
   }
 }

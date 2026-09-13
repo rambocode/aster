@@ -760,7 +760,8 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
     {
       result.appearance.terminalIdentity = AppearanceConfiguration().terminalIdentity
     }
-    if result.general.language.utf8.count > 32 { result.general.language = "system" }
+    // 未知语言码统一落回 system，避免手改配置写错后界面卡在源语言却显示着别的选项。
+    result.general.language = InterfaceLanguage.setting(result.general.language).rawValue
     result.controls.customLinkSchemes = Self.normalizedSchemes(
       result.controls.resolvedCustomLinkSchemes)
     result.controls.allowedNonStandardLinkSchemes = Self.normalizedSchemes(

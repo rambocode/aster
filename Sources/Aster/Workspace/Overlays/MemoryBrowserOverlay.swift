@@ -158,7 +158,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
   private let primaryButton = NSButton(title: "", target: nil, action: nil)
   /// PINNED 固定席位的开关（zero-mem 教训：关键事实不该依赖检索排名）。
   private let pinButton = NSButton(title: "", target: nil, action: nil)
-  private let deleteButton = NSButton(title: "删除", target: nil, action: nil)
+  private let deleteButton = NSButton(title: L("删除"), target: nil, action: nil)
   /// Task 的状态流转。用下拉而不是「标记完成」单个按钮：状态是三态机，
   /// 用户既要能完成也要能放弃，还要能把关掉的 Task 重新打开。
   private let taskStatusPopUp = NSPopUpButton()
@@ -181,7 +181,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
   ) {
     self.model = model
     self.projectPath = projectPath
-    projectName = projectPath.map { ($0 as NSString).lastPathComponent } ?? "全部项目"
+    projectName = projectPath.map { ($0 as NSString).lastPathComponent } ?? L("全部项目")
     tab = initialTab
     selectedID = selectedTaskID
     super.init(nibName: nil, bundle: nil)
@@ -206,7 +206,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     segmented.target = self
     segmented.action = #selector(segmentChanged(_:))
 
-    search.placeholderString = "搜索标题、正文与摘要…"
+    search.placeholderString = L("搜索标题、正文与摘要…")
     search.delegate = self
     search.onMove = { [weak self] delta in self?.moveSelection(delta) }
     search.onCancel = { [weak self] in self?.onClose?() }
@@ -218,9 +218,9 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     }
 
     let refresh = ActionButton(symbol: "arrow.clockwise") { [weak self] in self?.reload() }
-    refresh.toolTip = "重新读取"
+    refresh.toolTip = L("重新读取")
     let close = ActionButton(symbol: "xmark") { [weak self] in self?.onClose?() }
-    close.toolTip = "关闭"
+    close.toolTip = L("关闭")
     let header = NSStackView(views: [segmented, search, refresh, close])
     header.orientation = .horizontal
     header.spacing = 8
@@ -314,7 +314,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     taskStatusPopUp.addItems(withTitles: TaskStatus.allCases.map(\.displayName))
     taskStatusPopUp.target = self
     taskStatusPopUp.action = #selector(taskStatusChanged(_:))
-    taskStatusPopUp.toolTip = "改变这个 Task 的状态"
+    taskStatusPopUp.toolTip = L("改变这个 Task 的状态")
     let footer = NSStackView(
       views: [statusLabel, NSView(), taskStatusPopUp, deleteButton, pinButton, primaryButton])
     footer.orientation = .horizontal
@@ -371,7 +371,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     loadGeneration += 1
     let generation = loadGeneration
     let path = projectPath
-    statusLabel.stringValue = "读取中…"
+    statusLabel.stringValue = L("读取中…")
     Task { [weak self] in
       let payload = await Self.loadPayload(projectPath: path)
       guard let self, generation == self.loadGeneration else { return }
@@ -477,12 +477,12 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
 
   private func emptyMessage() -> String {
     guard payload.isStoreAvailable else {
-      return "尚无记录。在设置 → 智能体 → Session Memory 中开启记录。"
+      return L("尚无记录。在设置 → 智能体 → Session Memory 中开启记录。")
     }
     switch tab {
-    case .memories: return "该项目还没有 Memory。"
-    case .tasks: return "该项目还没有 Task。用命令面板的“新建 Task”创建。"
-    case .receipts: return "还没有 Agent 取用过上下文。"
+    case .memories: return L("该项目还没有 Memory。")
+    case .tasks: return L("该项目还没有 Task。用命令面板的\u{201c}新建 Task\u{201d}创建。")
+    case .receipts: return L("还没有 Agent 取用过上下文。")
     }
   }
 
@@ -498,8 +498,8 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
   }
 
   private func updateFooter() {
-    let scope = projectPath == nil ? "全部项目" : projectName
-    statusLabel.stringValue = "\(scope) · \(items.count) 项"
+    let scope = projectPath == nil ? L("全部项目") : projectName
+    statusLabel.stringValue = L("\(scope) · \(String(items.count)) 项")
     switch tab {
     case .memories:
       let record = selectedMemory
@@ -508,17 +508,17 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
       deleteButton.isHidden = record == nil
       taskStatusPopUp.isHidden = true
       primaryButton.isEnabled = true
-      primaryButton.title = record?.status == .disabled ? "启用" : "禁用"
+      primaryButton.title = record?.status == .disabled ? L("启用") : L("禁用")
       primaryButton.toolTip =
         record?.status == .disabled
-        ? "重新允许该 Memory 进入 Agent 检索" : "禁用后 MCP 检索完全看不到这条 Memory"
+        ? L("重新允许该 Memory 进入 Agent 检索") : L("禁用后 MCP 检索完全看不到这条 Memory")
       // 固定与禁用互斥：禁用中的条目先启用才能固定，避免出现「固定但不可见」的矛盾态。
       pinButton.isEnabled = record?.status != .disabled
-      pinButton.title = record?.status == .pinned ? "取消固定" : "固定"
+      pinButton.title = record?.status == .pinned ? L("取消固定") : L("固定")
       pinButton.toolTip =
         record?.status == .pinned
-        ? "移出固定席位，回到普通检索"
-        : "固定后无条件随项目上下文交给 Agent，不参与检索排名"
+        ? L("移出固定席位，回到普通检索")
+        : L("固定后无条件随项目上下文交给 Agent，不参与检索排名")
     case .tasks:
       let task = selectedTask
       primaryButton.isHidden = task == nil
@@ -531,11 +531,11 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
       // 已完成或已放弃的 Task 不再吸附新会话，按钮同步禁用，
       // 与「归入 Task」候选列表只列 open 的规则保持一致。
       primaryButton.isEnabled = task?.status == .open
-      primaryButton.title = "归入当前会话"
+      primaryButton.title = L("归入当前会话")
       primaryButton.toolTip =
         task?.status == .open
-        ? "把当前聚焦 Pane 的会话关联到这个 Task"
-        : "只有进行中的 Task 可以关联新会话"
+        ? L("把当前聚焦 Pane 的会话关联到这个 Task")
+        : L("只有进行中的 Task 可以关联新会话")
     case .receipts:
       primaryButton.isHidden = true
       pinButton.isHidden = true
@@ -572,7 +572,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
       loadMemorySources(record)
     case .tasks:
       guard let task = selectedTask else { return }
-      detailText.string = "读取中…"
+      detailText.string = L("读取中…")
       loadTaskDetail(task)
     case .receipts:
       guard let receipt = payload.receipts.first(where: { $0.id == selectedID }) else { return }
@@ -631,19 +631,19 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
   private func receiptDetailText(_ receipt: ContextReceipt) -> String {
     var blocks: [String] = []
     blocks.append(
-      "触发：\(receipt.trigger)　方式：\(receipt.deliveryMethod)　约 \(receipt.tokenEstimate) token")
+      L("触发：\(receipt.trigger)　方式：\(receipt.deliveryMethod)　约 \(String(receipt.tokenEstimate)) token"))
     if let query = receipt.query, !query.isEmpty {
-      blocks.append("查询：\(query)")
+      blocks.append(L("查询：\(query)"))
     }
     if receipt.memoryIDs.isEmpty {
-      blocks.append("交付的 Memory\n· 无")
+      blocks.append(L("交付的 Memory\n· 无"))
     } else {
       let lines = receipt.memoryIDs.map { identifier -> String in
         let title = UUID(uuidString: identifier)
           .flatMap { id in payload.memories.first { $0.id == id }?.title }
         return "· \(title ?? identifier)"
       }
-      blocks.append((["交付的 Memory"] + lines).joined(separator: "\n"))
+      blocks.append(([L("交付的 Memory")] + lines).joined(separator: "\n"))
     }
     return blocks.joined(separator: "\n\n")
   }
@@ -701,14 +701,10 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     guard tab == .memories, let record = selectedMemory, let window = view.window else { return }
     let alert = NSAlert()
     alert.alertStyle = .critical
-    alert.messageText = "删除这条 Memory？"
-    alert.informativeText = """
-      「\(record.title)」将被永久删除，连同它的来源回链一起消失，无法恢复。
-
-      如果只是想让它不再进入 Agent 上下文，用“禁用”即可。
-      """
-    alert.addButton(withTitle: "删除")
-    alert.addButton(withTitle: "取消")
+    alert.messageText = L("删除这条 Memory？")
+    alert.informativeText = L("「\(record.title)」将被永久删除，连同它的来源回链一起消失，无法恢复。\n\n如果只是想让它不再进入 Agent 上下文，用\u{201c}禁用\u{201d}即可。")
+    alert.addButton(withTitle: L("删除"))
+    alert.addButton(withTitle: L("取消"))
     alert.buttons.first?.hasDestructiveAction = true
     alert.beginSheetModal(for: window) { [weak self] response in
       guard let self, response == .alertFirstButtonReturn else { return }

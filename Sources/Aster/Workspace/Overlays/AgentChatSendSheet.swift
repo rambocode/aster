@@ -1,4 +1,5 @@
 import AppKit
+import AsterCore
 
 /// 发送前的人工确认面板。终端 stdout/stderr 并不天然分流，因此“Current Error”只表示
 /// 当前 Pane 最近命令以非零状态结束；正文仍来自用户选择的可见终端文本。
@@ -8,8 +9,8 @@ final class AgentChatSendSheetController: NSObject {
   private let presentation: AgentChatPresentation
   private let panel: NSPanel
   private let targetPopup = NSPopUpButton()
-  private let selectionCheck = NSButton(checkboxWithTitle: "终端选区", target: nil, action: nil)
-  private let transcriptCheck = NSButton(checkboxWithTitle: "当前终端 transcript", target: nil, action: nil)
+  private let selectionCheck = NSButton(checkboxWithTitle: L("终端选区"), target: nil, action: nil)
+  private let transcriptCheck = NSButton(checkboxWithTitle: L("当前终端 transcript"), target: nil, action: nil)
   private let preview = NSTextView()
   private let comment = NSTextView()
   private let errorLabel = NSTextField(labelWithString: "")
@@ -146,7 +147,7 @@ final class AgentChatSendSheetController: NSObject {
       selection: selection,
       transcript: transcript
     ) else {
-      errorLabel.stringValue = model.notice ?? "无法预填聊天内容。"
+      errorLabel.stringValue = model.notice ?? L("无法预填聊天内容。")
       return
     }
     dismiss()
@@ -159,12 +160,12 @@ final class AgentChatSendSheetController: NSObject {
       .filter { !$0.isEmpty }
       .joined(separator: "\n\n")
     guard !text.isEmpty else {
-      errorLabel.stringValue = "没有可复制的内容。"
+      errorLabel.stringValue = L("没有可复制的内容。")
       return
     }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)
-    errorLabel.stringValue = "已复制当前消息。"
+    errorLabel.stringValue = L("已复制当前消息。")
   }
 
   private func dismiss() {

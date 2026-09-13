@@ -71,7 +71,7 @@ final class InlineColorPickerViewController: NSViewController {
     let label = makeLabel(titleText, size: 11.5, weight: .medium, color: SettingsTheme.ink)
     label.lineBreakMode = .byTruncatingTail
     label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    let close = IconHoverButton(symbol: "xmark", accessibilityDescription: "关闭取色器") {
+    let close = IconHoverButton(symbol: "xmark", accessibilityDescription: L("关闭取色器")) {
       [weak self] in
       self?.dismissPicker()
     }

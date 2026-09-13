@@ -922,7 +922,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
         return nil
       }
       let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
-      let bounded = normalized.isEmpty ? "命令" : String(normalized.prefix(240))
+      let bounded = normalized.isEmpty ? L("命令") : String(normalized.prefix(240))
       commandOutlineTitles[inputStart.row] = bounded
       return TerminalCommandOutlineEntry(
         title: bounded,
@@ -1287,7 +1287,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
         }
         return true
       } catch {
-        Self.presentImportError(error, title: "无法插入手机内容")
+        Self.presentImportError(error, title: L("无法插入手机内容"))
         return false
       }
     }
@@ -1635,7 +1635,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
   @objc func pasteFileBase64Encoded(_ sender: Any?) {
     guard permitsUserInputAction() else { return }
     let panel = NSOpenPanel()
-    panel.title = "选择要以 Base64 粘贴的文件"
+    panel.title = L("选择要以 Base64 粘贴的文件")
     panel.canChooseFiles = true
     panel.canChooseDirectories = false
     panel.allowsMultipleSelection = false
@@ -1657,8 +1657,8 @@ final class AsterTerminalView: LocalProcessTerminalView {
   @objc func insertFilePath(_ sender: Any?) {
     guard permitsUserInputAction() else { return }
     let panel = NSOpenPanel()
-    panel.title = "插入文件路径"
-    panel.prompt = "插入"
+    panel.title = L("插入文件路径")
+    panel.prompt = L("插入")
     panel.canChooseFiles = true
     panel.canChooseDirectories = true
     panel.allowsMultipleSelection = true
@@ -1684,7 +1684,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
     do {
       destination = try TerminalImportedFileStore.makeScreenshotDestination()
     } catch {
-      Self.presentImportError(error, title: "无法开始截屏")
+      Self.presentImportError(error, title: L("无法开始截屏"))
       return
     }
 
@@ -1701,7 +1701,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
       screenshotCaptureProcess = process
     } catch {
       try? FileManager.default.removeItem(at: destination)
-      Self.presentImportError(error, title: "无法开始截屏")
+      Self.presentImportError(error, title: L("无法开始截屏"))
     }
   }
 
@@ -1721,7 +1721,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
       }
     } catch {
       try? FileManager.default.removeItem(at: destination)
-      Self.presentImportError(error, title: "无法插入截屏")
+      Self.presentImportError(error, title: L("无法插入截屏"))
     }
   }
 
@@ -1732,13 +1732,13 @@ final class AsterTerminalView: LocalProcessTerminalView {
 
   /// 右键菜单补齐复制、粘贴与 Paste As。动作走 responder 自身，不依赖主菜单焦点。
   override func menu(for event: NSEvent) -> NSMenu? {
-    let menu = NSMenu(title: "终端")
-    let copyItem = NSMenuItem(title: "复制", action: #selector(copy(_:)), keyEquivalent: "")
+    let menu = NSMenu(title: L("终端"))
+    let copyItem = NSMenuItem(title: L("复制"), action: #selector(copy(_:)), keyEquivalent: "")
     copyItem.target = self
     copyItem.isEnabled = selectionActive
     menu.addItem(copyItem)
     let sendToChatItem = NSMenuItem(
-      title: "发送选区到 Chat",
+      title: L("发送选区到 Chat"),
       action: #selector(sendSelectionToChat(_:)),
       keyEquivalent: ""
     )
@@ -1746,25 +1746,25 @@ final class AsterTerminalView: LocalProcessTerminalView {
     sendToChatItem.isEnabled = selectionActive && onSendSelectionToChat != nil
     menu.addItem(sendToChatItem)
     menu.addItem(.separator())
-    let pasteItem = NSMenuItem(title: "粘贴", action: #selector(paste(_:)), keyEquivalent: "")
+    let pasteItem = NSMenuItem(title: L("粘贴"), action: #selector(paste(_:)), keyEquivalent: "")
     pasteItem.target = self
     menu.addItem(pasteItem)
 
-    let pasteAsItem = NSMenuItem(title: "粘贴为", action: nil, keyEquivalent: "")
-    let pasteAsMenu = NSMenu(title: "粘贴为")
+    let pasteAsItem = NSMenuItem(title: L("粘贴为"), action: nil, keyEquivalent: "")
+    let pasteAsMenu = NSMenu(title: L("粘贴为"))
     pasteAsMenu.addItem(
-      targetedMenuItem("粘贴选区", #selector(pasteSelection(_:)), enabled: selectionActive)
+      targetedMenuItem(L("粘贴选区"), #selector(pasteSelection(_:)), enabled: selectionActive)
     )
     pasteAsMenu.addItem(
-      targetedMenuItem("粘贴 Base64 编码文件…", #selector(pasteFileBase64Encoded(_:)))
+      targetedMenuItem(L("粘贴 Base64 编码文件…"), #selector(pasteFileBase64Encoded(_:)))
     )
     pasteAsMenu.addItem(
-      targetedMenuItem("转义特殊字符后粘贴", #selector(pasteEscapingSpecialCharacters(_:)))
+      targetedMenuItem(L("转义特殊字符后粘贴"), #selector(pasteEscapingSpecialCharacters(_:)))
     )
-    pasteAsMenu.addItem(targetedMenuItem("括号粘贴", #selector(pasteBracketed(_:))))
+    pasteAsMenu.addItem(targetedMenuItem(L("括号粘贴"), #selector(pasteBracketed(_:))))
     pasteAsMenu.addItem(
       targetedMenuItem(
-        "粘贴并在 Composer 中继续",
+        L("粘贴并在 Composer 中继续"),
         #selector(pasteAndContinueInComposer(_:)),
         enabled: onPasteIntoComposer != nil
       ))
@@ -1906,37 +1906,38 @@ final class AsterTerminalView: LocalProcessTerminalView {
   private static func presentPasteConfirmation(_ analysis: PasteAnalysis) -> Bool {
     let alert = NSAlert()
     alert.alertStyle = .warning
-    alert.messageText = "粘贴的内容可能立即执行命令"
+    alert.messageText = L("粘贴的内容可能立即执行命令")
     let reasons = analysis.risks
       .map { risk -> String in
         switch risk {
-        case .multipleLines: "包含多行"
-        case .trailingNewline: "末尾包含换行"
-        case .privilegeEscalation: "包含 sudo 或 su"
-        case .controlCharacters: "包含不可见控制字符"
+        case .multipleLines: L("包含多行")
+        case .trailingNewline: L("末尾包含换行")
+        case .privilegeEscalation: L("包含 sudo 或 su")
+        case .controlCharacters: L("包含不可见控制字符")
         }
       }
       .sorted()
-      .joined(separator: "、")
-    alert.informativeText = "检测到：\(reasons)\n\n\(analysis.preview())"
-    alert.addButton(withTitle: "仍然粘贴")
-    alert.addButton(withTitle: "取消")
+      .joined(separator: L("、"))
+    let preview = analysis.preview()
+    alert.informativeText = L("检测到：\(reasons)\n\n\(preview)")
+    alert.addButton(withTitle: L("仍然粘贴"))
+    alert.addButton(withTitle: L("取消"))
     return alert.runModal() == .alertFirstButtonReturn
   }
 
   private static func presentFilePasteError(_ error: Error) {
     let alert = NSAlert()
     alert.alertStyle = .warning
-    alert.messageText = "无法粘贴该文件"
+    alert.messageText = L("无法粘贴该文件")
     switch error {
     case TerminalFilePasteError.fileTooLarge:
-      alert.informativeText = "文件超过 8 MiB 限制。"
+      alert.informativeText = L("文件超过 8 MiB 限制。")
     case TerminalFilePasteError.unsupportedFile:
-      alert.informativeText = "只能读取普通文件，不能读取目录、管道、socket 或设备。"
+      alert.informativeText = L("只能读取普通文件，不能读取目录、管道、socket 或设备。")
     default:
-      alert.informativeText = "文件不可读或在读取期间发生变化。"
+      alert.informativeText = L("文件不可读或在读取期间发生变化。")
     }
-    alert.addButton(withTitle: "好")
+    alert.addButton(withTitle: L("好"))
     alert.runModal()
   }
 
@@ -1946,15 +1947,15 @@ final class AsterTerminalView: LocalProcessTerminalView {
     alert.messageText = title
     switch error {
     case TerminalImportError.emptyData, TerminalImportError.invalidCapturedFile:
-      alert.informativeText = "系统没有返回可用的图片文件。"
+      alert.informativeText = L("系统没有返回可用的图片文件。")
     case TerminalImportError.fileTooLarge:
-      alert.informativeText = "图片超过 32 MiB 限制。"
+      alert.informativeText = L("图片超过 32 MiB 限制。")
     case TerminalImportError.unsupportedType:
-      alert.informativeText = "仅支持 PNG、JPEG、HEIC、TIFF 或 PDF。"
+      alert.informativeText = L("仅支持 PNG、JPEG、HEIC、TIFF 或 PDF。")
     default:
-      alert.informativeText = "无法创建或读取临时文件。"
+      alert.informativeText = L("无法创建或读取临时文件。")
     }
-    alert.addButton(withTitle: "好")
+    alert.addButton(withTitle: L("好"))
     alert.runModal()
   }
 
@@ -2773,7 +2774,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       default: inheritedEnvironment["SHELL"] ?? "/bin/zsh"
     )
     if !FileManager.default.isExecutableFile(atPath: shell) {
-      appendStartupWarning("配置的 Shell 不可执行：\(shell)。已回退到 /bin/zsh。")
+      appendStartupWarning(L("配置的 Shell 不可执行：\(shell)。已回退到 /bin/zsh。"))
       shell = "/bin/zsh"
     }
     let resourcesDirectory = AsterResourceLocations.resourcesDirectory()?.path
@@ -2806,7 +2807,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     {
       launchDirectory = FileManager.default.homeDirectoryForCurrentUser.path
       currentWorkingDirectory = launchDirectory
-      appendStartupWarning("原工作目录不可用，已回退到主目录。")
+      appendStartupWarning(L("原工作目录不可用，已回退到主目录。"))
     }
     currentWorkingDirectory = launchDirectory
     currentWorkingDirectoryIsLocal = true
@@ -2824,7 +2825,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     isRunning = view.process.running
     if !isRunning {
       lifecycleState = .startFailed
-      if startupError == nil { startupError = "无法创建本地终端进程。" }
+      if startupError == nil { startupError = L("无法创建本地终端进程。") }
       // PTY 启动失败只记录稳定状态，不记录 Shell 路径、工作目录或环境变量。
       diagnostics.record(
         "terminal.process_start_failed",
@@ -2866,7 +2867,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       default: inheritedEnvironment["SHELL"] ?? "/bin/zsh"
     )
     if !FileManager.default.isExecutableFile(atPath: shell) {
-      appendStartupWarning("配置的 Shell 不可执行，已回退到 /bin/zsh。")
+      appendStartupWarning(L("配置的 Shell 不可执行，已回退到 /bin/zsh。"))
       shell = "/bin/zsh"
     }
     let resourcesDirectory = AsterResourceLocations.resourcesDirectory()?.path
@@ -2894,7 +2895,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       || !isDirectory.boolValue
     {
       launchDirectory = FileManager.default.homeDirectoryForCurrentUser.path
-      appendStartupWarning("原工作目录不可用，已回退到主目录。")
+      appendStartupWarning(L("原工作目录不可用，已回退到主目录。"))
     }
     currentWorkingDirectory = launchDirectory
     currentWorkingDirectoryIsLocal = true
@@ -3119,7 +3120,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       } else {
         self.isRunning = false
         self.lifecycleState = .startFailed
-        self.startupError = GhosttyApp.shared.startupError ?? "无法创建 Ghostty terminal surface。"
+        self.startupError = GhosttyApp.shared.startupError ?? L("无法创建 Ghostty terminal surface。")
         self.diagnostics.record(
           "terminal.process_start_failed",
           level: .error,
@@ -3138,7 +3139,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       view.surfaceCreationDisabled = true
       isRunning = false
       lifecycleState = .startFailed
-      startupError = "受管终端不可用：\(managedFailure)"
+      startupError = L("受管终端不可用：\(managedFailure)")
       return view
     }
     view.createSurface()
@@ -3269,13 +3270,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         case .exited(let status)?:
           let exit = status.exitCode ?? code
           self.managedExitSummary =
-            "远端进程已退出" + (exit.map { "（状态码 \($0)）" } ?? "") + "。"
+            exit.map({ L("远端进程已退出（状态码 \(String($0))）。") }) ?? L("远端进程已退出。")
           self.applyProcessExit(code: exit)
         case .missing?, .serverRestarted?:
-          self.managedExitSummary = "远端进程已结束，服务端已回收该终端。"
+          self.managedExitSummary = L("远端进程已结束，服务端已回收该终端。")
           self.applyProcessExit(code: code)
         case .unreachable(_, let reason)?:
-          self.managedExitSummary = "远端服务暂时不可达：\(reason)"
+          self.managedExitSummary = L("远端服务暂时不可达：\(reason)")
           self.applyProcessExit(code: code)
         case nil:
           self.applyProcessExit(code: code)
@@ -3315,7 +3316,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 终端进程真实结束：写结束事件并收敛全部运行态。
   /// 测试用：不起真实进程，直接把会话置为"远端进程已结束"。生产代码不调用。
   func simulateManagedExitForTesting(code: Int32?) {
-    managedExitSummary = "远端进程已退出" + (code.map { "（状态码 \($0)）" } ?? "") + "。"
+    managedExitSummary = code.map({ L("远端进程已退出（状态码 \(String($0))）。") }) ?? L("远端进程已退出。")
     applyProcessExit(code: code)
   }
 
@@ -3662,13 +3663,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 动作上：只说“写入失败”，用户无从判断该解锁 Pane、退出 Vi 还是等终端就绪。
   var promptWriteBlocker: String? {
     if let ghosttyView {
-      guard ghosttyView.isProcessRunning else { return "终端进程已退出" }
-      return ghosttyView.readOnly ? "Pane 处于只读模式" : nil
+      guard ghosttyView.isProcessRunning else { return L("终端进程已退出") }
+      return ghosttyView.readOnly ? L("Pane 处于只读模式") : nil
     }
-    guard let terminalView else { return "终端视图尚未就绪" }
-    guard terminalView.process.running else { return "终端进程已退出" }
-    if terminalView.isReadOnly { return "Pane 处于只读模式" }
-    if terminalView.navigationMode != .normal { return "Pane 处于 Vi/Hint 模式" }
+    guard let terminalView else { return L("终端视图尚未就绪") }
+    guard terminalView.process.running else { return L("终端进程已退出") }
+    if terminalView.isReadOnly { return L("Pane 处于只读模式") }
+    if terminalView.navigationMode != .normal { return L("Pane 处于 Vi/Hint 模式") }
     return nil
   }
 
@@ -3889,7 +3890,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         let text = view.readLine(at: inputAnchor, startingAt: UInt32(inputStart.column))
       {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        title = normalized.isEmpty ? "命令" : String(normalized.prefix(240))
+        title = normalized.isEmpty ? L("命令") : String(normalized.prefix(240))
         ghosttyCommandOutlineTitles[inputStart.row] = title
         jumpAvailable = ghosttyBufferAnchors[promptStart.row]
           .flatMap { view.resolveBufferPoint($0) } != nil
@@ -3974,7 +3975,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   /// 关闸提示文案。复用 `startupError` 警告条（`lifecycleState` 非 `.startFailed` 时
   /// 它按警告显示），不新增一套提示位。
-  static let managedInputGateNotice = "正在同步远端会话快照，暂时不接受键盘输入。"
+  static var managedInputGateNotice: String { L("正在同步远端会话快照，暂时不接受键盘输入。") }
 
   /// 显示桥最近一次非正常退出的诊断：退出码与退出瞬间的画面尾部。
   /// 桥进程（`aster-session terminal attach`）把服务端拒绝码打在 stderr，也就是
@@ -4866,11 +4867,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       ? shell.resolvedNotifyOnWatchFinish
       : (exitCode == 0 ? shell.notifyOnFinish : shell.notifyOnError)
     guard enabled else { return }
-    let title = exitCode == 0 ? "命令已完成" : "命令执行失败"
+    let title = exitCode == 0 ? L("命令已完成") : L("命令执行失败")
     let command = submittedCommand ?? ""
     let body = !command.isEmpty
       ? command
-      : (exitCode == 0 ? "终端任务已结束。" : "退出状态：\(exitCode)")
+      : (exitCode == 0 ? L("终端任务已结束。") : L("退出状态：\(String(exitCode))"))
     post(
       TerminalNotification(title: title, body: body, urgency: exitCode == 0 ? .normal : .critical),
       category: exitCode == 0 ? .commandFinish : .errorExit
@@ -5078,8 +5079,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       else { return }
       post(
         TerminalNotification(
-          title: "Agent 等待输入",
-          body: "\(provider.commandName) 正在等待确认或输入。"
+          title: L("Agent 等待输入"),
+          body: L("\(provider.commandName) 正在等待确认或输入。")
         ),
         // Agent lifecycle 是 Aster 自身的任务状态，不应受 Shell Controlled
         // 对应用 OSC 通知的开关误伤；沿用命令完成分类获得独立的声音/前台策略。
@@ -5093,8 +5094,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       guard preferences?.configuration.agents.notifyTaskComplete == true else { return }
       post(
         TerminalNotification(
-          title: "Agent 任务已完成",
-          body: "\(provider.commandName) 已结束当前任务。"
+          title: L("Agent 任务已完成"),
+          body: L("\(provider.commandName) 已结束当前任务。")
         ),
         category: .commandFinish
       )

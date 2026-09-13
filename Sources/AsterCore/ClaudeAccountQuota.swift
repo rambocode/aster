@@ -58,7 +58,7 @@ public enum ClaudeAccountQuotaParser {
       let resetsAt = (entry["resets_at"] as? String).flatMap(parseISO8601)
       return AgentUsageWindow(
         kind: .modelWeekly, usedPercent: percent.doubleValue, resetsAt: resetsAt,
-        detail: "\(name) 的每周配额，与总周配额分开计算", label: name)
+        detail: L("\(name) 的每周配额，与总周配额分开计算"), label: name)
     }
     return nil
   }

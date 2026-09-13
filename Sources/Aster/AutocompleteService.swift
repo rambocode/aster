@@ -12,11 +12,11 @@ enum AutocompleteServiceError: Error, LocalizedError, Equatable {
 
   var errorDescription: String? {
     switch self {
-    case .invalidStateDirectory: "Autocomplete 状态目录不可用。"
-    case .unsafeStateFile(let path): "拒绝读取或覆盖非普通状态文件：\(path)"
-    case .bundledDatabaseUnavailable: "找不到有效的内置 Autocomplete 规格。"
-    case .updateResponseInvalid: "Fig 规格更新响应无效。"
-    case .tokenUnavailable: "无法创建安全的 Aster CLI token。"
+    case .invalidStateDirectory: L("Autocomplete 状态目录不可用。")
+    case .unsafeStateFile(let path): L("拒绝读取或覆盖非普通状态文件：\(path)")
+    case .bundledDatabaseUnavailable: L("找不到有效的内置 Autocomplete 规格。")
+    case .updateResponseInvalid: L("Fig 规格更新响应无效。")
+    case .tokenUnavailable: L("无法创建安全的 Aster CLI token。")
     }
   }
 }
@@ -1083,7 +1083,7 @@ final class AutocompleteService {
         let kind: AutocompleteCandidateKind = isDirectory ? .folder : .file
         return AutocompleteCandidate(
           insertText: insert,
-          description: isDirectory ? "目录" : "文件",
+          description: isDirectory ? L("目录") : L("文件"),
           kind: kind,
           score: AutocompleteRelevance.score(kind: kind, typed: token, candidate: insert),
           replacement: .currentToken(start: tokenStart)

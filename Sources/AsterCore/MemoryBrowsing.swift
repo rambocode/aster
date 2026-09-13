@@ -11,7 +11,7 @@ public enum MemoryBrowserTab: String, Codable, Equatable, Sendable, CaseIterable
     switch self {
     case .memories: "Memory"
     case .tasks: "Task"
-    case .receipts: "Context 记录"
+    case .receipts: L("Context 记录")
     }
   }
 }
@@ -98,32 +98,32 @@ public enum MemoryBrowsing {
   /// 领域模型由记录层拥有，浏览层不往里加展示用成员。
   public static func typeLabel(_ type: MemoryType) -> String {
     switch type {
-    case .session: "会话"
+    case .session: L("会话")
     case .task: "Task"
-    case .decision: "决策"
-    case .failure: "失败经验"
-    case .knowledge: "知识"
+    case .decision: L("决策")
+    case .failure: L("失败经验")
+    case .knowledge: L("知识")
     }
   }
 
   /// Memory 状态的中文名，只在非 active 时进入副标题。
   public static func statusLabel(_ status: MemoryStatus) -> String {
     switch status {
-    case .active: "生效中"
-    case .pinned: "已固定"
-    case .archived: "已归档"
-    case .superseded: "已被取代"
-    case .disabled: "已禁用"
+    case .active: L("生效中")
+    case .pinned: L("已固定")
+    case .archived: L("已归档")
+    case .superseded: L("已被取代")
+    case .disabled: L("已禁用")
     }
   }
 
   /// 来源回链的中文名，用于详情页的「来源」段。
   public static func sourceLabel(_ kind: MemorySourceRef.Kind) -> String {
     switch kind {
-    case .session: "会话"
-    case .event: "事件"
+    case .session: L("会话")
+    case .event: L("事件")
     case .task: "Task"
-    case .gitCommit: "Git 提交"
+    case .gitCommit: L("Git 提交")
     }
   }
 
@@ -175,7 +175,7 @@ public enum MemoryBrowsing {
     }
     return MemoryListItem(
       id: record.id,
-      title: record.title.isEmpty ? "（无标题）" : record.title,
+      title: record.title.isEmpty ? L("（无标题）") : record.title,
       subtitle: parts.joined(separator: " · "),
       typeLabel: type,
       extractorLabel: extractor,
@@ -214,8 +214,8 @@ public enum MemoryBrowsing {
       let query = receipt.query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
       let count = receipt.memoryIDs.count
       let subtitle = [
-        "\(count) 条 Memory",
-        "约 \(receipt.tokenEstimate) token",
+        L("\(String(count)) 条 Memory"),
+        L("约 \(String(receipt.tokenEstimate)) token"),
         receipt.deliveryMethod,
       ].joined(separator: " · ")
       return ContextReceiptItem(
@@ -244,7 +244,7 @@ public enum MemoryBrowsing {
     if !content.isEmpty { blocks.append(content) }
     if !sources.isEmpty {
       let lines = sources.map { "· \(sourceLabel($0.kind))：\($0.identifier)" }
-      blocks.append((["来源"] + lines).joined(separator: "\n"))
+      blocks.append(([L("来源")] + lines).joined(separator: "\n"))
     }
     return blocks.joined(separator: "\n\n")
   }
@@ -292,11 +292,11 @@ public enum MemoryBrowsing {
     let status = statusLabel(task.status)
     let timestamp = timestampLabel(task.updatedAt, now: now, calendar: calendar)
     let subtitle = [
-      status, "\(sessionCount) 个会话", "\(memoryCount) 条 Memory", timestamp,
+      status, L("\(String(sessionCount)) 个会话"), L("\(String(memoryCount)) 条 Memory"), timestamp,
     ].joined(separator: " · ")
     return MemoryListItem(
       id: task.id,
-      title: task.title.isEmpty ? "（未命名 Task）" : task.title,
+      title: task.title.isEmpty ? L("（未命名 Task）") : task.title,
       subtitle: subtitle,
       typeLabel: status,
       extractorLabel: "",
@@ -338,27 +338,27 @@ public enum MemoryBrowsing {
     calendar: Calendar = .current
   ) -> String {
     var blocks: [String] = []
-    blocks.append("状态：\(statusLabel(task.status))　项目：\(task.projectPath)")
+    blocks.append(L("状态：\(statusLabel(task.status))　项目：\(task.projectPath)"))
     if let summary = task.summary?.trimmingCharacters(in: .whitespacesAndNewlines),
       !summary.isEmpty
     {
       blocks.append(summary)
     }
     if sessions.isEmpty {
-      blocks.append("关联会话\n· 尚未归入任何会话")
+      blocks.append(L("关联会话") + "\n" + L("· 尚未归入任何会话"))
     } else {
       let lines = sessions.map { session -> String in
         var parts = [timestampLabel(session.startedAt, now: now, calendar: calendar)]
         if let provider = session.agentProvider, !provider.isEmpty { parts.append(provider) }
-        parts.append("\(session.commandCount) 条命令")
-        if session.failureCount > 0 { parts.append("\(session.failureCount) 次失败") }
+        parts.append(L("\(String(session.commandCount)) 条命令"))
+        if session.failureCount > 0 { parts.append(L("\(String(session.failureCount)) 次失败")) }
         if let title = session.memoryTitle, !title.isEmpty { parts.append(title) }
         return "· " + parts.joined(separator: " · ")
       }
-      blocks.append((["关联会话"] + lines).joined(separator: "\n"))
+      blocks.append(([L("关联会话")] + lines).joined(separator: "\n"))
     }
     if !memoryTitles.isEmpty {
-      blocks.append((["已提炼 Memory"] + memoryTitles.map { "· \($0)" }).joined(separator: "\n"))
+      blocks.append(([L("已提炼 Memory")] + memoryTitles.map { "· \($0)" }).joined(separator: "\n"))
     }
     return blocks.joined(separator: "\n\n")
   }
@@ -367,11 +367,11 @@ public enum MemoryBrowsing {
 
   /// 日期分组标题：今天 / 昨天 / `yyyy-MM-dd`。
   public static func dayLabel(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
-    if calendar.isDate(date, inSameDayAs: now) { return "今天" }
+    if calendar.isDate(date, inSameDayAs: now) { return L("今天") }
     if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
       calendar.isDate(date, inSameDayAs: yesterday)
     {
-      return "昨天"
+      return L("昨天")
     }
     let parts = calendar.dateComponents([.year, .month, .day], from: date)
     return String(

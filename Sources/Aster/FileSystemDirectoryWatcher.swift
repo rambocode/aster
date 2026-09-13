@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import AsterCore
 
 enum FileSystemDirectoryWatcherError: Error, LocalizedError, Equatable {
   case cannotOpenDirectory(Int32)
@@ -8,9 +9,9 @@ enum FileSystemDirectoryWatcherError: Error, LocalizedError, Equatable {
   var errorDescription: String? {
     switch self {
     case .cannotOpenDirectory(let code):
-      "无法监听本地目录（errno=\(code)）。"
+      L("无法监听本地目录（errno=\(String(code))）。")
     case .cannotOpenFile(let code):
-      "无法监听本地文件（errno=\(code)）。"
+      L("无法监听本地文件（errno=\(String(code))）。")
     }
   }
 }

@@ -31,9 +31,9 @@ final class SidebarOptionsButton: NSButton {
     self.menuProvider = menuProvider
     super.init(frame: .zero)
     image = NSImage(
-      systemSymbolName: "line.3.horizontal.decrease", accessibilityDescription: "整理标签")
+      systemSymbolName: "line.3.horizontal.decrease", accessibilityDescription: L("整理标签"))
     imagePosition = .imageOnly
-    toolTip = "整理标签"
+    toolTip = L("整理标签")
     isBordered = false
     // Otty 的整理按钮与 TABS eyebrow 同属三级 chrome，不跟随系统默认 control tint；
     // 否则 Floating Card 等主题切换后图标会突然变成主文字色。
@@ -258,10 +258,10 @@ final class TabRowButton: NSButton {
     let close: NSButton
     if horizontal {
       // 胶囊内的小号关闭按钮：IconHoverButton 自带悬停底色反馈。
-      let hoverClose = IconHoverButton(symbol: "xmark", accessibilityDescription: "关闭标签页") {
+      let hoverClose = IconHoverButton(symbol: "xmark", accessibilityDescription: L("关闭标签页")) {
         onClose?()
       }
-      hoverClose.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "关闭标签页")?
+      hoverClose.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: L("关闭标签页"))?
         .withSymbolConfiguration(.init(pointSize: 8, weight: .bold))
       hoverClose.restingTint = selected ? resolvedActiveForeground : resolvedForeground
       close = hoverClose
@@ -273,8 +273,8 @@ final class TabRowButton: NSButton {
       close.contentTintColor = selected ? resolvedActiveForeground : resolvedForeground
     }
     close.identifier = NSUserInterfaceItemIdentifier("sidebar-tab-close-\(tab.id.uuidString)")
-    close.toolTip = "关闭标签页"
-    close.setAccessibilityLabel("关闭标签页 \(self.displayTitleProvider())")
+    close.toolTip = L("关闭标签页")
+    close.setAccessibilityLabel(L("关闭标签页 \(self.displayTitleProvider())"))
     close.translatesAutoresizingMaskIntoConstraints = false
     accessorySlot.addSubview(close)
     closeButton = close
@@ -413,7 +413,7 @@ final class TabRowButton: NSButton {
     let value = displayTitleProvider()
     titleLabel?.stringValue = value
     titleLabel?.toolTip = displayTitleToolTip
-    closeButton?.setAccessibilityLabel("关闭标签页 \(value)")
+    closeButton?.setAccessibilityLabel(L("关闭标签页 \(value)"))
   }
 
   /// 只替换标签的状态附件，不重建 Sidebar、Pane 或长期存活的终端视图。Agent hook
@@ -453,7 +453,7 @@ final class TabRowButton: NSButton {
     let paneCount = tab.runtimes.count
     if paneCount > 1 {
       trailingLabel.stringValue = "\(paneCount)"
-      trailingLabel.toolTip = "此标签页有 \(paneCount) 个 Pane"
+      trailingLabel.toolTip = L("此标签页有 \(String(paneCount)) 个 Pane")
     } else {
       trailingLabel.stringValue = URL(
         fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
@@ -572,28 +572,28 @@ final class TabRowButton: NSButton {
       let tint = selected ? resolvedActiveForeground : resolvedForeground
       accessory = TabActivitySpinnerView(tint: tint, style: runningAnimationStyle)
       stateName = "running"
-      accessibilityLabel = "正在运行"
+      accessibilityLabel = L("正在运行")
     case .awaitingInput where showsAwaitingInput && hasBadgeOwner:
       accessory = makeLabel("✋", size: 11, weight: .semibold, color: AsterTheme.warning)
       stateName = "awaiting-input"
-      accessibilityLabel = "等待输入"
+      accessibilityLabel = L("等待输入")
     case .error where showsFailure && showsExitStatus:
       accessory = makeLabel(
         tab.lastCommandExitStatus.map(String.init) ?? "!",
         size: 10, weight: .semibold, color: AsterTheme.warning, monospaced: true
       )
       stateName = "error"
-      accessibilityLabel = "执行失败"
+      accessibilityLabel = L("执行失败")
     case .finished where showsFinished && showsExitStatus && !suppressesReadBadge
       && hasBadgeOwner:
       accessory = makeLabel("●", size: 9, weight: .semibold, color: AsterTheme.accent)
       stateName = "finished"
-      accessibilityLabel = "已完成"
+      accessibilityLabel = L("已完成")
     case .completed where showsFinished && showsExitStatus && !suppressesReadBadge
       && hasBadgeOwner:
       accessory = makeLabel("✓", size: 11, weight: .semibold, color: AsterTheme.accent)
       stateName = "completed"
-      accessibilityLabel = "刚刚完成"
+      accessibilityLabel = L("刚刚完成")
     default:
       if !horizontal, let icon = idleTabIcon,
         let iconView = TabIconArtwork.makeView(for: icon, fallbackTint: selected ? resolvedActiveForeground : resolvedForeground)
@@ -601,28 +601,28 @@ final class TabRowButton: NSButton {
         // 纵向行静态图标：规则图标或 Agent 图标，有状态发生时上面的分支会接管。
         accessory = iconView
         stateName = "icon"
-        accessibilityLabel = icon.name.map { "标签图标 \($0)" } ?? "空闲"
+        accessibilityLabel = icon.name.map { L("标签图标 \($0)") } ?? L("空闲")
       } else if !horizontal, tab.activeSession?.sshRemoteEndpoint != nil {
         let icon = NSImageView()
         icon.image = NSImage(
-          systemSymbolName: "desktopcomputer", accessibilityDescription: "SSH 远端")?
+          systemSymbolName: "desktopcomputer", accessibilityDescription: L("SSH 远端"))?
           .withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
         icon.contentTintColor = AsterTheme.tertiaryInk
         accessory = icon
         stateName = "ssh-remote"
-        accessibilityLabel = "SSH 远端"
+        accessibilityLabel = L("SSH 远端")
       } else if badgePlacement == .combined, let tabIcon,
         let iconView = TabIconArtwork.makeView(for: tabIcon, fallbackTint: selected ? resolvedActiveForeground : resolvedForeground)
       {
         // 「合并」摆放：平时状态槽显示用户图标，有状态发生时上面的分支会接管。
         accessory = iconView
         stateName = "icon"
-        accessibilityLabel = "空闲"
+        accessibilityLabel = L("空闲")
       } else if horizontal {
         // 横向胶囊里放不下 shell 名，idle 只留空槽占位。
         accessory = makeLabel("", size: 10, color: AsterTheme.tertiaryInk, monospaced: true)
         stateName = "idle"
-        accessibilityLabel = "空闲"
+        accessibilityLabel = L("空闲")
       } else {
         // 纵向行无图标无状态：状态槽整体收起，shell 名由右侧 trailingLabel 常驻显示。
         return nil

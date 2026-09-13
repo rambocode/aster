@@ -1,4 +1,5 @@
 import AppKit
+import AsterCore
 import Foundation
 @preconcurrency import GhosttyKit
 import os
@@ -43,12 +44,12 @@ final class GhosttyApp {
     guard resolveResources() else { return false }
     if !didInitializeLibrary {
       guard ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv) == GHOSTTY_SUCCESS else {
-        startupError = "libghostty 初始化失败。"
+        startupError = L("libghostty 初始化失败。")
         ghosttyLogger.error("ghostty_init failed")
         return false
       }
       guard ghostty_aster_extension_abi_version() == GHOSTTY_ASTER_EXTENSION_ABI_VERSION else {
-        startupError = "libghostty 的 Aster 扩展 ABI 版本不匹配。"
+        startupError = L("libghostty 的 Aster 扩展 ABI 版本不匹配。")
         ghosttyLogger.error("Aster Ghostty extension ABI mismatch")
         return false
       }
@@ -82,7 +83,7 @@ final class GhosttyApp {
     }
 
     guard let created = ghostty_app_new(&runtime, config) else {
-      startupError = "无法创建 libghostty application。"
+      startupError = L("无法创建 libghostty application。")
       ghostty_config_free(config)
       ghosttyLogger.error("ghostty_app_new failed")
       return false
@@ -103,7 +104,7 @@ final class GhosttyApp {
   private func makeConfig(configurationText: String) -> ghostty_config_t? {
     configurationDiagnostics = []
     guard let config = ghostty_config_new() else {
-      startupError = "无法分配 libghostty 配置。"
+      startupError = L("无法分配 libghostty 配置。")
       return nil
     }
     let file = FileManager.default.temporaryDirectory
@@ -115,7 +116,7 @@ final class GhosttyApp {
       file.path.withCString { ghostty_config_load_file(config, $0) }
     } catch {
       ghostty_config_free(config)
-      startupError = "无法准备 libghostty 配置。"
+      startupError = L("无法准备 libghostty 配置。")
       ghosttyLogger.error("temporary config preparation failed")
       return nil
     }
@@ -144,7 +145,7 @@ final class GhosttyApp {
   var configurationWarning: String? {
     guard let first = configurationDiagnostics.first else { return nil }
     let summary = Self.stripConfigurationFilePrefix(first)
-    return "libghostty 配置有 \(configurationDiagnostics.count) 处未生效：\(summary)"
+    return L("libghostty 配置有 \(String(configurationDiagnostics.count)) 处未生效：\(summary)")
   }
 
   /// 诊断原文形如 `<临时文件路径>.conf:<行号>:<字段>: <原因>`；临时路径每次随机、对用户没有
@@ -167,7 +168,7 @@ final class GhosttyApp {
       let root = bundle.resourceURL
     else {
       unsetenv("GHOSTTY_RESOURCES_DIR")
-      startupError = "未找到 libghostty 资源 Bundle。"
+      startupError = L("未找到 libghostty 资源 Bundle。")
       return false
     }
     let ghostty = root.appendingPathComponent("ghostty", isDirectory: true)
@@ -179,7 +180,7 @@ final class GhosttyApp {
         atPath: terminfo.appendingPathComponent("78/xterm-ghostty").path)
     else {
       unsetenv("GHOSTTY_RESOURCES_DIR")
-      startupError = "libghostty 运行时资源不完整。"
+      startupError = L("libghostty 运行时资源不完整。")
       return false
     }
     setenv("GHOSTTY_RESOURCES_DIR", ghostty.path, 1)

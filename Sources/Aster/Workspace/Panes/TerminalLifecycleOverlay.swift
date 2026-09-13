@@ -14,31 +14,31 @@ final class TerminalLifecycleOverlayView: NSView {
     init?(state: TerminalSessionLifecycleState, startupError: String?) {
       switch state {
       case .ended(.exited(let code)) where code == 0:
-        title = "Shell 已退出"
-        detail = "退出状态码 0。最后画面已保留，可以在当前 Pane 重新启动。"
+        title = L("Shell 已退出")
+        detail = L("退出状态码 0。最后画面已保留，可以在当前 Pane 重新启动。")
         symbol = "checkmark.circle"
       case .ended(.exited(let code)):
-        title = "Shell 异常退出"
-        detail = "退出状态码 \(code)。最后画面已保留，可以在当前 Pane 重新启动。"
+        title = L("Shell 异常退出")
+        detail = L("退出状态码 \(String(code))。最后画面已保留，可以在当前 Pane 重新启动。")
         symbol = "exclamationmark.triangle"
       case .ended(.signaled(let signal, let coreDumped)):
-        title = "Shell 被信号终止"
+        title = L("Shell 被信号终止")
         let signalLabel = Self.signalLabel(signal)
-        let coreSuffix = coreDumped ? "，系统报告已生成 core dump" : ""
-        detail = "终止信号 \(signalLabel)\(coreSuffix)。最后画面已保留。"
+        let coreSuffix = coreDumped ? L("，系统报告已生成 core dump") : ""
+        detail = L("终止信号 \(signalLabel)\(coreSuffix)。最后画面已保留。")
         symbol = "bolt.trianglebadge.exclamationmark"
       case .ended(.ioFailure):
-        title = "终端连接异常中断"
-        detail = "PTY 未取得可靠退出状态。最后画面已保留，可以重新启动 Shell。"
+        title = L("终端连接异常中断")
+        detail = L("PTY 未取得可靠退出状态。最后画面已保留，可以重新启动 Shell。")
         symbol = "cable.connector.slash"
       case .startFailed:
-        title = "Shell 启动失败"
+        title = L("Shell 启动失败")
         detail = startupError?.split(separator: "\n").first.map(String.init)
-          ?? "无法创建本地终端进程，可以修正配置后重试。"
+          ?? L("无法创建本地终端进程，可以修正配置后重试。")
         symbol = "exclamationmark.triangle"
       case .detached:
-        title = "已分离"
-        detail = "后台任务继续运行，布局已保留。重新附加即可恢复画面。"
+        title = L("已分离")
+        detail = L("后台任务继续运行，布局已保留。重新附加即可恢复画面。")
         symbol = "bolt.horizontal.circle"
       case .notStarted, .starting, .running, .stopping:
         return nil
@@ -71,24 +71,24 @@ final class TerminalLifecycleOverlayView: NSView {
     init(_ path: PaneRecoveryPath) {
       switch path {
       case .continueRunning:
-        title = "继续运行"
-        detail = "后台任务持续运行中，已重新连接。"
+        title = L("继续运行")
+        detail = L("后台任务持续运行中，已重新连接。")
         symbol = "checkmark.circle"
       case .newShell:
-        title = "新 Shell"
-        detail = "服务重启后创建了新的 Shell 进程。"
+        title = L("新 Shell")
+        detail = L("服务重启后创建了新的 Shell 进程。")
         symbol = "terminal"
       case .historyReplay:
-        title = "历史回放"
-        detail = "正在回放磁盘上保存的屏幕历史，非实时状态。"
+        title = L("历史回放")
+        detail = L("正在回放磁盘上保存的屏幕历史，非实时状态。")
         symbol = "clock.arrow.circlepath"
       case .agentRestore(_, _, _, let provider, _):
-        title = "Agent 对话恢复"
-        detail = "已通过 \(provider.rawValue) --resume 恢复对话。"
+        title = L("Agent 对话恢复")
+        detail = L("已通过 \(provider.rawValue) --resume 恢复对话。")
         symbol = "arrow.uturn.backward.circle"
       case .failed(_, _, _, let reason):
-        title = "恢复失败"
-        detail = "\(reason)。已创建新 Shell 替代。"
+        title = L("恢复失败")
+        detail = L("\(reason)。已创建新 Shell 替代。")
         symbol = "exclamationmark.triangle"
       }
     }
@@ -103,10 +103,10 @@ final class TerminalLifecycleOverlayView: NSView {
     // 附加前就已退出的受管终端走 markManagedFailure（引用被清掉、只留 managedFailure），同样算受管。
     let isManaged = session.managedTerminal != nil || session.managedFailure != nil
     if isManaged, case .ended = session.lifecycleState {
-      presentation.title = "远端进程已结束"
+      presentation.title = L("远端进程已结束")
       presentation.detail =
-        (session.managedExitSummary ?? session.managedFailure ?? "远端进程已退出。")
-        + " 可以在此 Pane 重新启动一个远端 Shell，或关闭这个标签。"
+        (session.managedExitSummary ?? session.managedFailure ?? L("远端进程已退出。"))
+        + L(" 可以在此 Pane 重新启动一个远端 Shell，或关闭这个标签。")
       presentation.symbol = "server.rack"
     }
     super.init(frame: .zero)
@@ -140,7 +140,7 @@ final class TerminalLifecycleOverlayView: NSView {
     detail.font = .systemFont(ofSize: 10.5)
     detail.textColor = AsterTheme.secondaryInk
     detail.maximumNumberOfLines = 2
-    let privacy = NSTextField(labelWithString: "已记录本地诊断信息，不包含命令、终端内容或路径。")
+    let privacy = NSTextField(labelWithString: L("已记录本地诊断信息，不包含命令、终端内容或路径。"))
     privacy.font = .systemFont(ofSize: 9.5)
     privacy.textColor = AsterTheme.tertiaryInk
 
@@ -148,7 +148,7 @@ final class TerminalLifecycleOverlayView: NSView {
     // 需要新建进程，而受管任务其实仍在运行。
     let isDetached = session.lifecycleState == .detached
     let restart = ActionButton(
-      title: isDetached ? "重新附加" : "重新启动 Shell",
+      title: isDetached ? L("重新附加") : L("重新启动 Shell"),
       symbol: isDetached ? "bolt.horizontal.circle" : "arrow.clockwise"
     ) { [weak session] in
       guard let session else { return }
@@ -165,7 +165,7 @@ final class TerminalLifecycleOverlayView: NSView {
     var trailing: [NSView] = [restart]
     // 远端 Pane 结束后多一个「关闭标签」：Agent 退出后用户要么继续用远端 Shell，要么关掉。
     if isManaged, case .ended = session.lifecycleState {
-      let close = ActionButton(title: "关闭标签", symbol: "xmark.circle") { [weak session] in
+      let close = ActionButton(title: L("关闭标签"), symbol: "xmark.circle") { [weak session] in
         session?.requestManagedClose()
       }
       close.identifier = NSUserInterfaceItemIdentifier(

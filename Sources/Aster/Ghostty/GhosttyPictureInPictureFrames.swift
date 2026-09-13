@@ -1,3 +1,4 @@
+import AsterCore
 import CoreGraphics
 import CoreVideo
 import Foundation
@@ -78,8 +79,8 @@ final class GhosttyPictureInPictureFrames: @unchecked Sendable {
     case unsupportedFrame, copyFailed
     var errorDescription: String? {
       switch self {
-      case .unsupportedFrame: "终端帧尺寸或像素格式不受画中画支持"
-      case .copyFailed: "无法复制终端画中画帧"
+      case .unsupportedFrame: L("终端帧尺寸或像素格式不受画中画支持")
+      case .copyFailed: L("无法复制终端画中画帧")
       }
     }
   }

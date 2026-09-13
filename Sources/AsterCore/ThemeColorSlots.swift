@@ -35,8 +35,8 @@ public enum ThemeColorGroup: String, CaseIterable, Codable, Equatable, Sendable 
     case .tabbar: "Tabbar"
     case .tab: "Tab"
     case .accents: "Accents"
-    case .cursor: "光标"
-    case .selection: "选区"
+    case .cursor: L("光标")
+    case .selection: L("选区")
     }
   }
 }
@@ -87,7 +87,7 @@ public struct ThemeColorSlot: Identifiable, Equatable, Sendable {
   /// tooltip 文案：`前景色 · terminal.foreground = "#2a2b33"`。派生值额外标注来源。
   public var tooltip: String {
     let hex = "\(title) · \(id) = \"\(resolved.displayString)\""
-    return isDerived ? "\(hex)（未设置，跟随 Window 派生）" : hex
+    return isDerived ? hex + L("（未设置，跟随 Window 派生）") : hex
   }
 }
 
@@ -129,38 +129,38 @@ extension TerminalTheme {
 
     var slots: [ThemeColorSlot] = [
       // 终端色永远是显式的：SwiftTerm 不能没有前景/背景。
-      slot("terminal.foreground", "前景色", .terminal, palette.foreground, derivedFrom: palette.foreground),
-      slot("terminal.background", "背景色", .terminal, palette.windowBackground, derivedFrom: palette.windowBackground),
-      slot("interface.window", "窗口底色", .window, palette.interfaceWindowBackground, derivedFrom: palette.panelBackground),
-      slot("container.background", "容器背景", .container, style.container.background, derivedFrom: palette.containerBackground),
-      slot("container.border", "容器边框", .container, style.container.borderColor, derivedFrom: windowFallback, kind: .border),
-      slot("panel.background", "面板背景", .panel, palette.panelBackground, derivedFrom: palette.panelBackground),
-      slot("panel.surface", "面板表面", .panel, palette.panelSurface, derivedFrom: palette.panelBackground),
-      slot("panel.border", "面板边框", .panel, palette.interfaceBorder, derivedFrom: windowFallback, kind: .border),
+      slot("terminal.foreground", L("前景色"), .terminal, palette.foreground, derivedFrom: palette.foreground),
+      slot("terminal.background", L("背景色"), .terminal, palette.windowBackground, derivedFrom: palette.windowBackground),
+      slot("interface.window", L("窗口底色"), .window, palette.interfaceWindowBackground, derivedFrom: palette.panelBackground),
+      slot("container.background", L("容器背景"), .container, style.container.background, derivedFrom: palette.containerBackground),
+      slot("container.border", L("容器边框"), .container, style.container.borderColor, derivedFrom: windowFallback, kind: .border),
+      slot("panel.background", L("面板背景"), .panel, palette.panelBackground, derivedFrom: palette.panelBackground),
+      slot("panel.surface", L("面板表面"), .panel, palette.panelSurface, derivedFrom: palette.panelBackground),
+      slot("panel.border", L("面板边框"), .panel, palette.interfaceBorder, derivedFrom: windowFallback, kind: .border),
       // Sidebar 这一组同时作用于左侧标签栏与右侧详情面板，两栏共用同一批 token。
-      slot("sidebar.background", "侧栏背景（左右两栏）", .sidebar, style.sidebarBackground, derivedFrom: palette.panelBackground),
-      slot("sidebar.foreground", "侧栏文字（左右两栏）", .sidebar, palette.interfaceForeground, derivedFrom: palette.foreground),
-      slot("sidebar.border", "侧栏边框（左右两栏）", .sidebar, style.sidebarBorderColor, derivedFrom: windowFallback, kind: .border),
-      slot("titlebar.background", "标题栏背景", .titlebar, style.titlebarBackground, derivedFrom: palette.renderedTerminalBackground),
-      slot("titlebar.foreground", "标题栏文字", .titlebar, style.titlebarForeground, derivedFrom: palette.secondaryForeground),
-      slot("tabbar.background", "标签栏背景", .tabbar, style.horizontalTabBarBackground, derivedFrom: style.sidebarBackground ?? palette.panelBackground),
-      slot("tabbar.border", "标签栏边框", .tabbar, style.horizontalTabBarBorderColor, derivedFrom: windowFallback, kind: .border),
-      slot("tab.foreground", "标签文字", .tab, style.tab.foreground, derivedFrom: palette.secondaryForeground),
+      slot("sidebar.background", L("侧栏背景（左右两栏）"), .sidebar, style.sidebarBackground, derivedFrom: palette.panelBackground),
+      slot("sidebar.foreground", L("侧栏文字（左右两栏）"), .sidebar, palette.interfaceForeground, derivedFrom: palette.foreground),
+      slot("sidebar.border", L("侧栏边框（左右两栏）"), .sidebar, style.sidebarBorderColor, derivedFrom: windowFallback, kind: .border),
+      slot("titlebar.background", L("标题栏背景"), .titlebar, style.titlebarBackground, derivedFrom: palette.renderedTerminalBackground),
+      slot("titlebar.foreground", L("标题栏文字"), .titlebar, style.titlebarForeground, derivedFrom: palette.secondaryForeground),
+      slot("tabbar.background", L("标签栏背景"), .tabbar, style.horizontalTabBarBackground, derivedFrom: style.sidebarBackground ?? palette.panelBackground),
+      slot("tabbar.border", L("标签栏边框"), .tabbar, style.horizontalTabBarBorderColor, derivedFrom: windowFallback, kind: .border),
+      slot("tab.foreground", L("标签文字"), .tab, style.tab.foreground, derivedFrom: palette.secondaryForeground),
       // Otty 级联：hover → ui.hover（原生叠加色）；active → 主题声明的 panel.surface，
       // 否则原生选中叠加色。不能回退到 panel 底色——那会让选中/悬停与侧栏同色而不可见。
-      slot("tab.hoverBackground", "标签悬停底色", .tab, style.tab.hoverBackground, derivedFrom: mode.nativeTabHoverBackground),
-      slot("tab.activeBackground", "选中标签底色", .tab, style.tab.activeBackground, derivedFrom: palette.panelSurface ?? mode.nativeTabActiveBackground),
-      slot("tab.activeForeground", "选中标签文字", .tab, style.tab.activeForeground, derivedFrom: palette.foreground),
-      slot("tab.activeBorderColor", "选中标签边框", .tab, style.tab.activeBorderColor, derivedFrom: windowFallback, kind: .border),
-      slot("interface.accent", "强调色", .accents, palette.accent, derivedFrom: palette.accent),
-      slot("interface.foreground", "界面文字", .accents, palette.interfaceForeground, derivedFrom: palette.foreground),
-      slot("interface.secondaryForeground", "次要文字", .accents, palette.secondaryForeground, derivedFrom: palette.secondaryForeground),
-      slot("interface.tertiaryForeground", "三级文字", .accents, palette.tertiaryForeground, derivedFrom: palette.secondaryForeground),
-      slot("interface.border", "界面描边", .accents, palette.interfaceBorder, derivedFrom: borderFallback, kind: .border),
-      slot("cursor.background", "光标", .cursor, palette.cursor, derivedFrom: palette.cursor),
-      slot("cursor.foreground", "光标下文字", .cursor, palette.cursorText, derivedFrom: palette.renderedTerminalBackground),
-      slot("selection.background", "选区", .selection, palette.selection, derivedFrom: palette.selection),
-      slot("selection.foreground", "选区文字", .selection, palette.selectionForeground, derivedFrom: palette.foreground),
+      slot("tab.hoverBackground", L("标签悬停底色"), .tab, style.tab.hoverBackground, derivedFrom: mode.nativeTabHoverBackground),
+      slot("tab.activeBackground", L("选中标签底色"), .tab, style.tab.activeBackground, derivedFrom: palette.panelSurface ?? mode.nativeTabActiveBackground),
+      slot("tab.activeForeground", L("选中标签文字"), .tab, style.tab.activeForeground, derivedFrom: palette.foreground),
+      slot("tab.activeBorderColor", L("选中标签边框"), .tab, style.tab.activeBorderColor, derivedFrom: windowFallback, kind: .border),
+      slot("interface.accent", L("强调色"), .accents, palette.accent, derivedFrom: palette.accent),
+      slot("interface.foreground", L("界面文字"), .accents, palette.interfaceForeground, derivedFrom: palette.foreground),
+      slot("interface.secondaryForeground", L("次要文字"), .accents, palette.secondaryForeground, derivedFrom: palette.secondaryForeground),
+      slot("interface.tertiaryForeground", L("三级文字"), .accents, palette.tertiaryForeground, derivedFrom: palette.secondaryForeground),
+      slot("interface.border", L("界面描边"), .accents, palette.interfaceBorder, derivedFrom: borderFallback, kind: .border),
+      slot("cursor.background", L("光标"), .cursor, palette.cursor, derivedFrom: palette.cursor),
+      slot("cursor.foreground", L("光标下文字"), .cursor, palette.cursorText, derivedFrom: palette.renderedTerminalBackground),
+      slot("selection.background", L("选区"), .selection, palette.selection, derivedFrom: palette.selection),
+      slot("selection.foreground", L("选区文字"), .selection, palette.selectionForeground, derivedFrom: palette.foreground),
     ]
     slots.sort { lhs, rhs in
       guard let left = ThemeColorGroup.allCases.firstIndex(of: lhs.group),

@@ -1,3 +1,4 @@
+import AsterCore
 import AVKit
 import CoreMedia
 
@@ -33,7 +34,7 @@ final class PictureInPicturePlayback: NSObject,
     var format: CMVideoFormatDescription?
     guard CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault,
       imageBuffer: pixelBuffer, formatDescriptionOut: &format) == noErr, let format
-    else { return "无法描述画中画视频帧" }
+    else { return L("无法描述画中画视频帧") }
     var timing = CMSampleTimingInfo(duration: .invalid,
       presentationTimeStamp: timebase.map(CMTimebaseGetTime) ?? .zero,
       decodeTimeStamp: .invalid)
@@ -41,16 +42,16 @@ final class PictureInPicturePlayback: NSObject,
     guard CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault,
       imageBuffer: pixelBuffer, formatDescription: format, sampleTiming: &timing,
       sampleBufferOut: &sample) == noErr, let sample
-    else { return "无法创建画中画视频帧" }
+    else { return L("无法创建画中画视频帧") }
     // 终端帧按到达顺序立即显示，不是带可预测时长的视频；系统 PiP 的播放时钟可能
     // 与源图层不同，不能让实时帧排在另一个时钟的未来或被当作过期帧丢弃。
     guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sample,
       createIfNecessary: true) as? [NSMutableDictionary], let attachment = attachments.first
-    else { return "无法设置画中画视频帧时序" }
+    else { return L("无法设置画中画视频帧时序") }
     attachment[kCMSampleAttachmentKey_DisplayImmediately as String] = true
     displayLayer.enqueue(sample)
     if displayLayer.status != .failed { presentedFrameCount += 1 }
-    return displayLayer.status == .failed ? "系统无法显示画中画视频帧" : nil
+    return displayLayer.status == .failed ? L("系统无法显示画中画视频帧") : nil
   }
 
   func pictureInPictureController(_ controller: AVPictureInPictureController, setPlaying playing: Bool) {

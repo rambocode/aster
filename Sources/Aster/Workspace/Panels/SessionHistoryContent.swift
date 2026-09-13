@@ -107,12 +107,12 @@ extension DetailsPanelViewController {
     }
     back.restingTint = AsterTheme.secondaryInk
     back.identifier = NSUserInterfaceItemIdentifier("details-history-back")
-    back.toolTip = "返回会话列表"
-    back.setAccessibilityLabel("返回会话列表")
+    back.toolTip = L("返回会话列表")
+    back.setAccessibilityLabel(L("返回会话列表"))
     back.isHidden = true
     historyBackButton = back
 
-    let title = makeLabel("会话", size: 11, weight: .semibold, color: AsterTheme.secondaryInk)
+    let title = makeLabel(L("会话"), size: 11, weight: .semibold, color: AsterTheme.secondaryInk)
     title.lineBreakMode = .byTruncatingMiddle
     historyTitleLabel = title
 
@@ -122,8 +122,8 @@ extension DetailsPanelViewController {
       self?.refreshHistoryFromUser()
     }
     refresh.identifier = NSUserInterfaceItemIdentifier("details-history-refresh")
-    refresh.toolTip = "重新读取会话记录"
-    refresh.setAccessibilityLabel("重新读取会话记录")
+    refresh.toolTip = L("重新读取会话记录")
+    refresh.setAccessibilityLabel(L("重新读取会话记录"))
     refresh.restingTint = AsterTheme.tertiaryInk
     historyRefreshButton = refresh
 
@@ -203,8 +203,8 @@ extension DetailsPanelViewController {
       self?.presentMemoryBrowserFromPanel()
     }
     manage.identifier = NSUserInterfaceItemIdentifier("details-memory-manage")
-    manage.toolTip = "在 Memory 浏览器中管理"
-    manage.setAccessibilityLabel("在 Memory 浏览器中管理")
+    manage.toolTip = L("在 Memory 浏览器中管理")
+    manage.setAccessibilityLabel(L("在 Memory 浏览器中管理"))
     manage.restingTint = AsterTheme.tertiaryInk
 
     // Memory 没有推送通道（提炼在 session 结束后异步落库），除了进入本页时的过期重取，
@@ -213,8 +213,8 @@ extension DetailsPanelViewController {
       self?.refreshMemoryFromUser()
     }
     refresh.identifier = NSUserInterfaceItemIdentifier("details-memory-refresh")
-    refresh.toolTip = "重新读取项目记忆"
-    refresh.setAccessibilityLabel("重新读取项目记忆")
+    refresh.toolTip = L("重新读取项目记忆")
+    refresh.setAccessibilityLabel(L("重新读取项目记忆"))
     refresh.restingTint = AsterTheme.tertiaryInk
     memoryRefreshButton = refresh
 
@@ -440,11 +440,11 @@ final class SessionHistorySessionRowView: HoverHighlightRowView {
       ($0 as NSString).lastPathComponent
     } ?? "Shell"
     titleLabel.stringValue = summary.memoryTitle ?? agent
-    var parts = ["\(summary.commandCount) 条命令"]
-    if summary.failureCount > 0 { parts.append("\(summary.failureCount) 条失败") }
+    var parts = [L("\(String(summary.commandCount)) 条命令")]
+    if summary.failureCount > 0 { parts.append(L("\(String(summary.failureCount)) 条失败")) }
     if summary.memoryTitle != nil { parts.append(agent) }
     // 未结束的 session 明说「进行中」，不用一个编造的时长填空。
-    parts.append(durationText ?? "进行中")
+    parts.append(durationText ?? L("进行中"))
     metaLabel.stringValue = parts.joined(separator: " · ")
     metaLabel.textColor = summary.failureCount > 0 ? AsterTheme.warning : AsterTheme.secondaryInk
     timeLabel.stringValue = RelativeTime.string(since: summary.endedAt ?? descriptor.startedAt)
@@ -593,14 +593,14 @@ final class SessionHistoryTimelineRowView: HoverHighlightRowView {
     disclosure.image = expandable
       ? NSImage(
         systemSymbolName: isExpanded ? "chevron.down" : "chevron.right",
-        accessibilityDescription: isExpanded ? "收起输出" : "展开输出")
+        accessibilityDescription: isExpanded ? L("收起输出") : L("展开输出"))
       : nil
     disclosure.isHidden = !expandable
     // 不可展开的行不接受点击，也不给悬停高亮与手型指针——否则是空承诺。
     toggleButton.isEnabled = expandable
     isHoverHighlightEnabled = expandable
     toolTip = row.isTranscriptSourced
-      ? "来自 Agent transcript 的补录，非终端实测：\(row.subtitle.isEmpty ? row.title : row.subtitle)"
+      ? L("来自 Agent transcript 的补录，非终端实测：\(row.subtitle.isEmpty ? row.title : row.subtitle)")
       : (row.subtitle.isEmpty ? row.title : row.subtitle)
     toggleAction = toggle
   }
@@ -643,7 +643,7 @@ final class SessionHistoryOutputRowView: HoverHighlightRowView {
     fullTextButton.action = #selector(loadFullText)
     copyButton.target = self
     copyButton.action = #selector(copyText)
-    for (button, title) in [(fullTextButton, "查看全文"), (copyButton, "复制")] {
+    for (button, title) in [(fullTextButton, L("查看全文")), (copyButton, L("复制"))] {
       button.isBordered = false
       button.alignment = .left
       button.attributedTitle = NSAttributedString(
@@ -692,7 +692,7 @@ final class SessionHistoryOutputRowView: HoverHighlightRowView {
     let display = text.count > SessionHistoryMetrics.expandedTextDisplayLimit
       ? String(text.suffix(SessionHistoryMetrics.expandedTextDisplayLimit))
       : text
-    textLabel.stringValue = display.isEmpty ? "（无输出内容）" : display
+    textLabel.stringValue = display.isEmpty ? L("（无输出内容）") : display
     // 已经是全文时不再提供入口：重复点击会反复读同一个文件。
     fullTextButton.isHidden = isFullText || !canLoadFullText
     copyButton.isHidden = display.isEmpty

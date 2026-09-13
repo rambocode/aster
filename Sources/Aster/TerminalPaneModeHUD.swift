@@ -1,4 +1,5 @@
 import AppKit
+import AsterCore
 
 /// 终端模式的轻量覆盖层。它不接受鼠标事件，也不持有业务状态；View 每次状态变化时
 /// 直接重绘 pill、Vi 光标和 Hint 标签，避免重建整个工作区或干扰 SwiftTerm 响应链。
@@ -66,7 +67,7 @@ final class TerminalPaneModeHUD: NSView {
 
     keyHints.isHidden = !showsKeyHints
     if showsKeyHints {
-      keyHints.stringValue = "h/j/k/l 移动   w/b/e 单词   0/$ 行首尾   v/V/⌃v 选择\nH/M/L 屏幕   gg/G 缓冲区   ⌃u/⌃d 半页   /? nN 查找   f 链接"
+      keyHints.stringValue = L("h/j/k/l 移动   w/b/e 单词   0/$ 行首尾   v/V/⌃v 选择\nH/M/L 屏幕   gg/G 缓冲区   ⌃u/⌃d 半页   /? nN 查找   f 链接")
       keyHints.frame = NSRect(x: 12, y: 12, width: min(620, bounds.width - 24), height: 42)
     }
 
