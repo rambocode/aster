@@ -243,6 +243,13 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     configuration.defaultWebpagePreferences.allowsContentJavaScript = true
     let proxy = SettingsScriptMessageProxy(controller: self)
     configuration.userContentController.add(proxy, name: SettingsWebBridge.messageHandlerName)
+    // 设置页脚本在模块初始化时就构造全部文案，所以语言必须在页面脚本之前注入：
+    // 用文档起始阶段的 user script 写 `window.AsterUILanguage`，settings.js 据此挑翻译表。
+    configuration.userContentController.addUserScript(
+      WKUserScript(
+        source: SettingsWebBridge.uiLanguageScript(AppLocalization.current),
+        injectionTime: .atDocumentStart,
+        forMainFrameOnly: true))
 
     let webView = WKWebView(
       frame: NSRect(origin: .zero, size: Self.defaultContentSize),
@@ -609,7 +616,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       sectionTitle("通用"),
       card([
         popupRow(
-          "语言", "界面显示语言",
+          "语言", "界面显示语言，更改后重新启动 Aster 生效",
           items: Self.languageOptions.map(\.label),
           selected: Self.languageOptions.firstIndex {
             $0.value == preferences.configuration.general.language
@@ -2851,11 +2858,10 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   }
 
   /// 语言下拉的取值表：value 写入配置持久化，label 只用于显示。
-  private static let languageOptions: [(label: String, value: String)] = [
-    ("跟随系统", "system"),
-    ("简体中文", "zh-Hans"),
-    ("English", "en"),
-  ]
+  /// 取值与 `InterfaceLanguage` 单一来源，新增语言只需加 case 与 `.lproj`。
+  private static var languageOptions: [(label: String, value: String)] {
+    InterfaceLanguage.allCases.map { ($0.nativeName, $0.rawValue) }
+  }
 
   /// 滑杆行；`fractionDigits` 控制数值标签的小数位（行高倍数等非整数设置需要）。
   private func sliderRow(
@@ -2997,6 +3003,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 private enum SettingsWebBridge {
   static let messageHandlerName = "asterSettings"
   static let protocolVersion = 1
+
+  /// 文档起始阶段注入的界面语言：语言码来自 `InterfaceLanguage` 白名单，不含用户文本，
+  /// 直接拼进脚本源码是安全的。settings.js 读 `window.AsterUILanguage` 选翻译表。
+  static func uiLanguageScript(_ language: InterfaceLanguage) -> String {
+    "window.AsterUILanguage = \"\(language.rawValue)\";"
+  }
 
   /// 尚未进入强类型运行时配置的 Otty 兼容字段默认值。字段仍会持久化并跨平台往返；
   /// 其中唯一在 macOS 上禁用的是 Windows DirectWrite 渲染模式。
