@@ -11,19 +11,40 @@ extension WorkspaceViewController {
   /// 当前窗口使用的机器编排。测试替换 `MachineFleetModel.shared` 以隔离配置目录。
   var machineFleet: MachineFleetModel { MachineFleetModel.shared }
 
-  /// 构建「机器」分区：可折叠组头 + Local 与全部保存的机器行。
+  /// 侧栏左下角的机器切换器：显示当前活动机器与状态，点开是机器列表弹出层。
+  func makeMachineSwitcher() -> NSView {
+    let theme = preferences.activeTheme
+    let row = machineFleet.rows.first { $0.id == machineFleet.activeMachineID }
+    let button = MachineSwitcherButton(row: row, theme: theme) { [weak self] in
+      self?.makeMachineSection() ?? NSView()
+    }
+    let host = NSView()
+    host.identifier = NSUserInterfaceItemIdentifier("machine-switcher-host")
+    host.addSubview(button)
+    let padding = CGFloat(theme.style.resolvedSidebarPadding.leading)
+    NSLayoutConstraint.activate([
+      button.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: padding + 4),
+      button.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -8),
+      button.topAnchor.constraint(equalTo: host.topAnchor, constant: 6),
+      button.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -10),
+    ])
+    return host
+  }
+
+  /// 机器列表（弹出层内容）：组头 + Local 与全部保存的机器行 + 「添加机器」。
   ///
-  /// 折叠状态复用侧栏既有的分组折叠偏好，键名固定为 `__machines__`，不与用户的
-  /// 项目/日期分组标题冲突。
+  /// 行控件与右键菜单和常驻分区时代完全一样，只是宿主从侧栏顶部换成了弹出层。
   func makeMachineSection() -> NSView {
     let theme = preferences.activeTheme
     let column = NSStackView()
     column.orientation = .vertical
     column.alignment = .width
     column.spacing = 0
+    column.translatesAutoresizingMaskIntoConstraints = false
+    column.widthAnchor.constraint(equalToConstant: 300).isActive = true
+    column.edgeInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
 
-    let collapsed = preferences.isSidebarGroupCollapsed(title: Self.machineSectionKey)
-    let header = makeMachineSectionHeader(collapsed: collapsed, theme: theme)
+    let header = makeMachineSectionHeader(collapsed: false, theme: theme)
     column.addArrangedSubview(header)
     header.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
 
@@ -48,19 +69,31 @@ extension WorkspaceViewController {
       host.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
     }
 
-    guard !collapsed else { return column }
-
     for row in machineFleet.rows {
       let button = MachineRowButton(
         row: row,
         selected: row.id == machineFleet.activeMachineID,
         theme: theme,
-        action: { [weak self] in self?.selectMachine(row.id) },
+        action: { [weak self] in
+          // 选中即关闭弹出层：切换机器会重建侧栏，弹出层留着只会挂在旧按钮上。
+          self?.machineSwitcher?.dismissPopover()
+          self?.selectMachine(row.id)
+        },
         menuProvider: { [weak self] in self?.makeMachineMenu(row) })
       column.addArrangedSubview(button)
       button.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
     }
     return column
+  }
+
+  /// 当前侧栏里的切换器按钮（弹出层的锚点）。
+  var machineSwitcher: MachineSwitcherButton? {
+    func find(_ view: NSView) -> MachineSwitcherButton? {
+      if let button = view as? MachineSwitcherButton { return button }
+      for child in view.subviews { if let found = find(child) { return found } }
+      return nil
+    }
+    return find(view)
   }
 
   /// 「机器」组头：折叠箭头 + 标题 + 「+」添加按钮。
@@ -71,14 +104,11 @@ extension WorkspaceViewController {
     let foreground = NSColor(
       theme.resolvedColor(forSlot: "tab.foreground")
         ?? theme.style.tab.foreground ?? theme.palette.secondaryForeground)
-    let host = SidebarGroupHeaderView { [weak self] in
-      guard let self else { return }
-      self.preferences.toggleSidebarGroupCollapsed(title: Self.machineSectionKey)
-      self.scheduleRefresh()
-    }
+    // 组头只是弹出层里的标题：不再折叠（列表本身就在弹出层里，关掉弹出层即"折叠"）。
+    _ = collapsed
+    let host = SidebarGroupHeaderView {}
     host.identifier = NSUserInterfaceItemIdentifier("machine-section-header")
-    host.setAccessibilityRole(.button)
-    host.setAccessibilityLabel("\(collapsed ? "展开" : "折叠")机器分区")
+    host.setAccessibilityLabel("机器分区")
     host.translatesAutoresizingMaskIntoConstraints = false
     host.heightAnchor.constraint(equalToConstant: 30).isActive = true
 
@@ -86,7 +116,7 @@ extension WorkspaceViewController {
     row.orientation = .horizontal
     row.spacing = 5
     row.alignment = .centerY
-    for symbol in [collapsed ? "chevron.right" : "chevron.down", "server.rack"] {
+    for symbol in ["server.rack"] {
       let icon = NSImageView()
       icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
         .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))

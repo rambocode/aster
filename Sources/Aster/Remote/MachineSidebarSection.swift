@@ -214,3 +214,115 @@ final class MachineRowButton: NSButton {
     }
   }
 }
+
+/// 侧栏左下角的机器切换器（对齐 herdrm 的 Devices 切换器）。
+///
+/// 一颗胶囊按钮显示当前活动机器 + 连接状态点；点开是一个瞬态弹出层，里面就是机器列表
+/// （`MachineRowButton`，右键菜单与行内 Agent 清单原样可用）和「添加机器」。机器列表不再
+/// 常驻侧栏顶部：标签才是侧栏的主体，机器是"我现在在哪台机器上"这一个事实。
+@MainActor
+final class MachineSwitcherButton: NSButton {
+  private let contentProvider: () -> NSView
+  private let popover = NSPopover()
+  /// 弹出层当前的内容视图；测试据此在弹出层里找机器行与添加按钮。
+  private(set) var popoverContentView: NSView?
+
+  init(row: MachineFleetRow?, theme: TerminalTheme, contentProvider: @escaping () -> NSView) {
+    self.contentProvider = contentProvider
+    super.init(frame: .zero)
+    translatesAutoresizingMaskIntoConstraints = false
+    isBordered = false
+    title = ""
+    setButtonType(.momentaryChange)
+    target = self
+    action = #selector(togglePopover)
+    identifier = NSUserInterfaceItemIdentifier("machine-switcher")
+    setAccessibilityRole(.popUpButton)
+    setAccessibilityLabel("当前机器 \(row?.label ?? "Local")")
+    if let row { toolTip = MachineRowButton.toolTip(row) }
+    heightAnchor.constraint(equalToConstant: 32).isActive = true
+    wantsLayer = true
+    layer?.cornerRadius = 8
+    layer?.cornerCurve = .continuous
+    let tint = NSColor(
+      theme.resolvedColor(forSlot: "tab.foreground")
+        ?? theme.style.tab.foreground ?? theme.palette.secondaryForeground)
+    layer?.backgroundColor = tint.withAlphaComponent(0.08).cgColor
+
+    let stack = NSStackView()
+    stack.orientation = .horizontal
+    stack.spacing = 6
+    stack.alignment = .centerY
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    let icon = NSImageView()
+    icon.image = NSImage(
+      systemSymbolName: row?.isLocal == false ? "server.rack" : "laptopcomputer",
+      accessibilityDescription: nil)?
+      .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+    icon.contentTintColor = tint
+    icon.setContentHuggingPriority(.required, for: .horizontal)
+    stack.addArrangedSubview(icon)
+    let label = makeLabel(row?.label ?? "Local", size: 12, weight: .medium, color: tint)
+    label.lineBreakMode = .byTruncatingTail
+    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    stack.addArrangedSubview(label)
+    let dot = NSView()
+    dot.wantsLayer = true
+    dot.layer?.cornerRadius = 3.5
+    dot.layer?.backgroundColor = Self.stateColor(row?.state ?? .disconnected).cgColor
+    dot.translatesAutoresizingMaskIntoConstraints = false
+    dot.identifier = NSUserInterfaceItemIdentifier("machine-switcher-state")
+    NSLayoutConstraint.activate([
+      dot.widthAnchor.constraint(equalToConstant: 7), dot.heightAnchor.constraint(equalToConstant: 7),
+    ])
+    stack.addArrangedSubview(dot)
+    let chevron = NSImageView()
+    chevron.image = NSImage(systemSymbolName: "chevron.up.chevron.down", accessibilityDescription: nil)?
+      .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+    chevron.contentTintColor = tint.withAlphaComponent(0.6)
+    chevron.setContentHuggingPriority(.required, for: .horizontal)
+    stack.addArrangedSubview(chevron)
+    addSubview(stack)
+    NSLayoutConstraint.activate([
+      stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+      stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+      stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+    ])
+
+    popover.behavior = .transient
+    popover.animates = true
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  /// 连接状态的颜色：在线绿、连接中黄、需要处理橙、其余灰。
+  static func stateColor(_ state: SessionConnectionState) -> NSColor {
+    switch state {
+    case .online: .systemGreen
+    case .connecting, .reconnecting: .systemYellow
+    case .attention: .systemOrange
+    case .disconnected, .disabled: .tertiaryLabelColor
+    }
+  }
+
+  @objc private func togglePopover() {
+    if popover.isShown {
+      popover.performClose(nil)
+      return
+    }
+    presentPopover()
+  }
+
+  /// 打开机器列表。内容每次现取，保证行内状态、Agent 清单是最新的。
+  func presentPopover() {
+    let content = contentProvider()
+    popoverContentView = content
+    let controller = NSViewController()
+    controller.view = content
+    popover.contentViewController = controller
+    popover.contentSize = content.fittingSize
+    popover.show(relativeTo: bounds, of: self, preferredEdge: .maxY)
+  }
+
+  func dismissPopover() { popover.performClose(nil) }
+}

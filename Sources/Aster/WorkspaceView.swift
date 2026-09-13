@@ -1297,12 +1297,6 @@ final class WorkspaceViewController: NSViewController {
     ])
     column.addArrangedSubview(header)
 
-    // 机器分区放在 TABS 之上：Local 与远端机器决定「标签属于哪台机器」，
-    // 顺序颠倒会让用户先选标签再发现自己在别的机器上。
-    let machines = makeMachineSection()
-    column.addArrangedSubview(machines)
-    machines.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
-
     // 红绿灯行感应区：header 顶部与交通灯同高的一条带子，只用来界定「折叠」按钮的
     // 显示范围。它不自带 tracking area，也不参与命中测试（否则会吃掉窗口拖动），
     // 指针位置由侧栏那一个 tracking area 统一推导。
@@ -1417,6 +1411,12 @@ final class WorkspaceViewController: NSViewController {
     spacer.setContentHuggingPriority(.defaultLow, for: .vertical)
     spacer.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
     column.addArrangedSubview(spacer)
+
+    // 机器切换器固定在侧栏左下角（对齐 herdrm 的 Devices 切换器）：标签是侧栏主体，
+    // "我在哪台机器上"是一个随时可切的事实，不占顶部空间。
+    let switcher = makeMachineSwitcher()
+    column.addArrangedSubview(switcher)
+    switcher.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
 
     return background
   }

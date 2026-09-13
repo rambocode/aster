@@ -10,8 +10,19 @@ import Testing
 // 「+ 添加机器」按钮与每行的右键菜单都是**真实可点**的控件，而不是只有编程接口。
 
 @MainActor
+private func allViews(_ root: NSView) -> [NSView] {
+  [root] + root.subviews.flatMap { allViews($0) }
+}
+
+/// 机器列表现在住在左下角切换器的弹出层里：先找到切换器、打开弹出层，再遍历其内容。
+@MainActor
 private func machineSidebarViews(_ root: NSView) -> [NSView] {
-  [root] + root.subviews.flatMap { machineSidebarViews($0) }
+  guard let switcher = allViews(root).compactMap({ $0 as? MachineSwitcherButton }).first else {
+    return []
+  }
+  if switcher.popoverContentView == nil { switcher.presentPopover() }
+  guard let content = switcher.popoverContentView else { return [] }
+  return allViews(content)
 }
 
 @MainActor
