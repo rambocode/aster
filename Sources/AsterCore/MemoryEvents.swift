@@ -123,9 +123,9 @@ public enum RecordingMode: String, Codable, Sendable, CaseIterable {
   /// 面向用户的中文名称，设置页与状态指示共用。
   public var displayName: String {
     switch self {
-    case .off: "关闭"
-    case .on: "记录中"
-    case .incognito: "隐身"
+    case .off: L("关闭")
+    case .on: L("记录中")
+    case .incognito: L("隐身")
     }
   }
 }

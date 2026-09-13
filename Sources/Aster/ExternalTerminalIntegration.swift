@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import AsterCore
 
 /// 把 Aster 写进常用编辑器的「外部终端」设置(对应设置页「为常用应用设为默认终端」)。
 /// VS Code 系编辑器共用 `terminal.external.osxExec` 键;Sublime Text 没有内置外部终端
@@ -72,8 +73,8 @@ enum ExternalTerminalIntegration {
 
     var errorDescription: String? {
       switch self {
-      case .notAnObject: "settings.json 顶层不是对象"
-      case .unparsable: "settings.json 含注释或语法错误,无法安全改写"
+      case .notAnObject: L("settings.json 顶层不是对象")
+      case .unparsable: L("settings.json 含注释或语法错误,无法安全改写")
       }
     }
   }
@@ -106,13 +107,13 @@ enum ExternalTerminalIntegration {
     let configured = outcomes.compactMap { if case .configured(let e) = $0 { e.name } else { nil } }
     let already = outcomes.compactMap { if case .alreadyConfigured(let e) = $0 { e.name } else { nil } }
     let unsupported = outcomes.compactMap { if case .unsupported(let e) = $0 { e.name } else { nil } }
-    let failed = outcomes.compactMap { if case .failed(let e, let reason) = $0 { "\(e.name)（\(reason)）" } else { nil } }
-    if !configured.isEmpty { parts.append("已配置：" + configured.joined(separator: "、")) }
-    if !already.isEmpty { parts.append("已是 Aster：" + already.joined(separator: "、")) }
+    let failed = outcomes.compactMap { if case .failed(let e, let reason) = $0 { L("\(e.name)（\(reason)）") } else { nil } }
+    if !configured.isEmpty { parts.append(L("已配置：") + configured.joined(separator: L("、"))) }
+    if !already.isEmpty { parts.append(L("已是 Aster：") + already.joined(separator: L("、"))) }
     if !unsupported.isEmpty {
-      parts.append(unsupported.joined(separator: "、") + " 没有内置外部终端设置，请安装 Terminal 包后手动指向 Aster")
+      parts.append(unsupported.joined(separator: L("、")) + L(" 没有内置外部终端设置，请安装 Terminal 包后手动指向 Aster"))
     }
-    if !failed.isEmpty { parts.append("失败：" + failed.joined(separator: "、")) }
-    return parts.isEmpty ? "未检测到支持的应用" : parts.joined(separator: "；")
+    if !failed.isEmpty { parts.append(L("失败：") + failed.joined(separator: L("、"))) }
+    return parts.isEmpty ? L("未检测到支持的应用") : parts.joined(separator: L("；"))
   }
 }

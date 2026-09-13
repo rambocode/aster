@@ -1,4 +1,5 @@
 import AppKit
+import AsterCore
 
 /// 工作区标题栏中的安全输入状态胶囊。它只在 Carbon Secure Event Input 已真实启用时
 /// 出现；视图本身不切换安全状态，避免一个展示控件成为第二个状态所有者。
@@ -18,7 +19,7 @@ final class SecureInputIndicatorView: NSView {
     let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
     icon.image = NSImage(
       systemSymbolName: "lock.shield.fill",
-      accessibilityDescription: "安全键盘输入已开启"
+      accessibilityDescription: L("安全键盘输入已开启")
     )?.withSymbolConfiguration(symbolConfiguration)
     icon.imageScaling = .scaleProportionallyDown
 
@@ -42,7 +43,7 @@ final class SecureInputIndicatorView: NSView {
     ])
     setAccessibilityElement(true)
     setAccessibilityRole(.staticText)
-    setAccessibilityLabel("安全键盘输入已开启")
+    setAccessibilityLabel(L("安全键盘输入已开启"))
     applyAppearance()
   }
 

@@ -863,7 +863,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         }
       }
     } else {
-      info.addArrangedSubview(makeLabel("正在检查…", size: 11, color: AsterTheme.secondaryInk))
+      info.addArrangedSubview(makeLabel(L("正在检查…"), size: 11, color: AsterTheme.secondaryInk))
     }
   }
 
@@ -883,14 +883,14 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     section.addArrangedSubview(makeGroupHeader(provider.commandName))
     guard let sessionID = terminal.activeAgentSessionID else {
       section.addArrangedSubview(
-        makeLabel("等待 Agent Integration 关联此 Pane 的会话。", size: 11, color: AsterTheme.secondaryInk))
+        makeLabel(L("等待 Agent Integration 关联此 Pane 的会话。"), size: 11, color: AsterTheme.secondaryInk))
       return section
     }
     guard let session = model.agentHistories.map(\.metadata).first(where: {
       $0.id == sessionID && $0.configuration.provider == provider
     }) else {
       section.addArrangedSubview(
-        makeLabel("正在读取此会话历史…", size: 11, color: AsterTheme.secondaryInk))
+        makeLabel(L("正在读取此会话历史…"), size: 11, color: AsterTheme.secondaryInk))
       return section
     }
     section.addArrangedSubview(makeLinkRow(symbol: "doc.on.doc", title: "Copy Session ID") {
@@ -903,7 +903,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
           self?.model.continueAgentSession(session, kind: .fork)
         })
     } else {
-      section.addArrangedSubview(makeLabel("此 Agent 不支持 Branch。", size: 11, color: AsterTheme.secondaryInk))
+      section.addArrangedSubview(makeLabel(L("此 Agent 不支持 Branch。"), size: 11, color: AsterTheme.secondaryInk))
     }
     section.addArrangedSubview(
       makeLinkRow(symbol: "clock.arrow.circlepath", title: "View Session History") { [weak self] in
@@ -1042,7 +1042,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     outlineTask?.cancel()
     outlineTask = nil
     guard let tab = model.selectedTab, let runtime = tab.activeRuntime else {
-      applyOutlineRows([], path: "—", latest: nil, emptyMessage: "没有活动 Pane")
+      applyOutlineRows([], path: "—", latest: nil, emptyMessage: L("没有活动 Pane"))
       return
     }
     if let session = runtime.terminalSession {
@@ -1053,7 +1053,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
           title: "\(status)  \(entry.title)",
           metadata: entry.finishedAt.map { RelativeTime.string(since: $0) } ?? "",
           indentation: 0,
-          toolTip: entry.isJumpAvailable ? nil : "源位置已从滚动缓冲区移除，仍可复制。",
+          toolTip: entry.isJumpAvailable ? nil : L("源位置已从滚动缓冲区移除，仍可复制。"),
           isJumpAvailable: entry.isJumpAvailable,
           action: { [weak session] in _ = session?.revealAbsoluteRow(entry.absoluteRow) },
           copyText: entry.title
@@ -1061,8 +1061,8 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       }
       rows += agentPromptOutlineRows(for: session)
       let emptyMessage = session.shellIntegrationDetected
-        ? "运行命令后会在这里显示 Shell Integration 锚点。"
-        : "需要 Shell Integration 才能显示命令。请在设置 → Shell 中启用它。"
+        ? L("运行命令后会在这里显示 Shell Integration 锚点。")
+        : L("需要 Shell Integration 才能显示命令。请在设置 → Shell 中启用它。")
       applyOutlineRows(
         rows,
         path: tab.workingDirectory,
@@ -1075,7 +1075,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     guard let resourcePath = runtime.descriptor.resourcePath,
       let kind = outlineKind(for: URL(fileURLWithPath: resourcePath))
     else {
-      applyOutlineRows([], path: displayedResourcePath, latest: nil, emptyMessage: "此 Pane 没有 Outline。")
+      applyOutlineRows([], path: displayedResourcePath, latest: nil, emptyMessage: L("此 Pane 没有 Outline。"))
       return
     }
     let text = runtime.documentText
@@ -1105,13 +1105,13 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
           title: entry.title,
           metadata: "",
           indentation: max(0, entry.level - 1),
-          toolTip: "第 \(entry.line) 行",
+          toolTip: L("第 \(String(entry.line)) 行"),
           isJumpAvailable: true,
           action: { [weak tab] in tab?.revealDocumentLine(entry.line, paneID: paneID) },
           copyText: entry.title
         )
       }
-      self.applyOutlineRows(rows, path: resourcePath, latest: nil, emptyMessage: "此文件没有可索引的结构。")
+      self.applyOutlineRows(rows, path: resourcePath, latest: nil, emptyMessage: L("此文件没有可索引的结构。"))
       self.outlineTask = nil
     }
   }
@@ -1180,7 +1180,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       menu: { [weak self] in self?.makeGitOperationsMenu() ?? NSMenu() }
     )
     commit.identifier = NSUserInterfaceItemIdentifier("details-git-commit")
-    commit.toolTip = "把 git commit 放入终端输入行，确认后回车执行"
+    commit.toolTip = L("把 git commit 放入终端输入行，确认后回车执行")
     gitCommitButton = commit
     let editor = SplitActionButton(
       title: "",
@@ -1265,7 +1265,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       gitDeletionsLabel?.stringValue = ""
       gitCommitButton?.isHidden = true
       gitEditorButton?.isHidden = true
-      gitEmptyLabel?.stringValue = "正在读取 Git 状态…"
+      gitEmptyLabel?.stringValue = L("正在读取 Git 状态…")
       gitEmptyLabel?.isHidden = false
       gitTable.reloadData()
       return
@@ -1277,7 +1277,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       gitDeletionsLabel?.stringValue = ""
       gitCommitButton?.isHidden = true
       gitEditorButton?.isHidden = true
-      gitEmptyLabel?.stringValue = "当前目录不在 Git 仓库中。"
+      gitEmptyLabel?.stringValue = L("当前目录不在 Git 仓库中。")
       gitEmptyLabel?.isHidden = false
       gitTable.reloadData()
       return
@@ -1315,7 +1315,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       })
     }
     gitRows = rows
-    gitEmptyLabel?.stringValue = "工作区干净"
+    gitEmptyLabel?.stringValue = L("工作区干净")
     gitEmptyLabel?.isHidden = !rows.isEmpty
     gitTable.reloadData()
   }
@@ -1328,11 +1328,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       open: gitOpenAction(for: change),
       stageSymbol: staged ? "minus.circle" : "plus.circle",
       stageTooltip: staged
-        ? "把 git restore --staged 放入终端输入行" : "把 git add 放入终端输入行",
+        ? L("把 git restore --staged 放入终端输入行") : L("把 git add 放入终端输入行"),
       stage: { [weak self] in
         self?.injectGitCommand(staged ? .unstage(path: change.path) : .stage(path: change.path))
       },
-      editorTooltip: editorName.map { "在 \($0) 中打开" },
+      editorTooltip: editorName.map { L("在 \($0) 中打开") },
       openInEditor: editorName == nil
         ? nil
         : { [weak self] in self?.openChangeInPreferredEditor(change) },
@@ -1369,12 +1369,12 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     }
     menu.addItem(.separator())
     menu.addItem(ActionMenuItem(title: "Merge…") { [weak self] in
-      self?.promptBranch(title: "Merge 分支", action: "Merge") { branch in
+      self?.promptBranch(title: L("Merge 分支"), action: "Merge") { branch in
         self?.injectGitCommand(.merge(branch: branch))
       }
     })
     menu.addItem(ActionMenuItem(title: "Rebase…") { [weak self] in
-      self?.promptBranch(title: "Rebase 到分支", action: "Rebase") { branch in
+      self?.promptBranch(title: L("Rebase 到分支"), action: "Rebase") { branch in
         self?.injectGitCommand(.rebase(branch: branch))
       }
     })
@@ -1385,13 +1385,13 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   /// 收集文本并在非法时不做任何事——命令必须由用户在终端里最终确认。
   private func promptBranch(title: String, action: String, completion: @escaping (String) -> Void) {
     let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-    field.placeholderString = "分支名"
+    field.placeholderString = L("分支名")
     let alert = NSAlert()
     alert.messageText = title
-    alert.informativeText = "命令会预填到终端输入行，确认后回车执行。"
+    alert.informativeText = L("命令会预填到终端输入行，确认后回车执行。")
     alert.accessoryView = field
     alert.addButton(withTitle: action)
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: L("取消"))
     alert.window.initialFirstResponder = field
     guard alert.runModal() == .alertFirstButtonReturn else { return }
     guard let branch = GitCommand.sanitizedBranch(field.stringValue) else { return }
@@ -1439,7 +1439,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       menu.addItem(item)
     }
     if editors.isEmpty {
-      let empty = NSMenuItem(title: "未检测到受支持的编辑器", action: nil, keyEquivalent: "")
+      let empty = NSMenuItem(title: L("未检测到受支持的编辑器"), action: nil, keyEquivalent: "")
       empty.isEnabled = false
       menu.addItem(empty)
     }
@@ -1503,7 +1503,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     button.primaryButton.title = editor.name
     button.primaryButton.image = Self.applicationIcon(for: editor)
     button.primaryButton.imagePosition = .imageLeading
-    button.toolTip = "在 \(editor.name) 中打开当前目录"
+    button.toolTip = L("在 \(editor.name) 中打开当前目录")
   }
 
   // MARK: - Files
@@ -1527,7 +1527,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       self.rebuildFileTreeProjection()
     }
     sort.isBordered = false
-    sort.toolTip = filesDirectoriesFirst ? "目录优先（点击切换为按名称）" : "按名称（点击切换为目录优先）"
+    sort.toolTip = filesDirectoriesFirst ? L("目录优先（点击切换为按名称）") : L("按名称（点击切换为目录优先）")
     filesSortButton = sort
     let showHidden = ActionButton(
       symbol: filesShowHidden ? "eye" : "eye.slash",
@@ -1675,7 +1675,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   private func updateFilesShowHiddenButton() {
     guard let button = filesShowHiddenButton else { return }
     let symbol = filesShowHidden ? "eye" : "eye.slash"
-    let label = filesShowHidden ? "不包含隐藏文件" : "包含隐藏文件"
+    let label = filesShowHidden ? L("不包含隐藏文件") : L("包含隐藏文件")
     button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
     button.toolTip = label
     button.setAccessibilityLabel(label)
@@ -1694,15 +1694,15 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       self.pendingFileSelectionPath = nil
     }
     filesSortButton?.toolTip = filesDirectoriesFirst
-      ? "目录优先（点击切换为按名称）" : "按名称（点击切换为目录优先）"
+      ? L("目录优先（点击切换为按名称）") : L("按名称（点击切换为目录优先）")
     updateFilesShowHiddenButton()
     guard let empty = filesEmptyLabel else { return }
     if fileNodes == nil {
-      empty.stringValue = "正在读取目录…"
+      empty.stringValue = L("正在读取目录…")
       empty.isHidden = false
     } else if visibleFileRows.isEmpty {
       empty.stringValue = filesQuery.isEmpty
-        ? "目录为空或不可读取。" : "没有匹配 “\(filesQuery)” 的条目。"
+        ? L("目录为空或不可读取。") : L("没有匹配 “\(filesQuery)” 的条目。")
       empty.isHidden = false
     } else {
       empty.isHidden = true
@@ -1770,7 +1770,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         action: outlineRow.action,
         copyText: outlineRow.copyText,
         copyFeedback: { [weak self] success in
-          self?.model.notice = success ? "已复制 Outline 文本。" : "无法复制 Outline 文本。"
+          self?.model.notice = success ? L("已复制 Outline 文本。") : L("无法复制 Outline 文本。")
         }
       )
       return cell
@@ -2169,7 +2169,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   func copyHistoryOutput(_ text: String) {
     NSPasteboard.general.clearContents()
     let copied = NSPasteboard.general.setString(text, forType: .string)
-    model.notice = copied ? "已复制输出内容。" : "无法复制输出内容。"
+    model.notice = copied ? L("已复制输出内容。") : L("无法复制输出内容。")
   }
 
   /// 用户点击刷新：强制重取，不看目录是否变化，也不看快照是否过期。
@@ -2221,7 +2221,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       }
       guard !Task.isCancelled, let self, self.historyExpandedRowIDs.contains(rowID) else { return }
       guard let contents, !contents.isEmpty else {
-        self.model.notice = "输出正文已被清理，只保留摘录。"
+        self.model.notice = L("输出正文已被清理，只保留摘录。")
         return
       }
       self.historyFullTexts[rowID] = contents
@@ -2243,7 +2243,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     switch historyMode {
     case .sessionList:
       if !historySessions.isEmpty {
-        rows.append(.sectionHeader("会话"))
+        rows.append(.sectionHeader(L("会话")))
         rows.append(
           contentsOf: historySessions.map { summary in
             .session(
@@ -2263,7 +2263,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
               sources: Self.historyMemorySourcesText(memory, refs: historyMemorySources)))
         }
         let timeline = currentHistoryTimelineRows()
-        if !timeline.isEmpty { rows.append(.sectionHeader("时间线")) }
+        if !timeline.isEmpty { rows.append(.sectionHeader(L("时间线"))) }
         for row in timeline {
           let expanded = historyExpandedRowIDs.contains(row.id)
           rows.append(.timeline(row, isExpanded: expanded))
@@ -2296,11 +2296,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       historyTitleLabel?.stringValue = agent
       historyTitleLabel?.toolTip = detail.descriptor.projectPath
     } else if inDetail {
-      historyTitleLabel?.stringValue = "会话详情"
+      historyTitleLabel?.stringValue = L("会话详情")
       historyTitleLabel?.toolTip = nil
     } else {
       let name = historyProjectPath.map { ($0 as NSString).lastPathComponent }
-      historyTitleLabel?.stringValue = name.map { "会话 · \($0)" } ?? "会话"
+      historyTitleLabel?.stringValue = name.map { L("会话 · \($0)") } ?? L("会话")
       historyTitleLabel?.toolTip = historyProjectPath
     }
 
@@ -2309,11 +2309,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     guard !hasRows else { return }
     switch historyStatus {
     case .loading:
-      empty.stringValue = "正在读取会话记录…"
+      empty.stringValue = L("正在读取会话记录…")
     case .unavailable:
-      empty.stringValue = "未开启记录。在设置中开启 Session Recording 后，这里会显示会话时间线。"
+      empty.stringValue = L("未开启记录。在设置中开启 Session Recording 后，这里会显示会话时间线。")
     case .ready:
-      empty.stringValue = inDetail ? "此会话没有可展示的事件。" : "此项目暂无记录。"
+      empty.stringValue = inDetail ? L("此会话没有可展示的事件。") : L("此项目暂无记录。")
     }
   }
 
@@ -2332,7 +2332,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   private static func historyMemorySourcesText(
     _ memory: MemoryRecord, refs: [MemorySourceRef]
   ) -> String {
-    var parts = ["来源：\(memory.extractor.displayName)"]
+    var parts = [L("来源：\(memory.extractor.displayName)")]
     let counts = Dictionary(grouping: refs, by: \.kind).mapValues(\.count)
     for kind in [MemorySourceRef.Kind.session, .event, .task, .gitCommit] {
       guard let count = counts[kind], count > 0 else { continue }
@@ -2430,11 +2430,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     let pinned = memoryRecords.filter { $0.status == .pinned }
     let rest = memoryRecords.filter { $0.status != .pinned }
     if !pinned.isEmpty {
-      rows.append(.sectionHeader("已固定"))
+      rows.append(.sectionHeader(L("已固定")))
       rows.append(contentsOf: pinned.map(memoryListRow))
     }
     if !rest.isEmpty {
-      rows.append(.sectionHeader("记忆"))
+      rows.append(.sectionHeader(L("记忆")))
       rows.append(contentsOf: rest.map(memoryListRow))
     }
     memoryRows = rows
@@ -2463,11 +2463,11 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     guard !hasRows else { return }
     switch memoryStatus {
     case .loading:
-      empty.stringValue = "正在读取项目记忆…"
+      empty.stringValue = L("正在读取项目记忆…")
     case .unavailable:
-      empty.stringValue = "未开启记录。在设置中开启 Session Recording 后，这里会积累项目记忆。"
+      empty.stringValue = L("未开启记录。在设置中开启 Session Recording 后，这里会积累项目记忆。")
     case .ready:
-      empty.stringValue = "此项目暂无记忆。会话结束后自动提炼的 Memory 会显示在这里。"
+      empty.stringValue = L("此项目暂无记忆。会话结束后自动提炼的 Memory 会显示在这里。")
     }
   }
 
@@ -2569,7 +2569,7 @@ private final class DetailsPaneRefreshOverlay: NSView {
     isHidden = true
     statusBackground.isHidden = true
     setAccessibilityElement(true)
-    setAccessibilityLabel("正在更新详情")
+    setAccessibilityLabel(L("正在更新详情"))
 
     statusBackground.wantsLayer = true
     statusBackground.layer?.cornerRadius = 7
@@ -2618,7 +2618,7 @@ private final class DetailsPaneRefreshOverlay: NSView {
   }
 
   func setRefreshing(_ refreshing: Bool, sectionTitle: String) {
-    statusLabel.stringValue = "正在更新 \(sectionTitle)…"
+    statusLabel.stringValue = L("正在更新 \(sectionTitle)…")
     setAccessibilityLabel(statusLabel.stringValue)
     guard refreshing != isRefreshing else { return }
     isRefreshing = refreshing
@@ -2899,8 +2899,8 @@ final class SplitActionButton: NSStackView {
     primaryButton.controlSize = .regular
     arrowButton.controlSize = .regular
     arrowButton.imagePosition = .imageOnly
-    arrowButton.toolTip = "更多操作"
-    arrowButton.setAccessibilityLabel("更多操作")
+    arrowButton.toolTip = L("更多操作")
+    arrowButton.setAccessibilityLabel(L("更多操作"))
     separator.wantsLayer = true
     separator.translatesAutoresizingMaskIntoConstraints = false
     separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
@@ -3130,10 +3130,10 @@ final class GitDiffPreviewOverlay: NSView {
     title.translatesAutoresizingMaskIntoConstraints = false
     header.addSubview(title)
 
-    let close = IconHoverButton(symbol: "xmark", accessibilityDescription: "关闭预览") { dismiss() }
+    let close = IconHoverButton(symbol: "xmark", accessibilityDescription: L("关闭预览")) { dismiss() }
     // 标题条底色固定，因此按钮的静息色也固定；悬停态仍由 IconHoverButton 统一提供。
     close.restingTint = DiffPreviewHeaderView.foregroundColor.withAlphaComponent(0.65)
-    close.toolTip = "关闭预览"
+    close.toolTip = L("关闭预览")
     close.identifier = NSUserInterfaceItemIdentifier("details-git-diff-close")
     close.translatesAutoresizingMaskIntoConstraints = false
     header.addSubview(close)
@@ -3175,7 +3175,7 @@ final class GitDiffPreviewOverlay: NSView {
       scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
       scroll.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -8),
     ])
-    apply(lines: [GitDiffLine(kind: .notice, text: "正在读取 diff…")])
+    apply(lines: [GitDiffLine(kind: .notice, text: L("正在读取 diff…"))])
     installEventMonitor()
   }
 
@@ -3214,7 +3214,7 @@ final class GitDiffPreviewOverlay: NSView {
     let text = NSMutableAttributedString()
     let font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
     let display = lines.isEmpty
-      ? [GitDiffLine(kind: .notice, text: "该文件没有可显示的差异。")] : lines
+      ? [GitDiffLine(kind: .notice, text: L("该文件没有可显示的差异。"))] : lines
     for line in display {
       text.append(NSAttributedString(
         string: line.text + "\n",
@@ -3380,7 +3380,7 @@ final class PointingHandButton: NSButton {
 private final class DetailsGitRowView: HoverHighlightRowView {
   private let groupLabel = NSTextField(labelWithString: "")
   private lazy var stageButton = IconHoverButton(
-    symbol: "plus.circle", accessibilityDescription: "暂存全部"
+    symbol: "plus.circle", accessibilityDescription: L("暂存全部")
   ) { [weak self] in self?.stageAction?() }
   private let badgeLabel = NSTextField(labelWithString: "")
   private let fileButton = PointingHandButton()
@@ -3412,7 +3412,7 @@ private final class DetailsGitRowView: HoverHighlightRowView {
     groupLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(groupLabel)
 
-    stageButton.toolTip = "把 git add -A 放入终端输入行"
+    stageButton.toolTip = L("把 git add -A 放入终端输入行")
     stageButton.translatesAutoresizingMaskIntoConstraints = false
     addSubview(stageButton)
 
@@ -3699,7 +3699,7 @@ private final class DetailsFileRowView: HoverHighlightRowView {
     if expandable {
       disclosure.setSymbol(
         expanded ? "chevron.down" : "chevron.right",
-        accessibilityDescription: expanded ? "折叠目录" : "展开目录")
+        accessibilityDescription: expanded ? L("折叠目录") : L("展开目录"))
     }
     let symbolName = node.isSymbolicLink
       ? "arrow.up.forward.square" : (node.isDirectory ? "folder" : "doc")

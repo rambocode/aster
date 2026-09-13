@@ -1,6 +1,7 @@
 import AppKit
 import AVKit
 import Combine
+import AsterCore
 
 /// 系统画中画只消费终端渲染帧。原 Pane、PTY、输入焦点和网格尺寸始终留在工作区。
 /// 固定模式绑定稳定 Pane ID；跟随模式按同一工作区的活动 Pane 切换帧源。
@@ -72,11 +73,11 @@ final class PanePictureInPictureController: NSObject,
   func show() {
     guard !isClosed, !isClosing, activeLifetime == nil else { return }
     guard AVPictureInPictureController.isPictureInPictureSupported(), controller != nil else {
-      fail("当前系统不支持画中画")
+      fail(L("当前系统不支持画中画"))
       return
     }
     guard sourceSurface != nil else {
-      fail("当前 Pane 没有可镜像的终端画面")
+      fail(L("当前 Pane 没有可镜像的终端画面"))
       return
     }
     activeLifetime = self
@@ -90,7 +91,7 @@ final class PanePictureInPictureController: NSObject,
     startupTimeout = Task { @MainActor [weak self] in
       do { try await Task.sleep(for: .seconds(8)) } catch { return }
       guard let self, !self.isClosed, self.controller?.isPictureInPictureActive != true else { return }
-      self.fail("系统画中画未能启动，请确认终端画面已显示后重试")
+      self.fail(L("系统画中画未能启动，请确认终端画面已显示后重试"))
     }
   }
 
@@ -144,7 +145,7 @@ final class PanePictureInPictureController: NSObject,
       let surface = session.pictureInPictureSurface
     else {
       // Pane 已关闭或切换到不支持的内容时，不能继续展示前一个 Pane 的旧画面。
-      if activeLifetime != nil { fail("活动 Pane 已关闭或没有可镜像的终端画面") }
+      if activeLifetime != nil { fail(L("活动 Pane 已关闭或没有可镜像的终端画面")) }
       else { detachSource() }
       return
     }
@@ -223,7 +224,7 @@ final class PanePictureInPictureController: NSObject,
     // 不回显系统错误里的文件路径或媒体元数据。
     let handler = isClosing ? nil : onFailure
     finishClose()
-    handler?("系统无法启动画中画，请稍后重试")
+    handler?(L("系统无法启动画中画，请稍后重试"))
   }
 
   func pictureInPictureController(_ controller: AVPictureInPictureController,

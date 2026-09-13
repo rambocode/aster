@@ -53,7 +53,7 @@ enum AgentTranscriptHTML {
     func flushGroup() {
       guard !group.isEmpty else { return }
       let bounded = group.text.count > entryDisplayLimit
-        ? String(group.text.prefix(entryDisplayLimit)) + "\n…（已截断，共 \(group.text.count) 字符）"
+        ? String(group.text.prefix(entryDisplayLimit)) + "\n" + L("…（已截断，共 \(String(group.text.count)) 字符）")
         : group.text
       html += "<details class=\"tools\"><summary>\(escape(group.summary))</summary>"
       if !bounded.isEmpty { html += "<pre>\(escape(bounded))</pre>" }
@@ -64,7 +64,8 @@ enum AgentTranscriptHTML {
     for entry in entries {
       if renderedCharacters >= totalDisplayLimit {
         flushGroup()
-        html += "<p class=\"notice\">— transcript 过长，其余 \(entries.count - renderedEntries) 条未显示；完整内容见会话文件 —</p>\n"
+        let remaining = String(entries.count - renderedEntries)
+        html += "<p class=\"notice\">" + L("— transcript 过长，其余 \(remaining) 条未显示；完整内容见会话文件 —") + "</p>\n"
         return html
       }
       switch entry.kind {
@@ -131,7 +132,7 @@ enum AgentTranscriptHTML {
 
   private static func boundedText(_ text: String) -> String {
     guard text.count > entryDisplayLimit else { return text }
-    return String(text.prefix(entryDisplayLimit)) + "\n\n…（本条已截断，共 \(text.count) 字符）"
+    return String(text.prefix(entryDisplayLimit)) + "\n\n" + L("…（本条已截断，共 \(String(text.count)) 字符）")
   }
 
   private static func escape(_ value: String) -> String {

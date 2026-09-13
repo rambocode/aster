@@ -129,13 +129,13 @@ public enum TerminalIdentityPolicy {
     guard isSyntacticallyValid(configuredName) else {
       return TerminalIdentityResolution(
         term: fallbackTerm,
-        warning: "TERM 名称非法，已回退到 \(fallbackTerm)。"
+        warning: L("TERM 名称非法，已回退到 \(fallbackTerm)。")
       )
     }
     guard entryExists(configuredName) else {
       return TerminalIdentityResolution(
         term: fallbackTerm,
-        warning: "找不到 TERM=\(configuredName) 的 terminfo 条目，已回退到 \(fallbackTerm)。"
+        warning: L("找不到 TERM=\(configuredName) 的 terminfo 条目，已回退到 \(fallbackTerm)。")
       )
     }
     return TerminalIdentityResolution(term: configuredName)

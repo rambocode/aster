@@ -92,7 +92,7 @@ struct RemoteAgentIntegrationInstaller: Sendable {
       timeout: TimeInterval(transport.policy.connectTimeout + 5))
     let home = result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
     guard result.exitStatus == 0, home.hasPrefix("/") else {
-      throw ManagedSessionError.runtimeUnavailable("远端未报告 $HOME，无法安装 Agent 集成。")
+      throw ManagedSessionError.runtimeUnavailable(L("远端未报告 $HOME，无法安装 Agent 集成。"))
     }
     return home
   }
@@ -102,7 +102,7 @@ struct RemoteAgentIntegrationInstaller: Sendable {
       arguments: transport.sshArguments(remoteCommand: RemoteAgentProbe.probeCommand()),
       timeout: 30)
     guard let probe = RemoteAgentProbe.parse(result.standardOutput) else {
-      throw ManagedSessionError.malformedReply("Agent 探测输出缺少标记")
+      throw ManagedSessionError.malformedReply(L("Agent 探测输出缺少标记"))
     }
     return probe
   }
@@ -117,7 +117,7 @@ struct RemoteAgentIntegrationInstaller: Sendable {
       timeout: TimeInterval(transport.policy.connectTimeout + 5))
     guard mkdir.exitStatus == 0 else {
       throw ManagedSessionError.runtimeUnavailable(
-        "无法创建远端目录 \(directory)：\(RemoteSSHDiagnostics.redact(mkdir.standardError))")
+        L("无法创建远端目录 \(directory)：\(RemoteSSHDiagnostics.redact(mkdir.standardError))"))
     }
     let staging = target + ".upload"
     try RemoteSSHInstallExecutor(transport: transport, runner: runner)
@@ -130,7 +130,7 @@ struct RemoteAgentIntegrationInstaller: Sendable {
       timeout: TimeInterval(transport.policy.connectTimeout + 5))
     guard activate.exitStatus == 0 else {
       throw ManagedSessionError.runtimeUnavailable(
-        "无法安装远端 hook 脚本：\(RemoteSSHDiagnostics.redact(activate.standardError))")
+        L("无法安装远端 hook 脚本：\(RemoteSSHDiagnostics.redact(activate.standardError))"))
     }
   }
 

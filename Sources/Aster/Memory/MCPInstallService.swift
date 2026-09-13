@@ -1,3 +1,4 @@
+import AsterCore
 import Foundation
 
 /// `aster-memory-mcp` 的一键安装服务：把 MCP server 注册进项目根目录的 `.mcp.json`，
@@ -42,15 +43,15 @@ enum MCPInstallService {
     var localizedMessage: String {
       switch self {
       case .executableNotFound:
-        "找不到 aster-memory-mcp 可执行文件，请重新安装 Aster 或使用完整构建产物。"
+        L("找不到 aster-memory-mcp 可执行文件，请重新安装 Aster 或使用完整构建产物。")
       case .unsafeConfigurationFile(let path):
-        "拒绝写入 \(path)：它不是当前用户拥有的普通文件。"
+        L("拒绝写入 \(path)：它不是当前用户拥有的普通文件。")
       case .configurationTooLarge(let path):
-        "\(path) 超过 1 MiB，已拒绝解析。"
+        L("\(path) 超过 1 MiB，已拒绝解析。")
       case .malformedConfiguration(let path):
-        "\(path) 不是合法的 MCP 配置（应为 JSON 对象）。"
+        L("\(path) 不是合法的 MCP 配置（应为 JSON 对象）。")
       case .writeFailed(let path):
-        "写入 \(path) 失败，请检查目录权限。"
+        L("写入 \(path) 失败，请检查目录权限。")
       }
     }
   }

@@ -1,3 +1,4 @@
+import AsterCore
 import Darwin
 import Foundation
 
@@ -44,13 +45,13 @@ enum AsterCLIInstaller {
     var localizedMessage: String {
       switch self {
       case .executableNotFound:
-        "找不到 aster-cli 可执行文件，请重新安装 Aster 或使用完整构建产物。"
+        L("找不到 aster-cli 可执行文件，请重新安装 Aster 或使用完整构建产物。")
       case .foreignTarget(let path):
-        "拒绝覆盖 \(path)：它不是 Aster 安装的命令。"
+        L("拒绝覆盖 \(path)：它不是 Aster 安装的命令。")
       case .noWritableDirectory:
-        "/usr/local/bin 与 ~/.local/bin 都不可写。"
+        L("/usr/local/bin 与 ~/.local/bin 都不可写。")
       case .writeFailed(let path):
-        "写入 \(path) 失败，请检查目录权限。"
+        L("写入 \(path) 失败，请检查目录权限。")
       }
     }
   }

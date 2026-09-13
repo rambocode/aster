@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import AsterCore
 
 enum ShellIntegrationInstallerError: Error, Equatable, LocalizedError {
   case missingResource(String)
@@ -10,11 +11,11 @@ enum ShellIntegrationInstallerError: Error, Equatable, LocalizedError {
 
   var errorDescription: String? {
     switch self {
-    case .missingResource(let path): "缺少 Shell 集成资源：\(path)"
-    case .fileTooLarge(let path): "Shell 启动文件超过安全大小限制：\(path)"
-    case .unsupportedFile(let path): "Shell 启动文件不是普通文件：\(path)"
-    case .malformedManagedBlock(let path): "Shell 启动文件中的 Aster 受管区块不完整：\(path)"
-    case .rollbackFailed(let path): "Shell 启动文件更新失败且无法恢复，请检查：\(path)"
+    case .missingResource(let path): L("缺少 Shell 集成资源：\(path)")
+    case .fileTooLarge(let path): L("Shell 启动文件超过安全大小限制：\(path)")
+    case .unsupportedFile(let path): L("Shell 启动文件不是普通文件：\(path)")
+    case .malformedManagedBlock(let path): L("Shell 启动文件中的 Aster 受管区块不完整：\(path)")
+    case .rollbackFailed(let path): L("Shell 启动文件更新失败且无法恢复，请检查：\(path)")
     }
   }
 }

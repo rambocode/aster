@@ -41,14 +41,14 @@ public enum SoftwareUpdateStatus: Equatable, Sendable {
   /// 状态点旁的说明文字，替换设置页该行的 detail。
   public var statusText: String {
     switch self {
-    case .unavailable: "此构建未启用自动更新"
-    case .idle: "尚未检查更新"
-    case .checking: "正在检查更新…"
-    case .upToDate: "已是最新版本"
-    case .available(let version): "发现新版本 \(version)"
-    case .downloading(let version): "正在下载 \(version)…"
-    case .readyToInstall(let version): "\(version) 已下载，退出 Aster 后安装"
-    case .failed(let reason): "更新检查失败：\(reason)"
+    case .unavailable: L("此构建未启用自动更新")
+    case .idle: L("尚未检查更新")
+    case .checking: L("正在检查更新…")
+    case .upToDate: L("已是最新版本")
+    case .available(let version): L("发现新版本 \(version)")
+    case .downloading(let version): L("正在下载 \(version)…")
+    case .readyToInstall(let version): L("\(version) 已下载，退出 Aster 后安装")
+    case .failed(let reason): L("更新检查失败：\(reason)")
     }
   }
 

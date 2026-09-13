@@ -15,7 +15,7 @@ enum WorkflowRecipeCommandReview {
     let numbered = commands.enumerated().map { index, command in
       "\(index + 1). \(command)"
     }
-    return (["共 \(commands.count) 条命令："] + numbered).joined(separator: "\n")
+    return ([L("共 \(String(commands.count)) 条命令：")] + numbered).joined(separator: "\n")
   }
 }
 
@@ -290,14 +290,14 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
   /// 在丢弃编辑器运行态前完成可取消的保存事务。
   func confirmCloseIfNeeded() -> Bool {
     guard isDirty else { return true }
-    let name = URL(fileURLWithPath: descriptor.resourcePath ?? "未命名文件").lastPathComponent
+    let name = URL(fileURLWithPath: descriptor.resourcePath ?? L("未命名文件")).lastPathComponent
     let alert = NSAlert()
-    alert.messageText = "要保存对“\(name)”的更改吗？"
-    alert.informativeText = "如果不保存，关闭后将无法恢复这些更改。"
+    alert.messageText = L("要保存对“\(name)”的更改吗？")
+    alert.informativeText = L("如果不保存，关闭后将无法恢复这些更改。")
     alert.alertStyle = .warning
-    alert.addButton(withTitle: "保存")
-    alert.addButton(withTitle: "取消")
-    alert.addButton(withTitle: "不保存")
+    alert.addButton(withTitle: L("保存"))
+    alert.addButton(withTitle: L("取消"))
+    alert.addButton(withTitle: L("不保存"))
     switch alert.runModal() {
     case .alertFirstButtonReturn:
       saveDocument()
@@ -1306,17 +1306,17 @@ final class AppModel: ObservableObject {
     let alert = NSAlert()
     let noun: String
     switch target {
-    case .tab: noun = "标签页"
-    case .window: noun = "窗口"
-    case .pane: noun = "分屏"
+    case .tab: noun = L("标签页")
+    case .window: noun = L("窗口")
+    case .pane: noun = L("分屏")
     }
-    alert.messageText = "要关闭这个\(noun)吗？"
+    alert.messageText = L("要关闭这个\(noun)吗？")
     alert.informativeText = hasRunningProcess
-      ? "有命令仍在运行。关闭\(noun)会终止它。"
-      : "关闭后其中的终端会话将结束。"
+      ? L("有命令仍在运行。关闭\(noun)会终止它。")
+      : L("关闭后其中的终端会话将结束。")
     alert.alertStyle = .warning
-    alert.addButton(withTitle: "关闭")
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: L("关闭"))
+    alert.addButton(withTitle: L("取消"))
     return alert.runModal() == .alertFirstButtonReturn
   }
   @Published var selectedTabID: UUID?
@@ -2114,7 +2114,7 @@ final class AppModel: ObservableObject {
 
   func togglePromptQueue() {
     guard let paneID = selectedTab?.activePaneID, canPresentPromptQueue else {
-      notice = "请先选择一个终端 Pane。"
+      notice = L("请先选择一个终端 Pane。")
       return
     }
     presentedPromptQueuePaneID = presentedPromptQueuePaneID == paneID ? nil : paneID
@@ -2134,7 +2134,7 @@ final class AppModel: ObservableObject {
   @discardableResult
   func updatePromptQueueDraft(_ value: String, paneID: UUID) -> Bool {
     guard value.utf8.count <= AgentPromptQueue().maximumPromptBytes else {
-      notice = "队列提示词超过 64 KiB 上限。"
+      notice = L("队列提示词超过 64 KiB 上限。")
       return false
     }
     promptQueueDrafts[paneID] = value
@@ -2154,7 +2154,7 @@ final class AppModel: ObservableObject {
       advancePromptQueue(paneID: paneID)
       return true
     } catch {
-      notice = "加入队列失败：\(error.localizedDescription)"
+      notice = L("加入队列失败：\(error.localizedDescription)")
       DiagnosticsCenter.shared.record(
         "agent.prompt_queue_enqueue_failed", level: .warning, category: .workspace, error: error)
       return false
@@ -2173,17 +2173,18 @@ final class AppModel: ObservableObject {
   func sendPromptQueueItem(id: UUID, paneID: UUID) -> Bool {
     guard let session = tabs.lazy.compactMap({ $0.runtime(for: paneID)?.terminalSession }).first
     else {
-      notice = "当前终端 Pane 已关闭。"
+      notice = L("当前终端 Pane 已关闭。")
       return false
     }
 
     var queue = promptQueue(for: paneID)
     guard let item = queue.pending.first(where: { $0.id == id }) else {
-      notice = "该队列项已不存在。"
+      notice = L("该队列项已不存在。")
       return false
     }
     guard session.submitPromptQueueText(item.text) else {
-      notice = "无法写入当前 CLI 输入框（\(session.promptWriteBlocker ?? "输入被前台程序拒绝")），队列项已保留。"
+      let blocker = session.promptWriteBlocker ?? L("输入被前台程序拒绝")
+      notice = L("无法写入当前 CLI 输入框（\(blocker)），队列项已保留。")
       return false
     }
     _ = queue.remove(id: id)
@@ -2218,7 +2219,8 @@ final class AppModel: ObservableObject {
         // 写入失败（只读 Pane、输入模式限制、PTY 已退出）时把 prompt 放回队首，
         // 用户仍能改用列表行的立即发送按钮。
         queue.restoreInFlight()
-        notice = "无法自动写入当前 CLI 输入框（\(session.promptWriteBlocker ?? "输入被前台程序拒绝")），队列项已保留。"
+        let blocker = session.promptWriteBlocker ?? L("输入被前台程序拒绝")
+        notice = L("无法自动写入当前 CLI 输入框（\(blocker)），队列项已保留。")
       }
     }
     // 无论本次是否派发都要写回：`observeAgentState` 记下的「in-flight 已真正开始」
@@ -2244,12 +2246,12 @@ final class AppModel: ObservableObject {
       let runtime = tab.activeRuntime,
       let session = runtime.terminalSession
     else {
-      notice = "请先选择一个终端 Pane。"
+      notice = L("请先选择一个终端 Pane。")
       return
     }
     let destinations = agentChatDestinations()
     guard !destinations.isEmpty else {
-      notice = "当前工作区没有可接收聊天内容的 Claude Code 或 Codex。"
+      notice = L("当前工作区没有可接收聊天内容的 Claude Code 或 Codex。")
       return
     }
     let transcript = session.textSnapshot().lines.suffix(2_000).joined(separator: "\n")
@@ -2276,7 +2278,7 @@ final class AppModel: ObservableObject {
   ) -> Bool {
     let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
     guard trimmedComment.utf8.count <= AgentChatContextBudget().reservedPromptBytes else {
-      notice = "Comment 超过 8 KiB 上限。"
+      notice = L("Comment 超过 8 KiB 上限。")
       return false
     }
     guard let target = tabs.first(where: { $0.id == destination.tabID })?.runtime(for: destination.paneID),
@@ -2284,7 +2286,7 @@ final class AppModel: ObservableObject {
       session.activeAgentProvider == destination.provider,
       destination.provider == .claudeCode || destination.provider == .codex
     else {
-      notice = "目标 Agent 已退出或 Pane 已关闭。"
+      notice = L("目标 Agent 已退出或 Pane 已关闭。")
       return false
     }
 
@@ -2298,18 +2300,18 @@ final class AppModel: ObservableObject {
       }
       let context = builder.renderedForPrompt
       guard !trimmedComment.isEmpty || !context.isEmpty else {
-        notice = "请填写 Comment 或至少选择一项上下文。"
+        notice = L("请填写 Comment 或至少选择一项上下文。")
         return false
       }
       let text = [trimmedComment, context].filter { !$0.isEmpty }.joined(separator: "\n\n")
       guard session.typePromptText(text) else {
-        notice = "目标 Agent 当前无法接收聊天内容。"
+        notice = L("目标 Agent 当前无法接收聊天内容。")
         return false
       }
-      notice = "已预填到 \(destination.title) 的输入框，等待你确认发送。"
+      notice = L("已预填到 \(destination.title) 的输入框，等待你确认发送。")
       return true
     } catch {
-      notice = "无法构造聊天上下文：\(error.localizedDescription)"
+      notice = L("无法构造聊天上下文：\(error.localizedDescription)")
       return false
     }
   }
@@ -2360,7 +2362,7 @@ final class AppModel: ObservableObject {
   /// 一并进入不可信区块，不会被当成系统指令。
   func sendFileToChat(_ url: URL) {
     guard let tab = selectedTab, let target = tab.preferredTerminalRuntime else {
-      notice = "当前标签没有可接收聊天上下文的终端。"
+      notice = L("当前标签没有可接收聊天上下文的终端。")
       return
     }
     do {
@@ -2370,12 +2372,12 @@ final class AppModel: ObservableObject {
       guard values.isRegularFile == true, values.isSymbolicLink != true,
         let size = values.fileSize, size <= AgentChatContextBudget().maximumItemBytes
       else {
-        notice = "只能发送不超过 64 KiB 的普通文件。"
+        notice = L("只能发送不超过 64 KiB 的普通文件。")
         return
       }
       let data = try Data(contentsOf: url, options: [.mappedIfSafe])
       guard data.count == size, let text = String(data: data, encoding: .utf8) else {
-        notice = "文件不是有效 UTF-8 文本，未添加到 Chat。"
+        notice = L("文件不是有效 UTF-8 文本，未添加到 Chat。")
         return
       }
       var builder = AgentChatContextBuilder()
@@ -2383,7 +2385,7 @@ final class AppModel: ObservableObject {
       tab.setActivePane(target.id)
       appendToComposer(builder.renderedForPrompt, paneID: target.id)
     } catch {
-      notice = "无法添加文件上下文：\(error.localizedDescription)"
+      notice = L("无法添加文件上下文：\(error.localizedDescription)")
     }
   }
 
@@ -2467,11 +2469,11 @@ final class AppModel: ObservableObject {
   ) {
     do {
       guard let sessionID = context.sessionID else {
-        notice = "当前 Agent 尚未报告会话 ID，无法 Fork。"
+        notice = L("当前 Agent 尚未报告会话 ID，无法 Fork。")
         return
       }
       guard context.configuration.provider == context.provider else {
-        notice = "Agent 会话配置与当前 Provider 不一致，无法继续。"
+        notice = L("Agent 会话配置与当前 Provider 不一致，无法继续。")
         return
       }
       let components = launchComponents(for: context.provider)
@@ -2499,7 +2501,7 @@ final class AppModel: ObservableObject {
         session = selectedTab?.activeSession
       }
       guard let session else {
-        notice = "无法创建用于继续 Agent 会话的终端。"
+        notice = L("无法创建用于继续 Agent 会话的终端。")
         return
       }
       let command = AgentShellCommandEncoder.encode(plan)
@@ -2509,7 +2511,7 @@ final class AppModel: ObservableObject {
       }
       isAgentHistoryPresented = false
     } catch {
-      notice = "无法继续 Agent 会话：\(error.localizedDescription)"
+      notice = L("无法继续 Agent 会话：\(error.localizedDescription)")
     }
   }
 
@@ -2559,7 +2561,7 @@ final class AppModel: ObservableObject {
   func updateComposerDraft(_ value: String, paneID: UUID) -> Bool {
     var state = composerState(for: paneID)
     guard state.updateDraft(value) else {
-      notice = "Composer 草稿超过大小上限。"
+      notice = L("Composer 草稿超过大小上限。")
       return false
     }
     agentComposers[paneID] = state
@@ -2570,7 +2572,7 @@ final class AppModel: ObservableObject {
     var state = composerState(for: paneID)
     let separator = state.draft.isEmpty ? "" : "\n"
     guard state.updateDraft(state.draft + separator + value) else {
-      notice = "Composer 草稿超过大小上限。"
+      notice = L("Composer 草稿超过大小上限。")
       return
     }
     agentComposers[paneID] = state
@@ -2592,7 +2594,7 @@ final class AppModel: ObservableObject {
       agentComposers[paneID] = state
       objectWillChange.send()
     } catch {
-      notice = "无法添加附件：\(error.localizedDescription)"
+      notice = L("无法添加附件：\(error.localizedDescription)")
     }
   }
 
@@ -2643,13 +2645,13 @@ final class AppModel: ObservableObject {
           attachments: submission.attachments,
           isPinned: state.isPinned
         )
-        notice = "当前终端无法接收 Composer 内容。"
+        notice = L("当前终端无法接收 Composer 内容。")
         return
       }
       agentComposers[paneID] = state
       if !state.isPinned { isComposerPresented = false }
     } catch {
-      notice = "Composer 发送失败：\(error.localizedDescription)"
+      notice = L("Composer 发送失败：\(error.localizedDescription)")
     }
   }
 
@@ -2666,7 +2668,7 @@ final class AppModel: ObservableObject {
       objectWillChange.send()
       advancePromptQueue(paneID: paneID)
     } catch {
-      notice = "加入队列失败：\(error.localizedDescription)"
+      notice = L("加入队列失败：\(error.localizedDescription)")
     }
   }
 
@@ -2781,9 +2783,9 @@ final class AppModel: ObservableObject {
   func promptRenameSelectedTab(preselectPrefix: Bool = false) {
     guard let tab = selectedTab else { return }
     let mode = NSPopUpButton()
-    mode.addItems(withTitles: ["固定名称", "动态前缀"])
+    mode.addItems(withTitles: [L("固定名称"), L("动态前缀")])
     let field = NSTextField()
-    field.placeholderString = "输入名称或前缀"
+    field.placeholderString = L("输入名称或前缀")
     switch tab.tabTitleOverride {
     case .automatic:
       mode.selectItem(at: preselectPrefix ? 1 : 0)
@@ -2804,12 +2806,12 @@ final class AppModel: ObservableObject {
     accessory.widthAnchor.constraint(equalToConstant: 300).isActive = true
 
     let alert = NSAlert()
-    alert.messageText = "重命名标签页"
-    alert.informativeText = "固定名称忽略程序标题更新；动态前缀会继续跟随 OSC 标题。"
+    alert.messageText = L("重命名标签页")
+    alert.informativeText = L("固定名称忽略程序标题更新；动态前缀会继续跟随 OSC 标题。")
     alert.accessoryView = accessory
-    alert.addButton(withTitle: "保存")
-    alert.addButton(withTitle: "取消")
-    alert.addButton(withTitle: "恢复自动标题")
+    alert.addButton(withTitle: L("保存"))
+    alert.addButton(withTitle: L("取消"))
+    alert.addButton(withTitle: L("恢复自动标题"))
     switch alert.runModal() {
     case .alertFirstButtonReturn:
       let override: TerminalTitleOverride = mode.indexOfSelectedItem == 0
@@ -2867,13 +2869,13 @@ final class AppModel: ObservableObject {
     let panel = NSSavePanel()
     panel.nameFieldStringValue = "\(tab.title).\(WorkflowRecipeTOML.fileExtension)"
     let scope = NSPopUpButton()
-    scope.addItems(withTitles: ["当前标签", "当前窗口", "仅命令"])
+    scope.addItems(withTitles: [L("当前标签"), L("当前窗口"), L("仅命令")])
     let content = NSPopUpButton()
-    content.addItems(withTitles: ["布局", "布局与命令", "布局、命令与 Scrollback"])
+    content.addItems(withTitles: [L("布局"), L("布局与命令"), L("布局、命令与 Scrollback")])
     content.selectItem(at: 1)
     let accessory = NSStackView(views: [
-      makeRecipeAccessoryRow(title: "范围", control: scope),
-      makeRecipeAccessoryRow(title: "内容", control: content),
+      makeRecipeAccessoryRow(title: L("范围"), control: scope),
+      makeRecipeAccessoryRow(title: L("内容"), control: content),
     ])
     accessory.orientation = .vertical
     accessory.spacing = 8
@@ -2901,9 +2903,9 @@ final class AppModel: ObservableObject {
         content: selectedContent
       )
       try WorkflowRecipeTOML.save(recipe, to: url)
-      notice = "Recipe 已保存"
+      notice = L("Recipe 已保存")
     } catch {
-      notice = "Recipe 保存失败：\(error.localizedDescription)"
+      notice = L("Recipe 保存失败：\(error.localizedDescription)")
     }
   }
 
@@ -2924,7 +2926,7 @@ final class AppModel: ObservableObject {
       return
     }
     guard url.isFileURL else {
-      notice = "Aster 暂不支持该链接。"
+      notice = L("Aster 暂不支持该链接。")
       return
     }
     var isDirectory: ObjCBool = false
@@ -2936,7 +2938,7 @@ final class AppModel: ObservableObject {
       return
     }
     guard url.pathExtension.lowercased() == WorkflowRecipeTOML.fileExtension else {
-      notice = "Aster 暂不支持打开该类型文件。"
+      notice = L("Aster 暂不支持打开该类型文件。")
       return
     }
     openRecipe(from: url)
@@ -2958,7 +2960,7 @@ final class AppModel: ObservableObject {
           let raw = identifier.hasPrefix("t_") ? String(identifier.dropFirst(2)) : identifier
           tab = UUID(uuidString: raw).flatMap { id in tabs.first { $0.id == id } }
         }
-        if let tab { select(tab) } else { notice = "深链指定的标签不存在。" }
+        if let tab { select(tab) } else { notice = L("深链指定的标签不存在。") }
       case .focusPane(let selector):
         let match: (TerminalTabItem, UUID)? = tabs.lazy.compactMap { tab in
           switch selector {
@@ -2976,11 +2978,11 @@ final class AppModel: ObservableObject {
         if let (tab, paneID) = match {
           revealWorkspaceLocation(tabID: tab.id, paneID: paneID)
         } else {
-          notice = "深链指定的 Pane 不存在。"
+          notice = L("深链指定的 Pane 不存在。")
         }
       }
     } catch {
-      notice = "无效或不受支持的 Aster 深链。"
+      notice = L("无效或不受支持的 Aster 深链。")
     }
   }
 
@@ -2995,14 +2997,14 @@ final class AppModel: ObservableObject {
   /// 网页等外部来源，是否执行必须由用户确认，与「不执行外部命令」的安全边界一致。
   private func openSSHURL(_ url: URL) {
     guard let host = url.host, !host.isEmpty, Self.isSafeSSHComponent(host, allowColon: true) else {
-      notice = "无效的 ssh 链接。"
+      notice = L("无效的 ssh 链接。")
       return
     }
     var command = "ssh "
     if let port = url.port { command += "-p \(port) " }
     if let user = url.user, !user.isEmpty {
       guard Self.isSafeSSHComponent(user, allowColon: false) else {
-        notice = "无效的 ssh 链接。"
+        notice = L("无效的 ssh 链接。")
         return
       }
       command += "\(user)@"
@@ -3020,7 +3022,7 @@ final class AppModel: ObservableObject {
   /// Open Quickly 的 SSH 条目与 `ssh://` 使用同一安全语义：只预填命令，不自动执行。
   func openSSHHost(_ host: SSHHost) {
     guard Self.isSafeSSHComponent(host.alias, allowColon: false) else {
-      notice = "SSH 配置包含不安全的主机字段。"
+      notice = L("SSH 配置包含不安全的主机字段。")
       return
     }
     // 使用 Host alias，才能保留 ProxyJump、IdentityFile 等完整 SSH 配置；显式展开
@@ -3176,9 +3178,9 @@ final class AppModel: ObservableObject {
         }
       }
       persistWorkspace()
-      notice = "已打开 \(envelope.recipe.name)"
+      notice = L("已打开 \(envelope.recipe.name)")
     } catch {
-      notice = "Recipe 打开失败：\(error.localizedDescription)"
+      notice = L("Recipe 打开失败：\(error.localizedDescription)")
     }
   }
 
@@ -3188,12 +3190,12 @@ final class AppModel: ObservableObject {
   ) -> WorkflowRecipeTrustChoice {
     let alert = NSAlert()
     alert.alertStyle = .warning
-    alert.messageText = "外部 Recipe 包含将要运行的命令"
-    alert.informativeText = "SHA-256: \(digest)\n请在下方逐条检查全部命令。"
+    alert.messageText = L("外部 Recipe 包含将要运行的命令")
+    alert.informativeText = L("SHA-256: \(digest)\n请在下方逐条检查全部命令。")
     alert.accessoryView = workflowRecipeCommandReviewView(commands: commands)
-    alert.addButton(withTitle: "仅运行一次")
-    alert.addButton(withTitle: "始终信任此内容")
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: L("仅运行一次"))
+    alert.addButton(withTitle: L("始终信任此内容"))
+    alert.addButton(withTitle: L("取消"))
     switch alert.runModal() {
     case .alertFirstButtonReturn: return .runOnce
     case .alertSecondButtonReturn: return .alwaysTrust
@@ -3216,11 +3218,11 @@ final class AppModel: ObservableObject {
     case .confirmOnce:
       let alert = NSAlert()
       alert.alertStyle = .warning
-      alert.messageText = "运行 Recipe 命令？"
-      alert.informativeText = "请在下方逐条检查全部命令。"
+      alert.messageText = L("运行 Recipe 命令？")
+      alert.informativeText = L("请在下方逐条检查全部命令。")
       alert.accessoryView = workflowRecipeCommandReviewView(commands: recipe.allCommands)
-      alert.addButton(withTitle: "运行")
-      alert.addButton(withTitle: "仅打开布局")
+      alert.addButton(withTitle: L("运行"))
+      alert.addButton(withTitle: L("仅打开布局"))
       return alert.runModal() == .alertFirstButtonReturn
     }
   }
@@ -3301,11 +3303,11 @@ final class AppModel: ObservableObject {
   private func confirmSingleRecipeCommand(_ command: String) -> SingleRecipeCommandDecision {
     let alert = NSAlert()
     alert.alertStyle = .warning
-    alert.messageText = "运行下一条 Recipe 命令？"
+    alert.messageText = L("运行下一条 Recipe 命令？")
     alert.informativeText = command
-    alert.addButton(withTitle: "运行此命令")
-    alert.addButton(withTitle: "跳过")
-    alert.addButton(withTitle: "停止重放")
+    alert.addButton(withTitle: L("运行此命令"))
+    alert.addButton(withTitle: L("跳过"))
+    alert.addButton(withTitle: L("停止重放"))
     switch alert.runModal() {
     case .alertFirstButtonReturn: return .run
     case .alertSecondButtonReturn: return .skip
@@ -3770,51 +3772,51 @@ final class AppModel: ObservableObject {
 
   var paletteCommands: [PaletteCommand] {
     var commands: [PaletteCommand] = [
-      .init(id: "new-window", title: "新建窗口", keywords: ["new", "window"], scope: .application),
-      .init(id: "new-tab", title: "新建标签页", keywords: ["new", "tab"], scope: .window),
-      .init(id: "reopen-tab", title: "重新打开最近关闭的标签页", keywords: ["reopen", "closed", "tab"], scope: .window),
-      .init(id: "rename-tab", title: "重命名标签页", keywords: ["rename", "prefix", "title"], scope: .window),
-      .init(id: "open-file", title: "打开文件", keywords: ["edit", "file"], scope: .window),
-      .init(id: "open-folder", title: "打开文件夹", keywords: ["browser", "folder"], scope: .window),
-      .init(id: "split-right", title: "向右拆分", keywords: ["pane", "split"]),
-      .init(id: "split-left", title: "向左拆分", keywords: ["pane", "split"]),
-      .init(id: "split-down", title: "向下拆分", keywords: ["pane", "split"]),
-      .init(id: "split-up", title: "向上拆分", keywords: ["pane", "split"]),
-      .init(id: "zoom-pane", title: "缩放拆分", keywords: ["zoom", "pane", "maximize"]),
-      .init(id: "equalize-splits", title: "等分拆分", keywords: ["pane", "split", "equal"]),
-      .init(id: "focus-next-pane", title: "聚焦下一个面板", keywords: ["pane", "focus"]),
-      .init(id: "files", title: "新建文件浏览器", keywords: ["tree", "files"]),
-      .init(id: "find", title: "在当前 Pane 中查找", keywords: ["search", "buffer"]),
-      .init(id: "global-find", title: "在全部 Pane 中查找", keywords: ["search", "workspace"], scope: .window),
+      .init(id: "new-window", title: L("新建窗口"), keywords: ["new", "window"], scope: .application),
+      .init(id: "new-tab", title: L("新建标签页"), keywords: ["new", "tab"], scope: .window),
+      .init(id: "reopen-tab", title: L("重新打开最近关闭的标签页"), keywords: ["reopen", "closed", "tab"], scope: .window),
+      .init(id: "rename-tab", title: L("重命名标签页"), keywords: ["rename", "prefix", "title"], scope: .window),
+      .init(id: "open-file", title: L("打开文件"), keywords: ["edit", "file"], scope: .window),
+      .init(id: "open-folder", title: L("打开文件夹"), keywords: ["browser", "folder"], scope: .window),
+      .init(id: "split-right", title: L("向右拆分"), keywords: ["pane", "split"]),
+      .init(id: "split-left", title: L("向左拆分"), keywords: ["pane", "split"]),
+      .init(id: "split-down", title: L("向下拆分"), keywords: ["pane", "split"]),
+      .init(id: "split-up", title: L("向上拆分"), keywords: ["pane", "split"]),
+      .init(id: "zoom-pane", title: L("缩放拆分"), keywords: ["zoom", "pane", "maximize"]),
+      .init(id: "equalize-splits", title: L("等分拆分"), keywords: ["pane", "split", "equal"]),
+      .init(id: "focus-next-pane", title: L("聚焦下一个面板"), keywords: ["pane", "focus"]),
+      .init(id: "files", title: L("新建文件浏览器"), keywords: ["tree", "files"]),
+      .init(id: "find", title: L("在当前 Pane 中查找"), keywords: ["search", "buffer"]),
+      .init(id: "global-find", title: L("在全部 Pane 中查找"), keywords: ["search", "workspace"], scope: .window),
       .init(id: "open-quickly", title: "Open Quickly", keywords: ["jump", "recent", "ssh"], scope: .window),
-      .init(id: "inspector", title: "切换详情面板", keywords: ["git", "info", "outline"], scope: .window),
-      .init(id: "pin-window", title: "切换窗口置顶", keywords: ["pin", "floating"], scope: .window),
-      .init(id: "picture-in-picture", title: "当前 Pane 画中画", keywords: ["pip", "float"], scope: .window),
-      .init(id: "picture-in-picture-follow", title: "画中画跟随活动 Pane", keywords: ["pip", "follow"], scope: .window),
-      .init(id: "save-recipe", title: "保存为 Recipe", keywords: ["workspace"], scope: .window),
-      .init(id: "open-recipe", title: "打开 Recipe", keywords: ["workspace"], scope: .window),
-      .init(id: "interrupt", title: "中断当前命令", keywords: ["control c", "stop"]),
-      .init(id: "vi-mode", title: "进入 Vi Mode", keywords: ["terminal", "keyboard", "navigate"]),
-      .init(id: "mark-mode", title: "进入 Mark Mode", keywords: ["terminal", "select", "copy"]),
-      .init(id: "hint-mode", title: "打开链接（Hint Mode）", keywords: ["terminal", "url", "path"]),
-      .init(id: "read-only", title: "切换只读模式", keywords: ["terminal", "lock", "input"]),
-      .init(id: "composer", title: "切换 Composer", keywords: ["agent", "prompt", "queue"]),
-      .init(id: "prompt-queue", title: "切换 Prompt 队列", keywords: ["agent", "prompt", "queue"]),
-      .init(id: "send-to-chat", title: "发送到聊天", keywords: ["agent", "selection", "transcript", "context"]),
-      .init(id: "agent-history", title: "Agent 历史", keywords: ["resume", "fork", "transcript"], scope: .window),
-      .init(id: "memory-browser", title: "浏览 Session Memory", keywords: ["memory", "history", "context", "receipt"], scope: .window),
-      .init(id: "memory-new-task", title: "新建 Task", keywords: ["task", "memory", "new"], scope: .window),
-      .init(id: "memory-assign-task", title: "把当前会话归入 Task", keywords: ["task", "memory", "assign", "session"], scope: .window),
-      .init(id: "memory-continue-task", title: "继续 Task", keywords: ["task", "memory", "continue", "resume"], scope: .window),
-      .init(id: "close-pane", title: "关闭当前面板", keywords: ["pane", "close"]),
-      .init(id: "close-tab", title: "关闭标签页", keywords: ["tab", "close"], scope: .window),
-      .init(id: "settings", title: "打开设置", keywords: ["preferences"], scope: .application),
+      .init(id: "inspector", title: L("切换详情面板"), keywords: ["git", "info", "outline"], scope: .window),
+      .init(id: "pin-window", title: L("切换窗口置顶"), keywords: ["pin", "floating"], scope: .window),
+      .init(id: "picture-in-picture", title: L("当前 Pane 画中画"), keywords: ["pip", "float"], scope: .window),
+      .init(id: "picture-in-picture-follow", title: L("画中画跟随活动 Pane"), keywords: ["pip", "follow"], scope: .window),
+      .init(id: "save-recipe", title: L("保存为 Recipe"), keywords: ["workspace"], scope: .window),
+      .init(id: "open-recipe", title: L("打开 Recipe"), keywords: ["workspace"], scope: .window),
+      .init(id: "interrupt", title: L("中断当前命令"), keywords: ["control c", "stop"]),
+      .init(id: "vi-mode", title: L("进入 Vi Mode"), keywords: ["terminal", "keyboard", "navigate"]),
+      .init(id: "mark-mode", title: L("进入 Mark Mode"), keywords: ["terminal", "select", "copy"]),
+      .init(id: "hint-mode", title: L("打开链接（Hint Mode）"), keywords: ["terminal", "url", "path"]),
+      .init(id: "read-only", title: L("切换只读模式"), keywords: ["terminal", "lock", "input"]),
+      .init(id: "composer", title: L("切换 Composer"), keywords: ["agent", "prompt", "queue"]),
+      .init(id: "prompt-queue", title: L("切换 Prompt 队列"), keywords: ["agent", "prompt", "queue"]),
+      .init(id: "send-to-chat", title: L("发送到聊天"), keywords: ["agent", "selection", "transcript", "context"]),
+      .init(id: "agent-history", title: L("Agent 历史"), keywords: ["resume", "fork", "transcript"], scope: .window),
+      .init(id: "memory-browser", title: L("浏览 Session Memory"), keywords: ["memory", "history", "context", "receipt"], scope: .window),
+      .init(id: "memory-new-task", title: L("新建 Task"), keywords: ["task", "memory", "new"], scope: .window),
+      .init(id: "memory-assign-task", title: L("把当前会话归入 Task"), keywords: ["task", "memory", "assign", "session"], scope: .window),
+      .init(id: "memory-continue-task", title: L("继续 Task"), keywords: ["task", "memory", "continue", "resume"], scope: .window),
+      .init(id: "close-pane", title: L("关闭当前面板"), keywords: ["pane", "close"]),
+      .init(id: "close-tab", title: L("关闭标签页"), keywords: ["tab", "close"], scope: .window),
+      .init(id: "settings", title: L("打开设置"), keywords: ["preferences"], scope: .application),
     ]
     commands.insert(
       contentsOf: enabledAgentProviders.map { provider in
         PaletteCommand(
           id: "launch-agent:\(provider.rawValue)",
-          title: "启动 \(provider.commandName)",
+          title: L("启动 \(provider.commandName)"),
           keywords: ["agent", "new", provider.rawValue],
           scope: .window
         )
@@ -3970,7 +3972,7 @@ final class AppModel: ObservableObject {
     else { return }
     persistAgentProjectSessions()
     guard let command = projectAgentResumeCommand(provider: provider, sessionID: sessionID) else { return }
-    notice = "\(provider.displayName) 会话已结束 · \(command) · 在此项目新开终端时补全首选"
+    notice = L("\(provider.displayName) 会话已结束 · \(command) · 在此项目新开终端时补全首选")
   }
 
   private func persistAgentProjectSessions() {
@@ -3990,7 +3992,7 @@ final class AppModel: ObservableObject {
         provider: record.provider, sessionID: record.sessionID)
     else { return nil }
     return ProjectCommandSuggestion(
-      command: command, description: "恢复 \(record.provider.displayName) 会话")
+      command: command, description: L("恢复 \(record.provider.displayName) 会话"))
   }
 
   /// 展示用的 resume 命令文本；规划失败（provider 无 resume 能力等）返回 nil。
@@ -4112,21 +4114,21 @@ extension AppModel {
   func promptNewMemoryTask() {
     guard let window = NSApp.keyWindow else { return }
     let field = NSTextField()
-    field.placeholderString = "例如：修复 WebSocket 重连"
+    field.placeholderString = L("例如：修复 WebSocket 重连")
     field.translatesAutoresizingMaskIntoConstraints = false
     field.widthAnchor.constraint(equalToConstant: 320).isActive = true
 
     let alert = NSAlert()
-    alert.messageText = "新建 Task"
+    alert.messageText = L("新建 Task")
     alert.informativeText =
-      "Task 把跨 Agent、跨会话的工作过程归成一组。创建后可以用“把当前会话归入 Task”关联终端会话。"
+      L("Task 把跨 Agent、跨会话的工作过程归成一组。创建后可以用“把当前会话归入 Task”关联终端会话。")
     alert.accessoryView = field
-    alert.addButton(withTitle: "创建")
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: L("创建"))
+    alert.addButton(withTitle: L("取消"))
     alert.beginSheetModal(for: window) { [weak self] response in
       guard let self, response == .alertFirstButtonReturn else { return }
       guard let title = TaskDescriptor.sanitizedTitle(field.stringValue) else {
-        self.notice = "Task 标题不能为空。"
+        self.notice = L("Task 标题不能为空。")
         return
       }
       self.createMemoryTask(title: title)
@@ -4145,13 +4147,13 @@ extension AppModel {
       }
       guard let self else { return }
       guard let projectPath, !projectPath.isEmpty else {
-        self.notice = "无法确定当前项目，Task 未创建。"
+        self.notice = L("无法确定当前项目，Task 未创建。")
         return
       }
       let task = TaskDescriptor(projectPath: projectPath, title: title)
       await MemoryStoreAccess.writer.record(.upsertTask(task))
       await MemoryStoreAccess.writer.flush()
-      self.notice = "已创建 Task「\(title)」。"
+      self.notice = L("已创建 Task「\(title)」。")
     }
   }
 
@@ -4159,11 +4161,11 @@ extension AppModel {
   /// 没有候选时直接引导去新建，而不是弹一个空列表。
   func promptAssignSessionToTask() {
     guard selectedTab?.activeSession != nil else {
-      notice = "请先选择一个终端 Pane。"
+      notice = L("请先选择一个终端 Pane。")
       return
     }
     guard isMemoryRecordingActive else {
-      notice = "记录当前未开启，会话没有可关联的记录。"
+      notice = L("记录当前未开启，会话没有可关联的记录。")
       return
     }
     let directory = activeMemoryWorkingDirectory
@@ -4175,7 +4177,7 @@ extension AppModel {
       let tasks = await Self.fetchOpenTasks(projectPath: projectPath)
       guard let self else { return }
       guard !tasks.isEmpty else {
-        self.notice = "该项目还没有进行中的 Task，请先新建。"
+        self.notice = L("该项目还没有进行中的 Task，请先新建。")
         return
       }
       self.presentTaskPicker(tasks)
@@ -4196,11 +4198,11 @@ extension AppModel {
     popUp.widthAnchor.constraint(equalToConstant: 320).isActive = true
 
     let alert = NSAlert()
-    alert.messageText = "把当前会话归入 Task"
-    alert.informativeText = "归入后，这个会话产生的 Memory 会带上 Task 归属，Agent 检索时能看到。"
+    alert.messageText = L("把当前会话归入 Task")
+    alert.informativeText = L("归入后，这个会话产生的 Memory 会带上 Task 归属，Agent 检索时能看到。")
     alert.accessoryView = popUp
-    alert.addButton(withTitle: "归入")
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: L("归入"))
+    alert.addButton(withTitle: L("取消"))
     alert.beginSheetModal(for: window) { [weak self] response in
       guard let self, response == .alertFirstButtonReturn else { return }
       let index = popUp.indexOfSelectedItem
@@ -4213,14 +4215,14 @@ extension AppModel {
   /// session 行主键同源，因此不需要额外的映射表。
   func assignActiveSession(toTask task: TaskDescriptor) {
     guard let sessionID = selectedTab?.activeSession?.id else {
-      notice = "请先选择一个终端 Pane。"
+      notice = L("请先选择一个终端 Pane。")
       return
     }
     Task { [weak self] in
       await MemoryStoreAccess.writer.record(
         .assignSessionTask(sessionID: sessionID, taskID: task.id))
       await MemoryStoreAccess.writer.flush()
-      self?.notice = "已把当前会话归入「\(task.title)」。"
+      self?.notice = L("已把当前会话归入「\(task.title)」。")
     }
   }
 }

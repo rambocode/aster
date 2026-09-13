@@ -1,3 +1,4 @@
+import AsterCore
 import CryptoKit
 import Darwin
 import Foundation
@@ -59,11 +60,11 @@ enum AgentSkillInstallService {
     var localizedMessage: String {
       switch self {
       case .sourceNotFound:
-        "找不到 Aster 附带的 skill 资源，请重新安装 Aster 或使用完整构建产物。"
+        L("找不到 Aster 附带的 skill 资源，请重新安装 Aster 或使用完整构建产物。")
       case .foreignDestination(let path):
-        "拒绝覆盖 \(path)：它不是 Aster 安装的 skill 目录。"
+        L("拒绝覆盖 \(path)：它不是 Aster 安装的 skill 目录。")
       case .writeFailed(let path):
-        "写入 \(path) 失败，请检查目录权限。"
+        L("写入 \(path) 失败，请检查目录权限。")
       }
     }
   }

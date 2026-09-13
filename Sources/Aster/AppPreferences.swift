@@ -57,9 +57,9 @@ final class AppPreferences: ObservableObject {
     var id: String { rawValue }
     var label: String {
       switch self {
-      case .system: "跟随系统"
-      case .light: "浅色"
-      case .dark: "深色"
+      case .system: L("跟随系统")
+      case .light: L("浅色")
+      case .dark: L("深色")
       }
     }
   }

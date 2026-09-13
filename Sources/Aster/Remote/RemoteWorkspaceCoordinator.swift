@@ -194,7 +194,7 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
   func refresh(machineProfileID: UUID) async -> Bool {
     guard !isStopped, machineProfileID != MachineProfile.localProfileID else { return false }
     guard let workspace = await ensureWorkspace(machineProfileID: machineProfileID) else {
-      lastError = "机器未配置远端运行时，无法读取共享工作区。"
+      lastError = L("机器未配置远端运行时，无法读取共享工作区。")
       onDidRefresh?()
       return false
     }
@@ -246,11 +246,12 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
       projection = try await workspace.controller.synchronize()
       let failed = result.entries.filter { $0.path == "failed" }
       guard failed.isEmpty else {
-        return "远端有 \(failed.count) 个终端恢复失败：\(failed.first?.failureReason ?? "未知原因")"
+        let reason = failed.first?.failureReason ?? L("未知原因")
+        return L("远端有 \(String(failed.count)) 个终端恢复失败：\(reason)")
       }
       return nil
     } catch {
-      return "远端终端冷恢复失败：\(RemoteSetupDescription.text(for: error))"
+      return L("远端终端冷恢复失败：\(RemoteSetupDescription.text(for: error))")
     }
   }
 
@@ -274,11 +275,11 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
         rows: Self.restoreGeometry.rows, columns: Self.restoreGeometry.columns,
         force: true, paneID: paneID)
       if let failed = result.entries.first(where: { $0.path == "failed" }) {
-        lastError = "远端终端重启失败：\(failed.failureReason ?? "未知原因")"
+        lastError = L("远端终端重启失败：\(failed.failureReason ?? L("未知原因"))")
         workspace.lastError = lastError
       }
     } catch {
-      lastError = "远端终端重启失败：\(RemoteSetupDescription.text(for: error))"
+      lastError = L("远端终端重启失败：\(RemoteSetupDescription.text(for: error))")
       workspace.lastError = lastError
     }
     await refresh(machineProfileID: machineProfileID)
@@ -397,8 +398,8 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
     case .blocked:
       let notification = TerminalNotification(
         identifier: "agent.\(machineProfileID).\(info.terminalID).blocked",
-        title: "\(providerName) 等待输入",
-        body: "\(machineName) 上的 \(providerName) 需要你的确认。",
+        title: L("\(providerName) 等待输入"),
+        body: L("\(machineName) 上的 \(providerName) 需要你的确认。"),
         urgency: .normal)
       poster.post(
         notification, category: .commandFinish,
@@ -407,8 +408,8 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
     case .done where info.unread:
       let notification = TerminalNotification(
         identifier: "agent.\(machineProfileID).\(info.terminalID).done",
-        title: "\(providerName) 已完成",
-        body: "\(machineName) 上的 \(providerName) 任务已完成。",
+        title: L("\(providerName) 已完成"),
+        body: L("\(machineName) 上的 \(providerName) 任务已完成。"),
         urgency: .normal)
       poster.post(
         notification, category: .commandFinish,
@@ -422,7 +423,7 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
   /// 取机器显示标签。远端机器用 SSH target，本机用 "Local"。
   private func machineLabel(for machineProfileID: UUID) -> String {
     ManagedTerminalCoordinatorRegistry.coordinator(forMachine: machineProfileID)
-      .remoteMachineLabel ?? "远端机器"
+      .remoteMachineLabel ?? L("远端机器")
   }
 
   /// 机器断线时标记其所有 Agent 为 stale（不伪造完成）。

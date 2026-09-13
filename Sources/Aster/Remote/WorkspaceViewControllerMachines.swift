@@ -108,7 +108,7 @@ extension WorkspaceViewController {
     _ = collapsed
     let host = SidebarGroupHeaderView {}
     host.identifier = NSUserInterfaceItemIdentifier("machine-section-header")
-    host.setAccessibilityLabel("机器分区")
+    host.setAccessibilityLabel(L("机器分区"))
     host.translatesAutoresizingMaskIntoConstraints = false
     host.heightAnchor.constraint(equalToConstant: 30).isActive = true
 
@@ -131,11 +131,11 @@ extension WorkspaceViewController {
     let add = NSButton()
     add.isBordered = false
     add.title = ""
-    add.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "添加机器")?
+    add.image = NSImage(systemSymbolName: "plus", accessibilityDescription: L("添加机器"))?
       .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
     add.contentTintColor = foreground
     add.identifier = NSUserInterfaceItemIdentifier("machine-add-button")
-    add.setAccessibilityLabel("添加机器")
+    add.setAccessibilityLabel(L("添加机器"))
     add.target = self
     add.action = #selector(presentAddMachine)
     add.translatesAutoresizingMaskIntoConstraints = false
@@ -164,14 +164,14 @@ extension WorkspaceViewController {
     let menu = NSMenu(title: row.label)
     menu.autoenablesItems = false
 
-    let rename = NSMenuItem(title: "重命名…", action: #selector(renameMachine(_:)), keyEquivalent: "")
+    let rename = NSMenuItem(title: L("重命名…"), action: #selector(renameMachine(_:)), keyEquivalent: "")
     rename.target = self
     rename.representedObject = row.id
     rename.identifier = NSUserInterfaceItemIdentifier("machine-menu-rename")
     menu.addItem(rename)
 
     let toggle = NSMenuItem(
-      title: row.enabled ? "禁用" : "启用", action: #selector(toggleMachineEnabled(_:)),
+      title: row.enabled ? L("禁用") : L("启用"), action: #selector(toggleMachineEnabled(_:)),
       keyEquivalent: "")
     toggle.target = self
     toggle.representedObject = row.id
@@ -180,14 +180,14 @@ extension WorkspaceViewController {
 
     // 更新远端服务是显式事务（§7）：只在用户点了它才会停止/替换远端进程，后台永不自动做。
     let update = NSMenuItem(
-      title: "更新远端服务…", action: #selector(updateMachineService(_:)), keyEquivalent: "")
+      title: L("更新远端服务…"), action: #selector(updateMachineService(_:)), keyEquivalent: "")
     update.target = self
     update.representedObject = row.id
     update.identifier = NSUserInterfaceItemIdentifier("machine-menu-update-service")
     menu.addItem(update)
 
     // 已探测到清单时直接列成子菜单，一步启动；未探测/为空时保留弹窗入口（弹窗会现探）。
-    let newAgent = NSMenuItem(title: "新建 Agent", action: nil, keyEquivalent: "")
+    let newAgent = NSMenuItem(title: L("新建 Agent"), action: nil, keyEquivalent: "")
     newAgent.identifier = NSUserInterfaceItemIdentifier("machine-menu-new-agent")
     if let agents = row.agents, !agents.isEmpty {
       let submenu = NSMenu(title: "新建 Agent")
@@ -202,13 +202,13 @@ extension WorkspaceViewController {
         submenu.addItem(item)
       }
       submenu.addItem(.separator())
-      let rescan = NSMenuItem(title: "重新探测…", action: #selector(rescanMachineAgents(_:)), keyEquivalent: "")
+      let rescan = NSMenuItem(title: L("重新探测…"), action: #selector(rescanMachineAgents(_:)), keyEquivalent: "")
       rescan.target = self
       rescan.representedObject = row.id
       submenu.addItem(rescan)
       newAgent.submenu = submenu
     } else {
-      newAgent.title = "新建 Agent…"
+      newAgent.title = L("新建 Agent…")
       newAgent.action = #selector(newMachineAgent(_:))
       newAgent.target = self
       newAgent.representedObject = row.id
@@ -216,14 +216,14 @@ extension WorkspaceViewController {
     menu.addItem(newAgent)
 
     let agents = NSMenuItem(
-      title: "远端 Agent 集成…", action: #selector(configureMachineAgents(_:)), keyEquivalent: "")
+      title: L("远端 Agent 集成…"), action: #selector(configureMachineAgents(_:)), keyEquivalent: "")
     agents.target = self
     agents.representedObject = row.id
     agents.identifier = NSUserInterfaceItemIdentifier("machine-menu-agent-integration")
     menu.addItem(agents)
 
     menu.addItem(.separator())
-    let remove = NSMenuItem(title: "移除…", action: #selector(removeMachine(_:)), keyEquivalent: "")
+    let remove = NSMenuItem(title: L("移除…"), action: #selector(removeMachine(_:)), keyEquivalent: "")
     remove.target = self
     remove.representedObject = row.id
     remove.identifier = NSUserInterfaceItemIdentifier("machine-menu-remove")
@@ -277,7 +277,7 @@ extension WorkspaceViewController {
         self.scheduleRefresh()
       } catch {
         MachineSetupSheet.presentFailure(
-          "远端 Agent 探测失败：\(RemoteSetupDescription.text(for: error))", in: window)
+          L("远端 Agent 探测失败：\(RemoteSetupDescription.text(for: error))"), in: window)
       }
     }
   }
@@ -297,13 +297,13 @@ extension WorkspaceViewController {
       let catalog: [RemoteAgentCatalogEntry]
       do { catalog = try await self.machineFleet.remoteAgentCatalog(id) } catch {
         MachineSetupSheet.presentFailure(
-          "远端 Agent 探测失败：\(RemoteSetupDescription.text(for: error))", in: window)
+          L("远端 Agent 探测失败：\(RemoteSetupDescription.text(for: error))"), in: window)
         return
       }
       guard !catalog.isEmpty else {
         MachineSetupSheet.presentNotice(
-          "远端 PATH 上没有发现任何已知 Agent CLI（claude、codex、grok、gemini…）。",
-          title: "没有可启动的 Agent", in: window)
+          L("远端 PATH 上没有发现任何已知 Agent CLI（claude、codex、grok、gemini…）。"),
+          title: L("没有可启动的 Agent"), in: window)
         return
       }
       guard let provider = MachineSetupSheet.promptForRemoteAgent(catalog, machineLabel: label, in: window)
@@ -344,7 +344,7 @@ extension WorkspaceViewController {
         }
         MachineSetupSheet.presentAgentIntegration(report, in: window)
       case .nothingToInstall(let message):
-        if !automatic { MachineSetupSheet.presentNotice(message, title: "没有可集成的 Agent", in: window) }
+        if !automatic { MachineSetupSheet.presentNotice(message, title: L("没有可集成的 Agent"), in: window) }
       case .cancelled:
         break
       case .failed(let message):

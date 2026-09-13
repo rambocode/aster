@@ -392,7 +392,7 @@ final class WorkspaceTitlePopoverViewController: NSViewController {
     segmented.translatesAutoresizingMaskIntoConstraints = false
     modeControl = segmented
 
-    let reset = IconHoverButton(symbol: "arrow.uturn.backward", accessibilityDescription: "恢复自动标题") {
+    let reset = IconHoverButton(symbol: "arrow.uturn.backward", accessibilityDescription: L("恢复自动标题")) {
       [weak self] in self?.resetName()
     }
     reset.identifier = NSUserInterfaceItemIdentifier("workspace-title-reset-name")
@@ -442,7 +442,7 @@ final class WorkspaceTitlePopoverViewController: NSViewController {
     let path = makeLabel(abbreviatedDirectory + "/", size: 12.5, color: AsterTheme.secondaryInk)
     path.toolTip = tab?.workingDirectory
     let icon = NSImageView(image: NSImage(systemSymbolName: "folder.fill",
-      accessibilityDescription: "工作目录") ?? NSImage())
+      accessibilityDescription: L("工作目录")) ?? NSImage())
     icon.contentTintColor = AsterTheme.tertiaryInk
     for item in [heading, icon, path] {
       host.addSubview(item)

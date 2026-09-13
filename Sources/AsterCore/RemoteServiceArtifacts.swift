@@ -184,13 +184,13 @@ extension RemoteServiceArtifactError {
   public var text: String {
     switch self {
     case .overrideUnreadable(let path):
-      "\(RemoteServiceArtifactCatalog.overrideEnvironmentKey) 指向的文件不可读：\(path)"
+      L("\(RemoteServiceArtifactCatalog.overrideEnvironmentKey) 指向的文件不可读：\(path)")
     case .overrideUnrecognized(let path):
-      "\(RemoteServiceArtifactCatalog.overrideEnvironmentKey) 不是可识别的 ELF/Mach-O 可执行文件：\(path)"
+      L("\(RemoteServiceArtifactCatalog.overrideEnvironmentKey) 不是可识别的 ELF/Mach-O 可执行文件：\(path)")
     case .overridePlatformMismatch(let expected, let actual):
-      "\(RemoteServiceArtifactCatalog.overrideEnvironmentKey) 是 \(actual) 产物，目标机器是 \(expected)，已拒绝上传。"
+      L("\(RemoteServiceArtifactCatalog.overrideEnvironmentKey) 是 \(actual) 产物，目标机器是 \(expected)，已拒绝上传。")
     case .bundledManifestInvalid(let detail):
-      "App 内置的远端服务清单无效：\(detail)"
+      L("App 内置的远端服务清单无效：\(detail)")
     }
   }
 }

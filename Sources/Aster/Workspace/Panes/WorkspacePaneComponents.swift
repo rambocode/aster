@@ -345,7 +345,7 @@ final class PaneCloseButton: NSButton {
     isBordered = false
     imagePosition = .imageOnly
     image = NSImage(
-      systemSymbolName: "xmark", accessibilityDescription: "关闭 Pane"
+      systemSymbolName: "xmark", accessibilityDescription: L("关闭 Pane")
     )?.withSymbolConfiguration(.init(pointSize: 9, weight: .bold))
     contentTintColor = .tertiaryLabelColor
     target = self

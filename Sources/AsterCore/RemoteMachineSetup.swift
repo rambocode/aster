@@ -132,7 +132,7 @@ public struct RemoteSSHSetupExecutor: RemoteSetupExecuting {
       timeout: TimeInterval(transport.policy.connectTimeout + 5))
     guard result.exitStatus == 0 else {
       throw ManagedSessionError.runtimeUnavailable(
-        "无法在远端准备状态目录 \(path)：\(RemoteSSHDiagnostics.redact(result.standardError))")
+        L("无法在远端准备状态目录 \(path)：\(RemoteSSHDiagnostics.redact(result.standardError))"))
     }
   }
 }
@@ -201,7 +201,7 @@ public struct RemoteMachineSetup: Sendable {
       throw RemoteSetupFailure(
         stage: .platformProbe,
         requiresExplicitSetup: error.kind.requiresExplicitSetup,
-        message: "远端探测失败（\(error.kind.rawValue)）：\(target.rawText)",
+        message: L("远端探测失败（\(error.kind.rawValue)）：\(target.rawText)"),
         sshKind: error.kind)
     }
     guard
@@ -210,7 +210,7 @@ public struct RemoteMachineSetup: Sendable {
       throw RemoteSetupFailure(
         stage: .platformProbe,
         requiresExplicitSetup: true,
-        message: "远端探测输出不可识别，未获得平台与二进制信息。")
+        message: L("远端探测输出不可识别，未获得平台与二进制信息。"))
     }
 
     // 4. 兼容性判定。这里只对**发行版本**做判断，能力集合要等真正握手才有值，
@@ -224,12 +224,12 @@ public struct RemoteMachineSetup: Sendable {
         return .incompatibleServerRunning(
           report: report,
           reason:
-            "远端 \(incompatible.path) 的协议主版本 \(major) 与客户端 \(RemoteProtocolContract.clientProtocolMajor) 不兼容，需要显式替换；后台不会停止它。"
+            L("远端 \(incompatible.path) 的协议主版本 \(String(major)) 与客户端 \(String(RemoteProtocolContract.clientProtocolMajor)) 不兼容，需要显式替换；后台不会停止它。")
         )
       }
       return .installationRequired(
         report: report,
-        reason: "远端 \(report.platform.os)/\(report.platform.architecture) 上没有可用的 aster-session，需要显式安装。"
+        reason: L("远端 \(report.platform.os)/\(report.platform.architecture) 上没有可用的 aster-session，需要显式安装。")
       )
     }
 
@@ -240,7 +240,7 @@ public struct RemoteMachineSetup: Sendable {
       throw RemoteSetupFailure(
         stage: .sessionPreparation,
         requiresExplicitSetup: true,
-        message: "远端未报告 $HOME，无法推导状态目录；请设置 ASTER_SESSION_STATE_DIR 后重试。")
+        message: L("远端未报告 $HOME，无法推导状态目录；请设置 ASTER_SESSION_STATE_DIR 后重试。"))
     }
     let identity: SessionServerIdentity
     do {
@@ -250,7 +250,7 @@ public struct RemoteMachineSetup: Sendable {
       throw RemoteSetupFailure(
         stage: .sessionPreparation,
         requiresExplicitSetup: true,
-        message: "命名会话 \(sessionName) 准备失败：\(Self.describe(error))")
+        message: L("命名会话 \(sessionName) 准备失败：\(Self.describe(error))"))
     }
 
     switch RemoteCompatibilityCheck.evaluate(
@@ -261,12 +261,12 @@ public struct RemoteMachineSetup: Sendable {
     case .incompatibleMajor(let remote, let client):
       return .incompatibleServerRunning(
         report: report,
-        reason: "运行中服务协议主版本 \(remote) 与客户端 \(client) 不兼容，需要显式替换；后台不会停止它。")
+        reason: L("运行中服务协议主版本 \(String(remote)) 与客户端 \(String(client)) 不兼容，需要显式替换；后台不会停止它。"))
     case .missingRequiredCapability(let missing):
       throw RemoteSetupFailure(
         stage: .compatibility,
         requiresExplicitSetup: true,
-        message: "远端服务缺少必需能力：\(missing.joined(separator: "、"))。")
+        message: L("远端服务缺少必需能力：\(missing.joined(separator: "、"))。"))
     case .unknown(let reason):
       throw RemoteSetupFailure(
         stage: .compatibility, requiresExplicitSetup: true, message: reason)
@@ -296,13 +296,13 @@ public struct RemoteMachineSetup: Sendable {
   /// target 校验失败的中文说明。全部发生在连接之前。
   static func describe(_ error: RemoteSSHTargetError) -> String {
     switch error {
-    case .empty: "SSH target 不能为空。"
-    case .optionLike(let text): "SSH target «\(text)» 以 - 开头，会被当成 ssh 选项，已在连接前拒绝。"
+    case .empty: L("SSH target 不能为空。")
+    case .optionLike(let text): L("SSH target «\(text)» 以 - 开头，会被当成 ssh 选项，已在连接前拒绝。")
     case .unsupportedCharacter(let character):
-      "SSH target 含不允许的字符 «\(character)»（Shell 元字符与空白一律拒绝），已在连接前拒绝。"
-    case .invalidURI(let text): "ssh:// URI 结构非法：\(text)"
-    case .invalidPort(let text): "端口非法：\(text)，必须是 1–65535。"
-    case .missingHost: "SSH target 缺少主机段。"
+      L("SSH target 含不允许的字符 «\(character)»（Shell 元字符与空白一律拒绝），已在连接前拒绝。")
+    case .invalidURI(let text): L("ssh:// URI 结构非法：\(text)")
+    case .invalidPort(let text): L("端口非法：\(text)，必须是 1–65535。")
+    case .missingHost: L("SSH target 缺少主机段。")
     }
   }
 
@@ -312,10 +312,12 @@ public struct RemoteMachineSetup: Sendable {
     if let managed = error as? ManagedSessionError {
       switch managed {
       case .runtimeUnavailable(let text): return text
-      case .serviceError(let code, let message): return "\(code)\(message.map { "：\($0)" } ?? "")"
-      case .malformedReply(let text): return "回复格式非法：\(text)"
-      case .commandFailed(let status, let output): return "命令失败（\(status)）：\(output)"
-      case .launchFailed(let text): return "启动失败：\(text)"
+      case .serviceError(let code, let message):
+        let suffix = message.map { "：\($0)" } ?? ""
+        return L("\(String(code))\(suffix)")
+      case .malformedReply(let text): return L("回复格式非法：\(text)")
+      case .commandFailed(let status, let output): return L("命令失败（\(String(status))）：\(output)")
+      case .launchFailed(let text): return L("启动失败：\(text)")
       }
     }
     return String(describing: error)
@@ -325,16 +327,16 @@ public struct RemoteMachineSetup: Sendable {
   static func authenticationMessage(_ error: RemoteSSHError, target: RemoteSSHTarget) -> String {
     switch error.kind {
     case .authenticationRequired:
-      "无法以非交互方式认证 \(target.rawText)。请在终端手动 ssh 一次完成认证，或把密钥加入 ssh-agent 后重试。"
+      L("无法以非交互方式认证 \(target.rawText)。请在终端手动 ssh 一次完成认证，或把密钥加入 ssh-agent 后重试。")
     case .hostKeyUnknown:
-      "\(target.rawText) 的主机密钥不在 known_hosts 中。Aster 不会自动接受主机密钥，请先手动 ssh 一次确认指纹。"
+      L("\(target.rawText) 的主机密钥不在 known_hosts 中。Aster 不会自动接受主机密钥，请先手动 ssh 一次确认指纹。")
     case .hostKeyChanged:
-      "\(target.rawText) 的主机密钥与 known_hosts 记录不符，连接已终止。请先确认是否为预期变更。"
-    case .hostUnreachable: "无法连通 \(target.rawText)。"
-    case .timeout: "连接 \(target.rawText) 超时。"
-    case .remoteCommandMissing: "\(target.rawText) 上找不到要执行的命令。"
-    case .cancelled: "连接已取消。"
-    case .transportFailure: "连接 \(target.rawText) 失败。"
+      L("\(target.rawText) 的主机密钥与 known_hosts 记录不符，连接已终止。请先确认是否为预期变更。")
+    case .hostUnreachable: L("无法连通 \(target.rawText)。")
+    case .timeout: L("连接 \(target.rawText) 超时。")
+    case .remoteCommandMissing: L("\(target.rawText) 上找不到要执行的命令。")
+    case .cancelled: L("连接已取消。")
+    case .transportFailure: L("连接 \(target.rawText) 失败。")
     }
   }
 }
@@ -360,13 +362,13 @@ public enum RemoteWorkspaceBoundary {
   public static func disabledReason(_ action: LocalAction, machineLabel: String) -> String {
     switch action {
     case .openFilePane:
-      "文件 Pane 只能打开本机文件。\(machineLabel) 上的文件请在该机器的终端里操作；远端文件服务尚未提供。"
+      L("文件 Pane 只能打开本机文件。\(machineLabel) 上的文件请在该机器的终端里操作；远端文件服务尚未提供。")
     case .openLocalPath, .dragInLocalFile:
-      "该路径属于本机，不会在 \(machineLabel) 上打开。远端 Pane 不访问本机文件。"
+      L("该路径属于本机，不会在 \(machineLabel) 上打开。远端 Pane 不访问本机文件。")
     case .revealInFinder:
-      "无法在访达中显示：该资源在 \(machineLabel) 上，不是本机路径。"
+      L("无法在访达中显示：该资源在 \(machineLabel) 上，不是本机路径。")
     case .localPathCompletion:
-      "路径补全已禁用：补全会读取本机目录，可能与 \(machineLabel) 上的同名目录混淆。"
+      L("路径补全已禁用：补全会读取本机目录，可能与 \(machineLabel) 上的同名目录混淆。")
     }
   }
 }

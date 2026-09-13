@@ -15,7 +15,7 @@ final class OpenQuicklyBackdropView: NSView {
     layer?.backgroundColor = NSColor.black.withAlphaComponent(0.055).cgColor
     identifier = NSUserInterfaceItemIdentifier("open-quickly-backdrop")
     setAccessibilityElement(true)
-    setAccessibilityLabel("关闭 Open Quickly")
+    setAccessibilityLabel(L("关闭 Open Quickly"))
   }
 
   required init?(coder: NSCoder) { nil }
@@ -138,7 +138,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     host.layer?.masksToBounds = false
     host.identifier = NSUserInterfaceItemIdentifier("open-quickly-overlay")
 
-    search.placeholderString = "搜索命令、URL、文件…"
+    search.placeholderString = L("搜索命令、URL、文件…")
     search.identifier = NSUserInterfaceItemIdentifier("open-quickly-search")
     // 保留 NSSearchField 的搜索图标、IME 和文本编辑能力，只去掉会形成蓝色
     // 长条的系统 bezel/focus ring；插入光标仍清晰表示输入焦点。
@@ -164,7 +164,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     searchRow.identifier = NSUserInterfaceItemIdentifier("open-quickly-search-row")
     searchRow.translatesAutoresizingMaskIntoConstraints = false
     let searchIcon = NSImageView()
-    searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "搜索")
+    searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: L("搜索"))
     // 图标本身可能包含不同主题/系统版本的透明留白；显式按 16pt 槽位居中和等比缩放，
     // 避免默认 image alignment 让视觉中心偏向 placeholder 的基线。
     searchIcon.imageAlignment = .alignCenter
@@ -344,9 +344,9 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     strip.orientation = .horizontal
     strip.spacing = 4
     let titles: [OpenQuicklyFilter: String] = [
-      .all: "全部", .opened: "已打开", .recent: "最近", .folder: "文件夹",
-      .ssh: "SSH", .agent: "智能体", .current: "当前", .recipe: "Recipes",
-      .file: "文件",
+      .all: L("全部"), .opened: L("已打开"), .recent: L("最近"), .folder: L("文件夹"),
+      .ssh: "SSH", .agent: L("智能体"), .current: L("当前"), .recipe: "Recipes",
+      .file: L("文件"),
     ]
     for filter in OpenQuicklyFilter.allCases {
       let chip = OpenQuicklyChip(
@@ -434,9 +434,9 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   /// 底部快捷键栏:左 Quick Select 提示,右「跳转到 ↩」与「操作 ⌘K」按钮。
   private func makeFooter() -> NSView {
     let quickSelect = makeLabel("Quick Select ⌘1–9", size: 10, color: AsterTheme.tertiaryInk)
-    let jump = makeLabel("跳转到 ↩", size: 10, color: AsterTheme.tertiaryInk)
+    let jump = makeLabel(L("跳转到 ↩"), size: 10, color: AsterTheme.tertiaryInk)
     footerJumpLabel = jump
-    let actions = ActionButton(title: "操作 ⌘K", bezelStyle: .inline) { [weak self] in
+    let actions = ActionButton(title: L("操作 ⌘K"), bezelStyle: .inline) { [weak self] in
       self?.showActionsMenu()
     }
     actions.font = NSFont.systemFont(ofSize: 10)
@@ -461,8 +461,8 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   /// 主动作文案都要跟着换，否则用户会以为自己还在搜标签。
   private func updateFilterChrome() {
     search.placeholderString =
-      selectedFilter == .file ? "搜索当前目录下的文件…" : Self.defaultPlaceholder
-    footerJumpLabel?.stringValue = selectedFilter == .file ? "打开 ↩" : "跳转到 ↩"
+      selectedFilter == .file ? L("搜索当前目录下的文件…") : Self.defaultPlaceholder
+    footerJumpLabel?.stringValue = selectedFilter == .file ? L("打开 ↩") : L("跳转到 ↩")
   }
 
   func controlTextDidChange(_ obj: Notification) {
@@ -484,7 +484,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
       // 文件索引是异步的：扫描还没回来时说「没有匹配项」会让用户误以为目录里真的
       // 没有文件，因此在扫描期间用「正在索引…」明确区分两种空。
       let message = selectedFilter == .file && fileScanInFlightRoot != nil
-        ? "正在索引…" : "没有匹配项"
+        ? L("正在索引…") : L("没有匹配项")
       resultsStack.addArrangedSubview(
         makeLabel(message, size: 11, color: AsterTheme.secondaryInk))
       updateResultsHeight()
@@ -547,16 +547,16 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   /// 小节标题的中文映射；顺序由 `OpenQuicklyIndex.priority` 决定，这里只负责文案。
   private static func sectionTitle(for kind: OpenQuicklyKind) -> String {
     switch kind {
-    case .window: "窗口"
-    case .opened: "标签页"
-    case .current: "当前"
-    case .prompt: "提示词"
-    case .recent: "最近标签页"
-    case .folder: "最近文件夹"
+    case .window: L("窗口")
+    case .opened: L("标签页")
+    case .current: L("当前")
+    case .prompt: L("提示词")
+    case .recent: L("最近标签页")
+    case .folder: L("最近文件夹")
     case .ssh: "SSH"
-    case .agent: "智能体"
+    case .agent: L("智能体")
     case .recipe: "Recipes"
-    case .file: "文件"
+    case .file: L("文件")
     }
   }
 
@@ -630,7 +630,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
           item: .init(
             id: "opened:\(tab.id.uuidString)", kind: .opened, title: tab.title,
             detail: Self.abbreviated(tab.workingDirectory)),
-          symbol: "macwindow", badge: "Tab", accented: false, actionTitle: "跳转到标签"
+          symbol: "macwindow", badge: "Tab", accented: false, actionTitle: L("跳转到标签")
         ) { [weak model, weak tab] in
           guard let tab else { return }
           model?.select(tab)
@@ -638,7 +638,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
         })
       result[result.count - 1].menuActions = [
         (
-          title: "关闭标签",
+          title: L("关闭标签"),
           handler: { [weak model, weak tab] in
             guard let tab else { return }
             model?.select(tab)
@@ -668,7 +668,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
               timestamp: matchedHistory?.metadata.updatedAt),
             symbol: pane.kind == .terminal ? "terminal" : "doc.text",
             badge: command != nil ? "Cmd" : "Pane",
-            accented: command != nil, actionTitle: "聚焦 Pane"
+            accented: command != nil, actionTitle: L("聚焦 Pane")
           ) { [weak model, weak current] in
             guard let current else { return }
             model?.revealWorkspaceLocation(tabID: current.id, paneID: pane.id)
@@ -684,7 +684,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
             id: "recent:\(snapshot.id.uuidString)", kind: .recent, title: snapshot.title,
             detail: Self.abbreviated(directory)),
           symbol: "clock.arrow.circlepath", badge: "Tab", accented: false,
-          actionTitle: "恢复标签"
+          actionTitle: L("恢复标签")
         ) { [weak model] in _ = model?.reopenClosedTab(id: snapshot.id) })
     }
     for match in model.frequentFolderMatches(limit: 200) {
@@ -694,11 +694,11 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
             id: "folder:\(match.path)", kind: .folder,
             title: URL(fileURLWithPath: match.path).lastPathComponent,
             detail: Self.abbreviated(match.path), score: match.score),
-          symbol: "folder", badge: "Folder", accented: false, actionTitle: "新建标签"
+          symbol: "folder", badge: "Folder", accented: false, actionTitle: L("新建标签")
         ) { [weak model] in model?.newTab(workingDirectory: match.path, hasContent: true) })
       result[result.count - 1].menuActions = [
         (
-          title: "在 Finder 中显示",
+          title: L("在 Finder 中显示"),
           handler: { [weak model] in
             NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: match.path)
             model?.isOpenQuicklyPresented = false
@@ -711,7 +711,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
         Target(
           item: .init(
             id: "ssh:\(host.alias)", kind: .ssh, title: host.alias, detail: host.destination),
-          symbol: "network", badge: "SSH", accented: false, actionTitle: "连接"
+          symbol: "network", badge: "SSH", accented: false, actionTitle: L("连接")
         ) { [weak model] in model?.openSSHHost(host) })
     }
     for provider in model.enabledAgentProviders {
@@ -720,10 +720,10 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
           item: .init(
             id: "agent-launch:\(provider.rawValue)",
             kind: .agent,
-            title: "启动 \(provider.commandName)",
-            detail: "在当前目录创建新的 Agent 会话"
+            title: L("启动 \(provider.commandName)"),
+            detail: L("在当前目录创建新的 Agent 会话")
           ),
-          symbol: "sparkles", badge: "Agent", accented: false, actionTitle: "启动"
+          symbol: "sparkles", badge: "Agent", accented: false, actionTitle: L("启动")
         ) { [weak model] in model?.launchAgent(provider) })
     }
     for history in model.agentHistories.prefix(500) {
@@ -738,11 +738,11 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
             timestamp: metadata.updatedAt
           ),
           symbol: "bubble.left.and.bubble.right", badge: "Session", accented: false,
-          actionTitle: "继续会话"
+          actionTitle: L("继续会话")
         ) { [weak model] in model?.continueAgentSession(metadata, kind: .resume) })
       result[result.count - 1].menuActions = [
         (
-          title: "Fork 会话",
+          title: L("Fork 会话"),
           handler: { [weak model] in model?.continueAgentSession(metadata, kind: .fork) }
         )
       ]
@@ -753,11 +753,11 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
           item: .init(
             id: "recipe:\(url.path)", kind: .recipe,
             title: url.deletingPathExtension().lastPathComponent, detail: url.path),
-          symbol: "doc.text", badge: "Recipe", accented: false, actionTitle: "打开 Recipe"
+          symbol: "doc.text", badge: "Recipe", accented: false, actionTitle: L("打开 Recipe")
         ) { [weak model] in model?.openRecipe(from: url) })
       result[result.count - 1].menuActions = [
         (
-          title: "在 Finder 中显示",
+          title: L("在 Finder 中显示"),
           handler: { [weak model] in
             NSWorkspace.shared.selectFile(
               url.lastPathComponent,
@@ -772,7 +772,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   }
 
   /// 默认 placeholder；「文件」过滤器会临时替换掉它。
-  private static let defaultPlaceholder = "搜索命令、URL、文件…"
+  private static var defaultPlaceholder: String { L("搜索命令、URL、文件…") }
 
   /// 主目录下的路径统一显示成 `~/…`，避免每一行都被 `/Users/<name>` 前缀占掉半行宽度。
   private static func abbreviated(_ path: String) -> String {
@@ -798,10 +798,10 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
       return Target(
         item: .init(
           id: "window:\(entry.window.windowNumber)", kind: .window,
-          title: title.isEmpty ? "工作区" : title,
+          title: title.isEmpty ? L("工作区") : title,
           detail: count == 1 ? "1 tab" : "\(count) tabs"),
         symbol: "macwindow.on.rectangle", badge: "Window", accented: false,
-        actionTitle: "切换到窗口"
+        actionTitle: L("切换到窗口")
       ) { [weak model, weak window = entry.window] in
         window?.makeKeyAndOrderFront(nil)
         model?.isOpenQuicklyPresented = false
@@ -820,7 +820,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
         item: .init(
           id: "file:\(file.path)", kind: .file, title: file.name,
           detail: file.relativeParent, score: -Double(file.depth)),
-        symbol: "doc", badge: "File", accented: false, actionTitle: "打开文件"
+        symbol: "doc", badge: "File", accented: false, actionTitle: L("打开文件")
       ) { [weak model] in
         // 与 Files 面板走同一条资源路由：它会重新校验类型/符号链接，并按内容决定
         // 用 viewer 还是 editor 打开，不需要在浮层里再判一遍。
@@ -829,7 +829,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
       }
       target.menuActions = [
         (
-          title: "在 Finder 中显示",
+          title: L("在 Finder 中显示"),
           handler: { [weak model] in
             NSWorkspace.shared.selectFile(
               file.path, inFileViewerRootedAtPath: url.deletingLastPathComponent().path)
@@ -837,7 +837,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
           }
         ),
         (
-          title: "复制路径",
+          title: L("复制路径"),
           handler: { [weak model] in
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(file.path, forType: .string)
@@ -927,13 +927,13 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
         item: .init(
           id: "prompt:\(history.metadata.id):\(entry.sourceRecordIndex)", kind: .prompt,
           title: collapsed, detail: history.metadata.title, timestamp: entry.timestamp),
-        symbol: "quote.bubble", badge: "Prompt", accented: false, actionTitle: "粘贴到终端"
+        symbol: "quote.bubble", badge: "Prompt", accented: false, actionTitle: L("粘贴到终端")
       ) { [weak model] in
         model?.insertPromptIntoPane(tabID: tab.id, paneID: destination.paneID, text: entry.text)
       }
       target.menuActions = [
         (
-          title: "复制到剪贴板",
+          title: L("复制到剪贴板"),
           handler: { [weak model] in
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(entry.text, forType: .string)

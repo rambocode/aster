@@ -13,17 +13,17 @@ enum AsterCLIRequestServiceError: Error, LocalizedError, Equatable {
   var errorDescription: String? {
     switch self {
     case .invalidStateDirectory:
-      "Aster CLI 状态目录不可用。"
+      L("Aster CLI 状态目录不可用。")
     case .tokenUnavailable:
-      "Aster CLI token 不存在、权限不安全或内容无效。"
+      L("Aster CLI token 不存在、权限不安全或内容无效。")
     case .unsafeRequestFile(let path):
-      "拒绝读取非普通、非私有或超限的 CLI 请求：\(path)"
+      L("拒绝读取非普通、非私有或超限的 CLI 请求：\(path)")
     case .malformedRequest:
-      "Aster CLI 请求格式无效。"
+      L("Aster CLI 请求格式无效。")
     case .responseTooLarge:
-      "Aster CLI 响应超过大小限制。"
+      L("Aster CLI 响应超过大小限制。")
     case .invalidResponseTarget:
-      "Aster CLI 响应目标不属于当前请求目录。"
+      L("Aster CLI 响应目标不属于当前请求目录。")
     }
   }
 }

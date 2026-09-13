@@ -18,12 +18,12 @@ enum MachineSetupSheet {
   /// 展示添加机器面板。取消返回 nil，此时**不做任何网络动作、不保存配置**。
   static func promptForNewMachine(in window: NSWindow?) -> Draft? {
     let alert = NSAlert()
-    alert.messageText = "添加机器"
+    alert.messageText = L("添加机器")
     alert.informativeText =
-      "输入 SSH target（支持 alias、user@host、ssh://user@host:port 和 root@ubuntu@orb）"
-      + "，并指定要绑定的命名会话。一个配置只绑定一个会话。"
-    alert.addButton(withTitle: "连接并保存")
-    alert.addButton(withTitle: "取消")
+      L("输入 SSH target（支持 alias、user@host、ssh://user@host:port 和 root@ubuntu@orb）")
+      + L("，并指定要绑定的命名会话。一个配置只绑定一个会话。")
+    alert.addButton(withTitle: L("连接并保存"))
+    alert.addButton(withTitle: L("取消"))
 
     let form = NSStackView()
     form.orientation = .vertical
@@ -31,10 +31,10 @@ enum MachineSetupSheet {
     form.spacing = 6
     form.frame = NSRect(x: 0, y: 0, width: 360, height: 108)
 
-    let labelField = makeField(placeholder: "标签，例如 orb-ubuntu", identifier: "machine-label-field")
+    let labelField = makeField(placeholder: L("标签，例如 orb-ubuntu"), identifier: "machine-label-field")
     let targetField = makeField(
-      placeholder: "SSH target，例如 root@ubuntu@orb", identifier: "machine-target-field")
-    let sessionField = makeField(placeholder: "命名会话", identifier: "machine-session-field")
+      placeholder: L("SSH target，例如 root@ubuntu@orb"), identifier: "machine-target-field")
+    let sessionField = makeField(placeholder: L("命名会话"), identifier: "machine-session-field")
     sessionField.stringValue = "default"
     for field in [labelField, targetField, sessionField] {
       field.widthAnchor.constraint(equalToConstant: 360).isActive = true
@@ -54,11 +54,11 @@ enum MachineSetupSheet {
   /// 展示重命名面板。重命名只改标签，不触发重连。
   static func promptForRename(current: String, in window: NSWindow?) -> String? {
     let alert = NSAlert()
-    alert.messageText = "重命名机器"
-    alert.informativeText = "重命名只更新显示标签，不会断开或重建连接。"
-    alert.addButton(withTitle: "重命名")
-    alert.addButton(withTitle: "取消")
-    let field = makeField(placeholder: "标签", identifier: "machine-rename-field")
+    alert.messageText = L("重命名机器")
+    alert.informativeText = L("重命名只更新显示标签，不会断开或重建连接。")
+    alert.addButton(withTitle: L("重命名"))
+    alert.addButton(withTitle: L("取消"))
+    let field = makeField(placeholder: L("标签"), identifier: "machine-rename-field")
     field.stringValue = current
     field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
     alert.accessoryView = field
@@ -76,32 +76,26 @@ enum MachineSetupSheet {
     alert.alertStyle = .warning
     alert.messageText =
       switch confirmation.kind {
-      case .installation: "需要在远端安装 aster-session"
-      case .incompatibleServer: "远端运行中的服务与客户端不兼容"
-      case .developmentArtifact: "将向远端安装未签名的开发产物"
-      case .serviceReplacement: "更新远端 aster-session 将重启服务"
+      case .installation: L("需要在远端安装 aster-session")
+      case .incompatibleServer: L("远端运行中的服务与客户端不兼容")
+      case .developmentArtifact: L("将向远端安装未签名的开发产物")
+      case .serviceReplacement: L("更新远端 aster-session 将重启服务")
       }
-    alert.informativeText = """
-      目标：\(confirmation.target)
-      平台：\(confirmation.platform)
-      版本：\(confirmation.version)
-      进程影响：\(confirmation.processImpact)
-
-      \(confirmation.reason)
-      """
-    alert.addButton(withTitle: "取消")
-    alert.addButton(withTitle: "我已了解，继续")
+    alert.informativeText =
+      L("目标：\(confirmation.target)\n平台：\(confirmation.platform)\n版本：\(confirmation.version)\n进程影响：\(confirmation.processImpact)\n\n\(confirmation.reason)")
+    alert.addButton(withTitle: L("取消"))
+    alert.addButton(withTitle: L("我已了解，继续"))
     return run(alert, in: window) == .alertSecondButtonReturn
   }
 
   /// 移除机器的确认。移除只断开配置，远端资源全部保留——文案必须说清楚。
   static func confirmRemoval(label: String, in window: NSWindow?) -> Bool {
     let alert = NSAlert()
-    alert.messageText = "移除机器「\(label)」？"
+    alert.messageText = L("移除机器「\(label)」？")
     alert.informativeText =
-      "只会删除本机上的这份配置并断开连接。远端的命名会话、终端进程与布局全部保留，不会被停止。"
-    alert.addButton(withTitle: "取消")
-    alert.addButton(withTitle: "移除")
+      L("只会删除本机上的这份配置并断开连接。远端的命名会话、终端进程与布局全部保留，不会被停止。")
+    alert.addButton(withTitle: L("取消"))
+    alert.addButton(withTitle: L("移除"))
     return run(alert, in: window) == .alertSecondButtonReturn
   }
 
@@ -112,22 +106,22 @@ enum MachineSetupSheet {
   ) -> Bool {
     let alert = NSAlert()
     alert.alertStyle = .informational
-    alert.messageText = "在远端安装 Aster Agent 集成"
+    alert.messageText = L("在远端安装 Aster Agent 集成")
     let pending = report.pending.map { entry in
       "• \(entry.provider.displayName)\(entry.version.map { " \($0)" } ?? "") → \(entry.configurationPath ?? "")"
     }
-    let done = report.candidates.filter(\.integrated).map { "• \($0.provider.displayName)（已就位）" }
+    let done = report.candidates.filter(\.integrated).map { "• \($0.provider.displayName)（\(L("已就位"))）" }
     let screenOnly = report.screenOnly.map(\.provider.displayName)
-    var lines = ["目标：\(target)", "hook 脚本：\(report.hookScriptPath)", "", "将写入远端配置："]
+    var lines = [L("目标：\(target)"), L("hook 脚本：\(report.hookScriptPath)"), "", L("将写入远端配置：")]
     lines += pending
-    if !done.isEmpty { lines += ["", "无需改动："] + done }
+    if !done.isEmpty { lines += ["", L("无需改动：")] + done }
     if !screenOnly.isEmpty {
-      lines += ["", "只能屏幕检测（不改动）：\(screenOnly.joined(separator: "、"))"]
+      lines += ["", L("只能屏幕检测（不改动）：\(screenOnly.joined(separator: "、"))")]
     }
-    lines += ["", "只添加带 Aster 标记的 hook 条目，不覆盖你的其它配置；可随时在远端删除。"]
+    lines += ["", L("只添加带 Aster 标记的 hook 条目，不覆盖你的其它配置；可随时在远端删除。")]
     alert.informativeText = lines.joined(separator: "\n")
-    alert.addButton(withTitle: "取消")
-    alert.addButton(withTitle: "安装")
+    alert.addButton(withTitle: L("取消"))
+    alert.addButton(withTitle: L("安装"))
     return run(alert, in: window) == .alertSecondButtonReturn
   }
 
@@ -136,10 +130,10 @@ enum MachineSetupSheet {
     _ catalog: [RemoteAgentCatalogEntry], machineLabel: String, in window: NSWindow?
   ) -> AgentProvider? {
     let alert = NSAlert()
-    alert.messageText = "在「\(machineLabel)」上新建 Agent"
-    alert.informativeText = "在远端以 Agent 身份开一个标签：登录 Shell 直接启动所选 CLI，退出即关闭标签。"
-    alert.addButton(withTitle: "启动")
-    alert.addButton(withTitle: "取消")
+    alert.messageText = L("在「\(machineLabel)」上新建 Agent")
+    alert.informativeText = L("在远端以 Agent 身份开一个标签：登录 Shell 直接启动所选 CLI，退出即关闭标签。")
+    alert.addButton(withTitle: L("启动"))
+    alert.addButton(withTitle: L("取消"))
     let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26), pullsDown: false)
     popup.identifier = NSUserInterfaceItemIdentifier("machine-agent-picker")
     for entry in catalog {
@@ -160,24 +154,24 @@ enum MachineSetupSheet {
     let alert = NSAlert()
     let failures = report.entries.filter { $0.failure != nil }
     alert.alertStyle = failures.isEmpty ? .informational : .warning
-    alert.messageText = failures.isEmpty ? "远端 Agent 集成已就位" : "远端 Agent 集成部分失败"
+    alert.messageText = failures.isEmpty ? L("远端 Agent 集成已就位") : L("远端 Agent 集成部分失败")
     var lines = report.candidates.map { entry -> String in
-      if let failure = entry.failure { return "• \(entry.provider.displayName)：失败——\(failure)" }
-      return "• \(entry.provider.displayName)：\(entry.integrated ? "已集成" : "未集成")"
+      if let failure = entry.failure { return "• \(entry.provider.displayName)：\(L("失败"))——\(failure)" }
+      return "• \(entry.provider.displayName)：\(entry.integrated ? L("已集成") : L("未集成"))"
     }
-    lines += ["", "远端 Agent 需要重新启动才会加载 hook。之后它的状态、等待输入与完成通知会出现在侧栏与 Dock。"]
+    lines += ["", L("远端 Agent 需要重新启动才会加载 hook。之后它的状态、等待输入与完成通知会出现在侧栏与 Dock。")]
     alert.informativeText = lines.joined(separator: "\n")
-    alert.addButton(withTitle: "好")
+    alert.addButton(withTitle: L("好"))
     _ = run(alert, in: window)
   }
 
   /// 展示一条信息性说明（例如"远端已是最新"）。不是错误，不用警告样式。
-  static func presentNotice(_ message: String, title: String = "无需更新", in window: NSWindow?) {
+  static func presentNotice(_ message: String, title: String = L("无需更新"), in window: NSWindow?) {
     let alert = NSAlert()
     alert.alertStyle = .informational
     alert.messageText = title
     alert.informativeText = message
-    alert.addButton(withTitle: "好")
+    alert.addButton(withTitle: L("好"))
     _ = run(alert, in: window)
   }
 
@@ -185,9 +179,9 @@ enum MachineSetupSheet {
   static func presentFailure(_ message: String, in window: NSWindow?) {
     let alert = NSAlert()
     alert.alertStyle = .warning
-    alert.messageText = "操作未完成"
+    alert.messageText = L("操作未完成")
     alert.informativeText = message
-    alert.addButton(withTitle: "好")
+    alert.addButton(withTitle: L("好"))
     _ = run(alert, in: window)
   }
 

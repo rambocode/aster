@@ -112,7 +112,7 @@ public enum GitDiffParser {
       parsed.append(
         GitDiffLine(
           kind: .notice,
-          text: "… 已省略 \(lines.count - lineLimit) 行，完整 diff 请在终端中查看。"))
+          text: L("… 已省略 \(String(lines.count - lineLimit)) 行，完整 diff 请在终端中查看。")))
     }
     return parsed
   }

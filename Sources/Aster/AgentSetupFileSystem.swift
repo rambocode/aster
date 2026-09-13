@@ -119,7 +119,7 @@ struct RemoteAgentSetupFileSystem: AgentSetupFileSystem {
       """, [path])
     let parts = output.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ")
     guard parts.count == 2, let size = Int(parts[1]) else {
-      throw AgentSetupServiceError.remoteCommandFailed("无法识别远端 stat 输出")
+      throw AgentSetupServiceError.remoteCommandFailed(L("无法识别远端 stat 输出"))
     }
     switch parts[0] {
     case "missing": return nil

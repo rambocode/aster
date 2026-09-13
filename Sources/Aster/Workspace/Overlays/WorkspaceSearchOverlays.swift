@@ -37,7 +37,7 @@ final class GlobalFindOverlayViewController: NSViewController, NSSearchFieldDele
     stack.orientation = .vertical
     stack.spacing = 6
     stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-    search.placeholderString = "在全部终端和已打开文件中查找…"
+    search.placeholderString = L("在全部终端和已打开文件中查找…")
     search.delegate = self
     search.onMove = { [weak self] delta in self?.moveSelection(delta) }
     search.onActivate = { [weak self] _ in self?.activateSelection() }
@@ -48,8 +48,8 @@ final class GlobalFindOverlayViewController: NSViewController, NSSearchFieldDele
       button.target = self
       button.action = #selector(optionsChanged(_:))
     }
-    caseSensitive.toolTip = "区分大小写"
-    regularExpression.toolTip = "正则表达式"
+    caseSensitive.toolTip = L("区分大小写")
+    regularExpression.toolTip = L("正则表达式")
     let header = NSStackView(views: [search, caseSensitive, regularExpression])
     header.orientation = .horizontal
     header.spacing = 8
@@ -87,11 +87,11 @@ final class GlobalFindOverlayViewController: NSViewController, NSSearchFieldDele
     buttons.removeAll()
     if search.stringValue.isEmpty {
       stack.addArrangedSubview(
-        makeLabel("输入内容以搜索当前窗口的全部 Pane。", size: 11, color: AsterTheme.secondaryInk))
+        makeLabel(L("输入内容以搜索当前窗口的全部 Pane。"), size: 11, color: AsterTheme.secondaryInk))
       return
     }
     if results.isEmpty {
-      stack.addArrangedSubview(makeLabel("没有匹配项", size: 11, color: AsterTheme.secondaryInk))
+      stack.addArrangedSubview(makeLabel(L("没有匹配项"), size: 11, color: AsterTheme.secondaryInk))
       return
     }
     for result in results.prefix(12) {
@@ -252,7 +252,7 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
     let fork = ActionButton(title: "Fork / Branch", bezelStyle: .rounded) { [weak self] in
       self?.continueSelection(.fork)
     }
-    let open = ActionButton(title: "打开", bezelStyle: .rounded) { [weak self] in
+    let open = ActionButton(title: L("打开"), bezelStyle: .rounded) { [weak self] in
       self?.openSelection()
     }
     open.identifier = NSUserInterfaceItemIdentifier("agent-history-open")
@@ -289,8 +289,8 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
     } ?? model.agentHistories
     search.placeholderString =
       scope == nil
-      ? "搜索 Agent 标题、项目、模型或 transcript…"
-      : "搜索当前项目的 Agent 会话…"
+      ? L("搜索 Agent 标题、项目、模型或 transcript…")
+      : L("搜索当前项目的 Agent 会话…")
     let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     if query.isEmpty {
       histories = Array(source.prefix(100))
@@ -307,7 +307,7 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
     if histories.isEmpty {
       resultsStack.addArrangedSubview(
         makeLabel(
-          scope == nil ? "没有 Agent 历史" : "当前项目没有 Agent 历史",
+          scope == nil ? L("没有 Agent 历史") : L("当前项目没有 Agent 历史"),
           size: 11, color: AsterTheme.secondaryInk))
       transcript.string = ""
       return
@@ -488,7 +488,7 @@ final class PaletteOverlayViewController: NSViewController, NSSearchFieldDelegat
     host.layer?.masksToBounds = false
     host.identifier = NSUserInterfaceItemIdentifier("command-palette-overlay")
 
-    search.placeholderString = "搜索命令…"
+    search.placeholderString = L("搜索命令…")
     search.identifier = NSUserInterfaceItemIdentifier("command-palette-search")
     // 保留 NSSearchField 的搜索图标位、IME 和文本编辑能力，只去掉会形成蓝色长条
     // 的系统 bezel/focus ring；插入光标仍清晰表示输入焦点。
@@ -509,7 +509,7 @@ final class PaletteOverlayViewController: NSViewController, NSSearchFieldDelegat
     searchRow.identifier = NSUserInterfaceItemIdentifier("command-palette-search-row")
     searchRow.translatesAutoresizingMaskIntoConstraints = false
     let searchIcon = NSImageView()
-    searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "搜索")
+    searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: L("搜索"))
     searchIcon.imageAlignment = .alignCenter
     searchIcon.imageScaling = .scaleProportionallyDown
     searchIcon.contentTintColor = AsterTheme.secondaryInk
@@ -585,7 +585,7 @@ final class PaletteOverlayViewController: NSViewController, NSSearchFieldDelegat
     selectedIndex = min(selectedIndex, max(0, commands.count - 1))
     rows.removeAll()
     guard !commands.isEmpty else {
-      resultsStack.addArrangedSubview(makeLabel("没有匹配项", size: 11, color: AsterTheme.secondaryInk))
+      resultsStack.addArrangedSubview(makeLabel(L("没有匹配项"), size: 11, color: AsterTheme.secondaryInk))
       updateResultsHeight()
       return
     }

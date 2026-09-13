@@ -150,7 +150,7 @@ final class PromptQueueBarView: NSView, NSTextViewDelegate {
     textView.textContainerInset = NSSize(width: 0, height: 3)
     textView.textContainer?.lineFragmentPadding = 0
     textView.drawsBackground = false
-    textView.placeholder = "加入 Prompt 队列…"
+    textView.placeholder = L("加入 Prompt 队列…")
     // NSTextView 放进 NSScrollView 需要这组配置才能真正随内容增高并跟随宽度换行；
     // 缺少它们时展开后的多行输入会被裁在第一行。
     textView.isVerticallyResizable = true
@@ -166,17 +166,17 @@ final class PromptQueueBarView: NSView, NSTextViewDelegate {
     textScroll.documentView = textView
     self.textScroll = textScroll
 
-    let close = TextHoverButton(title: "关闭") { [weak self] in self?.onClose() }
-    close.toolTip = "关闭 Prompt 队列输入条"
+    let close = TextHoverButton(title: L("关闭")) { [weak self] in self?.onClose() }
+    close.toolTip = L("关闭 Prompt 队列输入条")
     expandButton = IconHoverButton(
-      symbol: Symbols.expand, accessibilityDescription: "展开输入"
+      symbol: Symbols.expand, accessibilityDescription: L("展开输入")
     ) { [weak self] in self?.toggleExpanded() }
-    expandButton.toolTip = "展开/收起多行输入"
+    expandButton.toolTip = L("展开/收起多行输入")
     applySymbolScale(to: expandButton)
-    let enqueue = FilledCircleButton(symbol: "arrow.up", accessibilityDescription: "加入队列") {
+    let enqueue = FilledCircleButton(symbol: "arrow.up", accessibilityDescription: L("加入队列")) {
       [weak self] in self?.enqueue()
     }
-    enqueue.toolTip = "加入队列（Return）"
+    enqueue.toolTip = L("加入队列（Return）")
     constrainIconButton(expandButton)
     constrainIconButton(enqueue, side: 24)
 
@@ -202,7 +202,7 @@ final class PromptQueueBarView: NSView, NSTextViewDelegate {
     // 图标要跟随状态翻转，否则展开后仍显示“展开”语义，用户无从判断再点会发生什么。
     expandButton.setSymbol(
       isExpanded ? Symbols.collapse : Symbols.expand,
-      accessibilityDescription: isExpanded ? "收起输入" : "展开输入"
+      accessibilityDescription: isExpanded ? L("收起输入") : L("展开输入")
     )
     window?.makeFirstResponder(textView)
     superview?.layoutSubtreeIfNeeded()
@@ -232,8 +232,8 @@ private final class PromptQueueItemView: PromptQueueCardView {
     heightAnchor.constraint(equalToConstant: Self.height).isActive = true
 
     let send = IconHoverButton(
-      symbol: "arrow.turn.down.right", accessibilityDescription: "立即发送", handler: onSend)
-    send.toolTip = "立即发送此命令"
+      symbol: "arrow.turn.down.right", accessibilityDescription: L("立即发送"), handler: onSend)
+    send.toolTip = L("立即发送此命令")
     applySymbolScale(to: send)
     constrainIconButton(send)
     let text = NSTextField(labelWithString: item.text)
@@ -242,8 +242,8 @@ private final class PromptQueueItemView: PromptQueueCardView {
     text.lineBreakMode = .byTruncatingTail
     text.maximumNumberOfLines = 1
     let remove = IconHoverButton(
-      symbol: "trash", accessibilityDescription: "从队列移除", handler: onRemove)
-    remove.toolTip = "从队列移除"
+      symbol: "trash", accessibilityDescription: L("从队列移除"), handler: onRemove)
+    remove.toolTip = L("从队列移除")
     remove.restingTint = AsterTheme.tertiaryInk
     applySymbolScale(to: remove)
     constrainIconButton(remove)

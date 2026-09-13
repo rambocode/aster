@@ -97,14 +97,14 @@ final class OSC52ClipboardCoordinator {
     alert.alertStyle = .warning
     switch operation {
     case .read:
-      alert.messageText = "允许终端读取剪贴板？"
-      alert.informativeText = "当前终端程序请求读取系统剪贴板。剪贴板可能包含敏感信息。"
+      alert.messageText = L("允许终端读取剪贴板？")
+      alert.informativeText = L("当前终端程序请求读取系统剪贴板。剪贴板可能包含敏感信息。")
     case .write:
-      alert.messageText = "允许终端写入剪贴板？"
-      alert.informativeText = "当前终端程序请求替换系统剪贴板内容。"
+      alert.messageText = L("允许终端写入剪贴板？")
+      alert.informativeText = L("当前终端程序请求替换系统剪贴板内容。")
     }
-    alert.addButton(withTitle: "允许一次")
-    alert.addButton(withTitle: "拒绝")
+    alert.addButton(withTitle: L("允许一次"))
+    alert.addButton(withTitle: L("拒绝"))
     return alert.runModal() == .alertFirstButtonReturn
   }
 }

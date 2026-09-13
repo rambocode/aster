@@ -36,6 +36,14 @@ enum PackagedResourceVerifier {
       if required.contains(where: { !fileManager.fileExists(atPath: $0.path) }) {
         failures.append("libghostty resource bundle is incomplete")
       }
+      // 界面翻译表与 Ghostty 资源同在这个 bundle；少一种语言就意味着 SwiftPM 资源
+      // 规则或 build-app.sh 漏拷，用户切语言后会静默停在中文。
+      let missingLanguages = InterfaceLanguage.translatable.filter { language in
+        language != .source && AppLocalization.localizationBundle(for: language) == nil
+      }
+      if !missingLanguages.isEmpty {
+        failures.append("interface localization tables are incomplete")
+      }
     } else {
       failures.append("libghostty resource bundle is missing")
     }

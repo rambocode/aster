@@ -322,14 +322,14 @@ extension GhosttySurfaceView: NSMenuItemValidation {
   /// 可靠完成的动作，避免保留看似可点但依赖 SwiftTerm 私有状态的入口。
   override func menu(for event: NSEvent) -> NSMenu? {
     let hasSelection = surface.map(ghostty_surface_has_selection) == true
-    let menu = NSMenu(title: "终端")
-    let copyItem = NSMenuItem(title: "复制", action: #selector(copy(_:)), keyEquivalent: "")
+    let menu = NSMenu(title: L("终端"))
+    let copyItem = NSMenuItem(title: L("复制"), action: #selector(copy(_:)), keyEquivalent: "")
     copyItem.target = self
     copyItem.isEnabled = hasSelection
     menu.addItem(copyItem)
 
     let sendItem = NSMenuItem(
-      title: "发送选区到 Chat",
+      title: L("发送选区到 Chat"),
       action: #selector(sendSelectionToChat(_:)),
       keyEquivalent: ""
     )
@@ -338,13 +338,13 @@ extension GhosttySurfaceView: NSMenuItemValidation {
     menu.addItem(sendItem)
     menu.addItem(.separator())
 
-    let pasteItem = NSMenuItem(title: "粘贴", action: #selector(paste(_:)), keyEquivalent: "")
+    let pasteItem = NSMenuItem(title: L("粘贴"), action: #selector(paste(_:)), keyEquivalent: "")
     pasteItem.target = self
     pasteItem.isEnabled = surface != nil && !readOnly
     menu.addItem(pasteItem)
 
     let composerItem = NSMenuItem(
-      title: "粘贴并在 Composer 中继续",
+      title: L("粘贴并在 Composer 中继续"),
       action: #selector(pasteAndContinueInComposer(_:)),
       keyEquivalent: ""
     )
@@ -405,18 +405,18 @@ extension GhosttySurfaceView: NSMenuItemValidation {
   private static func presentPasteConfirmation(_ analysis: PasteAnalysis) -> Bool {
     let alert = NSAlert()
     alert.alertStyle = .warning
-    alert.messageText = "粘贴的内容可能立即执行命令"
+    alert.messageText = L("粘贴的内容可能立即执行命令")
     let reasons = analysis.risks.map { risk -> String in
       switch risk {
-      case .multipleLines: "包含多行"
-      case .trailingNewline: "末尾包含换行"
-      case .privilegeEscalation: "包含 sudo 或 su"
-      case .controlCharacters: "包含不可见控制字符"
+      case .multipleLines: L("包含多行")
+      case .trailingNewline: L("末尾包含换行")
+      case .privilegeEscalation: L("包含 sudo 或 su")
+      case .controlCharacters: L("包含不可见控制字符")
       }
     }.sorted().joined(separator: "、")
-    alert.informativeText = "检测到：\(reasons)\n\n\(analysis.preview())"
-    alert.addButton(withTitle: "仍然粘贴")
-    alert.addButton(withTitle: "取消")
+    alert.informativeText = L("检测到：\(reasons)\n\n\(analysis.preview())")
+    alert.addButton(withTitle: L("仍然粘贴"))
+    alert.addButton(withTitle: L("取消"))
     return alert.runModal() == .alertFirstButtonReturn
   }
 }

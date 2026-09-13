@@ -1,6 +1,7 @@
 import AppKit
 import CoreText
 import Foundation
+import AsterCore
 
 enum BundledFontRegistryError: Error, LocalizedError {
   case unsafeFontFile(String)
@@ -9,9 +10,9 @@ enum BundledFontRegistryError: Error, LocalizedError {
   var errorDescription: String? {
     switch self {
     case .unsafeFontFile(let path):
-      "内置字体不是可安全读取的普通文件：\(path)"
+      L("内置字体不是可安全读取的普通文件：\(path)")
     case .registrationFailed(let message):
-      "内置字体注册失败：\(message)"
+      L("内置字体注册失败：\(message)")
     }
   }
 }
@@ -90,7 +91,7 @@ enum BundledFontRegistry {
         return
       }
       throw BundledFontRegistryError.registrationFailed(
-        nsError?.localizedDescription ?? "未知错误"
+        nsError?.localizedDescription ?? L("未知错误")
       )
     }
     registeredFontURLs.insert(standardized)

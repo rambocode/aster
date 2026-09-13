@@ -123,22 +123,22 @@ extension MachineFleetServices {
     rawTarget: String, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
     acceptDevelopmentArtifact: Bool
   ) async throws -> RemoteInstallOutcome {
-    throw ManagedSessionError.runtimeUnavailable("本服务实现不支持远端安装。")
+    throw ManagedSessionError.runtimeUnavailable(L("本服务实现不支持远端安装。"))
   }
   func replaceService(
     profile: MachineProfile, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
     acceptDevelopmentArtifact: Bool
   ) async throws -> RemoteReplacementOutcome {
-    throw ManagedSessionError.runtimeUnavailable("本服务实现不支持远端服务替换。")
+    throw ManagedSessionError.runtimeUnavailable(L("本服务实现不支持远端服务替换。"))
   }
   func remoteBinaryDigest(rawTarget: String, path: String) async throws -> String? { nil }
   func agentIntegration(for profile: MachineProfile, install: [AgentProvider]?) async throws
     -> RemoteAgentIntegrationReport
   {
-    throw ManagedSessionError.runtimeUnavailable("本服务实现不支持远端 Agent 集成。")
+    throw ManagedSessionError.runtimeUnavailable(L("本服务实现不支持远端 Agent 集成。"))
   }
   func remoteAgentCatalog(for profile: MachineProfile) async throws -> RemoteAgentProbeResult {
-    throw ManagedSessionError.runtimeUnavailable("本服务实现不支持远端 Agent 探测。")
+    throw ManagedSessionError.runtimeUnavailable(L("本服务实现不支持远端 Agent 探测。"))
   }
 }
 
@@ -392,8 +392,8 @@ final class MachineFleetModel: ObservableObject {
   ) async -> MachineSetupResult {
     let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmedSession = sessionName.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedLabel.isEmpty else { return .failed("机器标签不能为空。") }
-    guard !trimmedSession.isEmpty else { return .failed("必须指定要绑定的命名会话。") }
+    guard !trimmedLabel.isEmpty else { return .failed(L("机器标签不能为空。")) }
+    guard !trimmedSession.isEmpty else { return .failed(L("必须指定要绑定的命名会话。")) }
 
     let profileID = UUID()
     let outcome: RemoteSetupOutcome
@@ -423,7 +423,7 @@ final class MachineFleetModel: ObservableObject {
           target: sshTarget,
           platform: "\(report.platform.os)/\(report.platform.architecture)",
           version: artifact.manifest.displaySummary,
-          processImpact: "安装只写入新的二进制文件，不会停止远端正在运行的任何进程。",
+          processImpact: L("安装只写入新的二进制文件，不会停止远端正在运行的任何进程。"),
           reason: reason))
       guard accepted else { return .cancelled }
       do {
@@ -431,7 +431,7 @@ final class MachineFleetModel: ObservableObject {
           rawTarget: sshTarget, report: report, artifact: artifact,
           acceptDevelopmentArtifact: accepted)
       } catch {
-        return .failed("安装失败：\(RemoteSetupDescription.text(for: error))")
+        return .failed(L("安装失败：\(RemoteSetupDescription.text(for: error))"))
       }
       return await completeSetup(
         rawTarget: sshTarget, label: trimmedLabel, sessionName: trimmedSession,
@@ -449,9 +449,9 @@ final class MachineFleetModel: ObservableObject {
           kind: .incompatibleServer,
           target: sshTarget,
           platform: "\(report.platform.os)/\(report.platform.architecture)",
-          version: report.runningServer?.version ?? report.candidates.first?.releaseVersion ?? "未知",
-          processImpact: "替换会停止运行中的服务实例及其全部受管进程。Aster 不会在后台执行它。",
-          reason: reason + "\n将安装：" + artifact.manifest.displaySummary))
+          version: report.runningServer?.version ?? report.candidates.first?.releaseVersion ?? L("未知"),
+          processImpact: L("替换会停止运行中的服务实例及其全部受管进程。Aster 不会在后台执行它。"),
+          reason: reason + "\n" + L("将安装：\(artifact.manifest.displaySummary)")))
       guard accepted else { return .cancelled }
       // 尚未保存的机器没有 profile；用本次设置的 ID、标签与会话名临时构造一份端点信息，
       // 运行时路径取不兼容的那个候选（它就是正在运行的服务）。
@@ -463,7 +463,7 @@ final class MachineFleetModel: ObservableObject {
           profile: pending, report: report, artifact: artifact,
           acceptDevelopmentArtifact: accepted)
       } catch {
-        return .failed("服务替换失败：\(RemoteSetupDescription.text(for: error))")
+        return .failed(L("服务替换失败：\(RemoteSetupDescription.text(for: error))"))
       }
       return await completeSetup(
         rawTarget: sshTarget, label: trimmedLabel, sessionName: trimmedSession,
@@ -478,9 +478,9 @@ final class MachineFleetModel: ObservableObject {
   func updateService(
     _ id: UUID, confirm: (MachineSetupConfirmation) -> Bool
   ) async -> MachineSetupResult {
-    guard id != MachineProfile.localProfileID else { return .failed("Local 的服务随 App 更新。") }
+    guard id != MachineProfile.localProfileID else { return .failed(L("Local 的服务随 App 更新。")) }
     guard let profile = profiles.first(where: { $0.id == id }), let target = profile.sshTarget
-    else { return .failed("机器不存在。") }
+    else { return .failed(L("机器不存在。")) }
 
     // 复用设置事务做探测与握手：拿到平台、候选与运行中服务身份。
     let outcome: RemoteSetupOutcome
@@ -518,7 +518,7 @@ final class MachineFleetModel: ObservableObject {
       let digest = try? await services.remoteBinaryDigest(rawTarget: target, path: runningBinaryPath),
       digest == artifact.manifest.sha256
     {
-      return .upToDate("远端服务已是本机的这一份（\(artifact.manifest.displaySummary)），无需更新。")
+      return .upToDate(L("远端服务已是本机的这一份（\(artifact.manifest.displaySummary)），无需更新。"))
     }
 
     let serviceRunning = report.runningServer != nil
@@ -532,9 +532,9 @@ final class MachineFleetModel: ObservableObject {
         platform: "\(report.platform.os)/\(report.platform.architecture)",
         version: artifact.manifest.displaySummary,
         processImpact: serviceRunning
-          ? "会停止命名会话「\(profile.sessionName)」的服务及其中 \(affected) 个受管终端，重启后按冷恢复恢复布局。"
-          : "远端当前没有运行中的服务，安装后直接启动。",
-        reason: "远端当前：\(current?.releaseVersion ?? "无可用服务") \(runningBinaryPath ?? "")"))
+          ? L("会停止命名会话「\(profile.sessionName)」的服务及其中 \(String(affected)) 个受管终端，重启后按冷恢复恢复布局。")
+          : L("远端当前没有运行中的服务，安装后直接启动。"),
+        reason: L("远端当前：\(current?.releaseVersion ?? L("无可用服务")) \(runningBinaryPath ?? "")")))
     guard accepted else { return .cancelled }
 
     var updated = profile
@@ -551,13 +551,13 @@ final class MachineFleetModel: ObservableObject {
         updated.remoteBinaryPath = install.installedPath
       }
     } catch {
-      return .failed("服务更新失败：\(RemoteSetupDescription.text(for: error))")
+      return .failed(L("服务更新失败：\(RemoteSetupDescription.text(for: error))"))
     }
 
-    guard let index = profiles.firstIndex(where: { $0.id == id }) else { return .failed("机器不存在。") }
+    guard let index = profiles.firstIndex(where: { $0.id == id }) else { return .failed(L("机器不存在。")) }
     var next = profiles
     next[index] = updated
-    do { try store.save(next) } catch { return .failed("配置保存失败：\(Self.describe(error))") }
+    do { try store.save(next) } catch { return .failed(L("配置保存失败：\(Self.describe(error))")) }
     profiles = next
     rebuildRows()
     // 新服务是新的 serverID/epoch：丢掉按旧二进制路径缓存的协调器，重新建立连接。
@@ -576,18 +576,18 @@ final class MachineFleetModel: ObservableObject {
     _ id: UUID, confirm: (RemoteAgentIntegrationReport) -> Bool
   ) async -> AgentIntegrationResult {
     guard id != MachineProfile.localProfileID else {
-      return .failed("本机 Agent 集成请在「设置 ▸ 智能体」里安装。")
+      return .failed(L("本机 Agent 集成请在「设置 ▸ 智能体」里安装。"))
     }
-    guard let profile = profiles.first(where: { $0.id == id }) else { return .failed("机器不存在。") }
+    guard let profile = profiles.first(where: { $0.id == id }) else { return .failed(L("机器不存在。")) }
     let report: RemoteAgentIntegrationReport
     do { report = try await services.agentIntegration(for: profile, install: nil) } catch {
-      return .failed("远端 Agent 探测失败：\(RemoteSetupDescription.text(for: error))")
+      return .failed(L("远端 Agent 探测失败：\(RemoteSetupDescription.text(for: error))"))
     }
     guard !report.candidates.isEmpty else {
       let screenOnly = report.screenOnly.map { $0.provider.displayName }
       let detail = screenOnly.isEmpty
-        ? "远端 PATH 上没有发现任何已知 Agent CLI。"
-        : "远端只发现 \(screenOnly.joined(separator: "、"))，它们没有 Aster 受管集成，将按普通终端运行并依赖屏幕检测。"
+        ? L("远端 PATH 上没有发现任何已知 Agent CLI。")
+        : L("远端只发现 \(screenOnly.joined(separator: "、"))，它们没有 Aster 受管集成，将按普通终端运行并依赖屏幕检测。")
       return .nothingToInstall(detail)
     }
     guard !report.pending.isEmpty else { return .installed(report) }
@@ -597,7 +597,7 @@ final class MachineFleetModel: ObservableObject {
         for: profile, install: report.pending.map(\.provider))
       return .installed(installed)
     } catch {
-      return .failed("远端 Agent 集成安装失败：\(RemoteSetupDescription.text(for: error))")
+      return .failed(L("远端 Agent 集成安装失败：\(RemoteSetupDescription.text(for: error))"))
     }
   }
 
@@ -646,16 +646,16 @@ final class MachineFleetModel: ObservableObject {
     case .failure(let failure): return .failed(failure.message)
     case .success(.ready(let profile, _, _)): return await saveNewProfile(profile)
     case .success(.installationRequired(_, let reason)):
-      return .failed("安装完成后远端仍未发现可用的 aster-session：\(reason)")
+      return .failed(L("安装完成后远端仍未发现可用的 aster-session：\(reason)"))
     case .success(.incompatibleServerRunning(_, let reason)):
-      return .failed("替换完成后远端服务仍不兼容：\(reason)")
+      return .failed(L("替换完成后远端服务仍不兼容：\(reason)"))
     }
   }
 
   /// `.ready` 的唯一落盘入口：写配置、进列表、起连接。
   private func saveNewProfile(_ profile: MachineProfile) async -> MachineSetupResult {
     do { try store.save(profiles + [profile]) } catch {
-      return .failed("配置保存失败：\(Self.describe(error))")
+      return .failed(L("配置保存失败：\(Self.describe(error))"))
     }
     profiles.append(profile)
     rebuildRows()
@@ -674,8 +674,8 @@ final class MachineFleetModel: ObservableObject {
     do {
       guard let artifact = try services.serviceArtifact(for: platform) else {
         return .unavailable(
-          "本机没有适用于 \(platform.os)/\(platform.architecture) 的 aster-session 产物。"
-            + "可用 \(RemoteEnvironmentKeys.remoteBinary) 指定自定义构建，或使用内含远端服务产物的正式版 App。")
+          L("本机没有适用于 \(platform.os)/\(platform.architecture) 的 aster-session 产物。")
+            + L("可用 \(RemoteEnvironmentKeys.remoteBinary) 指定自定义构建，或使用内含远端服务产物的正式版 App。"))
       }
       return .found(artifact)
     } catch let error as RemoteServiceArtifactError {
@@ -699,13 +699,13 @@ final class MachineFleetModel: ObservableObject {
   /// 重命名（§4.1 第 7 条）：只改标签，不触发重连。
   @discardableResult
   func rename(_ id: UUID, to label: String) -> String? {
-    guard id != MachineProfile.localProfileID else { return "Local 不能重命名。" }
+    guard id != MachineProfile.localProfileID else { return L("Local 不能重命名。") }
     let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return "标签不能为空。" }
-    guard let index = profiles.firstIndex(where: { $0.id == id }) else { return "机器不存在。" }
+    guard !trimmed.isEmpty else { return L("标签不能为空。") }
+    guard let index = profiles.firstIndex(where: { $0.id == id }) else { return L("机器不存在。") }
     var updated = profiles
     updated[index].label = trimmed
-    do { try store.save(updated) } catch { return "配置保存失败：\(Self.describe(error))" }
+    do { try store.save(updated) } catch { return L("配置保存失败：\(Self.describe(error))") }
     profiles = updated
     // 编排器只更新标签，代次、任务与连接状态全部保持不变。
     Task { [supervisor] in await supervisor.rename(profileID: id, label: trimmed) }
@@ -716,12 +716,12 @@ final class MachineFleetModel: ObservableObject {
   /// 启用/禁用（§4.1 第 7 条）：即使离线也可操作，只断开该配置，不停止远端服务。
   @discardableResult
   func setEnabled(_ id: UUID, _ enabled: Bool) -> String? {
-    guard id != MachineProfile.localProfileID else { return "Local 不能禁用。" }
-    guard let index = profiles.firstIndex(where: { $0.id == id }) else { return "机器不存在。" }
+    guard id != MachineProfile.localProfileID else { return L("Local 不能禁用。") }
+    guard let index = profiles.firstIndex(where: { $0.id == id }) else { return L("机器不存在。") }
     guard profiles[index].enabled != enabled else { return nil }
     var updated = profiles
     updated[index].enabled = enabled
-    do { try store.save(updated) } catch { return "配置保存失败：\(Self.describe(error))" }
+    do { try store.save(updated) } catch { return L("配置保存失败：\(Self.describe(error))") }
     profiles = updated
     let profile = updated[index]
     if enabled {
@@ -740,10 +740,10 @@ final class MachineFleetModel: ObservableObject {
   /// 移除（§4.1 第 7 条）：离线也能移除；只删配置与本地连接，远端资源全部保留。
   @discardableResult
   func remove(_ id: UUID) -> String? {
-    guard id != MachineProfile.localProfileID else { return "Local 不能移除。" }
-    guard profiles.contains(where: { $0.id == id }) else { return "机器不存在。" }
+    guard id != MachineProfile.localProfileID else { return L("Local 不能移除。") }
+    guard profiles.contains(where: { $0.id == id }) else { return L("机器不存在。") }
     let updated = profiles.filter { $0.id != id }
-    do { try store.save(updated) } catch { return "配置删除失败：\(Self.describe(error))" }
+    do { try store.save(updated) } catch { return L("配置删除失败：\(Self.describe(error))") }
     profiles = updated
     statuses.removeValue(forKey: id)
     agentCatalogs.removeValue(forKey: id)
@@ -764,8 +764,8 @@ final class MachineFleetModel: ObservableObject {
       activeMachineID = id
       return nil
     }
-    guard let profile = profiles.first(where: { $0.id == id }) else { return "机器不存在。" }
-    guard profile.enabled else { return "该机器已禁用。" }
+    guard let profile = profiles.first(where: { $0.id == id }) else { return L("机器不存在。") }
+    guard profile.enabled else { return L("该机器已禁用。") }
     activeMachineID = id
     return nil
   }
@@ -788,7 +788,7 @@ final class MachineFleetModel: ObservableObject {
       return MachineOfflinePresentation.from(
         MachineConnectionStatus(
           profileID: id, state: .disconnected, generation: 0, inputAllowed: false,
-          lastUpdatedAt: Date(), reason: "尚未建立连接。"))
+          lastUpdatedAt: Date(), reason: L("尚未建立连接。")))
     }
     return MachineOfflinePresentation.from(status)
   }
@@ -896,10 +896,10 @@ final class MachineFleetModel: ObservableObject {
       return RemoteSetupDescription.text(for: error)
     }
     switch storeError {
-    case .fileMissing(let path): return "机器配置文件不存在：\(path)"
-    case .corrupted(let detail): return "机器配置文件内容损坏：\(detail)"
-    case .invalidProfiles(let reasons): return "机器配置非法：\(reasons.joined(separator: "；"))"
-    case .ioFailure(let detail): return "机器配置读写失败：\(detail)"
+    case .fileMissing(let path): return L("机器配置文件不存在：\(path)")
+    case .corrupted(let detail): return L("机器配置文件内容损坏：\(detail)")
+    case .invalidProfiles(let reasons): return L("机器配置非法：\(reasons.joined(separator: "；"))")
+    case .ioFailure(let detail): return L("机器配置读写失败：\(detail)")
     }
   }
 }
@@ -950,11 +950,11 @@ struct RemoteMachineFleetServices: MachineFleetServices {
     guard let rawTarget = profile.sshTarget else {
       guard let stateParent, !stateParent.isEmpty else {
         throw ManagedSessionError.runtimeUnavailable(
-          "未配置 \(RemoteEnvironmentKeys.stateDirectory)，无法访问命名会话注册表。")
+          L("未配置 \(RemoteEnvironmentKeys.stateDirectory)，无法访问命名会话注册表。"))
       }
       guard let binary = localBinary, !binary.isEmpty else {
         throw ManagedSessionError.runtimeUnavailable(
-          "未配置 \(RemoteEnvironmentKeys.binary)，无法访问本机命名会话注册表。")
+          L("未配置 \(RemoteEnvironmentKeys.binary)，无法访问本机命名会话注册表。"))
       }
       return MachineRegistryAccess(
         client: LocalManagedSessionClient(),
@@ -1026,7 +1026,7 @@ struct RemoteMachineFleetServices: MachineFleetServices {
       ?? Self.nonEmpty(profile.stateParentPath)
       ?? RemoteHostProbe.privateStateParentPath(homeDirectory: report.platform.homeDirectory)
     guard let stateParent else {
-      throw ManagedSessionError.runtimeUnavailable("无法确定远端状态目录，无法替换服务。")
+      throw ManagedSessionError.runtimeUnavailable(L("无法确定远端状态目录，无法替换服务。"))
     }
     let currentBinary = Self.nonEmpty(environment[RemoteEnvironmentKeys.remoteBinary])
       ?? Self.nonEmpty(profile.remoteBinaryPath)
@@ -1083,7 +1083,7 @@ struct RemoteMachineFleetServices: MachineFleetServices {
         arguments: transport.sshArguments(remoteCommand: RemoteAgentProbe.probeCommand()),
         timeout: 30)
       guard let probe = RemoteAgentProbe.parse(result.standardOutput) else {
-        throw ManagedSessionError.malformedReply("Agent 探测输出缺少标记")
+        throw ManagedSessionError.malformedReply(L("Agent 探测输出缺少标记"))
       }
       return probe
     }.value
@@ -1222,7 +1222,7 @@ struct RemoteRuntimeLocation: Equatable, Sendable {
       ?? Self.nonEmpty(profile.stateParentPath)
     guard let binary, let stateParent else {
       throw ManagedSessionError.runtimeUnavailable(
-        "机器「\(profile.label)」缺少远端运行时位置（旧版本保存的配置）。请移除后重新添加该机器。")
+        L("机器「\(profile.label)」缺少远端运行时位置（旧版本保存的配置）。请移除后重新添加该机器。"))
     }
     return RemoteRuntimeLocation(binaryPath: binary, stateParentPath: stateParent)
   }

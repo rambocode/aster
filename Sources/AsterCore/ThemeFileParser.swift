@@ -9,7 +9,7 @@ import Foundation
 enum ThemeFileParser {
   static func parse(data: Data, sourceName: String) throws -> TerminalTheme {
     guard let source = String(data: data, encoding: .utf8) else {
-      throw TerminalThemeStoreError.invalidFormat("主题文件不是有效的 UTF-8。")
+      throw TerminalThemeStoreError.invalidFormat(L("主题文件不是有效的 UTF-8。"))
     }
     let document = try ThemeFileDocument(source: source)
     let name = document.string("meta.name")?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -154,7 +154,7 @@ enum ThemeFileParser {
       case "light": return .light
       case "dark": return .dark
       default:
-        throw TerminalThemeStoreError.invalidFormat("主题 meta.mode 必须是 light 或 dark。")
+        throw TerminalThemeStoreError.invalidFormat(L("主题 meta.mode 必须是 light 或 dark。"))
       }
     }
     func linear(_ value: UInt8) -> Double {
@@ -206,23 +206,23 @@ private struct ThemeFileDocument {
       pending += pending.isEmpty ? line : " " + line
       bracketDepth += Self.bracketDelta(line)
       guard bracketDepth >= 0 else {
-        throw TerminalThemeStoreError.invalidFormat("主题包含未配对的数组闭括号。")
+        throw TerminalThemeStoreError.invalidFormat(L("主题包含未配对的数组闭括号。"))
       }
       if bracketDepth > 0 { continue }
       guard let equal = pending.firstIndex(of: "=") else {
-        throw TerminalThemeStoreError.invalidFormat("主题包含无法识别的设置行。")
+        throw TerminalThemeStoreError.invalidFormat(L("主题包含无法识别的设置行。"))
       }
       let key = pending[..<equal].trimmingCharacters(in: .whitespaces)
       let value = pending[pending.index(after: equal)...].trimmingCharacters(in: .whitespaces)
       guard !key.isEmpty else {
-        throw TerminalThemeStoreError.invalidFormat("主题包含空设置名。")
+        throw TerminalThemeStoreError.invalidFormat(L("主题包含空设置名。"))
       }
       parsed[section.isEmpty ? key : "\(section).\(key)"] = value
       pending = ""
       bracketDepth = 0
     }
     guard pending.isEmpty, bracketDepth == 0 else {
-      throw TerminalThemeStoreError.invalidFormat("主题包含未闭合的数组。")
+      throw TerminalThemeStoreError.invalidFormat(L("主题包含未闭合的数组。"))
     }
     values = parsed
   }

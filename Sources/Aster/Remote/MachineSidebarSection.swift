@@ -36,7 +36,7 @@ final class MachineRowButton: NSButton {
     self.action = #selector(invoke)
     identifier = NSUserInterfaceItemIdentifier("machine-row-\(row.id.uuidString)")
     setAccessibilityRole(.button)
-    setAccessibilityLabel("机器 \(row.label)")
+    setAccessibilityLabel(L("机器 \(row.label)"))
     toolTip = Self.toolTip(row)
     heightAnchor.constraint(equalToConstant: 34).isActive = true
     menu = menuProvider()
@@ -90,7 +90,7 @@ final class MachineRowButton: NSButton {
     if let agents = row.agents, row.state == .online {
       let names = agents.map(\.provider.commandName).joined(separator: " ")
       let label = makeLabel(
-        names.isEmpty ? "无 agent" : names, size: 9.5, weight: .medium,
+        names.isEmpty ? L("无 agent") : names, size: 9.5, weight: .medium,
         color: tint.withAlphaComponent(names.isEmpty ? 0.45 : 0.75))
       label.identifier = NSUserInterfaceItemIdentifier("machine-agents")
       label.lineBreakMode = .byTruncatingTail
@@ -133,7 +133,7 @@ final class MachineRowButton: NSButton {
     case .attention:
       let icon = NSImageView()
       icon.image = NSImage(
-        systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "需要处理")?
+        systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: L("需要处理"))?
         .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
       icon.contentTintColor = .systemOrange
       icon.identifier = NSUserInterfaceItemIdentifier("machine-attention")
@@ -142,7 +142,7 @@ final class MachineRowButton: NSButton {
       return icon
     case .disabled:
       let icon = NSImageView()
-      icon.image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: "已禁用")?
+      icon.image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: L("已禁用"))?
         .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
       icon.contentTintColor = tint.withAlphaComponent(0.6)
       icon.identifier = NSUserInterfaceItemIdentifier("machine-disabled")
@@ -150,7 +150,7 @@ final class MachineRowButton: NSButton {
       return icon
     case .disconnected:
       let icon = NSImageView()
-      icon.image = NSImage(systemSymbolName: "bolt.horizontal.circle", accessibilityDescription: "未连接")?
+      icon.image = NSImage(systemSymbolName: "bolt.horizontal.circle", accessibilityDescription: L("未连接"))?
         .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
       icon.contentTintColor = tint.withAlphaComponent(0.6)
       icon.identifier = NSUserInterfaceItemIdentifier("machine-offline")
@@ -169,13 +169,14 @@ final class MachineRowButton: NSButton {
   }
 
   /// 悬停提示：状态 + 最后更新时间。离线时用户必须能看到缓存有多旧。
+  /// 悬停提示：状态 + 最后更新时间 + Agent 信息。
   static func toolTip(_ row: MachineFleetRow) -> String {
-    var lines = ["状态：\(stateText(row.state))", lastUpdatedText(row.lastUpdatedAt)]
+    var lines = [L("状态：\(stateText(row.state))"), lastUpdatedText(row.lastUpdatedAt)]
     if let error = row.lastError, !error.isEmpty { lines.append(error) }
     if let agents = row.agents {
-      lines.append(agents.isEmpty ? "Agent：远端未发现已知 CLI" : "Agent：" + agentsText(agents))
+      lines.append(agents.isEmpty ? L("Agent：远端未发现已知 CLI") : L("Agent：\(agentsText(agents))"))
     } else if !row.isLocal {
-      lines.append("Agent：尚未探测")
+      lines.append(L("Agent：尚未探测"))
     }
     return lines.joined(separator: "\n")
   }
@@ -193,24 +194,26 @@ final class MachineRowButton: NSButton {
   }
 
   /// 「最后更新」文案。从未连上时明确说明，不显示一个假的时间。
+  /// 「最后更新」文案。从未连上时明确说明，不显示一个假的时间。
   static func lastUpdatedText(_ date: Date?, now: Date = Date()) -> String {
-    guard let date else { return "从未连接" }
+    guard let date else { return L("从未连接") }
     let seconds = max(0, Int(now.timeIntervalSince(date)))
-    if seconds < 60 { return "最后更新 \(seconds) 秒前" }
-    if seconds < 3600 { return "最后更新 \(seconds / 60) 分钟前" }
-    if seconds < 86400 { return "最后更新 \(seconds / 3600) 小时前" }
-    return "最后更新 \(seconds / 86400) 天前"
+    if seconds < 60 { return L("最后更新 \(String(seconds)) 秒前") }
+    if seconds < 3600 { return L("最后更新 \(String(seconds / 60)) 分钟前") }
+    if seconds < 86400 { return L("最后更新 \(String(seconds / 3600)) 小时前") }
+    return L("最后更新 \(String(seconds / 86400)) 天前")
   }
 
   /// 连接状态的中文文案。终端退出不在这里表达，它属于终端状态。
+  /// 连接状态的文案。
   static func stateText(_ state: SessionConnectionState) -> String {
     switch state {
-    case .disconnected: "未连接"
-    case .connecting: "连接中"
-    case .online: "在线"
-    case .reconnecting: "重连中"
-    case .attention: "需要处理"
-    case .disabled: "已禁用"
+    case .disconnected: L("未连接")
+    case .connecting: L("连接中")
+    case .online: L("在线")
+    case .reconnecting: L("重连中")
+    case .attention: L("需要处理")
+    case .disabled: L("已禁用")
     }
   }
 }
@@ -240,7 +243,7 @@ final class MachineSwitcherButton: NSButton {
     // 辅助功能角色用 button 而不是 popUpButton：它弹的是自定义弹出层，不是系统菜单，
     // 辅助工具按 popUpButton 语义会去找不存在的菜单项。
     setAccessibilityRole(.button)
-    setAccessibilityLabel("切换机器：当前 \(row?.label ?? "Local")")
+    setAccessibilityLabel(L("切换机器：当前 \(row?.label ?? "Local")"))
     if let row { toolTip = MachineRowButton.toolTip(row) }
     heightAnchor.constraint(equalToConstant: 32).isActive = true
     wantsLayer = true

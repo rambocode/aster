@@ -5,7 +5,8 @@ check: 扫描 Sources/**/*.swift 里的 `L("…")` 调用，推导 .strings 的 
        核对每个 <lang>.lproj/Localizable.strings 是否都有翻译；缺失即失败。
 merge: 把 l10n-work/*.json（key → {lang: value}）合并写入各语言的 .strings（按 key 排序）。
 
-key 规则：Swift 字面量原文，`\\(…)` 插值处写 `%@`，字面 `%` 写作 `%%`；
+key 规则：Swift 字面量原文，`\\(…)` 插值处写 `%@`；带插值的文案里字面 `%` 写作 `%%`，
+无插值的文案 `%` 保持单个（Foundation 只对带插值的字面量做格式化）；
 Swift 转义（\\n、\\"、\\\\）按原样保留，.strings 语法与之兼容。
 """
 import glob, json, os, re, sys
@@ -64,7 +65,12 @@ def extract_keys(text, path):
             else:
                 out.append(c)
             j += 1
-        keys.append("".join(out))
+        key = re.sub(r"\\u\{([0-9A-Fa-f]+)\}", lambda m: chr(int(m.group(1), 16)), "".join(out))
+        # Foundation 只在字面量带插值时把它当格式串（字面 % 需写成 %%）；
+        # 无插值的文案按原文逐字查表，% 保持单个。
+        if "%@" not in key:
+            key = key.replace("%%", "%")
+        keys.append(key)
         i = j + 1
     return keys, problems
 
@@ -78,6 +84,15 @@ def parse_strings(path):
     for m in re.finditer(r'^"((?:[^"\\]|\\.)*)"\s*=\s*"((?:[^"\\]|\\.)*)";', text, re.M):
         table[m.group(1)] = m.group(2)
     return table
+
+
+def normalize_text(text):
+    """把子代理 JSON 里的 key/value 统一成 .strings 写法：
+    Swift 的 `\\u{XXXX}` 换成真实字符（Foundation 生成的 key 是真实字符）；
+    引号一律重新转义，避免原文里裸露的 `"` 破坏整个 .strings 文件。"""
+    text = re.sub(r"\\u\{([0-9A-Fa-f]+)\}", lambda m: chr(int(m.group(1), 16)), text)
+    text = text.replace('\\"', '"').replace('"', '\\"')
+    return text
 
 
 def strings_path(lang):
@@ -122,11 +137,18 @@ def cmd_merge(args):
     files = args or sorted(glob.glob(os.path.join(ROOT, "l10n-work", "*.json")))
     for f in files:
         data = json.load(open(f, encoding="utf-8"))
+        if not isinstance(data, dict):
+            continue  # 只认 key → {lang: value} 的映射；其它中间文件跳过
         for key, translations in data.items():
+            # 与 extract_keys 同一规则：无插值的 key/value 里 %% 归一成 %。
+            key = normalize_text(key)
+            if "%@" not in key:
+                key = key.replace("%%", "%")
             for lang in LANGS:
                 value = translations.get(lang)
                 if value:
-                    tables[lang][key] = value
+                    value = normalize_text(value)
+                    tables[lang][key] = value.replace("%%", "%") if "%@" not in key else value
     for lang in LANGS:
         os.makedirs(os.path.dirname(strings_path(lang)), exist_ok=True)
         with open(strings_path(lang), "w", encoding="utf-8") as out:

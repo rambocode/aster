@@ -61,12 +61,12 @@ final class TerminalNotificationService: TerminalNotificationPosting {
   }
 
   var authorizationSummary: String {
-    guard notificationCenterIsAvailable else { return "当前构建不可用" }
+    guard notificationCenterIsAvailable else { return L("当前构建不可用") }
     return switch authorizationStatus {
-    case .authorized, .provisional, .ephemeral: "已允许"
-    case .denied: "已关闭"
-    case .notDetermined: "尚未请求"
-    @unknown default: "状态未知"
+    case .authorized, .provisional, .ephemeral: L("已允许")
+    case .denied: L("已关闭")
+    case .notDetermined: L("尚未请求")
+    @unknown default: L("状态未知")
     }
   }
 
@@ -74,20 +74,20 @@ final class TerminalNotificationService: TerminalNotificationPosting {
   /// （authorized 绿 / bannerDisabled 琥珀 / denied 红 / 其余中性）。
   var webPermissionStatus: (text: String, state: String) {
     guard notificationCenterIsAvailable else {
-      return ("通知在当前构建不可用", "unavailable")
+      return (L("通知在当前构建不可用"), "unavailable")
     }
     switch authorizationStatus {
     case .authorized, .provisional, .ephemeral:
       if alertSetting == .disabled {
-        return ("已允许，但横幅样式设为“无”——横幅不会显示", "bannerDisabled")
+        return (L("已允许，但横幅样式设为“无”——横幅不会显示"), "bannerDisabled")
       }
-      return ("Aster 已被允许发送通知", "authorized")
+      return (L("Aster 已被允许发送通知"), "authorized")
     case .denied:
-      return ("已在系统设置中关闭——横幅不会显示", "denied")
+      return (L("已在系统设置中关闭——横幅不会显示"), "denied")
     case .notDetermined:
-      return ("尚未请求通知权限", "notDetermined")
+      return (L("尚未请求通知权限"), "notDetermined")
     @unknown default:
-      return ("通知权限状态未知", "unknown")
+      return (L("通知权限状态未知"), "unknown")
     }
   }
 

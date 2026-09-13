@@ -79,7 +79,7 @@ final class TerminalTargetOpenCoordinator {
         schemePolicy: preferences.configuration.controls.resolvedLinkSchemePolicy
       )
     } catch {
-      reportError("无法识别该链接或文件路径。")
+      reportError(L("无法识别该链接或文件路径。"))
       return false
     }
 
@@ -158,7 +158,7 @@ final class TerminalTargetOpenCoordinator {
         ? true : openURL(url)
     }
     guard opened else {
-      reportError("系统无法打开该目标。请检查文件是否存在，或是否安装了对应应用。")
+      reportError(L("系统无法打开该目标。请检查文件是否存在，或是否安装了对应应用。"))
       return false
     }
     if let permissionToRemember {
@@ -227,9 +227,9 @@ final class TerminalTargetOpenCoordinator {
   private static func denialMessage(for reason: TargetSecurityReason) -> String {
     switch reason {
     case .unsupportedFileType:
-      return "为避免阻塞或访问系统设备，不能打开管道、socket 或设备文件。"
+      return L("为避免阻塞或访问系统设备，不能打开管道、socket 或设备文件。")
     case .externalLink, .nonStandardScheme, .executableFile:
-      return "该目标未通过安全检查。"
+      return L("该目标未通过安全检查。")
     }
   }
 
@@ -238,26 +238,26 @@ final class TerminalTargetOpenCoordinator {
     alert.alertStyle = .warning
     switch reason {
     case .externalLink(let host):
-      alert.messageText = "允许打开 \(host)？"
-      alert.informativeText = "外部链接可能离开当前工作区。仅在信任该网站时打开。"
+      alert.messageText = L("允许打开 \(host)？")
+      alert.informativeText = L("外部链接可能离开当前工作区。仅在信任该网站时打开。")
     case .nonStandardScheme(let scheme):
-      alert.messageText = "允许打开 \(scheme):// 链接？"
-      alert.informativeText = "非标准链接会交给本机已注册的应用处理。仅在信任来源时打开。"
+      alert.messageText = L("允许打开 \(scheme):// 链接？")
+      alert.informativeText = L("非标准链接会交给本机已注册的应用处理。仅在信任来源时打开。")
     case .executableFile(let path):
-      alert.messageText = "允许打开可执行文件？"
-      alert.informativeText = "目标 \(path) 可能运行代码。仅在确认文件可信时打开。"
+      alert.messageText = L("允许打开可执行文件？")
+      alert.informativeText = L("目标 \(path) 可能运行代码。仅在确认文件可信时打开。")
     case .unsupportedFileType:
       return .cancel
     }
-    alert.addButton(withTitle: "打开一次")
+    alert.addButton(withTitle: L("打开一次"))
     let alwaysTitle: String = switch reason {
-    case .externalLink: "始终允许此网站"
-    case .nonStandardScheme: "始终允许此 Scheme"
-    case .executableFile: "始终允许此文件"
-    case .unsupportedFileType: "始终允许"
+    case .externalLink: L("始终允许此网站")
+    case .nonStandardScheme: L("始终允许此 Scheme")
+    case .executableFile: L("始终允许此文件")
+    case .unsupportedFileType: L("始终允许")
     }
     alert.addButton(withTitle: alwaysTitle)
-    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: L("取消"))
     switch alert.runModal() {
     case .alertFirstButtonReturn: return .once
     case .alertSecondButtonReturn: return .always
@@ -282,9 +282,9 @@ final class TerminalTargetOpenCoordinator {
   private static func presentError(_ message: String) {
     let alert = NSAlert()
     alert.alertStyle = .warning
-    alert.messageText = "无法打开目标"
+    alert.messageText = L("无法打开目标")
     alert.informativeText = message
-    alert.addButton(withTitle: "好")
+    alert.addButton(withTitle: L("好"))
     alert.runModal()
   }
 }
