@@ -237,8 +237,10 @@ final class MachineSwitcherButton: NSButton {
     target = self
     action = #selector(togglePopover)
     identifier = NSUserInterfaceItemIdentifier("machine-switcher")
-    setAccessibilityRole(.popUpButton)
-    setAccessibilityLabel("当前机器 \(row?.label ?? "Local")")
+    // 辅助功能角色用 button 而不是 popUpButton：它弹的是自定义弹出层，不是系统菜单，
+    // 辅助工具按 popUpButton 语义会去找不存在的菜单项。
+    setAccessibilityRole(.button)
+    setAccessibilityLabel("切换机器：当前 \(row?.label ?? "Local")")
     if let row { toolTip = MachineRowButton.toolTip(row) }
     heightAnchor.constraint(equalToConstant: 32).isActive = true
     wantsLayer = true
