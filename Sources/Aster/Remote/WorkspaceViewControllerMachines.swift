@@ -435,6 +435,9 @@ extension WorkspaceViewController {
   /// 只更新侧栏高亮等于没切机器：标签集合、画面订阅与交互闸门都必须跟着换，因此这里
   /// 一定要把切换交给 `RemoteWorkspaceCoordinator`。它内部先取消被切走机器的画面订阅，
   /// 再换标签集合，最后才取新机器的完整快照。
+  /// 主菜单「切换机器」入口，与侧栏弹出层同一条路径。
+  func presentMachineSelection(_ id: UUID) { selectMachine(id) }
+
   private func selectMachine(_ id: UUID) {
     if let failure = machineFleet.selectMachine(id) {
       MachineSetupSheet.presentFailure(failure, in: view.window)

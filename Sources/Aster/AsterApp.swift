@@ -1374,6 +1374,14 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(.separator())
     // 机器管理的主菜单入口。侧栏「MACHINES」分区的「+」是同一个动作的第二条路径；
     // 两条都必须存在：侧栏折叠时主菜单仍要能添加机器。
+    // 「切换机器」子菜单在打开时按当前机器列表动态填充（menuNeedsUpdate）：侧栏切换器折叠
+    // 或用键盘/辅助功能时也能切机器，与侧栏弹出层是同一个动作。
+    let switchMachine = NSMenuItem(title: "切换机器", action: nil, keyEquivalent: "")
+    let switchMenu = NSMenu(title: "切换机器")
+    switchMenu.identifier = Self.machineSwitchMenuIdentifier
+    switchMenu.delegate = self
+    switchMachine.submenu = switchMenu
+    submenu.addItem(switchMachine)
     submenu.addItem(menuItem("添加机器…", #selector(addRemoteMachine(_:)), "", modifiers: []))
     // 更新当前活动远端机器的服务。与侧栏右键菜单同一事务；主菜单入口保证侧栏折叠或
     // 用键盘/辅助功能操作时也能到达。Local 活动时由 validateMenuItem 置灰。
@@ -1967,8 +1975,35 @@ extension AsterAppDelegate: NSMenuItemValidation {
 /// Shell 菜单只在真正展开时刷新。NSMenu 的 delegate 是弱引用，但 AppDelegate 由
 /// NSApplication 强持有，因此菜单整个生命周期内都能稳定取得当前工作区窗口和 Pane。
 extension AsterAppDelegate: NSMenuDelegate {
+  static let machineSwitchMenuIdentifier = NSUserInterfaceItemIdentifier("machine-switch-menu")
+
   func menuNeedsUpdate(_ menu: NSMenu) {
+    if menu.identifier == Self.machineSwitchMenuIdentifier {
+      populateMachineSwitchMenu(menu)
+      return
+    }
     guard menu.identifier == Self.shellMenuIdentifier else { return }
     populateShellMenu(menu)
+  }
+
+  /// 「文件 ▸ 切换机器」：每台机器一项，当前活动机器打勾；禁用的机器置灰。
+  private func populateMachineSwitchMenu(_ menu: NSMenu) {
+    menu.removeAllItems()
+    let fleet = MachineFleetModel.shared
+    for row in fleet.rows {
+      let item = NSMenuItem(
+        title: row.label, action: #selector(switchToMachine(_:)), keyEquivalent: "")
+      item.target = self
+      item.representedObject = row.id
+      item.state = row.id == fleet.activeMachineID ? .on : .off
+      item.isEnabled = row.enabled
+      item.identifier = NSUserInterfaceItemIdentifier("machine-switch-\(row.id.uuidString)")
+      menu.addItem(item)
+    }
+  }
+
+  @objc private func switchToMachine(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? UUID else { return }
+    activeWorkspaceViewController?.presentMachineSelection(id)
   }
 }

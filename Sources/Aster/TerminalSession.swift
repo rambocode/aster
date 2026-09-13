@@ -3515,6 +3515,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
     let replacement = makeGhosttyTerminalView(preferences: preferences)
     if let terminalHostView {
+      // 分离时优雅退出的旧桥可能还在 2 秒宽限期内、视图尚未摘除；先清掉，避免盖住新画面。
+      for stale in terminalHostView.subviews where stale is GhosttySurfaceView && stale !== replacement {
+        (stale as? GhosttySurfaceView)?.destroySurface()
+        stale.removeFromSuperview()
+      }
       attachTerminal(replacement, to: terminalHostView)
     }
     if statusIsRunning { focus() }
@@ -4360,10 +4365,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 而且此时没有「随后重新附加」这回事。
   private func shutDownManagedBridge(_ ghostty: GhosttySurfaceView?, immediately: Bool) {
     guard let ghostty else { return }
+    // 旧 surface 拆掉后必须离开视图树：`attachTerminal` 把新 surface 放在第一个子视图之下，
+    // 留着的旧视图会盖住重新附加的新画面——用户看到的是分离前的最后一帧，敲什么都没反应。
     guard !immediately, ghostty.isProcessRunning,
       ghostty.sendProtocolBytes(Self.managedBridgeDetachEscape)
     else {
       ghostty.destroySurface()
+      ghostty.removeFromSuperview()
       return
     }
     Task { @MainActor in
@@ -4372,6 +4380,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         try? await Task.sleep(for: .milliseconds(50))
       }
       ghostty.destroySurface()
+      ghostty.removeFromSuperview()
     }
   }
 
