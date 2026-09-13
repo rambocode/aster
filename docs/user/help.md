@@ -331,6 +331,7 @@ aster notification show "构建完成" --body "全部通过"
 aster session terminals                      # 后台受管终端及其真实状态
 aster session detach --current               # 分离：后台任务继续运行
 aster session end w1:p3                      # 结束：终止该受管终端的后台进程
+```
 
 ### 远程 TUI 客户端
 
