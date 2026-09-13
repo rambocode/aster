@@ -1,0 +1,12 @@
+// 官网（落地页 + 文档站）的 Cloudflare Workers 静态资产部署配置。
+// 构建命令在 Cloudflare 控制台：`cd site-docs && npm ci && npm run docs:build`，
+// 产物落到 site/docs/，与手写的 site/index.html 合起来以 site/ 为根上传。
+// 非生产分支 Workers Builds 会改用 `npx wrangler versions upload`（不带任何参数），
+// 没有这个文件它就不知道资产目录在哪，PR 的部署检查会一直失败。
+{
+  "name": "aster",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./site"
+  }
+}
