@@ -15,6 +15,8 @@ ICON_PREVIEW_DIR="$BUILD_DIR/icon-preview"
 cd "$PROJECT_DIR"
 "$PROJECT_DIR/scripts/setup-ghostty.sh"
 swift build --scratch-path "$BUILD_DIR" -c release
+# 本机后台会话服务是 zig 产物，SwiftPM 不会生成；不构建它，打包版的 Local 受管模式整个不可用。
+"$PROJECT_DIR/scripts/build-session-runtime.sh" "$BUILD_DIR/release" >/dev/null
 
 # 每次从空 bundle 开始，避免删掉源码后旧资源仍残留在交付包。目标路径由项目目录
 # 和固定相对路径组成。拒绝符号链接形式的 dist，避免固定文本路径实际跳转到项目外。
@@ -41,10 +43,9 @@ cp "$BUILD_DIR/release/aster-memory-mcp" "$CONTENTS_DIR/MacOS/aster-memory-mcp"
 # 设置页安装的 /usr/local/bin/aster 也只是指向这里的 symlink。
 cp "$BUILD_DIR/release/aster-cli" "$CONTENTS_DIR/MacOS/aster-cli"
 # P8.8: 受管终端默认开启后，App 必须内含 aster-session 二进制。
-# ManagedTerminalCoordinator 自动从 Contents/MacOS/ 解析路径。
-if [[ -f "$BUILD_DIR/release/aster-session" ]]; then
-  cp "$BUILD_DIR/release/aster-session" "$CONTENTS_DIR/MacOS/aster-session"
-fi
+# ManagedTerminalCoordinator 自动从 Contents/MacOS/ 解析路径。缺了就是打包错误，不能静默跳过。
+[[ -f "$BUILD_DIR/release/aster-session" ]] || { echo "aster-session missing: $BUILD_DIR/release/aster-session" >&2; exit 1; }
+cp "$BUILD_DIR/release/aster-session" "$CONTENTS_DIR/MacOS/aster-session"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$PROJECT_DIR/THIRD-PARTY-NOTICES.md" "$RESOURCES_DIR/THIRD-PARTY-NOTICES.md"
 cp -R "$PROJECT_DIR/Resources/shell-integration" "$RESOURCES_DIR/shell-integration"
@@ -266,6 +267,7 @@ fi
 # 签上的，去掉 --deep 后必须显式补签，否则 --verify --deep --strict 与公证都会失败。
 "${SIGN[@]}" "$CONTENTS_DIR/MacOS/aster-memory-mcp"
 "${SIGN[@]}" "$CONTENTS_DIR/MacOS/aster-cli"
+"${SIGN[@]}" "$CONTENTS_DIR/MacOS/aster-session"
 
 # 最后签外层 App：Frameworks/ 与 MacOS/ 下已签好的嵌套代码在这一步被密封进 CodeResources。
 "${SIGN[@]}" "$APP_DIR"
@@ -273,6 +275,8 @@ fi
 # 分层签名漏掉任何一层都要在打 DMG 之前暴露，而不是等到公证被拒。
 # --deep 用于「校验」是正确用法，只有用于「签名」才有问题。
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+# 签名后的 aster-session 必须还能执行（hardened runtime 下静态 zig 二进制无额外 entitlement 需求）。
+"$CONTENTS_DIR/MacOS/aster-session" --version
 
 # rpath 写错或 framework 没拷进来只会在运行时崩，静态检查看不出来；这里显式断言，
 # 与下面的 --verify-packaged-resources 一起构成更新器的链接冒烟测试。

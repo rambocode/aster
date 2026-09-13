@@ -28,6 +28,10 @@ mkdir -p "$CONTENTS_DIR/MacOS" "$RESOURCES_DIR"
 cp "$BUILD_DIR/debug/Aster" "$CONTENTS_DIR/MacOS/Aster"
 cp "$BUILD_DIR/debug/aster-cli" "$CONTENTS_DIR/MacOS/aster-cli"
 cp "$BUILD_DIR/debug/aster-memory-mcp" "$CONTENTS_DIR/MacOS/aster-memory-mcp" 2>/dev/null || true
+# 本机受管终端服务：ManagedTerminalCoordinator 只从 Contents/MacOS/aster-session 解析 Local 端点，
+# 没它就等于验收不到「关窗口不杀进程 / 冷恢复」。用 release 目录复用 build-app.sh 的产物。
+"$PROJECT_DIR/scripts/build-session-runtime.sh" "$BUILD_DIR/release" >/dev/null
+cp "$BUILD_DIR/release/aster-session" "$CONTENTS_DIR/MacOS/aster-session"
 
 # Info.plist 逐字复制后只改 bundle id：其余键（最低系统版本、URL scheme、Sparkle feed）
 # 保持与真实产物一致，避免因为缺键而走到与用户不同的代码路径。
