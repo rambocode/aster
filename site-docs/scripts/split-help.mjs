@@ -19,6 +19,7 @@ const sidebarPath = path.resolve(root, ".vitepress/sidebar.generated.json");
 const SLUGS = {
   "Aster 能做什么": "index",
   "开始使用": "getting-started",
+  "远程机器": "remote-machines",
   "诊断日志与反馈": "diagnostics",
   "标签与三种布局": "tabs-and-layouts",
   "常用目录": "frequent-directories",
@@ -39,7 +40,7 @@ const SLUGS = {
 const GROUPS = [
   { text: "开始", slugs: ["index", "getting-started"] },
   { text: "界面", slugs: ["tabs-and-layouts", "splits-and-panes", "files-and-preview", "search-and-command-palette"] },
-  { text: "工作流", slugs: ["recipes-and-restore", "cli-and-deep-links", "working-with-agents", "session-memory", "frequent-directories"] },
+  { text: "工作流", slugs: ["recipes-and-restore", "cli-and-deep-links", "working-with-agents", "remote-machines", "session-memory", "frequent-directories"] },
   { text: "配置", slugs: ["settings", "themes", "software-update", "diagnostics", "faq"] },
 ];
 
