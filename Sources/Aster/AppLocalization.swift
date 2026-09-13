@@ -1,3 +1,4 @@
+import AppKit
 import AsterCore
 import Foundation
 
@@ -44,5 +45,34 @@ enum AppLocalization {
       }
     }
     return nil
+  }
+
+  /// 新设置解析出的语言与当前生效语言不同，才需要重启；系统语言恰好等于当前语言时不打扰用户。
+  static func relaunchRequired(
+    forSetting setting: String, preferredLanguages: [String] = Locale.preferredLanguages
+  ) -> Bool {
+    InterfaceLanguage.resolve(setting: setting, preferredLanguages: preferredLanguages) != current
+  }
+
+  /// 语言改动后的提示：让用户选择立即重启或稍后。用当前（旧）语言展示，用户一定看得懂。
+  /// 挂在设置窗口上作为 sheet；没有窗口时退化为独立对话框。
+  @MainActor
+  static func promptRelaunchIfNeeded(forSetting setting: String, in window: NSWindow?) {
+    guard relaunchRequired(forSetting: setting) else { return }
+    let alert = NSAlert()
+    alert.messageText = L("界面语言将在重新启动 Aster 后生效")
+    alert.informativeText = L("现在重新启动 Aster？打开的终端与标签会按你的关闭确认设置处理，稍后也可以手动退出再打开。")
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: L("立即重启"))
+    alert.addButton(withTitle: L("稍后"))
+    let relaunch = { (response: NSApplication.ModalResponse) in
+      guard response == .alertFirstButtonReturn else { return }
+      (NSApp.delegate as? AsterAppDelegate)?.relaunchApplication()
+    }
+    if let window {
+      alert.beginSheetModal(for: window, completionHandler: relaunch)
+    } else {
+      relaunch(alert.runModal())
+    }
   }
 }

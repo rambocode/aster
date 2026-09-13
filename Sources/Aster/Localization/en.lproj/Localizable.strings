@@ -1199,6 +1199,7 @@
 "状态未知" = "Unknown status";
 "状态：%@" = "Status: %@";
 "状态：%@　项目：%@" = "Status: %1$@  Project: %2$@";
+"现在重新启动 Aster？打开的终端与标签会按你的关闭确认设置处理，稍后也可以手动退出再打开。" = "Restart Aster now? Open terminals and tabs follow your close-confirmation settings. You can also quit and reopen later.";
 "现有运行中服务继续使用自己的二进制实例，不会被本次安装停止。" = "Existing running services will continue using their own binary instances and will not be stopped by this installation.";
 "生成诊断包失败：%@" = "Failed to generate diagnostic package: %@";
 "生效中" = "Active";
@@ -1211,6 +1212,7 @@
 "界面显示语言，更改后重新启动 Aster 生效" = "Interface display language; takes effect after restarting Aster";
 "界面框架" = "Interface Framework";
 "界面窗口" = "Interface Window";
+"界面语言将在重新启动 Aster 后生效" = "The interface language takes effect after Aster restarts";
 "登录 Shell" = "Login Shell";
 "目录" = "Directory";
 "目录为空或不可读取。" = "Directory is empty or unreadable.";
@@ -1233,6 +1235,7 @@
 "移除…" = "Remove…";
 "移除机器「%@」？" = "Remove Machine \"%@\"?";
 "程序已协商 bracketed paste 时跳过危险内容确认" = "Skip Dangerous Content Confirmation When the Program Has Negotiated Bracketed Paste";
+"稍后" = "Later";
 "稳定显示" = "Stable Display";
 "空心方块" = "Hollow Block";
 "空标签进入当前分组末尾；带内容标签可紧跟当前标签" = "Empty tabs go to the end of the current group; tabs with content can follow right after the current tab";
@@ -1244,6 +1247,7 @@
 "立即发送" = "Send Now";
 "立即发送此命令" = "Send this command now";
 "立即更新" = "Update Now";
+"立即重启" = "Restart Now";
 "竖线" = "Bar";
 "端口非法：%@，必须是 1–65535。" = "Invalid port: %@, must be 1–65535.";
 "第 %@ 行" = "Line %@";
