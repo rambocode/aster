@@ -17,6 +17,9 @@ public enum AgentTaskStateSignal: Equatable, Sendable {
   case idle
   case awaitingInput
   case inputSubmitted
+  /// Agent 进程结束（SessionEnd 类 hook）。没有 shell integration 的 Pane 收不到
+  /// commandFinished，只能靠它把 provider、用量条与会话绑定收掉。
+  case ended
 }
 
 /// Agent hook 通过所属 PTY 写入的私有 OSC 6974 指令。固定键值和受支持枚举避免把
@@ -70,6 +73,7 @@ public struct AgentTerminalDirective: Equatable, Sendable {
     case "processing": signal = .processing
     case "idle": signal = .idle
     case "awaiting-input": signal = .awaitingInput
+    case "ended": signal = .ended
     default: return nil
     }
     self.init(provider: provider, signal: signal, sessionID: sessionID)
@@ -106,7 +110,7 @@ public struct AgentTaskStateReducer: Equatable, Sendable {
     switch event.signal {
     case .processing, .inputSubmitted:
       state = .processing
-    case .idle:
+    case .idle, .ended:
       state = .idle
     case .awaitingInput:
       state = .awaitingInput

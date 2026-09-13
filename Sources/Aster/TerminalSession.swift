@@ -5392,6 +5392,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // 已由 shell command 精确识别 provider 时，拒绝其它 provider 向同一 PTY 注入状态；
     // wrapper 命令无法识别时则允许首个合法 hook 建立关联。
     if let activeAgentProvider, activeAgentProvider != directive.provider { return }
+    if directive.signal == .ended {
+      // 进程退出：只对已建立关联的 provider 生效，陌生 PTY 上的 ended 不建立再拆除。
+      if activeAgentProvider == directive.provider { finishAgentLifecycle() }
+      return
+    }
     activeAgentProvider = directive.provider
     agentProviderIsTitleEvidenceOnly = false
     if let sessionID = directive.sessionID { activeAgentSessionID = sessionID }
@@ -5479,6 +5484,27 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     codexUsageMonitor?.stop()
     codexUsageMonitor = nil
     codexUsageMonitorSessionID = nil
+  }
+
+  /// hook 报告 Agent 进程已退出（SessionEnd）：按 commandFinished 的 Agent 半边收尾——
+  /// 登记会话、清 provider / session / 用量、停读屏、状态回 idle。有 shell integration 时
+  /// 随后的 commandFinished 会再走一遍，各步对 nil provider 都是 no-op；没有 shell
+  /// integration（嵌套 shell、ssh、未装集成）时这是唯一能收掉用量条与 Agent 徽章的路径。
+  private func finishAgentLifecycle() {
+    stopAgentScreenMonitor()
+    reportAgentSessionEndedIfNeeded()
+    activeAgentProvider = nil
+    activeAgentSessionID = nil
+    agentCommandStartedAt = nil
+    clearAgentUsage()
+    agentProviderIsTitleEvidenceOnly = false
+    agentHasWorkEvidence = false
+    agentLifecycleIsAuthoritative = false
+    agentStateReducer = AgentTaskStateReducer()
+    clearFallbackAgentActivity()
+    agentTaskState = .idle
+    agentTaskCompletionUnread = false
+    outlineChanged.send()
   }
 
   /// provider 生命周期结束：停掉 Codex 监听并让用量条消失；下一轮要重新取得运行证据。

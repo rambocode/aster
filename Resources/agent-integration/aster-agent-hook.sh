@@ -10,7 +10,7 @@ provider="${2-}"
 session_id="${3-}"
 
 case "$state" in
-  processing|idle|awaiting-input) ;;
+  processing|idle|awaiting-input|ended) ;;
   *) exit 0 ;;
 esac
 case "$provider" in

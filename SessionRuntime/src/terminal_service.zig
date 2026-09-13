@@ -548,8 +548,9 @@ pub const Service = struct {
         }
         const state_text = agent_state orelse return error.InvalidRequest;
         const provider_text = provider orelse return error.InvalidRequest;
-        // hook 的三个状态映射到服务端状态集合：processing→working，awaiting-input→blocked，idle→idle。
-        const state: agent_mod.State = if (std.mem.eql(u8, state_text, "processing")) .working else if (std.mem.eql(u8, state_text, "awaiting-input")) .blocked else if (std.mem.eql(u8, state_text, "idle")) .idle else return error.InvalidRequest;
+        // hook 状态映射到服务端状态集合：processing→working，awaiting-input→blocked，idle/ended→idle
+        // （ended 表示 Agent 进程退出，服务端没有单独的「已退出」态，按 idle 记）。
+        const state: agent_mod.State = if (std.mem.eql(u8, state_text, "processing")) .working else if (std.mem.eql(u8, state_text, "awaiting-input")) .blocked else if (std.mem.eql(u8, state_text, "idle") or std.mem.eql(u8, state_text, "ended")) .idle else return error.InvalidRequest;
         const accepted = try self.agent_store.report(terminal_id, provider_text, state, null, session_id, "hook");
         if (accepted) try self.emitAgentChanged(terminal_id);
     }

@@ -311,3 +311,43 @@ func usageBarWaitsForAgentRuntimeEvidence() async throws {
   try await Task.sleep(for: .milliseconds(100))
   #expect(session.agentUsage == nil)
 }
+
+@Test("SessionEnd hook（ended）在没有 shell integration 时也能收掉用量条与 Agent 绑定")
+@MainActor
+func endedDirectiveClearsUsageWithoutShellIntegration() async throws {
+  let (suiteName, defaults) = try agentUsageDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  let service = offlineClaudeQuotaService()
+  service.injectForTesting(try #require(ClaudeAccountQuotaParser.windows(
+    fromUsageResponse: Data(#"{"five_hour":{"utilization":40}}"#.utf8))))
+  let session = TerminalSession(workingDirectory: "/tmp")
+  session.claudeAccountQuota = service
+  let terminalView = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+
+  // 陌生 PTY 上的 ended：不建立关联，也不报错。
+  terminalView.onAgentTerminalDirective?(AgentTerminalDirective(provider: .claudeCode, signal: .ended))
+  #expect(session.activeAgentProvider == nil)
+
+  // 只有 hook、没有 OSC 133：SessionStart 建立关联并显示用量。
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .claudeCode, signal: .idle, sessionID: "sess-ended-1"))
+  try await waitUntil { session.agentUsage?.window(.fiveHour)?.usedPercent == 40 }
+  #expect(session.activeAgentSessionID == "sess-ended-1")
+
+  // 其它 provider 的 ended 不能拆掉 Claude 的关联。
+  terminalView.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .ended))
+  #expect(session.activeAgentProvider == .claudeCode)
+
+  // Claude 退出：SessionEnd → ended。会话按真实 ID 登记，provider / 用量 / 状态全部收掉。
+  var ended: (AgentProvider, String?)?
+  session.onAgentSessionEnded = { provider, sessionID in ended = (provider, sessionID) }
+  terminalView.onAgentTerminalDirective?(AgentTerminalDirective(provider: .claudeCode, signal: .ended))
+  #expect(session.activeAgentProvider == nil)
+  #expect(session.activeAgentSessionID == nil)
+  #expect(session.agentUsage == nil)
+  #expect(session.agentTaskState == .idle)
+  #expect(ended?.0 == .claudeCode)
+  #expect(ended?.1 == "sess-ended-1")
+}

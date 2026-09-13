@@ -555,6 +555,8 @@ struct AgentSetupService {
         .init(event: "PostToolUse", state: .processing),
         .init(event: "Stop", state: .idle),
         .init(event: "PermissionRequest", state: .awaitingInput),
+        // 退出 claude 时收掉 Pane 的 Agent 绑定；无 shell integration 时这是唯一的结束信号。
+        .init(event: "SessionEnd", state: .ended),
       ]
     case .codex:
       [
@@ -651,7 +653,7 @@ struct AgentSetupService {
       ("SessionStart", .idle),
       ("PreToolUse", .processing),
       ("PostToolUse", .processing),
-      ("SessionEnd", .idle),
+      ("SessionEnd", .ended),
     ]
     for (event, state) in events {
       let command = try lifecycleHookCommand(state: state, provider: .grokBuild)
@@ -684,6 +686,7 @@ struct AgentSetupService {
     case .processing, .inputSubmitted: "processing"
     case .idle: "idle"
     case .awaitingInput: "awaiting-input"
+    case .ended: "ended"
     }
     return "/bin/sh \(shellQuoted(scriptPath)) \(stateValue) \(provider.rawValue)"
   }
