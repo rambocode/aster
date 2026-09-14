@@ -4001,6 +4001,18 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 受管终端结束后给结束卡的远端语义说明（进程退出 / 已回收 / 不可达）；新进程启动时清空。
   private(set) var managedExitSummary: String?
 
+  /// Local 受管终端已被服务端回收或对账失败后，把本 Pane 换回原生本地 Shell 并重启。
+  /// 本机托管已是可选项，死掉的托管 Pane 回到普通终端是用户最不意外的结果；调用方
+  /// 必须同时清掉布局描述符里的受管引用，否则下次启动仍会去绑一个不存在的终端。
+  @discardableResult
+  func restartAsLocalShell() -> Bool {
+    managedTerminal = nil
+    managedFailure = nil
+    managedExitSummary = nil
+    managedDisposition = .terminated
+    return restart()
+  }
+
   /// 用户在结束卡上点「关闭标签」：受管 Pane 的关闭是服务端事务，由协调器收到通知后执行。
   static let managedCloseRequested = Notification.Name("TerminalSession.managedCloseRequested")
   func requestManagedClose() {

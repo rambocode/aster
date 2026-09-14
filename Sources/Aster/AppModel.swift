@@ -1443,6 +1443,60 @@ final class AppModel: ObservableObject {
   private var pendingWorkflowCLICommands: [UUID: PendingWorkflowCLICommand] = [:]
   private var appSubscriptions: Set<AnyCancellable> = []
 
+  /// Local 受管 Pane 结束卡上「重新启动 Shell」/「关闭标签」的观察者。远端机器由
+  /// RemoteWorkspaceCoordinator 处理（它设置了 remoteStructureHandler）；Local 没有协调器，
+  /// 这两个按钮以前在本机上没有任何响应。`nonisolated(unsafe)`：只在 init 写、deinit 读。
+  nonisolated(unsafe) private var localManagedRetryObserver: (any NSObjectProtocol)?
+  nonisolated(unsafe) private var localManagedCloseObserver: (any NSObjectProtocol)?
+
+  deinit {
+    if let localManagedRetryObserver { NotificationCenter.default.removeObserver(localManagedRetryObserver) }
+    if let localManagedCloseObserver { NotificationCenter.default.removeObserver(localManagedCloseObserver) }
+  }
+
+  /// 该会话所在的本窗口标签；不属于本窗口时返回 nil（多窗口各自只处理自己的标签）。
+  private func tab(containing session: TerminalSession) -> TerminalTabItem? {
+    tabs.first { tab in
+      tab.layout.allPanes.contains { tab.runtime(for: $0.id)?.terminalSession === session }
+    }
+  }
+
+  /// Local 受管 Pane 点「重新启动 Shell」：清掉布局里的受管引用，把 Pane 换回原生 Shell。
+  private func restartLocalManagedPaneAsNativeShell(_ session: TerminalSession) {
+    guard remoteStructureHandler == nil, let tab = tab(containing: session),
+      let paneID = tab.layout.allPanes.first(where: { tab.runtime(for: $0.id)?.terminalSession === session })?.id
+    else { return }
+    tab.layout = tab.layout.updatingPane(paneID: paneID) { descriptor in
+      var updated = descriptor
+      updated.managedTerminal = nil
+      return updated
+    }
+    session.restartAsLocalShell()
+    persistWorkspace()
+  }
+
+  /// Local 受管 Pane 点「关闭标签」：走本地关闭路径（远端终端已不存在，无需服务端事务）。
+  private func closeLocalManagedTab(containing session: TerminalSession) {
+    guard remoteStructureHandler == nil, let tab = tab(containing: session) else { return }
+    closeTab(id: tab.id)
+  }
+
+  /// 观察者闭包捕获 self，必须等全部存储属性初始化完毕后再注册。
+  private func installLocalManagedObservers() {
+    localManagedRetryObserver = NotificationCenter.default.addObserver(
+      forName: TerminalSession.managedRetryRequested, object: nil, queue: .main
+    ) { [weak self] notification in
+      guard let session = notification.object as? TerminalSession else { return }
+      Task { @MainActor [weak self] in self?.restartLocalManagedPaneAsNativeShell(session) }
+    }
+    localManagedCloseObserver = NotificationCenter.default.addObserver(
+      forName: TerminalSession.managedCloseRequested, object: nil, queue: .main
+    ) { [weak self] notification in
+      guard let session = notification.object as? TerminalSession else { return }
+      Task { @MainActor [weak self] in self?.closeLocalManagedTab(containing: session) }
+    }
+  }
+
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
     if let data = defaults.data(forKey: recentlyClosedKey),
@@ -1487,6 +1541,7 @@ final class AppModel: ObservableObject {
         self.persistFrequentFolders()
       }
       .store(in: &appSubscriptions)
+    installLocalManagedObservers()
   }
 
   /// 在创建工作区控制器前调用。未清掉 running 标记表示上次异常退出；异常退出与
