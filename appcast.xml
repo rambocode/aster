@@ -3,6 +3,26 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.6.3</title>
+            <pubDate>Mon, 14 Sep 2026 18:03:03 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>22</sparkle:version>
+            <sparkle:shortVersionString>0.6.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 后台托管终端的 Shell 集成
+
+- 由后台会话服务启动的 Shell（本机「本机后台保活」或远程机器上的终端）现在和普通终端一样带有 Aster 的 Shell 集成：提示符标记、命令退出徽标、目录跟踪、别名上报和「下一步」自动补全都能正常工作。此前这些 Shell 完全没有集成，`git clone` 后不会出现 `cd` 提示。
+- 远程机器：服务产物现在随附 Shell 集成脚本，「更新远端服务」会一并安装到版本目录里。装好后重启该机器的服务，新启动的 Shell 即生效。
+
+## 修复
+
+- 本机上「远端进程已结束」卡片里的「重新启动 Shell」和「关闭标签」以前点了没有反应。现在「重新启动 Shell」会把这个面板换回普通的本地 Shell，「关闭标签」直接关闭标签。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.3/Aster-0.6.3.dmg" length="42668744" type="application/octet-stream" sparkle:edSignature="o2iU32+aofko4WWO2crLKj7ivFdO7htWF9MbKLbR2lsLwlU8PtPQcRpj3ydMrcfP7HoMl9e0b23j+i5zvmUGCg=="/>
+        </item>
+        <item>
             <title>0.6.2</title>
             <pubDate>Mon, 14 Sep 2026 16:20:32 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -98,32 +118,6 @@
 - 冷恢复出来的新 Shell 改为登录交互 Shell，PATH 与提示符和平时一致。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.5.0/Aster-0.5.0.dmg" length="40864190" type="application/octet-stream" sparkle:edSignature="Jo70AakYglQQFLCyktseG0SUWNCpnDfaoEfxs67Q3qu7c1cai3w4iOo2QAG6Ue4ySy84gyIPEepTSkz+jX0hCQ=="/>
-        </item>
-        <item>
-            <title>0.4.12</title>
-            <pubDate>Sun, 06 Sep 2026 17:35:32 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>17</sparkle:version>
-            <sparkle:shortVersionString>0.4.12</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## Pane 底部用量条
-
-- Claude 用量改为整个 Aster 共享一份数据与一条请求时间线：不管开了多少个 Claude Pane、Agent 启停多少次，对 `/usage` 接口的请求之间都至少隔 90 秒。此前每次 Claude 进程从无到有都会立刻请求一次，多个 Pane 反复启停会把接口打成 429，用量条随之空白；现在新开的 Pane 直接显示共享的上次结果，轮询恢复为每 90 秒一次。
-
-## Agent 会话 resume
-
-- 修复 Claude Code 2.1.x 下 Aster 收不到任何 hook 信号的问题：新版 Claude 启动 hook 时没有控制终端，写 `/dev/tty` 会失败。hook 脚本现在会沿父进程链找到 Pane 的终端设备再写入。此前「会话结束提示 resume 命令并作为同目录补全首选」因此从未生效，现在恢复正常。
-- 直接关闭仍在运行 Agent 的 Pane、标签或退出 Aster，也会登记该项目的最近会话，下次在同目录新开终端时补全首选就是对应的 resume 命令。
-- Claude Code 与 Codex 的会话关联不再依赖 hook：Aster 直接读取它们写在本机的会话文件，在运行中就把 session ID 绑定到 Pane。标签与标题栏的会话标题、Shell 菜单里的 Fork / 复制会话 ID、结束后的 resume 补全，在没装 hook 或 hook 信号丢失时同样可用。本次运行没有产生新会话文件但目录里有旧会话时，补全首选退化为 `claude --continue` / `codex resume --last`。
-
-## 补全与历史
-
-- 新开 Pane 或命令刚结束时（空 prompt）不再自动弹出候选面板；敲下第一个字符后才自动展开，按 Esc 仍可随时手动打开。行内 ghost（resume 命令、上一条命令的纠错）不受影响。
-- 只有真正执行过的命令才进入学习历史：找不到命令（127）、无法执行（126）或输出里明确写 command not found 的命令不再记录，避免打错的词污染后续补全。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.12/Aster-0.4.12.dmg" length="28480652" type="application/octet-stream" sparkle:edSignature="bepmuI7traRNCfixOveBtV3GkuaZQgZLqMHGwK12amXZgYyju25V+0XjsuiuEKhh5B/byP1xYcsPQ6NT82AdCA=="/>
         </item>
     </channel>
 </rss>
