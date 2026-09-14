@@ -863,6 +863,7 @@
 "控制 macOS 字形平滑；默认使用系统抗锯齿" = "macOS-Schriftglättung steuern; standardmäßig wird das System-Antialiasing verwendet";
 "控制侧边栏布局下，标签面板的显示方式" = "Steuert, wie der Tab-Bereich im Seitenleisten-Layout angezeigt wird";
 "控制最近活动的工作区窗口；也可直接拖动主窗口分隔线" = "Steuert das zuletzt aktive Arbeitsbereichsfenster; die Trennlinie des Hauptfensters kann auch direkt gezogen werden";
+"推送刚才的提交" = "Den gerade erstellten Commit pushen";
 "描述语言" = "Beschreibungssprache";
 "提炼时会发送的内容" = "Während der Verfeinerung gesendete Inhalte";
 "提示词" = "Prompt";
@@ -1188,6 +1189,7 @@
 "滚动越过末尾" = "Über das Ende hinaus scrollen";
 "滚过开头" = "Über den Anfang hinaus scrollen";
 "滚过末尾" = "Über das Ende hinaus scrollen";
+"激活刚创建的虚拟环境" = "Die gerade erstellte virtuelle Umgebung aktivieren";
 "点击修改快捷键" = "Klicken, um das Tastenkürzel zu ändern";
 "点击在 %@ 中运行 %@ 查看统计" = "Klicken, um %@ in %@ auszuführen und Statistiken anzuzeigen";
 "点按 Dock 图标时，若没有窗口则自动新建" = "Beim Klicken auf das Dock-Symbol automatisch ein neues Fenster erstellen, wenn keins vorhanden ist";
@@ -1347,6 +1349,7 @@
 "覆盖主题，全局优先" = "Design überschreiben, global hat Vorrang";
 "规则提炼" = "Regelbasierte Extraktion";
 "视图" = "Ansicht";
+"解压刚下载的压缩包" = "Das gerade heruntergeladene Archiv entpacken";
 "解释 Agent 状态检测…" = "Agent-Zustandserkennung erklären…";
 "触发：%@　方式：%@　约 %@ token" = "Auslöser: %@  Methode: %@  ~%@ Token";
 "触控板按像素滚动，并在手势结束时对齐字符行" = "Das Trackpad scrollt pixelweise und rastet am Gestenende an Zeichenzeilen ein";
@@ -1419,6 +1422,8 @@
 "运行 Recipe 命令？" = "Recipe-Befehl ausführen?";
 "运行下一条 Recipe 命令？" = "Nächsten Recipe-Befehl ausführen?";
 "运行中服务协议主版本 %@ 与客户端 %@ 不兼容，需要显式替换；后台不会停止它。" = "Die Protokoll-Hauptversion %@ des laufenden Dienstes ist mit dem Client %@ inkompatibel; ein explizites Ersetzen ist erforderlich. Er wird im Hintergrund nicht gestoppt.";
+"运行刚准备好的程序" = "Das gerade vorbereitete Programm ausführen";
+"运行刚构建的镜像" = "Das gerade gebaute Image ausführen";
 "运行命令后会在这里显示 Shell Integration 锚点。" = "Shell Integration-Anker werden hier nach dem Ausführen von Befehlen angezeigt.";
 "运行时" = "Laufzeit";
 "运行此命令" = "Diesen Befehl ausführen";
@@ -1427,6 +1432,9 @@
 "进入 Mark Mode" = "Mark Mode aktivieren";
 "进入 Vi Mode" = "Vi Mode aktivieren";
 "进入全屏幕" = "Vollbildmodus";
+"进入刚克隆的仓库" = "In das gerade geklonte Repository wechseln";
+"进入刚创建的目录" = "In das gerade erstellte Verzeichnis wechseln";
+"进入刚解压出的目录" = "In das gerade entpackte Verzeichnis wechseln";
 "进行中" = "In Bearbeitung";
 "远端 %@ 的协议主版本 %@ 与客户端 %@ 不兼容，需要显式替换；后台不会停止它。" = "Die Protokoll-Hauptversion %@ von Remote %1$@ ist mit dem Client %3$@ inkompatibel; ein explizites Ersetzen ist erforderlich. Er wird im Hintergrund nicht gestoppt.";
 "远端 %@/%@ 上没有可用的 aster-session，需要显式安装。" = "Kein verwendbares aster-session auf Remote %@/%@; eine explizite Installation ist erforderlich.";

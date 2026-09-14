@@ -863,6 +863,7 @@
 "控制 macOS 字形平滑；默认使用系统抗锯齿" = "Contrôler le lissage des polices macOS ; utilise l'anticrénelage système par défaut";
 "控制侧边栏布局下，标签面板的显示方式" = "Contrôler l'affichage du panneau d'onglets en disposition barre latérale";
 "控制最近活动的工作区窗口；也可直接拖动主窗口分隔线" = "Contrôle la fenêtre d'espace de travail la plus récemment active ; vous pouvez aussi faire glisser directement le séparateur de la fenêtre principale";
+"推送刚才的提交" = "Pousser le commit que vous venez de faire";
 "描述语言" = "Langue de description";
 "提炼时会发送的内容" = "Contenu envoyé lors de l'affinage";
 "提示词" = "Prompt";
@@ -1188,6 +1189,7 @@
 "滚动越过末尾" = "Défiler au-delà de la fin";
 "滚过开头" = "Défiler au-delà du début";
 "滚过末尾" = "Défiler au-delà de la fin";
+"激活刚创建的虚拟环境" = "Activer l’environnement virtuel que vous venez de créer";
 "点击修改快捷键" = "Cliquer pour modifier le raccourci";
 "点击在 %@ 中运行 %@ 查看统计" = "Cliquer pour exécuter %@ dans %@ et afficher les statistiques";
 "点按 Dock 图标时，若没有窗口则自动新建" = "Créer automatiquement une nouvelle fenêtre en cliquant sur l'icône du Dock s'il n'y en a aucune";
@@ -1347,6 +1349,7 @@
 "覆盖主题，全局优先" = "Remplacer le thème, priorité au global";
 "规则提炼" = "Extraction par règles";
 "视图" = "Affichage";
+"解压刚下载的压缩包" = "Extraire l’archive que vous venez de télécharger";
 "解释 Agent 状态检测…" = "Expliquer la détection d’état Agent…";
 "触发：%@　方式：%@　约 %@ token" = "Déclencheur : %@  Méthode : %@  ~%@ tokens";
 "触控板按像素滚动，并在手势结束时对齐字符行" = "Le pavé tactile défile au pixel près et s'aligne sur les lignes de caractères à la fin du geste";
@@ -1419,6 +1422,8 @@
 "运行 Recipe 命令？" = "Exécuter la commande Recipe ?";
 "运行下一条 Recipe 命令？" = "Exécuter la prochaine commande Recipe ?";
 "运行中服务协议主版本 %@ 与客户端 %@ 不兼容，需要显式替换；后台不会停止它。" = "La version majeure du protocole du service en cours d'exécution %@ est incompatible avec le client %@ ; un remplacement explicite est nécessaire. Il ne sera pas arrêté en arrière-plan.";
+"运行刚准备好的程序" = "Exécuter le programme que vous venez de préparer";
+"运行刚构建的镜像" = "Exécuter l’image que vous venez de construire";
 "运行命令后会在这里显示 Shell Integration 锚点。" = "Les ancres Shell Integration s’afficheront ici après l’exécution des commandes.";
 "运行时" = "Exécution";
 "运行此命令" = "Exécuter cette commande";
@@ -1427,6 +1432,9 @@
 "进入 Mark Mode" = "Entrer en Mark Mode";
 "进入 Vi Mode" = "Entrer en Vi Mode";
 "进入全屏幕" = "Passer en plein écran";
+"进入刚克隆的仓库" = "Entrer dans le dépôt que vous venez de cloner";
+"进入刚创建的目录" = "Entrer dans le dossier que vous venez de créer";
+"进入刚解压出的目录" = "Entrer dans le dossier que vous venez d’extraire";
 "进行中" = "En cours";
 "远端 %@ 的协议主版本 %@ 与客户端 %@ 不兼容，需要显式替换；后台不会停止它。" = "La version majeure du protocole du distant %@ (%@) est incompatible avec le client %@ ; un remplacement explicite est nécessaire. Il ne sera pas arrêté en arrière-plan.";
 "远端 %@/%@ 上没有可用的 aster-session，需要显式安装。" = "Aucun aster-session utilisable sur le distant %@/%@ ; une installation explicite est nécessaire.";

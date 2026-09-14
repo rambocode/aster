@@ -3197,6 +3197,18 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         event,
         at: TerminalGridPoint(column: Int(point.column), row: token)
       )
+      // 命令开始执行时网格上就是最终的命令行（含 ↑ 历史、shell 建议、Tab 补全的结果），
+      // 把它交给补全控制器做「下一步」推断；读不到时控制器回退到键盘重建。
+      if event == .commandStart, let running = ghosttyShellCommandTimeline.runningCommand,
+        let inputAnchor = ghosttyBufferAnchors[running.inputStart.row],
+        let outputAnchor = ghosttyBufferAnchors[running.outputStart.row],
+        let text = view.readText(
+          from: inputAnchor, startingAt: UInt32(running.inputStart.column), before: outputAnchor)
+      {
+        // 折行的命令会带软换行；命令文本本身不含换行，直接拼接。
+        autocompleteController?.receiveScreenCommand(
+          text.replacingOccurrences(of: "\n", with: ""))
+      }
       autocompleteController?.receive(event)
       handleShellIntegrationEvent(event)
       handleShellIntegrationTimeline(ghosttyShellCommandTimeline)

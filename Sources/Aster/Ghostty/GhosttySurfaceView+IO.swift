@@ -258,6 +258,33 @@ extension GhosttySurfaceView: NSMenuItemValidation {
       decoding: UnsafeRawBufferPointer(start: pointer, count: Int(text.text_len)), as: UTF8.self)
   }
 
+  /// 读取从 `start`（含 `column` 起）到 `end` 所在行之前一行行尾的文本；`end` 与 `start`
+  /// 同行时只读 `start` 行。用于在 OSC 133 C 时取出可能已折行的完整命令行。
+  func readText(
+    from start: ghostty_aster_buffer_point_s,
+    startingAt column: UInt32,
+    before end: ghostty_aster_buffer_point_s
+  ) -> String? {
+    guard let surface, let startPoint = resolveBufferPoint(start),
+      let endPoint = resolveBufferPoint(end)
+    else { return nil }
+    let startRow = UInt32(clamping: startPoint.screen_row)
+    let endRow = endPoint.screen_row > startPoint.screen_row
+      ? UInt32(clamping: endPoint.screen_row - 1) : startRow
+    var selection = ghostty_selection_s()
+    selection.top_left = ghostty_point_s(
+      tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_EXACT, x: column, y: startRow)
+    selection.bottom_right = ghostty_point_s(
+      tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_EXACT, x: .max, y: endRow)
+    selection.rectangle = false
+    var text = ghostty_text_s()
+    guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
+    defer { ghostty_surface_free_text(surface, &text) }
+    guard let pointer = text.text else { return "" }
+    return String(
+      decoding: UnsafeRawBufferPointer(start: pointer, count: Int(text.text_len)), as: UTF8.self)
+  }
+
   @discardableResult
   func reveal(_ anchor: ghostty_aster_buffer_point_s) -> Bool {
     guard let surface, let point = resolveBufferPoint(anchor) else { return false }

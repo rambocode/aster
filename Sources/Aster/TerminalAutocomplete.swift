@@ -225,6 +225,12 @@ final class TerminalAutocompleteController {
   private var outputCapture = ShellCommandOutputCapture()
   private var completedCommandOutput: ShellCapturedCommandOutput?
   private var pendingCorrection: String?
+  /// 上一条成功命令的「下一步」（`git clone` 后的 `cd <dir>`），在下一条空 prompt 作
+  /// ghost 首选。与 `pendingCorrection` 互斥：一个只在失败后出现，一个只在成功后出现。
+  private var pendingFollowUp: CommandFollowUp?
+  /// OSC 133 C 时终端网格上真实的命令行。键盘重建（tracker）在用户按 ↑ 调历史、
+  /// 接受 shell 自身建议或 Tab 补全后会缺失/不完整，「下一步」推断以屏幕文本为准。
+  private var screenCommand: String?
   private var aliases: [String] = []
   private var inlineDismissed = false
   /// 本地输入会先于 PTY 回显到达。等待回显期间保留候选数据但隐藏 ghost，避免它
@@ -279,6 +285,7 @@ final class TerminalAutocompleteController {
       awaitingInputEcho = false
       acceptsLateSubmittedInput = false
       panelSuppressedForPrompt = false
+      screenCommand = nil
       dismiss()
     case .inputStart:
       // B 明确表示光标已进入可编辑区。A 缺失时仍可从此处开始安全跟踪。
@@ -298,6 +305,9 @@ final class TerminalAutocompleteController {
       } else if !buffered.isEmpty {
         receiveInput(buffered[...])
       } else {
+        // 上一条命令的「下一步」不必等 150ms 防抖和整套候选计算：prompt 一就绪就先把
+        // ghost 画出来，完整候选随后照常刷新并保留同一首选。
+        presentPendingFollowUpImmediately()
         scheduleRefresh()
       }
       pendingPromptInputOverflowed = false
@@ -317,6 +327,20 @@ final class TerminalAutocompleteController {
       completedCommandOutput = nil
       dismiss()
     }
+  }
+
+  /// 终端在 commandStart 时读到的命令行文本。只取第一段（右侧提示符与命令之间至少
+  /// 两个空格），并拒绝控制字符与超长内容；空文本视为没有。
+  func receiveScreenCommand(_ text: String) {
+    let firstSegment = text.components(separatedBy: "  ").first ?? text
+    let trimmed = firstSegment.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, trimmed.utf8.count <= 4_096,
+      !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+    else {
+      screenCommand = nil
+      return
+    }
+    screenCommand = trimmed
   }
 
   func receiveInput(_ bytes: ArraySlice<UInt8>) {
@@ -386,15 +410,18 @@ final class TerminalAutocompleteController {
       completedCommandOutput = completed
     }
     guard promptActive else { return }
-    // 输出可能是 Shell 异步建议或重绘。收到分片即撤下旧 ghost，再在网格消费后核验。
-    awaitingInputEcho = true
-    render()
+    // 输出可能是 Shell 异步建议或重绘。有待回显的本地输入时立即撤下旧 ghost，避免它
+    // 锚定旧 caretFrame 与新输入叠字；没有待回显输入（空 prompt 上的时钟/异步提示符
+    // 重绘）时不先隐藏，否则每次重绘 ghost 都会闪一下，看起来像窗口在抖动。
+    let previouslyAwaiting = awaitingInputEcho
     // 输出捕获需先于同分片内的 OSC 命令完成事件，但 ghost 布局必须等终端 surface
     // 消费完回显并更新 caretFrame。终端的状态报告、光标控制等同样会走 PTY 输出，
     // 因此不能把“收到任意输出”当成回显完成，否则 ghost 会锚定旧光标并覆盖输入。
     Task { @MainActor [weak self] in
       guard let self, self.promptActive else { return }
-      self.awaitingInputEcho = !self.currentPromptIsEchoed()
+      let awaiting = !self.currentPromptIsEchoed()
+      guard awaiting != self.awaitingInputEcho || previouslyAwaiting else { return }
+      self.awaitingInputEcho = awaiting
       self.render()
     }
   }
@@ -521,6 +548,39 @@ final class TerminalAutocompleteController {
     return false
   }
 
+  /// 当前 prompt 文本前缀下可用的「下一步」候选；没有或前缀不匹配时为 nil。
+  private func pendingFollowUpCandidate() -> AutocompleteCandidate? {
+    guard let followUp = pendingFollowUp,
+      followUp.command.hasPrefix(tracker.line), followUp.command != tracker.line
+    else { return nil }
+    return AutocompleteCandidate(
+      insertText: followUp.command,
+      description: Self.followUpDescription(followUp.kind),
+      kind: .followUp,
+      score: Double.greatestFiniteMagnitude,
+      replacement: .fullLine
+    )
+  }
+
+  /// 只用「下一步」这一条候选立刻渲染 ghost，跳过整套候选查询；面板保持关闭。
+  private func presentPendingFollowUpImmediately() {
+    guard promptActive, tracker.isReliable, tracker.isCursorAtEnd,
+      let candidate = pendingFollowUpCandidate()
+    else { return }
+    let configuration = controls()
+    guard configuration.resolvedAutocompleteInlineSuggestion
+      || configuration.resolvedAutocompleteCandidatePanel != .disabled
+    else { return }
+    currentResult = AutocompleteResult(
+      candidates: [candidate],
+      ghostText: String(candidate.insertText.dropFirst(tracker.line.count)),
+      replacementStart: 0
+    )
+    selectedIndex = 0
+    firstVisibleIndex = 0
+    render()
+  }
+
   /// 测试和立即设置变更使用的同步刷新 seam；正常输入通过 150ms debounce 调用。
   func refreshNow() {
     refreshTask?.cancel()
@@ -562,6 +622,15 @@ final class TerminalAutocompleteController {
         replacementStart: 0
       )
     }
+    // 上一条成功命令的「下一步」（clone 后 cd、commit 后 push 等）是用户此刻最可能
+    // 的意图，排在最前。
+    if let candidate = pendingFollowUpCandidate() {
+      result = AutocompleteResult(
+        candidates: [candidate] + result.candidates.filter { $0.insertText != candidate.insertText },
+        ghostText: String(candidate.insertText.dropFirst(tracker.line.count)),
+        replacementStart: 0
+      )
+    }
     // 项目命令（最近一次 Agent 会话的 resume）排在首位；上一条命令的纠错意图更强，
     // 两者同时存在时纠错保持第一，项目命令紧随其后。
     if let project = projectCommandProvider?(currentDirectory()),
@@ -575,7 +644,7 @@ final class TerminalAutocompleteController {
         replacement: .fullLine
       )
       var candidates = result.candidates.filter { $0.insertText != project.command }
-      let insertionIndex = candidates.first?.kind == .correction ? 1 : 0
+      let insertionIndex = candidates.first.map { $0.kind == .correction || $0.kind == .followUp } == true ? 1 : 0
       candidates.insert(candidate, at: insertionIndex)
       result = AutocompleteResult.make(candidates: candidates, line: tracker.line)
     }
@@ -683,6 +752,15 @@ final class TerminalAutocompleteController {
   }
 
   private func finishCommand(exitStatus: Int?) {
+    let status = exitStatus ?? 0
+    // 「下一步」建议只看命令文本，不属于历史学习，因此不受本机学习开关约束；
+    // 但目录必须真实存在（本地 cwd 可校验时），否则 Tab 进去只会得到一条报错。
+    // 屏幕上的命令行是真值；键盘重建只在读屏失败时兜底。
+    let followUpSource = screenCommand ?? runningCommand
+    screenCommand = nil
+    pendingFollowUp = followUpSource.flatMap {
+      CommandFollowUpParser.suggestion(command: $0, exitStatus: status)
+    }.flatMap { Self.followUpTargetExists($0, in: currentDirectory()) ? $0 : nil }
     guard let command = runningCommand, !command.isEmpty else { return }
     let configuration = controls()
     guard configuration.resolvedAutocompleteOnDeviceLearning else {
@@ -690,7 +768,6 @@ final class TerminalAutocompleteController {
       return
     }
     let executable = ShellCommandTokenizer.tokenize(command).tokens.first ?? ""
-    let status = exitStatus ?? 0
     let output = ANSICleaner.visibleText(from: completedCommandOutput?.text ?? "")
     // 只学习真正执行过的命令：`runningCommand` 本身只来自回车提交的行，这里再把
     // shell 根本没能执行的（找不到命令 126/127、或输出里明说 command not found /
@@ -709,6 +786,33 @@ final class TerminalAutocompleteController {
       output: output,
       knownCommands: Set(service.specDatabase.commands.map(\.name))
     )
+  }
+
+  /// 建议依赖的路径（目录或文件）是否真实存在。cwd 不是本地绝对路径（远端 Shell）
+  /// 时无法校验，保留建议；`~` 开头的目标按用户主目录展开。
+  static func followUpTargetExists(_ followUp: CommandFollowUp, in directory: String) -> Bool {
+    guard let target = followUp.requiredPath else { return true }
+    guard directory.hasPrefix("/") else { return true }
+    let expanded = (target as NSString).expandingTildeInPath
+    let path = expanded.hasPrefix("/")
+      ? expanded : (directory as NSString).appendingPathComponent(expanded)
+    var isDirectory: ObjCBool = false
+    return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+      && isDirectory.boolValue == followUp.requiresDirectory
+  }
+
+  /// 面板里给「下一步」候选的说明文案。
+  static func followUpDescription(_ kind: CommandFollowUp.Kind) -> String {
+    switch kind {
+    case .enterClonedRepository: L("进入刚克隆的仓库")
+    case .enterCreatedDirectory: L("进入刚创建的目录")
+    case .enterExtractedDirectory: L("进入刚解压出的目录")
+    case .activateVirtualEnvironment: L("激活刚创建的虚拟环境")
+    case .extractDownloadedArchive: L("解压刚下载的压缩包")
+    case .pushCommit: L("推送刚才的提交")
+    case .runExecutable: L("运行刚准备好的程序")
+    case .runImage: L("运行刚构建的镜像")
+    }
   }
 
   /// shell 报告「没能执行」的判定：126（不可执行）/127（找不到命令）是 POSIX 约定；
@@ -760,7 +864,9 @@ final class TerminalAutocompleteController {
       return selectedIndex
     }
     // 工具明确给出的失败纠错是一个确定建议，不被同时存在的历史候选稀释。
-    if currentResult.candidates.first?.kind == .correction { return 0 }
+    if let kind = currentResult.candidates.first?.kind, kind == .correction || kind == .followUp {
+      return 0
+    }
     return currentResult.candidates.count == 1 ? 0 : nil
   }
 
@@ -1224,6 +1330,7 @@ final class AutocompleteCandidateRow: NSButton {
     case .learnedCommand: "clock.arrow.circlepath"
     case .readmeCommand: "book"
     case .correction: "wand.and.stars"
+    case .followUp: "arrow.turn.down.right"
     }
     let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
     return image?.withSymbolConfiguration(
