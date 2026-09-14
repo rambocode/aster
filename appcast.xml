@@ -3,6 +3,35 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.6.2</title>
+            <pubDate>Mon, 14 Sep 2026 16:20:32 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>21</sparkle:version>
+            <sparkle:shortVersionString>0.6.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 自动补全：命令之后的「下一步」
+
+- `git clone` 完成后，空提示符上直接显示灰色的 `cd 仓库目录`，按 Tab 就进入刚克隆的仓库。
+- 同样的推荐覆盖常见场景：`mkdir`、`git init`、`git worktree add`、各类脚手架（`cargo new`、`npm create`、`npx create-*`、`rails new`、`flutter create` 等）之后进入新目录；`tar`/`unzip` 解压后进入解压目录；`python -m venv`/`uv venv` 之后激活虚拟环境；`curl`/`wget` 下载压缩包后解压；`git commit` 之后 `git push`；`chmod +x` 之后运行脚本；`gcc`/`go build -o` 之后运行产物；`docker build -t` 之后 `docker run`。
+- 只有目标目录或文件真实存在时才推荐；带 `&&`、`|` 的复合命令和改变工作目录的选项不猜。
+- 推荐在提示符出现的瞬间就显示，不再等候选列表算完；用 ↑ 调出历史、接受 shell 自身建议或 Tab 补全后执行的命令同样能推断。
+- 空提示符上的灰色建议不再随提示符重绘闪烁。
+
+## 本机终端不再默认交给后台服务托管
+
+- 本机新建的终端现在是普通的原生终端。需要「退出或崩溃后 Shell 继续运行」的用户，可在设置 → Shell → 会话恢复 打开「本机后台保活」；也可以对某个工作区使用「托管到后台」手动转为托管。远程机器不受影响，始终托管。
+- 已经处于托管状态的标签保持原样，不会被强制换成新 Shell。
+
+## 修复
+
+- 后台会话服务启动的 Shell 缺少 `TERM` 环境变量，导致方向键无效、提示符被覆盖、命令行画成乱行、zsh-autosuggestions 的灰色建议看不见却会被 → 键接受。现在服务端总会补上 `TERM` 与 `COLORTERM`。修复只对新启动的后台服务生效；已在运行的旧服务需要停止后重新启动。
+- 按住 Command 悬停链接时，下划线与手形光标不再消失；链接徽章改为紧凑样式并完整显示地址。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.2/Aster-0.6.2.dmg" length="42519414" type="application/octet-stream" sparkle:edSignature="OEahKGQBH6J+zjYwc0pMh1+Gbfn0CtmVGY4FBnBM2ce00KpFYIOUIaVGyC1Huu8bbkjQNsxxtJIN0B12rr7tBg=="/>
+        </item>
+        <item>
             <title>0.6.1</title>
             <pubDate>Sun, 13 Sep 2026 11:53:18 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -95,28 +124,6 @@
 - 只有真正执行过的命令才进入学习历史：找不到命令（127）、无法执行（126）或输出里明确写 command not found 的命令不再记录，避免打错的词污染后续补全。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.12/Aster-0.4.12.dmg" length="28480652" type="application/octet-stream" sparkle:edSignature="bepmuI7traRNCfixOveBtV3GkuaZQgZLqMHGwK12amXZgYyju25V+0XjsuiuEKhh5B/byP1xYcsPQ6NT82AdCA=="/>
-        </item>
-        <item>
-            <title>0.4.11</title>
-            <pubDate>Sun, 06 Sep 2026 13:03:50 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>16</sparkle:version>
-            <sparkle:shortVersionString>0.4.11</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## Pane 底部用量条
-
-- Claude Code 或 Codex 运行时，Pane 底部显示一条用量条：Claude 显示 5 小时与每周配额，Codex 另含当前会话上下文占比；达到 80% 变为警示色，悬停查看重置时间。
-- Claude 的配额直接读取官方 `/usage` 接口，与 Claude 自己的 `/usage` 面板数值一致，有 Claude 运行时每分钟刷新、每轮回复结束再更新一次。首次会请求一次钥匙串访问授权，选「始终允许」即可；不改动 `~/.claude/settings.json`。
-- 点击用量条会在该 Pane 的 Agent 里打开完整统计面板（Claude Code 运行 `/stats`，Codex 运行 `/status`）。
-- 可在“设置 → 智能体 → Pane 底部显示用量条”关闭。
-
-## 链接与路径打开
-
-- 修复 Command 点击 `.app`、可执行文件或二进制文件路径时被错误送进编辑器并报错的问题：这些目标现在直接交给系统打开，目录与文本文件仍按设置在 Aster 内打开。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.4.11/Aster-0.4.11.dmg" length="27428991" type="application/octet-stream" sparkle:edSignature="syUU8AA7pc/Y6mq8vXeZLBsxk3CggcTsVay437jmkEL+SLvXLyD1r/47dmf3SKV88sz0wcckSYgLyY/RqG57Aw=="/>
         </item>
     </channel>
 </rss>
