@@ -224,6 +224,112 @@ func commandCorrectionParserRecognizesCommonSuggestions() {
   )
 }
 
+private func followUp(_ command: String, status: Int = 0) -> String? {
+  CommandFollowUpParser.suggestion(command: command, exitStatus: status)?.command
+}
+
+@Test("git clone 成功后可推断出 cd <目录> 的后续建议")
+func commandFollowUpParserSuggestsCdAfterClone() {
+  // 典型 ssh/https/scp 地址：从仓库名推导目录并去掉 .git。
+  #expect(followUp("git clone ssh://git@example.com/dxyc/dxy-device.git") == "cd dxy-device")
+  #expect(followUp("git clone https://github.com/org/repo") == "cd repo")
+  #expect(followUp("git clone git@github.com:org/repo.git/") == "cd repo")
+  #expect(followUp("/usr/bin/git clone https://x.io/a/b.git") == "cd b")
+  // 显式目标目录优先；带值选项不会被当成位置参数。
+  #expect(followUp("git clone --depth 1 -b main https://x.io/a/b.git my-dir") == "cd my-dir")
+  #expect(followUp("git clone --branch=dev --depth 1 https://x.io/a/b.git") == "cd b")
+  // 需要引号的目录名与 --bare 命名规则。
+  #expect(followUp("git clone https://x.io/a/b.git \"my repo\"") == "cd 'my repo'")
+  #expect(followUp("git clone --bare https://x.io/a/b.git") == "cd b.git")
+  #expect(
+    CommandFollowUpParser.suggestion(
+      command: "git clone https://x.io/a/b.git", exitStatus: 0)
+      == CommandFollowUp(command: "cd b", kind: .enterClonedRepository, requiredPath: "b",
+        requiresDirectory: true))
+  // 失败、非 clone、复合命令、`.` 目标都不给建议。
+  #expect(followUp("git clone https://x.io/a/b.git", status: 128) == nil)
+  #expect(followUp("git status") == nil)
+  #expect(followUp("git clone https://x.io/a/b.git && cd b") == nil)
+  #expect(followUp("git clone https://x.io/a/b.git .") == nil)
+  #expect(followUp("git clone") == nil)
+}
+
+@Test("创建目录、脚手架与解压后推荐 cd 进入")
+func commandFollowUpParserSuggestsCdAfterCreatingDirectories() {
+  #expect(followUp("mkdir new-project") == "cd new-project")
+  #expect(followUp("mkdir -p a/b/c") == "cd a/b/c")
+  #expect(followUp("mkdir -m 755 one two") == "cd two")
+  #expect(followUp("git init my-repo") == "cd my-repo")
+  #expect(followUp("git init") == nil)
+  #expect(followUp("git worktree add ../aster-feature -b feature") == "cd ../aster-feature")
+  #expect(followUp("git worktree list") == nil)
+  // 脚手架：项目名必须显式给出。
+  #expect(followUp("cargo new hello --bin") == "cd hello")
+  #expect(followUp("npm create vite@latest my-app -- --template react") == "cd my-app")
+  #expect(followUp("npm init vite@latest my-app") == "cd my-app")
+  #expect(followUp("npm create vite@latest") == nil)
+  #expect(followUp("npx create-react-app my-app") == "cd my-app")
+  #expect(followUp("npx -y create-next-app@latest site") == "cd site")
+  #expect(followUp("npx prettier src") == nil)
+  #expect(followUp("pnpm create vue my-vue") == "cd my-vue")
+  #expect(followUp("yarn dlx eslint src") == nil)
+  #expect(followUp("bunx create-vite web") == "cd web")
+  #expect(followUp("rails new blog -d postgresql") == "cd blog")
+  #expect(followUp("flutter create my_app") == "cd my_app")
+  #expect(followUp("django-admin startproject mysite") == "cd mysite")
+  #expect(followUp("composer create-project laravel/laravel shop") == "cd shop")
+  #expect(followUp("uv init tool") == "cd tool")
+  #expect(followUp("poetry new pkg") == "cd pkg")
+  // 解压：归档名去掉压缩后缀；改目录的 -C / -d 放弃。
+  #expect(followUp("tar -xzf node-v20.tar.gz") == "cd node-v20")
+  #expect(followUp("tar xf release.tar.xz") == "cd release")
+  #expect(followUp("tar --extract --file=src.tgz") == "cd src")
+  #expect(followUp("tar -xzf a.tar.gz -C /tmp") == nil)
+  #expect(followUp("tar -czf a.tar.gz dir") == nil)
+  #expect(followUp("unzip bundle.zip") == "cd bundle")
+  #expect(followUp("unzip bundle.zip -d out") == nil)
+}
+
+@Test("虚拟环境、下载、提交、chmod、编译与镜像构建都有对应下一步")
+func commandFollowUpParserSuggestsWorkflowContinuations() {
+  #expect(followUp("python3 -m venv .venv") == "source .venv/bin/activate")
+  #expect(followUp("python -m venv env") == "source env/bin/activate")
+  #expect(followUp("python3 -m pip install x") == nil)
+  #expect(followUp("virtualenv venv") == "source venv/bin/activate")
+  #expect(followUp("uv venv") == "source .venv/bin/activate")
+  #expect(
+    CommandFollowUpParser.suggestion(command: "uv venv", exitStatus: 0)?.requiredPath
+      == ".venv/bin/activate")
+  // 下载压缩包 → 解压；非压缩包或指定目录时不建议。
+  #expect(followUp("curl -LO https://x.io/dl/tool-1.0.tar.gz") == "tar -xf tool-1.0.tar.gz")
+  #expect(followUp("curl -sSL -o app.zip https://x.io/app?ver=2") == "unzip app.zip")
+  #expect(followUp("curl -fsSLo out.tgz https://x.io/a.tgz") == "tar -xf out.tgz")
+  #expect(followUp("curl https://x.io/a.tgz") == nil)
+  #expect(followUp("curl -LO https://x.io/readme.md") == nil)
+  #expect(followUp("wget https://x.io/dl/pkg.tar.xz?token=1") == "tar -xf pkg.tar.xz")
+  #expect(followUp("wget -O got.zip https://x.io/dl") == "unzip got.zip")
+  #expect(followUp("wget -P downloads https://x.io/a.zip") == nil)
+  // commit → push；--amend 不推。
+  #expect(followUp("git commit -m \"fix: x\"") == "git push")
+  #expect(followUp("git commit --amend --no-edit") == nil)
+  #expect(followUp("git commit -m x", status: 1) == nil)
+  // chmod +x → ./script；只认 +x 且单个目标。
+  #expect(followUp("chmod +x deploy.sh") == "./deploy.sh")
+  #expect(followUp("chmod u+x bin/run") == "bin/run")
+  #expect(followUp("chmod 644 a.txt") == nil)
+  #expect(followUp("chmod +x a.sh b.sh") == nil)
+  // 编译产物 → 运行。
+  #expect(followUp("gcc -Wall -o hello hello.c") == "./hello")
+  #expect(followUp("clang++ main.cpp -o app") == "./app")
+  #expect(followUp("go build -o server ./cmd/server") == "./server")
+  #expect(followUp("go build ./...") == nil)
+  // 镜像构建 → 运行。
+  #expect(followUp("docker build -t myapp:dev .") == "docker run --rm -it myapp:dev")
+  #expect(followUp("podman build --tag svc .") == "podman run --rm -it svc")
+  #expect(followUp("docker build .") == nil)
+  #expect(followUp("docker run -it ubuntu") == nil)
+}
+
 @Test("规格、历史、固定命令和 README 共用候选引擎且返回补全文本")
 func autocompleteEngineCombinesSourcesAndRanksKinds() {
   let database = AutocompleteSpecDatabase(

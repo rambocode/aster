@@ -300,6 +300,10 @@ public struct ShellConfiguration: Codable, Equatable, Sendable {
   /// 可选字段兼容 0.4.x 配置；缺失时按 Otty 默认值开启自动记录。
   public var frecencyAutoRecord: Bool? = true
   public var restoreMultiplexerSessions = true
+  /// 本机新建终端是否交给后台会话服务（aster-session）托管。默认关闭：本机用户预期
+  /// 的是一个普通终端，后台保活带来的守护进程、显示桥与环境差异不该由所有人承担。
+  /// 远端机器不受此开关影响，始终托管。
+  public var localManagedTerminals: Bool? = false
   public var restoreAgentSessions = true
   public var restoreProcesses = false
   public var notifyOnFinish = false
@@ -331,6 +335,7 @@ public struct ShellConfiguration: Codable, Equatable, Sendable {
   public var restoreProcessAllowlist: String? = ""
 
   public var resolvedTerminalResumeProtocol: Bool { terminalResumeProtocol ?? false }
+  public var resolvedLocalManagedTerminals: Bool { localManagedTerminals ?? false }
   public var resolvedRestoreProcessesScope: RestoreProcessesScope { restoreProcessesScope ?? .whitelist }
   public var resolvedRestoreProcessAllowlist: [String] {
     (restoreProcessAllowlist ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }

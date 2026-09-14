@@ -974,6 +974,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         ) { [weak self] value in
           self?.preferences.configuration.shell.restoreMultiplexerSessions = value
         },
+        toggleRow(
+          L("本机后台保活"), L("本机新建的终端交给后台会话服务托管，退出或崩溃后 Shell 继续运行；只影响之后新建的终端"),
+          value: preferences.configuration.shell.resolvedLocalManagedTerminals
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.localManagedTerminals = value
+        },
         // 与智能体页「恢复时重连会话」是同一个开关的双入口；真值统一在 agents.resumeSessions。
         toggleRow(
           L("恢复智能体会话"), L("恢复工作区时继续之前的智能体 CLI 会话"),
@@ -3208,6 +3214,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "shell.sshIntegration": configuration.shell.sshIntegration,
       "shell.frecencyAutoRecord": configuration.shell.resolvedFrecencyAutoRecord,
       "shell.restoreMultiplexerSessions": configuration.shell.restoreMultiplexerSessions,
+      "shell.localManagedTerminals": configuration.shell.resolvedLocalManagedTerminals,
       "shell.terminalResumeProtocol": configuration.shell.resolvedTerminalResumeProtocol,
       "shell.restoreProcessAllowlist": configuration.shell.restoreProcessAllowlist ?? "",
       "shell.restoreAgentSessions": configuration.shell.restoreAgentSessions,
@@ -3665,6 +3672,7 @@ extension SettingsViewController: WKNavigationDelegate {
     case "shell.sshIntegration": preferences.configuration.shell.sshIntegration = try bool()
     case "shell.frecencyAutoRecord": preferences.configuration.shell.frecencyAutoRecord = try bool()
     case "shell.restoreMultiplexerSessions": preferences.configuration.shell.restoreMultiplexerSessions = try bool()
+    case "shell.localManagedTerminals": preferences.configuration.shell.localManagedTerminals = try bool()
     case "shell.restoreAgentSessions": preferences.configuration.shell.restoreAgentSessions = try bool()
     case "shell.restoreProcesses": preferences.configuration.shell.restoreProcesses = try bool()
     case "shell.notifyOnFinish": preferences.configuration.shell.notifyOnFinish = try bool()

@@ -610,6 +610,155 @@ func terminalAutocompleteOffersCorrectionOnEmptyPrompt() throws {
   #expect(controller.currentResult.ghostText == "atus")
 }
 
+@Test("git clone 成功后下一条空 prompt 推荐 cd <目录>，本机学习关闭也生效")
+@MainActor
+func terminalAutocompleteOffersCdAfterSuccessfulClone() throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  // 目录必须真实存在才推荐：模拟 clone 在 cwd 下创建了 dxy-device。
+  let cwd = fixture.directory.appendingPathComponent("cwd", isDirectory: true)
+  try FileManager.default.createDirectory(
+    at: cwd.appendingPathComponent("dxy-device"), withIntermediateDirectories: true)
+  fixture.controls.value.autocompleteOnDeviceLearning = false
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let controller = TerminalAutocompleteController(
+    service: fixture.service,
+    sessionIdentifier: "session",
+    controls: { fixture.controls.value },
+    currentDirectory: { cwd.path }
+  )
+  controller.attach(to: view)
+
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git clone ssh://git@example.com/dxyc/dxy-device.git\r".utf8)[...])
+  controller.receive(.commandStart)
+  controller.receive(.commandFinished(exitStatus: 0))
+
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  // prompt 一就绪就立刻画出 ghost，不等 150ms 防抖与完整候选计算。
+  let overlay = try #require(view.subviews.compactMap { $0 as? TerminalAutocompleteOverlayView }.first)
+  let ghost = try #require(overlay.subviews.compactMap { $0 as? NSTextField }.first)
+  #expect(ghost.stringValue == "cd dxy-device")
+  #expect(!ghost.isHidden)
+  controller.refreshNow()
+  #expect(controller.currentResult.ghostText == "cd dxy-device")
+  #expect(controller.currentResult.candidates.first?.insertText == "cd dxy-device")
+  #expect(controller.currentResult.candidates.first?.kind == .followUp)
+  // 空 prompt 上还有历史/规格候选，但「下一步」是唯一确定建议，ghost 必须仍然画着。
+  #expect(ghost.stringValue == "cd dxy-device")
+  #expect(!ghost.isHidden)
+
+  // 输入前缀时只补后缀；前缀不匹配时消失。
+  controller.receiveInput(Array("cd d".utf8)[...])
+  controller.refreshNow()
+  #expect(controller.currentResult.ghostText == "xy-device")
+  controller.receiveInput(Array("ls".utf8)[...])
+  controller.refreshNow()
+  #expect(controller.currentResult.candidates.first?.insertText != "cd dxy-device")
+
+  // 目标目录不存在（clone 到别处或失败）时不推荐。
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("git clone https://example.com/org/missing.git\r".utf8)[...])
+  controller.receive(.commandStart)
+  controller.receive(.commandFinished(exitStatus: 0))
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.refreshNow()
+  #expect(controller.currentResult.ghostText != "cd missing")
+}
+
+@Test("venv 建好后推荐 source 激活，激活脚本不存在时不推荐；commit 后无需校验路径")
+@MainActor
+func terminalAutocompleteOffersFollowUpsWithFileAndNoPathChecks() throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let cwd = fixture.directory.appendingPathComponent("cwd", isDirectory: true)
+  try FileManager.default.createDirectory(
+    at: cwd.appendingPathComponent(".venv/bin"), withIntermediateDirectories: true)
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let controller = TerminalAutocompleteController(
+    service: fixture.service, sessionIdentifier: "session",
+    controls: { fixture.controls.value }, currentDirectory: { cwd.path })
+  controller.attach(to: view)
+
+  func run(_ command: String) {
+    controller.receive(.promptStart)
+    controller.receive(.inputStart)
+    controller.receiveInput(Array((command + "\r").utf8)[...])
+    controller.receive(.commandStart)
+    controller.receive(.commandFinished(exitStatus: 0))
+    controller.receive(.promptStart)
+    controller.receive(.inputStart)
+    controller.refreshNow()
+  }
+
+  // activate 文件还不存在（目录存在不算）→ 不推荐。
+  run("python3 -m venv .venv")
+  #expect(controller.currentResult.ghostText != "source .venv/bin/activate")
+
+  FileManager.default.createFile(
+    atPath: cwd.appendingPathComponent(".venv/bin/activate").path, contents: Data())
+  run("python3 -m venv .venv")
+  #expect(controller.currentResult.ghostText == "source .venv/bin/activate")
+
+  run("git commit -m \"feat: x\"")
+  #expect(controller.currentResult.ghostText == "git push")
+  #expect(controller.currentResult.candidates.first?.description == L("推送刚才的提交"))
+}
+
+@Test("按 ↑ 调出历史执行时，以屏幕上的命令行为准推断下一步")
+@MainActor
+func terminalAutocompleteUsesScreenCommandForFollowUp() throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  let cwd = fixture.directory.appendingPathComponent("cwd", isDirectory: true)
+  try FileManager.default.createDirectory(
+    at: cwd.appendingPathComponent("demo"), withIntermediateDirectories: true)
+  let view = AsterTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+  let controller = TerminalAutocompleteController(
+    service: fixture.service, sessionIdentifier: "session",
+    controls: { fixture.controls.value }, currentDirectory: { cwd.path })
+  controller.attach(to: view)
+
+  // 键盘只收到 ↑ 和回车：tracker 重建出的命令是空的。
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("\u{1B}[A\r".utf8)[...])
+  controller.receiveScreenCommand("mkdir demo")
+  controller.receive(.commandStart)
+  controller.receive(.commandFinished(exitStatus: 0))
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.refreshNow()
+  #expect(controller.currentResult.ghostText == "cd demo")
+
+  // 右侧提示符与命令之间至少两个空格，只取命令段。
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("\u{1B}[A\r".utf8)[...])
+  controller.receiveScreenCommand("mkdir demo            14:30:00 main")
+  controller.receive(.commandStart)
+  controller.receive(.commandFinished(exitStatus: 0))
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.refreshNow()
+  #expect(controller.currentResult.ghostText == "cd demo")
+
+  // 屏幕文本在下一条 prompt 开始时清空，不会串到后一条命令。
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("\u{1B}[A\r".utf8)[...])
+  controller.receive(.commandStart)
+  controller.receive(.commandFinished(exitStatus: 0))
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.refreshNow()
+  #expect(controller.currentResult.ghostText != "cd demo")
+}
+
 @MainActor
 private func makeController(
   _ fixture: (directory: URL, service: AutocompleteService, controls: MutableAutocompleteControls)

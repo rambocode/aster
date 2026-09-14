@@ -99,3 +99,25 @@ func managedTerminalLaunchSpecSharesOneRemoteRule() throws {
   #expect(bound.first == spec.argv.first)
   #expect(try #require(bound.last).hasSuffix(try #require(spec.argv.last)))
 }
+
+@Test("本机新建 Pane 默认原生 PTY；开关、显式端点或远端机器才自动托管；恢复的 Pane 永不自动托管")
+@MainActor
+func managedTerminalBinderAutoManagePolicy() {
+  // 本机 + 自动解析端点 + 开关关闭 → 原生 PTY。
+  #expect(!ManagedTerminalBinder.shouldAutoManage(
+    isRestored: false, isLocal: true, endpointIsExplicit: false, localManagedEnabled: false))
+  // 用户打开「本机后台保活」→ 托管。
+  #expect(ManagedTerminalBinder.shouldAutoManage(
+    isRestored: false, isLocal: true, endpointIsExplicit: false, localManagedEnabled: true))
+  // 环境变量显式指定端点（测试/开发）→ 托管，不看开关。
+  #expect(ManagedTerminalBinder.shouldAutoManage(
+    isRestored: false, isLocal: true, endpointIsExplicit: true, localManagedEnabled: false))
+  // 远端机器 → 始终托管。
+  #expect(ManagedTerminalBinder.shouldAutoManage(
+    isRestored: false, isLocal: false, endpointIsExplicit: false, localManagedEnabled: false))
+  // 恢复的旧 Pane → 永不自动托管，走显式迁移。
+  #expect(!ManagedTerminalBinder.shouldAutoManage(
+    isRestored: true, isLocal: false, endpointIsExplicit: true, localManagedEnabled: true))
+  // 配置默认值：关闭。
+  #expect(ShellConfiguration().resolvedLocalManagedTerminals == false)
+}

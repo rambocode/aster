@@ -1175,6 +1175,9 @@ public enum AutocompleteCandidateKind: String, Codable, Equatable, Sendable {
   case learnedCommand
   case readmeCommand
   case correction
+  /// 上一条成功命令的「下一步」（clone 后 cd、commit 后 push）。与 correction 一样是
+  /// 唯一确定的整行建议，即使旁边还有历史候选也直接画 ghost。
+  case followUp
 }
 
 /// 候选被接受时替换命令行的范围。整行候选从行首替换,token 候选只替换正在输入的
@@ -1328,6 +1331,7 @@ public enum AutocompleteRelevance {
   public static func baseWeight(for kind: AutocompleteCandidateKind) -> Double {
     switch kind {
     case .correction: 300      // 上条命令刚失败,纠错是最强意图
+    case .followUp: 300        // 上条命令刚成功,下一步同样是最强意图
     case .snippet: 200         // `aster learn` 显式钉到当前目录的
     case .dynamicArgument: 175 // 分支 / formula / script 这类活数据
     case .subcommand: 165
@@ -1530,7 +1534,7 @@ public struct AutocompleteEngine: Sendable {
     _ lhs: AutocompleteCandidate, _ rhs: AutocompleteCandidate
   ) -> AutocompleteCandidate {
     let fullLineKinds: Set<AutocompleteCandidateKind> = [
-      .snippet, .learnedCommand, .readmeCommand, .correction,
+      .snippet, .learnedCommand, .readmeCommand, .correction, .followUp,
     ]
     // 近似平局时优先整行候选:一次补全整条记住的命令,比只补一个 token 价值更大。
     var winner = lhs.score >= rhs.score ? lhs : rhs

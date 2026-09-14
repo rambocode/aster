@@ -863,6 +863,7 @@
 "控制 macOS 字形平滑；默认使用系统抗锯齿" = "Control macOS Font Smoothing; Uses System Anti-Aliasing by Default";
 "控制侧边栏布局下，标签面板的显示方式" = "Control How the Tab Panel Is Displayed Under the Sidebar Layout";
 "控制最近活动的工作区窗口；也可直接拖动主窗口分隔线" = "Controls the most recently active workspace window; you can also drag the main window's divider directly";
+"推送刚才的提交" = "Push the commit you just made";
 "描述语言" = "Description Language";
 "提炼时会发送的内容" = "Content Sent During Refinement";
 "提示词" = "Prompt";
@@ -1061,8 +1062,10 @@
 "本服务实现不支持远端安装。" = "This service implementation does not support remote installation.";
 "本服务实现不支持远端服务替换。" = "This service implementation does not support remote service replacement.";
 "本机 Agent 集成请在「设置 ▸ 智能体」里安装。" = "For local Agent integration, install from Settings ▸ Agents.";
+"本机后台保活" = "Keep local shells alive in background";
 "本机学习" = "Local Learning";
 "本机学习数据" = "Local Learning Data";
+"本机新建的终端交给后台会话服务托管，退出或崩溃后 Shell 继续运行；只影响之后新建的终端" = "Hand new local terminals to the background session service so shells survive quit or crash; affects only terminals created afterwards";
 "本机没有适用于 %@/%@ 的 aster-session 产物。" = "No aster-session artifact available locally for %@/%@.";
 "机器 %@" = "Machine %@";
 "机器「%@」缺少远端运行时位置（旧版本保存的配置）。请移除后重新添加该机器。" = "Machine \"%@\" is missing the remote runtime location (configuration saved by an older version). Please remove and re-add the Machine.";
@@ -1188,6 +1191,7 @@
 "滚动越过末尾" = "Scroll Past the End";
 "滚过开头" = "Scroll Past the Beginning";
 "滚过末尾" = "Scroll Past the End";
+"激活刚创建的虚拟环境" = "Activate the virtual environment you just created";
 "点击修改快捷键" = "Click to Change Shortcut";
 "点击在 %@ 中运行 %@ 查看统计" = "Click to run %@ in %@ to view stats";
 "点按 Dock 图标时，若没有窗口则自动新建" = "Automatically Create a New Window When Clicking the Dock Icon If None Exists";
@@ -1347,6 +1351,7 @@
 "覆盖主题，全局优先" = "Override Theme, Global Takes Priority";
 "规则提炼" = "Rule-based extraction";
 "视图" = "View";
+"解压刚下载的压缩包" = "Extract the archive you just downloaded";
 "解释 Agent 状态检测…" = "Explain Agent State Detection…";
 "触发：%@　方式：%@　约 %@ token" = "Trigger: %@  Method: %@  ~%@ tokens";
 "触控板按像素滚动，并在手势结束时对齐字符行" = "The Trackpad Scrolls by Pixel and Snaps to Character Rows When the Gesture Ends";
@@ -1419,6 +1424,8 @@
 "运行 Recipe 命令？" = "Run Recipe command?";
 "运行下一条 Recipe 命令？" = "Run next Recipe command?";
 "运行中服务协议主版本 %@ 与客户端 %@ 不兼容，需要显式替换；后台不会停止它。" = "The running service's protocol major version %@ is incompatible with client %@; explicit replacement is required. It will not be stopped in the background.";
+"运行刚准备好的程序" = "Run the program you just prepared";
+"运行刚构建的镜像" = "Run the image you just built";
 "运行命令后会在这里显示 Shell Integration 锚点。" = "Shell Integration anchors will appear here after running commands.";
 "运行时" = "Runtime";
 "运行此命令" = "Run This Command";
@@ -1427,6 +1434,9 @@
 "进入 Mark Mode" = "Enter Mark Mode";
 "进入 Vi Mode" = "Enter Vi Mode";
 "进入全屏幕" = "Enter Full Screen";
+"进入刚克隆的仓库" = "Enter the repository you just cloned";
+"进入刚创建的目录" = "Enter the directory you just created";
+"进入刚解压出的目录" = "Enter the directory you just extracted";
 "进行中" = "In Progress";
 "远端 %@ 的协议主版本 %@ 与客户端 %@ 不兼容，需要显式替换；后台不会停止它。" = "Remote %@'s protocol major version %@ is incompatible with client %@; explicit replacement is required. It will not be stopped in the background.";
 "远端 %@/%@ 上没有可用的 aster-session，需要显式安装。" = "No usable aster-session on remote %@/%@; explicit installation is required.";
