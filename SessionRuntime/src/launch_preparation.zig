@@ -48,6 +48,71 @@ pub const Prepared = struct {
     }
 };
 
+/// 服务端起的 shell 是守护进程的子进程，拿不到 App 注入给原生 Pane 的 shell 集成环境
+/// （OSC 133 提示符标记、OSC 7 目录跟踪、别名上报、命令退出徽标、补全学习全靠它）。
+/// 这里按 App 侧 ShellIntegrationLaunchPlan 的同一套规则注入：集成目录从服务二进制的位置
+/// 解析——App Bundle 里是 Contents/MacOS/../Resources/shell-integration，远端安装是
+/// <bin>/../share/aster/shell-integration；两处都没有就跳过。请求已带 ASTER_INTEGRATION
+/// 或用户设置 ASTER_DISABLE_INTEGRATION=1 时不动。
+pub fn appendShellIntegration(a: std.mem.Allocator, environment: *std.ArrayList([]const u8), integration_dir: ?[]const u8) !void {
+    const dir = integration_dir orelse return;
+    if (lookup(environment.items, "ASTER_INTEGRATION") != null) return;
+    if (lookup(environment.items, "ASTER_DISABLE_INTEGRATION")) |value| if (std.mem.eql(u8, value, "1")) return;
+    try environment.append(a, "ASTER_INTEGRATION=1");
+    try environment.append(a, try std.fmt.allocPrint(a, "ASTER_SHELL_INTEGRATION_DIR={s}", .{dir}));
+    // zsh：临时 ZDOTDIR 指向注入目录，.zshenv 会 source 用户真实的启动文件并把 ZDOTDIR 还原。
+    const real_zdotdir = lookup(environment.items, "ZDOTDIR");
+    try replaceOrAppend(a, environment, "ASTER_REAL_ZDOTDIR", real_zdotdir orelse (lookup(environment.items, "HOME") orelse ""));
+    try replaceOrAppend(a, environment, "ASTER_REAL_ZDOTDIR_SET", if (real_zdotdir != null) "1" else "0");
+    try replaceOrAppend(a, environment, "ZDOTDIR", try std.fmt.allocPrint(a, "{s}/zsh", .{dir}));
+    // fish：把注入目录放到 XDG_DATA_DIRS 最前，vendor_conf.d 自动加载。
+    const fish_dir = try std.fmt.allocPrint(a, "{s}/fish", .{dir});
+    const inherited_dirs = lookup(environment.items, "XDG_DATA_DIRS") orelse "/usr/local/share:/usr/share";
+    var joined: std.ArrayList(u8) = .empty;
+    try joined.appendSlice(a, fish_dir);
+    var parts = std.mem.splitScalar(u8, inherited_dirs, ':');
+    while (parts.next()) |part| {
+        if (part.len == 0 or std.mem.eql(u8, part, fish_dir)) continue;
+        try joined.append(a, ':');
+        try joined.appendSlice(a, part);
+    }
+    try replaceOrAppend(a, environment, "XDG_DATA_DIRS", joined.items);
+}
+
+/// 从服务自身可执行文件位置解析 shell 集成目录；以 zsh/.zshenv 是否可读为准。
+/// 只有内存不足会向上抛；找不到可执行文件或目录一律视为"没有集成目录"。
+pub fn resolveIntegrationDirectory(a: std.mem.Allocator) error{OutOfMemory}!?[]const u8 {
+    const exe = std.fs.selfExePathAlloc(a) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return null,
+    };
+    const bin_dir = std.fs.path.dirname(exe) orelse return null;
+    // 远端安装：版本化目录里二进制旁边的 shell-integration/（install 事务解包到这里）；
+    // App Bundle：Contents/MacOS/../Resources/shell-integration；开发布局：../share/aster/…。
+    const candidates = [_][]const u8{ "shell-integration", "../Resources/shell-integration", "../share/aster/shell-integration" };
+    for (candidates) |candidate| {
+        const dir = try std.fs.path.resolve(a, &.{ bin_dir, candidate });
+        const probe = try std.fs.path.join(a, &.{ dir, "zsh", ".zshenv" });
+        std.fs.accessAbsolute(probe, .{}) catch continue;
+        return dir;
+    }
+    return null;
+}
+
+fn lookup(environment: []const []const u8, key: []const u8) ?[]const u8 {
+    for (environment) |item| if (std.mem.eql(u8, name(item), key)) return item[key.len + 1 ..];
+    return null;
+}
+
+fn replaceOrAppend(a: std.mem.Allocator, environment: *std.ArrayList([]const u8), key: []const u8, value: []const u8) !void {
+    const entry = try std.fmt.allocPrint(a, "{s}={s}", .{ key, value });
+    for (environment.items) |*item| if (std.mem.eql(u8, name(item.*), key)) {
+        item.* = entry;
+        return;
+    };
+    try environment.append(a, entry);
+}
+
 /// Merge trusted execution-machine environment with validated request overrides.
 /// Duplicate names within either source fail; an override replaces one inherited
 /// value. Empty PATH is intentional (cwd), while absent PATH uses default_path.
@@ -89,6 +154,7 @@ pub fn prepare(allocator: std.mem.Allocator, request: Request, inherited: []cons
     };
     if (path == null) try environment.append(a, "PATH=" ++ default_path);
     try appendTerminalDefaults(a, &environment);
+    try appendShellIntegration(a, &environment, try resolveIntegrationDirectory(a));
     if (environment.items.len > 128) return error.InvalidTerminalEnvironment;
     const argv = try a.alloc([]const u8, request.argv.len);
     for (request.argv, 0..) |arg, index| argv[index] = try a.dupe(u8, arg);
@@ -269,4 +335,38 @@ test "launch preparation supplies TERM and COLORTERM when the daemon environment
         if (std.mem.eql(u8, name(item), "TERM")) try std.testing.expectEqualStrings("TERM=xterm-ghostty", item);
         if (std.mem.eql(u8, name(item), "COLORTERM")) try std.testing.expectEqualStrings("COLORTERM=no", item);
     }
+}
+
+test "launch preparation injects shell integration like the app launch plan and respects opt-out" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const t = arena.allocator();
+    var env: std.ArrayList([]const u8) = .empty;
+    try env.append(t, "HOME=/Users/me");
+    try env.append(t, "XDG_DATA_DIRS=/usr/share");
+    try appendShellIntegration(t, &env, "/app/Contents/Resources/shell-integration");
+    try std.testing.expectEqualStrings("1", lookup(env.items, "ASTER_INTEGRATION").?);
+    try std.testing.expectEqualStrings("/app/Contents/Resources/shell-integration", lookup(env.items, "ASTER_SHELL_INTEGRATION_DIR").?);
+    try std.testing.expectEqualStrings("/app/Contents/Resources/shell-integration/zsh", lookup(env.items, "ZDOTDIR").?);
+    try std.testing.expectEqualStrings("/Users/me", lookup(env.items, "ASTER_REAL_ZDOTDIR").?);
+    try std.testing.expectEqualStrings("0", lookup(env.items, "ASTER_REAL_ZDOTDIR_SET").?);
+    try std.testing.expectEqualStrings("/app/Contents/Resources/shell-integration/fish:/usr/share", lookup(env.items, "XDG_DATA_DIRS").?);
+
+    // 用户自己的 ZDOTDIR 被记住并标记为显式设置。
+    var custom: std.ArrayList([]const u8) = .empty;
+    try custom.append(t, "ZDOTDIR=/Users/me/.zsh");
+    try appendShellIntegration(t, &custom, "/x");
+    try std.testing.expectEqualStrings("/Users/me/.zsh", lookup(custom.items, "ASTER_REAL_ZDOTDIR").?);
+    try std.testing.expectEqualStrings("1", lookup(custom.items, "ASTER_REAL_ZDOTDIR_SET").?);
+    try std.testing.expectEqualStrings("/x/zsh", lookup(custom.items, "ZDOTDIR").?);
+
+    // 已注入或显式关闭时不动；没有集成目录时也不动。
+    var off: std.ArrayList([]const u8) = .empty;
+    try off.append(t, "ASTER_DISABLE_INTEGRATION=1");
+    try appendShellIntegration(t, &off, "/x");
+    try std.testing.expectEqual(@as(usize, 1), off.items.len);
+    var none: std.ArrayList([]const u8) = .empty;
+    try appendShellIntegration(t, &none, null);
+    try std.testing.expectEqual(@as(usize, 0), none.items.len);
 }

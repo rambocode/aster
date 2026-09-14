@@ -768,6 +768,7 @@ pub const Service = struct {
                 var environment_iterator = environment_map.iterator();
                 while (environment_iterator.next()) |item| try restore_environment.append(arena, try std.fmt.allocPrint(arena, "{s}={s}", .{ item.key_ptr.*, item.value_ptr.* }));
                 try preparation.appendTerminalDefaults(arena, &restore_environment);
+                try preparation.appendShellIntegration(arena, &restore_environment, try preparation.resolveIntegrationDirectory(arena));
                 // Use pool.beginCreate for the actual terminal spawn
                 self.pool.beginCreate(new_terminal_id, .{
                     .cwd = cwd, .argv = actual_argv, .environment = restore_environment.items, .geometry = geometry,
