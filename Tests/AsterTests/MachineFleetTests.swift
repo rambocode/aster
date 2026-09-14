@@ -1,3 +1,4 @@
+import Combine
 import AsterCore
 import Foundation
 import Testing
@@ -161,6 +162,16 @@ struct MachineFleetTests {
     }
   }
 
+  /// 一直在线的假驱动：连接立即成功，心跳永远响应。配合「等待即让出」的环境，
+  /// 心跳循环会以极高频率刷新编排器侧的 `lastUpdatedAt`。
+  private struct AlwaysOnlineDriver: MachineConnectionDriving {
+    func connect(profile: MachineProfile, generation: UInt64) async -> MachineConnectionOutcome {
+      .connected(MachineFleetFixtures.identity)
+    }
+    func heartbeat(profile: MachineProfile, generation: UInt64) async -> Bool { true }
+    func confirmSnapshot(profile: MachineProfile, generation: UInt64) async -> Bool { true }
+  }
+
   /// 假连接驱动：永不成功也永不真正等待，用来证明「即使连不上也能禁用/移除」。
   private struct SilentDriver: MachineConnectionDriving {
     func connect(profile: MachineProfile, generation: UInt64) async -> MachineConnectionOutcome {
@@ -170,7 +181,10 @@ struct MachineFleetTests {
     func confirmSnapshot(profile: MachineProfile, generation: UInt64) async -> Bool { false }
   }
 
-  private func makeFleet(_ services: FakeServices = FakeServices())
+  private func makeFleet(
+    _ services: FakeServices = FakeServices(),
+    driver: any MachineConnectionDriving = SilentDriver()
+  )
     -> (MachineFleetModel, URL, FakeServices)
   {
     let url = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -183,7 +197,7 @@ struct MachineFleetTests {
         environment: MachineConnectionEnvironment(
           // 虚拟等待：退避与心跳立即返回，用例不等真实秒数。
           sleep: { _ in await Task.yield() }, jitter: { 0 }),
-        driver: SilentDriver()),
+        driver: driver),
       localStateProvider: { .online },
       localErrorProvider: { nil })
     return (fleet, url, services)
@@ -676,6 +690,49 @@ struct MachineFleetTests {
     #expect(fleet.resolve(idOrLabel: "dup") == nil)
     #expect(fleet.resolve(idOrLabel: "local")?.id == MachineProfile.localProfileID)
     #expect(fleet.resolve(idOrLabel: UUID().uuidString) == nil)
+  }
+
+  // MARK: - 心跳不得重建工作区
+
+  @Test("远端心跳只刷新编排器时间戳，机器行保持相等，不触发 rows 重新发布")
+  func heartbeatDoesNotRepublishRows() async throws {
+    let (fleet, url, _) = makeFleet(driver: AlwaysOnlineDriver())
+    defer { cleanUp(fleet, url) }
+    guard case .added(let profile) = await fleet.addMachine(
+      label: "orb", sshTarget: "root@ubuntu@orb", sessionName: "work", confirm: { _ in true })
+    else {
+      Issue.record("添加应成功")
+      return
+    }
+
+    // 等到连接任务把机器推到 online。
+    var online: MachineFleetRow?
+    for _ in 0..<500 {
+      await Task.yield()
+      await fleet.refreshStatuses()
+      if let row = fleet.rows.first(where: { $0.id == profile.id }), row.state == .online {
+        online = row
+        break
+      }
+    }
+    let onlineRow = try #require(online)
+    let stampBefore = try #require(onlineRow.lastUpdatedAt)
+
+    // 在线之后心跳持续运行：编排器侧时间戳必须前进，行却必须保持不变、不再发布。
+    var publishes = 0
+    let subscription = fleet.$rows.dropFirst().sink { _ in publishes += 1 }
+    defer { subscription.cancel() }
+    var supervisorStampAdvanced = false
+    for _ in 0..<300 {
+      await Task.yield()
+      await fleet.refreshStatuses()
+      if let status = fleet.statuses[profile.id], status.lastUpdatedAt > stampBefore {
+        supervisorStampAdvanced = true
+      }
+    }
+    #expect(supervisorStampAdvanced, "心跳应持续刷新编排器侧的 lastUpdatedAt")
+    #expect(publishes == 0, "心跳不得让 rows 重新发布")
+    #expect(fleet.rows.first { $0.id == profile.id }?.lastUpdatedAt == stampBefore)
   }
 
   // MARK: - 侧栏文案
