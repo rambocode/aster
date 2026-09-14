@@ -198,6 +198,10 @@ final class MachineFleetModel: ObservableObject {
   /// Local 行的最后更新时间。只在 Local 状态真正变化时推进——每次重建都取当前时间
   /// 会让行内容永远“不相等”，于是每一轮状态轮询都触发一次侧栏整树重建。
   private var localStateStamp = (state: SessionConnectionState.disconnected, at: Date())
+  /// 远端行的最后更新时间，同样只在该机器的状态真正变化时推进。编排器每次心跳成功都会
+  /// 刷新 `MachineConnectionStatus.lastUpdatedAt`；若把它原样写进行，每 15 秒的心跳就会让
+  /// `rows` 不相等而重新发布，整个工作区（含正在使用的本地终端）随之整树重建。
+  private var remoteStateStamps: [UUID: (state: SessionConnectionState, at: Date)] = [:]
 
   /// 状态轮询间隔。编排器是 actor，界面只能异步取状态；测试把它调小以缩短用例。
   var statusPollInterval: Duration = .milliseconds(400)
@@ -870,6 +874,7 @@ final class MachineFleetModel: ObservableObject {
     }
     for profile in sorted {
       let status = statuses[profile.id]
+      let state = profile.enabled ? (status?.state ?? .disconnected) : .disabled
       result.append(
         MachineFleetRow(
           id: profile.id,
@@ -878,16 +883,32 @@ final class MachineFleetModel: ObservableObject {
           sshTarget: profile.sshTarget,
           isLocal: false,
           enabled: profile.enabled,
-          state: profile.enabled ? (status?.state ?? .disconnected) : .disabled,
-          lastUpdatedAt: status?.lastUpdatedAt,
+          state: state,
+          lastUpdatedAt: remoteStateStamp(for: profile.id, state: state, status: status),
           lastError: status?.reason,
           agents: agentCatalogs[profile.id]))
     }
+    remoteStateStamps = remoteStateStamps.filter { stamp in sorted.contains { $0.id == stamp.key } }
     // 内容没变就不写回：`rows` 是 @Published，每次赋值都会让工作区整树刷新，
     // 而状态轮询是高频调用。没有这道判断，侧栏会被每一轮空轮询重建一次，
     // 标签行实例随之被替换（AppKitMigrationTests 的行实例稳定性会因此失败）。
     guard result != rows else { return }
     rows = result
+  }
+
+  /// 远端行的展示时间戳：没有状态记录时为 nil；状态变化时取编排器当时的更新时间，
+  /// 之后心跳只刷新编排器侧的时间，不再推进这里的值。
+  private func remoteStateStamp(
+    for id: UUID, state: SessionConnectionState, status: MachineConnectionStatus?
+  ) -> Date? {
+    guard let status else {
+      remoteStateStamps[id] = nil
+      return nil
+    }
+    if remoteStateStamps[id]?.state != state {
+      remoteStateStamps[id] = (state, status.lastUpdatedAt)
+    }
+    return remoteStateStamps[id]?.at
   }
 
   /// 配置存储错误的展示文案。删除与损坏必须能被分辨。
