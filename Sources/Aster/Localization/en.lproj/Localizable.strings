@@ -1062,8 +1062,10 @@
 "本服务实现不支持远端安装。" = "This service implementation does not support remote installation.";
 "本服务实现不支持远端服务替换。" = "This service implementation does not support remote service replacement.";
 "本机 Agent 集成请在「设置 ▸ 智能体」里安装。" = "For local Agent integration, install from Settings ▸ Agents.";
+"本机后台保活" = "Keep local shells alive in background";
 "本机学习" = "Local Learning";
 "本机学习数据" = "Local Learning Data";
+"本机新建的终端交给后台会话服务托管，退出或崩溃后 Shell 继续运行；只影响之后新建的终端" = "Hand new local terminals to the background session service so shells survive quit or crash; affects only terminals created afterwards";
 "本机没有适用于 %@/%@ 的 aster-session 产物。" = "No aster-session artifact available locally for %@/%@.";
 "机器 %@" = "Machine %@";
 "机器「%@」缺少远端运行时位置（旧版本保存的配置）。请移除后重新添加该机器。" = "Machine \"%@\" is missing the remote runtime location (configuration saved by an older version). Please remove and re-add the Machine.";

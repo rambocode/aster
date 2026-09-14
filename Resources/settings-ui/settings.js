@@ -161,6 +161,7 @@
         ]},
         { title: t("会话恢复"), rows: [
           row("shell.restoreMultiplexerSessions", t("恢复复用器会话"), t("恢复窗口时重新附着 tmux / screen 复用器会话")),
+          row("shell.localManagedTerminals", t("本机后台保活"), t("本机新建的终端交给后台会话服务托管，退出或崩溃后 Shell 继续运行；只影响之后新建的终端")),
           // 与「智能体 → 智能体行为 → 恢复时重连会话」是同一个开关的双入口（对齐 Otty）。
           row("agents.resumeSessions", t("恢复 Code Agent 会话"), t("恢复终端时继续 Agent CLI 的原生会话")),
           row("shell.terminalResumeProtocol", t("终端恢复协议"), t("允许编辑器、SSH 和编码代理声明如何重新启动自身，以便 Aster 在重启后恢复它们（OSC 88）")),

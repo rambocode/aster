@@ -3,6 +3,25 @@ const Geometry = @import("geometry.zig").Geometry;
 
 /// Used only when neither the service environment nor request supplies PATH.
 pub const default_path = "/usr/bin:/bin:/usr/sbin:/sbin";
+/// The service runs as a daemon without a controlling terminal, so its own
+/// environment never carries TERM. A shell spawned without TERM cannot drive
+/// its line editor (zsh redraws garbage, arrows stop working, prompts vanish).
+/// xterm-256color exists in every terminfo database the runtime targets.
+pub const default_term = "xterm-256color";
+pub const default_colorterm = "truecolor";
+
+/// Append TERM/COLORTERM when neither the inherited nor the request environment
+/// set them. Existing values (including an explicit empty TERM) are untouched.
+pub fn appendTerminalDefaults(a: std.mem.Allocator, environment: *std.ArrayList([]const u8)) !void {
+    var has_term = false;
+    var has_colorterm = false;
+    for (environment.items) |item| {
+        if (std.mem.eql(u8, name(item), "TERM")) has_term = true;
+        if (std.mem.eql(u8, name(item), "COLORTERM")) has_colorterm = true;
+    }
+    if (!has_term) try environment.append(a, "TERM=" ++ default_term);
+    if (!has_colorterm) try environment.append(a, "COLORTERM=" ++ default_colorterm);
+}
 pub const Request = struct {
     cwd: []const u8,
     argv: []const []const u8,
@@ -69,6 +88,7 @@ pub fn prepare(allocator: std.mem.Allocator, request: Request, inherited: []cons
         break;
     };
     if (path == null) try environment.append(a, "PATH=" ++ default_path);
+    try appendTerminalDefaults(a, &environment);
     if (environment.items.len > 128) return error.InvalidTerminalEnvironment;
     const argv = try a.alloc([]const u8, request.argv.len);
     for (request.argv, 0..) |arg, index| argv[index] = try a.dupe(u8, arg);
@@ -226,5 +246,27 @@ test "launch preparation accepts searchable cwd without directory read permissio
         };
         std.posix.close(fd);
         return error.ExpectedDirectoryReadDenial;
+    }
+}
+
+test "launch preparation supplies TERM and COLORTERM when the daemon environment lacks them" {
+    const a = std.testing.allocator;
+    var ready = try prepare(a, .{ .cwd = "/", .argv = &.{"sh"} }, &.{"PATH=/bin"});
+    defer ready.deinit();
+    var term: ?[]const u8 = null;
+    var colorterm: ?[]const u8 = null;
+    for (ready.environment) |item| {
+        if (std.mem.eql(u8, name(item), "TERM")) term = item;
+        if (std.mem.eql(u8, name(item), "COLORTERM")) colorterm = item;
+    }
+    try std.testing.expectEqualStrings("TERM=" ++ default_term, term.?);
+    try std.testing.expectEqualStrings("COLORTERM=" ++ default_colorterm, colorterm.?);
+
+    // 请求或服务环境已给出的值不被覆盖。
+    var kept = try prepare(a, .{ .cwd = "/", .argv = &.{"sh"}, .environment = &.{"TERM=xterm-ghostty"} }, &.{ "PATH=/bin", "COLORTERM=no" });
+    defer kept.deinit();
+    for (kept.environment) |item| {
+        if (std.mem.eql(u8, name(item), "TERM")) try std.testing.expectEqualStrings("TERM=xterm-ghostty", item);
+        if (std.mem.eql(u8, name(item), "COLORTERM")) try std.testing.expectEqualStrings("COLORTERM=no", item);
     }
 }

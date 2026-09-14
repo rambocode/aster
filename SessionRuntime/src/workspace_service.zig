@@ -760,9 +760,17 @@ pub const Service = struct {
                 if (std.mem.eql(u8, path, "new_shell") and history_captured_at_ms != null) {
                     path = "history_replay";
                 }
+                // 冷恢复没有客户端环境可合并：沿用服务自身环境，并像 terminal.create 一样
+                // 补上 TERM/COLORTERM。守护进程环境里没有 TERM，缺了它 zsh 的行编辑会画出
+                // 乱行、方向键失效、提示符消失（用户看到的"恢复后终端坏了"）。
+                var restore_environment: std.ArrayList([]const u8) = .empty;
+                var environment_map = try std.process.getEnvMap(arena);
+                var environment_iterator = environment_map.iterator();
+                while (environment_iterator.next()) |item| try restore_environment.append(arena, try std.fmt.allocPrint(arena, "{s}={s}", .{ item.key_ptr.*, item.value_ptr.* }));
+                try preparation.appendTerminalDefaults(arena, &restore_environment);
                 // Use pool.beginCreate for the actual terminal spawn
                 self.pool.beginCreate(new_terminal_id, .{
-                    .cwd = cwd, .argv = actual_argv, .geometry = geometry,
+                    .cwd = cwd, .argv = actual_argv, .environment = restore_environment.items, .geometry = geometry,
                 }) catch |err| {
                     self.allocator.free(spec_cwd);
                     // Record failure entry

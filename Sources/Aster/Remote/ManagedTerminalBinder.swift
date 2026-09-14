@@ -4,11 +4,27 @@ import Foundation
 /// 把 Pane 描述符与后台受管终端绑定起来。
 ///
 /// 三条固定规则：
-/// 1. P8.8 起全新终端默认走受管路径（打包 App 自动解析）；环境变量可覆盖。
-/// 2. 新建 Pane 创建受管终端；创建失败只显示明确错误，不落地未标识的本地 Shell。
+/// 1. 本机全新终端默认是原生 PTY；只有用户打开「本机后台保活」或环境变量显式指定
+///    端点时才自动托管。远端机器始终托管。
+/// 2. 决定托管的 Pane 创建受管终端；创建失败只显示明确错误，不落地未标识的本地 Shell。
 /// 3. 旧布局里没有受管引用的 Pane 不自动托管——托管必须走 P2.6 的显式迁移事务。
 @MainActor
 enum ManagedTerminalBinder {
+  /// 「本机后台保活」开关的读取入口。由 App 在偏好设置就绪后注入，默认关闭。
+  static var localAutoManagePolicy: @MainActor () -> Bool = { false }
+
+  /// 一个没有受管引用的 Pane 是否应自动创建受管终端。纯函数，便于测试。
+  /// - 恢复的旧 Pane 永不自动托管（显式迁移事务处理）。
+  /// - 远端协调器或环境变量显式指定的端点：托管。
+  /// - 本机自动解析的端点：只在用户打开开关时托管。
+  static func shouldAutoManage(
+    isRestored: Bool, isLocal: Bool, endpointIsExplicit: Bool, localManagedEnabled: Bool
+  ) -> Bool {
+    if isRestored { return false }
+    if !isLocal || endpointIsExplicit { return true }
+    return localManagedEnabled
+  }
+
   /// 本机受管终端使用的登录 Shell argv。规则收敛在 `ManagedTerminalLaunchSpec`。
   static func shellArguments(shell: String) -> [String] {
     ManagedTerminalLaunchSpec.localArgv(shell: shell)
@@ -86,8 +102,13 @@ enum ManagedTerminalBinder {
       return
     }
 
-    // 旧布局的非受管 Pane 保持原样，等待显式迁移。
-    guard !isRestored else { return }
+    // 旧布局的非受管 Pane 保持原样，等待显式迁移；本机默认原生 PTY，见 shouldAutoManage。
+    guard shouldAutoManage(
+      isRestored: isRestored,
+      isLocal: coordinator.machineProfileID == MachineProfile.localProfileID,
+      endpointIsExplicit: coordinator.endpointIsExplicit,
+      localManagedEnabled: localAutoManagePolicy())
+    else { return }
 
     // cwd 与 Shell 属于**执行机器**：协调器是 SSH 传输时，本机 Pane 目录与本机 `$SHELL`
     // 在远端都可能不存在（修 §6.9）。两条路径共用同一个入口，不再各拼一份。

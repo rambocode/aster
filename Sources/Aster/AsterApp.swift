@@ -265,9 +265,17 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 生产环境是 SoftwareUpdateService.shared；开发构建与菜单测试为 nil / stub。
   private let softwareUpdateController: (any SoftwareUpdateControlling)?
 
+  /// 把「本机后台保活」开关交给受管终端绑定器；每次新建 Pane 时实时读取偏好。
+  private static func installManagedTerminalPolicy(_ preferences: AppPreferences) {
+    ManagedTerminalBinder.localAutoManagePolicy = { [weak preferences] in
+      preferences?.configuration.shell.resolvedLocalManagedTerminals ?? false
+    }
+  }
+
   override init() {
     model = AppModel()
     preferences = AppPreferences()
+    Self.installManagedTerminalPolicy(preferences)
     // 界面语言必须在任何菜单、窗口创建之前装好，否则先建的视图会停留在源语言。
     AppLocalization.apply(setting: preferences.configuration.general.language)
     // Aster 自有主题目录在窗口构建前先就位，避免启动时先按内置表渲染再闪一次。
@@ -282,6 +290,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     model: AppModel, preferences: AppPreferences,
     softwareUpdateController: (any SoftwareUpdateControlling)? = nil
   ) {
+    Self.installManagedTerminalPolicy(preferences)
     self.model = model
     self.preferences = preferences
     self.softwareUpdateController = softwareUpdateController

@@ -140,6 +140,15 @@ final class ManagedTerminalCoordinator {
 
   var isEnabled: Bool { endpoint != nil }
 
+  /// 端点是否由环境变量显式指定（测试、开发、远端协调器）。显式指定视为用户明确要求
+  /// 托管；只有从 App Bundle 自动解析的 Local 端点才受「本机后台保活」开关约束。
+  var endpointIsExplicit: Bool {
+    guard let binary = environment[Self.binaryEnvironmentKey], !binary.isEmpty,
+      let stateParent = environment[Self.stateDirectoryEnvironmentKey], !stateParent.isEmpty
+    else { return false }
+    return true
+  }
+
   /// 该机器的布局事务客户端（P4.2）。受管模式未开启时返回 nil。
   ///
   /// 事务与受管终端必须共用同一条传输：拆成两个客户端很容易在本机/SSH 之间配错，

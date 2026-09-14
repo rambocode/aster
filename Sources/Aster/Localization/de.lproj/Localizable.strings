@@ -1062,8 +1062,10 @@
 "本服务实现不支持远端安装。" = "Diese Dienstimplementierung unterstützt keine Remote-Installation.";
 "本服务实现不支持远端服务替换。" = "Diese Dienstimplementierung unterstützt kein Ersetzen des Remote-Dienstes.";
 "本机 Agent 集成请在「设置 ▸ 智能体」里安装。" = "Für die lokale Agent-Integration installieren Sie über Einstellungen ▸ Agents.";
+"本机后台保活" = "Lokale Shells im Hintergrund am Leben halten";
 "本机学习" = "Lokales Lernen";
 "本机学习数据" = "Lokale Lerndaten";
+"本机新建的终端交给后台会话服务托管，退出或崩溃后 Shell 继续运行；只影响之后新建的终端" = "Neue lokale Terminals an den Hintergrund-Sitzungsdienst übergeben, damit Shells Beenden oder Absturz überleben; betrifft nur danach erstellte Terminals";
 "本机没有适用于 %@/%@ 的 aster-session 产物。" = "Lokal ist kein aster-session-Artefakt für %@/%@ verfügbar.";
 "机器 %@" = "Rechner %@";
 "机器「%@」缺少远端运行时位置（旧版本保存的配置）。请移除后重新添加该机器。" = "Rechner „%@“ fehlt der Remote-Laufzeitspeicherort (von einer älteren Version gespeicherte Konfiguration). Bitte entfernen Sie den Rechner und fügen Sie ihn erneut hinzu.";
