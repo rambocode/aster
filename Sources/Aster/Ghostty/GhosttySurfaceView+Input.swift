@@ -96,10 +96,9 @@ extension GhosttySurfaceView {
   }
 
   override func flagsChanged(with event: NSEvent) {
-    // 按下/松开 Command 本身也要刷新下划线与路径预览,即使鼠标没有移动。
-    if event.keyCode == 54 || event.keyCode == 55 {
-      handleCommandModifierChange(pressed: event.modifierFlags.contains(.command))
-    }
+    // 以修饰键状态为准，不限定物理键码：重映射或合成的 flagsChanged 可能来自
+    // 其它按键。否则预览已按 command 状态显示，手形和下划线却仍停留在未按下状态。
+    handleCommandModifierChange(pressed: event.modifierFlags.contains(.command))
     updateCommandHoverPreview(with: event)
     guard navigationMode == .normal, let surface else { return }
     let action: ghostty_input_action_e =
@@ -188,8 +187,13 @@ extension GhosttySurfaceView {
     updateCommandHoverPreview(with: event)
   }
 
+  /// AppKit 在 `NSCursor.set()` 或视图层级变化后会自行合成 cursorUpdate 事件
+  /// （`_NSTrackingAreaAKManager setCursorForMouseLocation:`），实测它的 modifierFlags
+  /// 在 Command 按住时也不含 .command。这里绝不能把它当作修饰键状态来源，否则按下
+  /// Command 约 30ms 后状态就被清空：下划线与手形消失，而预览徽章仍在。
+  /// 只按当前状态重新应用指针形状。
   override func cursorUpdate(with event: NSEvent) {
-    handleLinkHoverMouseMoved(with: event)
+    updateLinkHoverCursor()
     if !linkHoverCursorActive { applyMouseShape(lastGhosttyMouseShape) }
   }
   override func mouseDragged(with event: NSEvent) {
@@ -233,6 +237,9 @@ extension GhosttySurfaceView {
   private func reportMousePosition(_ event: NSEvent) {
     guard let surface else { return }
     let local = convert(event.locationInWindow, from: nil)
+    // 点击和滚动同样会改变原生悬停位置；两套识别必须使用同一个事件坐标。
+    // 仅在 mouseMoved 中缓存会让“先点击/滚动再按 Command”继续命中旧位置。
+    lastLinkHoverLocation = local
     let point = NSPoint(x: local.x, y: bounds.height - local.y)
     ghostty_surface_mouse_pos(surface, point.x, point.y, modifiers(event))
   }

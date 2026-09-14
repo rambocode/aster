@@ -81,7 +81,11 @@ final class GhosttySurfaceView: NSView {
   var pasteBracketedSafe = true
   /// 链接预览开关（controls.showLinkPreviews）：按住 Command 悬停链接时在底部展示完整路径或 URL。
   var linkPreviewEnabled = true {
-    didSet { if !linkPreviewEnabled { removeLinkPreview() } }
+    didSet {
+      guard oldValue != linkPreviewEnabled else { return }
+      if linkPreviewEnabled { refreshCommandHoverPreview() }
+      else { removeLinkPreview() }
+    }
   }
   /// 宿主侧预览文本格式化器：命中检测仍用 Ghostty 报告的原始链接，仅展示时展开相对路径。
   var linkPreviewFormatter: ((String) -> String)?
@@ -90,12 +94,22 @@ final class GhosttySurfaceView: NSView {
   /// 当前预览来源:true 为 Ghostty 原生 mouse_over_link(OSC 8),false 为 Aster 侧文字识别。
   /// 原生的清除信号(空 URL)不得抹掉 Aster 侧刚显示的路径预览。
   private(set) var linkPreviewIsNative = false
+  /// 原生命中独立于预览开关；OSC 8 的显示文本不一定包含 URL，不能再用文字扫描否定命中。
+  var nativeHoveredLink: String?
+  /// 默认从窗口读取当前指针位置；测试宿主可注入坐标以复现静止指针与布局变化。
+  var linkPointerLocationProvider: (() -> NSPoint?)?
   /// 终端目标识别总开关（controls.linkDetectionEnabled）：关闭后不画下划线、不预览、不响应点击。
   var linkDetectionEnabled = true {
     didSet { if !linkDetectionEnabled { handleCommandModifierChange(pressed: false) } }
   }
   /// 普通文字 URL 的 scheme 识别范围（controls.linkSchemes）。
-  var linkSchemePolicy: LinkSchemePolicy = .all
+  var linkSchemePolicy: LinkSchemePolicy = .all {
+    didSet {
+      guard oldValue != linkSchemePolicy else { return }
+      invalidateLinkTargetCache()
+      refreshCommandHoverPreview()
+    }
+  }
   /// 路径候选存在性校验：由 Session 按当前可信 CWD 解析并 stat；nil 时所有路径视为不存在。
   var linkPathValidator: ((String) -> Bool)?
   /// Command 下划线颜色，跟随终端主题前景色。
@@ -212,7 +226,11 @@ final class GhosttySurfaceView: NSView {
 
   /// Ghostty 的 mouse_over_link action：按住 Command 悬停 OSC 8 链接时携带 URL，空字符串表示离开链接。
   func handleMouseOverLink(_ url: String) {
-    guard linkPreviewEnabled, !url.isEmpty else {
+    // 原生回调经过主队列转发，松开 Command 后迟到的旧命中不能重新显示反馈。
+    nativeHoveredLink = !url.isEmpty && linkCommandHeld && linkDetectionEnabled
+      && navigationMode == .normal && !isDestroyed ? url : nil
+    updateLinkHoverCursor()
+    guard linkPreviewEnabled, let nativeHoveredLink else {
       // 原生空信号只能清除原生来源的预览，避免与 Aster 侧路径预览互相覆盖；
       // 清除后立刻按最近指针位置补一次 Aster 侧识别，让同一位置的文字目标接管预览。
       if linkPreviewIsNative {
@@ -221,7 +239,7 @@ final class GhosttySurfaceView: NSView {
       }
       return
     }
-    showLinkPreview(url, native: true)
+    showLinkPreview(nativeHoveredLink, native: true)
   }
 
   /// 在终端左下角展示预览徽章；徽章不参与命中测试，指针事件继续到达终端。
@@ -261,6 +279,7 @@ final class GhosttySurfaceView: NSView {
       badge.removeFromSuperview()
       linkPreviewBadge = nil
     }
+    linkPreviewIsNative = false
   }
 
   func handleSecureInput(_ mode: ghostty_action_secure_input_e) {
@@ -439,6 +458,8 @@ final class GhosttySurfaceView: NSView {
   /// 永久销毁 surface。libghostty 自己持有 PTY monitor，free 后负责关闭 child 和回收资源。
   func destroySurface() {
     guard !isDestroyed else { return }
+    handleLinkHoverMouseExited()
+    removeLinkPreview()
     isDestroyed = true
     if let surface { ghostty_surface_free(surface) }
     surface = nil
@@ -478,6 +499,7 @@ final class GhosttySurfaceView: NSView {
     onRequestOpenTarget = nil
     onResolveHintCopyTarget = nil
     linkPreviewFormatter = nil
+    linkPointerLocationProvider = nil
     linkPathValidator = nil
   }
 
@@ -612,9 +634,10 @@ final class GhosttySurfaceView: NSView {
 /// 与 SwiftTerm 回归路径的 `TerminalLinkPreviewBadge` 保持同一视觉规格。
 final class GhosttyLinkPreviewBadge: NSView {
   static let horizontalInset: CGFloat = 16
-  static let height: CGFloat = 52
-  static let cornerRadius: CGFloat = 12
-  private static let horizontalTextPadding: CGFloat = 20
+  /// 紧凑规格：28pt 高、12pt 等宽字，只占一行终端高度，不遮挡输出。
+  static let height: CGFloat = 28
+  static let cornerRadius: CGFloat = 8
+  private static let horizontalTextPadding: CGFloat = 12
   private let label = NSTextField(labelWithString: "")
 
   override init(frame frameRect: NSRect) {
@@ -634,7 +657,7 @@ final class GhosttyLinkPreviewBadge: NSView {
     label.usesSingleLineMode = true
     label.maximumNumberOfLines = 1
     label.lineBreakMode = .byTruncatingMiddle
-    label.font = NSFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+    label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     addSubview(label)
     updateAppearanceColors()
   }
@@ -643,15 +666,18 @@ final class GhosttyLinkPreviewBadge: NSView {
     fatalError("init(coder:) has not been implemented")
   }
 
-  /// 依据文本宽度自适应徽章尺寸，超出可用宽度时中间截断。
+  /// 依据文本宽度自适应徽章尺寸；地址完整显示，只有超过 Pane 可用宽度时才中间截断。
   func update(text: String, maximumWidth: CGFloat) {
     label.stringValue = text
     label.toolTip = text
-    let measuredWidth = ceil(
-      (text as NSString).size(withAttributes: [.font: label.font!]).width
-    )
+    // 必须按 cell 自身尺寸量宽（含 NSTextFieldCell 内边距），裸字符串宽度会差几 pt，
+    // 宽度充足时地址仍被中间截断成 "http://12…8899"。再留 4pt 余量吸收取整误差。
+    let cellWidth = label.cell?.cellSize.width ?? 0
+    let measuredWidth = ceil(max(label.intrinsicContentSize.width, cellWidth)) + 4
     let availableWidth = max(1, maximumWidth)
     let idealWidth = max(80, measuredWidth + Self.horizontalTextPadding * 2)
+    // 放得下就禁止省略号（byClipping 不会生成 "…"）；只有超过 Pane 可用宽度才中间截断。
+    label.lineBreakMode = idealWidth <= availableWidth ? .byClipping : .byTruncatingMiddle
     frame.size = CGSize(width: min(availableWidth, idealWidth), height: Self.height)
     needsLayout = true
     layoutSubtreeIfNeeded()

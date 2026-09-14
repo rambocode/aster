@@ -1,6 +1,7 @@
 import AppKit
 import AsterCore
 @preconcurrency import GhosttyKit
+import QuartzCore
 
 /// 视口内一个可点击目标在终端网格上的位置：`screenRow` 为 retained-screen 行号，
 /// 列区间为闭区间，已含宽字符占用的第二列。
@@ -28,15 +29,19 @@ extension GhosttySurfaceView {
     linkCommandHeld = pressed
     if pressed {
       activateLinkUnderlines()
-      // 修饰键事件不会产生 mouseMoved；鼠标停在链接上时也必须立即刷新手形。
-      // 首次进入窗口尚未收到移动事件时，从窗口补取当前坐标。
-      if lastLinkHoverLocation == nil, let window {
+      // 按键不会产生 mouseMoved。每次都读取当前位置，避免点击、布局变化或
+      // 滚动后保留的旧坐标让“预览已命中、手形仍未命中”长期不同步。
+      if let linkPointerLocationProvider {
+        lastLinkHoverLocation = linkPointerLocationProvider()
+      } else if let window {
         let location = convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        if bounds.contains(location) { lastLinkHoverLocation = location }
+        lastLinkHoverLocation = bounds.contains(location) ? location : nil
       }
       updateLinkHoverCursor()
     } else {
+      nativeHoveredLink = nil
       deactivateLinkUnderlines()
+      removeLinkPreview()
     }
   }
 
@@ -55,6 +60,8 @@ extension GhosttySurfaceView {
   /// 指针离开 surface：下划线与手形指针一起撤掉，避免另一个 Pane 接管时残留。
   func handleLinkHoverMouseExited() {
     lastLinkHoverLocation = nil
+    linkCommandHeld = false
+    nativeHoveredLink = nil
     deactivateLinkUnderlines()
   }
 
@@ -71,6 +78,7 @@ extension GhosttySurfaceView {
       }
       self.refreshLinkUnderlines()
       self.updateLinkHoverCursor()
+      self.refreshCommandHoverPreview()
     }
   }
 
@@ -257,11 +265,13 @@ extension GhosttySurfaceView {
   // MARK: - 指针
 
   /// Command 悬停在目标上时显示手形；离开后恢复 Ghostty 最近一次要求的指针形状。
-  private func updateLinkHoverCursor() {
+  func updateLinkHoverCursor() {
     let hovering: Bool
-    if linkUnderlinesActive, let location = lastLinkHoverLocation,
-      inlineLinkTarget(at: location) != nil
-    {
+    if linkDetectionEnabled, linkCommandHeld, navigationMode == .normal,
+      nativeHoveredLink != nil {
+      hovering = true
+    } else if linkUnderlinesActive, let location = lastLinkHoverLocation,
+      inlineLinkTarget(at: location) != nil {
       hovering = true
     } else {
       hovering = false
@@ -292,9 +302,10 @@ final class GhosttyLinkUnderlineOverlay: NSView {
   /// 下划线距单元格底边的抬升量与粗细（pt）。
   private static let baselineInset: CGFloat = 1.5
   private static let thickness: CGFloat = 1
+  private let strokes = CAShapeLayer()
 
   var lineColor: NSColor = .textColor {
-    didSet { needsDisplay = true }
+    didSet { updateStrokes() }
   }
   private(set) var segments: [NSRect] = []
 
@@ -304,6 +315,9 @@ final class GhosttyLinkUnderlineOverlay: NSView {
     // 与预览徽章同理：CAMetalLayer 是手工挂在 backing layer 上的同级 sublayer，
     // 必须抬高 zPosition 才能画在终端画面之上。
     layer?.zPosition = 900
+    strokes.fillColor = nil
+    strokes.lineWidth = Self.thickness
+    layer?.addSublayer(strokes)
   }
 
   required init?(coder: NSCoder) { nil }
@@ -315,21 +329,29 @@ final class GhosttyLinkUnderlineOverlay: NSView {
   func update(segments: [NSRect]) {
     self.segments = segments
     isHidden = segments.isEmpty
-    needsDisplay = true
+    updateStrokes()
   }
 
-  override func draw(_ dirtyRect: NSRect) {
-    guard !segments.isEmpty else { return }
-    lineColor.setFill()
+  override func layout() {
+    super.layout()
+    updateStrokes()
+  }
+
+  /// Metal 宿主内直接合成矢量图层，不依赖 AppKit 为透明 NSView 安排 draw(_:)。
+  /// 禁用隐式动画，按下和松开 Command 时不会残留淡入淡出的旧线段。
+  private func updateStrokes() {
+    let path = CGMutablePath()
     for segment in segments {
-      let line = NSRect(
-        x: segment.minX,
-        y: segment.minY + Self.baselineInset,
-        width: segment.width,
-        height: Self.thickness
-      )
-      guard line.intersects(dirtyRect) else { continue }
-      line.fill()
+      let y = segment.minY + Self.baselineInset
+      path.move(to: CGPoint(x: segment.minX, y: y))
+      path.addLine(to: CGPoint(x: segment.maxX, y: y))
     }
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    strokes.frame = bounds
+    strokes.contentsScale = window?.backingScaleFactor ?? 2
+    strokes.strokeColor = lineColor.cgColor
+    strokes.path = segments.isEmpty ? nil : path
+    CATransaction.commit()
   }
 }

@@ -30,6 +30,21 @@ public enum LinkSchemePolicy: Equatable, Sendable {
   /// `file` 在解析后转成文件目标，但仍属于始终启用的标准 scheme。
   public static let standardSchemes: Set<String> = ["http", "https", "file", "mailto"]
 
+  /// 规范化设置中的协议列表；空行忽略，大小写和可选的 :// 后缀统一处理。
+  /// 非法项或超过 64 个协议时整批拒绝，避免静默丢弃用户输入后覆盖已保存列表。
+  public static func normalizedCustomSchemes(_ values: [String]) -> Set<String>? {
+    var result: Set<String> = []
+    for value in values {
+      var scheme = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      guard !scheme.isEmpty else { continue }
+      if scheme.hasSuffix("://") { scheme.removeLast(3) }
+      guard isSyntacticallyValid(scheme) else { return nil }
+      result.insert(scheme)
+      guard result.count <= 64 else { return nil }
+    }
+    return result
+  }
+
   /// 验证 RFC 3986 scheme 的 ASCII 子集，供配置导入层复用同一语法边界。
   public static func isSyntacticallyValid(_ value: String) -> Bool {
     guard value.utf8.count <= 64 else { return false }

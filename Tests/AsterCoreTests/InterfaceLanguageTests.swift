@@ -74,3 +74,20 @@ func localizationUsesInstalledTranslator() throws {
   #expect(L("缩放 \(name) 的 100% 视图") == "100% view at tmux")
   #expect(L("没有翻译的文案") == "没有翻译的文案")
 }
+
+@Test("重复翻译不累积回调栈，避免新增和切换标签随使用时间变慢")
+func localizationLookupKeepsCallbackStackBounded() throws {
+  let previous = CoreLocalization.translator
+  defer { CoreLocalization.translator = previous }
+  CoreLocalization.translator = { _ in String(Thread.callStackReturnAddresses.count) }
+
+  // 同一调用点重复走实际 L() 入口。计数替代耗时阈值，避免机器负载导致性能测试抖动。
+  // 每次读锁内闭包若发生 reabstraction 写回，后续调用就会穿过不断增长的包装栈。
+  var depths: [Int] = []
+  for _ in 0..<256 {
+    depths.append(try #require(Int(L("语言"))))
+  }
+  let first = try #require(depths.first)
+  let last = try #require(depths.last)
+  #expect(last <= first + 8, "翻译回调栈从 \(first) 增长到 \(last)")
+}

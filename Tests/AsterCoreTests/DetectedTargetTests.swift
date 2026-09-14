@@ -3,6 +3,18 @@ import Testing
 
 @testable import AsterCore
 
+@Test("自定义协议列表规范化并整批拒绝非法项或超限输入")
+func customLinkProtocolsNormalizeWithoutSilentlyDroppingValues() {
+  #expect(LinkSchemePolicy.normalizedCustomSchemes([" SSH:// ", "ssh", "", "git+ssh"])
+    == ["ssh", "git+ssh"])
+  #expect(LinkSchemePolicy.normalizedCustomSchemes(["codex", "bad protocol"]) == nil)
+  #expect(LinkSchemePolicy.normalizedCustomSchemes(["://"]) == nil)
+  #expect(LinkSchemePolicy.normalizedCustomSchemes(["1http"]) == nil)
+  #expect(LinkSchemePolicy.normalizedCustomSchemes([String(repeating: "x", count: 65)]) == nil)
+  #expect(LinkSchemePolicy.normalizedCustomSchemes((0..<65).map { "scheme\($0)" }) == nil)
+  #expect(LinkSchemePolicy.normalizedCustomSchemes([]) == [])
+}
+
 @Test("文件目标支持绝对、主目录、相对路径及行列后缀")
 func targetResolverNormalizesDocumentedFileForms() throws {
   let resolver = TargetResolver(homeDirectory: URL(fileURLWithPath: "/Users/tester"))

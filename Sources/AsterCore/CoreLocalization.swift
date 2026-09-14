@@ -54,12 +54,19 @@ public enum InterfaceLanguage: String, CaseIterable, Codable, Equatable, Sendabl
 public enum CoreLocalization {
   public typealias Translator = @Sendable (String.LocalizationValue) -> String
 
-  private static let storage = OSAllocatedUnfairLock<Translator?>(initialState: nil)
+  // 不把闭包本身作为锁的泛型 State：withLock 的 inout 访问会对含
+  // LocalizationValue 的函数反复生成 reabstraction 包装并写回，读一次叠一层，
+  // 最终让界面文案调用随使用时间变慢。通过具名状态的字段读写保持闭包身份稳定。
+  private struct State: Sendable {
+    var translator: Translator?
+  }
+
+  private static let storage = OSAllocatedUnfairLock(initialState: State())
 
   /// 当前翻译函数；nil 表示源语言直出。启动时设置一次，之后只读。
   public static var translator: Translator? {
-    get { storage.withLock { $0 } }
-    set { storage.withLock { $0 = newValue } }
+    get { storage.withLock { $0.translator } }
+    set { storage.withLock { $0.translator = newValue } }
   }
 
   /// 无翻译时的兜底：走 `Bundle.main` 的查表语义，缺 key 就把原文按插值格式化后返回。

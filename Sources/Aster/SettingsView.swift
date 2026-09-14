@@ -3549,7 +3549,16 @@ extension SettingsViewController: WKNavigationDelegate {
     }
   }
 
+  /// 回执在最新快照之后发送，供即时编辑器串行提交和反馈按钮确认真实执行结果。
+  /// 不依赖回执的既有网页动作会忽略该消息，协议保持向后兼容。
+  private func completeWebMutation(_ request: [String: Any], succeeded: Bool) {
+    guard let requestID = request["requestID"] as? String else { return }
+    sendWebMessage(["type": "mutationResult", "requestID": requestID, "succeeded": succeeded])
+  }
+
   private func handleWebSet(_ request: [String: Any]) {
+    var succeeded = false
+    defer { completeWebMutation(request, succeeded: succeeded) }
     guard (request["baseRevision"] as? NSNumber)?.intValue == webRevision,
       let changes = request["changes"] as? [[String: Any]],
       !changes.isEmpty, changes.count <= 32
@@ -3561,6 +3570,11 @@ extension SettingsViewController: WKNavigationDelegate {
 
     do {
       let languageBefore = preferences.configuration.general.language
+      // 网页写入已在事务结束时主动推送快照；不要再从自身 objectWillChange 排队
+      // 推送第二份快照，否则回执后的下一笔连续编辑会立刻持有过期 revision。
+      let wasApplying = isApplyingLocalControlAction
+      isApplyingLocalControlAction = true
+      defer { isApplyingLocalControlAction = wasApplying }
       for change in changes {
         guard let key = change["key"] as? String,
           key.count <= 128,
@@ -3570,6 +3584,7 @@ extension SettingsViewController: WKNavigationDelegate {
       }
       message = nil
       pushWebSnapshot()
+      succeeded = true
       // 语言只有重启才能整体切换：写入成功后立刻问用户是否现在重启，而不是静默保存。
       let languageAfter = preferences.configuration.general.language
       if languageAfter != languageBefore {
@@ -3709,10 +3724,15 @@ extension SettingsViewController: WKNavigationDelegate {
       default: throw SettingsWebBridgeError.invalidValue
       }
     case "controls.customLinkSchemes":
-      let schemes = try string().split(separator: ",").map {
-        $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-      }.filter(LinkSchemePolicy.isSyntacticallyValid)
-      preferences.configuration.controls.customLinkSchemes = Set(schemes.prefix(64))
+      // 64 个最长协议加可选 :// 和分隔符会超过通用文本字段的 4096 字节上限。
+      // 只为此字段放宽到它自身的有界表示长度，不扩大其它设置消息的输入范围。
+      guard let text = value as? String, text.utf8.count <= 64 * (64 + 3) + 63 * 2 else {
+        throw SettingsWebBridgeError.invalidValue
+      }
+      guard let schemes = LinkSchemePolicy.normalizedCustomSchemes(
+        text.components(separatedBy: ","))
+      else { throw SettingsWebBridgeError.invalidValue }
+      preferences.configuration.controls.customLinkSchemes = schemes
     case "controls.allowedNonStandardLinkSchemes":
       let schemes = try string().split(separator: ",").map {
         $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -4110,6 +4130,7 @@ extension SettingsViewController: WKNavigationDelegate {
     else {
       sendWebToast(L("操作已过期，请重试"), level: "error")
       pushWebSnapshot()
+      completeWebMutation(request, succeeded: false)
       return
     }
 
@@ -4141,11 +4162,14 @@ extension SettingsViewController: WKNavigationDelegate {
     case "manageFolders": manageTrackedFolders()
     case "configureOpenWithApps": configureOpenWithApplication()
     case "resetLinkApprovals":
-      preferences.configuration.controls.allowedNonStandardLinkSchemes = []
-      preferences.configuration.controls.allowedExternalLinkHosts = []
-      preferences.configuration.controls.allowedExecutableFileSignatures = []
-      message = L("已清除链接安全授权。")
-      refresh()
+      // 一次更新三类授权，避免多次快照刷新打断反馈；成功回执由网页保持到期。
+      var controls = preferences.configuration.controls
+      controls.allowedNonStandardLinkSchemes = []
+      controls.allowedExternalLinkHosts = []
+      controls.allowedExecutableFileSignatures = []
+      performLocalControlAction { preferences.configuration.controls = controls }
+      pushWebSnapshot()
+      completeWebMutation(request, succeeded: true)
     case "updateAutocomplete": updateAutocompleteSpecs()
     case "checkForUpdates": checkForUpdatesNow()
     case "clearAutocomplete": clearAutocompleteLearning()

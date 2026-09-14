@@ -432,6 +432,10 @@ extension GhosttySurfaceView {
   /// 按最近一次指针位置重新计算 Aster 侧预览；原生 OSC 8 预览仍在显示时保持不动。
   func refreshCommandHoverPreview() {
     guard linkPreviewEnabled, navigationMode == .normal else { return }
+    if linkCommandHeld, let nativeHoveredLink {
+      showLinkPreview(nativeHoveredLink, native: true)
+      return
+    }
     if linkPreviewIsNative, linkPreviewBadge != nil { return }
     guard linkCommandHeld, let location = lastLinkHoverLocation,
       let target = inlineLinkTarget(at: location)

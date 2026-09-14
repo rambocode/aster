@@ -222,10 +222,10 @@
           action("configureOpenWithApps", t("自定义打开方式"), t("向文件和文件夹菜单添加第三方应用"), t("配置…")),
         ]},
         { title: t("链接协议"), rows: [
-          row("controls.linkSchemes", t("自动识别链接协议"), t("识别所有合法协议，或只识别标准协议和自定义列表"), "select", { options: [["all", t("全部")], ["custom", t("自定义")]] }),
+          row("controls.linkSchemes", t("自动识别链接协议"), t("终端输出里哪些 URL 协议在 Cmd 悬停时显示下划线并可点击。http(s)、file、mailto 始终识别；「自定义」可额外添加。"), "select", { options: [["all", t("全部")], ["custom", t("自定义")]] }),
           action("configureLinkSchemes", t("自定义链接协议"), t("管理允许识别的协议，例如 codex、ssh、vscode"), t("配置…"), { visibleWhen: ["controls.linkSchemes", "custom"] }),
-          row("controls.showLinkPreviews", t("显示链接预览"), t("按住 Command 悬停时在底部显示完整路径或 URL")),
-          action("resetLinkApprovals", t("重置安全提示"), t("清除打开外部链接、自定义协议和可执行文件的“始终允许”授权"), t("重置"), { danger: true, confirmDuration: 1600, confirmedLabel: t("已重置") }),
+          row("controls.showLinkPreviews", t("显示链接预览"), t("按住 Cmd 悬停在链接上时，在底部角落显示该链接的完整路径或 URL。关闭后链接仍可点击，但不再显示预览。")),
+          action("resetLinkApprovals", t("重置安全提示"), t("清除所有「始终允许」记忆，下次打开外部链接、自定义协议或可执行文件时重新弹出确认对话框。"), t("重置"), { danger: true, confirmDuration: 1600, confirmedLabel: t("已重置") + " ✓" }),
         ]},
         { title: t("键盘"), rows: [
           row("controls.optionAsMetaMode", t("将 Option 键用作 Meta 键"), t("控制左右 Option 是否发送 Esc 前缀"), "select", { options: options.optionMeta }),
@@ -465,6 +465,8 @@
     for (const menu of document.querySelectorAll(".multiselect-menu")) menu.hidden = true;
   });
   let pendingRequest = 0;
+  const mutationReplies = new Map();
+  const actionFeedback = new Map();
   // lineHeightChoice 记录行高 segmented 最近一次点击（「默认」与「紧凑 (1.0)」
   // 写入同一组值，只能靠它消歧选中态）。
   const appearanceUIState = { fontScope: "computed", themeEditorOpen: false, lineHeightChoice: null };
@@ -491,6 +493,32 @@
       kind,
       ...payload,
     });
+    return String(pendingRequest);
+  }
+
+  // 只有收到原生成功回执才显示成功；旧快照重绘不能重置按钮的生命周期。
+  function mutate(kind, payload) {
+    return new Promise((resolve, reject) => {
+      const requestID = send(kind, payload);
+      if (!requestID) { reject(new Error("bridge unavailable")); return; }
+      const timeout = window.setTimeout(() => {
+        mutationReplies.delete(requestID);
+        reject(new Error("mutation timeout"));
+      }, 5000);
+      mutationReplies.set(requestID, succeeded => {
+        window.clearTimeout(timeout);
+        if (succeeded) resolve(); else reject(new Error("mutation rejected"));
+      });
+    });
+  }
+
+  function updateActionFeedback(action) {
+    const state = actionFeedback.get(action);
+    const button = content.querySelector(`[data-setting-key="${action}"] button`);
+    if (!button || !state) return;
+    button.textContent = state.label;
+    button.disabled = state.disabled;
+    button.setAttribute("aria-live", "polite");
   }
 
   function showToast(message, error = false) {
@@ -697,6 +725,9 @@
       button.className = `action-button${item.danger ? " danger" : ""}`;
       button.textContent = item.button;
       button.disabled = !supported;
+      const feedback = actionFeedback.get(item.action);
+      if (feedback) { button.textContent = feedback.label; button.disabled = feedback.disabled; }
+      if (item.action === "resetLinkApprovals") button.setAttribute("aria-live", "polite");
       if (item.action === "recordShortcut" && item.payload?.id) {
         button.addEventListener("click", () => {
           const previous = button.textContent;
@@ -723,11 +754,32 @@
       } else {
         button.addEventListener("click", () => {
           if (item.action === "configureLinkSchemes") {
-            openStringListDialog({
-              title: t("自定义链接协议"),
-              description: t("输入要识别的协议名称；不需要添加 ://。"),
-              key: "controls.customLinkSchemes",
-              placeholder: "codex",
+            window.AsterLinkProtocols.open({
+              items: String(settingValue("controls.customLinkSchemes") ?? "").split(",").map(value => value.trim()).filter(Boolean),
+              t,
+              commit: value => mutate("set", { changes: [{ key: "controls.customLinkSchemes", value }] }),
+              restoreFocus: () => content.querySelector('[data-setting-key="configureLinkSchemes"] button')?.focus(),
+            });
+            return;
+          }
+          if (item.action === "resetLinkApprovals") {
+            if (actionFeedback.get(item.action)?.disabled) return;
+            window.clearTimeout(actionFeedback.get(item.action)?.timer);
+            actionFeedback.set(item.action, { label: t("正在重置…"), disabled: true });
+            updateActionFeedback(item.action);
+            mutate("action", { action: item.action, payload: {} }).then(() => {
+              // Otty 的成功态仍可再次重置；保持手形与正常对比度，仅请求进行中禁用。
+              const feedback = { label: item.confirmedLabel, disabled: false };
+              actionFeedback.set(item.action, feedback);
+              updateActionFeedback(item.action);
+              feedback.timer = window.setTimeout(() => {
+                actionFeedback.set(item.action, { label: item.button, disabled: false });
+                updateActionFeedback(item.action);
+              }, item.confirmDuration);
+            }).catch(() => {
+              actionFeedback.set(item.action, { label: item.button, disabled: false });
+              updateActionFeedback(item.action);
+              showToast(t("未能重置，请重试。"), true);
             });
             return;
           }
@@ -844,47 +896,6 @@
     card.append(...group.rows.filter(isVisible).map(makeRow));
     host.appendChild(card);
     return host;
-  }
-
-  /// Otty 的协议列表使用页内模态框编辑。每行只接受单一 scheme，保存前仍由原生桥
-  /// 再次执行语法、数量和长度校验，网页不是安全边界。
-  function openStringListDialog({ title, description, key, placeholder }) {
-    const overlay = document.createElement("div");
-    overlay.className = "settings-dialog-overlay";
-    const dialog = document.createElement("div");
-    dialog.className = "settings-dialog";
-    dialog.setAttribute("role", "dialog");
-    dialog.setAttribute("aria-modal", "true");
-    const heading = document.createElement("h2");
-    heading.textContent = title;
-    const detail = document.createElement("p");
-    detail.textContent = description;
-    const field = document.createElement("textarea");
-    field.className = "control settings-dialog-list";
-    field.placeholder = placeholder;
-    field.value = String(settingValue(key) ?? "").split(",").map(value => value.trim()).filter(Boolean).join("\n");
-    const actions = document.createElement("div");
-    actions.className = "settings-dialog-actions";
-    const cancel = document.createElement("button");
-    cancel.className = "action-button";
-    cancel.textContent = t("取消");
-    const done = document.createElement("button");
-    done.className = "action-button primary";
-    done.textContent = t("完成");
-    const close = () => overlay.remove();
-    cancel.addEventListener("click", close);
-    done.addEventListener("click", () => {
-      const values = field.value.split(/[\n,]/).map(value => value.trim().replace(/:\/\/$/, "")).filter(Boolean);
-      commitValue({ key }, values.join(", "));
-      close();
-    });
-    overlay.addEventListener("click", event => { if (event.target === overlay) close(); });
-    overlay.addEventListener("keydown", event => { if (event.key === "Escape") close(); });
-    actions.append(cancel, done);
-    dialog.append(heading, detail, field, actions);
-    overlay.appendChild(dialog);
-    document.body.appendChild(overlay);
-    field.focus();
   }
 
   function openApplicationsDialog() {
@@ -3020,6 +3031,10 @@
         snapshot = message.snapshot;
         app.setAttribute("aria-busy", "false");
         render();
+      } else if (message.type === "mutationResult") {
+        const reply = mutationReplies.get(message.requestID);
+        mutationReplies.delete(message.requestID);
+        reply?.(message.succeeded === true);
       } else if (message.type === "selectSection") {
         setSection(message.section);
       } else if (message.type === "toast") {

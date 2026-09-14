@@ -458,6 +458,14 @@ input.control[type="text"]:focus, input.control[type="number"]:focus { border-co
 .settings-dialog-list { box-sizing: border-box; width: 100%; min-height: 180px; padding: 10px; resize: vertical; text-align: left; font-family: "SF Mono", Menlo, monospace; }
 .settings-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .settings-dialog-actions.split { justify-content: space-between; }
+.protocol-dialog { display: flex; flex-direction: column; overflow: hidden; }
+.protocol-dialog > :not(.protocol-list) { flex-shrink: 0; }
+.protocol-list { min-height: 0; max-height: 45vh; overflow-y: auto; margin-bottom: 10px; }
+.protocol-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.protocol-row input { flex: 1; min-width: 0; text-align: left; }
+.protocol-row input[aria-invalid="true"] { border-color: #d33; }
+.protocol-status { margin: 10px 0 0 !important; min-height: 18px; }
+.protocol-status.error { color: #d33; }
 .settings-dialog-apps { min-height: 80px; overflow: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); }
 .settings-dialog-apps > .setting-detail { display: block; padding: 26px 14px; text-align: center; }
 .settings-dialog-app { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
