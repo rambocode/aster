@@ -1011,7 +1011,8 @@ struct RemoteMachineFleetServices: MachineFleetServices {
     // 上传与远端复核是阻塞的 SSH 往返，必须离开主线程。
     return try await Task.detached(priority: .userInitiated) {
       try transaction.install(
-        plan: plan, manifest: artifact.manifest, localPath: artifact.localPath)
+        plan: plan, manifest: artifact.manifest, localPath: artifact.localPath,
+        shellIntegrationPath: artifact.shellIntegrationPath)
     }.value
   }
 
@@ -1053,7 +1054,8 @@ struct RemoteMachineFleetServices: MachineFleetServices {
         signatureVerifier: Self.releaseSignatureVerifier))
     return try await Task.detached(priority: .userInitiated) {
       try transaction.replace(
-        plan: plan, manifest: artifact.manifest, localPath: artifact.localPath)
+        plan: plan, manifest: artifact.manifest, localPath: artifact.localPath,
+        shellIntegrationPath: artifact.shellIntegrationPath)
     }.value
   }
 

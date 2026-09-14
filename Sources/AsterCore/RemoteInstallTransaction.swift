@@ -22,6 +22,21 @@ public enum RemoteArtifactKind: String, Codable, Sendable {
   case developmentBuild
 }
 
+/// 随服务二进制一起分发的附加文件（目前只有 shell 集成脚本压缩包）。
+/// 与二进制同样按 sha256 + 字节数复核，缺失时旧清单照常解码。
+public struct RemoteReleasePayload: Codable, Equatable, Sendable {
+  /// 产物目录里的文件名（与二进制同目录）。
+  public var fileName: String
+  public var sha256: String
+  public var sizeBytes: Int
+
+  public init(fileName: String, sha256: String, sizeBytes: Int) {
+    self.fileName = fileName
+    self.sha256 = sha256
+    self.sizeBytes = sizeBytes
+  }
+}
+
 /// 一个远端服务二进制的发行清单。安装校验的唯一事实来源。
 public struct RemoteReleaseManifest: Codable, Equatable, Sendable {
   /// 版本号，同时是版本化安装目录名。
@@ -42,6 +57,9 @@ public struct RemoteReleaseManifest: Codable, Equatable, Sendable {
   public var protocolMajor: Int?
   /// 协议次版本号。次版本不同不等于不兼容。
   public var protocolMinor: Int?
+  /// shell 集成脚本压缩包（`shell-integration.tar.gz`，解包后是 `shell-integration/` 目录）。
+  /// 服务端从二进制旁边的这个目录给远端 shell 注入 OSC 133/OSC 7 集成；nil 表示旧产物。
+  public var shellIntegration: RemoteReleasePayload?
 
   public init(
     version: String,
@@ -52,7 +70,8 @@ public struct RemoteReleaseManifest: Codable, Equatable, Sendable {
     signature: String? = nil,
     artifactKind: RemoteArtifactKind,
     protocolMajor: Int? = nil,
-    protocolMinor: Int? = nil
+    protocolMinor: Int? = nil,
+    shellIntegration: RemoteReleasePayload? = nil
   ) {
     self.version = version
     self.platform = platform
@@ -63,6 +82,7 @@ public struct RemoteReleaseManifest: Codable, Equatable, Sendable {
     self.artifactKind = artifactKind
     self.protocolMajor = protocolMajor
     self.protocolMinor = protocolMinor
+    self.shellIntegration = shellIntegration
   }
 
   /// 是否为正式受管发行。界面据此决定是否展示“非正式产物”的告警。
@@ -249,6 +269,12 @@ public struct RemoteInstallPlan: Sendable, Equatable {
   public var activePath: String { binDirectory + "/" + RemoteInstallPlan.binaryName }
   /// 上传用的临时文件路径。
   public var stagingPath: String { stagingDirectory + "/" + stagingID + ".part" }
+  /// shell 集成压缩包的上传临时路径。
+  public var shellIntegrationStagingPath: String {
+    stagingDirectory + "/" + stagingID + ".shell-integration.tar.gz"
+  }
+  /// 解包后的集成目录：与版本化二进制同目录，服务端按「二进制旁边的 shell-integration」解析。
+  public var versionedShellIntegrationDirectory: String { versionDirectory + "/shell-integration" }
 
   /// 旧版本的版本化二进制路径；回滚时把活动 symlink 指回它。
   public var previousVersionedPath: String? {
@@ -329,6 +355,23 @@ public struct RemoteInstallPlan: Sendable, Equatable {
     return ["/bin/sh", "-c", script]
   }
 
+  /// 把已复核的集成压缩包解到本次版本目录。放在 activate 之前：活动 symlink 切过去时
+  /// 集成目录必须已经就位，否则新服务起的第一批 shell 会没有集成。
+  public func installShellIntegrationCommand() -> [String] {
+    let staging = RemoteSSHInvocation.quote(shellIntegrationStagingPath)
+    let versionDir = RemoteSSHInvocation.quote(versionDirectory)
+    let target = RemoteSSHInvocation.quote(versionedShellIntegrationDirectory)
+    let script = [
+      "set -e",
+      "umask 077",
+      "mkdir -p \(versionDir)",
+      "rm -rf \(target)",
+      "tar -xzf \(staging) -C \(versionDir)",
+      "rm -f \(staging)",
+    ].joined(separator: "; ")
+    return ["/bin/sh", "-c", script]
+  }
+
   /// 回滚。
   ///
   /// 为什么这样写：只清理本次事务自己创建的东西——staging 临时文件与本次的版本化目录，
@@ -338,6 +381,7 @@ public struct RemoteInstallPlan: Sendable, Equatable {
   public func rollbackCommand() -> [String] {
     var steps: [String] = []
     steps.append("rm -f " + RemoteSSHInvocation.quote(stagingPath))
+    steps.append("rm -f " + RemoteSSHInvocation.quote(shellIntegrationStagingPath))
     steps.append("rm -f " + RemoteSSHInvocation.quote(activePath + ".new"))
     // 只有在这次事务确实新建了版本目录（版本与旧版本不同）时才删除它。
     if previousVersion != version {
@@ -436,13 +480,16 @@ public struct RemoteInstallTransaction: Sendable {
   /// - Parameters:
   ///   - localDigest: 本地产物摘要；nil 时从 `localPath` 现算。
   ///   - localSize: 本地产物字节数；nil 时从 `localPath` 现取。
+  /// - Parameter shellIntegrationPath: 本地 `shell-integration.tar.gz`；清单声明了它却传 nil
+  ///   时按产物缺失报错，不能装出一个没有集成的版本却当成功。
   @discardableResult
   public func install(
     plan: RemoteInstallPlan,
     manifest: RemoteReleaseManifest,
     localPath: String,
     localDigest: String? = nil,
-    localSize: Int? = nil
+    localSize: Int? = nil,
+    shellIntegrationPath: String? = nil
   ) throws -> RemoteInstallOutcome {
     let digest = try localDigest ?? RemoteInstallTransaction.fileDigest(at: localPath)
     let size = try localSize ?? RemoteInstallTransaction.fileSize(at: localPath)
@@ -467,6 +514,14 @@ public struct RemoteInstallTransaction: Sendable {
     do {
       try upload(localPath: localPath, remotePath: plan.stagingPath)
       try verifyRemoteArtifact(plan: plan, manifest: manifest)
+      if let payload = manifest.shellIntegration {
+        guard let shellIntegrationPath else {
+          throw RemoteInstallError.uploadFailed("shell-integration payload missing locally")
+        }
+        try upload(localPath: shellIntegrationPath, remotePath: plan.shellIntegrationStagingPath)
+        try verifyRemotePayload(path: plan.shellIntegrationStagingPath, payload: payload, plan: plan)
+        try runStep("integration", plan.installShellIntegrationCommand())
+      }
       try runStep("activate", plan.activateCommand())
     } catch {
       // 回滚诊断只作为附加信息，不能替换原始错误：调用方看到的必须是失败的真正原因。
@@ -497,6 +552,27 @@ public struct RemoteInstallTransaction: Sendable {
         RemoteInstallTransaction.safeDetail(error.detail, kind: error.kind.rawValue))
     } catch {
       throw RemoteInstallError.uploadFailed("upload interrupted")
+    }
+  }
+
+  /// 附加产物同样在远端复核摘要与大小；压缩包截断会让 tar 解出半个目录。
+  private func verifyRemotePayload(
+    path: String, payload: RemoteReleasePayload, plan: RemoteInstallPlan
+  ) throws {
+    let digestResult = try runStep("digest", plan.digestCommand(path: path))
+    let remoteDigest = RemoteInstallTransaction.parseDigest(digestResult.standardOutput)
+    guard remoteDigest == payload.sha256 else {
+      throw RemoteInstallError.validation(
+        .digestMismatch(expected: payload.sha256, actual: remoteDigest))
+    }
+    let sizeResult = try runStep("size", plan.sizeCommand(path: path))
+    guard let remoteSize = RemoteInstallTransaction.parseSize(sizeResult.standardOutput),
+      remoteSize == payload.sizeBytes
+    else {
+      throw RemoteInstallError.validation(
+        .sizeMismatch(
+          expected: payload.sizeBytes,
+          actual: RemoteInstallTransaction.parseSize(sizeResult.standardOutput) ?? -1))
     }
   }
 
@@ -775,7 +851,8 @@ public struct RemoteReplacementTransaction: Sendable {
     manifest: RemoteReleaseManifest,
     localPath: String,
     localDigest: String? = nil,
-    localSize: Int? = nil
+    localSize: Int? = nil,
+    shellIntegrationPath: String? = nil
   ) throws -> RemoteReplacementOutcome {
     // 1. 列出受影响终端
     let terminals: [ManagedTerminalStatus]
@@ -802,7 +879,8 @@ public struct RemoteReplacementTransaction: Sendable {
         manifest: manifest,
         localPath: localPath,
         localDigest: localDigest,
-        localSize: localSize)
+        localSize: localSize,
+        shellIntegrationPath: shellIntegrationPath)
     } catch {
       // 安装失败时旧版本目录仍完好，不需要额外回退。
       throw RemoteReplacementError.installFailed(String(describing: error))

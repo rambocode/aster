@@ -66,6 +66,12 @@ for target in "${targets[@]}"; do
   chmod 755 "$out_dir/aster-session"
   sha256="$(/usr/bin/shasum -a 256 "$out_dir/aster-session" | awk '{print $1}')"
   size="$(stat -f %z "$out_dir/aster-session")"
+  # shell 集成脚本随二进制一起分发：远端服务从二进制旁边的 shell-integration/ 目录
+  # 给它起的 shell 注入 OSC 133/OSC 7 集成。COPYFILE_DISABLE 防止 macOS 往 tar 里塞 ._* 文件。
+  integration_tar="$out_dir/shell-integration.tar.gz"
+  (cd "$PROJECT_DIR/Resources" && COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -czf "$integration_tar" shell-integration)
+  integration_sha256="$(/usr/bin/shasum -a 256 "$integration_tar" | awk '{print $1}')"
+  integration_size="$(stat -f %z "$integration_tar")"
   cat > "$out_dir/manifest.json" <<JSON
 {
   "version": "$version",
@@ -74,7 +80,12 @@ for target in "${targets[@]}"; do
   "sha256": "$sha256",
   "sizeBytes": $size,
   "artifactKind": "developmentBuild",
-  "protocolMajor": $protocol_major
+  "protocolMajor": $protocol_major,
+  "shellIntegration": {
+    "fileName": "shell-integration.tar.gz",
+    "sha256": "$integration_sha256",
+    "sizeBytes": $integration_size
+  }
 }
 JSON
   echo "== $target: $out_dir ($size bytes, sha256 ${sha256:0:12})"

@@ -23,6 +23,9 @@ private final class FakeInstallExecutor: RemoteInstallExecuting, @unchecked Send
   var digestOutput: String = ""
   /// 远端大小命令返回值。
   var sizeOutput: String = ""
+  /// 多次复核（二进制 + 集成压缩包）时按顺序消费；空时退回单值。
+  var digestOutputs: [String] = []
+  var sizeOutputs: [String] = []
   /// 上传时抛出的错误；nil 表示成功。
   var uploadError: Error?
   /// 让 activate 步骤返回的 stderr（用于空间不足场景）。
@@ -33,10 +36,12 @@ private final class FakeInstallExecutor: RemoteInstallExecuting, @unchecked Send
     commands.append(argv)
     let script = argv.last ?? ""
     if script.contains("sha256sum") {
-      return RemoteSSHResult(exitStatus: 0, standardOutput: digestOutput, standardError: "")
+      let output = digestOutputs.isEmpty ? digestOutput : digestOutputs.removeFirst()
+      return RemoteSSHResult(exitStatus: 0, standardOutput: output, standardError: "")
     }
     if script.contains("wc -c") {
-      return RemoteSSHResult(exitStatus: 0, standardOutput: sizeOutput, standardError: "")
+      let output = sizeOutputs.isEmpty ? sizeOutput : sizeOutputs.removeFirst()
+      return RemoteSSHResult(exitStatus: 0, standardOutput: output, standardError: "")
     }
     if script.contains("ln -sfn") && script.contains("chmod 755") {
       return RemoteSSHResult(
@@ -63,6 +68,7 @@ private final class FakeInstallExecutor: RemoteInstallExecuting, @unchecked Send
   var stepLabels: [String] {
     commands.map { argv in
       let script = argv.last ?? ""
+      if script.contains("tar -xzf") { return "integration" }
       if script.contains("mkdir -p") && script.contains("umask") { return "mkdir" }
       if script.contains("sha256sum") { return "digest" }
       if script.contains("wc -c") { return "size" }
@@ -393,4 +399,50 @@ private func expectValidationError(
   let decoded = try JSONDecoder().decode(RemoteReleaseManifest.self, from: data)
   #expect(decoded == manifest)
   #expect(String(decoding: data, as: UTF8.self).contains("testArtifact"))
+}
+
+
+@Test("清单声明 shell 集成压缩包时：上传、复核、解到版本目录，都在 activate 之前")
+func remoteInstallShipsShellIntegrationPayloadBeforeActivate() throws {
+  let executor = FakeInstallExecutor()
+  let payloadDigest = String(repeating: "cd", count: 32)
+  var manifest = makeManifest()
+  manifest.shellIntegration = RemoteReleasePayload(
+    fileName: "shell-integration.tar.gz", sha256: payloadDigest, sizeBytes: 4)
+  // 两次 digest/size 复核：先二进制，后压缩包。假执行器按调用顺序返回。
+  executor.digestOutputs = [sampleDigest + "  staging", payloadDigest + "  staging.tgz"]
+  executor.sizeOutputs = ["\(manifest.sizeBytes)\n", "4\n"]
+  let plan = RemoteInstallPlan(
+    targetDescription: "dev@host", homeDirectory: "/home/dev", manifest: manifest,
+    existingVersion: nil, stagingID: "stage")
+  let transaction = RemoteInstallTransaction(
+    executor: executor, remotePlatform: manifest.platform,
+    remoteArchitecture: manifest.architecture, acceptDevelopmentArtifact: true,
+    signatureVerifier: { _ in true })
+  _ = try transaction.install(
+    plan: plan, manifest: manifest, localPath: "/local/aster-session",
+    localDigest: sampleDigest, localSize: manifest.sizeBytes,
+    shellIntegrationPath: "/local/shell-integration.tar.gz")
+  #expect(executor.stepLabels == ["mkdir", "digest", "size", "digest", "size", "integration", "activate"])
+  #expect(executor.uploads.map(\.remote) == [plan.stagingPath, plan.shellIntegrationStagingPath])
+  #expect(plan.installShellIntegrationCommand()[2].contains("-C '\(plan.versionDirectory)'"))
+  #expect(plan.versionedShellIntegrationDirectory == plan.versionDirectory + "/shell-integration")
+  // 回滚也清理集成压缩包的临时文件。
+  #expect(plan.rollbackCommand()[2].contains(plan.shellIntegrationStagingPath))
+
+  // 清单声明了压缩包但本地缺文件：不能装出一个没有集成的版本。
+  let missing = FakeInstallExecutor()
+  missing.digestOutputs = [sampleDigest + "  staging"]
+  missing.sizeOutputs = ["\(manifest.sizeBytes)\n"]
+  let missingTransaction = RemoteInstallTransaction(
+    executor: missing, remotePlatform: manifest.platform,
+    remoteArchitecture: manifest.architecture, acceptDevelopmentArtifact: true,
+    signatureVerifier: { _ in true })
+  #expect(throws: RemoteInstallError.self) {
+    try missingTransaction.install(
+      plan: plan, manifest: manifest, localPath: "/local/aster-session",
+      localDigest: sampleDigest, localSize: manifest.sizeBytes)
+  }
+  #expect(missing.stepLabels.contains("activate") == false)
+  #expect(missing.stepLabels.last == "rollback")
 }

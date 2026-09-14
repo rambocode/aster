@@ -13,10 +13,13 @@ public struct RemoteServiceArtifact: Equatable, Sendable {
   public var localPath: String
   /// 安装校验的唯一事实来源。
   public var manifest: RemoteReleaseManifest
+  /// 与二进制同目录的 `shell-integration.tar.gz`；清单未声明或文件不存在时为 nil。
+  public var shellIntegrationPath: String?
 
-  public init(localPath: String, manifest: RemoteReleaseManifest) {
+  public init(localPath: String, manifest: RemoteReleaseManifest, shellIntegrationPath: String? = nil) {
     self.localPath = localPath
     self.manifest = manifest
+    self.shellIntegrationPath = shellIntegrationPath
   }
 }
 
@@ -175,7 +178,18 @@ public struct RemoteServiceArtifactCatalog: Sendable {
       throw RemoteServiceArtifactError.bundledManifestInvalid(
         "manifest 声明 \(manifest.platform)/\(manifest.architecture)，目录是 \(platform)/\(architecture)")
     }
-    return RemoteServiceArtifact(localPath: binary.path, manifest: manifest)
+    // 清单声明了集成压缩包但文件缺失，同样是打包错误：装出去的服务会没有 shell 集成。
+    var shellIntegrationPath: String?
+    if let payload = manifest.shellIntegration {
+      let payloadURL = directory.appendingPathComponent(payload.fileName)
+      guard FileManager.default.isReadableFile(atPath: payloadURL.path) else {
+        throw RemoteServiceArtifactError.bundledManifestInvalid(
+          "manifest 声明了 \(payload.fileName)，但产物目录里没有该文件")
+      }
+      shellIntegrationPath = payloadURL.path
+    }
+    return RemoteServiceArtifact(
+      localPath: binary.path, manifest: manifest, shellIntegrationPath: shellIntegrationPath)
   }
 }
 
