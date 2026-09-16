@@ -3,6 +3,25 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.6.5</title>
+            <pubDate>Thu, 17 Sep 2026 00:43:02 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>24</sparkle:version>
+            <sparkle:shortVersionString>0.6.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 修复
+
+- 在 Aster 终端里运行的程序崩溃（例如测试进程或 ffmpeg 段错误）时，Aster 自己会一起无声退出，重新打开后连续几次还会不恢复上次的工作区。现在终端里的程序崩溃只影响它自己，Aster 继续运行。
+
+## 新增
+
+- 「设置 → 通用 → 诊断 → 发送崩溃报告」：打开后，Aster 崩溃或异常退出时会把崩溃转储和最近的诊断事件发给开发者，帮助定位问题。默认关闭；报告不含终端内容、命令、路径或账号信息。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.5/Aster-0.6.5.dmg" length="41364745" type="application/octet-stream" sparkle:edSignature="qQuAFTIb9gXBEXurmf3UXN02jwwsUzcGws//yruSZNYCO3keYiiBjSPjKtvcRQ54awm1UXHuf/Otuir76lwtDw=="/>
+        </item>
+        <item>
             <title>0.6.4</title>
             <pubDate>Mon, 14 Sep 2026 18:52:13 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -81,32 +100,6 @@
 - “立即重启”走正常退出流程：有需要确认的终端会先询问，退出后 Aster 自动重新打开。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.1/Aster-0.6.1.dmg" length="41123448" type="application/octet-stream" sparkle:edSignature="7JL27lubk7xFCPL0Rw3BgR4gzJ49bpfxp+POrDAVYw41uXk6BwrB6MojfKs/C+lVc72412xJzt9vsxUnJs5cDQ=="/>
-        </item>
-        <item>
-            <title>0.6.0</title>
-            <pubDate>Sun, 13 Sep 2026 11:29:08 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>19</sparkle:version>
-            <sparkle:shortVersionString>0.6.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## 界面语言
-
-- 设置里的“语言”终于起作用了：新增繁體中文、English、日本語、Français、Deutsch 五种界面语言，加上简体中文共六种。菜单、侧栏、窗格提示、对话框、通知和整个设置页都会切换；更改后重新启动 Aster 生效。
-- “跟随系统”按 macOS 的偏好语言顺序匹配，`zh-TW` 显示繁体、`en-GB` 显示英文；系统语言不在支持范围时显示英文。
-- 终端里程序的输出语言仍由 Shell 自己的 `LANG` 决定，不受此设置影响。
-
-## 受管终端
-
-- 安装包内置了 macOS 版 `aster-session`，本机的受管终端模式开箱可用：分离后任务在后台继续运行，重新附加时进程不变。
-
-## Agent
-
-- 用量条只在确认 Agent 进程真的在运行后才显示，不再因误判而闪现。
-- Agent 会话结束时即使没有 Shell 集成也能正确收起用量条与 Agent 绑定。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.0/Aster-0.6.0.dmg" length="41064471" type="application/octet-stream" sparkle:edSignature="c+JRUkDeHB8nYtjmswCqdw0aCMGz2SZZ3VxmZBb3ajKKIDgH3UQGvJSl84lrQfRb3sYgaNw98Cq8/WecDIELBg=="/>
         </item>
     </channel>
 </rss>
