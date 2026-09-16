@@ -129,12 +129,14 @@ DMG_PATH=$("$PROJECT_DIR/scripts/build-dmg.sh" | tee /dev/stderr | tail -n 1)
 [[ -f "$DMG_PATH" ]] || die "build-dmg.sh did not produce a DMG"
 # 把本次构建的 dSYM 传到 Sentry，崩溃报告才能显示函数名。缺 sentry-cli 或令牌时只提示不阻断：
 # 发布本身不依赖它，但没有它这一版的崩溃栈将是裸地址，所以提示要显眼。
+# 令牌来源二选一：环境变量 SENTRY_AUTH_TOKEN，或 `sentry-cli login` 写入的 ~/.sentryclirc。
 DSYM_PATH="$PROJECT_DIR/dist/Aster.app.dSYM"
-if command -v sentry-cli >/dev/null 2>&1 && [[ -n "${SENTRY_AUTH_TOKEN:-}" && -d "$DSYM_PATH" ]]; then
+if command -v sentry-cli >/dev/null 2>&1 && [[ -d "$DSYM_PATH" ]] \
+  && { [[ -n "${SENTRY_AUTH_TOKEN:-}" ]] || grep -qs '^token=' "$HOME/.sentryclirc"; }; then
   sentry-cli debug-files upload --org dx-i1 --project aster "$DSYM_PATH" \
     || die "sentry-cli debug-files upload failed"
 else
-  echo "warning: dSYM not uploaded to Sentry (need sentry-cli on PATH and SENTRY_AUTH_TOKEN); run later:" >&2
+  echo "warning: dSYM not uploaded to Sentry (need sentry-cli on PATH and a token via SENTRY_AUTH_TOKEN or 'sentry-cli login'); run later:" >&2
   echo "  sentry-cli debug-files upload --org dx-i1 --project aster $DSYM_PATH" >&2
 fi
 
