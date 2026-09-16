@@ -128,6 +128,9 @@
             options: options.updateChannel,
           }),
         ]},
+        { title: t("诊断"), rows: [
+          row("diagnostics.crashReporting", t("发送崩溃报告"), t("崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令")),
+        ]},
         { title: t("关于"), rows: [
           row("about.version", "Aster", t("当前应用版本"), "readonly"),
           action("openCredits", t("致谢"), t("查看第三方组件及许可证"), t("打开")),

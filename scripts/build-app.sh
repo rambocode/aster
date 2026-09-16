@@ -36,6 +36,10 @@ fi
 rm -rf "$APP_DIR"
 mkdir -p "$CONTENTS_DIR/MacOS" "$RESOURCES_DIR" "$ICONSET_DIR" "$ICON_PREVIEW_DIR"
 cp "$BUILD_DIR/release/Aster" "$CONTENTS_DIR/MacOS/Aster"
+# 崩溃报告的符号化依赖 dSYM。放在 dist 下与 .app 并列，release.sh 会把它上传到 Sentry；
+# 不能放进 .app，否则会随 DMG 分发并把体积翻倍。
+rm -rf "$DIST_DIR/Aster.app.dSYM"
+dsymutil "$BUILD_DIR/release/Aster" -o "$DIST_DIR/Aster.app.dSYM"
 # MCPInstallService 按「与主程序同目录」解析 aster-memory-mcp，分发包必须把这个独立可执行文件
 # 一并放进 Contents/MacOS，否则用户在设置页一键安装 MCP 时会报 executableNotFound。
 cp "$BUILD_DIR/release/aster-memory-mcp" "$CONTENTS_DIR/MacOS/aster-memory-mcp"

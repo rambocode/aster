@@ -645,6 +645,16 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         ) { [weak self] value in
           self?.preferences.configuration.general.newWindowWhenAllClosed = value
         },
+        toggleRow(
+          L("发送崩溃报告"), L("崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令"),
+          value: preferences.configuration.resolvedDiagnostics.resolvedCrashReporting
+        ) { [weak self] value in
+          guard let self else { return }
+          var diagnostics = self.preferences.configuration.resolvedDiagnostics
+          diagnostics.crashReporting = value
+          self.preferences.configuration.diagnostics = diagnostics
+          CrashReportingService.shared.setEnabled(value)
+        },
       ]),
       sectionTitle(L("关闭确认")),
       card([
@@ -3204,6 +3214,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "general.closePaneConfirmation": configuration.general.closePaneConfirmation.rawValue,
       "appearance.newTabPosition": webNewTabPosition(configuration.appearance.resolvedNewTabPosition),
       "about.version": AsterResourceLocations.productVersion(),
+      "diagnostics.crashReporting": configuration.resolvedDiagnostics.resolvedCrashReporting,
     ], [
       "appearance.terminalIdentity": configuration.appearance.terminalIdentity,
       "appearance.terminalIdentityMode": webTerminalIdentityMode(configuration.appearance.terminalIdentity),
@@ -3630,6 +3641,13 @@ extension SettingsViewController: WKNavigationDelegate {
       guard let parsed = LaunchBehavior(rawValue: try string()) else { throw SettingsWebBridgeError.invalidValue }
       preferences.configuration.launchBehavior = parsed
     case "general.quitAfterLastWindowClosed": preferences.configuration.general.quitAfterLastWindowClosed = try bool()
+    case "diagnostics.crashReporting":
+      let enabled = try bool()
+      var diagnostics = preferences.configuration.resolvedDiagnostics
+      diagnostics.crashReporting = enabled
+      preferences.configuration.diagnostics = diagnostics
+      // 打开即上传积压的崩溃文件，用户不必等到下次启动才看到效果。
+      CrashReportingService.shared.setEnabled(enabled)
     case "general.newWindowWhenAllClosed": preferences.configuration.general.newWindowWhenAllClosed = try bool()
     case "general.closeTabConfirmation": preferences.configuration.general.closeTabConfirmation = try enumValue(string(), as: CloseConfirmation.self)
     case "general.closeWindowConfirmation": preferences.configuration.general.closeWindowConfirmation = try enumValue(string(), as: CloseConfirmation.self)

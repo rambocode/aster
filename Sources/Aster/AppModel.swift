@@ -1576,6 +1576,9 @@ final class AppModel: ObservableObject {
     case .openNewWindow, .startFreshAfterCrashLoop:
       shouldRestoreInitialWorkspace = false
     }
+    // 崩溃上报只在这里拿到「上次是否异常结束」的真值；是否真的发送由用户开关决定。
+    CrashReportingService.shared.noteSessionRecovery(
+      reason: reason.rawValue, crashCount: crashCount, decision: String(describing: decision))
     // 复用既有恢复真值记录异常退出与 crash-loop 决策；不新增并行状态文件，避免多窗口
     // 或强制退出时两套标记彼此矛盾。
     DiagnosticsCenter.shared.record(

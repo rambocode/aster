@@ -18,6 +18,8 @@ Aster 是本机优先的终端工作区。排查应用自身启动、PTY、持�
 3. 禁止记录终端输入输出、命令、路径、URL、环境变量、剪贴板、配置、账号/主机信息、令牌、secret 及系统 `.ips`。
 4. Debug 记录源码位置和 debug 事件；Release 不写这些字段。磁盘失败只降级为 Unified Logging，不能阻止应用启动。
 5. 反馈包绝不自动生成或上传；用户只能从“帮助 → 反馈问题…”保存或经系统分享面板发送。
+   唯一的自动上传是「设置 → 通用 → 诊断 → 发送崩溃报告」，默认关闭；打开后只上传崩溃
+   minidump 与异常退出事件，见下文「崩溃上报」。
 6. 每条记录自动携带 `process` 属性（进程名），新旧构建并存或辅助进程场景可按来源过滤。
 7. 测试环境（XCTest / swift-testing）不落盘 JSONL，只写 Unified Logging；显式注入 `rootDirectory` 的测试自查除外。测试噪声混入本地日志曾导致现场排障两轮误判（见 `engineering-pitfalls.md`）。
 6. Shell 的正常退出、非零退出、信号终止和 PTY I/O 失败必须使用稳定状态字段记录；不得附带命令、终端正文、启动路径或环境变量。
@@ -56,3 +58,28 @@ flowchart LR
 - `DiagnosticsCenterTests` 使用真实 PTY 验证异常退出事件会落盘，同时命令和工作目录不会进入日志；其它用例验证敏感属性和错误描述不会写入日志，且 ZIP 只含 manifest、用户说明和诊断文件。
 - 执行 `swift build`、`swift test --no-parallel`、`swift build -c release`、`./scripts/build-app.sh` 与 `codesign --verify --deep --strict dist/Aster.app`。
 - 手工检查帮助菜单、反馈面板、Finder 日志目录和生成 ZIP 的内容；不得通过终端内容或用户配置验证。
+
+## 崩溃上报（Sentry）
+
+- 开关：`diagnostics.crashReporting`，默认 false。关闭时 `CrashReportingService` 不读文件、不发请求。
+- 两类数据，都走 Sentry envelope 接口（项目 `dx-i1/aster`，DSN 只含 public key）：
+  1. **原生崩溃**：GhosttyKit 内置 Breakpad 已把崩溃写成 `~/.local/state/ghostty/crash/*.ghosttycrash`
+     （完整 envelope：事件 + minidump 附件）。上传前 `GhosttyCrashEnvelope.rewrite` 把 `release`
+     改成 `aster@<版本>+<构建号>`、去掉 `server_name`/`user`、加 `crash.source=ghostty-breakpad`。
+     已上传的文件名登记在 `~/Library/Application Support/Aster/CrashReports/uploaded.json`，
+     Ghostty 的原文件不动。每次启动最多传 5 个，单个不超过 19 MiB。
+  2. **异常退出事件**：`AppModel.beginApplicationSession` 判定上次为 crash/forceQuit 时，
+     `AbnormalExitEvent` 生成一条 message 事件，tags 带 `session.end_reason`、`session.crash_count`、
+     `session.recovery_decision`；没有配套 minidump 时 `crash.kind=silent_exit`（例如 `exit(1)`
+     这种崩溃 SDK 抓不到的退出）。面包屑取上一会话 JSONL 的最后 50 条，沿用既有敏感键过滤。
+- **为什么不用 sentry-cocoa 的崩溃处理器**：它给进程装 Mach 异常端口且不区分外部任务；终端子进程
+  继承该端口后一段错误，就会被当成 Aster 的致命崩溃记录并禁用处理器。Breakpad 那一层在修复
+  `catch_exception_raise` 导出后对外部任务是安全的，所以只复用它。见 `child-crash-exit.md`。
+- 符号化：`build-app.sh` 生成 `dist/Aster.app.dSYM`，`release.sh` 在有 `sentry-cli` 与
+  `SENTRY_AUTH_TOKEN` 时执行 `sentry-cli debug-files upload --org dx-i1 --project aster`，否则打印
+  待补命令。没有 dSYM 的版本崩溃栈只有裸地址。
+- 失败语义：网络错误或 429 留到下次启动重试；其它 4xx 记为已处理不再重试；改写失败同样记为已处理。
+  所有结果都写 `crash_reporting.uploaded` / `crash_reporting.upload_failed` 诊断事件。
+- 验收：`swift test --filter CrashReportEnvelope`；手工打开开关后在
+  `~/Library/Logs/Aster` 看到 `crash_reporting.uploaded`，Sentry 项目里出现对应 issue。
+

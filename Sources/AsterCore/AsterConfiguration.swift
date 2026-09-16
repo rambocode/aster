@@ -685,6 +685,16 @@ public struct AgentConfiguration: Codable, Equatable, Sendable {
   }
 }
 
+/// 「诊断」分类：崩溃与异常退出报告是否上传。默认关闭：上传的 minidump 含崩溃时的线程栈
+/// 内存，必须由用户明确同意；本地 JSONL 日志与反馈包不受此开关影响。
+public struct DiagnosticsConfiguration: Codable, Equatable, Sendable {
+  public var crashReporting: Bool? = false
+
+  public var resolvedCrashReporting: Bool { crashReporting ?? false }
+
+  public init() {}
+}
+
 /// Aster 的完整用户配置。持久化入口在解码后统一规范化所有外部可控数值。
 public struct AsterConfiguration: Codable, Equatable, Sendable {
   public var general = GeneralConfiguration()
@@ -696,6 +706,8 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
   /// 「视图」分类（标签规则、角标摆放、网页窗格、详情面板）。可选以兼容缺少该键的旧文件：
   /// 解码失败会让整份配置回退到默认值，所以新增顶层块必须是可选。
   public var view: ViewConfiguration?
+  /// 「诊断」分类。与 `view` 同理必须可选，缺键的旧配置才能继续解码。
+  public var diagnostics: DiagnosticsConfiguration?
   public var tabBarLayout = TabBarLayout.vertical
   public var launchBehavior = LaunchBehavior.restoreLastSession
   /// Aster 内保存的 Recipe 默认可信，可自动重放；可选字段兼容旧版单一重放策略。
@@ -709,6 +721,8 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
 
   /// 视图配置的非空读取口；写入请直接对 `view` 赋值。
   public var resolvedView: ViewConfiguration { view ?? ViewConfiguration() }
+  /// 诊断配置的非空读取口；写入请直接对 `diagnostics` 赋值。
+  public var resolvedDiagnostics: DiagnosticsConfiguration { diagnostics ?? DiagnosticsConfiguration() }
 
   public init() {}
 
