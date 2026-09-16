@@ -163,6 +163,33 @@ final class DiagnosticsCenter: @unchecked Sendable {
     }
   }
 
+  /// 读取上一个会话（最近一个不属于本进程的日志文件）的最后若干条原始 JSONL 行，
+  /// 供异常退出报告当面包屑。记录本身已过滤敏感键，这里不再解析内容。
+  func previousSessionRecordLines(limit: Int) -> [String] {
+    queue.sync {
+      guard persistsToDisk, limit > 0 else { return [] }
+      let prefix = "aster-"
+      let currentPrefix = "\(prefix)\(sessionID.uuidString.lowercased())-"
+      guard let urls = try? fileManager.contentsOfDirectory(
+        at: rootDirectory, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles])
+      else { return [] }
+      let candidates = urls.filter {
+        let name = $0.lastPathComponent
+        return name.hasPrefix(prefix) && name.hasSuffix(".jsonl") && !name.hasPrefix(currentPrefix)
+      }
+      // 取最近修改的一个文件；同一会话的多个分段里也只需要最新那个。
+      let newest = candidates.max {
+        ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
+          < ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
+      }
+      guard let newest, let data = try? Data(contentsOf: newest), data.count <= Self.maximumFileBytes,
+        let text = String(data: data, encoding: .utf8)
+      else { return [] }
+      let lines = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+      return Array(lines.suffix(limit))
+    }
+  }
+
   /// 在退出路径刷新文件。即便没有磁盘权限，结束事件仍会进入 Unified Logging。
   func finish(reason: String) {
     record("application.finished", level: .notice, category: .lifecycle, attributes: ["reason": reason])

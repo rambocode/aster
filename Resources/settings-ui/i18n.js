@@ -1,6 +1,9 @@
 // Aster 设置页多语言翻译表（自动生成）。
 window.AsterI18n = {
   "en": {
+    "诊断": "Diagnostics",
+    "发送崩溃报告": "Send crash reports",
+    "崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令": "After a crash or abnormal exit, upload the minidump and recent diagnostic events to Sentry to help fix the problem. The minidump contains thread stack memory at crash time, never terminal content or commands",
     "终端输出里哪些 URL 协议在 Cmd 悬停时显示下划线并可点击。http(s)、file、mailto 始终识别；「自定义」可额外添加。": "Which URL protocols in terminal output show an underline and become clickable on Cmd-hover. http(s), file, and mailto are always recognized; \"Custom\" lets you add more.",
     "按住 Cmd 悬停在链接上时，在底部角落显示该链接的完整路径或 URL。关闭后链接仍可点击，但不再显示预览。": "While holding Cmd and hovering over a link, show its full path or URL in the bottom corner. When off, links remain clickable but no preview is shown.",
     "清除所有「始终允许」记忆，下次打开外部链接、自定义协议或可执行文件时重新弹出确认对话框。": "Clear all \"Always Allow\" memories; the confirmation dialog will reappear next time you open an external link, custom protocol, or executable.",
@@ -842,6 +845,9 @@ window.AsterI18n = {
     "（未设置，跟随派生）": "(Not set, follows derived)"
   },
   "ja": {
+    "诊断": "診断",
+    "发送崩溃报告": "クラッシュレポートを送信",
+    "崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令": "クラッシュや異常終了の後、minidump と直近の診断イベントを Sentry にアップロードして問題の修正に役立てます。minidump にはクラッシュ時のスレッドスタックのメモリが含まれますが、ターミナルの内容やコマンドは含まれません",
     "终端输出里哪些 URL 协议在 Cmd 悬停时显示下划线并可点击。http(s)、file、mailto 始终识别；「自定义」可额外添加。": "ターミナル出力内でどの URL プロトコルが Cmd ホバー時に下線付きでクリック可能になるか。http(s)、file、mailto は常に認識され、「カスタム」でさらに追加できます。",
     "按住 Cmd 悬停在链接上时，在底部角落显示该链接的完整路径或 URL。关闭后链接仍可点击，但不再显示预览。": "Cmd を押しながらリンクにカーソルを合わせると、下隅にリンクの完全なパスまたは URL が表示されます。オフにするとリンクはクリック可能なままですが、プレビューは表示されません。",
     "清除所有「始终允许」记忆，下次打开外部链接、自定义协议或可执行文件时重新弹出确认对话框。": "すべての「常に許可」の記憶を消去します。次回、外部リンク、カスタムプロトコル、実行ファイルを開くときに確認ダイアログが再表示されます。",
@@ -1683,6 +1689,9 @@ window.AsterI18n = {
     "（未设置，跟随派生）": "（未設定、派生に従う）"
   },
   "fr": {
+    "诊断": "Diagnostics",
+    "发送崩溃报告": "Envoyer les rapports de plantage",
+    "崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令": "Après un plantage ou une sortie anormale, envoyer le minidump et les derniers événements de diagnostic à Sentry pour aider à corriger le problème. Le minidump contient la mémoire des piles de threads au moment du plantage, jamais le contenu du terminal ni les commandes",
     "终端输出里哪些 URL 协议在 Cmd 悬停时显示下划线并可点击。http(s)、file、mailto 始终识别；「自定义」可额外添加。": "Quels protocoles d'URL dans la sortie du terminal s'affichent soulignés et cliquables au survol avec Cmd. http(s), file et mailto sont toujours reconnus ; « Personnalisé » permet d'en ajouter d'autres.",
     "按住 Cmd 悬停在链接上时，在底部角落显示该链接的完整路径或 URL。关闭后链接仍可点击，但不再显示预览。": "En maintenant Cmd et en survolant un lien, afficher son chemin ou URL complet dans le coin inférieur. Une fois désactivé, les liens restent cliquables mais aucun aperçu n'est affiché.",
     "清除所有「始终允许」记忆，下次打开外部链接、自定义协议或可执行文件时重新弹出确认对话框。": "Efface toutes les mémorisations « Toujours autoriser » ; la boîte de dialogue de confirmation réapparaîtra à la prochaine ouverture d'un lien externe, protocole personnalisé ou exécutable.",
@@ -2524,6 +2533,9 @@ window.AsterI18n = {
     "（未设置，跟随派生）": "(Non défini, suit la dérivation)"
   },
   "de": {
+    "诊断": "Diagnose",
+    "发送崩溃报告": "Absturzberichte senden",
+    "崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令": "Nach einem Absturz oder unerwarteten Beenden Minidump und aktuelle Diagnoseereignisse an Sentry senden, um das Problem zu beheben. Der Minidump enthält den Thread-Stack-Speicher zum Absturzzeitpunkt, nie Terminalinhalte oder Befehle",
     "终端输出里哪些 URL 协议在 Cmd 悬停时显示下划线并可点击。http(s)、file、mailto 始终识别；「自定义」可额外添加。": "Welche URL-Protokolle in der Terminalausgabe beim Hover mit Cmd unterstrichen und klickbar werden. http(s), file und mailto werden immer erkannt; „Benutzerdefiniert\" erlaubt weitere.",
     "按住 Cmd 悬停在链接上时，在底部角落显示该链接的完整路径或 URL。关闭后链接仍可点击，但不再显示预览。": "Beim Halten von Cmd und Hovern über einem Link wird dessen vollständiger Pfad oder URL in der unteren Ecke angezeigt. Bei Deaktivierung bleiben Links klickbar, aber es wird keine Vorschau mehr angezeigt.",
     "清除所有「始终允许」记忆，下次打开外部链接、自定义协议或可执行文件时重新弹出确认对话框。": "Löscht alle „Immer erlauben\"-Merkungen; der Bestätigungsdialog erscheint beim nächsten Öffnen eines externen Links, benutzerdefinierten Protokolls oder einer ausführbaren Datei erneut.",
@@ -3365,6 +3377,9 @@ window.AsterI18n = {
     "（未设置，跟随派生）": "(Nicht festgelegt, folgt der Ableitung)"
   },
   "zh-Hant": {
+    "诊断": "診斷",
+    "发送崩溃报告": "傳送當機報告",
+    "崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令": "當機或異常結束後，把 minidump 與最近的診斷事件上傳到 Sentry 協助修復問題；minidump 含當機時的執行緒堆疊記憶體，不含終端內容與指令",
     "终端输出里哪些 URL 协议在 Cmd 悬停时显示下划线并可点击。http(s)、file、mailto 始终识别；「自定义」可额外添加。": "終端機輸出裡哪些 URL 通訊協定在 Cmd 懸停時顯示底線並可點按。http(s)、file、mailto 始終辨識；「自訂」可額外新增。",
     "按住 Cmd 悬停在链接上时，在底部角落显示该链接的完整路径或 URL。关闭后链接仍可点击，但不再显示预览。": "按住 Cmd 懸停在連結上時，在底部角落顯示該連結的完整路徑或 URL。關閉後連結仍可點按，但不再顯示預覽。",
     "清除所有「始终允许」记忆，下次打开外部链接、自定义协议或可执行文件时重新弹出确认对话框。": "清除所有「始終允許」記憶，下次開啟外部連結、自訂通訊協定或可執行檔時會重新彈出確認對話方塊。",

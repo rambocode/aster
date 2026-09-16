@@ -333,6 +333,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     configureWorkspaceModel(model)
     model.beginApplicationSession(launchBehavior: preferences.configuration.launchBehavior)
     DiagnosticsCenter.shared.record("application.launched", level: .notice, category: .lifecycle)
+    // 必须在 beginApplicationSession 之后：异常退出事件依赖它记下的恢复决策。
+    CrashReportingService.shared.start(enabled: preferences.configuration.resolvedDiagnostics.resolvedCrashReporting)
     synchronizeWorkspaceConfiguration()
     NSApp.mainMenu = makeMainMenu()
     ShortcutOverrideApplier.apply(

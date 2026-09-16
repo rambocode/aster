@@ -437,6 +437,7 @@
 "发送到 Chat" = "Envoyer au Chat";
 "发送到聊天" = "Envoyer au chat";
 "发送到聊天…" = "Envoyer au chat…";
+"发送崩溃报告" = "Envoyer les rapports de plantage";
 "发送诊断反馈" = "Envoyer un retour de diagnostic";
 "发送选区到 Chat" = "Envoyer la sélection au Chat";
 "取消" = "Annuler";
@@ -636,6 +637,7 @@
 "展开详情面板" = "Afficher le panneau de détails";
 "展开输入" = "Développer la saisie";
 "展开输出" = "Développer la sortie";
+"崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令" = "Après un plantage ou une sortie anormale, envoyer le minidump et les derniers événements de diagnostic à Sentry pour aider à corriger le problème. Le minidump contient la mémoire des piles de threads au moment du plantage, jamais le contenu du terminal ni les commandes";
 "工作区" = "Espace de travail";
 "工作区干净" = "Arbre de travail propre";
 "工作目录" = "Répertoire de travail";
@@ -1373,6 +1375,7 @@
 "设置范围" = "Portée des réglages";
 "识别本地路径、URL 和 OSC 8 显式链接；关闭后不再显示下划线、预览，也不响应 Cmd 点击。" = "Reconnaître les chemins locaux, les URL et les liens explicites OSC 8 ; une fois désactivé, le soulignement, l'aperçu et le Cmd-clic ne répondent plus.";
 "识别终端目标" = "Reconnaître les cibles du terminal";
+"诊断" = "Diagnostics";
 "诊断包已生成。" = "Paquet de diagnostic généré.";
 "该 Agent 没有 Aster hook 集成，任务状态依赖屏幕检测，无需写入任何配置。" = "Cet agent n'a pas d'intégration de hook Aster ; l'état des tâches repose sur la détection d'écran, aucune configuration n'a besoin d'être écrite.";
 "该文件没有可显示的差异。" = "Aucune différence à afficher pour ce fichier.";
