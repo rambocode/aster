@@ -115,7 +115,11 @@ echo "release: $SHORT_VERSION (build $BUNDLE_VERSION)${CHANNEL:+ on the $CHANNEL
 plutil -replace CFBundleShortVersionString -string "$SHORT_VERSION" "$PROJECT_DIR/Resources/Info.plist"
 plutil -replace CFBundleVersion -string "$BUNDLE_VERSION" "$PROJECT_DIR/Resources/Info.plist"
 git add Resources/Info.plist docs/release-notes
-git commit -q -m "chore(release): $SHORT_VERSION ($BUNDLE_VERSION)"
+# 阶段 2 之后失败（例如公证凭据不可用）重跑时，版本号提交已经推送过；此时没有可提交的改动，
+# 跳过提交而不是让 `git commit` 在 set -e 下中止整条发布。
+if ! git diff --cached --quiet; then
+  git commit -q -m "chore(release): $SHORT_VERSION ($BUNDLE_VERSION)"
+fi
 git push --quiet origin master
 RELEASE_SHA=$(git rev-parse HEAD)
 
