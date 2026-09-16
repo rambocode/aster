@@ -114,6 +114,14 @@ let package = Package(
         // 代价：xctest 宿主不在 .app 布局里，测试须经 scripts/test.sh 注入
         // DYLD_FRAMEWORK_PATH（SwiftPM 对动态 binaryTarget 的已知缺口）。
         .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
+        // GhosttyKit 内置 Sentry(Breakpad) 崩溃捕获：它给本进程装 task 级 Mach 异常端口，
+        // 终端里启动的所有子进程都会继承。子进程一旦段错误，异常消息先送回 Aster，由
+        // Breakpad 调系统 `exc_server` 分发到 C 回调 `catch_exception_raise`（flat
+        // namespace 动态查找）。release 构建会把这个没人静态引用的符号 dead-strip 掉，
+        // `exc_server` 找不到回调即失败，Breakpad 随即 `exit(1)`：整个 App 无声退出、
+        // 没有崩溃报告，还被记成一次异常退出。显式导出该符号，让它既保留又可被查到。
+        // 复现与验证见 docs/developer/child-crash-exit.md。
+        .unsafeFlags(["-Xlinker", "-exported_symbol", "-Xlinker", "_catch_exception_raise"]),
       ]
     ),
     .testTarget(
