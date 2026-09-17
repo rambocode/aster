@@ -667,7 +667,10 @@ final class TerminalAutocompleteController {
     case (.hidden, _):
       break
     case (.open(.automatic, _), .automatic):
-      if result.candidates.count < 2 { panelState = .hidden }
+      // 自动面板随输入退格清空而收起：空 prompt 上的候选只是目录历史，与上面
+      // 「空 prompt 不自动弹面板」同一语义；用户再敲字符会重新展开。手动打开的面板
+      // 不受影响（下面的 .manual 分支）。
+      if result.candidates.count < 2 || tracker.line.isEmpty { panelState = .hidden }
     case (.open(.automatic, _), _):
       // 配置从 auto 改掉时,收起此前自动弹出的面板。
       panelState = .hidden

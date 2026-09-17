@@ -1025,3 +1025,37 @@ func terminalAutocompleteRanksProjectCommandFirst() async throws {
   controller.refreshNow()
   #expect(controller.currentResult.candidates.first?.insertText != "claude --resume sess-42")
 }
+
+// 用户反馈：把输入退格删空后，自动弹出的历史列表仍压在光标下。空 prompt 上的候选只是
+// 目录历史，与「空 prompt 不自动弹面板」同一语义，自动面板必须随之收起。
+@Test("自动弹出的候选面板在输入退格清空后收起，再输入时重新展开")
+@MainActor
+func terminalAutocompleteAutoPanelClosesWhenInputIsErased() throws {
+  let fixture = try makeTerminalAutocompleteFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.directory) }
+  fixture.controls.value.autocompleteCandidatePanel = .automatic
+  let controller = makeController(fixture)
+  for command in ["git status", "git commit -m x", "ls"] {
+    controller.receive(.promptStart)
+    controller.receive(.inputStart)
+    controller.receiveInput(Array("\(command)\n".utf8)[...])
+    controller.receive(.commandStart)
+    controller.receive(.commandFinished(exitStatus: 0))
+  }
+
+  controller.receive(.promptStart)
+  controller.receive(.inputStart)
+  controller.receiveInput(Array("g".utf8)[...])
+  controller.refreshNow()
+  #expect(controller.panelVisible)
+
+  // 退格删到空行：候选（目录历史）仍 ≥ 2 条，但面板必须收起。
+  controller.receiveInput([0x7F][...])
+  controller.refreshNow()
+  #expect(controller.currentResult.candidates.count >= 2)
+  #expect(!controller.panelVisible)
+
+  controller.receiveInput(Array("l".utf8)[...])
+  controller.refreshNow()
+  #expect(controller.panelVisible)
+}
