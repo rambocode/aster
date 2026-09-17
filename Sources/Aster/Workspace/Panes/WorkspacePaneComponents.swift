@@ -43,9 +43,9 @@ final class PersistedSplitView: NSSplitView, NSSplitViewDelegate {
       isVertical
       ? NSRect(x: rect.midX - thickness / 2, y: rect.minY, width: thickness, height: rect.height)
       : NSRect(x: rect.minX, y: rect.midY - thickness / 2, width: rect.width, height: thickness)
-    // 悬停只加粗、加深灰度,不切换主题强调色:分隔线与把手同属工作区结构控件,
-    // 保持系统灰(与 PaneDragHandleView 的配色例外一致)。
-    (isHoveringDivider ? NSColor.secondaryLabelColor : AsterTheme.divider).setFill()
+    // 悬停时加粗并切成系统强调色(默认蓝):把手仍保持系统灰,分隔线需要更明确的
+    // 「可拖动」反馈,否则 1pt 的淡线在悬停加粗后仍不易与静态分隔线区分。
+    (isHoveringDivider ? NSColor.controlAccentColor : AsterTheme.divider).setFill()
     line.fill()
   }
 
