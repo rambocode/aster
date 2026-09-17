@@ -40,11 +40,11 @@
 
 Windows 客户端/服务器、Web 仪表盘、独立手机 App 不在本次范围。Herdr 的插件市场、全部 Agent 品牌清单、自动化编排产品功能不作为远程模式复制目标；把 Aster 已支持的 Agent、命令和扩展能力接入远端。
 
-远端文件编辑、Git 面板、代码同步、目录挂载和端口转发属于独立功能，不以“完整远程模式”隐含实现。通过终端在远端运行 Git 和编辑器。远端 File Pane 与本机文件操作保持明确禁用，显示原因；后续单独定义远端文件服务再开放。
+远端文件编辑、Git 面板、代码同步、目录挂载和端口转发属于独立功能，不以“完整远程模式”隐含实现。通过终端在远端运行 Git 和编辑器。详情面板的远端模式提供远端目录的只读浏览与上传/下载，以及服务器监控（见 [Inspector Details Panel](details-panel-domain.md)）；远端 File Pane 与本机文件操作仍保持明确禁用并显示原因，后续单独定义远端文件服务再开放。
 
 ## 2. 已核实的起点
 
-- `SSHHostResolutionService.swift` 使用 OpenSSH 配置解析；`TerminalSession.sshRemoteEndpoint` 仅为运行态投影，未保存远端终端身份。
+- `SSHHostResolutionService.swift` 使用 OpenSSH 配置解析；`TerminalSession.sshRemoteEndpoint` 仅为运行态投影，未保存远端终端身份。本分支在它旁边补了 `sshInvocation`（用户原始 ssh argv 前缀）与 `remoteWorkingDirectory`（远端 OSC 7 上报的目录），两者与受管终端引用一起组成只读的 `remoteInspectionContext`，供详情面板的旁路巡检使用；它们同样只是运行态投影，不进入布局持久化，也不作为资源身份。
 - `AsterCore/WorkspaceLayout.swift` 的 `PaneDescriptor` 保存目录和资源；`WorkspacePersistence.swift` 保存本地布局。
 - `TerminalSession.stop` 销毁 Ghostty surface。当前退出链路不能直接复用为远端结束操作。
 - `Ghostty/GhosttySurfaceView.swift` 创建拥有子进程的 surface；PTY observer 是观察接口，不视为可直接注入外部 PTY 的接口。
@@ -65,7 +65,7 @@ Windows 客户端/服务器、Web 仪表盘、独立手机 App 不在本次范�
 
 后台服务持有 PTY master、进程组、终端状态和布局。连接断开只回收连接资源，服务进程与 PTY 不依附 SSH 会话。每个命名会话运行独立后台服务，故障及停止操作限定在该会话。
 
-Ghostty surface 启动本地 `aster-session bridge` 子进程；bridge 使用 raw 模式，把规范化终端画面输出到本地 PTY，并把键盘、鼠标和尺寸传回服务。控制协议通过独立通道传输，不混入可见终端内容。关闭 surface 只结束 bridge。以此接入当前 Ghostty 进程模型，不假定存在尚未实现的外部 PTY 注入 API。
+Ghostty surface 启动本地 `aster-session bridge` 子进程；bridge 使用 raw 模式，把规范化终端画面输出到本地 PTY，并把键盘、鼠标和尺寸传回服务。控制协议通过独立通道传输，不混入可见终端内容。关闭 surface 只结束 bridge。增量过滤器（`SessionRuntime/src/delta_filter.zig`）只放行 OSC 0/1/2/7/8：OSC 7 必须放行，远端 Shell 上报的工作目录才能镜像到本地 Pane，详情面板的远端 Files 页据此跟随受管终端的 `cd`；其余 OSC（剪贴板、通知、下载等有副作用的序列）继续拦截，规则见第 5 节「远端 OSC 视为不可信数据」。以此接入当前 Ghostty 进程模型，不假定存在尚未实现的外部 PTY 注入 API。
 
 终端池持有每个 PTY/VT 的唯一所有权，不以客户端引用计数决定是否销毁。公开创建适配层先解析
 执行路径并合并执行机器的环境，再传入独立 argv/envp；启动失败不占槽位。默认限制为 32 个记录、

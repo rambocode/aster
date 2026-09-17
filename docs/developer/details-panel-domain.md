@@ -68,11 +68,119 @@ Content / Inspector 之间绘制 1pt 分隔线，使用 `interface.border`（含
 只做有界只读 I/O；`AsterCore` 只解析进程、端口、命令时间线和文档结构。视图不得直接
 读取进程、扫描会话历史或执行 shell。
 
+## 远端模式：服务器文件与服务器监控
+
+本分支给 Files 与 Info 两页加了远端模式：Pane 连在远端时，Files 列远端当前目录，Info 换成
+服务器监控。两页共用同一条旁路通道，其余页不变。
+
+### 模式判定
+
+- 模式的唯一来源是当前聚焦 Pane 的 `TerminalSession.remoteInspectionContext`
+  （`AsterCore/RemoteInspection/RemoteInspectionContext.swift`）：`.ssh(invocation, endpoint)`
+  表示用户在本地 Pane 手敲 `ssh …`，`.managed(reference, label, pid)` 表示远程工作模式的受管
+  远端终端，nil 即本地模式。不按命令行文本、标题或主机名猜测远端。
+- 远端目录来自远端 Shell 上报的 OSC 7，由 `RemoteWorkingDirectoryReport.parse` 判成
+  `.local` / `.remote` / `.invalid`；只有 `.remote` 写入 `TerminalSession.remoteWorkingDirectory`。
+  `.local` 继续走 Ghostty 校验后的 `GHOSTTY_ACTION_PWD`，同一次上报不得投递两次。
+- 远端上下文变化走独立的 `TerminalTabItem.remoteContextChanged`，**不复用**
+  `workingDirectoryChanged`：后者驱动 Git 与 History 页执行本地 git 与本地 SQLite 查询，把远端
+  路径喂给它们等于拿远端路径当本机路径用。Git 页在远端模式显示「远端不支持」占位。
+
+### Files 远端状态机
+
+`awaitingIntegration` → `loading(dir)` → `listed` / `failed(kind)` / `transferring(progress)`。
+
+- `awaitingIntegration`：远端模式但还没收到远端 cwd。给 1.5 秒宽限再显示横幅，避免登录过程中
+  闪一下提示。横幅提供「安装远端集成…」「浏览 $HOME」「输入路径…」。
+- `loading`：旧列表保留为不可交互视觉帧，与本地 Files 的刷新语义一致。
+- `listed`：目录优先 + 名称排序、Find 过滤与隐藏项开关复用本地控件。隐藏项由远端全量下发，
+  本地按 `filesShowHidden` 过滤，不为切换开关重跑远端脚本。
+- 进入目录只认双击。右键菜单固定为：进入、在终端 cd 过去、下载到…、复制路径、复制相对路径、
+  上传到此目录…。
+- 名字含非法 UTF-8 的条目（`RemoteDirectoryEntry.nameDecodedLossy`）只展示，不允许进入或下载：
+  有损解码后的名字回传远端已经不是原来那个文件。
+
+### Info 远端状态机
+
+`loading` → `snapshot` → `failed(kind)`。快照分段渲染：主机、负载与 CPU、内存 · Swap、磁盘、
+进程（按 CPU / 按内存）、监听端口。缺失的段进 `unavailableSections`，按段显示「此平台不提供该项」，
+不把缺段画成 0。CPU 百分比由客户端按 `channelKey` 保存上一 tick 的 `/proc/stat` 样本做差分，
+**不在远端 sleep**，因此首个 tick 显示「—」。`ss -p` 在非 root 下看不到其他用户的进程，段头
+明确提示，不把空进程列解释成没有监听者。
+
+### 旁路通道与连接复用
+
+- `RemoteSideChannel` 是两种场景唯一的调用面（`run` / `download` / `upload`）。场景 A 用
+  `SSHControlPathInvocation` 复用用户前台 `ssh` 已建立的 ControlMaster socket；场景 B 直接复用
+  `RemoteSessionTransport` 的私有配置。
+- 场景 A 的固定 `-o` 选项（`ControlMaster=no`、`ControlPath=<dir>/%C`、`BatchMode=yes`、
+  `ConnectTimeout=5`、`ServerAliveInterval=5`）必须**前置**在用户原始 argv 之前：OpenSSH 命令行
+  同一关键字取首次出现的值，前置才能保证旁路永远不当 master、永远非交互；用户自己的 `-p`、`-i`、
+  `-J`、`-F` 仍原样生效，旁路与前台因此落在同一个 `%C` 连接哈希上。
+- 场景 A 的复用依赖本地 `ssh` 包装函数。它住在独立的 `Resources/shell-integration/aster-ssh.{zsh,bash,fish}`
+  里，**不再由 `aster-integration.*` 定义**：Ghostty 原生 Pane 的 zsh 用的是 Ghostty 自带的 ZDOTDIR，
+  `aster-integration.zsh` 在产品默认路径上根本不会加载，包装函数留在那里等于永远不生效。
+- `ShellIntegrationInstaller` 因此在受管 rc 区块里写入**两段**条件：一段是原有的 tmux 限定整体集成，
+  另一段只要求 `TERM_PROGRAM == aster`、`ASTER_DISABLE_INTEGRATION != 1` 且 `ASTER_SSH_CONTROL_DIR`
+  非空，直接 `source` 对应的 `aster-ssh.*`，**与 TMUX 无关**。tmux 路径下 `aster-integration.*` 仍会
+  source 同目录的 `aster-ssh.*`（`${(%):-%x}` / `BASH_SOURCE` / `status filename` 定位），payload 里的
+  `_ASTER_SSH_WRAPPER_LOADED` 守卫保证两条路径同时命中时只定义一次。
+- payload 只在 `ASTER_SSH_CONTROL_DIR` 已注入、目录真实存在且用户没有自定义 `ssh` 函数/别名时定义。
+  该变量只在「SSH 集成」与「SSH 连接复用」同时开启、且 `/tmp/aster-cm-<uid>` 通过属主/权限/非符号链接
+  校验时注入；校验失败就放弃复用，不降级使用不安全目录。开关只影响之后新建的终端。
+- 复用可用性用 `ssh -O check` 判定。判定失败仍允许尝试一次；`BatchMode=yes` 下需要口令的连接会
+  立即失败并归为 `.authenticationRequired`，绝不弹交互认证。
+- `channelKey` 为 `managed:<profileID>:<serverID>` 或 `ssh:<sha256(configurationArguments)>`，
+  argv 用 `\0` 连接后取摘要——参数内部可能含空格，用空格拼会让两台机器撞成同一个 key，
+  从而混用彼此的目录缓存与 CPU 差分样本。
+
+### 性能与上限
+
+- Info 只在当前可见时每 3 秒一次，一个 tick 就是一次 `ssh` exec（≈ fork + 往返 30–80ms），
+  跑在 `Task.detached(priority: .utility)` 上；上一个 tick 未完成则跳过本次，不排队堆积。
+- 目录请求 300ms 去抖；每个 `channelKey` 一份 32 项的目录 LRU 缓存，切 Pane 不清空，切回同一
+  远端可直接出旧帧再刷新。
+- 目录脚本超时 10 秒、远端输出上限 1 MiB（`RemoteDirectoryListingScript.remoteByteLimit`），
+  解析最多 2000 条（`maximumEntryCount`）；三层截断任一层触发都置 `isTruncated`，界面标注
+  「已显示 2000 / N 项，已截断」，不假装列全了。
+- 监控脚本超时 8 秒、输出上限 256 KiB（`RemoteHostMonitor.outputByteLimit`）；缺 `ASTER_MON_V1`
+  首行按 malformed 处理。
+- 上传单个文件 ≤ 512 MiB、一次最多 20 个、串行执行；超过 5 个或总量超过 50 MiB 先确认。
+  下载先在远端 `stat` 大小再传：`cat` 不报告长度，只靠流式上限会先写掉几百 MiB 才放弃。
+
+### 身份校验
+
+每个远端请求携带 `RemoteInspectionRequestIdentity {tabID, paneID, channelKey, directory?, generation}`；
+提交结果前四项全等才写界面，迟到结果一律丢弃。切 Pane、切页、收起面板都会递增 generation 并取消
+在途工作，面板收起后不得留下轮询 Task。受管终端把远端 Shell pid 传给监控脚本，`[cwd]` 段的
+`readlink /proc/<pid>/cwd` 只在 `remoteWorkingDirectory` 为空时当 Files 的初始目录用，不回写
+session。
+
+### 安全边界
+
+- 远端路径与文件名是不可信输入。它们只经 `RemoteSSHInvocation.quote` 的 POSIX 单引号或脚本的
+  `$1`、`$2` 位置参数进入远端 Shell，脚本文本本身始终是常量；这些字符串从不当作本地路径解析，
+  也不进入本地命令行拼接。
+- 「在终端 cd 过去」**只预填** `cd '<quoted>'`，不回车。执行与否由用户决定，面板不代跑命令，
+  与 Git 页所有写操作的规则一致。
+- 上传写 `dir/.name.aster-upload` 再 `mv -f`，下载写本地同目录隐藏临时文件再原子改名：中途失败
+  不会留下半截文件冒充完整副本；失败路径同时清理两端 staging。同名覆盖前先 `test -e` 确认。
+- 日志与诊断只记 `RemoteSSHDiagnostics.redact` 后的分类结果，不写远端路径正文、命令参数或
+  认证信息。
+
+### 测试与验收入口
+
+解析层在 `Tests/AsterCoreTests/RemoteInspection/`（目录列表、监控解析、集成安装、旁路 argv、
+OSC 7 判定）；面板层用注入的假 `RemoteInspectionClient` 覆盖去重、迟到结果丢弃、切 Pane 取消、
+tick 跳过、截断标注与收起后无轮询。真机验收在 OrbStack `root@ubuntu@orb` 上跑，覆盖连接复用
+socket、监控数值变化、集成安装幂等、上传下载无残留、特殊文件名与截断、退出后恢复本地。
+
 ## 失败语义
 
 非终端 Pane 显示不可用；找不到 shell 根进程显示可重试的检查失败；成功但没有 listener
 显示 “No listening ports”。缺失 Agent 绑定显示集成等待状态，不显示其他 Pane 的历史。
 刷新期间旧行对辅助功能和鼠标都不可操作。
+远端模式按原因分开：需要认证提示开启「SSH 连接复用」后重连（不弹交互认证）、超时与不可达给重试、目录不存在给「返回上级」与「浏览 $HOME」、远端未上报目录给安装远端集成入口。这些原因对应的下一步动作各不相同，不能合并成一句「读取失败」。
 
 ## 测试与验收
 
