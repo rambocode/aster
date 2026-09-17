@@ -2187,6 +2187,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 当前 Pane 由已提交 SSH 命令解析出的最终服务器端点。它只属于运行态，不进入
   /// Workspace 快照；连接失败、返回本地 Shell 或 Pane 结束时立即清除。
   @Published private(set) var sshRemoteEndpoint: SSHResolvedEndpoint?
+  /// 远端 Shell 通过 OSC 7 上报的当前目录。nil 表示本机目录或尚未收到远端上报；
+  /// 详情面板据它决定是否切到「服务器文件」。与 `sshRemoteEndpoint` 同生命周期清除。
+  @Published private(set) var remoteWorkingDirectory: RemoteWorkingDirectory?
+  /// 当前远端会话对应的原始 `ssh` 命令解析结果。旁路连接必须复用用户自己的 argv
+  /// （`-p`/`-i`/`-J`/`-F` 等），否则 ControlMaster 的 `%C` 不一致，复用失效。
+  private(set) var sshInvocation: SSHCommandInvocation?
   @Published private(set) var terminalTitle = "Shell"
   @Published private(set) var terminalIconTitle = ""
   @Published private(set) var lifecycleState = TerminalSessionLifecycleState.notStarted
@@ -2502,6 +2508,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   func bindManagedTerminal(_ reference: ManagedTerminalReference?) {
     managedTerminal = reference
     managedFailure = nil
+    // 远端受管 Pane 的 cwd 属于远端机器，绑定成功那一刻起就不能再当本机路径用，
+    // 不必等远端 Shell 的第一条 OSC 7。
+    if remoteManagedMachineLabel != nil { currentWorkingDirectoryIsLocal = false }
   }
 
   /// 标记受管终端创建/对账失败；该 Pane 只显示错误，不启动本地 Shell。
@@ -2793,6 +2802,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       resourcesDirectory: resourcesDirectory,
       engineTerminfoDirectory: AsterResourceLocations.engineTerminfoDirectory()?.path,
       controlContext: controlContextProvider?(),
+      sshControlDirectory: sshControlDirectoryForLaunch(),
       terminfoEntryExists: SystemTerminfoChecker.entryExists
     )
     if let warning = launchEnvironment.resolution.warning {
@@ -2888,6 +2898,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       resourcesDirectory: resourcesDirectory,
       engineTerminfoDirectory: AsterResourceLocations.engineTerminfoDirectory()?.path,
       controlContext: controlContextProvider?(),
+      sshControlDirectory: sshControlDirectoryForLaunch(),
       terminfoEntryExists: SystemTerminfoChecker.entryExists
     )
     if let warning = launchEnvironment.resolution.warning { appendStartupWarning(warning) }
@@ -3176,6 +3187,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       receiveAgentOSCTitle(String(decoding: payload, as: UTF8.self))
       guard preferences?.configuration.shell.resolvedTitleShellControlled == true else { return }
       handleTitleOSC(code: code, text: String(decoding: payload, as: UTF8.self))
+    case 7:
+      // Ghostty 核心会丢弃 host 非本机的 OSC 7，`GHOSTTY_ACTION_PWD` 不触发，远端目录
+      // 只能从这里进入。本机目录仍走已校验的 PWD action：两边都处理会重复投递。
+      guard payload.count <= RemoteWorkingDirectoryReport.maximumPayloadBytes else { return }
+      let report = RemoteWorkingDirectoryReport.parse(String(decoding: payload, as: UTF8.self))
+      guard case .remote = report else { return }
+      applyWorkingDirectoryReport(report)
     case 9:
       guard payload.count <= TerminalNotificationParser.maximumChunkBytes else { return }
       let value = String(decoding: payload, as: UTF8.self)
@@ -4124,6 +4142,15 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalView?.openHintMode(nil)
   }
 
+  /// 只有「SSH 集成」与「SSH 连接复用」同时开启才注入 ASTER_SSH_CONTROL_DIR；目录校验
+  /// 失败（被他人占用、权限不对）时放弃复用而不是降级使用不安全目录。
+  private func sshControlDirectoryForLaunch() -> String? {
+    guard let shell = preferences?.configuration.shell,
+      shell.sshIntegration, shell.resolvedSSHConnectionSharing
+    else { return nil }
+    return SSHControlDirectory.prepare()
+  }
+
   /// 立即读取由 OSC 7 报告的工作目录。没有集成标记时保留最近一次可靠值。
   func resolvedCurrentWorkingDirectory() -> String {
     currentWorkingDirectory
@@ -4137,6 +4164,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     pendingCommandOrigin = nil
     guard let invocation = SSHCommandInvocation.parse(command) else { return }
 
+    sshInvocation = invocation
     sshResolutionGeneration &+= 1
     let generation = sshResolutionGeneration
     let resolver = sshEndpointResolver
@@ -4156,31 +4184,80 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     sshResolutionTask?.cancel()
     sshResolutionTask = nil
     if sshRemoteEndpoint != nil { sshRemoteEndpoint = nil }
+    if sshInvocation != nil { sshInvocation = nil }
+    if remoteWorkingDirectory != nil { remoteWorkingDirectory = nil }
   }
 
-  /// 统一处理 Ghostty/SwiftTerm 的 OSC 7。远端 URL 无法转成本地路径时只切换来源标记；
-  /// 之后第一次重新收到可信本地目录，说明 SSH 已返回本地 Shell，应撤销远端分组。
+  /// 统一处理 Ghostty/SwiftTerm 的 OSC 7 原始值。
   private func applyReportedWorkingDirectory(_ reportedValue: String) {
-    let normalized = Self.normalizeReportedWorkingDirectory(reportedValue)
-    guard !normalized.isEmpty else {
-      currentWorkingDirectoryIsLocal = false
+    applyWorkingDirectoryReport(RemoteWorkingDirectoryReport.parse(reportedValue))
+  }
+
+  /// 按分类结果落地工作目录。远端上报只更新远端投影，绝不污染本机相对路径基准；
+  /// 之后第一次重新收到可信本地目录，说明 SSH 已返回本地 Shell，应撤销远端分组。
+  private func applyWorkingDirectoryReport(_ report: RemoteWorkingDirectoryReport) {
+    // 受管远端 Pane 的工作目录天然属于远端机器：即使远端上报的主机名恰好与本机重名，
+    // 也不能判成本地目录，否则本地文件动作会指向错误的文件系统。
+    if let machineLabel = remoteManagedMachineLabel {
+      applyManagedRemoteWorkingDirectory(report, machineLabel: machineLabel)
       return
     }
-    let returnedFromRemote = !currentWorkingDirectoryIsLocal
-    currentWorkingDirectoryIsLocal = true
-    if returnedFromRemote { clearSSHRemoteEndpoint() }
-    if currentWorkingDirectory != normalized { currentWorkingDirectory = normalized }
+    switch report {
+    case .remote(let remote):
+      currentWorkingDirectoryIsLocal = false
+      if remoteWorkingDirectory != remote { remoteWorkingDirectory = remote }
+    case .local(let path):
+      let returnedFromRemote = !currentWorkingDirectoryIsLocal
+      currentWorkingDirectoryIsLocal = true
+      if returnedFromRemote { clearSSHRemoteEndpoint() }
+      if currentWorkingDirectory != path { currentWorkingDirectory = path }
+    case .invalid:
+      currentWorkingDirectoryIsLocal = false
+    }
+  }
+
+  /// 受管远端终端的 OSC 7 处理。`currentWorkingDirectory` 对这类 Pane 本来就存远端路径
+  /// （`RemoteWorkspaceProjection` 用 `status.cwd` 填），因此这里要一并刷新。
+  private func applyManagedRemoteWorkingDirectory(
+    _ report: RemoteWorkingDirectoryReport,
+    machineLabel: String
+  ) {
+    currentWorkingDirectoryIsLocal = false
+    let remote: RemoteWorkingDirectory
+    switch report {
+    case .remote(let value): remote = value
+    // 远端 Shell 省略主机名时用机器标签补齐，保证旁路查询与界面显示有稳定身份。
+    case .local(let path): remote = RemoteWorkingDirectory(host: machineLabel, path: path)
+    case .invalid: return
+    }
+    if remoteWorkingDirectory != remote { remoteWorkingDirectory = remote }
+    if currentWorkingDirectory != remote.path { currentWorkingDirectory = remote.path }
+  }
+
+  /// 详情面板的远端上下文投影。受管远端优先，其次是本地 Pane 内手敲的 `ssh`；
+  /// 两者都不成立时返回 nil，面板保持本机模式。
+  var remoteInspectionContext: RemoteInspectionContext? {
+    if let managedTerminal, let label = remoteManagedMachineLabel {
+      let coordinator = ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal)
+      return .managed(
+        reference: managedTerminal,
+        label: label,
+        pid: coordinator.shellProcessIdentifier(for: managedTerminal)
+      )
+    }
+    if let endpoint = sshRemoteEndpoint, let invocation = sshInvocation {
+      return .ssh(invocation: invocation, endpoint: endpoint)
+    }
+    return nil
   }
 
   /// 将 SwiftTerm 的 OSC 7 目录值转换为本地绝对路径。Shell 通常上报
   /// `file://localhost/path`，也允许直接上报路径；返回空串表示值不可用。
   static func normalizeReportedWorkingDirectory(_ reportedValue: String) -> String {
-    guard !reportedValue.isEmpty else { return "" }
-    if let url = URL(string: reportedValue), url.isFileURL {
-      guard isLocalFileURLHost(url.host) else { return "" }
-      return url.path.removingPercentEncoding ?? url.path
+    guard case .local(let path) = RemoteWorkingDirectoryReport.parse(reportedValue) else {
+      return ""
     }
-    return reportedValue.removingPercentEncoding ?? reportedValue
+    return path
   }
 
   /// Hint 的 Shift 动作只复制规范化目标，不执行安全确认或系统打开。文件路径保留可选
@@ -4207,14 +4284,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       if let line = file.line { return "\(file.path):\(line)" }
       return file.path
     }
-  }
-
-  private static func isLocalFileURLHost(_ host: String?) -> Bool {
-    guard let host, !host.isEmpty else { return true }
-    let normalized = host.lowercased()
-    let machine = ProcessInfo.processInfo.hostName.lowercased()
-    let shortMachine = machine.split(separator: ".").first.map(String.init) ?? machine
-    return ["localhost", "127.0.0.1", "::1", machine, shortMachine].contains(normalized)
   }
 
   /// 同步窗口活动状态：非活动窗口停止光标闪烁。

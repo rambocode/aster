@@ -30,6 +30,8 @@ final class ManagedTerminalCoordinator {
   /// 使它产出的 `ManagedTerminalReference` 天然带正确的机器身份，跨机器对账不会串。
   let machineProfileID: UUID
   private var lifecycle = ManagedTerminalLifecycleTracker()
+  /// terminalID → 服务端上报的 Shell PID。只从实测状态写入，不做本地推断。
+  private var shellProcessIdentifiers: [String: Int32] = [:]
   /// 最近一次成功握手的服务身份；用于识别冷重启。
   private(set) var serverIdentity: SessionServerIdentity?
   private(set) var connectionState: SessionConnectionState = .disconnected
@@ -74,6 +76,30 @@ final class ManagedTerminalCoordinator {
   /// 远端机器显示名；本机模式返回 nil。
   var remoteMachineLabel: String? {
     (client as? RemoteManagedSessionClient)?.transport.target.rawText
+  }
+
+  /// 远端受管模式的 SSH 传输参数；本机模式返回 nil。
+  ///
+  /// 详情面板的旁路查询用它生成 argv，从而复用受管终端已经建立的 ControlMaster
+  /// 连接，不需要用户再认证一次。返回的是值类型副本，调用方不能借它改传输状态。
+  var remoteTransport: RemoteSessionTransport? {
+    (client as? RemoteManagedSessionClient)?.transport
+  }
+
+  /// 服务端上报的受管 Shell 进程号。仅用于诊断与远端 `readlink /proc/<pid>/cwd`
+  /// 兜底，不作为资源身份：进程重建后 `terminalID` 也会换新。
+  func shellProcessIdentifier(for reference: ManagedTerminalReference) -> Int32? {
+    shellProcessIdentifiers[reference.terminalID]
+  }
+
+  /// 记录一次服务端状态里的 PID。终端已退出时清掉，避免把回收后的号码交给远端脚本。
+  private func noteShellProcessIdentifier(_ status: ManagedTerminalStatus) {
+    switch status.state {
+    case .running:
+      if let pid = status.pid, pid > 0 { shellProcessIdentifiers[status.reference.terminalID] = pid }
+    case .exited, .unavailable:
+      shellProcessIdentifiers.removeValue(forKey: status.reference.terminalID)
+    }
   }
 
   /// 当前服务缺失的可选能力提示（P3.7）。没有缺失或未握手时返回 nil。
@@ -201,9 +227,11 @@ final class ManagedTerminalCoordinator {
       throw ManagedSessionError.runtimeUnavailable(lastError ?? "server unavailable")
     }
     let client = self.client
-    return try await Task.detached(priority: .userInitiated) {
+    let status = try await Task.detached(priority: .userInitiated) {
       try client.createTerminal(endpoint, workingDirectory: workingDirectory, argv: argv)
     }.value
+    noteShellProcessIdentifier(status)
+    return status
   }
 
   /// 异步对账持久化引用与服务端实测状态。
@@ -222,6 +250,7 @@ final class ManagedTerminalCoordinator {
     let live = await Task.detached(priority: .userInitiated) {
       (try? client.listTerminals(endpoint)) ?? []
     }.value
+    live.forEach(noteShellProcessIdentifier)
     return ManagedTerminalReconciler.reconcile(
       references: references,
       liveTerminals: live,
@@ -267,13 +296,16 @@ final class ManagedTerminalCoordinator {
     }
     let status = try client.createTerminal(
       endpoint, workingDirectory: workingDirectory, argv: argv)
+    noteShellProcessIdentifier(status)
     return status
   }
 
   /// 查询该会话全部受管终端的真实状态。
   func liveTerminals() throws -> [ManagedTerminalStatus] {
     guard let endpoint else { throw ManagedSessionError.runtimeUnavailable("managed mode disabled") }
-    return try client.listTerminals(endpoint)
+    let live = try client.listTerminals(endpoint)
+    live.forEach(noteShellProcessIdentifier)
+    return live
   }
 
   /// 重开 App 后对账持久化引用与服务端实测状态。
@@ -307,6 +339,7 @@ final class ManagedTerminalCoordinator {
     else { return nil }
     // 真实结束由服务端上报；这里进入去重器，保证只写一次结束事件。
     _ = lifecycle.handle(.serverReportedEnd(status))
+    shellProcessIdentifiers.removeValue(forKey: reference.terminalID)
     return status
   }
 

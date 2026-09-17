@@ -372,6 +372,10 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// Shell 报告的新目录只要求刷新依赖 CWD 的局部内容。视图层订阅该事件更新详情面板，
   /// 不必等待或推断通用 `objectWillChange`，也不会在新快照返回前清空旧文件树。
   let workingDirectoryChanged = PassthroughSubject<(paneID: UUID, directory: String), Never>()
+  /// Pane 的远端上下文（远端 cwd 或 SSH 端点）变化。详情面板据它在本机模式与
+  /// 远端模式之间切换。**不复用 `workingDirectoryChanged`**：那条事件会驱动 Git 与
+  /// History 页跑本地 git / SQLite，把远端路径喂给它们只会产生错误结果。
+  let remoteContextChanged = PassthroughSubject<UUID, Never>()
   let windowTitleChanged = PassthroughSubject<String, Never>()
   let documentLineRevealRequested = PassthroughSubject<(paneID: UUID, line: Int), Never>()
   /// 目录变化由 Tab 专用回调上送给窗口级 frecency 数据库，不经 `objectWillChange`，
@@ -1148,6 +1152,23 @@ final class TerminalTabItem: ObservableObject, Identifiable {
         self.onWorkingDirectoryChanged?(directory)
       }
       .store(in: &cancellables)
+
+    // 远端投影两个真值（远端 cwd、SSH 端点）合成一条事件。`@Published` 在 `willSet`
+    // 阶段发布，订阅者此刻回读 session 仍是旧值，因此延后一轮再发 paneID。
+    if let session = runtime.terminalSession {
+      Publishers.MergeMany(
+        session.$remoteWorkingDirectory.removeDuplicates().dropFirst().map { _ in () }
+          .eraseToAnyPublisher(),
+        session.$sshRemoteEndpoint.removeDuplicates().dropFirst().map { _ in () }
+          .eraseToAnyPublisher()
+      )
+      .sink { [weak self] _ in
+        DispatchQueue.main.async { [weak self] in
+          self?.remoteContextChanged.send(descriptor.id)
+        }
+      }
+      .store(in: &cancellables)
+    }
   }
 
   private func fallbackTitle(for paneID: UUID) -> String {

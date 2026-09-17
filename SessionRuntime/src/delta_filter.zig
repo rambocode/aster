@@ -61,7 +61,7 @@ pub const Filter = struct {
                     } else if (byte == 0x1b) self.state = .osc_escape else if (self.osc_header) {
                         if (byte == ';') {
                             self.osc_header = false;
-                            self.osc_allowed = self.osc_code == 0 or self.osc_code == 1 or self.osc_code == 2 or self.osc_code == 8;
+                            self.osc_allowed = self.osc_code == 0 or self.osc_code == 1 or self.osc_code == 2 or self.osc_code == 7 or self.osc_code == 8;
                         } else if (byte >= '0' and byte <= '9' and self.osc_code < 10000) {
                             self.osc_code = self.osc_code * 10 + byte - '0';
                         } else {
