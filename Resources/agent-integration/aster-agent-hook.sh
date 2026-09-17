@@ -86,6 +86,33 @@ if [ "${#session_id}" -gt 128 ]; then
   session_id=""
 fi
 
+# 优先经控制 socket 上报（`aster agent report`）。直接写 tty 时，hook 的 OSC 会和 Agent 自己
+# 的输出在内核 pty 队列里交错（大帧被按队列分片写入，hook 的 write 夹在两片之间），把多字节
+# 字符或转义序列截成两半，Claude Code 等 TUI 因此出现残留横线、错位的花屏。socket 只改 App 内
+# 状态，不进 PTY。目标用 pane UUID（ASTER_SESSION_ID）而非短 ID：短 ID 在 App 重启后会重排，
+# 受管终端里残留的旧值可能指到别的 pane；UUID 对不上只会 not_found，随后退回 tty 通道。
+# 远端机器或开发构建没有 ASTER_BIN_PATH / socket，直接退回 tty。
+report_via_control_socket() {
+  [ "${ASTER_ENV-}" = 1 ] || return 1
+  [ -n "${ASTER_SESSION_ID-}" ] || return 1
+  [ -S "${ASTER_SOCKET_PATH-}" ] || return 1
+  [ -x "${ASTER_BIN_PATH-}" ] || return 1
+  case "$ASTER_SESSION_ID" in
+    *[!A-Za-z0-9-]*) return 1 ;;
+  esac
+  # ASTER_CLI_NO_LAUNCH：App 不在时绝不能由 hook 把 Aster 拉起来。
+  if [ -n "$session_id" ]; then
+    ASTER_CLI_NO_LAUNCH=1 "$ASTER_BIN_PATH" agent report "p_$ASTER_SESSION_ID" \
+      --state "$state" --provider "$provider" --session-id "$session_id" >/dev/null 2>&1
+  else
+    ASTER_CLI_NO_LAUNCH=1 "$ASTER_BIN_PATH" agent report "p_$ASTER_SESSION_ID" \
+      --state "$state" --provider "$provider" >/dev/null 2>&1
+  fi
+}
+if report_via_control_socket; then
+  exit 0
+fi
+
 # 目标 tty 把事件绑定到确切的 Aster Pane（多个 Agent 共用 cwd 时也不会串）。
 # Claude Code 2.1.x 以「无控制终端」方式启动 hook 子进程：`[ -w /dev/tty ]` 仍为真，
 # 但真正打开时报 "Device not configured"，事件因此从未到达 Aster。claude 进程本身

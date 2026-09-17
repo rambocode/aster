@@ -5413,6 +5413,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     return AgentShellCommandEncoder.encode(plan)
   }
 
+  /// 控制协议 `agent.report` 的入口：hook 经 socket 上报，与 PTY 里收到 OSC 6974 走同一条路径，
+  /// 两条通道的状态机语义必须保持一致。
+  func receiveAgentTerminalDirective(_ directive: AgentTerminalDirective) {
+    handleAgentTerminalDirective(directive)
+  }
+
   private func handleAgentTerminalDirective(_ directive: AgentTerminalDirective) {
     // 已由 shell command 精确识别 provider 时，拒绝其它 provider 向同一 PTY 注入状态；
     // wrapper 命令无法识别时则允许首个合法 hook 建立关联。

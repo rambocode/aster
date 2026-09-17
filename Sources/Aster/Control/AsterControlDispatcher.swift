@@ -109,6 +109,16 @@ final class AsterControlDispatcher {
       let params = try decode(PaneFocusParams.self, request)
       focus(try bridge.resolve(selector: params.pane))
       return try encode(AsterControlOKResult())
+    case .agentReport:
+      // 按 pane 而非 agent 解析：SessionStart 的首个 idle 到达时 Aster 还没把该 pane 认成 agent。
+      let params = try decode(AgentReportParams.self, request)
+      let record = try bridge.resolve(selector: params.target)
+      let session = try terminalSession(record)
+      guard let directive = params.directive else {
+        throw AsterControlError.invalidParams("state/provider/sessionID 不是合法的 agent 指令")
+      }
+      session.receiveAgentTerminalDirective(directive)
+      return try encode(AsterControlOKResult())
     case .paneSendText:
       let params = try decode(PaneSendTextParams.self, request)
       let record = try bridge.resolve(selector: params.pane)

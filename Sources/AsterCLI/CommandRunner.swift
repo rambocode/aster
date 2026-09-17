@@ -80,6 +80,12 @@ struct CommandRunner {
       let result = try client.call(.agentFocus, params: try encode(params))
       try emit(result, text: renderOK)
 
+    case .agentReport(var params):
+      params.target = resolveTarget(params.target)
+      // hook 每次工具调用都会触发；App 无响应时必须快速失败，让 hook 退回 tty 通道，不能拖住 Agent。
+      let result = try client.call(.agentReport, params: try encode(params), timeout: 3)
+      try emit(result, text: renderOK)
+
     case .agentStart(var params):
       params.pane = params.pane.map(resolveTarget)
       let result = try client.call(
