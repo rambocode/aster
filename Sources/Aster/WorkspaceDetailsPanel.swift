@@ -66,6 +66,14 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   private let model: AppModel
   private let preferences: AppPreferences
   private let inspectionClient: WorkspaceInspectionClient
+  /// 远端模式的检查接口与模式来源。两者都可注入，测试因此不必真的建立 SSH 会话。
+  private let remoteClient: RemoteInspectionClient
+  private let remoteSource: RemoteInspectionSource
+  /// 远端模式的两个子控制器懒创建：本地 Pane 不为它们付出任何视图与任务代价。
+  private var remoteFilesController: RemoteFilesSectionController?
+  private var remoteMonitorController: RemoteMonitorSectionController?
+  /// Git 页在远端模式下的「远端不支持」占位。
+  private var remoteUnsupportedView: NSView?
   private let fileActionService: WorkspaceFileActionService
   private let now: @MainActor () -> Date
   private let contentHost = NSView()
@@ -191,6 +199,8 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     model: AppModel,
     preferences: AppPreferences,
     inspectionClient: WorkspaceInspectionClient = .live,
+    remoteClient: RemoteInspectionClient = .live,
+    remoteSource: RemoteInspectionSource = .live,
     fileActionService: WorkspaceFileActionService = WorkspaceFileActionService(),
     now: @escaping @MainActor () -> Date = Date.init,
     // 编辑器探测走 NSWorkspace，结果取决于本机安装了什么；注入后测试才能稳定断言
@@ -204,6 +214,8 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     self.model = model
     self.preferences = preferences
     self.inspectionClient = inspectionClient
+    self.remoteClient = remoteClient
+    self.remoteSource = remoteSource
     self.fileActionService = fileActionService
     self.now = now
     self.editorLocator = editorLocator
@@ -487,6 +499,119 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     paneRefreshOverlay.setRefreshing(refreshing, sectionTitle: selection.title)
   }
 
+  // MARK: - 远端模式分流
+
+  /// 当前聚焦 Pane 的远端上下文；nil 即本地模式。
+  ///
+  /// 模式的唯一来源是会话自身的远端上下文，不按命令行文本、标题或主机名猜测。
+  var inspectorRemoteContext: RemoteInspectionContext? { remoteSource.context(model.selectedTab) }
+
+  /// 远端页当前该显示哪些页：Info / Files 换成远端实现，Git 换成「远端不支持」占位
+  /// （拿远端路径跑本地 git 等于把远端路径当本机路径用）。
+  private func remoteOverrides(_ section: Section) -> Bool {
+    inspectorRemoteContext != nil && (section == .info || section == .files || section == .git)
+  }
+
+  /// 组装一次远端请求的宿主快照。
+  private func makeRemoteHost() -> RemoteInspectionHost? {
+    guard let tab = model.selectedTab, let context = inspectorRemoteContext else { return nil }
+    return RemoteInspectionHost(
+      tabID: tab.id,
+      paneID: tab.activePaneID,
+      context: context,
+      channelKey: remoteClient.channelKey(context),
+      workingDirectory: remoteSource.workingDirectory(tab)
+    )
+  }
+
+  private func remoteFilesSection() -> RemoteFilesSectionController {
+    if let existing = remoteFilesController { return existing }
+    let controller = RemoteFilesSectionController(
+      client: remoteClient,
+      onCommitted: { [weak self] in self?.completePaneRefresh(for: .files) },
+      // 与 Git 页写操作同一规则：只预填到终端输入行，由用户回车。
+      prefillCommand: { [weak self] command in
+        self?.model.selectedTab?.activeSession?.typeText(command)
+      },
+      notify: { [weak self] text in self?.model.notice = text }
+    )
+    attachRemoteChild(controller)
+    remoteFilesController = controller
+    return controller
+  }
+
+  private func remoteMonitorSection() -> RemoteMonitorSectionController {
+    if let existing = remoteMonitorController { return existing }
+    let controller = RemoteMonitorSectionController(
+      client: remoteClient,
+      onCommitted: { [weak self] in self?.completePaneRefresh(for: .info) }
+    )
+    attachRemoteChild(controller)
+    remoteMonitorController = controller
+    return controller
+  }
+
+  /// 子控制器的视图永远压在刷新屏障之下，和内置页保持同一层级规则。
+  private func attachRemoteChild(_ controller: NSViewController) {
+    addChild(controller)
+    controller.view.translatesAutoresizingMaskIntoConstraints = false
+    contentHost.addSubview(controller.view, positioned: .below, relativeTo: paneRefreshOverlay)
+    controller.view.pinEdges(to: contentHost)
+    controller.view.isHidden = true
+  }
+
+  private func remoteUnsupportedPlaceholder() -> NSView {
+    if let existing = remoteUnsupportedView { return existing }
+    let label = makeLabel(L("远端不支持"), size: 11, color: AsterTheme.secondaryInk)
+    label.alignment = .center
+    let container = NSView()
+    container.identifier = NSUserInterfaceItemIdentifier("details-remote-unsupported")
+    container.addSubview(label)
+    label.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      label.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+      label.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
+    ])
+    container.translatesAutoresizingMaskIntoConstraints = false
+    contentHost.addSubview(container, positioned: .below, relativeTo: paneRefreshOverlay)
+    container.pinEdges(to: contentHost)
+    container.isHidden = true
+    remoteUnsupportedView = container
+    return container
+  }
+
+  /// 按当前模式与选中页切换远端子视图的显隐。隐藏的子控制器同时挂起，避免隐藏页轮询。
+  private func updateRemoteContent() {
+    let isRemote = inspectorRemoteContext != nil && customSelection == nil
+    let showFiles = isRemote && selection == .files
+    let showMonitor = isRemote && selection == .info
+    // 隐藏的子控制器必须同时挂起：退出 ssh 后只把视图藏起来，监控仍会每 3 秒打一次远端。
+    if showFiles {
+      remoteFilesSection().view.isHidden = false
+    } else {
+      remoteFilesController?.view.isHidden = true
+      remoteFilesController?.suspend()
+    }
+    if showMonitor {
+      remoteMonitorSection().view.isHidden = false
+    } else {
+      remoteMonitorController?.view.isHidden = true
+      remoteMonitorController?.suspend()
+    }
+    if isRemote, selection == .git {
+      remoteUnsupportedPlaceholder().isHidden = false
+    } else {
+      remoteUnsupportedView?.isHidden = true
+    }
+  }
+
+  /// 远端上下文变化（建立 / 断开 ssh、远端 cd）后重新分流并刷新当前页。
+  private func handleRemoteContextChange() {
+    showSelectedContent()
+    guard isPresentationActive else { return }
+    prepareSelectedSection()
+  }
+
   /// 页签离开后立即终止该页仍未完成的昂贵工作，避免隐藏页继续占用子进程或解析 CPU。
   /// 已完成快照不会清理，因此回切时仍可直接显示；Outline 的未完成解析则标记为待刷新。
   private func cancelInspection(for section: Section) {
@@ -494,12 +619,14 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     case .info:
       informationTask?.cancel()
       informationRefreshTask?.cancel()
+      remoteMonitorController?.suspend()
     case .git:
       gitTask?.cancel()
       // 切走 Git 页或收起面板时，diff 浮层不能继续悬在窗口上。
       dismissGitDiffPreview()
     case .files:
       filesTask?.cancel()
+      remoteFilesController?.suspend()
     case .outline:
       if outlineTask != nil { outlineNeedsRefresh = true }
       outlineTask?.cancel()
@@ -532,6 +659,9 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
         self.requestedFilesDirectory = nil
         self.outlineTask?.cancel()
         self.outlineNeedsRefresh = true
+        // 远端子控制器按 Tab/Pane/通道校验结果，切 Pane 必须先推进 generation 再重新激活。
+        self.remoteFilesController?.suspend()
+        self.remoteMonitorController?.suspend()
         self.resetHistoryForPaneChange()
         self.resetMemoryForPaneChange()
         // 旧 Info/Outline/Git/Files 模型留在原表格中，只由覆盖层拦截交互；新快照通过
@@ -569,6 +699,14 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
           self.historyMode = .sessionList
           self.refreshHistory(directory: change.directory)
         }
+      }
+      .store(in: &cancellables)
+    // 远端上下文有自己的事件，**不复用** workingDirectoryChanged：后者驱动 Git 与
+    // History 页跑本地 git 与本地 SQLite，把远端路径喂给它们就是当本机路径用。
+    tab.remoteContextChanged
+      .sink { [weak self, weak tab] paneID in
+        guard let self, let tab, paneID == tab.activePaneID else { return }
+        self.handleRemoteContextChange()
       }
       .store(in: &cancellables)
     observeOutlineChanges()
@@ -720,6 +858,22 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       customControllers[customSelection]?.refreshContext()
       return
     }
+    // 远端模式下 Info / Files 由子控制器负责，Git 只是占位，都不发起本地检查。
+    if let host = makeRemoteHost() {
+      switch selection {
+      case .files:
+        remoteFilesSection().activate(host: host)
+        return
+      case .info:
+        remoteMonitorSection().activate(host: host)
+        return
+      case .git:
+        completePaneRefresh(for: .git)
+        return
+      case .outline, .history:
+        break
+      }
+    }
     switch selection {
     case .info:
       if informationPaneID != model.selectedTab?.activePaneID {
@@ -746,8 +900,8 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   /// 搜索框、表格行池和约束都留在原层级，避免反复 remove/add 触发完整布局。
   private func showSelectedContent() {
     // Git 页展示时若快照超过 30 秒则后台重取，避免分支切换后统计长期过期。
-    if selection == .git, isGitSnapshotExpired { refreshGit() }
-    if cachedContent[selection] == nil {
+    if selection == .git, isGitSnapshotExpired, !remoteOverrides(.git) { refreshGit() }
+    if cachedContent[selection] == nil, !remoteOverrides(selection) {
       let content: NSView
       switch selection {
       case .outline: content = makeOutlineContent()
@@ -762,7 +916,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       content.pinEdges(to: contentHost)
     }
     for (section, content) in cachedContent {
-      content.isHidden = customSelection != nil || section != selection
+      content.isHidden = customSelection != nil || section != selection || remoteOverrides(section)
       // 兜底：即便曾经横向滚出，显示时也把 clip 的横向偏移归零。
       if let scroll = content as? NSScrollView, scroll.contentView.bounds.origin.x != 0 {
         scroll.contentView.scroll(to: NSPoint(x: 0, y: scroll.contentView.bounds.origin.y))
@@ -773,6 +927,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     for (id, controller) in customControllers where controller.isViewLoaded {
       controller.view.isHidden = id != customSelection
     }
+    updateRemoteContent()
     updatePaneRefreshOverlay()
   }
 
