@@ -65,3 +65,8 @@ _aster_zsh_preexec() {
 
 add-zsh-hook precmd _aster_zsh_precmd
 add-zsh-hook preexec _aster_zsh_preexec
+
+# 本机 ssh 连接复用的包装函数放在 aster-ssh.zsh：Ghostty 原生 Pane 不加载本文件，受管 rc
+# 区块要能单独 source 那个 payload。`${(%):-%x}` 取正在被 source 的文件路径（不受
+# FUNCTION_ARGZERO 影响），据此定位同目录的兄弟文件。
+source "${${(%):-%x}:A:h}/aster-ssh.zsh"

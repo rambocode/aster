@@ -149,6 +149,7 @@
           row("shell.shellIntegration", t("提供 Shell 集成"), t("支撑提示符标记、工作目录跟踪、命令状态以及 edit/view/jump 包装命令——会在 shell 启动文件里加一行")),
           action("configureShells", t("按 Shell 单独配置"), t("分别启用 zsh、fish 与 bash"), t("配置…")),
           row("shell.sshIntegration", t("SSH 集成"), t("包装 SSH 命令以转发环境变量、安装 terminfo，并保持远端目录与标题跟踪")),
+          row("shell.sshConnectionSharing", t("SSH 连接复用"), t("本机 ssh 命令通过 OpenSSH ControlMaster 复用已认证连接；详情面板的远端文件与服务器监控借用它，不需要再次认证。只影响之后新建的终端")),
         ]},
         { title: "Aster CLI", rows: [
           action("installCLI", t("命令"), t("将 `aster` 命令安装到 PATH（指向 App 内 aster-cli 的符号链接）；安装状态见「智能体 → Agent 控制」"), t("安装 CLI")),

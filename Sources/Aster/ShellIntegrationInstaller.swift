@@ -20,10 +20,12 @@ enum ShellIntegrationInstallerError: Error, Equatable, LocalizedError {
   }
 }
 
-/// 安装和移除 Bash 及 tmux 子 Shell 所需的最小受管 rc 区块。
+/// 安装和移除 Bash、tmux 子 Shell 及 SSH 连接复用所需的最小受管 rc 区块。
 ///
-/// 普通 zsh/fish Pane 使用进程级环境注入，不修改用户配置。Bash 没有等价入口，而
-/// tmux 创建的子 Shell 不再经过 Pane 启动计划，因此只有这些边界写入带守卫的区块。
+/// 普通 zsh/fish Pane 的 OSC 133 集成使用进程级环境注入，不需要改用户配置。Bash 没有等价
+/// 入口，tmux 创建的子 Shell 不再经过 Pane 启动计划，而 Ghostty 原生 Pane 的 zsh 用的是
+/// Ghostty 自带的 ZDOTDIR——三者都拿不到 Aster 的 payload，因此这些边界写入带守卫的区块。
+/// SSH 包装函数单独指向 `aster-ssh.*`，条件不含 TMUX，产品默认路径才能拿到连接复用。
 /// 编辑会保留区块外字节、文件权限和符号链接；特殊文件及超大文件直接拒绝。
 struct ShellIntegrationInstaller {
   static let startMarker = "# >>> Aster shell integration >>>"
@@ -31,6 +33,10 @@ struct ShellIntegrationInstaller {
 
   private static let separatorAddedSuffix = " (separator added)"
   private static let maximumRCBytes = 1_048_576
+
+  /// ssh 包装 payload 的加载条件：只在 Aster 注入了 ControlMaster 目录时才读盘并定义函数。
+  private static let bourneSSHCondition = "[[ -n \"${ASTER_SSH_CONTROL_DIR:-}\" ]]"
+  private static let fishSSHCondition = "test -n \"$ASTER_SSH_CONTROL_DIR\""
 
   /// 单个启动文件经完整读取、类型检查和 marker 校验后的写入计划。先为所有目标生成
   /// 计划，再进行任何内容写入，避免后置文件损坏时留下只安装了一半的集成区块。
@@ -64,20 +70,43 @@ struct ShellIntegrationInstaller {
     let zshResource = resourceDirectory.appendingPathComponent("aster-integration.zsh")
     let bashResource = resourceDirectory.appendingPathComponent("aster-integration.bash")
     let fishResource = resourceDirectory.appendingPathComponent("aster-integration.fish")
+    let zshSSHResource = resourceDirectory.appendingPathComponent("aster-ssh.zsh")
+    let bashSSHResource = resourceDirectory.appendingPathComponent("aster-ssh.bash")
+    let fishSSHResource = resourceDirectory.appendingPathComponent("aster-ssh.fish")
     if enabled {
-      for resource in [zshResource, bashResource, fishResource] {
+      for resource in [
+        zshResource, bashResource, fishResource,
+        zshSSHResource, bashSSHResource, fishSSHResource,
+      ] {
         guard fileManager.isReadableFile(atPath: resource.path) else {
           throw ShellIntegrationInstallerError.missingResource(resource.path)
         }
       }
     }
 
-    let bashBlock = enabled ? bourneBlock(resource: bashResource, requiresTMUX: false) : nil
-    let zshBlock = enabled && tmuxAvailable
-      ? bourneBlock(resource: zshResource, requiresTMUX: true) : nil
+    let bashBlock = enabled
+      ? bourneConditional(resource: bashResource, extraConditions: [])
+        + bourneConditional(resource: bashSSHResource, extraConditions: [Self.bourneSSHCondition])
+      : nil
+    // Ghostty 原生 Pane 的 zsh 走 Ghostty 自带的 ZDOTDIR，`aster-integration.zsh` 永远不会被
+    // 加载，因此 ssh 包装必须由这段不依赖 TMUX 的独立条件直接加载 payload；否则「SSH 连接
+    // 复用」在产品默认路径上完全不生效。tmux 子 Shell 仍由上面那段整体集成覆盖。
+    var zshLines: [String] = []
+    if tmuxAvailable {
+      zshLines += bourneConditional(
+        resource: zshResource, extraConditions: ["[[ -n \"${TMUX:-}\" ]]"])
+    }
+    zshLines += bourneConditional(
+      resource: zshSSHResource, extraConditions: [Self.bourneSSHCondition])
+    let zshBlock = enabled ? zshLines : nil
     let fishURL = homeDirectory.appendingPathComponent(
       ".config/fish/conf.d/aster-shell-integration.fish")
-    let fishBlock = enabled && tmuxAvailable ? fishManagedBlock(resource: fishResource) : nil
+    var fishLines: [String] = []
+    if tmuxAvailable {
+      fishLines += fishConditional(resource: fishResource, extraConditions: ["set -q TMUX"])
+    }
+    fishLines += fishConditional(resource: fishSSHResource, extraConditions: [Self.fishSSHCondition])
+    let fishBlock = enabled ? fishLines : nil
     let requests: [(URL, [String]?)] = [
       (homeDirectory.appendingPathComponent(".bashrc"), bashBlock),
       (homeDirectory.appendingPathComponent(".bash_profile"), bashBlock),
@@ -111,12 +140,12 @@ struct ShellIntegrationInstaller {
     }
   }
 
-  private func bourneBlock(resource: URL, requiresTMUX: Bool) -> [String] {
-    var conditions = [
+  /// 生成一条 Bourne（bash/zsh）条件 source 语句：固定的 Aster 终端与总开关守卫 + 额外条件。
+  private func bourneConditional(resource: URL, extraConditions: [String]) -> [String] {
+    let conditions = [
       "[[ \"${TERM_PROGRAM:-}\" == \"aster\" ]]",
       "[[ \"${ASTER_DISABLE_INTEGRATION:-0}\" != \"1\" ]]",
-    ]
-    if requiresTMUX { conditions.append("[[ -n \"${TMUX:-}\" ]]") }
+    ] + extraConditions
     return [
       "if \(conditions.joined(separator: " && ")); then",
       "  source \(Self.shellQuoted(resource.path))",
@@ -124,9 +153,14 @@ struct ShellIntegrationInstaller {
     ]
   }
 
-  private func fishManagedBlock(resource: URL) -> [String] {
-    [
-      "if test \"$TERM_PROGRAM\" = \"aster\"; and test \"$ASTER_DISABLE_INTEGRATION\" != \"1\"; and set -q TMUX",
+  /// 生成一条 fish 条件 source 语句，语义与 `bourneConditional` 对应。
+  private func fishConditional(resource: URL, extraConditions: [String]) -> [String] {
+    let conditions = [
+      "test \"$TERM_PROGRAM\" = \"aster\"",
+      "test \"$ASTER_DISABLE_INTEGRATION\" != \"1\"",
+    ] + extraConditions
+    return [
+      "if \(conditions.joined(separator: "; and "))",
       "  source \(Self.shellQuoted(resource.path))",
       "end",
     ]

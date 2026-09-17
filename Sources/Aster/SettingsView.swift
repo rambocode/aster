@@ -966,6 +966,13 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         ) { [weak self] value in
           self?.preferences.configuration.shell.sshIntegration = value
         },
+        toggleRow(
+          L("SSH 连接复用"),
+          L("本机 ssh 命令通过 OpenSSH ControlMaster 复用已认证连接；详情面板的远端文件与服务器监控借用它，不需要再次认证。只影响之后新建的终端"),
+          value: preferences.configuration.shell.resolvedSSHConnectionSharing
+        ) { [weak self] value in
+          self?.preferences.configuration.shell.sshConnectionSharing = value
+        },
       ]),
       sectionTitle(L("常用目录")),
       card([
@@ -3223,6 +3230,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "shell.notificationPermissionState": TerminalNotificationService.shared.webPermissionStatus.state,
       "shell.shellIntegration": configuration.shell.shellIntegration,
       "shell.sshIntegration": configuration.shell.sshIntegration,
+      "shell.sshConnectionSharing": configuration.shell.resolvedSSHConnectionSharing,
       "shell.frecencyAutoRecord": configuration.shell.resolvedFrecencyAutoRecord,
       "shell.restoreMultiplexerSessions": configuration.shell.restoreMultiplexerSessions,
       "shell.localManagedTerminals": configuration.shell.resolvedLocalManagedTerminals,
@@ -3688,6 +3696,8 @@ extension SettingsViewController: WKNavigationDelegate {
       preferences.configuration.shell.restoreProcessAllowlist = try string()
     case "shell.shellIntegration": setShellIntegrationEnabled(try bool())
     case "shell.sshIntegration": preferences.configuration.shell.sshIntegration = try bool()
+    case "shell.sshConnectionSharing":
+      preferences.configuration.shell.sshConnectionSharing = try bool()
     case "shell.frecencyAutoRecord": preferences.configuration.shell.frecencyAutoRecord = try bool()
     case "shell.restoreMultiplexerSessions": preferences.configuration.shell.restoreMultiplexerSessions = try bool()
     case "shell.localManagedTerminals": preferences.configuration.shell.localManagedTerminals = try bool()

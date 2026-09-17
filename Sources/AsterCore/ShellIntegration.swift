@@ -225,11 +225,20 @@ public struct ShellIntegrationLaunchPlan: Equatable, Sendable {
   public let shell: IntegratedShell
   public let environment: [String: String]
 
+  /// ssh 包装函数的启用开关兼参数：集成脚本只在它非空且是目录时定义包装函数。
+  public static let sshControlDirectoryKey = "ASTER_SSH_CONTROL_DIR"
+
+  /// 生成注入计划。
+  ///
+  /// - Parameter sshControlDirectory: 本机 ssh 连接复用的 ControlMaster 目录；非空时
+  ///   注入 `ASTER_SSH_CONTROL_DIR`，集成脚本据此定义 `ssh` 包装函数。传 nil 表示
+  ///   用户关闭了复用（或目录校验失败），此时环境里不出现该变量，包装函数不会定义。
   public static func make(
     shellPath: String,
     enabled: Bool,
     resourceDirectory: String,
-    inheritedEnvironment: [String: String]
+    inheritedEnvironment: [String: String],
+    sshControlDirectory: String? = nil
   ) -> ShellIntegrationLaunchPlan? {
     guard enabled, inheritedEnvironment["ASTER_DISABLE_INTEGRATION"] != "1",
       !resourceDirectory.isEmpty
@@ -240,6 +249,9 @@ public struct ShellIntegrationLaunchPlan: Equatable, Sendable {
     var environment = inheritedEnvironment
     environment["ASTER_INTEGRATION"] = "1"
     environment["ASTER_SHELL_INTEGRATION_DIR"] = resourceDirectory
+    if let sshControlDirectory, !sshControlDirectory.isEmpty {
+      environment[ShellIntegrationLaunchPlan.sshControlDirectoryKey] = sshControlDirectory
+    }
 
     switch shell {
     case .zsh:

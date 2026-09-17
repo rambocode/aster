@@ -163,6 +163,9 @@ func shellIntegrationResourcesAreReadableAndSyntacticallyValid() throws {
     "aster-integration.zsh",
     "aster-integration.bash",
     "aster-integration.fish",
+    "aster-ssh.zsh",
+    "aster-ssh.bash",
+    "aster-ssh.fish",
     "zsh/.zshenv",
     "fish/vendor_conf.d/aster-shell-integration.fish",
   ]
@@ -179,14 +182,17 @@ func shellIntegrationResourcesAreReadableAndSyntacticallyValid() throws {
   #expect(!fishPayload.contains("functions --details"))
 
   try runSyntaxCheck(executable: "/bin/zsh", arguments: ["-n", root.appendingPathComponent("aster-integration.zsh").path])
+  try runSyntaxCheck(executable: "/bin/zsh", arguments: ["-n", root.appendingPathComponent("aster-ssh.zsh").path])
   try runSyntaxCheck(executable: "/bin/zsh", arguments: ["-n", root.appendingPathComponent("zsh/.zshenv").path])
   try runSyntaxCheck(executable: "/bin/bash", arguments: ["-n", root.appendingPathComponent("aster-integration.bash").path])
+  try runSyntaxCheck(executable: "/bin/bash", arguments: ["-n", root.appendingPathComponent("aster-ssh.bash").path])
 
   let fish = ["/opt/homebrew/bin/fish", "/usr/local/bin/fish"].first {
     FileManager.default.isExecutableFile(atPath: $0)
   }
   if let fish {
     try runSyntaxCheck(executable: fish, arguments: ["-n", root.appendingPathComponent("aster-integration.fish").path])
+    try runSyntaxCheck(executable: fish, arguments: ["-n", root.appendingPathComponent("aster-ssh.fish").path])
     try runSyntaxCheck(
       executable: fish,
       arguments: ["-n", root.appendingPathComponent("fish/vendor_conf.d/aster-shell-integration.fish").path]
@@ -387,6 +393,294 @@ func bashIntegrationEmitsCommandLifecycle() throws {
     markers: ["\u{1B}]133;A\u{7}", "\u{1B}]133;B\u{7}", "\u{1B}]133;C\u{7}",
       "ASTER_BASH_BODY", "\u{1B}]133;D;0\u{7}"]
   )
+}
+
+@Test("没有 ASTER_SSH_CONTROL_DIR 时 zsh 集成不定义 ssh 包装函数")
+func zshIntegrationSkipsSSHWrapperWithoutControlDirectory() throws {
+  let home = try temporaryDirectory(named: "aster-zsh-ssh-off")
+  defer { try? FileManager.default.removeItem(at: home) }
+  try "".write(to: home.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+  let root = repositoryRoot.appendingPathComponent("Resources/shell-integration")
+
+  let output = try runInteractiveShell(
+    executable: "/bin/zsh",
+    arguments: ["-d", "-l", "-i"],
+    environment: sshWrapperEnvironment(home: home, root: root, controlDirectory: nil),
+    input: "whence -w ssh\nexit\n"
+  )
+
+  #expect(!output.contains("ssh: function"))
+}
+
+@Test("有 ASTER_SSH_CONTROL_DIR 时 zsh 集成定义带 ControlMaster 的 ssh 包装函数")
+func zshIntegrationDefinesSSHWrapperWithControlDirectory() throws {
+  let home = try temporaryDirectory(named: "aster-zsh-ssh-on")
+  defer { try? FileManager.default.removeItem(at: home) }
+  try "".write(to: home.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+  let controlDirectory = home.appendingPathComponent("control", isDirectory: true)
+  try FileManager.default.createDirectory(at: controlDirectory, withIntermediateDirectories: true)
+  let root = repositoryRoot.appendingPathComponent("Resources/shell-integration")
+
+  let output = try runInteractiveShell(
+    executable: "/bin/zsh",
+    arguments: ["-d", "-l", "-i"],
+    environment: sshWrapperEnvironment(
+      home: home, root: root, controlDirectory: controlDirectory.path),
+    input: "whence -w ssh\nfunctions ssh\nexit\n"
+  )
+
+  #expect(output.contains("ssh: function"))
+  #expect(output.contains("ControlMaster=auto"))
+  // 函数体保留变量引用：ControlPath 在每次调用时展开，目录换了也不用重新定义函数。
+  #expect(output.contains("ControlPath=${ASTER_SSH_CONTROL_DIR}/%C"))
+}
+
+@Test("用户已定义 ssh 时 zsh 集成保留用户定义")
+func zshIntegrationKeepsUserDefinedSSH() throws {
+  let home = try temporaryDirectory(named: "aster-zsh-ssh-user")
+  defer { try? FileManager.default.removeItem(at: home) }
+  try "ssh() { print -r -- ASTER_USER_SSH }\n".write(
+    to: home.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+  let controlDirectory = home.appendingPathComponent("control", isDirectory: true)
+  try FileManager.default.createDirectory(at: controlDirectory, withIntermediateDirectories: true)
+  let root = repositoryRoot.appendingPathComponent("Resources/shell-integration")
+
+  let output = try runInteractiveShell(
+    executable: "/bin/zsh",
+    arguments: ["-d", "-l", "-i"],
+    environment: sshWrapperEnvironment(
+      home: home, root: root, controlDirectory: controlDirectory.path),
+    input: "functions ssh\nexit\n"
+  )
+
+  #expect(output.contains("ASTER_USER_SSH"))
+  #expect(!output.contains("ControlMaster=auto"))
+}
+
+@Test("bash 集成按 ASTER_SSH_CONTROL_DIR 决定是否定义 ssh 包装函数")
+func bashIntegrationDefinesSSHWrapperOnlyWithControlDirectory() throws {
+  let home = try temporaryDirectory(named: "aster-bash-ssh")
+  defer { try? FileManager.default.removeItem(at: home) }
+  let root = repositoryRoot.appendingPathComponent("Resources/shell-integration")
+  try ShellIntegrationInstaller(
+    resourceDirectory: root, homeDirectory: home, tmuxAvailable: false
+  ).reconcile(enabled: true)
+  let controlDirectory = home.appendingPathComponent("control", isDirectory: true)
+  try FileManager.default.createDirectory(at: controlDirectory, withIntermediateDirectories: true)
+
+  let without = try runInteractiveShell(
+    executable: "/bin/bash",
+    arguments: ["--login", "-i"],
+    environment: sshWrapperEnvironment(home: home, root: root, controlDirectory: nil),
+    input: "declare -F ssh || echo ASTER_NO_SSH_FUNCTION\nexit\n"
+  )
+  #expect(without.contains("ASTER_NO_SSH_FUNCTION"))
+
+  let with = try runInteractiveShell(
+    executable: "/bin/bash",
+    arguments: ["--login", "-i"],
+    environment: sshWrapperEnvironment(
+      home: home, root: root, controlDirectory: controlDirectory.path),
+    input: "declare -f ssh\nexit\n"
+  )
+  #expect(with.contains("ControlMaster=auto"))
+  #expect(with.contains("ControlPath=${ASTER_SSH_CONTROL_DIR}/%C"))
+}
+
+@Test("受管 rc 区块用不依赖 TMUX 的独立条件加载 ssh payload")
+func shellIntegrationInstallerWritesTMUXIndependentSSHBlock() throws {
+  let home = try temporaryDirectory(named: "aster-ssh-block")
+  defer { try? FileManager.default.removeItem(at: home) }
+  let root = repositoryRoot.appendingPathComponent("Resources/shell-integration")
+  // tmux 不可用也必须写入 ssh 区块：Ghostty 原生 Pane 与 tmux 无关。
+  try ShellIntegrationInstaller(
+    resourceDirectory: root, homeDirectory: home, tmuxAvailable: false
+  ).reconcile(enabled: true)
+
+  let zshText = try String(
+    contentsOf: home.appendingPathComponent(".zshrc"), encoding: .utf8)
+  let bashText = try String(
+    contentsOf: home.appendingPathComponent(".bashrc"), encoding: .utf8)
+  let fishText = try String(
+    contentsOf: home.appendingPathComponent(
+      ".config/fish/conf.d/aster-shell-integration.fish"),
+    encoding: .utf8
+  )
+
+  for (text, suffix) in [(zshText, "zsh"), (bashText, "bash")] {
+    let expected = """
+      if [[ "${TERM_PROGRAM:-}" == "aster" ]] && [[ "${ASTER_DISABLE_INTEGRATION:-0}" != "1" ]] \
+      && [[ -n "${ASTER_SSH_CONTROL_DIR:-}" ]]; then
+        source '\(root.appendingPathComponent("aster-ssh.\(suffix)").path)'
+      fi
+      """
+    #expect(text.contains(expected), "缺少 ssh 受管语句：\(suffix)\n\(text)")
+  }
+  #expect(
+    fishText.contains(
+      "if test \"$TERM_PROGRAM\" = \"aster\"; and test \"$ASTER_DISABLE_INTEGRATION\" != \"1\"; "
+        + "and test -n \"$ASTER_SSH_CONTROL_DIR\""))
+  #expect(fishText.contains("aster-ssh.fish"))
+  // tmux 不可用时不写整体集成，只保留 ssh 语句。
+  #expect(!zshText.contains("aster-integration.zsh"))
+  #expect(!fishText.contains("aster-integration.fish"))
+  #expect(!zshText.contains("TMUX"))
+}
+
+@Test("旧受管区块在再次安装时整体更新为新文本且保持幂等")
+func shellIntegrationInstallerUpdatesLegacyManagedBlock() throws {
+  let home = try temporaryDirectory(named: "aster-ssh-upgrade")
+  defer { try? FileManager.default.removeItem(at: home) }
+  let root = repositoryRoot.appendingPathComponent("Resources/shell-integration")
+  // 旧版本只写 tmux 限定的整体集成，没有 ssh 语句；升级必须原地改写而不是叠加。
+  let legacy = """
+    export USER_VALUE=1
+    \(ShellIntegrationInstaller.startMarker)
+    if [[ "${TERM_PROGRAM:-}" == "aster" ]] && [[ "${ASTER_DISABLE_INTEGRATION:-0}" != "1" ]] && [[ -n "${TMUX:-}" ]]; then
+      source '/old/path/aster-integration.zsh'
+    fi
+    \(ShellIntegrationInstaller.endMarker)
+
+    """
+  let zshRC = home.appendingPathComponent(".zshrc")
+  try legacy.write(to: zshRC, atomically: true, encoding: .utf8)
+  let installer = ShellIntegrationInstaller(
+    resourceDirectory: root, homeDirectory: home, tmuxAvailable: true)
+
+  try installer.reconcile(enabled: true)
+  let firstPass = try String(contentsOf: zshRC, encoding: .utf8)
+  try installer.reconcile(enabled: true)
+  let secondPass = try String(contentsOf: zshRC, encoding: .utf8)
+
+  #expect(firstPass == secondPass)
+  #expect(firstPass.components(separatedBy: ShellIntegrationInstaller.startMarker).count == 2)
+  #expect(!firstPass.contains("/old/path/aster-integration.zsh"))
+  #expect(firstPass.contains(root.appendingPathComponent("aster-ssh.zsh").path))
+  #expect(firstPass.contains(root.appendingPathComponent("aster-integration.zsh").path))
+  #expect(firstPass.hasPrefix("export USER_VALUE=1\n"))
+
+  try installer.reconcile(enabled: false)
+  #expect(try String(contentsOf: zshRC, encoding: .utf8) == "export USER_VALUE=1\n")
+}
+
+@Test("Ghostty 原生 zsh Pane 只靠受管 rc 区块就能拿到 ssh 包装函数")
+func zshNativePaneDefinesSSHWrapperFromManagedBlock() throws {
+  let home = try temporaryDirectory(named: "aster-zsh-native-ssh")
+  defer { try? FileManager.default.removeItem(at: home) }
+  let root = repositoryRoot.appendingPathComponent("Resources/shell-integration")
+  try "".write(to: home.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+  try ShellIntegrationInstaller(
+    resourceDirectory: root, homeDirectory: home, tmuxAvailable: true
+  ).reconcile(enabled: true)
+  let controlDirectory = home.appendingPathComponent("control", isDirectory: true)
+  try FileManager.default.createDirectory(at: controlDirectory, withIntermediateDirectories: true)
+
+  let without = try runInteractiveShell(
+    executable: "/bin/zsh",
+    arguments: ["-d", "-l", "-i"],
+    environment: nativePaneEnvironment(home: home, controlDirectory: nil),
+    input: "whence -w ssh\nexit\n"
+  )
+  #expect(!without.contains("ssh: function"))
+
+  let with = try runInteractiveShell(
+    executable: "/bin/zsh",
+    arguments: ["-d", "-l", "-i"],
+    environment: nativePaneEnvironment(home: home, controlDirectory: controlDirectory.path),
+    input: "whence -w ssh\nfunctions ssh\nexit\n"
+  )
+  #expect(with.contains("ssh: function"))
+  #expect(with.contains("ControlMaster=auto"))
+  #expect(with.contains("ControlPath=${ASTER_SSH_CONTROL_DIR}/%C"))
+}
+
+@Test("Ghostty 原生 zsh Pane 保留用户自定义的 ssh")
+func zshNativePaneKeepsUserDefinedSSH() throws {
+  let home = try temporaryDirectory(named: "aster-zsh-native-user-ssh")
+  defer { try? FileManager.default.removeItem(at: home) }
+  let root = repositoryRoot.appendingPathComponent("Resources/shell-integration")
+  try "ssh() { print -r -- ASTER_USER_SSH }\n".write(
+    to: home.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+  try ShellIntegrationInstaller(
+    resourceDirectory: root, homeDirectory: home, tmuxAvailable: true
+  ).reconcile(enabled: true)
+  let controlDirectory = home.appendingPathComponent("control", isDirectory: true)
+  try FileManager.default.createDirectory(at: controlDirectory, withIntermediateDirectories: true)
+
+  let output = try runInteractiveShell(
+    executable: "/bin/zsh",
+    arguments: ["-d", "-l", "-i"],
+    environment: nativePaneEnvironment(home: home, controlDirectory: controlDirectory.path),
+    input: "functions ssh\nexit\n"
+  )
+
+  #expect(output.contains("ASTER_USER_SSH"))
+  #expect(!output.contains("ControlMaster=auto"))
+}
+
+@Test("Ghostty 原生 bash Pane 只靠受管 rc 区块就能拿到 ssh 包装函数")
+func bashNativePaneDefinesSSHWrapperFromManagedBlock() throws {
+  let home = try temporaryDirectory(named: "aster-bash-native-ssh")
+  defer { try? FileManager.default.removeItem(at: home) }
+  let root = repositoryRoot.appendingPathComponent("Resources/shell-integration")
+  try ShellIntegrationInstaller(
+    resourceDirectory: root, homeDirectory: home, tmuxAvailable: true
+  ).reconcile(enabled: true)
+  let controlDirectory = home.appendingPathComponent("control", isDirectory: true)
+  try FileManager.default.createDirectory(at: controlDirectory, withIntermediateDirectories: true)
+
+  let without = try runInteractiveShell(
+    executable: "/bin/bash",
+    arguments: ["--login", "-i"],
+    environment: nativePaneEnvironment(home: home, controlDirectory: nil),
+    input: "declare -F ssh || echo ASTER_NO_SSH_FUNCTION\nexit\n"
+  )
+  #expect(without.contains("ASTER_NO_SSH_FUNCTION"))
+
+  let with = try runInteractiveShell(
+    executable: "/bin/bash",
+    arguments: ["--login", "-i"],
+    environment: nativePaneEnvironment(home: home, controlDirectory: controlDirectory.path),
+    input: "declare -f ssh\nexit\n"
+  )
+  #expect(with.contains("ControlMaster=auto"))
+  #expect(with.contains("ControlPath=${ASTER_SSH_CONTROL_DIR}/%C"))
+}
+
+/// 模拟 Ghostty 原生 Pane：不注入 ASTER_INTEGRATION、不改 ZDOTDIR，也不在 tmux 里，
+/// 唯一的加载入口就是安装器写进用户 rc 的受管区块。
+private func nativePaneEnvironment(home: URL, controlDirectory: String?) -> [String: String] {
+  var environment = [
+    "HOME": home.path,
+    "PATH": "/usr/bin:/bin",
+    "PWD": home.path,
+    "TERM": "xterm-256color",
+    "TERM_PROGRAM": "aster",
+  ]
+  if let controlDirectory { environment["ASTER_SSH_CONTROL_DIR"] = controlDirectory }
+  return environment
+}
+
+/// ssh 包装函数用例共用的环境：只有 controlDirectory 非 nil 时才注入开关变量。
+private func sshWrapperEnvironment(
+  home: URL,
+  root: URL,
+  controlDirectory: String?
+) -> [String: String] {
+  var environment = [
+    "HOME": home.path,
+    "PATH": "/usr/bin:/bin",
+    "PWD": home.path,
+    "TERM": "xterm-256color",
+    "TERM_PROGRAM": "aster",
+    "ASTER_INTEGRATION": "1",
+    "ASTER_SHELL_INTEGRATION_DIR": root.path,
+    "ASTER_REAL_ZDOTDIR": home.path,
+    "ASTER_REAL_ZDOTDIR_SET": "0",
+    "ZDOTDIR": root.appendingPathComponent("zsh").path,
+  ]
+  if let controlDirectory { environment["ASTER_SSH_CONTROL_DIR"] = controlDirectory }
+  return environment
 }
 
 private let repositoryRoot = URL(fileURLWithPath: #filePath)

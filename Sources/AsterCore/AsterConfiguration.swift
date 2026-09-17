@@ -297,6 +297,9 @@ public struct GeneralConfiguration: Codable, Equatable, Sendable {
 public struct ShellConfiguration: Codable, Equatable, Sendable {
   public var shellIntegration = true
   public var sshIntegration = true
+  /// 本机 `ssh` 命令是否通过 OpenSSH ControlMaster 复用已认证连接。可选字段兼容旧配置，
+  /// 缺失时按开启处理：详情面板的远端文件与服务器监控要借用这条已认证连接才能免二次认证。
+  public var sshConnectionSharing: Bool? = true
   /// 可选字段兼容 0.4.x 配置；缺失时按 Otty 默认值开启自动记录。
   public var frecencyAutoRecord: Bool? = true
   public var restoreMultiplexerSessions = true
@@ -327,6 +330,9 @@ public struct ShellConfiguration: Codable, Equatable, Sendable {
   public var resolvedFrecencyAutoRecord: Bool {
     frecencyAutoRecord ?? true
   }
+
+  /// 连接复用的最终取值。包装函数还额外要求「SSH 集成」开启，两者都为真才注入。
+  public var resolvedSSHConnectionSharing: Bool { sshConnectionSharing ?? true }
 
   /// 「会话恢复」的可选字段:终端恢复协议(OSC 88)、进程恢复范围与白名单。
   /// 可选以兼容旧配置;默认值与 Otty 一致(协议关、范围 whitelist、白名单空)。

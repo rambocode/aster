@@ -53,6 +53,22 @@ cp "$BUILD_DIR/release/aster-session" "$CONTENTS_DIR/MacOS/aster-session"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$PROJECT_DIR/THIRD-PARTY-NOTICES.md" "$RESOURCES_DIR/THIRD-PARTY-NOTICES.md"
 cp -R "$PROJECT_DIR/Resources/shell-integration" "$RESOURCES_DIR/shell-integration"
+# 远端集成脚本随 shell-integration 目录整体复制（remote/aster-remote.{bash,zsh,fish}）。
+# 详情面板的「安装远端集成」把它们上传到远端；缺了只会在用户点安装时失败，因此显式断言。
+for REMOTE_SCRIPT in aster-remote.bash aster-remote.zsh aster-remote.fish; do
+  if [[ ! -f "$RESOURCES_DIR/shell-integration/remote/$REMOTE_SCRIPT" ]]; then
+    echo "Missing packaged remote shell integration: shell-integration/remote/$REMOTE_SCRIPT" >&2
+    exit 1
+  fi
+done
+# SSH 连接复用 payload：受管 rc 区块用绝对路径直接 source 这些文件，缺了会让用户 Shell 每次
+# 启动都报 "no such file"，而不是安静降级，因此同样显式断言。
+for SSH_SCRIPT in aster-ssh.bash aster-ssh.zsh aster-ssh.fish; do
+  if [[ ! -f "$RESOURCES_DIR/shell-integration/$SSH_SCRIPT" ]]; then
+    echo "Missing packaged ssh shell integration: shell-integration/$SSH_SCRIPT" >&2
+    exit 1
+  fi
+done
 cp -R "$PROJECT_DIR/Resources/autocomplete" "$RESOURCES_DIR/autocomplete"
 cp -R "$PROJECT_DIR/Resources/agent-integration" "$RESOURCES_DIR/agent-integration"
 chmod 755 "$RESOURCES_DIR/agent-integration/aster-agent-hook.sh"

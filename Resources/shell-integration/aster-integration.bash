@@ -79,3 +79,6 @@ PROMPT_COMMAND="_aster_bash_prompt_command${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 if [[ "$PS1" != *$'\e]133;B\a'* ]]; then
   PS1="${PS1}"$'\[\e]133;B\a\]'
 fi
+
+# 本机 ssh 连接复用的包装函数放在 aster-ssh.bash，原因见 aster-ssh.zsh 文件头。
+source "$(dirname "${BASH_SOURCE[0]}")/aster-ssh.bash"

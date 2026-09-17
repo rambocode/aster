@@ -21,6 +21,7 @@ enum TerminalLaunchEnvironmentBuilder {
     resourcesDirectory: String?,
     engineTerminfoDirectory: String? = nil,
     controlContext: TerminalControlContext? = nil,
+    sshControlDirectory: String? = nil,
     terminfoEntryExists: (String, [String: String]) -> Bool
   ) -> TerminalLaunchEnvironmentResult {
     // 主资源 terminfo（build-app.sh 合并生成）优先；引擎 Bundle 的 terminfo 让
@@ -52,10 +53,16 @@ enum TerminalLaunchEnvironmentBuilder {
         shellPath: shellPath,
         enabled: shellIntegrationEnabled,
         resourceDirectory: "\(resourcesDirectory)/shell-integration",
-        inheritedEnvironment: environment
+        inheritedEnvironment: environment,
+        sshControlDirectory: sshControlDirectory
       )
     {
       environment = plan.environment
+    }
+    // Ghostty Pane 用引擎自带的 shell integration（enabled=false，上面的 plan 为 nil），
+    // 但用户 rc 里受管 block 里的 Aster 脚本仍会加载，所以复用目录必须独立于 plan 注入。
+    if let sshControlDirectory, !sshControlDirectory.isEmpty {
+      environment[ShellIntegrationLaunchPlan.sshControlDirectoryKey] = sshControlDirectory
     }
     let productVersion = TerminalProductVersion(version)
     return TerminalLaunchEnvironmentResult(

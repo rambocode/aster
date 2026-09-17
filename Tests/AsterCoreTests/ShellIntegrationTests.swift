@@ -258,3 +258,27 @@ func ghosttyFallbackPromptTracksCommandLifecycle() throws {
   #expect(timeline.marks.count == 1)
   #expect(timeline.marks.first?.exitStatus == 7)
 }
+
+/// 复用目录只在非空时注入；空值不能留下一个会让脚本误判的空环境变量。
+@Test("Shell 集成注入 ASTER_SSH_CONTROL_DIR")
+func shellIntegrationPlanInjectsSSHControlDirectory() throws {
+  let base = ["HOME": "/Users/tester"]
+  let injected = try #require(
+    ShellIntegrationLaunchPlan.make(
+      shellPath: "/bin/zsh",
+      enabled: true,
+      resourceDirectory: "/Applications/Aster.app/Contents/Resources/shell-integration",
+      inheritedEnvironment: base,
+      sshControlDirectory: "/tmp/aster-cm-501"
+    ))
+  #expect(injected.environment["ASTER_SSH_CONTROL_DIR"] == "/tmp/aster-cm-501")
+
+  let omitted = try #require(
+    ShellIntegrationLaunchPlan.make(
+      shellPath: "/bin/zsh",
+      enabled: true,
+      resourceDirectory: "/Applications/Aster.app/Contents/Resources/shell-integration",
+      inheritedEnvironment: base
+    ))
+  #expect(omitted.environment["ASTER_SSH_CONTROL_DIR"] == nil)
+}

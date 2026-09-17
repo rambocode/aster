@@ -426,3 +426,24 @@ func openDestinationsRejectLegacyRawValue() throws {
   #expect(FolderOpenDestination(rawValue: "otty") == nil)
   #expect(LinkOpenDestination.aster.rawValue == "aster")
 }
+
+/// 旧配置文件没有 `sshConnectionSharing` 字段，解码后必须回退到开启，
+/// 否则升级用户会在毫无提示的情况下失去远端文件与服务器监控的免认证通道。
+@Test("SSH 连接复用缺省开启且兼容旧配置")
+func shellConfigurationResolvesSSHConnectionSharing() throws {
+  #expect(ShellConfiguration().resolvedSSHConnectionSharing)
+
+  // 从当前结构体编码后删掉该键，模拟升级前写下的配置文件。
+  var object = try #require(
+    try JSONSerialization.jsonObject(with: try JSONEncoder().encode(ShellConfiguration()))
+      as? [String: Any])
+  object.removeValue(forKey: "sshConnectionSharing")
+  let legacy = try JSONSerialization.data(withJSONObject: object)
+  let decoded = try JSONDecoder().decode(ShellConfiguration.self, from: legacy)
+  #expect(decoded.sshConnectionSharing == nil)
+  #expect(decoded.resolvedSSHConnectionSharing)
+
+  var configuration = ShellConfiguration()
+  configuration.sshConnectionSharing = false
+  #expect(!configuration.resolvedSSHConnectionSharing)
+}

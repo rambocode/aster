@@ -57,3 +57,6 @@ function _aster_fish_postexec --on-event fish_postexec
     set -g _ASTER_FISH_COMMAND_ACTIVE 0
   end
 end
+
+# 本机 ssh 连接复用的包装函数放在 aster-ssh.fish，原因见 aster-ssh.zsh 文件头。
+source (dirname (status filename))/aster-ssh.fish
