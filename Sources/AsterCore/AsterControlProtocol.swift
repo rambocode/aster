@@ -208,6 +208,8 @@ public enum AsterControlMethod: String, CaseIterable, Codable, Sendable {
   case agentSendKeys = "agent.send_keys"
   case agentFocus = "agent.focus"
   case agentStart = "agent.start"
+  /// Agent lifecycle hook 上报状态（等价于往 PTY 写 OSC 6974，但不经过 PTY，见 AgentReportParams）。
+  case agentReport = "agent.report"
   case paneRead = "pane.read"
   case paneSendText = "pane.send_text"
   case paneSendKeys = "pane.send_keys"
@@ -232,7 +234,7 @@ public enum AsterControlMethod: String, CaseIterable, Codable, Sendable {
     switch self {
     case .serverPing, .sessionSnapshot, .agentList, .agentGet, .agentRead, .paneRead,
       .paneWaitForOutput, .eventsSubscribe, .eventsWait, .agentWait, .agentFocus, .paneFocus,
-      .notificationShow, .workflowExecute, .sessionTerminals:
+      .notificationShow, .workflowExecute, .sessionTerminals, .agentReport:
       return false
     case .agentPrompt, .agentSendKeys, .agentStart, .paneSendText, .paneSendKeys, .sessionDetach,
       .sessionEnd:
@@ -288,6 +290,47 @@ public struct AgentTargetParams: Codable, Equatable, Sendable, AsterControlValid
 
   public func validate() throws {
     try ControlSelectorValidation.validateSelector(target, field: "target")
+  }
+}
+
+/// agent.report：Agent lifecycle hook 经控制 socket 上报状态。
+///
+/// 语义与 hook 往所属 PTY 写 OSC 6974 完全一致（同一套 `AgentTerminalDirective` 校验），
+/// 区别只在传输通道：hook 子进程直接写 `/dev/ttysNNN` 时会和 Agent 自己的输出在内核
+/// pty 队列里交错，把多字节字符或转义序列截成两半，Claude Code 等 TUI 因此花屏；
+/// 走 socket 只改 App 内状态，不进 PTY。`target` 是 pane selector（hook 用 `p_<UUID>`）。
+public struct AgentReportParams: Codable, Equatable, Sendable, AsterControlValidatable {
+  public var target: String
+  /// `processing` | `idle` | `awaiting-input` | `ended`，与 OSC 6974 的 AgentState 同名。
+  public var state: String
+  /// AgentProvider 的 rawValue。
+  public var provider: String
+  public var sessionID: String?
+
+  public init(target: String, state: String, provider: String, sessionID: String? = nil) {
+    self.target = target
+    self.state = state
+    self.provider = provider
+    self.sessionID = sessionID
+  }
+
+  /// 拼成 OSC 6974 payload 交给同一个解析器校验，保证两条通道接受的输入集合完全相同。
+  public var oscPayload: String {
+    var payload = "AgentState=\(state);Provider=\(provider)"
+    if let sessionID { payload += ";SessionID=\(sessionID)" }
+    return payload
+  }
+
+  public func validate() throws {
+    try ControlSelectorValidation.validateSelector(target, field: "target")
+    guard directive != nil else {
+      throw AsterControlError.invalidParams("state/provider/sessionID 不是合法的 agent 指令")
+    }
+  }
+
+  /// 校验通过后的指令；非法组合为 nil。
+  public var directive: AgentTerminalDirective? {
+    AgentTerminalDirective(payload: oscPayload)
   }
 }
 

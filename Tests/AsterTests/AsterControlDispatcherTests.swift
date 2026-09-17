@@ -111,6 +111,53 @@ struct AsterControlDispatcherTests {
     #expect(await fixture.call("agent.get", ["target": "w1:p1"]).result?["agent_status"]?.stringValue == "idle")
   }
 
+  @Test("agent.report 经 socket 上报与 PTY 内 OSC 6974 同语义，且不写 PTY")
+  func agentReportMirrorsTerminalDirective() async throws {
+    let (fixture, _) = try makeFixture(allowSendKeys: false)
+    defer { fixture.workspace.tearDown() }
+    let (session, _) = try fixture.workspace.makeActiveTerminalView()
+
+    // 首个 idle 到达时 pane 还不是 agent：必须按 pane 解析，而不是 agent_not_found。
+    let first = await fixture.call(
+      "agent.report", ["target": "w1:p1", "state": "processing", "provider": "codex", "sessionID": "s1"])
+    #expect(first.error == nil)
+    await pumpControlEvents()
+    let info = await fixture.call("agent.get", ["target": "w1:p1"])
+    #expect(info.result?["agent"]?.stringValue == "codex")
+    #expect(info.result?["agent_status"]?.stringValue == "working")
+    #expect(info.result?["detection"]?.stringValue == "hook")
+    #expect(info.result?["session_id"]?.stringValue == "s1")
+
+    // 写门禁关闭也不影响：report 只改 App 内状态，不进 PTY。
+    let blocked = await fixture.call(
+      "agent.report", ["target": "w1:p1", "state": "awaiting-input", "provider": "codex"])
+    #expect(blocked.error == nil)
+    #expect(session.agentTaskState == .awaitingInput)
+
+    // 与 OSC 6974 相同的拒绝规则：非法 state / provider / sessionID、不存在的 pane。
+    #expect(
+      await fixture.call("agent.report", ["target": "w1:p1", "state": "bogus", "provider": "codex"]).error?.code
+        == .invalidParams)
+    #expect(
+      await fixture.call("agent.report", ["target": "w1:p1", "state": "idle", "provider": "nope"]).error?.code
+        == .invalidParams)
+    #expect(
+      await fixture.call(
+        "agent.report", ["target": "w1:p1", "state": "idle", "provider": "codex", "sessionID": "bad id"]
+      ).error?.code == .invalidParams)
+    #expect(
+      await fixture.call("agent.report", ["target": "w9:p9", "state": "idle", "provider": "codex"]).error?.code
+        == .notFound)
+    // 已绑定 codex 的 pane 拒绝其它 provider 注入（与 PTY 路径一致）。
+    let foreign = await fixture.call("agent.report", ["target": "w1:p1", "state": "idle", "provider": "claudeCode"])
+    #expect(foreign.error == nil)
+    #expect(session.activeAgentProvider == .codex)
+
+    let ended = await fixture.call("agent.report", ["target": "w1:p1", "state": "ended", "provider": "codex"])
+    #expect(ended.error == nil)
+    #expect(session.activeAgentProvider == nil)
+  }
+
   @Test("写门禁：write_not_allowed / write_rejected（只读）")
   func writeGate() async throws {
     let (fixture, box) = try makeFixture(allowSendKeys: false)

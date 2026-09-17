@@ -45,6 +45,29 @@ struct AsterCLIArgumentsTests {
     #expect(try command(["agent", "get", "builder"]) == .agentGet(.init(target: "builder")))
     #expect(try command(["agent", "get", "--current"]) == .agentGet(.init(target: "current")))
     #expect(try command(["agent", "focus", "w1:p2"]) == .agentFocus(.init(target: "w1:p2")))
+    // agent report：hook 用 p_<UUID> 定位 pane；state/provider 必填，非法组合在解析期就拒绝。
+    let paneUUID = "p_0F1E2D3C-4B5A-6978-8899-AABBCCDDEEFF"
+    #expect(
+      try command([
+        "agent", "report", paneUUID, "--state", "idle", "--provider", "claudeCode", "--session-id", "s-1",
+      ])
+        == .agentReport(.init(target: paneUUID, state: "idle", provider: "claudeCode", sessionID: "s-1")))
+    #expect(
+      try command(["agent", "report", "--current", "--state", "ended", "--provider", "codex"])
+        == .agentReport(.init(target: "current", state: "ended", provider: "codex")))
+    #expect(try parse(["agent", "report", "--current", "--state", "idle", "--provider", "codex"]).requiresAsterEnv)
+    #expect(throws: AsterCLIArgumentError.self) {
+      try command(["agent", "report", "--current", "--state", "bogus", "--provider", "codex"])
+    }
+    #expect(throws: AsterCLIArgumentError.self) {
+      try command(["agent", "report", "--current", "--state", "idle", "--provider", "nope"])
+    }
+    #expect(throws: AsterCLIArgumentError.self) {
+      try command(["agent", "report", "--current", "--state", "idle"])
+    }
+    #expect(throws: AsterCLIArgumentError.self) {
+      try command(["agent", "report", "--current", "--state", "idle", "--provider", "codex", "--session-id", "bad id"])
+    }
     #expect(
       try command(["agent", "read", "w1:p2", "--source", "recent", "--lines", "50"])
         == .agentRead(.init(target: "w1:p2", source: .recent, lines: 50)))

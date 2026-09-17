@@ -32,6 +32,8 @@ public enum AsterCLICommand: Equatable, Sendable {
   case agentSendKeys(AgentSendKeysParams)
   case agentFocus(AgentTargetParams)
   case agentStart(AgentStartParams)
+  /// lifecycle hook 上报 Agent 状态（走 socket，不写 PTY）。
+  case agentReport(AgentReportParams)
   /// pane 为 nil 表示由运行时用 `$ASTER_PANE_ID` 兜底。
   case paneRead(pane: String?, source: PaneReadSource, lines: Int?)
   case paneSendText(pane: String?, text: String, enter: Bool)
@@ -85,7 +87,8 @@ public struct AsterCLIArguments: Equatable, Sendable {
     // 与 agent.* 同级，只对 Aster 内进程开放；只读的 `session terminals` 保持任意终端可用。
     switch command {
     case .agentList, .agentGet, .agentRead, .agentPrompt, .agentWait, .agentSendKeys, .agentFocus,
-      .agentStart, .eventsSubscribe, .eventsWait, .notificationShow, .sessionDetach, .sessionEnd:
+      .agentStart, .agentReport, .eventsSubscribe, .eventsWait, .notificationShow, .sessionDetach,
+      .sessionEnd:
       return true
     case .help, .version, .skill, .sessionSnapshot, .sessionTerminals, .paneRead, .paneSendText,
       .paneSendKeys, .paneFocus, .paneWaitForOutput, .legacy:
@@ -221,7 +224,7 @@ public struct AsterCLIArguments: Equatable, Sendable {
   private static func parseAgent(_ input: [String]) throws -> AsterCLICommand {
     guard let subcommand = input.first else {
       throw AsterCLIArgumentError(
-        "agent 需要子命令：list | get | read | prompt | wait | send-keys | focus | start")
+        "agent 需要子命令：list | get | read | prompt | wait | send-keys | focus | start | report")
     }
     let arguments = Array(input.dropFirst())
     switch subcommand {
@@ -238,6 +241,19 @@ public struct AsterCLIArguments: Equatable, Sendable {
         arguments, command: "agent focus", flags: ["--current"], valued: [])
       let target = try requiredTarget(parsed, command: "agent focus")
       return .agentFocus(AgentTargetParams(target: target))
+    case "report":
+      // hook 专用：state/provider 必填，session-id 可选；合法性由协议层 validate 统一判定。
+      let parsed = try parseOptions(
+        arguments, command: "agent report", flags: ["--current"],
+        valued: ["--state", "--provider", "--session-id"])
+      let target = try requiredTarget(parsed, command: "agent report")
+      guard let state = parsed.values["--state"], let provider = parsed.values["--provider"] else {
+        throw AsterCLIArgumentError("agent report 需要 --state 与 --provider")
+      }
+      let params = AgentReportParams(
+        target: target, state: state, provider: provider, sessionID: parsed.values["--session-id"])
+      try mapValidation { try params.validate() }
+      return .agentReport(params)
     case "read":
       let parsed = try parseOptions(
         arguments, command: "agent read", flags: ["--current"], valued: ["--source", "--lines"])
@@ -741,6 +757,7 @@ public struct AsterCLIArguments: Equatable, Sendable {
       agent send-keys <target>|--current <key>...
       agent focus <target>|--current
       agent start <name> --kind <kind> [--pane <id>|--current] [--timeout ms] [-- <args>...]
+      agent report <target>|--current --state <state> --provider <provider> [--session-id <id>]  （lifecycle hook 内部使用）
 
     Pane:
       pane read [<pane>|--pane <id>|--current] [--source visible|recent] [--lines N]

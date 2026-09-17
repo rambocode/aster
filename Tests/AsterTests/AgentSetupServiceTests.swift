@@ -693,6 +693,75 @@ func agentLifecycleHookRejectsUnsafeSessionIDPayloads() throws {
   #expect(!oversized.contains("SessionID="))
 }
 
+@Test("lifecycle hook 优先经控制 socket 上报，不再往 tty 写 OSC；CLI 失败时回退 tty")
+func agentLifecycleHookPrefersControlSocketAndFallsBackToTTY() throws {
+  let directory = try agentSetupTemporaryDirectory(named: "aster-hook-socket")
+  defer { try? FileManager.default.removeItem(at: directory) }
+  // sun_path 上限 104 字节：temporaryDirectory 太长，socket 文件放 /tmp 短路径。
+  let socketPath = "/tmp/aster-hook-\(UUID().uuidString.prefix(8)).sock"
+  try bindUnixSocketFile(at: socketPath)
+  defer { unlink(socketPath) }
+  let log = directory.appendingPathComponent("cli.log")
+  // 假 CLI：把 argv 与 ASTER_CLI_NO_LAUNCH 记到日志，退出码由 FAKE_CLI_EXIT 控制。
+  let fakeCLI = directory.appendingPathComponent("aster-cli")
+  try """
+    #!/bin/sh
+    printf '%s\n' "NO_LAUNCH=${ASTER_CLI_NO_LAUNCH-}" "$*" >> "\(log.path)"
+    exit "${FAKE_CLI_EXIT:-0}"
+    """.write(to: fakeCLI, atomically: true, encoding: .utf8)
+  try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o755)], ofItemAtPath: fakeCLI.path)
+  let paneUUID = "0F1E2D3C-4B5A-6978-8899-AABBCCDDEEFF"
+  let environment = [
+    "ASTER_ENV": "1", "ASTER_SESSION_ID": paneUUID, "ASTER_SOCKET_PATH": socketPath,
+    "ASTER_BIN_PATH": fakeCLI.path,
+  ]
+  let payload = """
+    {"session_id":"repro-session-123","cwd":"/tmp/repro","hook_event_name":"SessionStart"}
+    """
+
+  let viaSocket = try runAgentLifecycleHook(payload: payload, environment: environment)
+  #expect(!viaSocket.contains("6974"))
+  #expect(!viaSocket.contains("AgentState="))
+  let logged = try String(contentsOf: log, encoding: .utf8)
+  #expect(logged.contains("NO_LAUNCH=1"))
+  #expect(
+    logged.contains(
+      "agent report p_\(paneUUID) --state idle --provider codex --session-id repro-session-123"))
+
+  // CLI 失败（App 不在、pane 对不上）：退回 tty，OSC 必须照常到达。
+  let fallback = try runAgentLifecycleHook(
+    payload: payload, environment: environment.merging(["FAKE_CLI_EXIT": "1"]) { $1 })
+  #expect(fallback.contains("AgentState=idle;Provider=codex;SessionID=repro-session-123"))
+
+  // socket 文件不存在：不调 CLI，直接走 tty。
+  let logLinesBefore = try String(contentsOf: log, encoding: .utf8).split(separator: "\n").count
+  let noSocket = try runAgentLifecycleHook(
+    payload: payload, environment: environment.merging(["ASTER_SOCKET_PATH": directory.appendingPathComponent("missing.sock").path]) { $1 })
+  #expect(noSocket.contains("AgentState=idle;Provider=codex;SessionID=repro-session-123"))
+  #expect(try String(contentsOf: log, encoding: .utf8).split(separator: "\n").count == logLinesBefore)
+}
+
+/// 在指定路径 bind 一个 Unix socket 文件（无人监听）：hook 只用 `[ -S ]` 判断是否尝试 socket 通道。
+private func bindUnixSocketFile(at path: String) throws {
+  let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+  guard descriptor >= 0 else { throw CocoaError(.fileWriteUnknown) }
+  defer { Darwin.close(descriptor) }
+  var address = sockaddr_un()
+  address.sun_family = sa_family_t(AF_UNIX)
+  let bytes = Array(path.utf8)
+  guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { throw CocoaError(.fileWriteUnknown) }
+  withUnsafeMutableBytes(of: &address.sun_path) { buffer in
+    for (index, byte) in bytes.enumerated() { buffer[index] = byte }
+    buffer[bytes.count] = 0
+  }
+  let result = withUnsafePointer(to: &address) { pointer in
+    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+      Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+    }
+  }
+  guard result == 0 else { throw CocoaError(.fileWriteUnknown) }
+}
+
 /// fixture 文件模拟 Codex 关闭后的 stdin pipe；`script` 只负责提供真实伪终端，使写往
 /// `/dev/tty` 的 OSC 可被捕获。这与 Aster Pane 内运行边界一致，不是只检查脚本文本。
 /// 在伪终端里跑 lifecycle hook，可选覆盖 provider 与 Grok 注入的环境变量。
@@ -723,6 +792,11 @@ private func runAgentLifecycleHook(
   var processEnvironment = ProcessInfo.processInfo.environment
   processEnvironment.removeValue(forKey: "GROK_HOOK_EVENT")
   processEnvironment.removeValue(forKey: "GROK_SESSION_ID")
+  // 测试进程本身可能跑在 Aster pane 里：剥掉宿主注入的控制环境，否则 hook 会真的把状态
+  // 报给宿主 Aster 的 pane，而不是走这里要验证的 tty 边界。
+  for key in ["ASTER_ENV", "ASTER_SESSION_ID", "ASTER_SOCKET_PATH", "ASTER_BIN_PATH", "ASTER_PANE_ID"] {
+    processEnvironment.removeValue(forKey: key)
+  }
   for (key, value) in environment {
     processEnvironment[key] = value
   }
