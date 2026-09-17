@@ -213,14 +213,19 @@ public struct WorkspaceSnapshot: Codable, Equatable, Sendable {
   public var tabs: [WorkspaceTabSnapshot]
   /// 手动分隔线位于对应标签之后。可选字段保证旧工作区快照无损升级。
   public var dividerAfterTabIDs: [UUID]?
+  /// 快照落盘时刻。退出流程会同步写一次，因此下次启动时它就是「上次退出时间」，
+  /// 用于恢复横幅里的 Quitted at。可选字段兼容没有该字段的旧快照。
+  public var savedAt: Date?
 
   public init(
     selectedTabID: UUID,
     tabs: [WorkspaceTabSnapshot],
-    dividerAfterTabIDs: [UUID] = []
+    dividerAfterTabIDs: [UUID] = [],
+    savedAt: Date? = nil
   ) {
     self.selectedTabID = selectedTabID
     self.tabs = tabs
     self.dividerAfterTabIDs = dividerAfterTabIDs
+    self.savedAt = savedAt
   }
 }

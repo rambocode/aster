@@ -773,6 +773,7 @@
 "恢复 tmux / screen 会话" = "tmux-/screen-Sitzungen wiederherstellen";
 "恢复上次会话" = "Letzte Sitzung wiederherstellen";
 "恢复主题原始参数" = "Ursprüngliche Design-Parameter wiederherstellen";
+"恢复于 %@" = "Wiederhergestellt um %@";
 "恢复失败" = "Wiederherstellung fehlgeschlagen";
 "恢复工作区时继续之前的智能体 CLI 会话" = "Vorherige Agent-CLI-Sitzung beim Wiederherstellen des Arbeitsbereichs fortsetzen";
 "恢复工作区时继续之前的智能体会话" = "Vorherige Agent-Sitzung beim Wiederherstellen des Arbeitsbereichs fortsetzen";
@@ -1481,6 +1482,7 @@
 "退出" = "Beenden";
 "退出 Aster" = "Aster beenden";
 "退出 Quick Terminal？" = "Quick Terminal beenden?";
+"退出于 %@" = "Beendet um %@";
 "退出全屏幕" = "Vollbildmodus beenden";
 "退出应用会结束 Quick Terminal 中的 Shell 和运行中的任务。" = "Das Beenden der App beendet die Shell und laufende Aufgaben in Quick Terminal.";
 "退出状态码 %@。最后画面已保留，可以在当前 Pane 重新启动。" = "Exit-Code %@. Der letzte Bildschirm wurde beibehalten; Sie können in diesem Bereich neu starten.";

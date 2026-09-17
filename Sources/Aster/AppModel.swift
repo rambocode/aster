@@ -1618,6 +1618,11 @@ final class AppModel: ObservableObject {
         for record in tabSnapshot.restoreCommands ?? [] {
           tab.runtime(for: record.paneID)?.terminalSession?.scheduleRestoredCommand(record)
         }
+        // 恢复横幅：每个终端 Pane 在 Shell 启动前先打印「上次退出 / 本次恢复」时间，
+        // 让用户一眼分清哪些输出是上一次会话留下的。
+        for pane in tabSnapshot.layout.allPanes where pane.kind == .terminal {
+          tab.runtime(for: pane.id)?.terminalSession?.scheduleRestoreBanner(quitAt: snapshot.savedAt)
+        }
       }
       dividerAfterTabIDs = Set(snapshot.dividerAfterTabIDs ?? [])
       let previousHistory = recentlyClosedTabs
@@ -3957,7 +3962,8 @@ final class AppModel: ObservableObject {
     let snapshot = WorkspaceSnapshot(
       selectedTabID: selectedTabID,
       tabs: tabs.map(\.snapshot),
-      dividerAfterTabIDs: Array(dividerAfterTabIDs)
+      dividerAfterTabIDs: Array(dividerAfterTabIDs),
+      savedAt: Date()
     )
     guard let data = try? JSONEncoder().encode(snapshot) else { return }
     defaults.set(data, forKey: snapshotKey)

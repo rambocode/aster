@@ -187,3 +187,21 @@ import Testing
   #expect(decodedLegacy.agentSessions == nil)
   #expect(decodedLegacy.layout == legacy.layout)
 }
+
+// 恢复横幅的「上次退出时间」来自快照的 savedAt；旧快照没有该字段时必须解码为 nil。
+@Test func workspaceSnapshotRoundTripsSavedAtAndLegacyJSONDecodesNil() throws {
+  let pane = PaneDescriptor(kind: .terminal, workingDirectory: "/tmp")
+  let tab = WorkspaceTabSnapshot(id: UUID(), title: "Shell", layout: .leaf(pane))
+  let savedAt = Date(timeIntervalSince1970: 1_726_308_000)
+  let snapshot = WorkspaceSnapshot(selectedTabID: tab.id, tabs: [tab], savedAt: savedAt)
+  let data = try JSONEncoder().encode(snapshot)
+  let restored = try JSONDecoder().decode(WorkspaceSnapshot.self, from: data)
+  #expect(restored.savedAt == savedAt)
+
+  var legacyJSON = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+  legacyJSON.removeValue(forKey: "savedAt")
+  let legacyData = try JSONSerialization.data(withJSONObject: legacyJSON)
+  let decodedLegacy = try JSONDecoder().decode(WorkspaceSnapshot.self, from: legacyData)
+  #expect(decodedLegacy.savedAt == nil)
+  #expect(decodedLegacy.tabs == snapshot.tabs)
+}
