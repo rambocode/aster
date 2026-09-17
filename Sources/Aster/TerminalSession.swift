@@ -2330,6 +2330,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 诊断 seam：恢复重连是否仍在等待首个 prompt。仅供测试观察，UI 不消费。
   var hasPendingRestoredAgentResume: Bool { pendingRestoredAgentResume != nil }
   var hasPendingRestoredCommand: Bool { pendingRestoredCommand != nil }
+  /// 工作区恢复时待打印的时间横幅。只在首次拉起 Shell 时消费一次，「重新启动 Shell」
+  /// 或 surface 重建不会再重复打印。
+  private var pendingRestoreBanner: (quitAt: Date?, restoredAt: Date)?
+  /// 诊断 seam：横幅是否仍等待 Shell 启动。仅供测试观察。
+  var hasPendingRestoreBanner: Bool { pendingRestoreBanner != nil }
   private var completedFlashTask: Task<Void, Never>?
   private var progressExpiryTask: Task<Void, Never>?
   /// 生产固定使用 5 秒静默窗口；构造参数让回归测试可用虚拟的短窗口
@@ -2909,6 +2914,18 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     // aster-direct-child 绕过 login(1)，由 Ghostty 等待受控启动命令的真实退出状态。
     view.command = GhosttyConfiguration.launchCommand(
       shell: shell, arguments: Self.launchArguments(forShell: shell))
+    // 恢复横幅只走原生 Shell 路径：受管终端桥接的是仍在运行的进程，屏幕内容本来就在，
+    // 下面的 bridge 命令也会整体覆盖启动命令。
+    if let banner = pendingRestoreBanner, managedTerminal == nil, let launch = view.command {
+      // 只有 Ghostty 会为 zsh 注入集成（shell-integration=detect）时才需要补注入；用户关掉
+      // 集成时不能替他打开。
+      let reinjectZsh = preferences.configuration.shell.shellIntegration
+        && URL(fileURLWithPath: shell).lastPathComponent == "zsh"
+      view.command = SessionRestoreBanner.launchCommand(
+        prefixing: launch, shell: shell, reinjectGhosttyZshIntegration: reinjectZsh,
+        quitAt: banner.quitAt, restoredAt: banner.restoredAt)
+    }
+    pendingRestoreBanner = nil
     // 受管终端的 surface 子进程是显示桥，不是任务本身：关闭 surface 只结束桥，
     // 后台服务持有的 PTY 与进程组继续运行。
     if let managedTerminal,
@@ -5228,6 +5245,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   func scheduleRestoredCommand(_ record: WorkspacePaneRestoreCommand) {
     pendingRestoredCommand = record
     scheduleRestoreFallbackIfNeeded()
+  }
+
+  /// 登记工作区恢复横幅：`quitAt` 是上次快照落盘时间(旧快照为 nil,只打印恢复行),
+  /// 恢复时间取登记时刻。横幅在 Shell 启动命令前打印,不经过 prompt,也不占用输入。
+  func scheduleRestoreBanner(quitAt: Date?) {
+    pendingRestoreBanner = (quitAt, Date())
   }
 
   /// 快照阶段挑出本 Pane 的恢复命令:有 OSC 88 声明优先;否则看前台命令是否是复用器或
