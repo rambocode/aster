@@ -55,6 +55,9 @@ final class WorkspaceViewController: NSViewController {
   /// 当前视图树内同一标签可能同时出现在一种标签布局中。数组保留扩展余地，并让活动
   /// 状态只原地更新行尾附件，不因 Agent hook 重建终端工作区。
   private var tabRowsByID: [UUID: [TabRowButton]] = [:]
+  /// 上次全量刷新时每个标签所在的项目分组 identifier。分组按活动 Pane 目录解析，但焦点
+  /// 切换刻意不做全量刷新；靠它判断「分组是否真的变了」，只在变了时才重建侧栏。
+  private var renderedProjectGroupIdentifiers: [UUID: String] = [:]
   private var pendingTabActivityIDs: Set<UUID> = []
   private var tabActivityRefreshScheduled = false
   private var retainedObjects: [AnyObject] = []
@@ -977,6 +980,9 @@ final class WorkspaceViewController: NSViewController {
           // 不产生 OSC 7，若不在这里同步，胶囊会一直停在最后一个上报目录的 Pane（通常
           // 是最近创建、启动时上报了一次目录的那个）。
           self.workspaceTitleButton?.workingDirectory = tab.workingDirectory
+          // 分组头也按活动 Pane 目录解析，但只有全量刷新才重建：分屏里两个 Pane 属于不同
+          // 项目时，切焦点会让组头停在上一个 Pane 的项目。分组没变仍走局部更新，不打断终端。
+          if self.sidebarProjectGroupIsStale(for: tab) { self.scheduleRefresh() }
         }
         .store(in: &tabSubscriptions)
       tab.windowTitleChanged
@@ -1453,12 +1459,8 @@ final class WorkspaceViewController: NSViewController {
         section = SidebarTabSection(
           identifier: nil, title: nil, toolTip: nil, kind: .ungrouped, tabs: [])
       case .project:
-        let project = SidebarProjectGroup.resolve(
-          directory: tab.workingDirectory,
-          homeDirectory: NSHomeDirectory(),
-          fallback: tab.title,
-          sshEndpoint: tab.activeSession?.sshRemoteEndpoint
-        )
+        let project = sidebarProjectGroup(for: tab)
+        renderedProjectGroupIdentifiers[tab.id] = project.identifier
         section = SidebarTabSection(
           identifier: project.identifier,
           title: project.title,
@@ -1484,6 +1486,24 @@ final class WorkspaceViewController: NSViewController {
       grouped[identifier]?.tabs.append(tab)
     }
     return sectionOrder.compactMap { grouped[$0] }
+  }
+
+  /// 标签在「按项目分组」下所属的分组：跟随活动 Pane 的目录 / SSH 端点。
+  private func sidebarProjectGroup(for tab: TerminalTabItem) -> SidebarProjectGroup {
+    SidebarProjectGroup.resolve(
+      directory: tab.workingDirectory,
+      homeDirectory: NSHomeDirectory(),
+      fallback: tab.title,
+      sshEndpoint: tab.activeSession?.sshRemoteEndpoint
+    )
+  }
+
+  /// 焦点切到另一个 Pane 后，标签的项目分组是否已与侧栏上画的不一致。
+  private func sidebarProjectGroupIsStale(for tab: TerminalTabItem) -> Bool {
+    guard preferences.sidebarTabGrouping == .project,
+      let rendered = renderedProjectGroupIdentifiers[tab.id]
+    else { return false }
+    return sidebarProjectGroup(for: tab).identifier != rendered
   }
 
   private func sidebarDateGroupTitle(for date: Date) -> String {

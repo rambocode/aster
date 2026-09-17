@@ -2871,3 +2871,40 @@ func sidebarRunningAnimationFollowsActivePane() async throws {
   try await Task.sleep(for: .milliseconds(80))
   #expect(!visibleTabAccessoryStates(for: tab, in: controller).contains("running"))
 }
+
+@Test("按项目分组时，分屏切换焦点后分组头跟随活动 Pane 的项目")
+@MainActor
+func sidebarProjectGroupFollowsActivePane() async throws {
+  let defaults = isolatedDefaults()
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.tabBarLayout = .vertical
+  preferences.sidebarTabGrouping = .project
+  // 用编辑器 Pane 避免真实 Shell 启动后用 OSC 7 覆盖测试目录；分组只看 Pane 的目录。
+  let model = try makeNonTerminalTestModel(defaults: defaults, directories: ["/tmp/alpha-project"])
+  let tab = try #require(model.selectedTab)
+  let leftPaneID = try #require(tab.activePaneID as UUID?)
+  tab.split(
+    direction: .right, kind: .editor, resourcePath: "/tmp/aster-sidebar-test-1.txt",
+    workingDirectory: "/tmp/beta-project")
+  let rightPaneID = try #require(tab.activePaneID as UUID?)
+  #expect(leftPaneID != rightPaneID)
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+  func groupTitles() -> [String] {
+    controller.view.descendants.compactMap {
+      $0.identifier?.rawValue == "sidebar-group-header" ? ($0 as? NSTextField)?.stringValue : nil
+    }
+  }
+  // 右侧 Pane 是活动 Pane：分组头是它的项目。
+  #expect(groupTitles() == ["beta-project"])
+
+  tab.setActivePane(leftPaneID)
+  try await Task.sleep(for: .milliseconds(120))
+  #expect(groupTitles() == ["alpha-project"])
+
+  tab.setActivePane(rightPaneID)
+  try await Task.sleep(for: .milliseconds(120))
+  #expect(groupTitles() == ["beta-project"])
+}
