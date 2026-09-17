@@ -69,11 +69,14 @@ final class PersistedSplitView: NSSplitView, NSSplitViewDelegate {
       isHoveringDivider = false
       return
     }
-    let area = NSTrackingArea(
-      rect: rect,
-      options: [.mouseEnteredAndExited, .activeInKeyWindow],
-      owner: self
-    )
+    // 拖完分隔条时指针正压在新命中区上。AppKit 只在下一次鼠标事件才判定初始内外；
+    // 指针一步跨出去就会被当成「从未进入」，永远收不到 mouseExited，高亮与拖动光标
+    // 都停在拖动态。指针当下在区内就声明 `.assumeInside`，让离开时必定补发 exited。
+    var options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeInKeyWindow]
+    if let window, rect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
+      options.insert(.assumeInside)
+    }
+    let area = NSTrackingArea(rect: rect, options: options, owner: self)
     addTrackingArea(area)
     dividerTrackingArea = area
     // 移除感应区不会补发 mouseExited：指针正好停在旧感应区里时高亮会一直卡住。
@@ -97,7 +100,15 @@ final class PersistedSplitView: NSSplitView, NSSplitViewDelegate {
   }
 
   override func mouseEntered(with event: NSEvent) { isHoveringDivider = true }
-  override func mouseExited(with event: NSEvent) { isHoveringDivider = false }
+
+  /// 离开分隔条时把光标复位。分隔条的拖动光标由 NSSplitView 的 cursor rect 设置，
+  /// 拖完后 cursor rect 在指针压着的位置重建，同样会漏掉「离开」，光标就卡成拖动形状。
+  /// `NSCursor.set()` 之后 AppKit 会为指针所在视图补发 cursorUpdate，终端等子视图随即
+  /// 恢复自己的光标（见 GhosttySurfaceView.cursorUpdate 注释）。
+  override func mouseExited(with event: NSEvent) {
+    isHoveringDivider = false
+    NSCursor.arrow.set()
+  }
 
   /// `NSSplitView` 把「分隔条厚度」当作与分隔方向垂直的固有尺寸（水平分隔时固有高度
   /// 只有 1pt），因为它的子视图走 autoresizing、无法反推内容尺寸。放进 `NSStackView`
@@ -158,6 +169,9 @@ final class PersistedSplitView: NSSplitView, NSSplitViewDelegate {
     isUserResizing = true
     super.mouseDown(with: event)
     isUserResizing = false
+    // 拖动结束：命中区与 cursor rect 都按最终位置重建一次，不依赖拖动过程中的重建。
+    updateTrackingAreas()
+    window?.invalidateCursorRects(for: self)
   }
 }
 

@@ -243,13 +243,14 @@ final class WorkspacePanelSplitView: NSSplitView, NSSplitViewDelegate {
   private func updateDividerFeedbackGeometry() {
     for area in dividerTrackingAreas { removeTrackingArea(area) }
     dividerTrackingAreas.removeAll()
+    let pointer = window.map { convert($0.mouseLocationOutsideOfEventStream, from: nil) }
     for index in 0..<max(0, panels.count - 1) {
       guard let rect = dividerRect(at: index) else { continue }
-      let area = NSTrackingArea(
-        rect: rect,
-        options: [.mouseEnteredAndExited, .activeInKeyWindow],
-        owner: self
-      )
+      // 指针正压在分隔条上时重建（拖完那一刻），AppKit 默认当作「在外面」；指针一步跨出
+      // 就永远收不到 mouseExited。区内重建就声明 `.assumeInside`，离开时必定补发。
+      var options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeInKeyWindow]
+      if let pointer, rect.contains(pointer) { options.insert(.assumeInside) }
+      let area = NSTrackingArea(rect: rect, options: options, owner: self)
       addTrackingArea(area)
       dividerTrackingAreas.append(area)
     }
@@ -275,8 +276,11 @@ final class WorkspacePanelSplitView: NSSplitView, NSSplitViewDelegate {
     )
   }
 
+  /// 离开分隔条时把光标复位：cursor rect 在指针压着的位置重建时同样会漏掉「离开」，
+  /// 光标会卡成左右拖动形状。`NSCursor.set()` 后 AppKit 会给指针下的视图补发 cursorUpdate。
   override func mouseExited(with _: NSEvent) {
     hoveredDividerIndex = nil
+    NSCursor.arrow.set()
   }
 
   override func viewDidMoveToWindow() {
