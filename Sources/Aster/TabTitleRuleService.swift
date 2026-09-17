@@ -74,6 +74,8 @@ enum TabTitleRuleService {
 }
 
 /// 标签图标渲染：图标集 SVG 按模板着色，emoji 直接用文本绘制。两者都落在 16pt 方槽内。
+/// 图标本体按 16pt 绘制：图标集 SVG 的线稿只占 24 格画布中间约 20 格，14pt 时视觉上
+/// 只剩 12pt 左右，明显小于 13pt 的标题字，用户反馈「太小」。
 @MainActor
 enum TabIconArtwork {
   private static var imageCache: [String: NSImage] = [:]
@@ -127,17 +129,20 @@ enum TabIconArtwork {
       return variant == .view ? image(named: name, variant: .tab) : nil
     }
     image.isTemplate = true
-    image.size = NSSize(width: 14, height: 14)
+    image.size = NSSize(width: iconPointSize, height: iconPointSize)
     imageCache[cacheKey] = image
     return image
   }
 
-  /// 生成 14pt 的图标视图；emoji 优先于图标集名称（用户在选择器里二选一时后写者胜）。
+  /// 图标视图边长；与侧栏行 16pt 状态槽等宽。
+  static let iconPointSize: CGFloat = 16
+
+  /// 生成 `iconPointSize` 见方的图标视图；emoji 优先于图标集名称（用户在选择器里二选一时后写者胜）。
   static func makeView(for icon: TabRuleIcon, fallbackTint: NSColor) -> NSView? {
     let tint = icon.color.map { NSColor($0) } ?? fallbackTint
     if let emoji = icon.emoji, !emoji.isEmpty {
       let label = NSTextField(labelWithString: emoji)
-      label.font = .systemFont(ofSize: 12)
+      label.font = .systemFont(ofSize: 14)
       label.alignment = .center
       label.setAccessibilityLabel(L("标签图标 \(emoji)"))
       return label
@@ -149,8 +154,8 @@ enum TabIconArtwork {
     view.imageScaling = .scaleProportionallyDown
     view.setAccessibilityLabel(L("标签图标 \(name)"))
     view.translatesAutoresizingMaskIntoConstraints = false
-    view.widthAnchor.constraint(equalToConstant: 14).isActive = true
-    view.heightAnchor.constraint(equalToConstant: 14).isActive = true
+    view.widthAnchor.constraint(equalToConstant: iconPointSize).isActive = true
+    view.heightAnchor.constraint(equalToConstant: iconPointSize).isActive = true
     return view
   }
 }
