@@ -46,7 +46,8 @@ def connect(path, process):
         try:
             peer.connect(str(path))
             hello = receive(peer)
-            assert hello["type"] == "hello" and set(hello["capabilities"]) == {"health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation"}
+            # 能力集只会增长（agent_state、live_handoff 等后续加入），只断言基础能力是子集。
+            assert hello["type"] == "hello" and {"health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation"} <= set(hello["capabilities"])
             return peer, hello
         except (FileNotFoundError, ConnectionRefusedError):
             peer.close()
@@ -84,7 +85,7 @@ with tempfile.TemporaryDirectory(prefix="aster-server-", dir="/tmp") as parent:
         status_value = json.loads(status.stdout)
         assert status_value["operation"] == "server.status"
         assert status_value["target"] == {key: hello[key] for key in ("serverID", "serverEpoch", "sessionID")}
-        assert set(status_value["result"]["capabilities"]) == {"health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation"}
+        assert {"health_check", "server_lifecycle", "terminal_control", "terminal_observe", "surface_interest", "session_snapshot", "workspace_mutation"} <= set(status_value["result"]["capabilities"])
         assert request(peer, hello, "server.status")["result"]["protocolMajor"] == 1
         old_target = {key: hello[key] for key in ("serverID", "serverEpoch", "sessionID")}
         stale = dict(old_target, serverEpoch=str(uuid.uuid4()))
