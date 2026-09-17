@@ -98,6 +98,8 @@ final class WorkspaceViewController: NSViewController {
   /// 命令面板、Open Quickly、全局查找和 Agent 历史共用窗口级 Esc 兜底。搜索框
   /// 失焦后事件不会经过 `OverlaySearchField`，因此不能只依赖控件自己的 keyDown。
   private nonisolated(unsafe) var workspaceOverlayKeyMonitor: Any?
+  /// 等鼠标全部松开再做整树刷新的一次性监视器，见 `scheduleRefreshAfterMouseRelease`。
+  private nonisolated(unsafe) var refreshAfterMouseReleaseMonitor: Any?
   /// 主题选择器是独立 key Panel；展示期间后方工作区仍是实时预览画布，
   /// 不能暂停终端光标状态。
   private var themeSwitcherPresentationActive = false
@@ -419,6 +421,7 @@ final class WorkspaceViewController: NSViewController {
   deinit {
     if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
     if let workspaceOverlayKeyMonitor { NSEvent.removeMonitor(workspaceOverlayKeyMonitor) }
+    if let refreshAfterMouseReleaseMonitor { NSEvent.removeMonitor(refreshAfterMouseReleaseMonitor) }
   }
 
   /// 用窗口级事件监视器跟踪「点了哪个分屏」。终端和文本视图会自己消费 `mouseDown`
@@ -707,6 +710,31 @@ final class WorkspaceViewController: NSViewController {
     )
   }
 
+  /// 鼠标按住期间不做整树刷新。`refresh()` 会把 Pane 树连同终端视图拆掉重装，正在被
+  /// 点击的视图收不到 mouseUp；Ghostty 会一直当左键按着，此后每次移动鼠标都在拉选区。
+  /// 点击切换 Pane 焦点正是这种场景（mouseDown 时切焦点，刷新排在 mouseUp 之前）。
+  func scheduleRefreshAfterMouseRelease() {
+    guard NSEvent.pressedMouseButtons != 0 else {
+      scheduleRefresh()
+      return
+    }
+    guard refreshAfterMouseReleaseMonitor == nil else { return }
+    refreshAfterMouseReleaseMonitor = NSEvent.addLocalMonitorForEvents(
+      matching: [.leftMouseUp, .rightMouseUp, .otherMouseUp]
+    ) { [weak self] event in
+      // 监视器先于目标视图拿到事件；推到下一轮 runloop，让视图先处理完自己的 mouseUp。
+      DispatchQueue.main.async { [weak self] in
+        guard let self, NSEvent.pressedMouseButtons == 0,
+          let monitor = self.refreshAfterMouseReleaseMonitor
+        else { return }
+        NSEvent.removeMonitor(monitor)
+        self.refreshAfterMouseReleaseMonitor = nil
+        self.scheduleRefresh()
+      }
+      return event
+    }
+  }
+
   func scheduleRefresh() {
     guard !refreshScheduled else { return }
     refreshScheduled = true
@@ -982,7 +1010,7 @@ final class WorkspaceViewController: NSViewController {
           self.workspaceTitleButton?.workingDirectory = tab.workingDirectory
           // 分组头也按活动 Pane 目录解析，但只有全量刷新才重建：分屏里两个 Pane 属于不同
           // 项目时，切焦点会让组头停在上一个 Pane 的项目。分组没变仍走局部更新，不打断终端。
-          if self.sidebarProjectGroupIsStale(for: tab) { self.scheduleRefresh() }
+          if self.sidebarProjectGroupIsStale(for: tab) { self.scheduleRefreshAfterMouseRelease() }
         }
         .store(in: &tabSubscriptions)
       tab.windowTitleChanged

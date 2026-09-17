@@ -125,6 +125,9 @@ final class GhosttySurfaceView: NSView {
   var linkPathExistenceCache: [String: Bool] = [:]
   var lastLinkHoverLocation: NSPoint?
   var commandClickOrigin: NSPoint?
+  /// 已向 Ghostty 发出左键 PRESS、尚未发出 RELEASE。宿主整树刷新会把本视图拆下再装回，
+  /// AppKit 不再把 mouseUp 送来；Ghostty 会一直当左键按着，之后每次移动都在拉选区。
+  var leftMouseReleasePending = false
   /// 原生 open_url 每回流一次加一；Aster 侧 Command 点击据此避免对同一次点击重复打开。
   var nativeOpenURLSequence = 0
   var lastGhosttyMouseShape = GHOSTTY_MOUSE_SHAPE_TEXT

@@ -118,6 +118,7 @@ extension GhosttySurfaceView {
     reportMousePosition(event)
     _ = ghostty_surface_mouse_button(
       surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, modifiers(event))
+    leftMouseReleasePending = true
   }
 
   override func mouseEntered(with event: NSEvent) {
@@ -128,6 +129,7 @@ extension GhosttySurfaceView {
   override func mouseUp(with event: NSEvent) {
     guard navigationMode == .normal, let surface else { return }
     reportMousePosition(event)
+    leftMouseReleasePending = false
     _ = ghostty_surface_mouse_button(
       surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, modifiers(event))
     // 先让 Ghostty 处理 OSC 8 原生打开，再由 Aster 侧识别普通文字目标。
@@ -182,7 +184,11 @@ extension GhosttySurfaceView {
   }
 
   override func mouseMoved(with event: NSEvent) {
-    if navigationMode == .normal { reportMousePosition(event) }
+    if navigationMode == .normal {
+      // 先补发丢失的 RELEASE 再上报位置，否则这次位置上报本身就会把选区拉出来。
+      releaseStaleLeftMouseButton(mods: modifiers(event))
+      reportMousePosition(event)
+    }
     handleLinkHoverMouseMoved(with: event)
     updateCommandHoverPreview(with: event)
   }
@@ -204,6 +210,23 @@ extension GhosttySurfaceView {
   }
   override func otherMouseDragged(with event: NSEvent) {
     if navigationMode == .normal { reportMousePosition(event) }
+  }
+
+  /// 视图被拆离窗口时补发 RELEASE：宿主刷新会在一次点击中途拆装本视图，之后的
+  /// mouseUp 不会再送到这里；不补发，Ghostty 会把后续所有移动当成拖选。
+  override func viewWillMove(toWindow newWindow: NSWindow?) {
+    super.viewWillMove(toWindow: newWindow)
+    if newWindow == nil { releaseStaleLeftMouseButton(mods: GHOSTTY_MODS_NONE, force: true) }
+  }
+
+  /// 若 Ghostty 侧仍记着左键按下、而系统已无左键按住（或 `force`：视图正被拆离），
+  /// 补一个 RELEASE 让它回到未按下状态。真实 mouseUp 之后再来一次 RELEASE 无害。
+  private func releaseStaleLeftMouseButton(mods: ghostty_input_mods_e, force: Bool = false) {
+    guard leftMouseReleasePending, let surface,
+      force || NSEvent.pressedMouseButtons & 0x1 == 0
+    else { return }
+    leftMouseReleasePending = false
+    _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods)
   }
 
   override func mouseExited(with event: NSEvent) {
