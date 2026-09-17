@@ -2772,3 +2772,102 @@ func sidebarAgentIconFollowsActivePane() async throws {
   #expect(
     (try visibleTabAccessory(for: tab, in: controller)).accessibilityLabel() == "标签图标 claude")
 }
+
+@Test("分屏切换焦点时，标题栏目录胶囊跟随活动 Pane 的目录，而不是停留在最后上报目录的 Pane")
+@MainActor
+func titleCapsuleWorkingDirectoryFollowsActivePane() async throws {
+  let defaults = isolatedDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  let leftPaneID = try #require(tab.activePaneID as UUID?)
+  let leftSession = try #require(tab.activeSession)
+  model.splitSelectedTab(.right)
+  let rightPaneID = try #require(tab.activePaneID as UUID?)
+  let rightSession = try #require(tab.activeSession)
+  #expect(leftPaneID != rightPaneID)
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+  defer {
+    leftSession.stop(immediately: true)
+    rightSession.stop(immediately: true)
+  }
+  // OSC 7 直接喂给 Session，不依赖真实 Shell 的启动目录上报时机。
+  let source = AsterTerminalView(frame: .zero)
+  let leftDirectory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("aster-capsule-left-\(UUID().uuidString)", isDirectory: true).path
+  let rightDirectory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("aster-capsule-right-\(UUID().uuidString)", isDirectory: true).path
+
+  func titleButton() throws -> WorkspaceTitleButton {
+    try #require(controller.view.descendants.compactMap { $0 as? WorkspaceTitleButton }.first)
+  }
+
+  // 两个 Pane 各自上报一次目录：先左后右，右侧是活动 Pane，胶囊此时显示右侧目录。
+  tab.setActivePane(leftPaneID)
+  leftSession.hostCurrentDirectoryUpdate(source: source, directory: leftDirectory)
+  try await Task.sleep(for: .milliseconds(80))
+  tab.setActivePane(rightPaneID)
+  rightSession.hostCurrentDirectoryUpdate(source: source, directory: rightDirectory)
+  try await Task.sleep(for: .milliseconds(80))
+  #expect(try titleButton().workingDirectory == rightDirectory)
+
+  // 切回左侧：没有新的 OSC 7，胶囊仍必须切到左侧目录。
+  tab.setActivePane(leftPaneID)
+  try await Task.sleep(for: .milliseconds(80))
+  #expect(try titleButton().workingDirectory == leftDirectory)
+
+  tab.setActivePane(rightPaneID)
+  try await Task.sleep(for: .milliseconds(80))
+  #expect(try titleButton().workingDirectory == rightDirectory)
+}
+
+@Test("三分屏只有一个 Pane 在跑 Agent 时，聚焦到普通 shell Pane 不显示运行动画")
+@MainActor
+func sidebarRunningAnimationFollowsActivePane() async throws {
+  let defaults = isolatedDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  let agentPaneID = try #require(tab.activePaneID as UUID?)
+  let agentSession = try #require(tab.activeSession)
+  model.splitSelectedTab(.right)
+  let middlePaneID = try #require(tab.activePaneID as UUID?)
+  let middleSession = try #require(tab.activeSession)
+  model.splitSelectedTab(.right)
+  let rightPaneID = try #require(tab.activePaneID as UUID?)
+  let rightSession = try #require(tab.activeSession)
+  #expect(Set([agentPaneID, middlePaneID, rightPaneID]).count == 3)
+
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+  let agentView = try #require(
+    agentSession.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer {
+    agentSession.stop(immediately: true)
+    middleSession.stop(immediately: true)
+    rightSession.stop(immediately: true)
+  }
+
+  // 只有第一个 Pane 跑 claude 且处于 processing；另外两个是普通 shell。
+  agentView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .claudeCode, signal: .processing))
+  try await Task.sleep(for: .milliseconds(80))
+
+  // 当前活动 Pane 是最右侧普通 shell：不能出现运行动画，也不能出现 Agent 图标。
+  #expect(!visibleTabAccessoryStates(for: tab, in: controller).contains("running"))
+  #expect(!visibleTabAccessoryStates(for: tab, in: controller).contains("icon"))
+
+  tab.setActivePane(agentPaneID)
+  try await Task.sleep(for: .milliseconds(80))
+  #expect(visibleTabAccessoryStates(for: tab, in: controller).contains("running"))
+
+  tab.setActivePane(middlePaneID)
+  try await Task.sleep(for: .milliseconds(80))
+  #expect(!visibleTabAccessoryStates(for: tab, in: controller).contains("running"))
+}

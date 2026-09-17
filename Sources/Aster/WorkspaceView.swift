@@ -973,6 +973,10 @@ final class WorkspaceViewController: NSViewController {
           self.scheduleTabActivityRefresh(tab.id)
           self.workspaceTitleButton?.agentSessionTitle = tab.activeAgentSessionTitle
           self.workspaceTitleButton?.agentProvider = tab.activeSession?.activeAgentProvider
+          // 目录胶囊只在 `workingDirectoryChanged` 命中活动 Pane 时更新；切换焦点本身
+          // 不产生 OSC 7，若不在这里同步，胶囊会一直停在最后一个上报目录的 Pane（通常
+          // 是最近创建、启动时上报了一次目录的那个）。
+          self.workspaceTitleButton?.workingDirectory = tab.workingDirectory
         }
         .store(in: &tabSubscriptions)
       tab.windowTitleChanged

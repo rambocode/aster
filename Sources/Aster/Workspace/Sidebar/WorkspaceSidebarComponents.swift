@@ -475,8 +475,8 @@ final class TabRowButton: NSButton {
     tab.activeSession?.activeAgentProvider
   }
 
-  /// 运行动画所用的 provider：徽章 `.running` 是标签级聚合（任一 Pane 在跑），因此这里
-  /// 允许回落到标签里任意一个 Agent 会话，让动画样式匹配真正在跑的那个 Agent。
+  /// 徽章归属所用的 provider：等待输入 / 已完成是通知类状态，允许回落到标签里任意一个
+  /// Agent 会话（别的 Pane 在等你，也该看到）。运行动画不用它，见 `showsRunningAnimation`。
   private var preferredAgentProvider: AgentProvider? {
     activePaneAgentProvider
       ?? tab.runtimes.values.compactMap({ $0.terminalSession?.activeAgentProvider }).first
@@ -491,9 +491,9 @@ final class TabRowButton: NSButton {
   }
 
   /// 运行动画样式（对齐 Otty）：Claude Code 半圆 ◑ 旋转；Codex 2×2 点阵循环；
-  /// 其它 Agent / 普通命令暂时沿用半圆旋转。
+  /// 其它 Agent / 普通命令暂时沿用半圆旋转。动画只画活动 Pane 的 Agent，样式也随之。
   private var runningAnimationStyle: TabActivitySpinnerView.Style {
-    preferredAgentProvider == .codex ? .dots : .spin
+    activePaneAgentProvider == .codex ? .dots : .spin
   }
 
   /// 展示标题本身已带 Agent 的 spinner 字符（Claude 的 ✳/◐ 前缀会自己翻转）时为 true；
@@ -502,10 +502,16 @@ final class TabRowButton: NSButton {
     AsterControlTitleNormalizer.hasSpinnerPrefix(displayTitleProvider())
   }
 
-  /// 运行动画只属于 Agent：普通命令（如 `./start.sh`）跑着时行前不画任何动画，
-  /// 否则用户会误以为标签里有 Agent。标题自带 spinner 字符时同样交给标题承担。
+  /// 运行动画只属于 Agent，且**严格**跟随活动 Pane：普通命令（如 `./start.sh`）跑着时
+  /// 行前不画任何动画，否则用户会误以为标签里有 Agent；`.running` 徽章是标签级聚合，
+  /// 三个 Pane 里只有一个在跑 Agent 时，聚焦到另外两个普通 shell 也不该转半圆——
+  /// 和静态图标一样，它表示「你现在看的这个 Pane 在干什么」。标题自带 spinner 字符时
+  /// 同样交给标题承担。
   private var showsRunningAnimation: Bool {
-    !titleCarriesAgentGlyph && preferredAgentProvider != nil
+    guard !titleCarriesAgentGlyph, let session = tab.activeSession,
+      session.activeAgentProvider != nil
+    else { return false }
+    return session.agentTaskState == .processing
   }
 
   /// 纵向行静态图标：规则图标优先，其次是**当前活动 Pane** 正在运行的 Agent 图标；
