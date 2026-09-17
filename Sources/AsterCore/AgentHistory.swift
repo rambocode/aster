@@ -196,12 +196,24 @@ public struct AgentTranscriptReport: Equatable, Sendable {
 }
 
 public enum AgentTranscriptParser {
+  /// 记录级上限被突破时的处理策略。
+  public enum OverflowPolicy: Equatable, Sendable {
+    /// 整体失败：调用方需要完整可信的历史（默认）。
+    case fail
+    /// 降级继续：超长记录按损坏记录跳过，记录数超限则停在上限处并标记 `reachedEntryLimit`。
+    /// 历史列表 / 标题推导用它——一条 400KB 的 tool_result 不该让整个会话从列表里消失。
+    case degrade
+  }
+
   /// 解析 Claude/Codex 风格 JSONL，同时容忍单条顶层 JSON 数组。损坏的局部记录会被
-  /// 计入 skipped 并跳过；资源上限违反则整体失败，调用方不能把不完整结果当可信历史。
+  /// 计入 skipped 并跳过；资源上限违反在 `.fail` 下整体失败，调用方不能把不完整结果当
+  /// 可信历史；`.degrade` 下只丢弃越界记录、截断尾部，报告里带上 skipped / reachedEntryLimit。
+  /// 输入总字节上限不受策略影响：调用方要先把数据裁到上限内。
   public static func parse(
     _ data: Data,
     provider _: AgentProvider,
-    limits: AgentTranscriptLimits = .default
+    limits: AgentTranscriptLimits = .default,
+    overflow: OverflowPolicy = .fail
   ) throws -> AgentTranscriptReport {
     guard data.count <= limits.maximumInputBytes else {
       throw AgentTranscriptError.inputTooLarge(maximumBytes: limits.maximumInputBytes)
@@ -219,9 +231,19 @@ public enum AgentTranscriptParser {
         .reversed().drop(while: Self.isJSONWhitespace).reversed()
       guard !line.isEmpty else { continue }
       guard parsedRecordCount < limits.maximumRecords else {
+        if overflow == .degrade {
+          reachedEntryLimit = true
+          break lineLoop
+        }
         throw AgentTranscriptError.tooManyRecords(maximum: limits.maximumRecords)
       }
       guard line.count <= limits.maximumRecordBytes else {
+        if overflow == .degrade {
+          // 超长记录几乎都是大块 tool_result；跳过它不影响其余消息与标题推导。
+          parsedRecordCount += 1
+          skippedRecordCount += 1
+          continue
+        }
         throw AgentTranscriptError.recordTooLarge(
           index: parsedRecordCount,
           maximumBytes: limits.maximumRecordBytes
@@ -245,6 +267,10 @@ public enum AgentTranscriptParser {
       }
       let recordIncrement = max(objects.count, 1)
       guard recordIncrement <= limits.maximumRecords - parsedRecordCount else {
+        if overflow == .degrade {
+          reachedEntryLimit = true
+          break lineLoop
+        }
         throw AgentTranscriptError.tooManyRecords(maximum: limits.maximumRecords)
       }
       let firstSourceRecordIndex = parsedRecordCount

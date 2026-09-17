@@ -239,3 +239,31 @@ extension AgentSessionMetadata {
     )
   }
 }
+
+// 降级策略：历史列表用它——一条超长 tool_result 或记录数超限不该让整个会话消失。
+@Test func transcriptParserDegradePolicySkipsOversizedRecordsAndStopsAtRecordLimit() throws {
+  let limits = AgentTranscriptLimits(
+    maximumInputBytes: 4_096,
+    maximumRecordBytes: 64,
+    maximumRecords: 3,
+    maximumEntries: 10,
+    maximumEntryBytes: 64
+  )
+  let big = String(repeating: "x", count: 200)
+  let jsonLines = """
+    {"type":"user","message":{"content":"first prompt"}}
+    {"type":"user","message":{"content":"\(big)"}}
+    {"type":"user","message":{"content":"second"}}
+    {"type":"user","message":{"content":"beyond limit"}}
+    """
+  let report = try AgentTranscriptParser.parse(
+    Data(jsonLines.utf8), provider: .claudeCode, limits: limits, overflow: .degrade)
+  #expect(report.entries.map(\.text) == ["first prompt", "second"])
+  #expect(report.skippedRecordCount == 1)
+  #expect(report.reachedEntryLimit)
+
+  // 默认策略语义不变：同样的输入整体失败。
+  #expect(throws: AgentTranscriptError.recordTooLarge(index: 1, maximumBytes: 64)) {
+    try AgentTranscriptParser.parse(Data(jsonLines.utf8), provider: .claudeCode, limits: limits)
+  }
+}
