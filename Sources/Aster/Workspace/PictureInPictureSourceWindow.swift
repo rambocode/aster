@@ -2,7 +2,7 @@ import AppKit
 import AVKit
 
 /// AVKit 在 macOS 通过 CALayerHost 镜像源窗口。独立透明承载窗口避免系统的占位图
-/// 覆盖真实终端，并允许源视频层跟随 PiP 尺寸，绕开 macOS 26 的 1:1 裁剪问题。
+/// 覆盖真实终端，并允许源视频层跟随 PiP 尺寸，绕开 macOS 26+ 的 1:1 裁剪问题。
 @MainActor
 final class PictureInPictureSourceWindow {
   private let window: NSWindow
@@ -46,7 +46,8 @@ final class PictureInPictureSourceWindow {
     if let size = pipWindow?.contentView?.bounds.size ?? fallbackSize {
       layout(size: size)
     }
-    if ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 26,
+    // macOS 26 起（27 实测同样存在）系统会在镜像上盖一层黑底空占位；只隐藏确实为空的那一层。
+    if ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26,
       let content = pipWindow?.contentView
     {
       suppressEmptySystemOverlay(in: content)
@@ -76,7 +77,8 @@ final class PictureInPictureSourceWindow {
   }
 
   private func suppressEmptySystemOverlay(in view: NSView) {
-    // macOS 26 的 sample-buffer 路径多盖了一层没有内容的 AVPlayerLayer 镜像占位。
+    // macOS 26/27 的 sample-buffer 路径多盖了一层没有内容的 AVPlayerLayer 镜像占位（黑底，
+    // 只露出底部一条终端画面）。
     // 只处理精确类名且确实为空的叶图层；未来系统若在此处承载真实内容则保持原样。
     if String(describing: type(of: view)) == "AVPictureInPictureCALayerHostView",
       let layer = view.layer, layer.contents == nil, layer.sublayers?.isEmpty != false,
