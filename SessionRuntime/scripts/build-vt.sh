@@ -26,7 +26,7 @@ fi
 # Verify the complete sequential patch result in an isolated Git index. This
 # also permits upgrading an exactly matching earlier prefix of our patch set;
 # unrelated local changes are never reset or overwritten.
-patch_files=("$runtime_dir/patches/0001-formatter-cursor-order.patch" "$runtime_dir/patches/0002-screen-export.patch" "$runtime_dir/patches/0003-history-budget.patch" "$runtime_dir/patches/0004-history-pages.patch" "$runtime_dir/patches/0005-history-page-release.patch" "$runtime_dir/patches/0006-graphics-metadata-budget.patch")
+patch_files=("$runtime_dir/patches/0001-formatter-cursor-order.patch" "$runtime_dir/patches/0002-screen-export.patch" "$runtime_dir/patches/0003-history-budget.patch" "$runtime_dir/patches/0004-history-pages.patch" "$runtime_dir/patches/0005-history-page-release.patch" "$runtime_dir/patches/0006-graphics-metadata-budget.patch" "$runtime_dir/patches/0007-cursor-shape-replay.patch")
 if [[ -z "$(git -C "$source_dir" status --porcelain --untracked-files=no)" ]]; then
   git -C "$source_dir" -c advice.detachedHead=false checkout -q "$revision"
 fi

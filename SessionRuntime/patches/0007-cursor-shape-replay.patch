@@ -1,0 +1,61 @@
+diff --git a/src/terminal/Screen.zig b/src/terminal/Screen.zig
+index 39fdd6109..ba71da5b8 100644
+--- a/src/terminal/Screen.zig
++++ b/src/terminal/Screen.zig
+@@ -128,6 +128,13 @@ pub const Cursor = struct {
+     /// encouraged to set their own default.
+     cursor_style: CursorStyle = .block,
+ 
++    /// Aster: the last DECSCUSR request the program sent on this screen, or
++    /// null when it never asked. `cursor_style` alone cannot tell "steady
++    /// block" apart from "reset to the terminal default", so restore replay
++    /// re-emits this request verbatim and lets the receiving terminal apply
++    /// its own configured default for `.default`.
++    cursor_style_req: ?ansi.CursorStyle = null,
++
+     /// The "last column flag (LCF)" as its called. If this is set then the
+     /// next character print will force a soft-wrap.
+     pending_wrap: bool = false,
+diff --git a/src/terminal/c/formatter.zig b/src/terminal/c/formatter.zig
+index 9eae7ca57..8f7cd4245 100644
+--- a/src/terminal/c/formatter.zig
++++ b/src/terminal/c/formatter.zig
+@@ -552,6 +552,26 @@ fn cursorReplay(terminal: *const ZigTerminal, live: *const @import("../Screen.zi
+     try cursorState(terminal, &projected, saved.origin, writer);
+     try writer.writeAll("\x1b7");
+     try cursorState(terminal, live, terminal.modes.get(.origin), writer);
++    try cursorShape(live, writer);
++}
++
++/// Re-emits the program's last DECSCUSR request for this screen. Screen
++/// content replay starts from RIS, which drops the cursor shape; without this a
++/// shell whose integration switched the cursor to a bar comes back as the
++/// client's default block until the next prompt is drawn. Screens that never
++/// received DECSCUSR emit nothing so the client keeps its configured default.
++fn cursorShape(screen: *const @import("../Screen.zig"), writer: *std.Io.Writer) std.Io.Writer.Error!void {
++    const req = screen.cursor.cursor_style_req orelse return;
++    const code: u8 = switch (req) {
++        .default => 0,
++        .blinking_block => 1,
++        .steady_block => 2,
++        .blinking_underline => 3,
++        .steady_underline => 4,
++        .blinking_bar => 5,
++        .steady_bar => 6,
++    };
++    try writer.print("\x1b[{d} q", .{code});
+ }
+ 
+ fn cursorState(terminal: *const ZigTerminal, screen: *const @import("../Screen.zig"), origin: bool, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+diff --git a/src/terminal/stream_terminal.zig b/src/terminal/stream_terminal.zig
+index f68f088bf..1a06229d5 100644
+--- a/src/terminal/stream_terminal.zig
++++ b/src/terminal/stream_terminal.zig
+@@ -163,6 +163,7 @@ pub const Handler = struct {
+                 };
+                 self.terminal.modes.set(.cursor_blinking, blink);
+                 self.terminal.screens.active.cursor.cursor_style = style;
++                self.terminal.screens.active.cursor.cursor_style_req = value;
+             },
+             .erase_display_below => self.terminal.eraseDisplay(.below, value),
+             .erase_display_above => self.terminal.eraseDisplay(.above, value),

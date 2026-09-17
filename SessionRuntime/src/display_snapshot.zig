@@ -296,3 +296,51 @@ test "saved DEC modes survive snapshot independently of current values" {
     try std.testing.expectEqualStrings("\x1b[?2004;2$y\x1b[?1006;2$y\x1b[?7;1$y\x1b[?2004;1$y\x1b[?1006;1$y\x1b[?7;2$y", try expected.bytes());
     try std.testing.expectEqualStrings(try expected.bytes(), try actual.bytes());
 }
+
+test "restore replays the shell's DECSCUSR cursor shape after RIS" {
+    var source = try vt.Terminal.init(80, 24, 100);
+    defer source.deinit();
+    // Shell integration typically switches to a steady bar at the prompt.
+    source.write("prompt$ \x1b[6 q");
+    const bytes = try capture(std.testing.allocator, &source, 65536);
+    defer std.testing.allocator.free(bytes);
+    // RIS comes first and would reset the shape; the request must follow it.
+    const ris = std.mem.indexOf(u8, bytes, "\x1bc") orelse return error.TestUnexpectedResult;
+    const shape = std.mem.lastIndexOf(u8, bytes, "\x1b[6 q") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(shape > ris);
+    // A receiver that parses the frame keeps the request and replays it again.
+    var destination = try vt.Terminal.init(80, 24, 100);
+    defer destination.deinit();
+    destination.write(bytes);
+    const again = try capture(std.testing.allocator, &destination, 65536);
+    defer std.testing.allocator.free(again);
+    try std.testing.expect(std.mem.indexOf(u8, again, "\x1b[6 q") != null);
+}
+
+test "restore emits no DECSCUSR when the program never set a cursor shape" {
+    var source = try vt.Terminal.init(80, 24, 100);
+    defer source.deinit();
+    source.write("plain prompt$ ");
+    const bytes = try capture(std.testing.allocator, &source, 65536);
+    defer std.testing.allocator.free(bytes);
+    // DECSCA (`"q`) is part of protection replay; only the ` q` shape request must be absent.
+    try std.testing.expect(std.mem.indexOf(u8, bytes, " q") == null);
+}
+
+test "restore keeps per-screen cursor shape for primary and alternate" {
+    var source = try vt.Terminal.init(80, 24, 100);
+    defer source.deinit();
+    // Bar at the shell prompt, then a full-screen program on the alternate
+    // screen asks for a steady block.
+    source.write("\x1b[6 q\x1b[?1049h\x1b[2 q");
+    const bytes = try capture(std.testing.allocator, &source, 65536);
+    defer std.testing.allocator.free(bytes);
+    const bar = std.mem.indexOf(u8, bytes, "\x1b[6 q") orelse return error.TestUnexpectedResult;
+    const block = std.mem.lastIndexOf(u8, bytes, "\x1b[2 q") orelse return error.TestUnexpectedResult;
+    const enter_alt = std.mem.indexOf(u8, bytes, "\x1b[?1049h") orelse return error.TestUnexpectedResult;
+    // Primary shape is applied before entering the alternate screen; the
+    // active alternate shape is the last word.
+    try std.testing.expect(bar < enter_alt);
+    try std.testing.expect(block > enter_alt);
+}
+
