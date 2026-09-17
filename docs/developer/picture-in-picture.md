@@ -37,7 +37,7 @@ flowchart LR
 
 `PictureInPictureSourceWindow` 用完全透明且不接收事件的独立窗口承载视频层。不能直接
 把视频层放在原终端上：AVKit 会在源图层显示“正在画中画播放”占位。
-macOS 26 的 sample-buffer PiP 存在 1:1 镜像裁剪及空覆盖层问题（本机 26.6.2 已复现；
+macOS 26 起的 sample-buffer PiP 存在 1:1 镜像裁剪及空覆盖层问题（本机 26.6.2 与 27.0 都已复现，适配按 `majorVersion >= 26` 生效；27.0 上该黑底占位层偏移覆盖了镜像的上半部分，只露出底部一条终端画面；
 参见 [Apple Developer Forums 的复现与变通方案](https://developer.apple.com/forums/thread/821582)）。
 承载窗口跟随本进程 `PIPPanel` 内容尺寸，暂时隐藏其无内容的
 `AVPictureInPictureCALayerHostView`，关闭时恢复；保留 12pt 视频内边距，防止圆角裁掉文字。
