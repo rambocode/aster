@@ -3,6 +3,33 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.6.6</title>
+            <pubDate>Thu, 17 Sep 2026 20:21:14 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>25</sparkle:version>
+            <sparkle:shortVersionString>0.6.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 修复
+
+- 分屏时切换焦点，顶部的目录胶囊、左侧标签的项目分组、以及标签行的 Agent 运行动画现在都跟随当前聚焦的 Pane。之前它们会停在最后一个上报状态的 Pane（通常是最近创建的那个），切到别的 Pane 后显示的目录、分组和图标都不对。
+- 把补全提示符退格删空后，自动弹出的候选面板会随之收起，不再空着停留；手动用 Esc 打开的面板不受影响。
+- 画中画在 macOS 27 上不再盖一层黑底、只露出底部一条终端画面。
+
+## 新增
+
+- 恢复上次工作区时，每个终端 Pane 会在 Shell 启动前先打印两行暗淡的时间横幅：`退出于 MM/dd HH:mm`（上次快照落盘、通常即退出的时刻）和 `恢复于 MM/dd HH:mm`，方便一眼分清之后的输出都属于本次会话。恢复的 Pane 同时保留 shell 集成，光标、命令跟踪和目录显示都和新开的 Pane 一致。旧版本写下的快照没有退出时间，只打印恢复行。
+- 当前 Pane 里运行 Agent CLI 时，标签优先显示 Agent 自己生成的会话名：Claude Code 的自动标题或 `/rename` 起的名、Codex 的线程名；生成之前才回落到会话里的第一条提问。
+
+## 优化
+
+- 标签图标略微放大，和标签文字更协调。
+- 拖动分屏分隔条前，悬停时分隔条会显示系统强调色，更明确地提示可以拖动。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.6/Aster-0.6.6.dmg" length="43573525" type="application/octet-stream" sparkle:edSignature="GvJYEifckEbLL9oqTtGedzT9lJ8KXIbGmAFYGdBS1B45Ars6tmg+IKko5zEwrd409CbjfPy6vToUooLIHY/UDA=="/>
+        </item>
+        <item>
             <title>0.6.5</title>
             <pubDate>Thu, 17 Sep 2026 00:43:02 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -84,22 +111,6 @@
 - 按住 Command 悬停链接时，下划线与手形光标不再消失；链接徽章改为紧凑样式并完整显示地址。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.2/Aster-0.6.2.dmg" length="42519414" type="application/octet-stream" sparkle:edSignature="OEahKGQBH6J+zjYwc0pMh1+Gbfn0CtmVGY4FBnBM2ce00KpFYIOUIaVGyC1Huu8bbkjQNsxxtJIN0B12rr7tBg=="/>
-        </item>
-        <item>
-            <title>0.6.1</title>
-            <pubDate>Sun, 13 Sep 2026 11:53:18 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>20</sparkle:version>
-            <sparkle:shortVersionString>0.6.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## 界面语言
-
-- 在设置里切换语言后会立刻提示“界面语言将在重新启动 Aster 后生效”，可以选择“立即重启”或“稍后”；此前切换后没有任何反馈，容易以为设置没生效。
-- “立即重启”走正常退出流程：有需要确认的终端会先询问，退出后 Aster 自动重新打开。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.1/Aster-0.6.1.dmg" length="41123448" type="application/octet-stream" sparkle:edSignature="7JL27lubk7xFCPL0Rw3BgR4gzJ49bpfxp+POrDAVYw41uXk6BwrB6MojfKs/C+lVc72412xJzt9vsxUnJs5cDQ=="/>
         </item>
     </channel>
 </rss>
