@@ -136,7 +136,14 @@ ASTER_SIGN_IDENTITY="Developer ID Application: …" \
 
 版本号策略：`CFBundleVersion` 用**跨通道共享的全局单调整数**，`CFBundleShortVersionString` 承载语义。
 
-发版之间仓库里的短版本一直带 `-dev`，发版时由脚本去掉后缀，发完再推到下一个 `-dev`。`-dev` 版本永远不发布、不打标签、不进 appcast；脚本在阶段 0 两头把关：仓库版本号不是 `-dev` 形态就拒绝发版（说明上次收尾提交没跑成，继续发会重复发同一版），推导或传入的发版号带 `-dev` 也拒绝（它会进 appcast 的 `shortVersionString`、Release 标题和标签，三样都收不回来）。
+发版之间仓库里的短版本一直带 `-dev`，发版时由脚本去掉后缀，发完再推到下一个 `-dev`。`-dev` 版本永远不发布、不打标签、不进 appcast。
+
+版本号已经是正式形态（没有 `-dev`）时脚本按 appcast 判别，而不是一律拒绝——阶段 1 之后任何一步失败，版本号都已经写成正式号，重跑是正常路径：
+
+- `CFBundleVersion` 还没进 appcast → 中断后重跑，放行并提示。阶段 1 的提交本身幂等（没有改动就跳过 commit）。
+- `CFBundleVersion` 已在 appcast 里 → 已经发布完但收尾提交没跑成，拒绝。再发一次就是重复发版，而 `sparkle:version` 是 appcast item 的主键、发出去的号收不回来。
+
+另一头同样把关：推导或传入的发版号带 `-dev` 一律拒绝，它会进 appcast 的 `shortVersionString`、Release 标题和标签，三样都收不回来。
 
 | CFBundleVersion | ShortVersion | 通道 | tag |
 | --- | --- | --- | --- |

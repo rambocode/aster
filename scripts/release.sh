@@ -49,14 +49,32 @@ PLIST="$PROJECT_DIR/Resources/Info.plist"
 PLIST_SHORT=$(plutil -extract CFBundleShortVersionString raw "$PLIST")
 PLIST_BUNDLE=$(plutil -extract CFBundleVersion raw "$PLIST")
 
-# 仓库里的短版本必须是 `-dev` 形态。不是，就说明上一次发版的收尾提交没跑成（版本号
-# 停在已发布的正式号上）；此时继续发版会重复发同一个版本，必须先人工改回 -dev。
-[[ "$PLIST_SHORT" == *-dev ]] \
-  || die "Info.plist 的 $PLIST_SHORT 不是 -dev 开发版；上次发版的收尾提交可能没跑成，先改回 -dev 形态"
+# appcast 里已发布的最大 sparkle:version。既用于「中断重跑 vs 重复发版」的判别，
+# 也用于阶段 0 末尾的单调性校验。首次发布时 appcast.xml 还不存在。
+APPCAST="$PROJECT_DIR/appcast.xml"
+MAX_IN_FEED=0
+if [[ -f "$APPCAST" ]]; then
+  MAX_IN_FEED=$(xmllint --xpath '//*[local-name()="version"]/text()' "$APPCAST" 2>/dev/null \
+    | tr ' ' '\n' | sort -n | tail -1)
+  MAX_IN_FEED="${MAX_IN_FEED:-0}"
+fi
 
-# 缺省从 -dev 版本推出发版号与构建号；显式参数只用于跳版本号。
+# 仓库里的短版本正常是 `-dev` 形态；缺省从它推出发版号与构建号。
 [[ -n "$SHORT_VERSION" ]] || SHORT_VERSION="${PLIST_SHORT%-dev}"
 [[ -n "$BUNDLE_VERSION" ]] || BUNDLE_VERSION="$PLIST_BUNDLE"
+
+# 版本号已经是正式形态（没有 -dev），说明阶段 1 跑过了。这有两种情况，必须分开：
+#   - 中途失败后重跑：标签、Release 与 appcast 都还没有该版本，继续跑才能把发布做完。
+#     阶段 1 的提交本身是幂等的（没有改动就跳过 commit），所以直接放行。
+#   - 已经发布完但收尾提交没跑成：版本号停在已发布的正式号上，再发一次就是重复发版，
+#     而 appcast 的 sparkle:version 是主键、发出去的号收不回来，必须拦住。
+# 判据取 appcast：它是「这个构建号有没有真的发出去」的唯一权威，比标签更靠前失败。
+if [[ "$PLIST_SHORT" != *-dev ]]; then
+  if (( BUNDLE_VERSION <= MAX_IN_FEED )); then
+    die "$PLIST_SHORT (build $BUNDLE_VERSION) 已经发布过；上次发版的收尾提交没跑成，先把版本号改回下一个 -dev"
+  fi
+  echo "note: 版本号已是 $PLIST_SHORT，按中断后重跑处理（appcast 里还没有 build $BUNDLE_VERSION）"
+fi
 
 # 发出去的版本号绝不能带 -dev：它会进 appcast 的 shortVersionString、Release 标题和
 # 标签，而这三样都收不回来。
@@ -129,13 +147,6 @@ LOCAL_KEY=$("$SPARKLE_BIN/generate_keys" -p)
   || die "SUPublicEDKey in Info.plist does not match the signing key in this Mac's keychain"
 
 # 版本单调性：唯一不可逆的错误，必须机器校验。首次发布时 appcast.xml 还不存在。
-APPCAST="$PROJECT_DIR/appcast.xml"
-MAX_IN_FEED=0
-if [[ -f "$APPCAST" ]]; then
-  MAX_IN_FEED=$(xmllint --xpath '//*[local-name()="version"]/text()' "$APPCAST" 2>/dev/null \
-    | tr ' ' '\n' | sort -n | tail -1)
-  MAX_IN_FEED="${MAX_IN_FEED:-0}"
-fi
 (( BUNDLE_VERSION > MAX_IN_FEED )) \
   || die "CFBundleVersion $BUNDLE_VERSION must exceed $MAX_IN_FEED already published in appcast.xml"
 
