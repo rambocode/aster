@@ -451,3 +451,87 @@ func emptyFailureDetailOmitsTrailingColon() {
   #expect(RemoteInspectionFailure.unreachable("").message == "连接失败")
   #expect(RemoteInspectionFailure.transport("超时").message == "连接失败：超时")
 }
+
+@Test("服务器监控按分页渲染，一次只显示一类指标")
+@MainActor
+func remoteMonitorRendersOneTabAtATime() async throws {
+  _ = NSApplication.shared
+  var snapshot = RemoteHostMonitorSnapshot()
+  snapshot.host = "ubuntu"
+  snapshot.disks = [
+    RemoteDiskUsage(mount: "/data", filesystem: "/dev/vdb1", sizeKiB: 100, usedKiB: 50, availableKiB: 50)
+  ]
+  snapshot.listeningPorts = [
+    RemoteListeningPort(networkProtocol: .tcp, address: "0.0.0.0", port: 8080, pid: 7, processName: "nginx")
+  ]
+  let client = RemoteInspectionClient(
+    listDirectory: { _, directory in .success(makeListing(directory: directory)) },
+    monitor: { _, _ in .success(snapshot) }
+  )
+  let controller = RemoteMonitorSectionController(client: client, onCommitted: {})
+  controller.loadViewIfNeeded()
+  controller.activate(host: makeHost(directory: "/srv"))
+  await settle(milliseconds: 450)
+
+  #expect(controller.selectedTab == .overview)
+  var texts = controller.view.remoteTestTexts
+  #expect(texts.contains { $0.contains("ubuntu") })
+  #expect(!texts.contains { $0.contains("/data") })
+  #expect(!texts.contains { $0.contains("nginx") })
+
+  controller.selectTab(.ports)
+  texts = controller.view.remoteTestTexts
+  #expect(texts.contains { $0.contains("nginx") })
+  #expect(!texts.contains { $0.contains("ubuntu") })
+}
+
+@Test("窄栏隐藏次要列，拉宽后恢复完整列")
+@MainActor
+func remoteMonitorAdaptsColumnsToPanelWidth() async throws {
+  _ = NSApplication.shared
+  var snapshot = RemoteHostMonitorSnapshot()
+  snapshot.listeningPorts = [
+    RemoteListeningPort(
+      networkProtocol: .tcp, address: "192.168.139.114", port: 8080, pid: 7, processName: "nginx")
+  ]
+  snapshot.topByCPU = [
+    RemoteProcessSample(
+      pid: 4242, cpuPercent: 12.5, memoryPercent: 1, residentKiB: 2_048, user: "root",
+      command: "nginx", arguments: "nginx: master")
+  ]
+  let client = RemoteInspectionClient(
+    listDirectory: { _, directory in .success(makeListing(directory: directory)) },
+    monitor: { _, _ in .success(snapshot) }
+  )
+  let controller = RemoteMonitorSectionController(client: client, onCommitted: {})
+  controller.loadViewIfNeeded()
+  controller.activate(host: makeHost(directory: "/srv"))
+  await settle(milliseconds: 450)
+
+  func layout(width: CGFloat) {
+    controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 600)
+    controller.view.layoutSubtreeIfNeeded()
+  }
+
+  layout(width: 260)
+  controller.selectTab(.ports)
+  var texts = controller.view.remoteTestTexts
+  #expect(texts.contains { $0.contains("nginx") })
+  #expect(!texts.contains { $0.contains("192.168.139.114") })
+
+  layout(width: 420)
+  controller.selectTab(.processes)
+  controller.selectTab(.ports)
+  texts = controller.view.remoteTestTexts
+  #expect(texts.contains { $0.contains("192.168.139.114") })
+
+  controller.selectTab(.processes)
+  texts = controller.view.remoteTestTexts
+  #expect(texts.contains { $0.contains("4242") })
+
+  layout(width: 260)
+  controller.selectTab(.overview)
+  controller.selectTab(.processes)
+  texts = controller.view.remoteTestTexts
+  #expect(!texts.contains { $0.contains("4242") })
+}

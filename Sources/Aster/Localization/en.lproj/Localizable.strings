@@ -1665,3 +1665,7 @@
 "；如 PATH 未包含 ~/.local/bin 请自行加入" = "; if PATH does not include ~/.local/bin, please add it yourself";
 "探测失败：%@" = "Detection failed: %@";
 "连接失败" = "Connection failed";
+"概览" = "Overview";
+"进程" = "Processes";
+"端口" = "Ports";
+"未知进程" = "Unknown process";

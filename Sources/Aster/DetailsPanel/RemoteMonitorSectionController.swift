@@ -45,9 +45,24 @@ final class RemoteMonitorSectionController: NSViewController {
   private var cpuPercent: Double?
   /// 进程表按 CPU 还是按内存排序。
   private var processesByCPU = true
+  /// 当前分页。切 Pane 不重置：同一个人通常连着看同一类指标。
+  private(set) var selectedTab: RemoteMonitorTab = .overview
+  /// 上一次渲染用的宽度档位。只用来判断「要不要重渲染」，行内容一律按渲染当时的
+  /// 实时宽度决定——缓存值会在 render 与 layout 交错时让同一屏出现两种档位的行。
+  private var renderedLayoutMode: RemoteInspectorLayout.Mode?
+
+  /// 当前档位。以滚动区实际可用宽度为准：控制器根视图在被父约束收敛前和窗口一样宽。
+  var layoutMode: RemoteInspectorLayout.Mode {
+    let available = scrollView?.contentView.bounds.width ?? view.bounds.width
+    return RemoteInspectorLayout.mode(forWidth: Double(available))
+  }
 
   private(set) var state: RemoteMonitorState = .idle
   private let contentStack = NSStackView()
+  private var tabBar: RemoteMonitorTabBar?
+  /// 保留滚动区引用：档位要按「内容真正能用的宽度」判断，控制器根视图在被父视图
+  /// 约束收敛前一度和窗口一样宽，用它算档位会把窄栏误判成宽栏。
+  private var scrollView: NSScrollView?
 
   init(client: RemoteInspectionClient, onCommitted: @escaping @MainActor () -> Void) {
     self.client = client
@@ -91,7 +106,53 @@ final class RemoteMonitorSectionController: NSViewController {
       contentStack.topAnchor.constraint(equalTo: document.topAnchor),
       document.bottomAnchor.constraint(greaterThanOrEqualTo: contentStack.bottomAnchor),
     ])
-    view = scroll
+    scrollView = scroll
+    let bar = RemoteMonitorTabBar(selection: selectedTab) { [weak self] tab in
+      guard let self else { return }
+      self.selectedTab = tab
+      self.render()
+    }
+    tabBar = bar
+
+    // tab 条自身只占内容宽度，靠约束贴住左边；把它拉满再指望 NSStackView 内部对齐，
+    // 水平 stack 会把富余宽度平摊给各 chip，结果整排被推到面板中间。
+    let barHost = NSView()
+    barHost.addSubview(bar)
+    bar.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      bar.leadingAnchor.constraint(equalTo: barHost.leadingAnchor),
+      bar.topAnchor.constraint(equalTo: barHost.topAnchor),
+      bar.bottomAnchor.constraint(equalTo: barHost.bottomAnchor),
+      bar.trailingAnchor.constraint(lessThanOrEqualTo: barHost.trailingAnchor),
+    ])
+
+    let container = NSStackView(views: [barHost, scroll])
+    container.orientation = .vertical
+    container.alignment = .leading
+    container.spacing = 0
+    container.distribution = .fill
+    barHost.translatesAutoresizingMaskIntoConstraints = false
+    scroll.translatesAutoresizingMaskIntoConstraints = false
+    barHost.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+    scroll.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+    view = container
+    render()
+  }
+
+  /// 宽度变化只在跨过档位阈值时才重建内容，避免拖动分隔线时每帧重排。
+  override func viewDidLayout() {
+    super.viewDidLayout()
+    let mode = layoutMode
+    guard mode != renderedLayoutMode else { return }
+    tabBar?.apply(mode: mode)
+    render()
+  }
+
+  /// 切换分页。tab 条自己点击时也走这里，保证「界面点选」与「代码切换」同一条路径。
+  func selectTab(_ tab: RemoteMonitorTab) {
+    guard selectedTab != tab else { return }
+    selectedTab = tab
+    tabBar?.select(tab)
     render()
   }
 
@@ -204,6 +265,7 @@ final class RemoteMonitorSectionController: NSViewController {
 
   private func render() {
     guard isViewLoaded else { return }
+    renderedLayoutMode = layoutMode
     for subview in contentStack.arrangedSubviews { subview.removeFromSuperview() }
     switch state {
     case .idle:
@@ -227,6 +289,15 @@ final class RemoteMonitorSectionController: NSViewController {
   }
 
   private func renderSnapshot(_ snapshot: RemoteHostMonitorSnapshot) {
+    switch selectedTab {
+    case .overview: renderOverview(snapshot)
+    case .disks: renderDisks(snapshot)
+    case .processes: addProcessSection(snapshot)
+    case .ports: addPortSection(snapshot)
+    }
+  }
+
+  private func renderOverview(_ snapshot: RemoteHostMonitorSnapshot) {
     addSection(L("主机")) { stack in
       stack.addArrangedSubview(makeLabel(snapshot.host ?? "—", size: 12))
       if let uname = snapshot.uname {
@@ -266,19 +337,24 @@ final class RemoteMonitorSectionController: NSViewController {
       }
     }
 
+  }
+
+  private func renderDisks(_ snapshot: RemoteHostMonitorSnapshot) {
     addSection(L("磁盘")) { stack in
       guard !snapshot.disks.isEmpty else {
         stack.addArrangedSubview(unavailableLabel())
         return
       }
       for disk in snapshot.disks {
-        stack.addArrangedSubview(makeLabel(disk.mount, size: 11))
+        // 挂载点从中间截断：长路径的首尾（根目录与最后一级）比中间更能认出是哪块盘。
+        let mount = makeLabel(disk.mount, size: 11)
+        mount.lineBreakMode = .byTruncatingMiddle
+        mount.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        stack.addArrangedSubview(mount)
+        mount.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         stack.addArrangedSubview(usageRow(used: disk.usedKiB, total: disk.sizeKiB))
       }
     }
-
-    addProcessSection(snapshot)
-    addPortSection(snapshot)
   }
 
   private func addProcessSection(_ snapshot: RemoteHostMonitorSnapshot) {
@@ -305,9 +381,13 @@ final class RemoteMonitorSectionController: NSViewController {
         let detail = processesByCPU
           ? String(format: "%.1f%%", process.cpuPercent)
           : RemoteInspectionFormat.kibibytes(process.residentKiB)
-        stack.addArrangedSubview(
-          makeLabel(
-            "\(process.command)  \(String(process.pid))  \(detail)", size: 10.5, monospaced: true))
+        // 窄栏先让位 PID：它只在要 kill 进程时才用得上，而占用率是这一页存在的理由。
+        let name = layoutMode == .compact
+          ? process.command
+          : "\(process.command)  \(String(process.pid))"
+        let row = remoteMetricRow(leading: name, trailing: detail)
+        stack.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
       }
     }
   }
@@ -325,11 +405,20 @@ final class RemoteMonitorSectionController: NSViewController {
             L("非 root 用户看不到其他用户的进程"), size: 10.5, color: AsterTheme.tertiaryInk))
       }
       for port in snapshot.listeningPorts {
-        let owner = port.processName.map { "\($0)  " } ?? ""
-        stack.addArrangedSubview(
-          makeLabel(
-            "\(owner)\(port.networkProtocol.rawValue)  \(port.address):\(String(port.port))",
-            size: 10.5, monospaced: true))
+        // 窄栏丢掉监听地址只留协议与端口：端口号才是用来对上服务的那一列，
+        // 地址多半是 0.0.0.0 或 ::，占满整行却几乎不携带信息。
+        let leading = port.processName ?? L("未知进程")
+        let trailing = layoutMode == .compact
+          ? "\(port.networkProtocol.rawValue)  :\(String(port.port))"
+          : "\(port.networkProtocol.rawValue)  \(port.address):\(String(port.port))"
+        let row = remoteMetricRow(
+          leading: leading,
+          trailing: trailing,
+          leadingColor: port.processName == nil ? AsterTheme.tertiaryInk : AsterTheme.ink,
+          truncatesLeadingInMiddle: false
+        )
+        stack.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
       }
     }
   }

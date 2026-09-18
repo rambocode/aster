@@ -66,6 +66,10 @@ final class RemoteFileRowView: HoverHighlightRowView {
   private let nameButton = PointingHandButton()
   private let metadataLabel = NSTextField(labelWithString: "")
   private var onOpen: (() -> Void)?
+  /// 当前条目的两种元数据文案；窄栏只留大小，宽栏加上修改时间。
+  private var compactMetadata = ""
+  private var regularMetadata = ""
+  private var appliedMode: RemoteInspectorLayout.Mode?
 
   /// 图标色与本地 Files 页保持一致，避免两种模式看起来像两个功能。
   private static let iconTint = NSColor(
@@ -138,12 +142,28 @@ final class RemoteFileRowView: HoverHighlightRowView {
     nameButton.toolTip = entry.nameDecodedLossy
       ? L("文件名不是合法 UTF-8，无法进入或下载") : entry.name
 
-    var metadata = entry.kind == .directory ? "" : RemoteInspectionFormat.bytes(entry.size)
-    metadata += metadata.isEmpty ? "" : " · "
-    metadata += RemoteInspectionFormat.timestamp(entry.modifiedAt)
-    metadataLabel.stringValue = metadata
+    let size = entry.kind == .directory ? "" : RemoteInspectionFormat.bytes(entry.size)
+    let time = RemoteInspectionFormat.timestamp(entry.modifiedAt)
+    compactMetadata = size
+    regularMetadata = size.isEmpty ? time : "\(size) · \(time)"
+    appliedMode = nil
+    applyMetadataForCurrentWidth()
 
     self.onOpen = onOpen
+  }
+
+  /// 行宽变化时切换元数据详略。修改时间比文件名次要得多，窄栏让它先让位，
+  /// 免得名称被压到只剩两三个字。
+  override func layout() {
+    super.layout()
+    applyMetadataForCurrentWidth()
+  }
+
+  private func applyMetadataForCurrentWidth() {
+    let mode = RemoteInspectorLayout.mode(forWidth: Double(bounds.width))
+    guard appliedMode != mode else { return }
+    appliedMode = mode
+    metadataLabel.stringValue = mode == .compact ? compactMetadata : regularMetadata
   }
 
   @objc private func openItem() { onOpen?() }
