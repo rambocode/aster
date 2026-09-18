@@ -3042,6 +3042,7 @@ private enum SettingsWebBridge {
     "quickTerminal.position": .string("top"),
     "quickTerminal.screen": .string("main"),
     "quickTerminal.size": .number(50),
+    "quickTerminal.margin": .number(12),
     "quickTerminal.animationDuration": .number(0.15),
     "quickTerminal.autohide": .bool(true),
     "quickTerminal.followSpaces": .bool(true),
@@ -4042,6 +4043,7 @@ extension SettingsViewController: WKNavigationDelegate {
       let number = value.doubleValue
       let allowedRange: ClosedRange<Double>? = switch key {
       case "quickTerminal.size": 10...100
+      case "quickTerminal.margin": 0...200
       case "quickTerminal.animationDuration": 0...1
       case "appearance.adjustCellHeight": -8...16
       case "appearance.fontThicken": 0...4

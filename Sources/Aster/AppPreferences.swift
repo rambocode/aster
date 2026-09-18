@@ -171,6 +171,40 @@ final class AppPreferences: ObservableObject {
     set { defaults.set(min(max(newValue, 0), 4), forKey: Keys.inspectorSection) }
   }
 
+  /// Quick Terminal 被手动拖拽后的窗口尺寸。与 `quickTerminal.position` / `.size` /
+  /// `.margin` 的百分比布局是两层：设置决定基准布局，手动拖拽记住实际尺寸并优先生效；
+  /// 用户在设置里改动任一布局字段时由 `QuickTerminalController` 清空这里，回到百分比。
+  /// 刻意不用 @Published：拖拽结束时写入，不能触发订阅者重新定位窗口（会打断拖拽手感）。
+  /// 只记尺寸不记位置——面板无标题栏不可拖动，位置始终由 position 推导，避免跑出屏幕。
+  var quickTerminalManualSize: NSSize? {
+    get {
+      guard let stored = defaults.dictionary(forKey: Keys.quickTerminalManualSize),
+        let width = stored["width"] as? Double, let height = stored["height"] as? Double,
+        width.isFinite, height.isFinite, width > 0, height > 0
+      else { return nil }
+      return NSSize(width: width, height: height)
+    }
+    set {
+      guard let newValue, newValue.width > 0, newValue.height > 0 else {
+        defaults.removeObject(forKey: Keys.quickTerminalManualSize)
+        return
+      }
+      defaults.set(
+        ["width": newValue.width, "height": newValue.height],
+        forKey: Keys.quickTerminalManualSize)
+    }
+  }
+
+  /// Quick Terminal 上一次生效的布局设置签名。手动尺寸只在设置未变时沿用；
+  /// 签名随设置一起落盘，因此重启后仍能区分“用户改了设置”与“首次读取”。
+  var quickTerminalLayoutSignature: String? {
+    get { defaults.string(forKey: Keys.quickTerminalLayoutSignature) }
+    set {
+      if let newValue { defaults.set(newValue, forKey: Keys.quickTerminalLayoutSignature) }
+      else { defaults.removeObject(forKey: Keys.quickTerminalLayoutSignature) }
+    }
+  }
+
   /// 详情面板选中的自定义视图 id；nil 表示选中的是内置页（此时读 `inspectorSection`）。
   var inspectorCustomSection: UUID? {
     get { defaults.string(forKey: Keys.inspectorCustomSection).flatMap(UUID.init(uuidString:)) }
@@ -1023,6 +1057,8 @@ final class AppPreferences: ObservableObject {
     static let sidebarTabGrouping = "aster.sidebar.tab-grouping.v1"
     static let sidebarTabOrder = "aster.sidebar.tab-order.v1"
     static let sidebarCollapsedGroups = "aster.sidebar.collapsed-groups.v1"
+    static let quickTerminalManualSize = "aster.quick-terminal.manual-size.v1"
+    static let quickTerminalLayoutSignature = "aster.quick-terminal.layout-signature.v1"
     static let inspectorPresented = "aster.inspector.presented.v1"
     static let inspectorSection = "aster.inspector.section.v1"
     static let inspectorCustomSection = "aster.inspector.custom-section.v1"

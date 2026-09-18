@@ -21,6 +21,95 @@ import Testing
 }
 
 @MainActor
+@Test func quickTerminalGeometryAppliesMarginAndManualSize() {
+  let screen = NSRect(x: 0, y: 100, width: 1600, height: 900)
+  // 边距只内缩不贴边的两侧：顶部显示时左右留白，上沿必须完全贴住可见区域顶端。
+  let top = QuickTerminalController.frame(in: screen, position: "top", fraction: 0.5, margin: 20)
+  #expect(top == NSRect(x: 20, y: 550, width: 1560, height: 450))
+  #expect(top.maxY == screen.maxY)
+  let bottom = QuickTerminalController.frame(
+    in: screen, position: "bottom", fraction: 0.5, margin: 20)
+  #expect(bottom.minY == screen.minY)
+  #expect(bottom.minX == 20)
+  #expect(bottom.width == 1560)
+  // 左右显示时反过来：上下留白，侧沿完全贴边。
+  let right = QuickTerminalController.frame(in: screen, position: "right", fraction: 0.5, margin: 20)
+  #expect(right.maxX == screen.maxX)
+  #expect(right.height == 860)
+  #expect(right.minY == 120)
+  // 居中显示不贴任何边，四周都留白。
+  let center = QuickTerminalController.frame(
+    in: screen, position: "center", fraction: 1, margin: 20)
+  #expect(center == screen.insetBy(dx: 20, dy: 20))
+
+  // 手动尺寸覆盖百分比，但仍按位置贴边、另一轴居中，并夹紧在可用区域与下限之间。
+  let manual = QuickTerminalController.frame(
+    in: screen, position: "top", fraction: 0.5, margin: 20,
+    manualSize: NSSize(width: 900, height: 300))
+  #expect(manual.size == NSSize(width: 900, height: 300))
+  #expect(manual.maxY == screen.maxY)
+  #expect(manual.midX == screen.midX)
+  let clamped = QuickTerminalController.frame(
+    in: screen, position: "left", fraction: 0.5, margin: 20,
+    manualSize: NSSize(width: 10, height: 100_000))
+  #expect(clamped.width == QuickTerminalController.minimumSize.width)
+  #expect(clamped.height == 860)
+  #expect(clamped.minX == screen.minX)
+
+  // 非法边距与越界边距都不能把窗口挤空；上界按短边三分之一夹紧。
+  #expect(
+    QuickTerminalController.frame(in: screen, position: "top", fraction: 0.5, margin: .nan)
+      == QuickTerminalController.frame(in: screen, position: "top", fraction: 0.5))
+  let huge = QuickTerminalController.frame(
+    in: screen, position: "center", fraction: 1, margin: 10_000)
+  #expect(huge.width == 1000)
+  #expect(huge.height == 300)
+}
+
+@MainActor
+@Test func quickTerminalManualResizePersistsUntilLayoutSettingChanges() throws {
+  let suite = "QuickTerminalResizeTests.\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suite))
+  defer { defaults.removePersistentDomain(forName: suite) }
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.setCompatibilityValue(.number(0), forKey: "quickTerminal.animationDuration")
+  preferences.setCompatibilityValue(.bool(false), forKey: "quickTerminal.autohide")
+  let controller = QuickTerminalController(preferences: preferences)
+  defer { controller.shutdown() }
+  controller.show()
+  let window = try #require(controller.window)
+  #expect(window.styleMask.contains(.resizable))
+  #expect(window.minSize == QuickTerminalController.minimumSize)
+  // 只能改大小，不能被拖走：位置始终由「位置」设置推导。
+  #expect(!window.isMovable)
+  #expect(!window.isMovableByWindowBackground)
+
+  // 终端内容不贴窗口边：host 装在内边距容器里，四边各留 contentInset。
+  let container = try #require(window.contentView)
+  let host = try #require(container.subviews.first)
+  let inset = QuickTerminalController.contentInset
+  #expect(host.frame == container.bounds.insetBy(dx: inset, dy: inset))
+
+  let resized = NSSize(width: 700, height: 350)
+  window.setContentSize(resized)
+  controller.windowDidEndLiveResize(
+    Notification(name: NSWindow.didEndLiveResizeNotification, object: window))
+  #expect(preferences.quickTerminalManualSize == window.frame.size)
+
+  // 与布局无关的设置变化不能丢掉手动尺寸。
+  preferences.setCompatibilityValue(.bool(false), forKey: "quickTerminal.followSpaces")
+  controller.refresh()
+  #expect(preferences.quickTerminalManualSize == resized)
+  #expect(window.frame.size == resized)
+
+  // 改动位置属于布局设置，手动尺寸作废并回到百分比基准。
+  preferences.setCompatibilityValue(.string("bottom"), forKey: "quickTerminal.position")
+  controller.refresh()
+  #expect(preferences.quickTerminalManualSize == nil)
+  #expect(window.frame.size != resized)
+}
+
+@MainActor
 @Test func quickTerminalHideAndRapidReopenPreserveSession() async throws {
   let suite = "QuickTerminalTests.\(UUID().uuidString)"
   let defaults = try #require(UserDefaults(suiteName: suite))
