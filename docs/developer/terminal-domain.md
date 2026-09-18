@@ -131,7 +131,17 @@ Session 的退出状态。测试直接在主线程调用 `dataReceived` 时保�
 `TerminalSessionLifecycleState` 区分未启动、启动中、运行中、已结束、启动失败和主动停止。
 Ghostty 的 child-exited action 回传 Shell 退出码，`TerminalProcessTermination` 将其归一化为正常退出、
 异常退出或 I/O 失败。旧 SwiftTerm 回归入口仍接受 `waitpid` 原始状态。结束卡片覆盖在最后一帧之上，
-卡片外区域仍可选择和复制历史内容；正常 `exit` 不会被当成需要自动重启的错误。
+卡片外区域仍可选择和复制历史内容。
+
+用户主动结束 Shell（`exit` / Ctrl+D）时不显示结束卡，而是关闭所在 Pane。判定规则是
+`TerminalProcessTermination.closesPaneAutomatically(uptime:)`：退出码 0 直接关闭；非零退出码
+要求进程至少运行 `minimumUptimeForNonZeroAutoClose`（3 秒）——不带参数的 `exit` 会沿用上一条
+命令的状态码，不能一律当成异常，但 Shell 启动即失败必须留下画面供排查；信号终止与 I/O 失败
+始终保留结束卡。`TerminalSession` 只通过 `onRequestCloseAfterExit` 提出请求，
+`AppModel.closePaneAfterShellExit` 延后一轮主队列执行关闭：标签内还有其他 Pane 时只关该 Pane
+（不改变焦点，登记到「重新打开」历史），只剩一个 Pane 时关闭整个标签且不弹关闭确认。
+受管终端不参与自动关闭：桥的退出码不代表远端进程状态，结束卡上的重新附加 / 重新启动 /
+关闭标签是服务端事务入口。
 
 用户点击“重新启动 Shell”时，Session 保留 Pane 身份和稳定 host view，但丢弃旧
 `GhosttySurfaceView`，创建新的 libghostty surface 与 PTY。每个新 view 定义一个进程

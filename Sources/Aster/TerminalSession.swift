@@ -2402,6 +2402,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 返回 false 表示当前目标不属于 Aster 内部 Pane 能力，协调器会安全回退系统应用。
   var onRequestOpenInAster: ((URL, Bool) -> Bool)?
   var onCommandFinished: (() -> Void)?
+  /// Shell 由用户主动结束（`exit` / Ctrl+D）后请求关闭所在 Pane；由所属 WorkspaceTab 注入。
+  /// 只在 `TerminalProcessTermination.closesPaneAutomatically` 成立时触发；未注入时保留结束卡。
+  var onRequestCloseAfterExit: (() -> Void)?
   /// 已绑定 session ID 的 Agent 结束（命令退出或 PTY 退出）时上报 provider 与 session ID，
   /// 供窗口层登记「项目最近会话」并提示可 resume 的 ID。仅在 lifecycle hook 提供过 ID 时触发。
   /// session ID 为 nil 表示「该目录确有此 provider 的会话，但没定位到本次的 ID」，
@@ -3332,7 +3335,21 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       }
       return
     }
+    // 必须在 applyProcessExit 之前取：运行时长依赖 processStartedAt，结束后的清理可能把它清掉。
+    let uptime = processStartedAt.map { Date().timeIntervalSince($0) } ?? 0
     applyProcessExit(code: code)
+    requestCloseAfterExitIfNeeded(uptime: uptime)
+  }
+
+  /// 本机原生 Shell 被用户主动结束后，请求所属标签关闭这个 Pane。
+  ///
+  /// 受管终端不走这里：它的结束卡承载「重新附加 / 重新启动 / 关闭标签」等服务端事务入口，
+  /// 而且桥的退出码不代表远端进程的真实状态，自动关闭会把仍可恢复的终端直接丢掉。
+  private func requestCloseAfterExitIfNeeded(uptime: TimeInterval) {
+    guard case .ended(let termination) = lifecycleState,
+      termination.closesPaneAutomatically(uptime: uptime)
+    else { return }
+    onRequestCloseAfterExit?()
   }
 
   /// 显示桥退出但服务端任务仍在运行：按分离处理，不写任何结束事件。
@@ -3366,6 +3383,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   func simulateManagedExitForTesting(code: Int32?) {
     managedExitSummary = code.map({ L("远端进程已退出（状态码 \(String($0))）。") }) ?? L("远端进程已退出。")
     applyProcessExit(code: code)
+  }
+
+  /// 测试用：不起真实进程，模拟本机原生 Shell 运行 `uptime` 秒后以 `code` 退出。生产代码不调用。
+  func simulateProcessExitForTesting(code: Int32?, uptime: TimeInterval) {
+    applyProcessExit(code: code)
+    requestCloseAfterExitIfNeeded(uptime: uptime)
   }
 
   private func applyProcessExit(code: Int32?) {

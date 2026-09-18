@@ -382,6 +382,8 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// 避免单次 `cd` 同时触发无关界面刷新。
   var onWorkingDirectoryChanged: ((String) -> Void)?
   var onCommandFinished: ((UUID) -> Void)?
+  /// 某个 Pane 的 Shell 被用户主动结束（`exit` / Ctrl+D），请求窗口层关闭该 Pane。
+  var onPaneRequestedCloseAfterExit: ((UUID) -> Void)?
   /// 已绑定 session ID 的 Agent 结束时上报 (paneID, provider, sessionID, 工作目录)。
   /// 窗口层据此登记「项目最近会话」并提示 resume ID。
   var onAgentSessionEnded: ((UUID, AgentProvider, String?, String) -> Void)?
@@ -935,18 +937,23 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// 关闭当前聚焦的面板。返回 false 表示没有可关闭的分屏（只剩最后一个面板），
   /// 由调用方决定是否升级成关闭整个标签页；用户取消保存提示同样返回 false。
   @discardableResult
-  func closeActivePane() -> Bool {
+  func closeActivePane() -> Bool { closePane(id: activePaneID) }
+
+  /// 关闭指定面板（不要求它是当前聚焦面板，例如后台 Pane 里的 Shell 自己退出）。
+  /// 返回值语义同 `closeActivePane`。关闭的不是聚焦面板时焦点保持不动。
+  @discardableResult
+  func closePane(id paneID: UUID) -> Bool {
     guard layout.allPanes.count > 1 else { return false }
-    guard runtimes[activePaneID]?.confirmCloseIfNeeded() != false else { return false }
-    guard let updated = layout.removing(paneID: activePaneID) else { return false }
+    guard runtimes[paneID]?.confirmCloseIfNeeded() != false else { return false }
+    guard let updated = layout.removing(paneID: paneID) else { return false }
     // 焦点先于删除计算：删除后原 Pane 的兄弟关系已经消失，无法再定位相邻面板。
-    let successor = layout.neighborPaneID(ofPane: activePaneID) ?? updated.firstPaneID
-    let removedPaneID = activePaneID
-    runtimes.removeValue(forKey: removedPaneID)?.stop()
-    paneTitleStates.removeValue(forKey: removedPaneID)
-    paneAgentSessionTitles.removeValue(forKey: removedPaneID)
-    if zoomedPaneID == activePaneID { zoomedPaneID = nil }
+    let successor = layout.neighborPaneID(ofPane: paneID) ?? updated.firstPaneID
+    runtimes.removeValue(forKey: paneID)?.stop()
+    paneTitleStates.removeValue(forKey: paneID)
+    paneAgentSessionTitles.removeValue(forKey: paneID)
+    if zoomedPaneID == paneID { zoomedPaneID = nil }
     layout = updated
+    guard paneID == activePaneID else { return true }
     activePaneID = successor ?? activePaneID
     if let state = paneTitleStates[activePaneID] { applyActiveTitleState(state) }
     return true
@@ -1075,6 +1082,9 @@ final class TerminalTabItem: ObservableObject, Identifiable {
         self?.applyProgramTitle(paneID: descriptor.id, code: code, text: text)
       }
       session.onCommandFinished = { [weak self] in self?.onCommandFinished?(descriptor.id) }
+      session.onRequestCloseAfterExit = { [weak self] in
+        self?.onPaneRequestedCloseAfterExit?(descriptor.id)
+      }
       session.onAgentSessionEnded = { [weak self, weak session] provider, sessionID in
         guard let self, let session else { return }
         self.onAgentSessionEnded?(
@@ -1912,15 +1922,19 @@ final class AppModel: ObservableObject {
   /// 关闭指定标签，用于侧栏行内关闭等不应先改变当前选中项的入口。
   /// 若目标就是当前标签，选中相邻标签；关闭后台标签时保持当前选中项。
   /// 未保存文档拒绝关闭时不改变任何模型状态。
-  func closeTab(id: UUID) {
+  ///
+  /// `confirm` 为 false 时跳过「关闭标签」确认（未保存文档的提示仍保留）：用户在最后一个
+  /// Pane 里输入 `exit` 已经表达了关闭意图，再弹一次确认只会打断。
+  func closeTab(id: UUID, confirm: Bool = true) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
     // 远端关闭标签是**资源关闭**语义（会结束远端进程），必须走服务端事务。
     if let remoteStructureHandler {
-      guard confirmClose(.tab, hasRunningProcess: tabs[index].hasForegroundCommand) else { return }
+      guard !confirm || confirmClose(.tab, hasRunningProcess: tabs[index].hasForegroundCommand)
+      else { return }
       remoteStructureHandler.closeTab(tabID: id)
       return
     }
-    guard confirmClose(.tab, hasRunningProcess: tabs[index].hasForegroundCommand),
+    guard !confirm || confirmClose(.tab, hasRunningProcess: tabs[index].hasForegroundCommand),
       tabs[index].confirmCloseDocuments()
     else { return }
     let wasSelected = selectedTabID == id
@@ -2080,9 +2094,15 @@ final class AppModel: ObservableObject {
 
   private func closePaneAndRecord(in tab: TerminalTabItem) -> Bool {
     guard tab.layout.allPanes.count > 1,
-      let descriptor = tab.layout.allPanes.first(where: { $0.id == tab.activePaneID }),
-      confirmClose(.pane, hasRunningProcess: tab.activePaneHasForegroundCommand),
-      tab.closeActivePane()
+      confirmClose(.pane, hasRunningProcess: tab.activePaneHasForegroundCommand)
+    else { return false }
+    return closePaneAndRecord(paneID: tab.activePaneID, in: tab)
+  }
+
+  /// 关闭指定 Pane 并登记到「重新打开」历史；确认弹窗由调用方决定是否需要。
+  private func closePaneAndRecord(paneID: UUID, in tab: TerminalTabItem) -> Bool {
+    guard let descriptor = tab.layout.allPanes.first(where: { $0.id == paneID }),
+      tab.closePane(id: paneID)
     else { return false }
     recordClosedWorkspaceItem(.init(
       event: WorkflowClosedItem(
@@ -2092,6 +2112,24 @@ final class AppModel: ObservableObject {
       pane: descriptor
     ))
     return true
+  }
+
+  /// Pane 里的 Shell 被用户主动结束（`exit` / Ctrl+D）后关闭该 Pane；标签只剩这一个 Pane 时
+  /// 关闭整个标签，与 ⌘W 的语义一致。进程已经结束、没有可丢失的运行态，所以不弹关闭确认。
+  func closePaneAfterShellExit(paneID: UUID, in tab: TerminalTabItem) {
+    guard tabs.contains(where: { $0 === tab }),
+      tab.layout.allPanes.contains(where: { $0.id == paneID })
+    else { return }
+    guard tab.layout.allPanes.count > 1 else {
+      closeTab(id: tab.id, confirm: false)
+      return
+    }
+    if let remoteStructureHandler {
+      remoteStructureHandler.closePane(tabID: tab.id, paneID: paneID)
+      return
+    }
+    guard closePaneAndRecord(paneID: paneID, in: tab) else { return }
+    persistWorkspace()
   }
 
   private func recordClosedWorkspaceItem(_ item: ClosedWorkspaceItem) {
@@ -4005,6 +4043,13 @@ final class AppModel: ObservableObject {
     tab.onCommandFinished = { [weak self] paneID in
       self?.completeWorkflowCLICommand(paneID: paneID)
       self?.dispatchNextRecipeCommand(paneID: paneID)
+    }
+    tab.onPaneRequestedCloseAfterExit = { [weak self, weak tab] paneID in
+      // 延后一轮再关：回调发自会话自己的退出处理，同步关闭会在它还没收尾时就销毁 surface。
+      DispatchQueue.main.async {
+        guard let self, let tab else { return }
+        self.closePaneAfterShellExit(paneID: paneID, in: tab)
+      }
     }
     tab.onAgentSessionEnded = { [weak self] _, provider, sessionID, directory in
       self?.recordEndedAgentSession(provider: provider, sessionID: sessionID, directory: directory)
