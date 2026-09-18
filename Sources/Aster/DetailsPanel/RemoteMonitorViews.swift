@@ -117,3 +117,130 @@ func remoteMetricRow(
   row.distribution = .fill
   return row
 }
+
+/// 进程表的表头：三列标题，当前排序列带方向箭头，整块可点。
+@MainActor
+final class RemoteProcessHeaderRow: NSStackView {
+  private let nameButton = NSButton(title: "", target: nil, action: nil)
+  private var cpuButton: ActionButton!
+  private var memoryButton: ActionButton!
+
+  init(onSelect: @escaping (RemoteProcessSortColumn) -> Void) {
+    super.init(frame: .zero)
+    orientation = .horizontal
+    alignment = .firstBaseline
+    spacing = 8
+    distribution = .fill
+
+    cpuButton = ActionButton(bezelStyle: .inline) { onSelect(.cpu) }
+    memoryButton = ActionButton(bezelStyle: .inline) { onSelect(.memory) }
+    cpuButton.identifier = NSUserInterfaceItemIdentifier("details-remote-process-sort-cpu")
+    memoryButton.identifier = NSUserInterfaceItemIdentifier("details-remote-process-sort-memory")
+    // 进程列不参与排序：名称排序对「谁在吃资源」这个问题没有帮助，留着只会多一个误点目标。
+    nameButton.isEnabled = false
+    let headerButtons: [NSButton] = [nameButton, cpuButton, memoryButton]
+    for button in headerButtons {
+      button.isBordered = false
+      button.alignment = .left
+    }
+    nameButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    nameButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    let valueButtons: [NSButton] = [cpuButton, memoryButton]
+    for button in valueButtons {
+      button.alignment = .right
+      button.setContentCompressionResistancePriority(.required, for: .horizontal)
+      button.setContentHuggingPriority(.required, for: .horizontal)
+      button.widthAnchor.constraint(greaterThanOrEqualToConstant: 54).isActive = true
+    }
+    addArrangedSubview(nameButton)
+    addArrangedSubview(cpuButton)
+    addArrangedSubview(memoryButton)
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  func apply(sort: RemoteProcessSort) {
+    setTitle(nameButton, L("进程"), active: false, sort: sort)
+    setTitle(cpuButton, L("CPU"), active: sort.column == .cpu, sort: sort)
+    setTitle(memoryButton, L("内存"), active: sort.column == .memory, sort: sort)
+  }
+
+  /// 箭头只画在当前排序列上；朝上是升序、朝下是降序，与 Finder 列表一致。
+  private func setTitle(
+    _ button: NSButton, _ text: String, active: Bool, sort: RemoteProcessSort
+  ) {
+    let arrow = active ? (sort.order == .ascending ? " ▲" : " ▼") : ""
+    button.attributedTitle = NSAttributedString(
+      string: text + arrow,
+      attributes: [
+        .font: NSFont.systemFont(ofSize: 10, weight: active ? .semibold : .regular),
+        .foregroundColor: active ? AsterTheme.ink : AsterTheme.tertiaryInk,
+      ])
+  }
+}
+
+/// 进程表的一行：名称可截断，CPU 与内存两列固定宽度常驻；整行可点开详情。
+@MainActor
+final class RemoteProcessRow: HoverHighlightRowView {
+  private let nameButton = PointingHandButton()
+  private let cpuLabel = NSTextField(labelWithString: "")
+  private let memoryLabel = NSTextField(labelWithString: "")
+  private var onOpen: (() -> Void)?
+
+  init(sample: RemoteProcessSample, onOpen: @escaping () -> Void) {
+    super.init(frame: .zero)
+    self.onOpen = onOpen
+    hoverHorizontalInset = 0
+
+    nameButton.isBordered = false
+    nameButton.alignment = .left
+    nameButton.imagePosition = .noImage
+    nameButton.lineBreakMode = .byTruncatingTail
+    nameButton.target = self
+    nameButton.action = #selector(openDetail)
+    nameButton.attributedTitle = NSAttributedString(
+      string: sample.command,
+      attributes: [
+        .font: NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular),
+        .foregroundColor: AsterTheme.ink,
+      ])
+    nameButton.toolTip = sample.arguments.isEmpty ? sample.command : sample.arguments
+    nameButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+    for (label, text) in [
+      (cpuLabel, String(format: "%.1f%%", sample.cpuPercent)),
+      (memoryLabel, RemoteInspectionFormat.kibibytes(sample.residentKiB)),
+    ] {
+      label.stringValue = text
+      label.font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
+      label.textColor = AsterTheme.secondaryInk
+      label.alignment = .right
+      label.setContentCompressionResistancePriority(.required, for: .horizontal)
+      label.setContentHuggingPriority(.required, for: .horizontal)
+    }
+
+    let row = NSStackView(views: [nameButton, cpuLabel, memoryLabel])
+    row.orientation = .horizontal
+    row.alignment = .firstBaseline
+    row.spacing = 8
+    row.distribution = .fill
+    addSubview(row)
+    row.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      row.leadingAnchor.constraint(equalTo: leadingAnchor),
+      row.trailingAnchor.constraint(equalTo: trailingAnchor),
+      row.centerYAnchor.constraint(equalTo: centerYAnchor),
+      cpuLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 54),
+      memoryLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 54),
+    ])
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  @objc private func openDetail() { onOpen?() }
+
+  override func mouseDown(with event: NSEvent) {
+    super.mouseDown(with: event)
+    onOpen?()
+  }
+}

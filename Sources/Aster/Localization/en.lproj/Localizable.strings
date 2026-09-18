@@ -1669,3 +1669,8 @@
 "进程" = "Processes";
 "端口" = "Ports";
 "未知进程" = "Unknown process";
+"PID" = "PID";
+"用户" = "User";
+"内存占比" = "Memory share";
+"命令行" = "Command line";
+"返回进程列表" = "Back to processes";

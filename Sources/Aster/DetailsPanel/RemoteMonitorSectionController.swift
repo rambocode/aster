@@ -43,8 +43,10 @@ final class RemoteMonitorSectionController: NSViewController {
   /// 因此首个 tick 一定显示「—」，而不是假装是 0%。
   private var previousCPUSamples: [String: RemoteCPUStatSample] = [:]
   private var cpuPercent: Double?
-  /// 进程表按 CPU 还是按内存排序。
-  private var processesByCPU = true
+  /// 进程表的排序列与方向。
+  private var processSort = RemoteProcessSort()
+  /// 正在查看详情的进程 PID；nil 表示显示列表。
+  private var inspectedProcessPID: Int32?
   /// 当前分页。切 Pane 不重置：同一个人通常连着看同一类指标。
   private(set) var selectedTab: RemoteMonitorTab = .overview
   /// 上一次渲染用的宽度档位。只用来判断「要不要重渲染」，行内容一律按渲染当时的
@@ -145,6 +147,18 @@ final class RemoteMonitorSectionController: NSViewController {
     let mode = layoutMode
     guard mode != renderedLayoutMode else { return }
     tabBar?.apply(mode: mode)
+    render()
+  }
+
+  /// 切换进程表排序列。表头点击与测试走同一条路径。
+  func sortProcesses(by column: RemoteProcessSortColumn) {
+    processSort = processSort.selecting(column)
+    render()
+  }
+
+  /// 打开或关闭进程详情；传 nil 返回列表。
+  func inspectProcess(pid: Int32?) {
+    inspectedProcessPID = pid
     render()
   }
 
@@ -358,37 +372,76 @@ final class RemoteMonitorSectionController: NSViewController {
   }
 
   private func addProcessSection(_ snapshot: RemoteHostMonitorSnapshot) {
-    let title = processesByCPU ? L("进程（按 CPU）") : L("进程（按内存）")
-    addSection(title) { stack in
-      let toggle = ActionButton(
-        title: processesByCPU ? L("按内存排序") : L("按 CPU 排序"),
-        bezelStyle: .inline
-      ) { [weak self] in
-        guard let self else { return }
-        self.processesByCPU.toggle()
-        self.render()
-      }
-      toggle.isBordered = false
-      toggle.contentTintColor = AsterTheme.accent
-      toggle.identifier = NSUserInterfaceItemIdentifier("details-remote-monitor-process-order")
-      stack.addArrangedSubview(toggle)
-      let processes = processesByCPU ? snapshot.topByCPU : snapshot.topByMemory
-      guard !processes.isEmpty else {
+    let rows = RemoteProcessTable.merged(
+      byCPU: snapshot.topByCPU, byMemory: snapshot.topByMemory, sort: processSort)
+    if let pid = inspectedProcessPID, let sample = rows.first(where: { $0.pid == pid }) {
+      addProcessDetail(sample)
+      return
+    }
+    // 采集回来发现进程已经退出：直接回列表，而不是留一张对不上任何进程的详情卡。
+    inspectedProcessPID = nil
+
+    addSection("") { stack in
+      guard !rows.isEmpty else {
         stack.addArrangedSubview(unavailableLabel())
         return
       }
-      for process in processes {
-        let detail = processesByCPU
-          ? String(format: "%.1f%%", process.cpuPercent)
-          : RemoteInspectionFormat.kibibytes(process.residentKiB)
-        // 窄栏先让位 PID：它只在要 kill 进程时才用得上，而占用率是这一页存在的理由。
-        let name = layoutMode == .compact
-          ? process.command
-          : "\(process.command)  \(String(process.pid))"
-        let row = remoteMetricRow(leading: name, trailing: detail)
+      let header = RemoteProcessHeaderRow { [weak self] column in
+        guard let self else { return }
+        self.processSort = self.processSort.selecting(column)
+        self.render()
+      }
+      header.apply(sort: processSort)
+      stack.addArrangedSubview(header)
+      header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+      for sample in rows {
+        let row = RemoteProcessRow(sample: sample) { [weak self] in
+          guard let self else { return }
+          self.inspectedProcessPID = sample.pid
+          self.render()
+        }
+        stack.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        row.heightAnchor.constraint(equalToConstant: 18).isActive = true
+      }
+    }
+  }
+
+  /// 单个进程的详情。字段全部来自同一次采集，不额外发请求——面板每 3 秒本来就会刷新一遍。
+  private func addProcessDetail(_ sample: RemoteProcessSample) {
+    let back = ActionButton(title: L("返回进程列表"), bezelStyle: .inline) { [weak self] in
+      self?.inspectedProcessPID = nil
+      self?.render()
+    }
+    back.isBordered = false
+    back.contentTintColor = AsterTheme.accent
+    back.identifier = NSUserInterfaceItemIdentifier("details-remote-process-back")
+    contentStack.addArrangedSubview(back)
+
+    addSection(sample.command) { stack in
+      let fields: [(String, String)] = [
+        (L("PID"), String(sample.pid)),
+        (L("用户"), sample.user),
+        (L("CPU"), String(format: "%.1f%%", sample.cpuPercent)),
+        (L("内存"), RemoteInspectionFormat.kibibytes(sample.residentKiB)),
+        (L("内存占比"), String(format: "%.1f%%", sample.memoryPercent)),
+      ]
+      for (name, value) in fields {
+        let row = remoteMetricRow(
+          leading: name, trailing: value, leadingColor: AsterTheme.secondaryInk)
         stack.addArrangedSubview(row)
         row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
       }
+      guard !sample.arguments.isEmpty else { return }
+      stack.addArrangedSubview(
+        makeLabel(L("命令行"), size: 10, weight: .semibold, color: AsterTheme.tertiaryInk))
+      // 命令行可能很长，按面板宽度换行显示，不截断——用户来看详情就是为了看全它。
+      let arguments = makeLabel(sample.arguments, size: 10.5, monospaced: true)
+      arguments.lineBreakMode = .byWordWrapping
+      arguments.maximumNumberOfLines = 0
+      arguments.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+      stack.addArrangedSubview(arguments)
+      arguments.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
   }
 
@@ -428,13 +481,17 @@ final class RemoteMonitorSectionController: NSViewController {
     makeLabel(L("此平台不提供该项"), size: 11, color: AsterTheme.tertiaryInk)
   }
 
+  /// `title` 为空时不画分组标题：进程页的可排序表头自己就是标题，再叠一行分组名
+  /// 会出现两行「进程」。
   private func addSection(_ title: String, build: (NSStackView) -> Void) {
     let stack = NSStackView()
     stack.orientation = .vertical
     stack.alignment = .leading
     stack.spacing = 4
-    stack.addArrangedSubview(
-      makeLabel(title, size: 10, weight: .semibold, color: AsterTheme.tertiaryInk))
+    if !title.isEmpty {
+      stack.addArrangedSubview(
+        makeLabel(title, size: 10, weight: .semibold, color: AsterTheme.tertiaryInk))
+    }
     build(stack)
     contentStack.addArrangedSubview(stack)
     stack.translatesAutoresizingMaskIntoConstraints = false

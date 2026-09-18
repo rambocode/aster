@@ -1669,3 +1669,8 @@
 "进程" = "Prozesse";
 "端口" = "Ports";
 "未知进程" = "Unbekannter Prozess";
+"PID" = "PID";
+"用户" = "Benutzer";
+"内存占比" = "Speicheranteil";
+"命令行" = "Befehlszeile";
+"返回进程列表" = "Zurück zu Prozessen";

@@ -89,7 +89,14 @@ extension NSView {
 
   /// 子树里所有静态文本，用于断言状态文案。
   fileprivate var remoteTestTexts: [String] {
-    remoteTestDescendants.compactMap { ($0 as? NSTextField)?.stringValue }
+    // 进程表的名称与可排序表头都是按钮，标题走 attributedTitle；只看 NSTextField
+    // 会漏掉整张表。
+    remoteTestDescendants.compactMap { view in
+      if let field = view as? NSTextField { return field.stringValue }
+      guard let button = view as? NSButton else { return nil }
+      let attributed = button.attributedTitle.string
+      return attributed.isEmpty ? button.title : attributed
+    }
   }
 }
 
@@ -499,6 +506,7 @@ func remoteMonitorAdaptsColumnsToPanelWidth() async throws {
       pid: 4242, cpuPercent: 12.5, memoryPercent: 1, residentKiB: 2_048, user: "root",
       command: "nginx", arguments: "nginx: master")
   ]
+  snapshot.topByMemory = snapshot.topByCPU
   let client = RemoteInspectionClient(
     listDirectory: { _, directory in .success(makeListing(directory: directory)) },
     monitor: { _, _ in .success(snapshot) }
@@ -527,11 +535,62 @@ func remoteMonitorAdaptsColumnsToPanelWidth() async throws {
 
   controller.selectTab(.processes)
   texts = controller.view.remoteTestTexts
-  #expect(texts.contains { $0.contains("4242") })
+  // 进程表两列数值常驻，宽窄都要能读到 CPU 与内存。
+  #expect(texts.contains { $0.contains("12.5%") })
+  #expect(texts.contains { $0.contains("2") })
 
   layout(width: 260)
   controller.selectTab(.overview)
   controller.selectTab(.processes)
   texts = controller.view.remoteTestTexts
-  #expect(!texts.contains { $0.contains("4242") })
+  #expect(texts.contains { $0.contains("12.5%") })
+}
+
+@Test("进程表可按列排序，点进程可查看详情并返回")
+@MainActor
+func remoteMonitorProcessTableSortsAndOpensDetail() async throws {
+  _ = NSApplication.shared
+  var snapshot = RemoteHostMonitorSnapshot()
+  snapshot.topByCPU = [
+    RemoteProcessSample(
+      pid: 11, cpuPercent: 90, memoryPercent: 1, residentKiB: 1_024, user: "root",
+      command: "busy", arguments: "busy --loop"),
+    RemoteProcessSample(
+      pid: 22, cpuPercent: 1, memoryPercent: 40, residentKiB: 900_000, user: "app",
+      command: "fat", arguments: "fat --serve"),
+  ]
+  snapshot.topByMemory = snapshot.topByCPU.reversed()
+  let client = RemoteInspectionClient(
+    listDirectory: { _, directory in .success(makeListing(directory: directory)) },
+    monitor: { _, _ in .success(snapshot) }
+  )
+  let controller = RemoteMonitorSectionController(client: client, onCommitted: {})
+  controller.loadViewIfNeeded()
+  controller.view.frame = NSRect(x: 0, y: 0, width: 420, height: 600)
+  controller.activate(host: makeHost(directory: "/srv"))
+  await settle(milliseconds: 450)
+  controller.selectTab(.processes)
+
+  var texts = controller.view.remoteTestTexts
+  #expect(texts.contains { $0.hasPrefix("CPU") && $0.contains("▼") })
+  // 「进程」只该出现两次：分页页签与表头首列。再多一次说明表头上面又叠了分组标题。
+  #expect(texts.filter { $0 == "进程" }.count == 2)
+  #expect(texts.contains { $0.contains("busy") })
+  #expect(texts.contains { $0.contains("fat") })
+
+  // 点「内存」表头：排序列切过去，箭头也跟着走。
+  controller.sortProcesses(by: .memory)
+  texts = controller.view.remoteTestTexts
+  #expect(texts.contains { $0.hasPrefix("内存") && $0.contains("▼") })
+  #expect(!texts.contains { $0.hasPrefix("CPU") && $0.contains("▼") })
+
+  controller.inspectProcess(pid: 22)
+  texts = controller.view.remoteTestTexts
+  #expect(texts.contains { $0.contains("fat --serve") })
+  #expect(texts.contains { $0.contains("22") })
+  #expect(!texts.contains { $0.contains("busy") })
+
+  controller.inspectProcess(pid: nil)
+  texts = controller.view.remoteTestTexts
+  #expect(texts.contains { $0.contains("busy") })
 }
