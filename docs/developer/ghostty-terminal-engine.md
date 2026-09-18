@@ -28,6 +28,10 @@ Aster 只保留工作区、会话、安全授权和产品交互。
 8. 关闭和重启必须幂等；旧 surface 的迟到 callback 不得改变新进程代次。
 9. Surface 创建失败必须进入 `startFailed` 并显示稳定错误，不能静默回退到另一终端内核。
 10. Aster 扩展必须通过显式 ABI version gate；升级 revision 时缺少任一符号都必须构建失败。
+11. `destroySurface()` 必须先把 libghostty 的 IOSurfaceLayer（即视图的 backing layer）换成只带最后
+    一帧的普通 `CALayer`，再调用 `ghostty_surface_free`。该 layer 的 display 回调裸指向 renderer，
+    free 不会摘掉它；视图要到工作区下一轮重建才离开视图树，期间 CoreAnimation 一重绘就是
+    use-after-free（Shell 退出后立刻关 Pane 必现，崩在 `Renderer.drawFrame` 的加锁上）。
 
 ## 业务流程
 

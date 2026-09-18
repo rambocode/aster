@@ -464,6 +464,7 @@ final class GhosttySurfaceView: NSView {
     handleLinkHoverMouseExited()
     removeLinkPreview()
     isDestroyed = true
+    detachRendererLayer()
     if let surface { ghostty_surface_free(surface) }
     surface = nil
     for pointer in configStrings { free(pointer) }
@@ -471,6 +472,22 @@ final class GhosttySurfaceView: NSView {
     environmentVariables = []
     onSecureInputChange?(false)
     clearCallbacks()
+  }
+
+  /// 在释放 surface 之前把 libghostty 的渲染 layer 换成只带最后一帧的普通 layer。
+  ///
+  /// libghostty 把自己的 IOSurfaceLayer 设成本视图的 backing layer，它的 display 回调裸指向
+  /// renderer。`ghostty_surface_free` 不会把它摘掉，而本视图要等工作区下一轮重建才离开
+  /// 视图树；这期间只要 CoreAnimation 在 commit 里重绘它（Shell 刚退出时总有一帧待画），
+  /// 就会在已释放的 renderer 上加锁并崩溃。保留 contents 是为了 Pane 消失前不闪出空白。
+  private func detachRendererLayer() {
+    guard let rendererLayer = layer else { return }
+    let snapshot = CALayer()
+    snapshot.frame = rendererLayer.frame
+    snapshot.contents = rendererLayer.contents
+    snapshot.contentsScale = rendererLayer.contentsScale
+    snapshot.contentsGravity = rendererLayer.contentsGravity
+    layer = snapshot
   }
 
   private func clearCallbacks() {
