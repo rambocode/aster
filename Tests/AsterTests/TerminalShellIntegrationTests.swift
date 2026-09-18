@@ -461,3 +461,72 @@ func ghosttyUserInputCreatesSSHProjectWithoutProgrammaticSend() async throws {
   #expect(project.kind == .ssh)
   #expect(project.title == "127.0.0.1")
 }
+
+@Test("用 ↑ 历史调出的 SSH 命令再次执行时仍建立远端分组")
+@MainActor
+func ghosttyHistoryRecalledSSHCommandRestoresRemoteEndpoint() async throws {
+  let suite = "TerminalShellIntegrationTests.\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suite))
+  defaults.removePersistentDomain(forName: suite)
+  defer { defaults.removePersistentDomain(forName: suite) }
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.sidebarTabGrouping = .project
+  let model = AppModel(defaults: defaults)
+  model.newTab(workingDirectory: "/tmp")
+  defer { model.tabs.forEach { $0.stop(immediately: true) } }
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = NSWindow(
+    contentRect: NSRect(x: 0, y: 0, width: 1_000, height: 700),
+    styleMask: [.titled, .closable, .resizable],
+    backing: .buffered,
+    defer: false
+  )
+  window.contentViewController = controller
+  window.makeKeyAndOrderFront(nil)
+  window.layoutIfNeeded()
+  defer { window.orderOut(nil) }
+
+  let session = try #require(model.selectedTab?.activeSession)
+  func findGhosttyView(in root: NSView) -> GhosttySurfaceView? {
+    if let view = root as? GhosttySurfaceView { return view }
+    return root.subviews.lazy.compactMap { findGhosttyView(in: $0) }.first
+  }
+  let view = try #require(findGhosttyView(in: controller.view))
+
+  for _ in 0..<150 where !view.isProcessRunning || !session.shellIntegrationDetected {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(view.isProcessRunning)
+  #expect(session.shellIntegrationDetected)
+
+  // 用 Shell function 替代真实 ssh：短暂停留后返回本地 Shell，模拟一次远端会话。
+  #expect(view.typeText("function ssh(){ sleep 0.3; }; printf '__SSH_STUB_READY__\\n'\n"))
+  for _ in 0..<100
+  where view.readText(includeScrollback: true)?.contains("__SSH_STUB_READY__") != true {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  try await Task.sleep(for: .milliseconds(250))
+
+  // 第一次：完整键入命令，键盘重建可得到 argv。
+  #expect(view.typeText("ssh -F /dev/null 127.0.0.1\n"))
+  for _ in 0..<100 where session.sshRemoteEndpoint == nil {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(session.sshRemoteEndpoint?.hostName == "127.0.0.1")
+
+  // 命令结束后远端分组被清除，Shell 回到下一轮 prompt。
+  for _ in 0..<150 where session.sshRemoteEndpoint != nil {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(session.sshRemoteEndpoint == nil)
+  try await Task.sleep(for: .milliseconds(250))
+
+  // 第二次：↑ 调历史再回车。键盘字节里没有命令文本，必须以屏幕上的命令行为准。
+  #expect(view.typeText("\u{1B}[A"))
+  try await Task.sleep(for: .milliseconds(150))
+  #expect(view.typeText("\n"))
+  for _ in 0..<100 where session.sshRemoteEndpoint == nil {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(session.sshRemoteEndpoint?.hostName == "127.0.0.1")
+}

@@ -329,18 +329,21 @@ final class TerminalAutocompleteController {
     }
   }
 
-  /// 终端在 commandStart 时读到的命令行文本。只取第一段（右侧提示符与命令之间至少
-  /// 两个空格），并拒绝控制字符与超长内容；空文本视为没有。
+  /// 终端在 commandStart 时读到的命令行文本；规范化失败时视为没有。
   func receiveScreenCommand(_ text: String) {
+    screenCommand = Self.normalizedScreenCommand(text)
+  }
+
+  /// 把网格上读到的命令行规范化为可信命令文本。只取第一段（右侧提示符与命令之间
+  /// 至少两个空格），并拒绝控制字符与超长内容；空文本返回 nil。Session 的 SSH
+  /// 分组与补全的「下一步」推断共用这一条规则，避免两处对屏幕文本解释不一致。
+  static func normalizedScreenCommand(_ text: String) -> String? {
     let firstSegment = text.components(separatedBy: "  ").first ?? text
     let trimmed = firstSegment.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty, trimmed.utf8.count <= 4_096,
       !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
-    else {
-      screenCommand = nil
-      return
-    }
-    screenCommand = trimmed
+    else { return nil }
+    return trimmed
   }
 
   func receiveInput(_ bytes: ArraySlice<UInt8>) {

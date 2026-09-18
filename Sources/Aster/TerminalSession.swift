@@ -3241,8 +3241,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
           from: inputAnchor, startingAt: UInt32(running.inputStart.column), before: outputAnchor)
       {
         // 折行的命令会带软换行；命令文本本身不含换行，直接拼接。
-        autocompleteController?.receiveScreenCommand(
-          text.replacingOccurrences(of: "\n", with: ""))
+        let screenCommand = text.replacingOccurrences(of: "\n", with: "")
+        autocompleteController?.receiveScreenCommand(screenCommand)
+        adoptScreenCommandIfNeeded(screenCommand)
       }
       autocompleteController?.receive(event)
       handleShellIntegrationEvent(event)
@@ -4175,6 +4176,19 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       self.sshRemoteEndpoint = endpoint
       self.sshResolutionTask = nil
     }
+  }
+
+  /// 命令开始执行时以网格上的命令行为准修正已提交命令。↑ 调历史、接受 Shell 自身建议
+  /// 或 Tab 补全后，键盘字节重建出的命令会缺失或不完整（第二次执行 `ssh` 时常只剩空串），
+  /// 而 SSH 分组、Agent 识别与自动进度都消费 `submittedCommand`，因此屏幕文本与键盘
+  /// 文本不一致时按屏幕文本重新登记。命令来源保持首次登记的值，Recipe 回放不会被改写。
+  private func adoptScreenCommandIfNeeded(_ text: String) {
+    guard let command = TerminalAutocompleteController.normalizedScreenCommand(text),
+      command != submittedCommand
+    else { return }
+    let origin = submittedCommandOrigin
+    recordSubmittedCommand(command)
+    submittedCommandOrigin = origin
   }
 
   /// 清除远端投影并使所有在途解析结果失效。分组变化由 `@Published` 定向触发侧栏
