@@ -123,20 +123,31 @@ ASTER_SIGN_IDENTITY="Developer ID Application: …" ASTER_NOTARY_PROFILE=aster-n
 ASTER_SIGN_IDENTITY="Developer ID Application: …" \
   ASTER_NOTARY_KEY="$HOME/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8" \
   ASTER_NOTARY_KEY_ID=XXXXXXXXXX ASTER_NOTARY_ISSUER=<issuer-uuid> \
-  ./scripts/release.sh --short 0.5.0 --bundle 10
+  ./scripts/release.sh
+# 先核对版本号算得对（跑完整的阶段 0 校验，不写任何东西）：
+  ./scripts/release.sh --dry-run
+# 跳版本号：
+  ./scripts/release.sh --short 0.7.0
 # 预览版：
-  ./scripts/release.sh --short 0.5.0-preview.1 --bundle 8 --preview
+  ./scripts/release.sh --short 0.5.0-preview.1 --preview
 ```
 
 它承担五个「顺序错了就出事」的不变量，详见脚本头部注释。其中**唯一不可逆**的是 `CFBundleVersion` 单调递增：Sparkle 用 `sparkle:version`（即 `CFBundleVersion`）判定有没有新版本，`generate_appcast` 拿它当 appcast item 的主键，重复值直接报错，而发出去的版本号收不回来。脚本阶段 0 的 `MAX_IN_FEED` 校验是唯一防线。
 
 版本号策略：`CFBundleVersion` 用**跨通道共享的全局单调整数**，`CFBundleShortVersionString` 承载语义。
 
+发版之间仓库里的短版本一直带 `-dev`，发版时由脚本去掉后缀，发完再推到下一个 `-dev`。`-dev` 版本永远不发布、不打标签、不进 appcast；脚本在阶段 0 两头把关：仓库版本号不是 `-dev` 形态就拒绝发版（说明上次收尾提交没跑成，继续发会重复发同一版），推导或传入的发版号带 `-dev` 也拒绝（它会进 appcast 的 `shortVersionString`、Release 标题和标签，三样都收不回来）。
+
 | CFBundleVersion | ShortVersion | 通道 | tag |
 | --- | --- | --- | --- |
-| 7 | `0.4.2` | stable | `v0.4.2` |
+| 26 | `0.6.7-dev` | 不发布 | 无 |
+| 26 | `0.6.7` | stable | `v0.6.7` |
+| 27 | `0.6.8-dev` | 不发布 | 无 |
 | 8 | `0.5.0-preview.1` | preview | `v0.5.0-preview.1`（prerelease） |
-| 9 | `0.5.0` | stable | `v0.5.0` |
+
+开发版产物的短版本还会由 `build-app.sh` 接上 git 短哈希（`0.6.7-dev-1a2b3c4`，工作区有改动加 `+`），只写进 `dist/Aster.app` 里的 Info.plist，仓库那份不动。`build-dmg.sh` 读产物版本而不是仓库版本，因此同一个 `-dev` 版本反复构建的 DMG 按提交区分，不会撞上「拒绝覆盖同名 DMG」。
+
+两项已知影响：开发构建在 Sentry 里是独立 release（`aster@0.6.7-dev-abc123+26`），而 dSYM 只在发版时上传，所以开发版崩溃栈不带符号；Agent skill 的安装标记按版本字符串相等比较，后缀翻转会触发一次重装，属正常刷新。官网 `site/index.html` 的版本号跟随**已发布**版本手工更新，开发期与仓库 plist 不一致是预期。
 
 不把 `-preview.1` 塞进 `CFBundleVersion`：Apple 规定它只能是不超过三段的数字点分串，带后缀会让 codesign、LaunchServices 与公证的行为不确定。
 

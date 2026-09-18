@@ -39,8 +39,9 @@
 
 - 应用版本以 `Resources/Info.plist` 为准：`CFBundleShortVersionString` 表达语义版本，`CFBundleVersion` 使用跨 stable / preview 通道共享的全局单调整数。
 - 每次发布的 `CFBundleVersion` 必须大于所有已发布版本，不得复用或按通道单独计数；Sparkle 依赖它判断更新。
-- 标签使用 `v<版本>`；预览版按 `0.5.0-preview.1` 形式表达并通过发布脚本的 `--preview` 指定。不要将预览后缀写进 `CFBundleVersion`，也不要套用其他项目的 `-dev` 或平台前缀标签规则。
-- 普通开发修改不自动升版本；发布通过 `scripts/release.sh` 统一处理，细节见 [软件更新](developer/software-update.md)。
+- 标签使用 `v<版本>`；预览版按 `0.5.0-preview.1` 形式表达并通过发布脚本的 `--preview` 指定。不要将预览后缀写进 `CFBundleVersion`，也不要套用其他项目的平台前缀标签规则。
+- **发版之间版本号一直带 `-dev`**（`0.6.7-dev`）：本地与中间构建一眼能和线上包区分。`build-app.sh` 给开发版产物再接上 git 短哈希（`0.6.7-dev-1a2b3c4`，工作区有改动加 `+`），仓库里始终只写 `-dev`。带 `-dev` 的版本永远不发布、不打标签。
+- 单次改动不升版本号；发版由 `scripts/release.sh` 统一处理：去掉 `-dev` 得到发版号，发完自动把版本号推到下一个 `-dev`（末段数字加一）并提交推送。正常发版不需要参数，跳版本号时给 `--short`。发版前先跑 `--dry-run` 核对算出来的版本号。细节见 [软件更新](developer/software-update.md)。
 
 ## 提交信息
 
@@ -69,8 +70,8 @@
 ## CI 与发版
 
 - 当前仓库没有 `.github/workflows/`，不假定存在自动 CI、提交钩子或标签触发发布；本地检查仍需实际执行。新增自动化时再将对应入口与门禁写入本文。
-- 发布入口为 `./scripts/release.sh --short <version> --bundle <int>`，预览版追加 `--preview`。脚本要求干净的 `master`、与 `origin/master` 同步、标签未存在、发行说明齐全且构建号递增。
-- 发布脚本会修改版本、提交并推送、构建签名公证包、创建 GitHub Release 和更新 appcast；只有获得发布授权后才能执行。
+- 发布入口为 `./scripts/release.sh`（版本号取自 `Info.plist` 的 `-dev` 版本），跳版本号加 `--short <version>`，预览版追加 `--preview`，`--dry-run` 只跑校验并打印算出的版本号。脚本要求干净的 `master`、与 `origin/master` 同步、标签未存在、发行说明齐全、仓库版本号是 `-dev` 形态且构建号递增。
+- 发布脚本会修改版本、提交并推送、构建签名公证包、创建 GitHub Release、更新 appcast，最后把版本号推到下一个 `-dev` 再提交推送；只有获得发布授权后才能执行。收尾那次推送失败必须当场处理，否则下一次发版会卡在「工作区不干净 / 与 origin 不同步」。
 - 必须先上传 DMG，再发布指向它的 appcast；每次 appcast 生成使用仅含当次 DMG 的 staging 目录，避免改坏历史下载链接。
 - 签名身份与公证配置通过 `ASTER_SIGN_IDENTITY`、`ASTER_NOTARY_PROFILE` 等既有环境变量提供；Sparkle EdDSA 私钥留在登录钥匙串，不导出进仓库。`.build/`、`dist/`、生成的 Ghostty 资源及 XCFramework 保持未跟踪。
 - 发版验收覆盖签名、公证、安装包、Release 资产和 appcast；本地构建成功不能代替远端发布成功。完整流程与失败恢复以 [软件更新](developer/software-update.md) 和发布脚本为准。

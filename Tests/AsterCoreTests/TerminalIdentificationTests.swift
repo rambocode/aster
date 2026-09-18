@@ -52,6 +52,11 @@ func customTerminalIdentityRequiresInstalledEntry() {
 func terminalVersionEncodesStableDeviceAttributeValue() {
   #expect(TerminalProductVersion("1.0.2").deviceAttributesValue == 10_002)
   #expect(TerminalProductVersion("12.34.56-beta.3").deviceAttributesValue == 123_456)
+  // 发版之间仓库版本号带 `-dev`，打包产物还会再接 git 短哈希（脏加 `+`）。这两种
+  // 形态都必须和正式版解析成同一个 DA2 值，否则终端在开发构建里会上报另一个版本。
+  #expect(TerminalProductVersion("0.6.7-dev").deviceAttributesValue == 607)
+  #expect(TerminalProductVersion("0.6.7-dev-1a2b3c4").deviceAttributesValue == 607)
+  #expect(TerminalProductVersion("0.6.7-dev-1a2b3c4+").deviceAttributesValue == 607)
   #expect(TerminalProductVersion("0.4").deviceAttributesValue == 400)
   #expect(TerminalProductVersion("bad").deviceAttributesValue == 0)
   #expect(TerminalProductVersion("\(Int.max).1.1").deviceAttributesValue == 0)

@@ -51,6 +51,16 @@ cp "$BUILD_DIR/release/aster-cli" "$CONTENTS_DIR/MacOS/aster-cli"
 [[ -f "$BUILD_DIR/release/aster-session" ]] || { echo "aster-session missing: $BUILD_DIR/release/aster-session" >&2; exit 1; }
 cp "$BUILD_DIR/release/aster-session" "$CONTENTS_DIR/MacOS/aster-session"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
+# 开发版（版本号带 -dev）再接上 git 短哈希，工作区有改动加 `+`：装上之后一眼知道这个
+# 包是哪个提交打的。只改产物里的 Info.plist，仓库那份始终只写 -dev；发版时仓库版本号
+# 已经去掉 -dev，这段不触发，线上包的版本号保持干净。
+APP_SHORT_VERSION=$(plutil -extract CFBundleShortVersionString raw "$CONTENTS_DIR/Info.plist")
+if [[ "$APP_SHORT_VERSION" == *-dev ]]; then
+  GIT_REV=$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
+  [[ -n "$(git -C "$PROJECT_DIR" status --porcelain 2>/dev/null)" ]] && GIT_REV="${GIT_REV}+"
+  plutil -replace CFBundleShortVersionString -string "$APP_SHORT_VERSION-$GIT_REV" \
+    "$CONTENTS_DIR/Info.plist"
+fi
 cp "$PROJECT_DIR/THIRD-PARTY-NOTICES.md" "$RESOURCES_DIR/THIRD-PARTY-NOTICES.md"
 cp -R "$PROJECT_DIR/Resources/shell-integration" "$RESOURCES_DIR/shell-integration"
 # 远端集成脚本随 shell-integration 目录整体复制（remote/aster-remote.{bash,zsh,fish}）。

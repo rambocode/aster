@@ -3,8 +3,6 @@ set -euo pipefail
 
 PROJECT_DIR="${0:A:h:h}"
 APP_DIR="$PROJECT_DIR/dist/Aster.app"
-VERSION=$(plutil -extract CFBundleShortVersionString raw "$PROJECT_DIR/Resources/Info.plist")
-DMG_PATH="${1:-$PROJECT_DIR/dist/Aster-$VERSION.dmg}"
 # 签名身份与公证 profile 都经环境变量注入。ASTER_SIGN_IDENTITY 会传给内层
 # build-app.sh——整条 DMG 流程必须带它，缺变量重跑会把已签好的 App 重签回 ad-hoc。
 SIGN_IDENTITY="${ASTER_SIGN_IDENTITY:--}"
@@ -32,6 +30,12 @@ if (( NOTARIZATION_ENABLED )) && [[ "$SIGN_IDENTITY" == "-" ]]; then
 fi
 
 "$PROJECT_DIR/scripts/build-app.sh" >/dev/null
+
+# 版本号读**产物**而不是仓库：开发版的产物版本号带 git 短哈希（build-app.sh 写入），
+# DMG 名与卷名因此天然按提交区分，同一个 -dev 版本反复构建不会撞上下面的同名拒绝。
+# 发版时产物与仓库值相同，DMG 名不变。
+VERSION=$(plutil -extract CFBundleShortVersionString raw "$APP_DIR/Contents/Info.plist")
+DMG_PATH="${1:-$PROJECT_DIR/dist/Aster-$VERSION.dmg}"
 if [[ -e "$DMG_PATH" ]]; then
   echo "Refusing to overwrite existing DMG: $DMG_PATH" >&2
   exit 1

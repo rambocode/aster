@@ -23,7 +23,7 @@ The project requires macOS 14+, Swift 6.2, Zig 0.15.2, and the Xcode Metal Toolc
   alpha channel; the script fails hard when it is missing rather than falling back to an opaque
   Quick Look thumbnail, which would bake a white square behind the icon.
 - `./scripts/build-dmg.sh` creates and verifies the DMG.
-- `./scripts/release.sh --short <version> --bundle <int>` cuts a full release (version bump, notarized DMG, GitHub release, appcast). See `docs/developer/software-update.md`.
+- `./scripts/release.sh` cuts a full release: it strips the `-dev` suffix from the version in `Resources/Info.plist`, builds a notarized DMG, publishes the GitHub release and appcast, then bumps the version to the next `-dev` and pushes. Run `--dry-run` first to check the computed version; pass `--short` only to skip version numbers. See `docs/developer/software-update.md`.
 - `open dist/Aster.app` launches the packaged application for manual checks.
 
 ## Coding Style & Naming Conventions
@@ -40,7 +40,7 @@ Use Conventional Commits as seen in history, for example `feat(workspace): add t
 
 ## Security & Configuration Tips
 
-Keep signing identities and notarization profiles in `ASTER_SIGN_IDENTITY` and `ASTER_NOTARY_PROFILE`; never commit credentials. The Sparkle EdDSA private key lives in the login keychain and must never be exported into the repository; `CFBundleVersion` must increase monotonically on every release because Sparkle uses it to compare versions and published values cannot be recalled. Build outputs such as `.build/`, `dist/`, generated Ghostty resources, and `Vendor/GhosttyKit.xcframework` remain untracked. For architecture, input-validation, or release changes, consult `CLAUDE.md` and the matching `docs/developer/` domain guide before editing.
+Keep signing identities and notarization profiles in `ASTER_SIGN_IDENTITY` and `ASTER_NOTARY_PROFILE`; never commit credentials. The Sparkle EdDSA private key lives in the login keychain and must never be exported into the repository; `CFBundleVersion` must increase monotonically on every release because Sparkle uses it to compare versions and published values cannot be recalled; between releases `CFBundleShortVersionString` carries a `-dev` suffix and is never published. Build outputs such as `.build/`, `dist/`, generated Ghostty resources, and `Vendor/GhosttyKit.xcframework` remain untracked. For architecture, input-validation, or release changes, consult `CLAUDE.md` and the matching `docs/developer/` domain guide before editing.
 
 约定
 

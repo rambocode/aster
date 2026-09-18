@@ -15,9 +15,15 @@ set -euo pipefail
 #   5. CFBundleVersion 必须严格大于 appcast 里现有的最大 sparkle:version。这是唯一
 #      不可逆的错误——发出去的版本号收不回来。
 #
+# 版本号来自 Resources/Info.plist 的 `-dev` 开发版号：发版之间它一直带 `-dev`
+# （`0.6.7-dev`），本脚本去掉后缀得到发版号，发完再把它推到下一个开发版并提交。
+# 因此正常发版不需要任何参数；跳版本号（0.6.x → 0.7.0）时才显式给 --short。
+#
 # 用法：
-#   ./scripts/release.sh --short 0.5.0 --bundle 10
-#   ./scripts/release.sh --short 0.5.0-preview.1 --bundle 8 --preview
+#   ./scripts/release.sh                          # 发 plist 里的 -dev 版本
+#   ./scripts/release.sh --dry-run                # 只算版本号并跑前置校验，不写任何东西
+#   ./scripts/release.sh --short 0.7.0            # 跳版本号
+#   ./scripts/release.sh --short 0.7.0-preview.1 --preview
 
 PROJECT_DIR="${0:A:h:h}"
 BUILD_DIR="${ASTER_BUILD_PATH:-$PROJECT_DIR/.build}"
@@ -28,24 +34,49 @@ die() { echo "release: $1" >&2; exit 1 }
 SHORT_VERSION=""
 BUNDLE_VERSION=""
 PREVIEW=0
+DRY_RUN=0
 while (( $# > 0 )); do
   case "$1" in
     --short)   SHORT_VERSION="${2:-}"; shift 2 ;;
     --bundle)  BUNDLE_VERSION="${2:-}"; shift 2 ;;
     --preview) PREVIEW=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
     *) die "unknown argument: $1" ;;
   esac
 done
 
-[[ -n "$SHORT_VERSION" ]] || die "--short <CFBundleShortVersionString> is required"
-[[ -n "$BUNDLE_VERSION" ]] || die "--bundle <CFBundleVersion> is required"
+PLIST="$PROJECT_DIR/Resources/Info.plist"
+PLIST_SHORT=$(plutil -extract CFBundleShortVersionString raw "$PLIST")
+PLIST_BUNDLE=$(plutil -extract CFBundleVersion raw "$PLIST")
+
+# 仓库里的短版本必须是 `-dev` 形态。不是，就说明上一次发版的收尾提交没跑成（版本号
+# 停在已发布的正式号上）；此时继续发版会重复发同一个版本，必须先人工改回 -dev。
+[[ "$PLIST_SHORT" == *-dev ]] \
+  || die "Info.plist 的 $PLIST_SHORT 不是 -dev 开发版；上次发版的收尾提交可能没跑成，先改回 -dev 形态"
+
+# 缺省从 -dev 版本推出发版号与构建号；显式参数只用于跳版本号。
+[[ -n "$SHORT_VERSION" ]] || SHORT_VERSION="${PLIST_SHORT%-dev}"
+[[ -n "$BUNDLE_VERSION" ]] || BUNDLE_VERSION="$PLIST_BUNDLE"
+
+# 发出去的版本号绝不能带 -dev：它会进 appcast 的 shortVersionString、Release 标题和
+# 标签，而这三样都收不回来。
+[[ "$SHORT_VERSION" != *-dev ]] || die "发版号不能带 -dev 后缀，got: $SHORT_VERSION"
 # Apple 要求 CFBundleVersion 是数字点分串；带 -preview 后缀会让 codesign、
 # LaunchServices 与公证的行为不确定，语义版本只放在 CFBundleShortVersionString 里。
 [[ "$BUNDLE_VERSION" == <-> ]] || die "--bundle must be a plain integer, got: $BUNDLE_VERSION"
 
+# 下一个开发版：短版本末段数字加一再接 -dev（0.6.7 → 0.6.8-dev，
+# 0.7.0-preview.1 → 0.7.0-preview.2-dev），构建号加一。
+NEXT_SHORT=$(perl -pe 's/(\d+)$/$1+1/e' <<<"$SHORT_VERSION")-dev
+NEXT_BUNDLE=$(( BUNDLE_VERSION + 1 ))
+
 TAG="v$SHORT_VERSION"
 CHANNEL=""
 (( PREVIEW )) && CHANNEL="preview"
+
+# 先报要发什么、发完推到哪，再跑校验：校验失败时也已经能核对版本号算得对不对。
+echo "release: $SHORT_VERSION (build $BUNDLE_VERSION)${CHANNEL:+ on the $CHANNEL channel}"
+echo "next:    $NEXT_SHORT (build $NEXT_BUNDLE)"
 
 # ---------------------------------------------------------------- 阶段 0：前置校验
 # 这一整段不做任何写操作。任何一项不满足都必须在动 git 和 Apple 服务之前失败。
@@ -108,7 +139,12 @@ fi
 (( BUNDLE_VERSION > MAX_IN_FEED )) \
   || die "CFBundleVersion $BUNDLE_VERSION must exceed $MAX_IN_FEED already published in appcast.xml"
 
-echo "release: $SHORT_VERSION (build $BUNDLE_VERSION)${CHANNEL:+ on the $CHANNEL channel}"
+# --dry-run 在这里退出：阶段 0 的校验已经全部跑完（签名、公证凭据、git 状态、发行说明、
+# Sparkle 密钥、版本单调性），但还没有任何写操作。发版前先跑一次确认版本号算得对。
+if (( DRY_RUN )); then
+  echo "dry-run: 前置校验通过，未做任何修改"
+  exit 0
+fi
 
 # ------------------------------------------------- 阶段 1：写版本号并推送到 master
 # 必须先推，gh release create 才能把 tag 打在已经存在于远端的 commit 上。
@@ -187,3 +223,14 @@ else
   echo "WARNING: enclosure URL not reachable yet (GitHub CDN may lag a few minutes)"
 fi
 echo "note: the appcast feed is served from raw.githubusercontent with ~5 min of CDN cache"
+
+# ------------------------------------------- 阶段 6：版本号推到下一个开发版并推送
+# 这个提交不打标签、不建 Release：-dev 版本永远不发布。必须推送成功——阶段 0 要求
+# 工作区干净且与 origin/master 同步，漏推会让下一次发版在第一步就失败。
+plutil -replace CFBundleShortVersionString -string "$NEXT_SHORT" "$PLIST"
+plutil -replace CFBundleVersion -string "$NEXT_BUNDLE" "$PLIST"
+git add Resources/Info.plist
+git commit -q -m "chore(release): 版本号推到下一个开发版（$NEXT_SHORT）"
+git push --quiet origin master \
+  || die "下一个开发版的提交没能推送；手动 git push origin master 后再发下一版"
+echo "next:     $NEXT_SHORT (build $NEXT_BUNDLE) committed and pushed"
