@@ -613,17 +613,20 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
     let controller = makeWorkspaceWindow(
       model: model,
-      defaults: .standard,
-      autosaveName: "Aster.MainWindow"
+      defaults: .standard
     )
     mainWindowController = controller
     controller.showWindow(nil)
   }
 
+  /// 刻意不给窗口设 `setFrameAutosaveName`：窗口尺寸的权威来源是
+  /// `appearance.windowWidth/Height`（`windowDidEndLiveResize` 写入、创建时套用），
+  /// AppKit 的 frame autosave 会成为第二份可写副本。更严重的是它和 zoom 抢同一份
+  /// 「保存的 frame」：用户手动拖过窗口大小后，autosave 把新尺寸记成 standard frame，
+  /// 双击标题栏放大会立刻被判定为「已放大」而缩回原尺寸——看起来就是全屏一下又弹回去。
   private func makeWorkspaceWindow(
     model: AppModel,
-    defaults: UserDefaults,
-    autosaveName: String?
+    defaults: UserDefaults
   ) -> NSWindowController {
     let panelLayoutStore = WorkspacePanelLayoutStore(
       defaults: defaults,
@@ -652,7 +655,6 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     window.contentViewController = content
     window.delegate = self
     panelLayoutStores[ObjectIdentifier(window)] = panelLayoutStore
-    if let autosaveName { window.setFrameAutosaveName(autosaveName) }
     window.center()
     window.appearance = preferences.preferredAppearance
     return NSWindowController(window: window)
@@ -899,8 +901,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
     let controller = makeWorkspaceWindow(
       model: windowModel,
-      defaults: defaults,
-      autosaveName: nil
+      defaults: defaults
     )
     guard let window = controller.window else {
       defaults.removePersistentDomain(forName: suiteName)
