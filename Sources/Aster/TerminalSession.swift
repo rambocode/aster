@@ -2221,7 +2221,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @Published private(set) var activeAgentProvider: AgentProvider? {
     didSet { if oldValue != activeAgentProvider { syncClaudeAccountQuota() } }
   }
-  @Published private(set) var activeAgentSessionID: String?
+  /// session ID 通常比「Agent 在跑」的证据晚到：标题或屏幕先确认 TUI 已起来，rollout /
+  /// transcript 要等首条 prompt 落盘才能定位出 ID。`confirmAgentRuntime` 只在首次确认时
+  /// 跑一次同步，那一刻 ID 多半还是 nil，所以这里必须自己再驱动一次，否则 Codex 的
+  /// rollout 监听永远不会启动、用量条也就一直不出现。
+  @Published private(set) var activeAgentSessionID: String? {
+    didSet { if oldValue != activeAgentSessionID { syncCodexUsageMonitor() } }
+  }
   @Published private(set) var agentTaskState = AgentTaskState.idle {
     // Claude 一轮结束（回到 idle 或等输入）说明刚有 API 响应记账，补拉一次账号配额。
     didSet {

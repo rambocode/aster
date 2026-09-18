@@ -92,6 +92,59 @@ func codexMonitorReadsRolloutTailAfterAppend() async throws {
   #expect(monitor.map { Mirror(reflecting: $0).displayStyle == .optional && String(describing: $0) == "nil" } ?? true)
 }
 
+// 真实 Codex 的时序：标题先证明 TUI 已经起来（运行时确认），session ID 要等 rollout 落盘
+// 后由会话文件定位或 hook 补报。以前用量同步只挂在一次性的运行时确认上，ID 后到就再也
+// 不会启动监听，底部用量条永远不出现。
+@Test("Codex 的 session ID 晚于运行时证据到达时仍然启动 rollout 监听")
+@MainActor
+func codexMonitorStartsWhenSessionIDArrivesAfterRuntimeEvidence() async throws {
+  let (suiteName, defaults) = try agentUsageDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  let home = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "aster-usage-home-\(UUID().uuidString)", isDirectory: true)
+  let day = home.appendingPathComponent(".codex/sessions/2026/09/06", isDirectory: true)
+  try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: home) }
+  let sessionID = "01a04237-0000-4000-8000-000000000002"
+  let rollout = day.appendingPathComponent("rollout-2026-09-06T11-00-00-\(sessionID).jsonl")
+  let meta = #"{"type":"session_meta","payload":{"id":"\#(sessionID)","cwd":"/tmp"}}"#
+  let tokenCount = #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":300,"reasoning_output_tokens":0},"model_context_window":1000},"rate_limits":{"primary":{"used_percent":64,"window_minutes":10080,"resets_at":1788748005},"secondary":null}}}"#
+  try (meta + "\n" + tokenCount + "\n").write(to: rollout, atomically: true, encoding: .utf8)
+
+  let session = TerminalSession(workingDirectory: "/tmp")
+  session.claudeAccountQuota = offlineClaudeQuotaService()
+  session.agentUsageHomeDirectory = home
+  let terminalView = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  defer { session.stop(immediately: true) }
+
+  // 第一步：敲 codex 回车 + 标题证实 TUI 起来了，但此时还没有 session ID。
+  terminalView.onShellIntegrationEvent?(.promptStart)
+  terminalView.onShellIntegrationEvent?(.inputStart)
+  terminalView.onAutocompleteInput?(Array("codex\n".utf8)[...])
+  terminalView.onShellIntegrationEvent?(.commandStart)
+  terminalView.onObservedTitleUpdate?(0, "codex")
+  #expect(session.activeAgentProvider == .codex)
+  #expect(session.activeAgentSessionID == nil)
+  try await Task.sleep(for: .milliseconds(100))
+  #expect(session.agentUsage == nil)
+
+  // 第二步：ID 补到（hook 或会话文件定位），监听必须在这一刻启动。
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .codex, signal: .idle, sessionID: sessionID))
+  var observed: AgentUsageSnapshot?
+  for _ in 0..<40 where observed == nil {
+    try await Task.sleep(for: .milliseconds(100))
+    observed = session.agentUsage
+  }
+  let snapshot = try #require(observed)
+  #expect(snapshot.provider == .codex)
+  #expect(snapshot.window(.weekly)?.usedPercent == 64)
+  #expect(snapshot.window(.session)?.usedPercent == 30)
+}
+
 private func agentUsageDefaults() throws -> (String, UserDefaults) {
   let suiteName = "AgentUsageSessionTests.\(UUID().uuidString)"
   let defaults = try #require(UserDefaults(suiteName: suiteName))
