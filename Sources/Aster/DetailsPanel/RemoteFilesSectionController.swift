@@ -42,6 +42,10 @@ final class RemoteFilesSectionController: NSViewController, NSTableViewDataSourc
   private(set) var host: RemoteInspectionHost?
   /// 同一 Pane 内的请求序号；切 Pane、切页、收起面板都会推进它，迟到结果据此丢弃。
   private var generation: UInt64 = 0
+  /// 已提交列表的次数。宽限期用它判断「这一轮是否真的拿到了新列表」，不能用
+  /// `state == .listed` 代替：同一条通道断开重连（exit 后再 ssh）时通道身份没变，
+  /// 页面状态仍停在上一次连接的列表上，用状态判断会让横幅永远出不来。
+  private var listingSequence: UInt64 = 0
   private var isActive = false
 
   /// 当前展示的目录（远端 `pwd -P` 解析后的绝对路径）。
@@ -316,6 +320,7 @@ final class RemoteFilesSectionController: NSViewController, NSTableViewDataSourc
       cache[key, default: RemoteDirectoryCache()].store(listing, for: requestKey)
     }
     activeDirectory = listing.directory
+    listingSequence &+= 1
     state = .listed(listing)
     rebuildRows()
     applyState()
@@ -326,6 +331,7 @@ final class RemoteFilesSectionController: NSViewController, NSTableViewDataSourc
   /// 受管终端在宽限期内用监控脚本的 `[cwd]` 段兜底，拿到就直接列目录。
   private func startAwaitingIntegration() {
     guard graceTask == nil, let host else { return }
+    let sequenceAtStart = listingSequence
     graceTask = Task { @MainActor [weak self] in
       // 受管终端能从监控脚本的 `[cwd]` 段读到远端 Shell 的真实目录；场景 A 没有这条路，
       // 只能等远端集成上报，所以先给 1.5 秒宽限，避免登录过程中横幅闪一下。
@@ -351,8 +357,8 @@ final class RemoteFilesSectionController: NSViewController, NSTableViewDataSourc
         return
       }
       self.graceTask = nil
-      // 宽限期内已经拿到列表（缓存或兜底目录）就不要再盖一层横幅。
-      if case .listed = self.state { return }
+      // 只有「这一轮宽限期内新提交的列表」才免横幅；停留在上一次连接的旧列表不算。
+      if self.listingSequence != sequenceAtStart { return }
       self.state = .awaitingIntegration
       self.applyState()
       self.onCommitted()
@@ -425,6 +431,16 @@ final class RemoteFilesSectionController: NSViewController, NSTableViewDataSourc
     case .idle:
       messageStack.isHidden = true
     case .awaitingIntegration:
+      // 还没拿到本次连接的目录上报，旧列表与旧路径都不能再展示：它们属于上一条会话，
+      // 留着会让用户以为看到的是当前远端的内容。
+      if !rows.isEmpty {
+        rows = []
+        table.reloadData()
+      }
+      activeDirectory = nil
+      requestedDirectory = nil
+      pathLabel.stringValue = label
+      upButton?.isEnabled = false
       configureBanner()
       messageStack.addArrangedSubview(banner)
       messageStack.isHidden = false

@@ -118,7 +118,9 @@ extension RemoteFilesSectionController {
       guard let self, self.host?.addressesSameChannel(as: host) == true else { return }
       switch inspected {
       case .failure(let failure):
-        self.banner.setStatus(L("安装失败：\(failure.message)"))
+        // 探测阶段失败时还没有动过远端任何文件，说成「安装失败」会让用户以为
+        // 远端被改了一半，必须用探测自己的文案。
+        self.banner.setStatus(L("探测失败：\(failure.message)"))
       case .success(let status):
         self.banner.setStatus("")
         let shells = RemoteShellIntegrationShell.allCases.filter {

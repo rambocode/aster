@@ -259,8 +259,17 @@ public enum RemoteHostMonitorParser {
         )
       )
     }
-    disks.sort { $0.sizeKiB > $1.sizeKiB }
-    return Array(disks.prefix(maximumDiskCount))
+    // 同一个设备可能被 bind mount 到多个路径（OrbStack 的 /mnt/machines/* 就是如此），
+    // df 会逐条列出，面板照抄就是几行一模一样的容量。按设备去重，保留路径最短的挂载点
+    // ——它通常就是用户认得的那个根挂载点。
+    var seenFilesystems: Set<String> = []
+    var deduplicated: [RemoteDiskUsage] = []
+    for disk in disks.sorted(by: { $0.mount.count < $1.mount.count }) {
+      guard seenFilesystems.insert(disk.filesystem).inserted else { continue }
+      deduplicated.append(disk)
+    }
+    deduplicated.sort { $0.sizeKiB > $1.sizeKiB }
+    return Array(deduplicated.prefix(maximumDiskCount))
   }
 
   // MARK: - 进程

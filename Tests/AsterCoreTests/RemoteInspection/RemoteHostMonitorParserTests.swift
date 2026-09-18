@@ -362,3 +362,20 @@ private func parse(_ text: String, now: Date = Date()) throws -> RemoteHostMonit
   #expect(!snapshot.disks.isEmpty)
   #expect(!snapshot.topByCPU.isEmpty)
 }
+
+@Test("同一设备的多个 bind mount 只保留一条最短挂载点")
+func monitorParserDeduplicatesBindMounts() throws {
+  let output = """
+    ASTER_MON_V1
+    [disk]
+    /dev/vdb1 151584000 87552000 64032000 58% /
+    /dev/vdb1 151584000 87552000 64032000 58% /opt/orbstack-guest/data
+    /dev/vdb1 151584000 87552000 64032000 58% /mnt/machines/aster-arm64
+    mac 972000000 898000000 74000000 93% /mnt/mac
+    [end]
+    """
+  let snapshot = try RemoteHostMonitorParser.parse(Data(output.utf8))
+  #expect(snapshot.disks.count == 2)
+  #expect(snapshot.disks.map(\.filesystem) == ["mac", "/dev/vdb1"])
+  #expect(snapshot.disks.first { $0.filesystem == "/dev/vdb1" }?.mount == "/")
+}

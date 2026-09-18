@@ -29,12 +29,16 @@ enum RemoteInspectionFailure: Error, Equatable, Sendable {
   var message: String {
     switch self {
     case .authenticationRequired: L("需要认证：开启「SSH 连接复用」并重新连接")
-    case .unreachable(let detail): L("连接失败：\(detail)")
+    case .unreachable(let detail):
+      detail.isEmpty ? L("连接失败") : L("连接失败：\(detail)")
     case .channelUnavailable: L("无法建立远端旁路连接")
     case .directoryMissing: L("远端目录不存在")
     case .directoryNotReadable: L("远端目录不可读")
     case .malformed: L("远端返回了无法解析的输出")
-    case .transport(let detail): L("连接失败：\(detail)")
+    case .transport(let detail):
+      // OpenSSH 的 stderr 经脱敏后常常为空（没命中白名单标记），此时补一句尾随冒号
+      // 只会显示成「连接失败：」，读起来像文案被截断。
+      detail.isEmpty ? L("连接失败") : L("连接失败：\(detail)")
     }
   }
 

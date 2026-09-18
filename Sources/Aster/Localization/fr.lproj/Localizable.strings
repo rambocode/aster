@@ -1663,3 +1663,5 @@
 "，系统报告已生成 core dump" = ", le système a signalé la génération d'un core dump";
 "；" = " ; ";
 "；如 PATH 未包含 ~/.local/bin 请自行加入" = "; si le PATH ne contient pas ~/.local/bin, veuillez l'ajouter vous-même";
+"探测失败：%@" = "Échec de la détection : %@";
+"连接失败" = "Échec de la connexion";

@@ -218,16 +218,13 @@ public enum RemoteShellIntegrationInstall {
       lines.append("rc=\"\(rc)\"")
       let append =
         "grep -qF \"$marker\" \"$rc\" 2>/dev/null || printf '\\n%s\\n' \(RemoteSSHInvocation.quote(block)) >> \"$rc\" || exit 1"
-      if shell == .bash {
-        // 只有登录 Shell 确实是 bash 时才新建 .bashrc：在 zsh 机器上凭空造一个 bash rc
-        // 会让用户以为 Aster 改了不相干的配置。
-        lines.append("case \"${SHELL:-}\" in */bash) create=1 ;; *) create=0 ;; esac")
-        lines.append("if [ -f \"$rc\" ] || [ \"$create\" = 1 ]; then")
-        lines.append("  " + append)
-        lines.append("fi")
-      } else {
-        lines.append(append)
-      }
+      // rc 不存在时只为登录 Shell 新建：在一台只跑 bash 的机器上凭空造 .zshrc
+      // （反之亦然）会让用户以为 Aster 改了不相干的配置。fish 走 conf.d，不改 rc。
+      lines.append(
+        "case \"${SHELL:-}\" in */\(shell.rawValue)) create=1 ;; *) create=0 ;; esac")
+      lines.append("if [ -f \"$rc\" ] || [ \"$create\" = 1 ]; then")
+      lines.append("  " + append)
+      lines.append("fi")
     }
     lines.append("printf 'ASTER_RI_INSTALL_OK\\n'")
     lines.append("exit 0")

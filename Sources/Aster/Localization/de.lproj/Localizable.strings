@@ -1663,3 +1663,5 @@
 "，系统报告已生成 core dump" = ", System meldet Core-Dump wurde erzeugt";
 "；" = "; ";
 "；如 PATH 未包含 ~/.local/bin 请自行加入" = "; falls PATH ~/.local/bin nicht enthält, bitte selbst hinzufügen";
+"探测失败：%@" = "Erkennung fehlgeschlagen: %@";
+"连接失败" = "Verbindung fehlgeschlagen";

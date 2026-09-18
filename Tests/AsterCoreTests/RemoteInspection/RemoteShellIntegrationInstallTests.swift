@@ -103,6 +103,8 @@ private func sampleScripts() -> [RemoteShellIntegrationShell: String] {
   let home = try makeHome()
   defer { try? FileManager.default.removeItem(at: home) }
   try Data("# user bashrc\n".utf8).write(to: home.appendingPathComponent(".bashrc"))
+  // .zshrc 预先存在：rc 已存在的 Shell 无论登录 Shell 是谁都要追加。
+  try Data("# user zshrc\n".utf8).write(to: home.appendingPathComponent(".zshrc"))
   let environment = ["HOME": home.path, "SHELL": "/bin/bash", "PATH": "/usr/bin:/bin"]
 
   let argv = RemoteShellIntegrationInstall.installCommand(scripts: sampleScripts())
@@ -233,4 +235,14 @@ private func sampleScripts() -> [RemoteShellIntegrationShell: String] {
     #expect(contents.contains("133;A"))
     #expect(contents.contains("133;C"))
   }
+}
+
+@Test("rc 不存在时只为登录 Shell 新建，不给其它 Shell 凭空造配置")
+func installScriptCreatesMissingRCOnlyForLoginShell() {
+  let script = RemoteShellIntegrationInstall.installScript(
+    scripts: [.bash: "# bash", .zsh: "# zsh"])
+  #expect(script.contains("*/bash) create=1"))
+  #expect(script.contains("*/zsh) create=1"))
+  // 两个 Shell 都要走同一道「文件存在或本机就是它」的门槛。
+  #expect(script.components(separatedBy: "if [ -f \"$rc\" ] || [ \"$create\" = 1 ]").count == 3)
 }

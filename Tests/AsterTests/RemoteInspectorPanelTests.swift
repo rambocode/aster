@@ -412,3 +412,42 @@ func monitorFailureShowsRetry() async throws {
   let identifiers = controller.view.remoteTestDescendants.compactMap { $0.identifier?.rawValue }
   #expect(identifiers.contains("details-remote-monitor-retry"))
 }
+
+@Test("同一通道断开重连后不再停留在上一次连接的目录列表")
+@MainActor
+func reconnectWithoutReportClearsStaleRemoteListing() async throws {
+  _ = NSApplication.shared
+  let client = RemoteInspectionClient(
+    listDirectory: { _, directory in .success(makeListing(directory: directory)) },
+    monitor: { _, _ in .success(RemoteHostMonitorSnapshot()) }
+  )
+  let controller = RemoteFilesSectionController(
+    client: client, onCommitted: {}, prefillCommand: { _ in }, notify: { _ in })
+  controller.loadViewIfNeeded()
+  let tabID = UUID()
+  let paneID = UUID()
+  // 第一次连接拿到了目录上报，列出内容。
+  controller.activate(
+    host: makeHost(tabID: tabID, paneID: paneID, directory: "/tmp/old-session"))
+  await settle(milliseconds: 450)
+  #expect(controller.activeDirectory == "/tmp/old-session")
+
+  // exit 后再 ssh 同一台机器：通道身份不变，但远端还没上报目录。
+  controller.activate(host: makeHost(tabID: tabID, paneID: paneID, directory: nil))
+  await settle(milliseconds: 1_800)
+
+  guard case .awaitingIntegration = controller.state else {
+    Issue.record("重连后应回到等待远端上报状态，实际：\(controller.state)")
+    return
+  }
+  let texts = controller.view.remoteTestTexts
+  #expect(!texts.contains { $0.contains("old-session") })
+}
+
+@Test("远端失败详情为空时不显示尾随冒号")
+@MainActor
+func emptyFailureDetailOmitsTrailingColon() {
+  #expect(RemoteInspectionFailure.transport("").message == "连接失败")
+  #expect(RemoteInspectionFailure.unreachable("").message == "连接失败")
+  #expect(RemoteInspectionFailure.transport("超时").message == "连接失败：超时")
+}
