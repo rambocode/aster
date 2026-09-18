@@ -3,6 +3,35 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.6.7</title>
+            <pubDate>Fri, 18 Sep 2026 10:09:00 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>26</sparkle:version>
+            <sparkle:shortVersionString>0.6.7</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 新增
+
+- SSH 到服务器后，右侧详情面板的 Files 页变成「服务器文件」、Info 页变成「服务器监控」，`exit` 回到本机后自动恢复本地内容。远程工作模式下的远端终端同样可用。
+- **服务器文件**：跟随远端 Shell 上报的当前目录，在终端里 `cd` 过去面板就跟着走。可以进子目录、返回上级、复制路径、把 `cd` 预填到终端、下载文件到本机，也能拖文件进面板上传到当前目录。目录超过 2000 项会标注「已显示 2000 / N 项，已截断」。
+- **服务器监控**：分「概览 / 磁盘 / 进程 / 端口」四页，点页签切换，一次只看一类指标。概览是主机名与系统版本、运行时长、负载与 CPU、内存和 Swap；磁盘列出各挂载点用量（同一块盘挂到多个路径时只列一条）；进程是一张三列表格（进程 / CPU / 内存），点表头排序、箭头朝下是从大到小，点某一行能看它的 PID、用户、占用和完整命令行；端口列出监听中的 TCP/UDP 与占用它的进程。面板可见时每 3 秒刷新，切页不会重连服务器。
+- 远端目录要靠远端 Shell 上报。面板会提示「未收到远端目录上报」并提供「安装远端集成」，点一下就把集成脚本装到远端 `~/.config/aster/`，安装前会列出将要改动的远端文件让你确认。装完重新登录或执行 `exec $SHELL` 生效。不想装也可以直接浏览 `$HOME` 或手动输入路径。
+- 新增设置「Shell → Shell 集成 → SSH 连接复用」（默认开启，需要「SSH 集成」也开着）：Aster 启动的终端里 `ssh` 会自动带上 OpenSSH 的 ControlMaster 选项，把已认证的连接复用给上面两个面板，面板因此不需要再认证一次。你自己定义的 `ssh` 函数或别名优先，Aster 不会替换它。开关只影响之后新建的终端。
+
+## 修复
+
+- 在一个 Pane 里拖选文字后点另一个 Pane，终端不再卡在选择模式，新 Pane 立刻能正常输入。
+- 拖完分屏分隔线后把指针移开，光标会复位成箭头，不再一直停在左右箭头的拖动形态。
+- 用 ↑ 调出历史里的 `ssh` 命令再执行，左侧标签重新按远端主机分组。之前这种情况下键盘记录拿不到完整命令，第二次执行同一条 `ssh` 就不再建立远端分组了；接受 Shell 自动建议或 Tab 补全后执行也是同样的问题。
+
+## 优化
+
+- 详情面板拖窄之后会自动精简次要列：进程隐去 PID、端口隐去监听地址、文件隐去修改时间，把宽度让给真正要读的那一列；拉宽后自动恢复。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.7/Aster-0.6.7.dmg" length="42198244" type="application/octet-stream" sparkle:edSignature="NCDBjxsSx7lXYOlsZKRL/Z1phQCdytoROs7B5+yXs3Zz41A5uMEVhpk7vnQ9KrSNyDppy2lxIZVfWG9GO36pCA=="/>
+        </item>
+        <item>
             <title>0.6.6</title>
             <pubDate>Thu, 17 Sep 2026 20:21:14 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -82,35 +111,6 @@
 - 本机上「远端进程已结束」卡片里的「重新启动 Shell」和「关闭标签」以前点了没有反应。现在「重新启动 Shell」会把这个面板换回普通的本地 Shell，「关闭标签」直接关闭标签。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.3/Aster-0.6.3.dmg" length="42668744" type="application/octet-stream" sparkle:edSignature="o2iU32+aofko4WWO2crLKj7ivFdO7htWF9MbKLbR2lsLwlU8PtPQcRpj3ydMrcfP7HoMl9e0b23j+i5zvmUGCg=="/>
-        </item>
-        <item>
-            <title>0.6.2</title>
-            <pubDate>Mon, 14 Sep 2026 16:20:32 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>21</sparkle:version>
-            <sparkle:shortVersionString>0.6.2</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## 自动补全：命令之后的「下一步」
-
-- `git clone` 完成后，空提示符上直接显示灰色的 `cd 仓库目录`，按 Tab 就进入刚克隆的仓库。
-- 同样的推荐覆盖常见场景：`mkdir`、`git init`、`git worktree add`、各类脚手架（`cargo new`、`npm create`、`npx create-*`、`rails new`、`flutter create` 等）之后进入新目录；`tar`/`unzip` 解压后进入解压目录；`python -m venv`/`uv venv` 之后激活虚拟环境；`curl`/`wget` 下载压缩包后解压；`git commit` 之后 `git push`；`chmod +x` 之后运行脚本；`gcc`/`go build -o` 之后运行产物；`docker build -t` 之后 `docker run`。
-- 只有目标目录或文件真实存在时才推荐；带 `&&`、`|` 的复合命令和改变工作目录的选项不猜。
-- 推荐在提示符出现的瞬间就显示，不再等候选列表算完；用 ↑ 调出历史、接受 shell 自身建议或 Tab 补全后执行的命令同样能推断。
-- 空提示符上的灰色建议不再随提示符重绘闪烁。
-
-## 本机终端不再默认交给后台服务托管
-
-- 本机新建的终端现在是普通的原生终端。需要「退出或崩溃后 Shell 继续运行」的用户，可在设置 → Shell → 会话恢复 打开「本机后台保活」；也可以对某个工作区使用「托管到后台」手动转为托管。远程机器不受影响，始终托管。
-- 已经处于托管状态的标签保持原样，不会被强制换成新 Shell。
-
-## 修复
-
-- 后台会话服务启动的 Shell 缺少 `TERM` 环境变量，导致方向键无效、提示符被覆盖、命令行画成乱行、zsh-autosuggestions 的灰色建议看不见却会被 → 键接受。现在服务端总会补上 `TERM` 与 `COLORTERM`。修复只对新启动的后台服务生效；已在运行的旧服务需要停止后重新启动。
-- 按住 Command 悬停链接时，下划线与手形光标不再消失；链接徽章改为紧凑样式并完整显示地址。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.2/Aster-0.6.2.dmg" length="42519414" type="application/octet-stream" sparkle:edSignature="OEahKGQBH6J+zjYwc0pMh1+Gbfn0CtmVGY4FBnBM2ce00KpFYIOUIaVGyC1Huu8bbkjQNsxxtJIN0B12rr7tBg=="/>
         </item>
     </channel>
 </rss>
