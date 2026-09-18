@@ -41,3 +41,11 @@ Use Conventional Commits as seen in history, for example `feat(workspace): add t
 ## Security & Configuration Tips
 
 Keep signing identities and notarization profiles in `ASTER_SIGN_IDENTITY` and `ASTER_NOTARY_PROFILE`; never commit credentials. The Sparkle EdDSA private key lives in the login keychain and must never be exported into the repository; `CFBundleVersion` must increase monotonically on every release because Sparkle uses it to compare versions and published values cannot be recalled. Build outputs such as `.build/`, `dist/`, generated Ghostty resources, and `Vendor/GhosttyKit.xcframework` remain untracked. For architecture, input-validation, or release changes, consult `CLAUDE.md` and the matching `docs/developer/` domain guide before editing.
+
+约定
+
+架构约束、代码组织、版本号、提交信息、文档同步、提交前检查与发版都在 docs/contributing.md，随本文件一起载入：
+
+@docs/contributing.md
+
+交流用中文。
