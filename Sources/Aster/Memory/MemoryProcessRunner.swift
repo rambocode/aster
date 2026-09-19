@@ -78,7 +78,8 @@ enum MemoryProcessRunner {
       }
     }
     pipe.fileHandleForReading.readabilityHandler = nil
-    let tail = pipe.fileHandleForReading.readDataToEndOfFile()
+    // 不等 EOF：后台孙进程可能一直握着写端，见 `readRemainingWithoutBlocking`。
+    let tail = pipe.fileHandleForReading.readRemainingWithoutBlocking(maximumBytes: maximumBytes)
     output.lock.lock()
     let remaining = maximumBytes - output.data.count
     if remaining > 0 { output.data.append(tail.prefix(remaining)) }

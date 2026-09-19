@@ -489,7 +489,8 @@ enum MemoryExtractionProcess {
       terminate(process, finished: finished)
     }
     pipe.fileHandleForReading.readabilityHandler = nil
-    let tail = pipe.fileHandleForReading.readDataToEndOfFile()
+    // 不等 EOF：后台孙进程可能一直握着写端，见 `readRemainingWithoutBlocking`。
+    let tail = pipe.fileHandleForReading.readRemainingWithoutBlocking(maximumBytes: maximumOutputBytes)
     output.lock.lock()
     if output.data.count < maximumOutputBytes {
       output.data.append(tail.prefix(maximumOutputBytes - output.data.count))
