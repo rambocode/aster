@@ -575,6 +575,9 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     activeAgentSessionTitle ?? title
   }
 
+  /// 某个 Pane 已投影的 Agent 会话标题（不受用户固定名影响）。
+  func agentSessionTitle(paneID: UUID) -> String? { paneAgentSessionTitles[paneID] }
+
   /// 更新某个 Pane 的 Agent 会话标题；nil 表示清除（Agent 退出或会话无标题）。
   /// 只有活动 Pane 的变化会触发标签行与胶囊的局部刷新。
   func updateAgentSessionTitle(_ value: String?, paneID: UUID) {
@@ -1438,6 +1441,17 @@ final class AppModel: ObservableObject {
   /// 为解析会话标题触发的历史重扫节流点；扫描按 5 秒下限合并，避免 Agent 状态
   /// 频繁翻转时反复枚举 transcript 目录。
   private var agentTitleReloadAt: Date?
+  /// 运行中会话的标题跟踪。Claude / Codex 的标题在首条 prompt 后几秒才写盘，靠它按单个
+  /// 会话文件后台探测；全量历史重扫只留给没有 provider 标题的其它 Agent。
+  private(set) lazy var agentSessionTitleTracker: AgentSessionTitleTracker = {
+    let tracker = AgentSessionTitleTracker()
+    tracker.bindingProvider = { [weak self] paneID in self?.agentSessionTitleBinding(paneID: paneID) }
+    tracker.onTitlesChanged = { [weak self] in self?.refreshAgentSessionTitles() }
+    tracker.onRetriesExhausted = { [weak self] paneID in
+      self?.reloadAgentHistoryIfUntitled(paneID: paneID)
+    }
+    return tracker
+  }()
 #if DEBUG
   /// Test seam for exercising history-backed Open Quickly routes without scanning the user's
   /// real Agent session directories or exposing a mutable production history collection.
@@ -2618,10 +2632,14 @@ final class AppModel: ObservableObject {
           let history = agentHistories.first {
             $0.metadata.id == sessionID && $0.metadata.configuration.provider == provider
           }
-          resolved = history.flatMap {
-            $0.metadata.title == $0.metadata.id ? nil : $0.metadata.title
+          // 探测到的 provider 标题比历史扫描新（历史只在启动和打开面板时刷新），优先用它。
+          resolved =
+            agentSessionTitleTracker.title(provider: provider, sessionID: sessionID)
+            ?? history.flatMap { $0.metadata.title == $0.metadata.id ? nil : $0.metadata.title }
+          // Claude / Codex 由单会话探测负责，不再为它们触发全量重扫。
+          if resolved == nil, !AgentSessionTitleProbe.supports(provider) {
+            hasUnresolvedBoundSession = true
           }
-          if resolved == nil { hasUnresolvedBoundSession = true }
         }
         tab.updateAgentSessionTitle(resolved, paneID: paneID)
       }
@@ -2630,6 +2648,45 @@ final class AppModel: ObservableObject {
     let timestamp = Date()
     if let last = agentTitleReloadAt, timestamp.timeIntervalSince(last) < 5 { return }
     agentTitleReloadAt = timestamp
+    reloadAgentHistory()
+  }
+
+  /// 标题探测用的 Pane 绑定。SSH 里跑的 Agent 会话文件在远端，本机读不到，直接不探测。
+  private func agentSessionTitleBinding(paneID: UUID) -> AgentSessionTitleTracker.Binding? {
+    for tab in tabs {
+      guard let session = tab.runtime(for: paneID)?.terminalSession else { continue }
+      guard session.sshRemoteEndpoint == nil, let provider = session.activeAgentProvider,
+        let sessionID = session.activeAgentSessionID
+      else { return nil }
+      return AgentSessionTitleTracker.Binding(
+        provider: provider, sessionID: sessionID,
+        workingDirectory: session.resolvedCurrentWorkingDirectory(),
+        homeDirectory: session.agentUsageHomeDirectory)
+    }
+    return nil
+  }
+
+  /// 绑定变化后补探测：只看还没有标题的 Pane。正在处理 prompt 的会话标题随时会写盘，
+  /// 走重试序列；其余（刚打开、恢复旧会话）只读一次，没有 prompt 就不会再读。
+  private func probeUntitledAgentSessions() {
+    for tab in tabs {
+      for (paneID, runtime) in tab.runtimes {
+        guard let session = runtime.terminalSession, let provider = session.activeAgentProvider,
+          let sessionID = session.activeAgentSessionID,
+          agentSessionTitleTracker.title(provider: provider, sessionID: sessionID) == nil
+        else { continue }
+        agentSessionTitleTracker.probe(
+          paneID: paneID, retrying: session.agentTaskState == .processing)
+      }
+    }
+  }
+
+  /// 探测重试用尽仍没有 provider 标题时的兜底：该 Pane 连 prompt 推导的标题都没有，
+  /// 才重扫一次历史。已有标题就不扫——否则没有 AI 标题的会话每条 prompt 都会触发全量扫描。
+  private func reloadAgentHistoryIfUntitled(paneID: UUID) {
+    guard let tab = tabs.first(where: { $0.runtime(for: paneID) != nil }),
+      tab.agentSessionTitle(paneID: paneID) == nil
+    else { return }
     reloadAgentHistory()
   }
 
@@ -4143,9 +4200,12 @@ final class AppModel: ObservableObject {
       // 状态翻转的时刻正是 transcript 落盘/追加的时刻：借此解析会话标题，
       // 未命中时按节流重扫历史。
       self?.refreshAgentSessionTitles(reloadIfUnmatched: true)
+      // processing 意味着 prompt 刚提交，标题几秒后才写盘，需要重试；其它翻转只读一次。
+      self?.agentSessionTitleTracker.probe(paneID: paneID, retrying: state == .processing)
     }
     tab.onAgentSessionBindingChanged = { [weak self] in
       self?.refreshAgentSessionTitles(reloadIfUnmatched: true)
+      self?.probeUntitledAgentSessions()
       // Agent 绑定（provider / session ID）进入了工作区快照；变化时同步落盘，
       // 否则强退或崩溃后快照里没有可重连的会话身份。
       self?.schedulePersistWorkspace()
