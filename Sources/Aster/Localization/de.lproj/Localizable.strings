@@ -208,6 +208,7 @@
 "…（已截断，共 %@ 字符）" = "… (gekürzt, insgesamt %@ Zeichen)";
 "…（本条已截断，共 %@ 字符）" = "… (dieser Eintrag gekürzt, insgesamt %@ Zeichen)";
 "⌘、⌥ 等技术符号；仅在字体按双宽绘制时开启" = "Technische Symbole wie ⌘, ⌥; nur aktiv, wenn die Schrift in doppelter Breite gerendert wird";
+"⏎ 粘贴" = "⏎ Einfügen";
 "①、Ⓐ、ⓐ 等；默认按双宽显示" = "①, Ⓐ, ⓐ usw.; standardmäßig in doppelter Breite dargestellt";
 "、" = ", ";
 "「%@」将被永久删除，连同它的来源回链一起消失，无法恢复。\n\n如果只是想让它不再进入 Agent 上下文，用“禁用”即可。" = "„%@“ wird zusammen mit seinen Quellverweisen dauerhaft gelöscht. Dies kann nicht rückgängig gemacht werden.\n\nWenn Sie es nur aus dem Agent-Kontext entfernen möchten, verwenden Sie „Deaktivieren“.";
@@ -429,6 +430,7 @@
 "前置全部窗口" = "Alle nach vorne bringen";
 "前进" = "Vorwärts";
 "剪切" = "Ausschneiden";
+"剪贴板建议" = "Vorschlag aus der Zwischenablage";
 "加入 Prompt 队列…" = "Zur Prompt-Warteschlange hinzufügen…";
 "加入队列" = "In Warteschlange einreihen";
 "加入队列失败：%@" = "Einreihen fehlgeschlagen: %@";
@@ -581,6 +583,7 @@
 "备份或保存失败：%@" = "Sicherung oder Speichern fehlgeschlagen: %@";
 "复制" = "Kopieren";
 "复制与粘贴" = "Kopieren und Einfügen";
+"复制内容后，在空提示符上以灰字提示剪贴板内容，回车只粘贴不执行" = "Nach dem Kopieren den Inhalt der Zwischenablage grau in einer leeren Promptzeile anzeigen; die Eingabetaste fügt ihn nur ein, ohne ihn auszuführen";
 "复制到 %@" = "Nach %@ kopieren";
 "复制到剪贴板" = "In die Zwischenablage kopieren";
 "复制后清除选区" = "Auswahl nach dem Kopieren aufheben";
@@ -1334,6 +1337,7 @@
 "粘贴为" = "Einfügen als";
 "粘贴保护" = "Einfügeschutz";
 "粘贴到终端" = "In Terminal einfügen";
+"粘贴剪贴板内容" = "Inhalt der Zwischenablage einfügen";
 "粘贴多行或含控制字符的内容前先确认" = "Vor dem Einfügen von mehrzeiligem Inhalt oder Inhalt mit Steuerzeichen bestätigen";
 "粘贴并在 Composer 中继续" = "Einsetzen und im Composer fortfahren";
 "粘贴的内容可能立即执行命令" = "Eingefügter Inhalt könnte Befehle sofort ausführen";

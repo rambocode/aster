@@ -207,6 +207,7 @@
           row("controls.autocompleteShortcut", t("接受候选"), t("接受 inline suggestion 的快捷键"), "select", { options: options.autocompleteShortcut }),
           row("controls.autocompleteCandidatePanel", t("候选面板"), t("自动显示或使用快捷键打开"), "select", { options: options.candidatePanel }),
           row("controls.autocompleteInlineSuggestion", "Inline suggestion", t("在终端光标后显示候选后缀")),
+          row("controls.clipboardSuggestion", t("剪贴板建议"), t("复制内容后，在空提示符上以灰字提示剪贴板内容，回车只粘贴不执行")),
           row("controls.autocompleteOnDeviceLearning", t("本机学习"), t("只保存脱敏后的本机历史")),
           row("controls.autocompleteDatabaseStatus", t("补全数据库"), t("上游 Fig 规格版本与已安装的命令数量"), "readonly"),
           action("updateAutocomplete", t("更新补全数据库"), t("从 Aster 仓库拉取最新的命令规格文件"), t("立即更新")),

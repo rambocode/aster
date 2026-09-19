@@ -349,6 +349,9 @@ final class GhosttySurfaceView: NSView {
   func writeSystemClipboard(_ text: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)
+    // 终端内复制不切换应用、也不产生 OSC 133，提示符上的剪贴板建议需要这条广播
+    // 才知道该重算。
+    ClipboardSuggestionMonitor.noteLocalChange()
   }
 
   /// 偏好变化由 app config 广播；surface 自己重刷以确保新主题立即生效。

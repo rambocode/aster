@@ -1175,6 +1175,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.controls.autocompleteInlineSuggestion = value
         },
         toggleRow(
+          L("剪贴板建议"), L("复制内容后，在空提示符上以灰字提示剪贴板内容，回车只粘贴不执行"),
+          value: preferences.configuration.controls.resolvedClipboardSuggestion
+        ) { [weak self] value in
+          self?.preferences.configuration.controls.clipboardSuggestion = value
+        },
+        toggleRow(
           L("本机学习"), L("在本机脱敏记录命令，并允许 README 与沙箱 help 规格学习"),
           value: preferences.configuration.controls.resolvedAutocompleteOnDeviceLearning
         ) { [weak self] value in
@@ -3304,6 +3310,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "controls.autocompleteShortcut": webAutocompleteShortcut(configuration.controls.resolvedAutocompleteShortcut),
       "controls.autocompleteCandidatePanel": webCandidatePanel(configuration.controls.resolvedAutocompleteCandidatePanel),
       "controls.autocompleteInlineSuggestion": configuration.controls.resolvedAutocompleteInlineSuggestion,
+      "controls.clipboardSuggestion": configuration.controls.resolvedClipboardSuggestion,
       "controls.autocompleteOnDeviceLearning": configuration.controls.resolvedAutocompleteOnDeviceLearning,
       "controls.autocompleteDatabaseStatus": autocompleteDatabaseStatus,
       "controls.autocompleteHistoryIgnore": configuration.controls.resolvedAutocompleteHistoryIgnore.joined(separator: ", "),
@@ -3846,6 +3853,7 @@ extension SettingsViewController: WKNavigationDelegate {
       let mapped = ["automatic": "auto", "disabled": "disable"][raw] ?? raw
       preferences.configuration.controls.autocompleteCandidatePanel = try enumValue(mapped, as: AutocompleteCandidatePanel.self)
     case "controls.autocompleteInlineSuggestion": preferences.configuration.controls.autocompleteInlineSuggestion = try bool()
+    case "controls.clipboardSuggestion": preferences.configuration.controls.clipboardSuggestion = try bool()
     case "controls.autocompleteOnDeviceLearning": preferences.configuration.controls.autocompleteOnDeviceLearning = try bool()
     case "controls.autocompleteHistoryIgnore":
       preferences.configuration.controls.autocompleteHistoryIgnore = try string().split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

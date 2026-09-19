@@ -582,6 +582,8 @@ final class AutocompleteService {
   private var learningDatabase: AutocompleteLearningDatabase
 
   private(set) var specDatabase: AutocompleteSpecDatabase
+  /// `PATH` 可执行文件查找结果的进程内缓存，见 `executableExistsOnPath`。
+  private var executableLookupCache: [String: Bool] = [:]
   private(set) var cliToken: String
   let cliRequestService: AsterCLIRequestService
   /// 动态候选(git 分支、npm script、Homebrew formula …)的按目录缓存。
@@ -672,6 +674,39 @@ final class AutocompleteService {
       fileManager: fileManager
     )
   }()
+
+  /// 首词是不是本机认得的一条命令：内置/更新/本机探测的规格库、Shell 别名、学过的
+  /// 历史命令、写成路径形式的可执行文件，或 `PATH` 里确实存在的程序。
+  ///
+  /// 剪贴板建议用它把「一条命令」和「一段话」区分开——`ClipboardSuggestionPolicy`
+  /// 只能判断文本结构，`git status` 和 `Please review this` 在结构上是一样的。
+  func knowsCommand(_ token: String, aliases: [String] = []) -> Bool {
+    if ClipboardSuggestionPolicy.isPathLikeCommand(token) { return true }
+    if specDatabase.command(named: token) != nil { return true }
+    if aliases.contains(token) { return true }
+    if learningDatabase.entries.contains(where: {
+      $0.command == token || $0.command.hasPrefix(token + " ")
+    }) { return true }
+    return executableExistsOnPath(token)
+  }
+
+  /// `PATH` 上是否存在同名可执行文件。结果缓存在进程内：同一份剪贴板内容会在每次
+  /// 候选刷新时重新问一遍，没有缓存就变成反复的磁盘 stat。
+  private func executableExistsOnPath(_ token: String) -> Bool {
+    // 带斜杠的不是 PATH 查找的对象，上面的路径分支已经处理过。
+    guard !token.contains("/") else { return false }
+    if let cached = executableLookupCache[token] { return cached }
+    let searchPaths = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+      .split(separator: ":", omittingEmptySubsequences: true)
+      .prefix(32)
+    let found = searchPaths.contains { directory in
+      fileManager.isExecutableFile(atPath: "\(directory)/\(token)")
+    }
+    // 缓存满了直接清空重来：这里只是省一次磁盘查询，不值得为淘汰策略引入排序开销。
+    if executableLookupCache.count >= 256 { executableLookupCache.removeAll(keepingCapacity: true) }
+    executableLookupCache[token] = found
+    return found
+  }
 
   func suggestions(
     line: String,
