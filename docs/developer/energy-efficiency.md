@@ -19,6 +19,12 @@ Aster 会长期承载多个终端、文件 Pane、Agent 状态和本机 CLI。�
 - **按需 vsync**：Ghostty focused surface 保持 `window-vsync=true`，但普通静态终端只在
   内容、光标或几何变化后运行 display link；自定义 shader 动画仍连续刷新。
 
+- **surface 可见性**：后台标签的终端视图会被拆出窗口，窗口也可能最小化、被完全遮住或在
+  其他 Space。`GhosttySurfaceView` 把「有没有人看得到像素」同步给 libghostty，看不见的
+  surface 不编码 Metal 帧、不呈现 IOSurface，renderer 线程降到 utility QoS。
+- **静止期**：Agent 屏幕检测已发布 idle，且 PTY 内容序号自上次读屏后未变。这段时间里
+  轮询的每一轮都是空转，改由输出事件叫醒。
+
 ## 核心规则
 
 1. 操作系统已经提供目录、PTY、OSC 或进程退出事件时，正常空闲路径不得再增加固定 timer。
@@ -36,6 +42,20 @@ Aster 会长期承载多个终端、文件 Pane、Agent 状态和本机 CLI。�
    禁止用 `window-vsync=false` 换取空闲低 wakeup，因为它会引入撕裂、重负载功耗和 macOS
    外接显示器风险。空闲停止必须等 `draw_now` completion 返回并重新 armed 后执行，不能在
    `drawNowCallback` 内同步调用 `CVDisplayLinkStop`。
+
+8. Ghostty surface 的可见性只有一个判定入口 `isSurfaceVisibleToUser`：视图在窗口里、没有隐藏
+   祖先、窗口 `occlusionState` 含 `.visible`；系统画中画镜像采集期间无条件视为可见，因为
+   镜像直接消费 renderer 的帧。变为可见立即上报，变为不可见延后一轮主队列确认，避免工作区
+   整树刷新（同一轮里拆下再装回）触发一次降级加一次补画。
+9. Agent 屏幕检测在静止期不做固定 300ms 轮询：生产节奏用 2 秒兜底，`TerminalSession` 的
+   `detectionContentSequence` 每次变化调用 `contentDidChange()` 提前叫醒，叫醒后仍按 300ms
+   合并一阵连续输出。静止期判定与发布层「跳过读屏」的条件一致，被省掉的轮次本来也不读屏。
+10. 热路径不得逐批读屏。Ghostty 的输出活动探针要整屏取文本并和 IO / renderer 线程争终端锁，
+    只在空闲后的第一批立即执行，连续输出期间最多每 250ms 一次，且最后一批之后必有一次。
+11. 每 300ms 执行的清单 `contains` 门用 UTF-8 字节搜索；`String.contains` 按字素比较，在整屏
+    文本上慢一个数量级。needle 与文本都先转小写，语义保持大小写不敏感。
+12. 周期性检查不得 fork 可以用系统调用替代的命令。Info 页的监听端口由 `ListeningPortScanner`
+    经 libproc 读取；窗口不可见时即使面板展开也跳过这一轮 `ps` 与端口扫描。
 
 ## 业务流程
 
@@ -114,3 +134,25 @@ Xcode `Activity Monitor` 采样约 20 秒。`Power Profiler` 不支持 macOS，`
 正常波动；其中最差一轮的 CPU 与 wakeups 仍只剩原始值的 25.3% / 18.8%，继续满足目标。
 同一最终构建通过真实窗口像素验收：一次性输出 `seq 1 5000` 后可见区显示到 5000 并恢复
 prompt，证明低 wakeup 不是停止呈现造成的。
+
+## 2026-09-19 有 Agent 负载时的热点治理
+
+空闲基线已经接近零，剩余能耗集中在「终端里有 Agent 在流式输出」的场景。对正式版
+（运行 5 小时 40 分、累计 CPU 688 秒，约等于它托管的那个 `claude` 进程）做 20 秒
+`/usr/bin/sample`，剔除等待类栈帧后的忙采样分布：
+
+| 热点 | 忙采样占比 | 处理 |
+| --- | ---: | --- |
+| 主线程合计 | 55% | 见下 |
+| `AgentScreenDetectionMonitor.tick` → `String.contains` | 13% | 字节搜索；静止期停轮询 |
+| PTY 每批 `readText`（活动探针） | 7% | 250ms 节流 |
+| `NSDockTile.display`（Dock 动画） | 6% | 去掉每帧 Task 跳转，timer 加 tolerance |
+| Ghostty renderer + Metal 提交 + CVDisplayLink | 约 40% | 不可见 surface 停止绘制 |
+
+另外两项不在进程自身采样里，但记在 Aster 名下：Info 页展开时每 3 秒 fork 的 `ps` +
+`lsof`（`lsof` 单次约 30ms CPU，折合约 1% 的一个核）；以及后台标签、被遮挡窗口里的
+surface 仍在持续提交 GPU 帧。活动监视器「能耗」页把终端里运行的全部子进程（`claude`、
+`swift build`、测试）都汇总到 Aster 这一行，12 小时电源数值不能直接当作 Aster 自身的开销。
+
+`powermetrics` 需要管理员权限，本轮没有 GPU 瓦数的直接读数；验证依据是定向测试与
+同协议 `sample` 对比，设备级电量测量仍属发布前补充项。
