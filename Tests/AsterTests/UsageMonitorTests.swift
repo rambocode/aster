@@ -33,17 +33,23 @@ private final class StubStatusItem: UsageStatusItemPresenting {
   func remove() { isRemoved = true }
 }
 
-/// 假的页面：只记录生命周期调用与视图是否真的被构建过。
+/// 假的页面：记录生命周期调用、收到的展示口径、刷新次数与视图是否真的被构建过。
 @MainActor
 private final class StubSection: UsageSectionController {
   private(set) var activateCount = 0
   private(set) var suspendCount = 0
   private(set) var didBuildView = false
+  /// 按顺序记录每一次收到的展示口径，用来验证广播的时机而不只是最终值。
+  private(set) var receivedModes: [UsageDisplayMode] = []
+  private(set) var refreshCount = 0
 
   lazy var view: NSView = makeView()
 
   func activate() { activateCount += 1 }
   func suspend() { suspendCount += 1 }
+  func apply(displayMode: UsageDisplayMode) { receivedModes.append(displayMode) }
+  /// 刻意不用默认实现（它会转成 `activate()`），否则分不清刷新和激活。
+  func refreshRequested() { refreshCount += 1 }
 
   private func makeView() -> NSView {
     didBuildView = true
@@ -247,113 +253,208 @@ struct UsagePanelViewControllerTests {
   }
 }
 
-@Suite("UsageMonitor 配额页")
+@Suite("UsageMonitor 浮动窗外壳")
 @MainActor
-struct UsageQuotaSectionTests {
-  @Test("有倒计时内容时排下一次刷新，挂起后取消")
-  func 挂起取消倒计时() throws {
-    let section = UsageQuotaSectionController(store: UsageQuotaStore())
-    section.activate()
-    section.render([try makeUsageAccount()])
-    #expect(section.hasScheduledTick)
-    section.suspend()
-    #expect(!section.hasScheduledTick)
+struct UsagePanelChromeTests {
+  /// 三页全是假实现的容器，外加各页的引用，省掉每个用例重复搭台。
+  @MainActor
+  private struct Rig {
+    let controller: UsagePanelViewController
+    let quota: StubSection
+    let tokens: StubSection
+    let sessions: StubSection
   }
 
-  @Test("没有配额数据时不排任何任务")
-  func 空数据无任务() throws {
-    let section = UsageQuotaSectionController(store: UsageQuotaStore())
-    section.activate()
-    #expect(!section.hasScheduledTick)
-    section.suspend()
+  private static func makeRig(defaults: UserDefaults) -> Rig {
+    let quota = StubSection()
+    let tokens = StubSection()
+    let sessions = StubSection()
+    return Rig(
+      controller: UsagePanelViewController(
+        sections: [.quota: quota, .tokens: tokens, .sessions: sessions], defaults: defaults),
+      quota: quota, tokens: tokens, sessions: sessions)
   }
 
-  @Test("没激活过的配额页不排任何任务")
-  func 未激活无任务() throws {
-    let section = UsageQuotaSectionController(store: UsageQuotaStore())
-    #expect(!section.hasScheduledTick)
+  @Test("切换口径会广播到全部已构建的页")
+  func 口径广播到已构建的页() throws {
+    let defaults = try makeDefaults()
+    let rig = Self.makeRig(defaults: defaults)
+    rig.controller.setVisible(true)
+    rig.controller.select(.tokens)
+
+    rig.controller.select(displayMode: .remaining)
+    #expect(rig.quota.receivedModes == [.used, .remaining])
+    #expect(rig.tokens.receivedModes == [.used, .remaining])
+    // 没切到过的页不该因为一个展示参数被提前唤醒。
+    #expect(rig.sessions.receivedModes.isEmpty)
+    #expect(!rig.sessions.didBuildView)
+    rig.controller.setVisible(false)
   }
 
-  @Test("挂起后再收到快照也不会重新排任务")
-  func 挂起后不复活() throws {
-    let section = UsageQuotaSectionController(store: UsageQuotaStore())
-    section.activate()
-    section.suspend()
-    section.render([try makeUsageAccount()])
-    #expect(!section.hasScheduledTick)
+  @Test("懒构建的新页在构建后立刻拿到当前口径")
+  func 新页补发当前口径() throws {
+    let defaults = try makeDefaults()
+    let rig = Self.makeRig(defaults: defaults)
+    rig.controller.setVisible(true)
+    rig.controller.select(displayMode: .remaining)
+    #expect(rig.sessions.receivedModes.isEmpty)
+
+    rig.controller.select(.sessions)
+    #expect(rig.sessions.receivedModes == [.remaining])
+    rig.controller.setVisible(false)
   }
 
-  @Test("有订阅档位时显示徽标")
-  func 档位徽标显示() throws {
-    let section = UsageQuotaSectionController(store: UsageQuotaStore())
-    section.activate()
-    section.render([try makeUsageAccount(plan: "Max 20x")])
-    let badge = try #require(
-      findUsageView("usage-quota-plan-claudeCode:default", in: section.view)
-        as? UsagePlanBadgeView)
-    #expect(!badge.isHidden)
-    #expect(badge.text == "Max 20x")
-    section.suspend()
+  @Test("底栏切换口径写回 defaults 并在下次恢复")
+  func 口径持久化() throws {
+    let defaults = try makeDefaults()
+    let first = Self.makeRig(defaults: defaults).controller
+    first.setVisible(true)
+    let chip = try #require(
+      findUsageView("usage-panel-mode-remaining", in: first.view) as? NSButton)
+    chip.performClick(nil)
+    #expect(first.displayMode == .remaining)
+    first.setVisible(false)
+
+    let restored = Self.makeRig(defaults: defaults).controller
+    #expect(restored.displayMode == .remaining)
   }
 
-  @Test("没有订阅档位时隐藏徽标")
-  func 档位缺失隐藏徽标() throws {
-    let section = UsageQuotaSectionController(store: UsageQuotaStore())
-    section.activate()
-    var account = try makeUsageAccount(plan: nil)
-    section.render([account])
-    let badge = try #require(
-      findUsageView("usage-quota-plan-claudeCode:default", in: section.view)
-        as? UsagePlanBadgeView)
-    #expect(badge.isHidden)
-    #expect(badge.text.isEmpty)
+  @Test("表头刷新按钮只作用在当前页")
+  func 刷新按钮打到当前页() throws {
+    let defaults = try makeDefaults()
+    let rig = Self.makeRig(defaults: defaults)
+    rig.controller.setVisible(true)
+    rig.controller.select(.tokens)
 
-    // 纯空白与 nil 同样处理，不留一个空胶囊。
-    account.plan = "   "
-    section.render([account])
-    #expect(badge.isHidden)
-    section.suspend()
+    let button = try #require(
+      findUsageView("usage-panel-refresh", in: rig.controller.view) as? NSButton)
+    button.performClick(nil)
+    #expect(rig.tokens.refreshCount == 1)
+    #expect(rig.quota.refreshCount == 0)
+    rig.controller.setVisible(false)
   }
 
-  @Test("档位从无到有时原地出现，卡片实例不变")
-  func 档位原地更新() throws {
-    let section = UsageQuotaSectionController(store: UsageQuotaStore())
-    section.activate()
-    // 同一份账号只改 plan：新建账号会带上新的 `resetsAt`，那属于结构变化。
-    var account = try makeUsageAccount(plan: nil)
-    section.render([account])
-    let card = try #require(
-      findUsageView("usage-quota-card-claudeCode:default", in: section.view))
-    let badge = try #require(
-      findUsageView("usage-quota-plan-claudeCode:default", in: section.view)
-        as? UsagePlanBadgeView)
-    #expect(badge.isHidden)
+  @Test("面板收起后表头不再排自续刷新")
+  func 收起取消表头刷新() throws {
+    let defaults = try makeDefaults()
+    let rig = Self.makeRig(defaults: defaults)
+    #expect(!rig.controller.hasScheduledHeaderTick)
 
-    account.plan = "Pro"
-    section.render([account])
-    #expect(!badge.isHidden)
-    #expect(badge.text == "Pro")
-    #expect(findUsageView("usage-quota-card-claudeCode:default", in: section.view) === card)
-    section.suspend()
+    rig.controller.setVisible(true)
+    #expect(rig.controller.hasScheduledHeaderTick)
+
+    rig.controller.setVisible(false)
+    #expect(!rig.controller.hasScheduledHeaderTick)
   }
 
-  @Test("窗口结构变化仍然重建卡片")
-  func 结构变化重建卡片() throws {
-    let section = UsageQuotaSectionController(store: UsageQuotaStore())
-    section.activate()
-    var account = try makeUsageAccount(usedPercent: 10)
-    section.render([account])
-    let card = try #require(
-      findUsageView("usage-quota-card-claudeCode:default", in: section.view))
+  @Test("从没取到过数据时表头显示「尚未取数」")
+  func 表头无数据文案() throws {
+    let defaults = try makeDefaults()
+    let rig = Self.makeRig(defaults: defaults)
+    rig.controller.setVisible(true)
+    #expect(rig.controller.headerStatusText == L("尚未取数"))
+    rig.controller.setVisible(false)
+  }
 
-    account.windows = [
-      try #require(
-        AgentUsageWindow(
-          kind: .fiveHour, usedPercent: 80, resetsAt: account.windows[0].resetsAt))
-    ]
-    section.render([account])
-    #expect(findUsageView("usage-quota-card-claudeCode:default", in: section.view) !== card)
-    section.suspend()
+  /// 磨砂的三个关键参数很容易在后续重构里被无意改回默认值，每一条都会让面板变成一块灰板
+  /// 或者干脆不透明，而这些都不会让任何别的用例失败。
+  @Test("根视图是磨砂玻璃，窗体透明")
+  func 磨砂透明窗体() throws {
+    let defaults = try makeDefaults()
+    let rig = Self.makeRig(defaults: defaults)
+    rig.controller.setVisible(true)
+
+    let root = try #require(rig.controller.view as? NSVisualEffectView)
+    #expect(root.state == .active)
+    #expect(root.blendingMode == .behindWindow)
+    rig.controller.setVisible(false)
+
+    let panel = UsagePanelController(
+      content: rig.controller, defaults: defaults, anchor: { nil })
+    #expect(!panel.window.isOpaque)
+    #expect(panel.window.hasShadow)
+    #expect(panel.window.backgroundColor == .clear)
+  }
+
+  /// 蒙版要夹在磨砂与内容之间。顺序错了对比度就白补，`hitTest` 忘了放行则整块面板点不动，
+  /// 两种都不会让别的用例失败。
+  @Test("主题蒙版夹在磨砂与内容之间，且不拦鼠标")
+  func 蒙版层级与命中() throws {
+    let defaults = try makeDefaults()
+    let rig = Self.makeRig(defaults: defaults)
+    rig.controller.setVisible(true)
+
+    let root = try #require(rig.controller.view as? UsagePanelRootView)
+    let scrim = root.scrimView
+    #expect(scrim.hitTest(NSPoint(x: 10, y: 10)) == nil)
+
+    let scrimIndex = try #require(root.subviews.firstIndex(of: scrim))
+    let headerIndex = try #require(
+      root.subviews.firstIndex { $0.identifier?.rawValue == "usage-panel-header" })
+    let footerIndex = try #require(
+      root.subviews.firstIndex { $0.identifier?.rawValue == "usage-panel-footer" })
+    #expect(scrimIndex < headerIndex)
+    #expect(scrimIndex < footerIndex)
+    rig.controller.setVisible(false)
+  }
+}
+
+@Suite("UsageMonitor 分段控件")
+@MainActor
+struct UsageSegmentedControlTests {
+  /// 记录每一次回调的值。
+  @MainActor
+  private final class Recorder {
+    private(set) var values: [String] = []
+    func record(_ value: String) { values.append(value) }
+  }
+
+  private static func makeControl(
+    ids: [String], selected: String, recorder: Recorder
+  ) -> UsageSegmentedControl {
+    UsageSegmentedControl(
+      items: ids.map { UsageSegmentedControl.Item(id: $0, title: $0) },
+      selected: selected,
+      identifierPrefix: "seg",
+      onSelect: { [weak recorder] value in recorder?.record(value) })
+  }
+
+  @Test("点别的格才回调，重复点选中的那格不回调")
+  func 点击回调() throws {
+    let recorder = Recorder()
+    let control = Self.makeControl(ids: ["a", "b"], selected: "a", recorder: recorder)
+
+    let segmentA = try #require(findUsageView("seg-a", in: control) as? NSButton)
+    let segmentB = try #require(findUsageView("seg-b", in: control) as? NSButton)
+    segmentA.performClick(nil)
+    #expect(recorder.values.isEmpty)
+
+    segmentB.performClick(nil)
+    #expect(recorder.values == ["b"])
+    #expect(control.selection == "b")
+  }
+
+  @Test("外部 select 只改样式，不回调")
+  func 外部选中不回调() throws {
+    let recorder = Recorder()
+    let control = Self.makeControl(ids: ["a", "b"], selected: "a", recorder: recorder)
+    control.select("b")
+    control.select("b")
+    #expect(control.selection == "b")
+    #expect(recorder.values.isEmpty)
+  }
+
+  @Test("setItems 换项后，旧选中项不在新集合里就退回第一格")
+  func 换项退回第一格() throws {
+    let recorder = Recorder()
+    let control = Self.makeControl(ids: ["a", "b"], selected: "b", recorder: recorder)
+
+    control.setItems(
+      ["x", "y"].map { UsageSegmentedControl.Item(id: $0, title: $0) }, selected: "b")
+    #expect(control.selection == "x")
+    #expect(findUsageView("seg-b", in: control) == nil)
+    #expect(findUsageView("seg-y", in: control) != nil)
+    #expect(recorder.values.isEmpty)
   }
 }
 

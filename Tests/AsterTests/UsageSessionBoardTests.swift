@@ -107,6 +107,77 @@ struct UsageSessionBoardSectionTests {
     #expect(controller.cardsInOrder.first?.directoryText == "~/project")
   }
 
+  @Test("指标列是三等分的，标签在上数值在下")
+  func 指标三等分列() {
+    let source = StubBoardSource()
+    let id = UUID()
+    source.entries = [makeEntry(id, status: .working, title: "alpha")]
+    let controller = makeController(source)
+    controller.activate()
+    defer { controller.suspend() }
+
+    let card = controller.cardsInOrder.first
+    let columns = card?.metricColumns ?? []
+    #expect(card?.metricsDistribution == .fillEqually)
+    #expect(columns.count == 3)
+    #expect(columns.map(\.nameText) == ["CPU", "内存", "进程"])
+    // 每列都是「标签在上、数值在下」的纵向两行。
+    #expect(columns.allSatisfy({ $0.orientation == .vertical }))
+    #expect(columns.map(\.orderedTexts.count) == [2, 2, 2])
+    #expect(columns.first?.orderedTexts.first == "CPU")
+    #expect(columns.first?.orderedTexts.last == card?.cpuText)
+    #expect(findView("usage-session-metric-cpu", in: controller.view) != nil)
+  }
+
+  @Test("还没有采样结果时三列都是破折号")
+  func 首帧指标破折号() {
+    let source = StubBoardSource()
+    let id = UUID()
+    source.entries = [makeEntry(id, status: .working, title: "alpha")]
+    // 间隔给足，保证断言发生在第一拍采样回来之前。
+    let controller = makeController(source, interval: .seconds(60))
+    controller.activate()
+    defer { controller.suspend() }
+
+    let card = controller.cardsInOrder.first
+    #expect(card?.cpuText == "—")
+    #expect(card?.memoryText == "—")
+    #expect(card?.processText == "—")
+  }
+
+  @Test("等待输入的卡片有红竖线与红色徽标，其余用中性色")
+  func 等待输入红色标记() {
+    let source = StubBoardSource()
+    let blocked = UUID()
+    let working = UUID()
+    source.entries = [
+      makeEntry(blocked, status: .blocked, title: "zeta"),
+      makeEntry(working, status: .working, title: "alpha"),
+    ]
+    let controller = makeController(source)
+    controller.activate()
+    defer { controller.suspend() }
+
+    #expect(controller.cardsInOrder.first?.showsBlockedAccent == true)
+    #expect(controller.cardsInOrder.first?.statusTextColor == NSColor.systemRed)
+    #expect(controller.cardsInOrder.last?.showsBlockedAccent == false)
+    #expect(controller.cardsInOrder.last?.statusTextColor == AsterTheme.secondaryInk)
+    #expect(findView("usage-session-status-badge", in: controller.view) != nil)
+  }
+
+  @Test("目录中间截断")
+  func 目录中间截断() {
+    let source = StubBoardSource()
+    let id = UUID()
+    source.entries = [makeEntry(id, status: .working, title: "alpha")]
+    let controller = makeController(source)
+    controller.activate()
+    defer { controller.suspend() }
+
+    #expect(controller.cardsInOrder.first?.directoryTruncatesMiddle == true)
+    #expect(controller.cardsInOrder.first?.directoryText == "~/project")
+  }
+
   @Test("没有会话时显示空态且不采样")
   func 空态不采样() {
     let source = StubBoardSource()
@@ -213,11 +284,14 @@ struct UsageSessionBoardSectionTests {
     #expect(controller.hasScheduledPoll)
 
     // 第一拍没有上一份样本，CPU 只能是破折号，内存与进程数已经可用。
-    await waitUntil { controller.cardsInOrder.first?.footprintText.contains("512 MB") == true }
-    #expect(controller.cardsInOrder.first?.footprintText == "CPU — · 内存 512 MB · 2 个进程")
+    await waitUntil { controller.cardsInOrder.first?.memoryText == "512 MB" }
+    #expect(controller.cardsInOrder.first?.cpuText == "—")
+    #expect(controller.cardsInOrder.first?.processText == "2")
 
-    await waitUntil { controller.cardsInOrder.first?.footprintText.contains("50%") == true }
-    #expect(controller.cardsInOrder.first?.footprintText == "CPU 50% · 内存 512 MB · 2 个进程")
+    await waitUntil { controller.cardsInOrder.first?.cpuText == "50%" }
+    #expect(controller.cardsInOrder.first?.cpuText == "50%")
+    #expect(controller.cardsInOrder.first?.memoryText == "512 MB")
+    #expect(controller.cardsInOrder.first?.processText == "2")
   }
 
   @Test("拿不到根进程的卡片占用显示破折号")
@@ -231,7 +305,9 @@ struct UsageSessionBoardSectionTests {
 
     // 采了好几拍也拿不到根进程，占用一直是破折号。
     try? await Task.sleep(for: .milliseconds(80))
-    #expect(controller.cardsInOrder.first?.footprintText == "CPU — · 内存 —")
+    #expect(controller.cardsInOrder.first?.cpuText == "—")
+    #expect(controller.cardsInOrder.first?.memoryText == "—")
+    #expect(controller.cardsInOrder.first?.processText == "—")
   }
 
   @Test("挂起后停止采样，迟到的采样结果不落到界面")
@@ -258,7 +334,9 @@ struct UsageSessionBoardSectionTests {
     gate.signal()
     // 给迟到的结果足够时间回到主线程；它应当被世代校验挡下。
     try? await Task.sleep(for: .milliseconds(80))
-    #expect(controller.cardsInOrder.first?.footprintText == "CPU — · 内存 —")
+    #expect(controller.cardsInOrder.first?.cpuText == "—")
+    #expect(controller.cardsInOrder.first?.memoryText == "—")
+    #expect(controller.cardsInOrder.first?.processText == "—")
     #expect(controller.hasScheduledPoll == false)
   }
 }

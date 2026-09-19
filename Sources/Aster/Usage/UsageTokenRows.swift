@@ -1,4 +1,4 @@
-// Token 页的数字格式与行视图：紧凑计数、总量卡、占比行、区间 chip。
+// Token 页的数字格式与行视图：紧凑计数、占比文本、按 Agent 行、按项目行、区间 chip。
 import AppKit
 import AsterCore
 import Foundation
@@ -43,6 +43,18 @@ enum TokenNumberText {
   /// 保留一位小数。
   private static func oneDecimal(_ value: Double) -> Double { (value * 10).rounded() / 10 }
 
+  /// 占比文本：`100%` / `42%` / `3.2%` / `<0.1%`。
+  ///
+  /// 纯数字格式，不进翻译表。10% 以上用整数是因为行里只放得下三四个字符，而小项目
+  /// 全写成 `0%` 会让十几行看起来一模一样，所以 10% 以下保留一位小数。
+  static func percent(_ share: Double) -> String {
+    let value = min(max(share, 0), 1) * 100
+    if value >= 99.95 { return "100%" }
+    if value >= 10 { return String(format: "%.0f%%", value) }
+    if value >= 0.1 { return String(format: "%.1f%%", value) }
+    return value > 0 ? "<0.1%" : "0%"
+  }
+
   /// 带千分位的完整数字，只用在 tooltip 里——那里有空间给出精确值。
   static func grouped(_ value: Int64) -> String {
     groupedFormatter.string(from: NSNumber(value: value)) ?? "\(value)"
@@ -67,129 +79,57 @@ func usageTokenRangeTitle(_ range: TokenStatsRange) -> String {
   }
 }
 
-/// Token 页的卡片底：淡底圆角，颜色随明暗外观刷新。
-@MainActor
-final class UsageTokenCardView: NSView {
-  override init(frame frameRect: NSRect) {
-    super.init(frame: frameRect)
-    identifier = NSUserInterfaceItemIdentifier("usage-token-card")
-    wantsLayer = true
-    layer?.cornerRadius = 8
-    applyColors()
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  override func viewDidChangeEffectiveAppearance() {
-    super.viewDidChangeEffectiveAppearance()
-    applyColors()
-  }
-
-  private func applyColors() {
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      layer?.backgroundColor = AsterTheme.ink.withAlphaComponent(0.05).cgColor
-      layer?.borderColor = AsterTheme.hairline.withAlphaComponent(0.5).cgColor
-      layer?.borderWidth = 1
-    }
-  }
-}
-
-/// 总量卡：一个大数字加输入 / 缓存写入 / 缓存读取 / 输出四列。
-@MainActor
-func makeUsageTokenTotalsCard(_ totals: TokenTotals) -> NSView {
-  let card = UsageTokenCardView()
-  card.identifier = NSUserInterfaceItemIdentifier("usage-token-totals")
-  card.toolTip = TokenNumberText.breakdown(totals)
-
-  let caption = makeLabel(L("总量"), size: 10, color: AsterTheme.tertiaryInk)
-  let headline = makeLabel(
-    TokenNumberText.compact(totals.total), size: 26, weight: .semibold, monospaced: true)
-
-  let columns = NSStackView(views: [
-    makeUsageTokenColumn(L("输入"), totals.input),
-    makeUsageTokenColumn(L("缓存写入"), totals.cacheWrite),
-    makeUsageTokenColumn(L("缓存读取"), totals.cacheRead),
-    makeUsageTokenColumn(L("输出"), totals.output),
-  ])
-  columns.orientation = .horizontal
-  columns.alignment = .top
-  columns.distribution = .fillEqually
-  columns.spacing = 6
-
-  let rows = NSStackView(views: [caption, headline, columns])
-  rows.orientation = .vertical
-  rows.alignment = .leading
-  rows.spacing = 2
-  rows.setCustomSpacing(8, after: headline)
-  card.addSubview(rows)
-  rows.pinEdges(to: card, insets: NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12))
-  return card
-}
-
-/// 总量卡里的一列：上面是列名，下面是紧凑数字。
-@MainActor
-private func makeUsageTokenColumn(_ title: String, _ value: Int64) -> NSView {
-  let name = makeLabel(title, size: 10, color: AsterTheme.tertiaryInk)
-  let number = makeLabel(
-    TokenNumberText.compact(value), size: 11, weight: .medium, color: AsterTheme.secondaryInk,
-    monospaced: true)
-  let stack = NSStackView(views: [name, number])
-  stack.orientation = .vertical
-  stack.alignment = .leading
-  stack.spacing = 1
-  return stack
-}
-
-/// 小节标题（「按 Agent」「按项目」）。
+/// 卡片内的小节标题（「按 Agent」「按项目」）。
 @MainActor
 func makeUsageTokenSectionTitle(_ text: String) -> NSTextField {
   makeLabel(text, size: 11, weight: .semibold, color: AsterTheme.secondaryInk)
 }
 
-/// 排行里的一行：名称 + 占比条 + 紧凑数字。可点击（项目行用来展开热力图）。
-///
-/// 填充用 `CALayer` 直接设 frame，不用 Auto Layout 的 multiplier：后者不可变，
-/// 改比例得整条重建约束。
+/// 行右端靠右对齐的数字列。占比列与数值列共用一套排版，两张卡的右边缘才对得齐。
 @MainActor
-final class UsageTokenShareRow: NSView {
-  private static let trackHeight: CGFloat = 5
+private func makeTrailingNumber(
+  _ text: String, size: CGFloat, weight: NSFont.Weight, color: NSColor, minimumWidth: CGFloat
+) -> NSTextField {
+  let label = makeLabel(text, size: size, weight: weight, color: color, monospaced: true)
+  label.alignment = .right
+  label.setContentHuggingPriority(.required, for: .horizontal)
+  label.setContentCompressionResistancePriority(.required, for: .horizontal)
+  label.widthAnchor.constraint(greaterThanOrEqualToConstant: minimumWidth).isActive = true
+  return label
+}
 
-  private let track = NSView()
-  private let fill = CALayer()
-  private let fraction: Double
-  private let onClick: (() -> Void)?
-  /// 展开态的行把名称加重，让「这一行现在被打开着」在视觉上立得住。
-  private let isHighlighted: Bool
+/// 按 Agent 的一行：图标 + 名称（左），占比与数值靠右。
+///
+/// 这里**不画进度条**：provider 只有几行且名称自带辨识度，条形反而把右边的数字挤窄；
+/// 需要排序感的是项目那张卡。
+@MainActor
+final class UsageTokenAgentRow: NSView {
+  let percentLabel: NSTextField
+  let valueLabel: NSTextField
 
-  init(
-    name: String, value: Int64, share: Double, tooltip: String? = nil,
-    highlighted: Bool = false, onClick: (() -> Void)? = nil
-  ) {
-    fraction = min(max(share, 0), 1)
-    self.onClick = onClick
-    isHighlighted = highlighted
+  init(provider: AgentProvider, value: Int64, share: Double, tooltip: String?) {
+    percentLabel = makeTrailingNumber(
+      TokenNumberText.percent(share), size: 10, weight: .regular,
+      color: AsterTheme.secondaryInk, minimumWidth: 40)
+    valueLabel = makeTrailingNumber(
+      TokenNumberText.compact(value), size: 11, weight: .semibold, color: AsterTheme.ink,
+      minimumWidth: 54)
     super.init(frame: .zero)
+    identifier = NSUserInterfaceItemIdentifier("usage-token-agent-\(provider.rawValue)")
     translatesAutoresizingMaskIntoConstraints = false
     toolTip = tooltip
 
-    let label = makeLabel(
-      name, size: 11, weight: highlighted ? .semibold : .regular,
-      color: highlighted ? AsterTheme.ink : AsterTheme.secondaryInk)
-    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    let number = makeLabel(
-      TokenNumberText.compact(value), size: 10, weight: .medium, color: AsterTheme.secondaryInk,
-      monospaced: true)
-    number.alignment = .right
-    number.setContentHuggingPriority(.required, for: .horizontal)
+    let icon = NSImageView()
+    icon.image = TabIconArtwork.image(named: TabRowButton.agentIconName(provider))
+    icon.imageScaling = .scaleProportionallyUpOrDown
+    icon.contentTintColor = AsterTheme.secondaryInk
+    icon.translatesAutoresizingMaskIntoConstraints = false
 
-    track.wantsLayer = true
-    track.layer?.cornerRadius = Self.trackHeight / 2
-    track.layer?.masksToBounds = true
-    track.layer?.addSublayer(fill)
-    fill.cornerRadius = Self.trackHeight / 2
-    track.translatesAutoresizingMaskIntoConstraints = false
+    let name = makeLabel(provider.displayName, size: 11, color: AsterTheme.ink)
+    name.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-    let stack = NSStackView(views: [label, track, number])
+    let stack = NSStackView(views: [icon, name, percentLabel, valueLabel])
     stack.orientation = .horizontal
     stack.alignment = .centerY
     stack.spacing = 6
@@ -197,19 +137,110 @@ final class UsageTokenShareRow: NSView {
     addSubview(stack)
     stack.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      track.heightAnchor.constraint(equalToConstant: Self.trackHeight),
-      track.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.34),
-      label.widthAnchor.constraint(greaterThanOrEqualToConstant: 40),
-      number.widthAnchor.constraint(greaterThanOrEqualToConstant: 46),
+      icon.widthAnchor.constraint(equalToConstant: 15),
+      icon.heightAnchor.constraint(equalToConstant: 15),
+      heightAnchor.constraint(greaterThanOrEqualToConstant: 20),
       stack.leadingAnchor.constraint(equalTo: leadingAnchor),
       stack.trailingAnchor.constraint(equalTo: trailingAnchor),
       stack.topAnchor.constraint(equalTo: topAnchor),
       stack.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
+  }
+
+  required init?(coder: NSCoder) { nil }
+}
+
+/// 按项目的一行：名称 + 占比条 + 占比 + 数值 + 展开箭头。整行可点击。
+///
+/// 条形填充用 `CALayer` 直接设 frame，不用 Auto Layout 的 multiplier：后者不可变，
+/// 改比例得整条重建约束。
+@MainActor
+final class UsageTokenProjectRow: NSView {
+  private static let trackHeight: CGFloat = 5
+
+  let nameLabel: NSTextField
+  let percentLabel: NSTextField
+  let valueLabel: NSTextField
+  /// 占比条。名称先截断、条先让宽，数值与占比不让——窄面板里数字是这一行的正事。
+  let track = NSView()
+
+  private let fill = CALayer()
+  private let chevron = NSImageView()
+  private let fraction: Double
+  private let onClick: () -> Void
+  private(set) var isExpanded = false
+
+  init(
+    key: String, name: String, value: Int64, share: Double, tooltip: String?,
+    onClick: @escaping () -> Void
+  ) {
+    fraction = min(max(share, 0), 1)
+    self.onClick = onClick
+    nameLabel = makeLabel(name, size: 11, color: AsterTheme.secondaryInk)
+    percentLabel = makeTrailingNumber(
+      TokenNumberText.percent(share), size: 10, weight: .regular,
+      color: AsterTheme.secondaryInk, minimumWidth: 40)
+    valueLabel = makeTrailingNumber(
+      TokenNumberText.compact(value), size: 11, weight: .semibold, color: AsterTheme.ink,
+      minimumWidth: 54)
+    super.init(frame: .zero)
+    identifier = NSUserInterfaceItemIdentifier("usage-token-project-\(key)")
+    translatesAutoresizingMaskIntoConstraints = false
+    toolTip = tooltip
+
+    nameLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+    track.identifier = NSUserInterfaceItemIdentifier("usage-token-share-track")
+    track.wantsLayer = true
+    track.layer?.cornerRadius = Self.trackHeight / 2
+    track.layer?.masksToBounds = true
+    track.layer?.addSublayer(fill)
+    fill.cornerRadius = Self.trackHeight / 2
+    track.translatesAutoresizingMaskIntoConstraints = false
+
+    chevron.identifier = NSUserInterfaceItemIdentifier("usage-token-project-chevron")
+    chevron.imageScaling = .scaleProportionallyUpOrDown
+    chevron.contentTintColor = AsterTheme.tertiaryInk
+    chevron.translatesAutoresizingMaskIntoConstraints = false
+
+    let stack = NSStackView(views: [nameLabel, track, percentLabel, valueLabel, chevron])
+    stack.orientation = .horizontal
+    stack.alignment = .centerY
+    stack.spacing = 6
+    stack.distribution = .fill
+    addSubview(stack)
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    // 条宽只是「希望占行宽的四分之一」，不是硬约束：440pt 面板再窄下去时它得先让路，
+    // 右边的占比和数值是必读信息，不能被挤没。
+    let trackWidth = track.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.26)
+    trackWidth.priority = .defaultHigh
+    NSLayoutConstraint.activate([
+      track.heightAnchor.constraint(equalToConstant: Self.trackHeight),
+      trackWidth,
+      track.widthAnchor.constraint(greaterThanOrEqualToConstant: 24),
+      nameLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 40),
+      chevron.widthAnchor.constraint(equalToConstant: 10),
+      chevron.heightAnchor.constraint(equalToConstant: 10),
+      heightAnchor.constraint(greaterThanOrEqualToConstant: 20),
+      stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+      stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+      stack.topAnchor.constraint(equalTo: topAnchor),
+      stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+    applyExpansionStyle()
     applyColors()
   }
 
   required init?(coder: NSCoder) { nil }
+
+  /// 切换展开态。只改样式，展开块由控制器插在本行下方。
+  func setExpanded(_ expanded: Bool) {
+    guard expanded != isExpanded else { return }
+    isExpanded = expanded
+    applyExpansionStyle()
+    applyColors()
+  }
 
   override func layout() {
     super.layout()
@@ -222,92 +253,25 @@ final class UsageTokenShareRow: NSView {
     applyColors()
   }
 
-  override func mouseDown(with event: NSEvent) {
-    guard let onClick else {
-      super.mouseDown(with: event)
-      return
-    }
-    onClick()
-  }
+  override func mouseDown(with event: NSEvent) { onClick() }
 
-  override func resetCursorRects() {
-    guard onClick != nil else { return }
-    addCursorRect(bounds, cursor: .pointingHand)
+  override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+
+  /// 展开态的行把名称加重并把箭头转向下，让「这一行现在被打开着」在视觉上立得住。
+  private func applyExpansionStyle() {
+    nameLabel.font = NSFont.systemFont(ofSize: 11, weight: isExpanded ? .semibold : .regular)
+    nameLabel.textColor = isExpanded ? AsterTheme.ink : AsterTheme.secondaryInk
+    let symbol = isExpanded ? "chevron.down" : "chevron.right"
+    chevron.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
   }
 
   private func applyColors() {
     effectiveAppearance.performAsCurrentDrawingAppearance {
-      track.layer?.backgroundColor = AsterTheme.hairline.cgColor
+      // 轨道压到 12% 的 ink：磨砂面板下更淡的底会和卡片融掉，条和轨道就分不开了。
+      track.layer?.backgroundColor = AsterTheme.ink.withAlphaComponent(0.12).cgColor
       fill.backgroundColor =
-        isHighlighted
+        isExpanded
         ? AsterTheme.accent.cgColor : AsterTheme.accent.withAlphaComponent(0.7).cgColor
-    }
-  }
-}
-
-/// Token 页顶部的区间 chip 行。视觉与浮动窗页签一致（选中项淡底圆角）。
-@MainActor
-final class UsageTokenRangeBar: NSStackView {
-  private var buttons: [TokenStatsRange: NSButton] = [:]
-  private let onSelect: (TokenStatsRange) -> Void
-  private(set) var selection: TokenStatsRange
-
-  init(selection: TokenStatsRange, onSelect: @escaping (TokenStatsRange) -> Void) {
-    self.selection = selection
-    self.onSelect = onSelect
-    super.init(frame: .zero)
-    orientation = .horizontal
-    alignment = .centerY
-    spacing = 4
-    for range in TokenStatsRange.allCases {
-      let button = ActionButton(title: usageTokenRangeTitle(range), bezelStyle: .inline) {
-        [weak self] in
-        self?.handleClick(range)
-      }
-      button.isBordered = false
-      button.identifier = NSUserInterfaceItemIdentifier("usage-token-range-\(range.rawValue)")
-      buttons[range] = button
-      addArrangedSubview(button)
-    }
-    applyStyle()
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  /// 外部改选中态（恢复持久化）时只更新样式，不再回调。
-  func select(_ range: TokenStatsRange) {
-    guard selection != range else { return }
-    selection = range
-    applyStyle()
-  }
-
-  override func viewDidChangeEffectiveAppearance() {
-    super.viewDidChangeEffectiveAppearance()
-    applyStyle()
-  }
-
-  private func handleClick(_ range: TokenStatsRange) {
-    guard selection != range else { return }
-    selection = range
-    applyStyle()
-    onSelect(range)
-  }
-
-  private func applyStyle() {
-    for (range, button) in buttons {
-      let selected = range == selection
-      button.attributedTitle = NSAttributedString(
-        string: usageTokenRangeTitle(range),
-        attributes: [
-          .font: NSFont.systemFont(ofSize: 11, weight: selected ? .semibold : .regular),
-          .foregroundColor: selected ? AsterTheme.ink : AsterTheme.secondaryInk,
-        ])
-      button.wantsLayer = true
-      button.layer?.cornerRadius = 5
-      button.effectiveAppearance.performAsCurrentDrawingAppearance {
-        button.layer?.backgroundColor =
-          selected ? AsterTheme.ink.withAlphaComponent(0.08).cgColor : NSColor.clear.cgColor
-      }
     }
   }
 }

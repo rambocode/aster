@@ -167,6 +167,51 @@ mach 绝对时间单位，Apple Silicon 上换算系数不是 1。
 
 浮动窗是 `.nonactivatingPanel` + `.floating` 的 `NSPanel`，可加入所有 Space；首次贴在状态栏
 图标下方，之后记住位置（`aster.usage.panel-frame.v1`），屏幕布局变了就夹回可见区域。
+默认 560×680：每个配额窗口占两行（名称+条+百分比 / 接近上限+重置时间），380pt 宽会挤成一团。
+
+## 界面
+
+视觉与信息结构照 tally 重做，但它是 SwiftUI 而 `Sources/Aster` 禁止 SwiftUI，所以只学布局，
+用 AppKit 实现，颜色一律走 `AsterTheme`（要同时支持亮/暗，不能硬编码它的深色）。
+
+三页共用一套卡片语言：圆角卡 + 卡头（图标 + 名称 + 小胶囊徽标）+ 「标签在上、数值在下」的
+等分指标列。表头是标题 + 页签 + 刷新按钮 + 「X 前更新」；底栏是「已用 / 剩余」切换。
+
+刻意没照搬的三处：
+- **不做「refreshes in 52s」倒计时**。四家来源节奏不同（Claude 300 秒被动轮询、Codex 与 Cursor
+  各自轮询且带节流），一个统一倒计时会骗人。改成「X 前更新」加手动刷新按钮。
+- **不做 fleet 汇总条与「N acct/wk」顾问行**。那是给多账号池设计的，每家只有一个账号时
+  它就是卡片的重复。
+- **不做底栏那排窗口管理图标**。我们没有对应能力。
+
+「已用 / 剩余」（`UsageDisplayMode`，持久化在 `aster.usage.display-mode.v1`）只改展示：
+**严重度永远按已用百分比算**，不随口径变——否则切到「剩余」后快见底的条会变成绿色，
+正好把警告藏起来。
+
+### 磨砂背景与可读性
+
+面板底是 `NSVisualEffectView`（`material = .popover`、`blendingMode = .behindWindow`、
+`state = .active`，窗体 `isOpaque = false`），透出桌面。`.behindWindow` 会把壁纸亮度混进来，
+但**不会翻转应用的 `effectiveAppearance`**——亮色模式下文字仍是深色，遇到深色壁纸就读不出来。
+两层防线解决，都不依赖壁纸：
+
+1. **主题蒙版**：磨砂之上压一层 `AsterTheme.paper`，不透明度 `UsagePanelRootView.scrimAlpha`
+   （现 0.70）。它是「玻璃感 vs 可读性」的**唯一旋钮**。蒙版 `hitTest` 返回 nil，不拦鼠标。
+2. **内容不直接落在玻璃上**：三页卡片共用 `UsageCardStyle`（`AsterTheme.paper` 55% 底 +
+   全强度 `hairline` 描边）。磨砂下半强度的线会断续，低透明度的 `ink` 着色会被桌面冲掉。
+   卡片区域叠加后实际不透明度约 0.87，玻璃感主要留在留白、表头与底栏。
+
+**卡片样式只有一份真值**（`Sources/Aster/Usage/UsageCardStyle.swift`）。Token 页有一条测试
+断言各卡的圆角、边宽与底色 alpha 与它一致，防止有人再往某一页塞硬编码常量。
+同理，磨砂下所有 `tertiaryInk` 的小字（目录、月份刻度、周几行标签、指标列标签）都提到了
+`secondaryInk`，热力图空格子与进度条轨道提到 `ink` 12%——6% 在玻璃上会被桌面吃掉。
+
+曾经考虑但**不做**的第三条路：采样桌面亮度自动切换亮/暗外观。要屏幕录制权限，开销也大。
+
+### 分段控件
+
+页签、底栏口径、Token 页区间三处共用 `UsageSegmentedControl`（一条圆角轨道 + 浮起的选中
+胶囊）。各格按最宽文字的 semibold 宽度**等宽**，否则切换时胶囊宽度会跳。
 
 ## 验证
 

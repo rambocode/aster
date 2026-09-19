@@ -436,10 +436,12 @@
 "删除右侧词" = "Delete Word Right";
 "删除左侧词" = "Delete Word Left";
 "删除这条 Memory？" = "Delete This Memory?";
+"刷新" = "Refresh";
 "前台通知" = "Foreground Notifications";
 "前景色" = "Foreground";
 "前置全部窗口" = "Bring All to Front";
 "前进" = "Forward";
+"剩余" = "Left";
 "剪切" = "Cut";
 "剪贴板建议" = "Clipboard suggestion";
 "加入 Prompt 队列…" = "Add to Prompt Queue…";
@@ -529,6 +531,9 @@
 "启用 Shell 集成" = "Enable Shell Integration";
 "启用路径：%@（原子切换的 symlink）" = "Enable path: %@ (atomically switched symlink)";
 "周" = "Wk";
+"周一" = "Mon";
+"周三" = "Wed";
+"周五" = "Fri";
 "周期" = "Cycle";
 "命令" = "Command";
 "命令以非零状态退出时发送系统通知" = "Send a System Notification When a Command Exits with a Nonzero Status";
@@ -671,6 +676,7 @@
 "将把 Aster 写入以下应用的外部终端设置（terminal.external.osxExec）：" = "This will write Aster into the following apps' external terminal setting (terminal.external.osxExec):";
 "尚无记录" = "No Records Yet";
 "尚无记录。在设置 → 智能体 → Session Memory 中开启记录。" = "No records yet. Enable recording in Settings → Agent → Session Memory.";
+"尚未取数" = "No data yet";
 "尚未建立连接。" = "No connection established yet.";
 "尚未检查更新" = "Updates not checked yet";
 "尚未请求" = "Not requested yet";
@@ -753,6 +759,7 @@
 "已清空全部记录。" = "All records have been cleared.";
 "已清除选中的本机补全数据。" = "The selected local autocomplete data has been cleared.";
 "已清除链接安全授权。" = "Link security authorizations have been cleared.";
+"已用" = "Used";
 "已用 %@" = "Used %@";
 "已用 %@（含赠送 %@）" = "Used %@ (incl. %@ bonus)";
 "已禁用" = "Disabled";
@@ -919,6 +926,7 @@
 "排除" = "Exclude";
 "探测失败：%@" = "Detection failed: %@";
 "接受候选" = "Accept Candidate";
+"接近上限" = "Near limit";
 "控制" = "Control";
 "控制 OpenType 标准、上下文和 discretionary ligatures" = "Control OpenType Standard, Contextual, and Discretionary Ligatures";
 "控制 macOS 字形平滑；默认使用系统抗锯齿" = "Control macOS Font Smoothing; Uses System Anti-Aliasing by Default";

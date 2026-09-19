@@ -114,7 +114,7 @@
 "CLI 与 IPC" = "CLI et IPC";
 "CLI 输出缓冲不存在、不是普通文件或读取期间发生变化。" = "Le tampon de sortie CLI n’existe pas, n’est pas un fichier régulier ou a changé pendant la lecture.";
 "CLI 输出超过大小上限（%@ bytes）。" = "La sortie CLI dépasse la limite de taille (%@ bytes).";
-"CPU" = "Processeur";
+"CPU" = "CPU";
 "CPU %@ · 内存 %@" = "CPU %@ · Mémoire %@";
 "CPU %@ · 内存 %@ · %@ 个进程" = "CPU %@ · Mémoire %@ · %@ processus";
 "Claude Code 运行时显示 5 小时 / 每周配额，Codex 另含当前会话上下文占比" = "Claude Code affiche le quota de 5 heures / hebdomadaire à l'exécution ; Codex inclut aussi le taux d'utilisation du contexte de la session en cours";
@@ -436,10 +436,12 @@
 "删除右侧词" = "Supprimer le mot à droite";
 "删除左侧词" = "Supprimer le mot à gauche";
 "删除这条 Memory？" = "Supprimer cette Memory ?";
+"刷新" = "Actualiser";
 "前台通知" = "Notifications au premier plan";
 "前景色" = "Premier plan";
 "前置全部窗口" = "Tout ramener au premier plan";
 "前进" = "Suivant";
+"剩余" = "Restant";
 "剪切" = "Couper";
 "剪贴板建议" = "Suggestion du presse-papiers";
 "加入 Prompt 队列…" = "Ajouter à la file de Prompt…";
@@ -529,6 +531,9 @@
 "启用 Shell 集成" = "Activer l'intégration Shell";
 "启用路径：%@（原子切换的 symlink）" = "Chemin d'activation : %@ (lien symbolique commuté atomiquement)";
 "周" = "Sem.";
+"周一" = "Lun";
+"周三" = "Mer";
+"周五" = "Ven";
 "周期" = "Cycle";
 "命令" = "Commande";
 "命令以非零状态退出时发送系统通知" = "Envoyer une notification système quand une commande se termine avec un statut non nul";
@@ -671,6 +676,7 @@
 "将把 Aster 写入以下应用的外部终端设置（terminal.external.osxExec）：" = "Ceci écrira Aster dans le réglage de terminal externe (terminal.external.osxExec) des applications suivantes :";
 "尚无记录" = "Aucun enregistrement pour le moment";
 "尚无记录。在设置 → 智能体 → Session Memory 中开启记录。" = "Aucun enregistrement. Activez l'enregistrement dans Réglages → Agent → Session Memory.";
+"尚未取数" = "Aucune donnée";
 "尚未建立连接。" = "Aucune connexion n'a encore été établie.";
 "尚未检查更新" = "Mises à jour pas encore vérifiées";
 "尚未请求" = "Pas encore demandé";
@@ -753,6 +759,7 @@
 "已清空全部记录。" = "Tous les enregistrements ont été effacés.";
 "已清除选中的本机补全数据。" = "Les données d'autocomplétion locales sélectionnées ont été effacées.";
 "已清除链接安全授权。" = "Les autorisations de sécurité des liens ont été effacées.";
+"已用" = "Utilisé";
 "已用 %@" = "Utilisé %@";
 "已用 %@（含赠送 %@）" = "Utilisé %@ (dont %@ offerts)";
 "已禁用" = "Désactivé";
@@ -919,6 +926,7 @@
 "排除" = "Exclure";
 "探测失败：%@" = "Échec de la détection : %@";
 "接受候选" = "Accepter la suggestion";
+"接近上限" = "Proche de la limite";
 "控制" = "Contrôle";
 "控制 OpenType 标准、上下文和 discretionary ligatures" = "Contrôler les ligatures OpenType standard, contextuelles et discrétionnaires";
 "控制 macOS 字形平滑；默认使用系统抗锯齿" = "Contrôler le lissage des polices macOS ; utilise l'anticrénelage système par défaut";

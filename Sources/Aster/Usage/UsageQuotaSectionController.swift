@@ -1,4 +1,4 @@
-// AI 用量浮动窗「配额」页：每个账号一张卡，逐窗口显示已用百分比与重置倒计时。
+// AI 用量浮动窗「配额」页：每个账号一张卡，逐窗口两行显示百分比与重置倒计时。
 import AppKit
 import AsterCore
 import Combine
@@ -12,7 +12,12 @@ import Foundation
 final class UsageQuotaSectionController: UsageSectionController {
   /// 倒计时文字的刷新间隔。分钟级精度不需要更密的 tick。
   static let tickInterval = Duration.seconds(60)
+  /// 卡片排两列所需的最小内容宽度。
+  static let twoColumnMinimumWidth: CGFloat = 620
+  /// 掉回一列的宽度。比进两列的阈值低一档形成滞回，宽度正好卡在阈值上时不会来回跳。
+  static let singleColumnMaximumWidth: CGFloat = 600
   private static let contentInset: CGFloat = 12
+  private static let cardSpacing: CGFloat = 10
 
   private let store: UsageQuotaStore
   private let contentStack = NSStackView()
@@ -23,6 +28,17 @@ final class UsageQuotaSectionController: UsageSectionController {
   private var renderedSignatures: [CardSignature]?
   /// 当前卡片，与最近一次渲染的账号同序。
   private var cards: [UsageQuotaCardView] = []
+  /// 当前展示口径。新建卡片要带上它，否则切过口径后新到的账号会显示成另一套数字。
+  private var displayMode: UsageDisplayMode = .used
+  /// `addFullWidth` 装上的宽度约束。重排容器前必须先拆掉，否则同一个视图会攒下多条。
+  private var fullWidthConstraints: [NSLayoutConstraint] = []
+
+  private lazy var emptyLabel: NSTextField = makeWrappingLabel(
+    L("还没有配额数据。启动一次 Claude Code 或 Codex 后这里会显示。"),
+    size: 11, color: AsterTheme.secondaryInk)
+  private lazy var footnoteLabel: NSTextField = makeWrappingLabel(
+    L("其它 Agent 没有本地配额数据，只统计 token。"),
+    size: 10, color: AsterTheme.tertiaryInk)
 
   /// 卡片结构签名。
   ///
@@ -36,6 +52,9 @@ final class UsageQuotaSectionController: UsageSectionController {
 
   /// 是否还排着下一次倒计时刷新。页面挂起后必须为 false。
   var hasScheduledTick: Bool { tickTask != nil }
+
+  /// 当前列数。宽度跨过 `twoColumnMinimumWidth` 时在 1 和 2 之间切换。
+  private(set) var columnCount = 1
 
   init(store: UsageQuotaStore) {
     self.store = store
@@ -72,17 +91,28 @@ final class UsageQuotaSectionController: UsageSectionController {
     tickTask = nil
   }
 
+  /// 「已用 / 剩余」口径切换。
+  ///
+  /// 走原地更新那条路：卡片实例、滚动位置与 tooltip 都保留，只改数字、条宽。
+  /// 颜色不动——严重度永远按已用百分比算，见 `UsageQuotaWindowRow.severity`。
+  func apply(displayMode: UsageDisplayMode) {
+    guard displayMode != self.displayMode else { return }
+    self.displayMode = displayMode
+    for card in cards { card.apply(displayMode: displayMode) }
+  }
+
   // MARK: - 视图
 
   private func makeView() -> NSView {
     contentStack.orientation = .vertical
     contentStack.alignment = .leading
-    contentStack.spacing = 10
+    contentStack.spacing = Self.cardSpacing
     contentStack.edgeInsets = NSEdgeInsets(
       top: Self.contentInset, left: Self.contentInset, bottom: Self.contentInset,
       right: Self.contentInset)
 
-    let document = FlippedDocumentView()
+    let document = UsageQuotaDocumentView()
+    document.onWidthChange = { [weak self] width in self?.applyWidth(width) }
     document.addSubview(contentStack)
     let scroll = NSScrollView()
     scroll.identifier = NSUserInterfaceItemIdentifier("usage-quota-section")
@@ -108,6 +138,21 @@ final class UsageQuotaSectionController: UsageSectionController {
     return scroll
   }
 
+  /// 按可用宽度决定列数。只有跨过阈值才重排，所以每帧 layout 调用它是廉价的。
+  ///
+  /// 两个阈值之间是滞回区：滚动条出现/消失会让内容宽度抖动十几点，单阈值会在边界上反复重排。
+  func applyWidth(_ width: CGFloat) {
+    var target = columnCount
+    if width >= Self.twoColumnMinimumWidth {
+      target = 2
+    } else if width <= Self.singleColumnMaximumWidth {
+      target = 1
+    }
+    guard target != columnCount else { return }
+    columnCount = target
+    layoutCards()
+  }
+
   // MARK: - 渲染
 
   /// 用一份快照更新页面。内部可见而非 private：`UsageQuotaStore` 目前没有注入数据的入口，
@@ -130,38 +175,61 @@ final class UsageQuotaSectionController: UsageSectionController {
   }
 
   private func rebuild(_ accounts: [UsageAccountSnapshot]) {
+    cards = accounts.map { UsageQuotaCardView(account: $0, displayMode: displayMode) }
+    layoutCards()
+  }
+
+  /// 把当前卡片按 `columnCount` 摆进内容栈。
+  ///
+  /// 只换容器、不重建 `UsageQuotaCardView` 实例：切列数时卡片上的数字、tooltip 和
+  /// 正在显示的倒计时都要原样留着，重建会让整页闪一下。
+  private func layoutCards() {
+    NSLayoutConstraint.deactivate(fullWidthConstraints)
+    fullWidthConstraints = []
     for arranged in contentStack.arrangedSubviews {
       contentStack.removeArrangedSubview(arranged)
       arranged.removeFromSuperview()
     }
-    cards = accounts.map { UsageQuotaCardView(account: $0) }
+    // 两列模式下卡片挂在临时的行 stack 上，那些 stack 刚被丢掉；先把卡片摘干净，
+    // 免得它们还带着 `fillEqually` 生成的等宽约束进入下一种布局。
+    for card in cards { card.removeFromSuperview() }
 
     if cards.isEmpty {
-      let empty = makeLabel(
-        L("还没有配额数据。启动一次 Claude Code 或 Codex 后这里会显示。"),
-        size: 11, color: AsterTheme.secondaryInk)
-      empty.lineBreakMode = .byWordWrapping
-      empty.maximumNumberOfLines = 0
-      addFullWidth(empty)
-    } else {
+      addFullWidth(emptyLabel)
+    } else if columnCount <= 1 {
       for card in cards { addFullWidth(card) }
+    } else {
+      for start in stride(from: 0, to: cards.count, by: columnCount) {
+        let slice = cards[start..<min(start + columnCount, cards.count)]
+        let row = NSStackView(views: Array(slice))
+        row.orientation = .horizontal
+        row.alignment = .top
+        row.distribution = .fillEqually
+        row.spacing = Self.cardSpacing
+        // 末行不满时补占位视图，`fillEqually` 才不会把最后一张卡拉成整行宽。
+        for _ in slice.count..<columnCount { row.addArrangedSubview(NSView()) }
+        addFullWidth(row)
+      }
     }
 
-    let footnote = makeLabel(
-      L("其它 Agent 没有本地配额数据，只统计 token。"),
-      size: 10, color: AsterTheme.tertiaryInk)
-    footnote.lineBreakMode = .byWordWrapping
-    footnote.maximumNumberOfLines = 0
-    addFullWidth(footnote)
+    addFullWidth(footnoteLabel)
   }
 
   /// 卡片与说明文字都要撑满内容宽度；stack 的 `.leading` 对齐只保证左边对齐。
   private func addFullWidth(_ view: NSView) {
     contentStack.addArrangedSubview(view)
     view.translatesAutoresizingMaskIntoConstraints = false
-    view.widthAnchor.constraint(
-      equalTo: contentStack.widthAnchor, constant: -Self.contentInset * 2
-    ).isActive = true
+    let constraint = view.widthAnchor.constraint(
+      equalTo: contentStack.widthAnchor, constant: -Self.contentInset * 2)
+    constraint.isActive = true
+    fullWidthConstraints.append(constraint)
+  }
+
+  private func makeWrappingLabel(_ text: String, size: CGFloat, color: NSColor) -> NSTextField {
+    let label = makeLabel(text, size: size, color: color)
+    label.lineBreakMode = .byWordWrapping
+    label.maximumNumberOfLines = 0
+    return label
   }
 
   private func refreshCards() {
@@ -189,265 +257,15 @@ final class UsageQuotaSectionController: UsageSectionController {
   }
 }
 
-/// 一个账号的配额卡片：标题行（账号名 + 订阅档位徽标）、逐窗口进度条、数据时刻。
-///
-/// 窗口结构由 `init` 固定；`plan` 与 `fetchedAt` 走 `apply` 原地更新，
-/// 倒计时文字走 `refresh(now:)`，两者都不动视图结构。
+/// 配额页滚动区的文档视图：翻转坐标系，并在宽度变化时回调，让页面决定排几列。
 @MainActor
-final class UsageQuotaCardView: NSView {
-  /// 数据比这更旧才值得标出来，与用量条 tooltip 的口径一致。
-  private static let staleThreshold: TimeInterval = 120
+private final class UsageQuotaDocumentView: NSView {
+  var onWidthChange: ((CGFloat) -> Void)?
 
-  private let titleLabel: NSTextField
-  private let planBadge: UsagePlanBadgeView
-  private let meterRows: [UsageQuotaMeterRow]
-  private let stampLabel = makeLabel("", size: 10, color: AsterTheme.tertiaryInk)
-  private var fetchedAt: Date?
-
-  /// 是否有随时间变化的内容。全是静态数据的卡片不需要页面排 tick。
-  var needsTick: Bool { fetchedAt != nil || meterRows.contains(where: \.hasCountdown) }
-
-  init(account: UsageAccountSnapshot) {
-    titleLabel = makeLabel(account.label, size: 12, weight: .semibold)
-    planBadge = UsagePlanBadgeView(accountID: account.id)
-    meterRows = account.windows.map { UsageQuotaMeterRow(window: $0) }
-    super.init(frame: .zero)
-    identifier = NSUserInterfaceItemIdentifier("usage-quota-card-\(account.id)")
-    wantsLayer = true
-    layer?.cornerRadius = 8
-
-    // 徽标紧跟账号名，右侧留一个会撑开的空视图，标题行才不会把徽标推到卡片中间。
-    let spacer = NSView()
-    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    let titleRow = NSStackView(views: [titleLabel, planBadge, spacer])
-    titleRow.orientation = .horizontal
-    titleRow.alignment = .centerY
-    titleRow.spacing = 6
-
-    let rows = NSStackView()
-    rows.orientation = .vertical
-    rows.alignment = .leading
-    rows.spacing = 6
-    rows.translatesAutoresizingMaskIntoConstraints = false
-    rows.addArrangedSubview(titleRow)
-    for row in meterRows { rows.addArrangedSubview(row) }
-    rows.addArrangedSubview(stampLabel)
-    addSubview(rows)
-    rows.pinEdges(to: self, insets: NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12))
-    titleRow.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
-    for row in meterRows {
-      row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
-    }
-
-    apply(account)
-    applyColors()
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  /// 订阅档位与数据时刻的原地更新。
-  func apply(_ account: UsageAccountSnapshot) {
-    planBadge.apply(plan: account.plan)
-    fetchedAt = account.fetchedAt
-  }
-
-  /// 刷新所有随时间变化的文字。
-  func refresh(now: Date) {
-    for row in meterRows { row.refresh(now: now) }
-    guard let fetchedAt else {
-      stampLabel.isHidden = true
-      return
-    }
-    // 超过两分钟才提示：`/usage` 限流很紧，刚取回的数据标「0 分钟前」只是噪声。
-    let age = now.timeIntervalSince(fetchedAt)
-    stampLabel.isHidden = age <= Self.staleThreshold
-    stampLabel.stringValue = L("\(UsageDurationText.make(age)) 前更新")
-  }
-
-  override func viewDidChangeEffectiveAppearance() {
-    super.viewDidChangeEffectiveAppearance()
-    applyColors()
-  }
-
-  private func applyColors() {
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      layer?.backgroundColor = AsterTheme.ink.withAlphaComponent(0.05).cgColor
-      layer?.borderColor = AsterTheme.hairline.withAlphaComponent(0.5).cgColor
-      layer?.borderWidth = 1
-    }
-  }
-}
-
-/// 账号名右侧的订阅档位徽标（「Max 20x」「Pro」「Plus」……）。
-///
-/// 各家的档位叫法不统一，这里不做归一化映射，原样展示数据源给的字符串——
-/// 把「5x」翻译成别的说法只会让用户对不上自己在官网看到的订阅名。
-@MainActor
-final class UsagePlanBadgeView: NSView {
-  private static let horizontalInset: CGFloat = 5
-  private let label = makeLabel("", size: 10, weight: .medium, color: AsterTheme.secondaryInk)
-
-  /// 当前展示的档位文字；空串表示徽标隐藏。
-  var text: String { label.stringValue }
-
-  init(accountID: String) {
-    super.init(frame: .zero)
-    identifier = NSUserInterfaceItemIdentifier("usage-quota-plan-\(accountID)")
-    wantsLayer = true
-    layer?.cornerRadius = 4
-    addSubview(label)
-    label.pinEdges(
-      to: self,
-      insets: NSEdgeInsets(
-        top: 1, left: Self.horizontalInset, bottom: 1, right: Self.horizontalInset))
-    setContentHuggingPriority(.required, for: .horizontal)
-    apply(plan: nil)
-    applyColors()
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  /// 档位为 nil、空串或纯空白时整块隐藏；有值只改文字。
-  func apply(plan: String?) {
-    let value = plan?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    label.stringValue = value
-    isHidden = value.isEmpty
-    toolTip = value.isEmpty ? nil : value
-  }
-
-  override func viewDidChangeEffectiveAppearance() {
-    super.viewDidChangeEffectiveAppearance()
-    applyColors()
-  }
-
-  private func applyColors() {
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      layer?.backgroundColor = AsterTheme.ink.withAlphaComponent(0.08).cgColor
-    }
-  }
-}
-
-/// 配额页里的一行：窗口名 + 可伸缩进度条 + 百分比 + 「X 后重置」。
-///
-/// 不复用 Pane 用量条的 `AgentUsageMeterView`：那里的轨道固定 56pt，
-/// 在 380pt 宽的浮动窗里会留下大片空白。填充同样用 `CALayer` 直接设 frame，
-/// 因为 Auto Layout 的 multiplier 不可变，改比例得重建约束。
-@MainActor
-final class UsageQuotaMeterRow: NSView {
-  private static let trackHeight: CGFloat = 5
-
-  private let usageWindow: AgentUsageWindow
-  private let track = NSView()
-  private let fill = CALayer()
-  private let percentLabel: NSTextField
-  private let resetLabel: NSTextField
-  private let fraction: Double
-  private let severity: UsageStatusSummary.Severity
-
-  init(window: AgentUsageWindow) {
-    usageWindow = window
-    fraction = min(max(window.usedPercent / 100, 0), 1)
-    severity =
-      switch window.usedPercent {
-      case UsageStatusSummary.criticalThreshold...: .critical
-      case UsageStatusSummary.warningThreshold...: .warning
-      default: .normal
-      }
-    percentLabel = makeLabel(
-      "\(Int(window.usedPercent.rounded()))%", size: 10, weight: .medium,
-      color: AsterTheme.secondaryInk, monospaced: true)
-    resetLabel = makeLabel("", size: 10, color: AsterTheme.tertiaryInk)
-    super.init(frame: .zero)
-    identifier = NSUserInterfaceItemIdentifier("usage-quota-meter-\(window.kind.rawValue)")
-    translatesAutoresizingMaskIntoConstraints = false
-    toolTip = AgentUsageMeterView.tooltip(for: window)
-
-    let name = makeLabel(window.displayLabel, size: 10, color: AsterTheme.tertiaryInk)
-    name.setContentHuggingPriority(.required, for: .horizontal)
-    percentLabel.alignment = .right
-    resetLabel.alignment = .right
-    resetLabel.setContentHuggingPriority(.required, for: .horizontal)
-
-    track.wantsLayer = true
-    track.layer?.cornerRadius = Self.trackHeight / 2
-    track.layer?.masksToBounds = true
-    fill.cornerRadius = Self.trackHeight / 2
-    track.layer?.addSublayer(fill)
-    track.translatesAutoresizingMaskIntoConstraints = false
-    track.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    track.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-    let stack = NSStackView(views: [name, track, percentLabel, resetLabel])
-    stack.orientation = .horizontal
-    stack.alignment = .centerY
-    stack.spacing = 6
-    stack.distribution = .fill
-    addSubview(stack)
-    stack.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      track.heightAnchor.constraint(equalToConstant: Self.trackHeight),
-      name.widthAnchor.constraint(greaterThanOrEqualToConstant: 24),
-      percentLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 30),
-      stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-      stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-      stack.topAnchor.constraint(equalTo: topAnchor),
-      stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-    ])
-    refresh(now: Date())
-    applyColors()
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  /// 是否有重置倒计时。没有的话这一行的文字不随时间变化。
-  var hasCountdown: Bool { usageWindow.resetsAt != nil }
-
-  /// 刷新倒计时文字。没有重置时间的窗口这一列留空。
-  func refresh(now: Date) {
-    guard let resetsAt = usageWindow.resetsAt, resetsAt > now else {
-      resetLabel.stringValue = ""
-      return
-    }
-    resetLabel.stringValue = L("\(UsageDurationText.make(resetsAt.timeIntervalSince(now))) 后重置")
-  }
+  override var isFlipped: Bool { true }
 
   override func layout() {
     super.layout()
-    let bounds = track.bounds
-    fill.frame = CGRect(x: 0, y: 0, width: bounds.width * fraction, height: bounds.height)
-  }
-
-  override func viewDidChangeEffectiveAppearance() {
-    super.viewDidChangeEffectiveAppearance()
-    applyColors()
-  }
-
-  private func applyColors() {
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      track.layer?.backgroundColor = AsterTheme.hairline.cgColor
-      fill.backgroundColor =
-        switch severity {
-        case .normal: AsterTheme.accent.cgColor
-        case .warning: AsterTheme.warning.cgColor
-        case .critical: NSColor.systemRed.cgColor
-        }
-    }
-  }
-}
-
-/// 时长短语（「2 小时 5 分」）。「X 后重置」与「X 前更新」共用同一套措辞。
-@MainActor
-enum UsageDurationText {
-  private static let formatter: DateComponentsFormatter = {
-    let formatter = DateComponentsFormatter()
-    formatter.unitsStyle = .short
-    formatter.allowedUnits = [.day, .hour, .minute]
-    formatter.maximumUnitCount = 2
-    return formatter
-  }()
-
-  /// 不足一分钟的差值按一分钟显示：显示「0 分钟」既不准确也没有信息量。
-  static func make(_ interval: TimeInterval) -> String {
-    formatter.string(from: max(interval, 60)) ?? ""
+    onWidthChange?(bounds.width)
   }
 }

@@ -95,7 +95,7 @@ final class UsageSessionBoardSectionController: UsageSectionController {
   private func makeView() -> NSView {
     contentStack.orientation = .vertical
     contentStack.alignment = .leading
-    contentStack.spacing = 8
+    contentStack.spacing = 10
     contentStack.edgeInsets = NSEdgeInsets(
       top: Self.contentInset, left: Self.contentInset, bottom: Self.contentInset,
       right: Self.contentInset)

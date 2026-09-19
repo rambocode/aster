@@ -1,4 +1,4 @@
-// 浮动窗「Token」页：区间切换、按项目 / 按 Agent 排行、活动热力图。
+// 浮动窗「Token」页：区间切换、总量卡、按 Agent / 按项目排行、活动热力图。
 import AppKit
 import AsterCore
 import Foundation
@@ -24,7 +24,12 @@ final class UsageTokenSectionController: UsageSectionController {
   private let progressBar = NSProgressIndicator()
   private let heatmap = TokenHeatmapView()
   private let heatmapCaption = makeLabel("", size: 10, color: AsterTheme.tertiaryInk)
-  private var rangeBar: UsageTokenRangeBar?
+  private var rangeBar: UsageSegmentedControl?
+
+  /// 项目卡及其行。展开块要原地插在某一行下方，所以这两个引用必须活过一次渲染。
+  private var projectsCard: UsageTokenCardView?
+  private var projectRows: [String: UsageTokenProjectRow] = [:]
+  private var expansionView: NSView?
 
   private var samples: [TokenSample] = []
   /// 是否已经拿到过一次结果。决定空数据时显示进度还是「还没有数据」。
@@ -74,6 +79,16 @@ final class UsageTokenSectionController: UsageSectionController {
     loadTask = nil
   }
 
+  /// 表头刷新按钮。页面已经是激活态时 `activate()` 会被 `isActive` 挡掉，所以直接再扫一次；
+  /// 引擎是增量的，重扫只付新增文件的代价。
+  func refreshRequested() {
+    guard isActive else {
+      activate()
+      return
+    }
+    startLoad()
+  }
+
   // MARK: - 取数
 
   /// 先用缓存秒出旧数据，再跑一次增量扫描。
@@ -120,15 +135,14 @@ final class UsageTokenSectionController: UsageSectionController {
     guard range != self.range else { return }
     self.range = range
     defaults.set(range.rawValue, forKey: Self.rangeDefaultsKey)
-    rangeBar?.select(range)
+    rangeBar?.select(range.rawValue)
     refreshSummary()
     rebuild()
   }
 
   /// 展开或收起某个项目的热力图。再点同一行收起。
   func toggleProject(_ key: String) {
-    expandedProject = expandedProject == key ? nil : key
-    rebuild()
+    setExpandedProject(expandedProject == key ? nil : key)
   }
 
   private func refreshSummary() {
@@ -143,7 +157,7 @@ final class UsageTokenSectionController: UsageSectionController {
   private func makeView() -> NSView {
     contentStack.orientation = .vertical
     contentStack.alignment = .leading
-    contentStack.spacing = 8
+    contentStack.spacing = 10
     contentStack.edgeInsets = NSEdgeInsets(
       top: Self.contentInset, left: Self.contentInset, bottom: Self.contentInset,
       right: Self.contentInset)
@@ -155,6 +169,7 @@ final class UsageTokenSectionController: UsageSectionController {
     progressBar.maxValue = 100
     progressBar.identifier = NSUserInterfaceItemIdentifier("usage-token-progress")
     updatingLabel.identifier = NSUserInterfaceItemIdentifier("usage-token-updating")
+    heatmap.identifier = NSUserInterfaceItemIdentifier("usage-token-year-heatmap")
     heatmapCaption.lineBreakMode = .byWordWrapping
     heatmapCaption.maximumNumberOfLines = 0
 
@@ -186,8 +201,11 @@ final class UsageTokenSectionController: UsageSectionController {
 
   // MARK: - 渲染
 
-  /// 重建整页内容。区间、样本、展开行任一变化都走这里；进度刷新不走。
+  /// 重建整页内容。区间与样本变化走这里；展开 / 收起项目不走，它只原地换一块。
   private func rebuild() {
+    projectsCard = nil
+    projectRows = [:]
+    expansionView = nil
     for arranged in contentStack.arrangedSubviews {
       contentStack.removeArrangedSubview(arranged)
       arranged.removeFromSuperview()
@@ -200,32 +218,33 @@ final class UsageTokenSectionController: UsageSectionController {
     }
 
     addFullWidth(makeUsageTokenTotalsCard(summary.totals))
-    if !summary.providers.isEmpty {
-      addFullWidth(makeUsageTokenSectionTitle(L("按 Agent")))
-      for row in summary.providers { addFullWidth(makeProviderRow(row, total: summary.totals.total))
-      }
-    }
-    if !summary.projects.isEmpty {
-      addFullWidth(makeUsageTokenSectionTitle(L("按项目")))
-      for row in summary.projects {
-        addFullWidth(makeProjectRow(row))
-        guard expandedProject == row.key else { continue }
-        addFullWidth(makeProjectHeatmap(for: row.key))
-      }
-    }
-    addFullWidth(makeYearHeatmap())
+    if !summary.providers.isEmpty { addFullWidth(makeAgentsCard(summary)) }
+    if !summary.projects.isEmpty { addFullWidth(makeProjectsCard(summary)) }
+    addFullWidth(makeYearHeatmapCard())
   }
 
-  /// 顶部：左边区间 chip，右边不打扰的「更新中」字样。
+  /// 顶部：左边不打扰的「更新中」字样，右上角区间分段控件。
+  ///
+  /// 分段控件与页签、配额页共用 `UsageSegmentedControl`，三处样式才不会各走各的。
   private func makeHeaderRow() -> NSView {
-    let bar = UsageTokenRangeBar(selection: range) { [weak self] range in
+    let items = TokenStatsRange.allCases.map {
+      UsageSegmentedControl.Item(id: $0.rawValue, title: usageTokenRangeTitle($0))
+    }
+    let bar = UsageSegmentedControl(
+      items: items, selected: range.rawValue, identifierPrefix: "usage-token-range"
+    ) { [weak self] id in
+      guard let range = TokenStatsRange(rawValue: id) else { return }
       self?.selectRange(range)
     }
+    bar.setContentHuggingPriority(.required, for: .horizontal)
+    bar.setContentCompressionResistancePriority(.required, for: .horizontal)
     rangeBar = bar
     updatingLabel.isHidden = !hasInFlightLoad || samples.isEmpty
+    // 「更新中」在窄面板里先让位：分段控件是可点的，截断了就没法用。
+    updatingLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     let spacer = NSView()
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    let row = NSStackView(views: [bar, spacer, updatingLabel])
+    let row = NSStackView(views: [updatingLabel, spacer, bar])
     row.orientation = .horizontal
     row.alignment = .centerY
     row.spacing = 6
@@ -255,46 +274,105 @@ final class UsageTokenSectionController: UsageSectionController {
     return stack
   }
 
-  private func makeProviderRow(_ row: TokenStatsSummary.ProviderRow, total: Int64) -> NSView {
-    let view = UsageTokenShareRow(
-      name: row.provider.displayName, value: row.totals.total,
-      share: total > 0 ? Double(row.totals.total) / Double(total) : 0,
-      tooltip: TokenNumberText.breakdown(row.totals))
-    view.identifier = NSUserInterfaceItemIdentifier(
-      "usage-token-agent-\(row.provider.rawValue)")
-    return view
-  }
-
-  /// 项目行。tooltip 给出完整路径与四列明细——行里只放得下最后一段目录名。
-  private func makeProjectRow(_ row: TokenStatsSummary.ProjectRow) -> NSView {
-    let path = row.key.isEmpty ? row.name : row.key
-    let view = UsageTokenShareRow(
-      name: row.name, value: row.totals.total, share: row.share,
-      tooltip: "\(path)\n\(TokenNumberText.breakdown(row.totals))",
-      highlighted: expandedProject == row.key
-    ) { [weak self] in
-      self?.toggleProject(row.key)
+  /// 按 Agent 卡。每个 provider 一行：图标 + 名称、占比、数值。
+  private func makeAgentsCard(_ summary: TokenStatsSummary) -> NSView {
+    let card = UsageTokenCardView()
+    card.identifier = NSUserInterfaceItemIdentifier("usage-token-agents")
+    card.addRow(makeUsageTokenSectionTitle(L("按 Agent")))
+    let total = summary.totals.total
+    for row in summary.providers {
+      card.addRow(
+        UsageTokenAgentRow(
+          provider: row.provider, value: row.totals.total,
+          share: total > 0 ? Double(row.totals.total) / Double(total) : 0,
+          tooltip: TokenNumberText.breakdown(row.totals)))
     }
-    view.identifier = NSUserInterfaceItemIdentifier("usage-token-project-\(row.key)")
-    return view
+    return card
   }
 
-  /// 展开在项目行下方的小热力图。不画月份刻度，免得把行距撑开。
-  private func makeProjectHeatmap(for key: String) -> NSView {
+  /// 按项目卡。tooltip 给出完整路径与四列明细——行里只放得下最后一段目录名。
+  private func makeProjectsCard(_ summary: TokenStatsSummary) -> NSView {
+    let card = UsageTokenCardView()
+    card.identifier = NSUserInterfaceItemIdentifier("usage-token-projects")
+    card.addRow(makeUsageTokenSectionTitle(L("按项目")))
+    for row in summary.projects {
+      let path = row.key.isEmpty ? row.name : row.key
+      let view = UsageTokenProjectRow(
+        key: row.key, name: row.name, value: row.totals.total, share: row.share,
+        tooltip: "\(path)\n\(TokenNumberText.breakdown(row.totals))"
+      ) { [weak self] in
+        self?.toggleProject(row.key)
+      }
+      card.addRow(view)
+      projectRows[row.key] = view
+    }
+    projectsCard = card
+
+    // 切区间后重建这张卡，展开态要跟着回来；那个项目在新区间里没有行了就自动收起。
+    if let key = expandedProject {
+      if let row = projectRows[key] {
+        row.setExpanded(true)
+        insertExpansion(for: key)
+      } else {
+        expandedProject = nil
+      }
+    }
+    return card
+  }
+
+  /// 原地插入 / 移除展开块，不重建整页：整页重建会把滚动位置顶回最上面。
+  private func setExpandedProject(_ key: String?) {
+    if let previous = expandedProject { projectRows[previous]?.setExpanded(false) }
+    if let expansionView, let projectsCard { projectsCard.removeRow(expansionView) }
+    expansionView = nil
+    expandedProject = key
+    guard let key, let row = projectRows[key] else { return }
+    row.setExpanded(true)
+    insertExpansion(for: key)
+  }
+
+  /// 把展开块插在对应项目行的正下方。
+  private func insertExpansion(for key: String) {
+    guard let projectsCard, let row = projectRows[key],
+      let index = projectsCard.rows.arrangedSubviews.firstIndex(of: row)
+    else { return }
+    let view = makeProjectExpansion(for: key)
+    projectsCard.insertRow(view, at: index + 1)
+    expansionView = view
+  }
+
+  /// 展开块：该项目自己的一年热力图加一行说明。
+  ///
+  /// 分位数刻度按项目各算各的（`TokenActivityHeatmap.cells` 已经这么做），项目之间差
+  /// 两三个数量级，共用一套刻度会让小项目常年平铺在 1 级。
+  private func makeProjectExpansion(for key: String) -> NSView {
+    let daily = TokenStatsSummary.dailyTotals(samples: samples, project: key)
+    let today = self.today
     let view = TokenHeatmapView()
     view.identifier = NSUserInterfaceItemIdentifier("usage-token-project-heatmap")
-    view.showsMonthScale = false
-    view.apply(
-      cells: TokenActivityHeatmap.cells(
-        dailyTotals: TokenStatsSummary.dailyTotals(samples: samples, project: key), today: today))
-    return view
+    // 与底部那张走同一套布局：月份刻度照画，窄到摆不下锚点月份时热力图自己会把那行收掉。
+    view.apply(cells: TokenActivityHeatmap.cells(dailyTotals: daily, today: today))
+
+    let windowTotal = TokenActivityHeatmap.windowTotal(dailyTotals: daily, today: today)
+    let caption = makeLabel(
+      L("过去一年共 \(TokenNumberText.compact(windowTotal)) token"), size: 10,
+      color: AsterTheme.tertiaryInk)
+
+    let stack = NSStackView(views: [view, caption])
+    stack.identifier = NSUserInterfaceItemIdentifier("usage-token-project-expansion")
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 4
+    stack.edgeInsets = NSEdgeInsets(top: 2, left: 0, bottom: 6, right: 0)
+    view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+    return stack
   }
 
   /// 底部：全部项目合计的一年热力图。
   ///
   /// 它始终是「过去一年」，和上面按区间汇总的数字不是同一个量，所以说明文字里把窗口写明，
   /// 避免两个对不上的数字被当成统计错误。
-  private func makeYearHeatmap() -> NSView {
+  private func makeYearHeatmapCard() -> NSView {
     let daily = TokenStatsSummary.dailyTotals(samples: samples, project: nil)
     let today = self.today
     heatmap.apply(cells: TokenActivityHeatmap.cells(dailyTotals: daily, today: today))
@@ -302,13 +380,9 @@ final class UsageTokenSectionController: UsageSectionController {
     heatmapCaption.stringValue = L("过去一年共 \(TokenNumberText.compact(windowTotal)) token")
 
     let card = UsageTokenCardView()
-    let rows = NSStackView(views: [heatmap, heatmapCaption])
-    rows.orientation = .vertical
-    rows.alignment = .leading
-    rows.spacing = 6
-    card.addSubview(rows)
-    rows.pinEdges(to: card, insets: NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12))
-    heatmap.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
+    card.identifier = NSUserInterfaceItemIdentifier("usage-token-year")
+    card.addRow(heatmap)
+    card.addRow(heatmapCaption)
     return card
   }
 

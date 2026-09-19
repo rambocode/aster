@@ -397,7 +397,7 @@
 "关闭预览" = "Vorschau schließen";
 "其他" = "Sonstige";
 "其它 Agent 没有本地配额数据，只统计 token。" = "Andere Agents speichern keine lokalen Kontingentdaten; es werden nur Tokens gezählt.";
-"内存" = "Arbeitsspeicher";
+"内存" = "Speicher";
 "内存占比" = "Speicheranteil";
 "内容" = "Inhalt";
 "内置 Fig 命令规格（含子命令、选项与参数）；只在手动操作时联网" = "Eingebaute Fig-Befehlsspezifikationen (inklusive Unterbefehle, Optionen und Argumente); geht nur bei manuellen Aktionen online";
@@ -436,10 +436,12 @@
 "删除右侧词" = "Wort rechts löschen";
 "删除左侧词" = "Wort links löschen";
 "删除这条 Memory？" = "Diese Memory löschen?";
+"刷新" = "Aktualisieren";
 "前台通知" = "Vordergrundbenachrichtigungen";
 "前景色" = "Vordergrund";
 "前置全部窗口" = "Alle nach vorne bringen";
 "前进" = "Vorwärts";
+"剩余" = "Verbleibend";
 "剪切" = "Ausschneiden";
 "剪贴板建议" = "Vorschlag aus der Zwischenablage";
 "加入 Prompt 队列…" = "Zur Prompt-Warteschlange hinzufügen…";
@@ -529,6 +531,9 @@
 "启用 Shell 集成" = "Shell-Integration aktivieren";
 "启用路径：%@（原子切换的 symlink）" = "Aktivierungspfad: %@ (atomar umgeschalteter Symlink)";
 "周" = "Wo.";
+"周一" = "Mo";
+"周三" = "Mi";
+"周五" = "Fr";
 "周期" = "Zyklus";
 "命令" = "Befehl";
 "命令以非零状态退出时发送系统通知" = "Systembenachrichtigung senden, wenn ein Befehl mit einem Status ungleich null endet";
@@ -671,6 +676,7 @@
 "将把 Aster 写入以下应用的外部终端设置（terminal.external.osxExec）：" = "Dadurch wird Aster in die Einstellung für externe Terminals (terminal.external.osxExec) folgender Apps eingetragen:";
 "尚无记录" = "Noch keine Aufzeichnungen";
 "尚无记录。在设置 → 智能体 → Session Memory 中开启记录。" = "Noch keine Einträge. Aktivieren Sie die Aufzeichnung unter Einstellungen → Agent → Session Memory.";
+"尚未取数" = "Noch keine Daten";
 "尚未建立连接。" = "Noch keine Verbindung hergestellt.";
 "尚未检查更新" = "Updates noch nicht geprüft";
 "尚未请求" = "Noch nicht angefordert";
@@ -753,6 +759,7 @@
 "已清空全部记录。" = "Alle Aufzeichnungen wurden gelöscht.";
 "已清除选中的本机补全数据。" = "Die ausgewählten lokalen Autovervollständigungsdaten wurden gelöscht.";
 "已清除链接安全授权。" = "Link-Sicherheitsberechtigungen wurden gelöscht.";
+"已用" = "Verbraucht";
 "已用 %@" = "Verbraucht %@";
 "已用 %@（含赠送 %@）" = "Verbraucht %@ (inkl. %@ Bonus)";
 "已禁用" = "Deaktiviert";
@@ -919,6 +926,7 @@
 "排除" = "Ausschließen";
 "探测失败：%@" = "Erkennung fehlgeschlagen: %@";
 "接受候选" = "Kandidat übernehmen";
+"接近上限" = "Limit fast erreicht";
 "控制" = "Kontrolle";
 "控制 OpenType 标准、上下文和 discretionary ligatures" = "OpenType-Standard-, Kontext- und optionale Ligaturen steuern";
 "控制 macOS 字形平滑；默认使用系统抗锯齿" = "macOS-Schriftglättung steuern; standardmäßig wird das System-Antialiasing verwendet";

@@ -10,8 +10,10 @@ import Foundation
 /// 走到 `suspend()`。
 @MainActor
 final class UsagePanelController: NSObject, NSWindowDelegate {
-  static let defaultSize = NSSize(width: 380, height: 460)
-  static let minimumSize = NSSize(width: 320, height: 320)
+  /// 默认尺寸。配额页的窗口行是两行（标签 + 进度条 + 百分比 / 重置时间），380pt 宽下仍然读得
+  /// 清楚，再宽只是多留白；高度取到能一眼看全三四张卡片即可。
+  static let defaultSize = NSSize(width: 440, height: 600)
+  static let minimumSize = NSSize(width: 380, height: 340)
   /// 位置与尺寸的持久化键。
   static let frameDefaultsKey = "aster.usage.panel-frame.v1"
   /// 面板顶边与状态栏按钮底边的间隙。
@@ -44,11 +46,20 @@ final class UsagePanelController: NSObject, NSWindowDelegate {
     super.init()
     panel.identifier = NSUserInterfaceItemIdentifier("usage-panel")
     panel.title = L("AI 用量")
+    // 标题由表头自己画（主题色、左对齐、和页签同一行体系）；系统标题居中绘制，留着会和
+    // 表头文字重叠。`title` 仍然设置，窗口菜单与辅助功能要用它。
+    panel.titleVisibility = .hidden
     panel.titlebarAppearsTransparent = true
     panel.contentViewController = content
     panel.contentMinSize = Self.minimumSize
     panel.isReleasedWhenClosed = false
     panel.hidesOnDeactivate = false
+    // 磨砂要透出窗后的内容，窗体本身就必须是透明的：留着默认的不透明底色，
+    // 根视图的 `NSVisualEffectView` 采样到的只会是这块底色。阴影反过来要留着，
+    // 否则透明面板压在浅色桌面上完全没有边界。
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.hasShadow = true
     panel.isFloatingPanel = true
     panel.isMovableByWindowBackground = true
     panel.level = .floating
