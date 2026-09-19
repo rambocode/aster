@@ -3,6 +3,30 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.6.8</title>
+            <pubDate>Sat, 19 Sep 2026 08:47:20 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>27</sparkle:version>
+            <sparkle:shortVersionString>0.6.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 新增
+
+- 左侧标签支持标题颜色。默认给每个新标签分配一个互不相同的颜色（12 色调色板，优先挑没被占用的），标签多起来也能一眼定位；颜色随会话快照保存，重启后不变。标签右键菜单新增「标题颜色」：12 个色块、换一个随机颜色、自定义颜色、恢复默认。设置「视图 → 标签页图标与角标 → 随机标题颜色」可以关掉自动着色，你亲手选过的颜色不受影响，继续显示。
+- Claude Code 在跑的时候，标签行首的动画改成 Claude Code 自己的星芒：从小圆点长到六芒星再缩回，固定品牌橙，一眼能认出这个 Pane 跑的是哪个 Agent。Codex 保持点阵，其它 Agent 和机器连接状态保持原来的半圆翻转。
+- Shell 主动退出后自动关闭所在 Pane。输入 `exit` 或按 Ctrl+D，Pane 直接收掉，不用再点一次关闭；标签里只剩一个 Pane 时关掉整个标签，误关了可以用「重新打开」找回。退出码非零时要求终端至少活过 3 秒才自动关——Shell 一启动就失败会留下画面供排查。信号终止、I/O 失败和受管终端始终保留结束卡，上面的重新附加 / 重新启动入口还在。
+- Quick Terminal 可以手动拖尺寸了，四边都有 resize 手柄，最小 320×160。拖出来的尺寸会记住，收起再呼出、重启都保持；改了位置、尺寸百分比或边距会回到百分比基准。新增「快捷终端 → 边距」设置（默认 12 点，0–200），只在不贴屏幕边的那几侧留白：顶部或底部显示时左右留白、贴边那侧仍然贴住，居中显示时四周都留。窗口位置仍然只由设置决定，不能拖走。
+
+## 修复
+
+- 修复 Codex Pane 底部不显示用量条。Codex 的时序是界面先起来、会话 ID 后到，而用量监听只在「界面起来」那一刻检查一次，那时 ID 还是空的，之后就再没有路径重新启动监听。现在 ID 到位会重新同步。
+- 修复手动改过窗口大小后，双击标题栏无法放大。AppKit 的窗口尺寸自动保存和放大功能在抢同一份记录，手动拖过尺寸后双击会被判定为「已经放大」而立刻缩回。窗口尺寸本来就以设置里的宽高为准，多出来的那份记录已移除。
+- 修复 Shell 退出后偶发崩溃。终端画面释放时如果正好还有一帧待绘制，系统会在已释放的渲染器上重绘并直接崩掉。之前手动关 Pane 慢一步碰不到，配上这版的「退出自动关 Pane」会必现，已在释放前摘掉渲染层。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.8/Aster-0.6.8.dmg" length="42260217" type="application/octet-stream" sparkle:edSignature="JQH08LC5OsJGJ8JgeLrr76lrHMgKRRUDCONQCTbvYUo55lIUEPy9PVi9KtIxqsdE2VtA5+iC6t92qrbjcUiEDw=="/>
+        </item>
+        <item>
             <title>0.6.7</title>
             <pubDate>Fri, 18 Sep 2026 10:09:00 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -91,26 +115,6 @@
 - 配置了远程机器时，本机终端的提示符不再每 15 秒闪动一次。原因是远程机器的心跳会让侧栏机器列表重新发布，整个工作区随之重建，终端收到窗口尺寸变化信号后重画提示符。现在心跳只更新连接状态，不再触发界面重建。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.4/Aster-0.6.4.dmg" length="42671537" type="application/octet-stream" sparkle:edSignature="K1FYJC+ZCtwV59SQDYv0iBPTGFuHrcO+LWfL1l+I1uIng7YQqpvT96XbdmSZ7Tj0kvOlT1xcClAwp0BK8apPBA=="/>
-        </item>
-        <item>
-            <title>0.6.3</title>
-            <pubDate>Mon, 14 Sep 2026 18:03:03 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>22</sparkle:version>
-            <sparkle:shortVersionString>0.6.3</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## 后台托管终端的 Shell 集成
-
-- 由后台会话服务启动的 Shell（本机「本机后台保活」或远程机器上的终端）现在和普通终端一样带有 Aster 的 Shell 集成：提示符标记、命令退出徽标、目录跟踪、别名上报和「下一步」自动补全都能正常工作。此前这些 Shell 完全没有集成，`git clone` 后不会出现 `cd` 提示。
-- 远程机器：服务产物现在随附 Shell 集成脚本，「更新远端服务」会一并安装到版本目录里。装好后重启该机器的服务，新启动的 Shell 即生效。
-
-## 修复
-
-- 本机上「远端进程已结束」卡片里的「重新启动 Shell」和「关闭标签」以前点了没有反应。现在「重新启动 Shell」会把这个面板换回普通的本地 Shell，「关闭标签」直接关闭标签。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.3/Aster-0.6.3.dmg" length="42668744" type="application/octet-stream" sparkle:edSignature="o2iU32+aofko4WWO2crLKj7ivFdO7htWF9MbKLbR2lsLwlU8PtPQcRpj3ydMrcfP7HoMl9e0b23j+i5zvmUGCg=="/>
         </item>
     </channel>
 </rss>
