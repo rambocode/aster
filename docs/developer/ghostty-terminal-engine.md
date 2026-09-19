@@ -83,7 +83,7 @@ Aster 补丁面记录在 `UPSTREAM.md`。
 
 `GhosttyConfiguration` 映射字体、字号、行高、主题颜色、光标、选择、scrollback、Option
 键、鼠标、右键、剪贴板和 Shell integration。`GhosttyApp` 从权限为 `0600` 的临时文件加载
-配置，完成解析后立即删除文件。任何诊断都视为启动失败，避免拼错配置被静默忽略。
+配置，完成解析后立即删除文件。诊断只作警告：未生效的条目回退为默认值并在界面提示，不阻断启动。
 libghostty 没有公开 config 所有权契约，因此已经交给 core 的 config 保留到进程结束。
 
 **字体回退必须写进配置。** `GhosttyConfiguration` 在主字体之后逐行写出 `font-family`：先是
