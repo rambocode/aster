@@ -1735,6 +1735,15 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
             return next
           }()
         },
+        toggleRow(
+          L("随机标题颜色"),
+          L("新标签自动分配一个和其它标签不重样的标题颜色；关掉只影响自动色，手动设的颜色仍然保留"),
+          value: view.resolvedRandomTabTitleColors
+        ) { [weak self] value in
+          var next = self?.preferences.configuration.resolvedView ?? ViewConfiguration()
+          next.randomTabTitleColors = value
+          self?.preferences.configuration.view = next
+        },
         toggleRow(L("保持登录状态"), L("把网页窗格的 cookie 和站点数据写到磁盘"), value: view.resolvedWebPanePersistData) { [weak self] value in
           var next = self?.preferences.configuration.resolvedView ?? ViewConfiguration()
           next.webPanePersistData = value
@@ -3728,6 +3737,8 @@ extension SettingsViewController: WKNavigationDelegate {
       try updateViewConfiguration { $0.rulesArrangement = try self.enumValue(try string(), as: TabRuleArrangement.self) }
     case "view.badgePlacement":
       try updateViewConfiguration { $0.badgePlacement = try self.enumValue(try string(), as: TabBadgePlacement.self) }
+    case "view.randomTabTitleColors":
+      try updateViewConfiguration { $0.randomTabTitleColors = try bool() }
     case "view.webPanePersistData":
       try updateViewConfiguration { $0.webPanePersistData = try bool() }
     case "view.tabRules":
@@ -5119,6 +5130,7 @@ extension SettingsViewController: WKNavigationDelegate {
     [
       "view.rulesArrangement": view.resolvedRulesArrangement.rawValue,
       "view.badgePlacement": view.resolvedBadgePlacement.rawValue,
+      "view.randomTabTitleColors": view.resolvedRandomTabTitleColors,
       "view.webPanePersistData": view.resolvedWebPanePersistData,
       "view.tabRules": view.resolvedTabRules.map { rule -> [String: Any] in
         var object: [String: Any] = [

@@ -138,6 +138,7 @@
 "OSC 52 读取剪贴板" = "OSC 52 Read from Clipboard";
 "Open Quickly · 当前" = "Open Quickly · Current";
 "Option 作为 Meta" = "Option as Meta";
+"PID" = "PID";
 "PTY 会话未运行" = "PTY session is not running";
 "PTY 未取得可靠退出状态。最后画面已保留，可以重新启动 Shell。" = "PTY did not obtain a reliable exit status. The last screen has been preserved; you can restart the shell.";
 "Pane 处于 Vi/Hint 模式" = "Pane is in Vi/Hint mode";
@@ -385,6 +386,7 @@
 "关闭面板" = "Close Pane";
 "关闭预览" = "Close Preview";
 "内存" = "Memory";
+"内存占比" = "Memory share";
 "内容" = "Content";
 "内置 Fig 命令规格（含子命令、选项与参数）；只在手动操作时联网" = "Built-in Fig command specs (including subcommands, options, and arguments); goes online only for manual actions";
 "内置字体不是可安全读取的普通文件：%@" = "Built-in font is not a safely readable regular file: %@";
@@ -527,6 +529,7 @@
 "命令已完成" = "Command Finished";
 "命令执行失败" = "Command Failed";
 "命令等待输入时在标签上显示标记" = "Show a Marker on the Tab When a Command Is Waiting for Input";
+"命令行" = "Command line";
 "命令规格更新失败：%@" = "Failed to update command spec: %@";
 "命令重放" = "Command Replay";
 "命令面板" = "Command Palette";
@@ -810,6 +813,7 @@
 "恢复运行中的进程" = "Restore Running Processes";
 "恢复默认尺寸" = "Restore Default Size";
 "恢复默认设置" = "Restore Default Settings";
+"恢复默认颜色" = "Reset to Default Color";
 "成功退出后在标签上显示强调色圆点" = "Show an Accent-Colored Dot on the Tab After a Successful Exit";
 "我已了解，继续" = "I Understand, Continue";
 "截屏" = "Screenshot";
@@ -886,7 +890,9 @@
 "按住 Cmd 悬停在链接上时，在底部角落显示该链接的完整路径或 URL。关闭后链接仍可点击，但不再显示预览。" = "While holding Cmd and hovering over a link, show its full path or URL in the bottom corner. When off, links remain clickable but no preview is shown.";
 "按内存排序" = "Sort by memory";
 "按名称（点击切换为目录优先）" = "By name (click to switch to directory first)";
+"换一个随机颜色" = "Pick Another Random Color";
 "排除" = "Exclude";
+"探测失败：%@" = "Detection failed: %@";
 "接受候选" = "Accept Candidate";
 "控制" = "Control";
 "控制 OpenType 标准、上下文和 discretionary ligatures" = "Control OpenType Standard, Contextual, and Discretionary Ligatures";
@@ -943,6 +949,7 @@
 "新建标签页开始使用 Aster" = "Open a new tab to get started with Aster";
 "新建窗口" = "New Window";
 "新建远端 Agent…" = "New Remote Agent…";
+"新标签自动分配一个和其它标签不重样的标题颜色；关掉只影响自动色，手动设的颜色仍然保留" = "Give each new tab a title color that differs from the other tabs. Turning this off only hides the automatic colors — colors you set by hand are kept.";
 "新标签页位置" = "New Tab Position";
 "新窗口如何决定初始尺寸" = "How a New Window Determines Its Initial Size";
 "方块" = "Block";
@@ -1085,6 +1092,7 @@
 "未知主题字体样式" = "Unknown Theme Font Style";
 "未知原因" = "Unknown Reason";
 "未知的 Agent：%@" = "Unknown agent: %@";
+"未知进程" = "Unknown process";
 "未知错误" = "Unknown error";
 "未连接" = "Not Connected";
 "未配置 %@，无法访问命名会话注册表。" = "%@ is not configured; unable to access the named Session registry.";
@@ -1139,6 +1147,7 @@
 "标题权限" = "Title Permission";
 "标题栏文字" = "Title Bar Text";
 "标题栏背景" = "Title Bar Background";
+"标题颜色" = "Title Color";
 "根据 OSC 7 目录变化更新本机 frecency 排名；忽略列表中的目录不会重新出现" = "Update local frecency ranking based on OSC 7 directory changes; directories in the ignore list will not reappear";
 "格式" = "Format";
 "检查已取消。" = "Inspection cancelled.";
@@ -1146,7 +1155,9 @@
 "检测" = "Detect";
 "检测到密码输入时启用系统安全键盘" = "Enable the System Secure Keyboard When Password Input Is Detected";
 "检测到：%@\n\n%@" = "Detected: %@\n\n%@";
+"概览" = "Overview";
 "模型周" = "Model Wk";
+"橙" = "Orange";
 "次要文字" = "Secondary Text";
 "正则表达式" = "Regular Expression";
 "正在上传 %@（%@/%@）" = "Uploading %@ (%@/%@)";
@@ -1250,6 +1261,7 @@
 "现有运行中服务继续使用自己的二进制实例，不会被本次安装停止。" = "Existing running services will continue using their own binary instances and will not be stopped by this installation.";
 "生成诊断包失败：%@" = "Failed to generate diagnostic package: %@";
 "生效中" = "Active";
+"用户" = "User";
 "用逗号分隔，例如 vscode,codex,ssh" = "Comma-separated, e.g. vscode,codex,ssh";
 "用逗号分隔；每项按空白分词前缀匹配，留空即关闭" = "Comma-separated; each item matches by whitespace-tokenized prefix, leave empty to disable";
 "由 全局 → 主题 → 回退 解析得到" = "Resolved from Global → Theme → Fallback";
@@ -1299,6 +1311,7 @@
 "立即更新" = "Update Now";
 "立即重启" = "Restart Now";
 "竖线" = "Bar";
+"端口" = "Ports";
 "端口非法：%@，必须是 1–65535。" = "Invalid port: %@, must be 1–65535.";
 "第 %@ 行" = "Line %@";
 "第一行内容位于中部" = "First Line of Content in the Middle";
@@ -1309,6 +1322,7 @@
 "等待输入徽章" = "Waiting for Input Badge";
 "等待输入时通知" = "Notify When Waiting for Input";
 "简体中文" = "Simplified Chinese";
+"粉" = "Pink";
 "粘贴" = "Paste";
 "粘贴 Base64 编码文件…" = "Paste Base64-Encoded File…";
 "粘贴为" = "Paste As";
@@ -1328,6 +1342,8 @@
 "系统集成" = "System Integration";
 "系统默认" = "System Default";
 "紧凑 (1.0)" = "Compact (1.0)";
+"紫" = "Purple";
+"红" = "Red";
 "约 %@ token" = "~%@ tokens";
 "终止信号 %@%@。最后画面已保留。" = "Terminated by signal %@%@. The last screen has been preserved.";
 "终端" = "Terminal";
@@ -1354,6 +1370,7 @@
 "继续 Task" = "Continue Task";
 "继续会话" = "Resume Session";
 "继续运行" = "Continuing";
+"绿" = "Green";
 "编辑" = "Edit";
 "编辑器" = "Composer";
 "缩放" = "Zoom";
@@ -1387,7 +1404,10 @@
 "自定义 CLI 别名" = "Custom CLI Aliases";
 "自定义主题的显示名称" = "Customize the Theme's Display Name";
 "自定义协议" = "Custom Protocol";
+"自定义颜色…" = "Custom Color…";
 "范围" = "Scope";
+"蓝" = "Blue";
+"薄荷" = "Mint";
 "行高" = "Line Height";
 "补全数据库" = "Autocomplete Database";
 "补全数据库已更新：%@。" = "Autocomplete database updated: %@.";
@@ -1447,6 +1467,7 @@
 "读取中…" = "Loading…";
 "调整拆分大小" = "Resize Split";
 "负载" = "Load";
+"赭" = "Ochre";
 "超时" = "timed out";
 "跟随主题" = "Follow Theme";
 "跟随末尾设置" = "Follow the End Setting";
@@ -1485,6 +1506,7 @@
 "运行此命令" = "Run This Command";
 "返回上级" = "Go Up";
 "返回会话列表" = "Back to Session List";
+"返回进程列表" = "Back to processes";
 "还没有 Agent 取用过上下文。" = "No Agent has consumed context yet.";
 "进入" = "Open";
 "进入 Mark Mode" = "Enter Mark Mode";
@@ -1493,6 +1515,7 @@
 "进入刚克隆的仓库" = "Enter the repository you just cloned";
 "进入刚创建的目录" = "Enter the directory you just created";
 "进入刚解压出的目录" = "Enter the directory you just extracted";
+"进程" = "Processes";
 "进程（按 CPU）" = "Processes (by CPU)";
 "进程（按内存）" = "Processes (by memory)";
 "进行中" = "In Progress";
@@ -1537,6 +1560,7 @@
 "连接 %@ 失败。" = "Failed to connect to %@.";
 "连接 %@ 超时。" = "Connection to %@ timed out.";
 "连接中" = "Connecting";
+"连接失败" = "Connection failed";
 "连接失败：%@" = "Connection failed: %@";
 "连接已取消。" = "Connection canceled.";
 "连接并保存" = "Connect and Save";
@@ -1613,6 +1637,7 @@
 "重置安全提示" = "Reset Security Prompts";
 "重试" = "Retry";
 "重连中" = "Reconnecting";
+"金" = "Gold";
 "链接协议" = "Link Protocols";
 "错误退出" = "Error Exit";
 "错误退出时播放声音" = "Play a Sound on Error Exit";
@@ -1622,6 +1647,7 @@
 "问题描述（可选）" = "Description (optional)";
 "队列提示词超过 64 KiB 上限。" = "Queue prompt exceeds the 64 KiB limit.";
 "附件…" = "Attachments…";
+"随机标题颜色" = "Random Title Colors";
 "隐藏 Aster" = "Hide Aster";
 "隐身" = "Incognito";
 "需要 Shell Integration 才能显示命令。请在设置 → Shell 中启用它。" = "Shell Integration is required to display commands. Please enable it in Settings → Shell.";
@@ -1631,6 +1657,9 @@
 "需要处理" = "Needs Attention";
 "需要更新" = "Update Needed";
 "需要认证：开启「SSH 连接复用」并重新连接" = "Authentication required: turn on \"SSH Connection Sharing\" and reconnect";
+"青" = "Teal";
+"青柠" = "Lime";
+"靛" = "Indigo";
 "非 root 用户看不到其他用户的进程" = "Non-root users cannot see other users' processes";
 "非标准链接会交给本机已注册的应用处理。仅在信任来源时打开。" = "Non-standard links will be handled by the locally registered application. Open only if you trust the source.";
 "非零退出或 OSC 进度错误时显示警告" = "Show a Warning on Nonzero Exit or OSC Progress Error";
@@ -1663,14 +1692,3 @@
 "，系统报告已生成 core dump" = ", system reported a core dump was generated";
 "；" = "; ";
 "；如 PATH 未包含 ~/.local/bin 请自行加入" = "; if PATH does not include ~/.local/bin, please add it yourself";
-"探测失败：%@" = "Detection failed: %@";
-"连接失败" = "Connection failed";
-"概览" = "Overview";
-"进程" = "Processes";
-"端口" = "Ports";
-"未知进程" = "Unknown process";
-"PID" = "PID";
-"用户" = "User";
-"内存占比" = "Memory share";
-"命令行" = "Command line";
-"返回进程列表" = "Back to processes";

@@ -344,6 +344,14 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   }
   /// 标题的局部更新通道；只刷新侧栏/标签行文案，不重建视图树。
   let titleChanged = PassthroughSubject<String, Never>()
+  /// 用户显式设置的标题颜色；nil 表示跟随自动色或主题默认前景。
+  /// 与 `title` 同理走局部刷新通道，改颜色不重建工作区视图树。
+  private(set) var titleColor: HexColor?
+  /// 新建标签时分配的调色板索引（`TabTitleColorPalette`），随机颜色开关关闭时不渲染。
+  private(set) var autoTitleColorIndex: Int?
+  /// 标题颜色的局部更新通道；与 `titleChanged` 分开，避免颜色变化被误当作标题变化
+  /// 去刷新窗口标题、Dock 或 Agent 会话名。
+  let titleColorChanged = PassthroughSubject<Void, Never>()
   private var titleState: TerminalTitleState
   /// 各 Pane 精确绑定的 Agent 会话标题（运行态，不进快照；恢复会话后由绑定事件重建）。
   /// 有值时标签行与标题栏胶囊优先显示它；用户显式固定名（`.name` 覆盖）仍然最高优先。
@@ -500,11 +508,15 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     layout: PaneLayout? = nil,
     titleState: TerminalTitleState? = nil,
     createdAt: Date = Date(),
-    updatedAt: Date? = nil
+    updatedAt: Date? = nil,
+    titleColor: HexColor? = nil,
+    autoTitleColorIndex: Int? = nil
   ) {
     self.id = id
     self.createdAt = createdAt
     self.updatedAt = updatedAt ?? createdAt
+    self.titleColor = titleColor
+    self.autoTitleColorIndex = autoTitleColorIndex
     let initialTitleState = (titleState ?? TerminalTitleState(fallback: title)).normalized()
     self.titleState = initialTitleState
     self.title = initialTitleState.tabTitle
@@ -531,7 +543,9 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       layout: snapshot.layout,
       titleState: snapshot.titleState,
       createdAt: snapshot.createdAt ?? Date(),
-      updatedAt: snapshot.updatedAt
+      updatedAt: snapshot.updatedAt,
+      titleColor: snapshot.titleColor,
+      autoTitleColorIndex: snapshot.autoTitleColorIndex
     )
   }
 
@@ -1011,8 +1025,36 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       createdAt: createdAt,
       updatedAt: updatedAt,
       agentSessions: agentSessions.isEmpty ? nil : agentSessions,
-      restoreCommands: restoreCommands.isEmpty ? nil : restoreCommands
+      restoreCommands: restoreCommands.isEmpty ? nil : restoreCommands,
+      titleColor: titleColor,
+      autoTitleColorIndex: autoTitleColorIndex
     )
+  }
+
+  /// 设置或清除用户显式标题颜色。清除后回到自动色（随机颜色开启时）或主题默认前景。
+  func setTitleColor(_ color: HexColor?) {
+    guard titleColor != color else { return }
+    titleColor = color
+    markUpdated()
+    titleColorChanged.send(())
+    onWorkspaceChanged?()
+  }
+
+  /// 写入自动分配的调色板索引。分配策略由 `AppModel` 负责（它才知道同窗口其它标签
+  /// 占用了哪些颜色），Tab 只保存结果并发局部刷新。
+  func setAutoTitleColorIndex(_ index: Int?) {
+    guard autoTitleColorIndex != index else { return }
+    autoTitleColorIndex = index
+    titleColorChanged.send(())
+    onWorkspaceChanged?()
+  }
+
+  /// 当前应当渲染的标题颜色：用户显式色优先；随机颜色开启时回落到自动色。
+  /// - Parameter randomColorsEnabled: 「随机标题颜色」开关状态。
+  func resolvedTitleColor(randomColorsEnabled: Bool) -> HexColor? {
+    if let titleColor { return titleColor }
+    guard randomColorsEnabled, let autoTitleColorIndex else { return nil }
+    return TabTitleColorPalette.color(atIndex: autoTitleColorIndex)
   }
 
   func markUpdated() { updatedAt = Date() }
@@ -1660,6 +1702,8 @@ final class AppModel: ObservableObject {
       recentlyClosedTabs.removeEntries(withIDs: Set(tabs.map(\.id)))
       if recentlyClosedTabs != previousHistory { persistRecentlyClosedTabs() }
       for tab in tabs { configurePersistence(for: tab) }
+      // 0.6.x 之前的快照没有自动颜色；一次性补齐，让老工作区也按「互不撞色」着色。
+      for tab in tabs where tab.autoTitleColorIndex == nil { assignAutoTitleColor(to: tab) }
       selectedTabID =
         tabs.contains(where: { $0.id == snapshot.selectedTabID })
         ? snapshot.selectedTabID : tabs.first?.id
@@ -1890,12 +1934,49 @@ final class AppModel: ObservableObject {
         dividerAfterTabIDs.insert(tab.id)
       }
     }
+    // 颜色在插入前分配：此时 `tabs` 还不含新标签，占用集合正好是「其它标签」。
+    // 跨窗口移动过来的标签已经带着颜色，保持不变。
+    if tab.autoTitleColorIndex == nil { assignAutoTitleColor(to: tab) }
     tabs.insert(tab, at: insertionIndex)
     // 物理插入位置只决定 tabs 数组（横向标签条、快照顺序）；侧栏的时间排序是用户
     // 显式选择的视图层排序，插入标签不得改写它——早期在这里自动切到 manual，
     // 导致整理菜单的 ORDER 选项每开一个新标签就悄悄失效。
     configurePersistence(for: tab)
     selectedTabID = tab.id
+    persistWorkspace()
+  }
+
+  // MARK: - 标签标题颜色
+
+  /// 分配一个与本窗口其它标签不重复的自动颜色。不重复只在窗口内保证：
+  /// 每个工作区窗口有自己的 `AppModel`，跨窗口撞色不影响同一列表里的可区分度。
+  private func assignAutoTitleColor(to tab: TerminalTabItem) {
+    tab.setAutoTitleColorIndex(
+      TabTitleColorPalette.allocateIndex(used: usedAutoTitleColorIndices(excluding: tab.id)))
+  }
+
+  /// 本窗口已占用的调色板索引（可排除某个标签自身，用于「换一个颜色」与补齐）。
+  private func usedAutoTitleColorIndices(excluding excludedID: UUID?) -> [Int] {
+    tabs.compactMap { $0.id == excludedID ? nil : $0.autoTitleColorIndex }
+  }
+
+  /// 右键菜单「设置标题颜色」：传 nil 表示恢复默认（回到自动色或主题前景）。
+  func setTabTitleColor(_ color: HexColor?, for id: UUID) {
+    guard let tab = tabs.first(where: { $0.id == id }) else { return }
+    tab.setTitleColor(color)
+    persistWorkspace()
+  }
+
+  /// 右键菜单「换一个随机颜色」：重挑一个自动色并清掉用户显式色，
+  /// 否则显式色会一直盖住新挑的颜色，用户点了看不到变化。
+  func shuffleTabTitleColor(for id: UUID) {
+    guard let tab = tabs.first(where: { $0.id == id }) else { return }
+    tab.setAutoTitleColorIndex(
+      TabTitleColorPalette.reallocateIndex(
+        current: tab.autoTitleColorIndex,
+        used: usedAutoTitleColorIndices(excluding: tab.id)
+      ))
+    tab.setTitleColor(nil)
     persistWorkspace()
   }
 

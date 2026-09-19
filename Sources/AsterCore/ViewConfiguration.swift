@@ -151,6 +151,9 @@ public struct ViewConfiguration: Codable, Equatable, Sendable {
   public var rulesArrangement: TabRuleArrangement?
   public var tabRules: [TabTitleRule]?
   public var badgePlacement: TabBadgePlacement?
+  /// 新标签是否自动分配一个随机标题颜色（同一窗口内尽量不撞色）。
+  /// 关闭后只隐藏自动色，用户手动设置的标题颜色仍然显示。
+  public var randomTabTitleColors: Bool?
   public var webPanePersistData: Bool?
   public var detailsPanelSections: [DetailsPanelSectionSetting]?
   public var detailsPanelCustomViews: [DetailsPanelCustomView]?
@@ -163,6 +166,8 @@ public struct ViewConfiguration: Codable, Equatable, Sendable {
   public var resolvedRulesArrangement: TabRuleArrangement { rulesArrangement ?? .byItem }
   public var resolvedTabRules: [TabTitleRule] { tabRules ?? [] }
   public var resolvedBadgePlacement: TabBadgePlacement { badgePlacement ?? .combined }
+  /// 缺省开启：新装或旧配置升级后，标签自动带上互不相同的标题颜色。
+  public var resolvedRandomTabTitleColors: Bool { randomTabTitleColors ?? true }
   public var resolvedWebPanePersistData: Bool { webPanePersistData ?? true }
   public var resolvedCustomViews: [DetailsPanelCustomView] { detailsPanelCustomViews ?? [] }
 

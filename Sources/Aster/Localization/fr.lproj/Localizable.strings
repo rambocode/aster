@@ -138,6 +138,7 @@
 "OSC 52 读取剪贴板" = "Lecture presse-papiers via OSC 52";
 "Open Quickly · 当前" = "Open Quickly · Actuel";
 "Option 作为 Meta" = "Option comme Meta";
+"PID" = "PID";
 "PTY 会话未运行" = "La session PTY n'est pas en cours d'exécution";
 "PTY 未取得可靠退出状态。最后画面已保留，可以重新启动 Shell。" = "Le PTY n'a pas obtenu de statut de sortie fiable. Le dernier écran a été conservé ; vous pouvez redémarrer le Shell.";
 "Pane 处于 Vi/Hint 模式" = "Le panneau est en mode Vi/Hint";
@@ -385,6 +386,7 @@
 "关闭面板" = "Fermer le panneau";
 "关闭预览" = "Fermer l'aperçu";
 "内存" = "Mémoire";
+"内存占比" = "Part de mémoire";
 "内容" = "Contenu";
 "内置 Fig 命令规格（含子命令、选项与参数）；只在手动操作时联网" = "Spécifications de commandes Fig intégrées (sous-commandes, options et arguments inclus) ; se connecte uniquement lors d'une action manuelle";
 "内置字体不是可安全读取的普通文件：%@" = "La police intégrée n’est pas un fichier régulier lisible en toute sécurité : %@";
@@ -527,6 +529,7 @@
 "命令已完成" = "Commande terminée";
 "命令执行失败" = "Échec de la commande";
 "命令等待输入时在标签上显示标记" = "Afficher un repère sur l'onglet quand une commande attend une saisie";
+"命令行" = "Ligne de commande";
 "命令规格更新失败：%@" = "Échec de la mise à jour des spécifications de commande : %@";
 "命令重放" = "Relecture de commande";
 "命令面板" = "Palette de commandes";
@@ -810,6 +813,7 @@
 "恢复运行中的进程" = "Restaurer les processus en cours";
 "恢复默认尺寸" = "Restaurer la taille par défaut";
 "恢复默认设置" = "Restaurer les réglages par défaut";
+"恢复默认颜色" = "Rétablir la couleur par défaut";
 "成功退出后在标签上显示强调色圆点" = "Afficher un point de couleur d'accentuation sur l'onglet après une sortie réussie";
 "我已了解，继续" = "J'ai compris, continuer";
 "截屏" = "Capture d’écran";
@@ -886,7 +890,9 @@
 "按住 Cmd 悬停在链接上时，在底部角落显示该链接的完整路径或 URL。关闭后链接仍可点击，但不再显示预览。" = "En maintenant Cmd et en survolant un lien, afficher son chemin ou URL complet dans le coin inférieur. Une fois désactivé, les liens restent cliquables mais aucun aperçu n'est affiché.";
 "按内存排序" = "Trier par mémoire";
 "按名称（点击切换为目录优先）" = "Par nom (cliquez pour passer au tri par répertoire)";
+"换一个随机颜色" = "Choisir une autre couleur aléatoire";
 "排除" = "Exclure";
+"探测失败：%@" = "Échec de la détection : %@";
 "接受候选" = "Accepter la suggestion";
 "控制" = "Contrôle";
 "控制 OpenType 标准、上下文和 discretionary ligatures" = "Contrôler les ligatures OpenType standard, contextuelles et discrétionnaires";
@@ -943,6 +949,7 @@
 "新建标签页开始使用 Aster" = "Ouvrez un nouvel onglet pour commencer à utiliser Aster";
 "新建窗口" = "Nouvelle fenêtre";
 "新建远端 Agent…" = "Nouvel Agent distant…";
+"新标签自动分配一个和其它标签不重样的标题颜色；关掉只影响自动色，手动设的颜色仍然保留" = "Attribue à chaque nouvel onglet une couleur de titre différente des autres. La désactivation masque seulement les couleurs automatiques ; celles définies à la main sont conservées.";
 "新标签页位置" = "Position du nouvel onglet";
 "新窗口如何决定初始尺寸" = "Comment une nouvelle fenêtre détermine sa taille initiale";
 "方块" = "Bloc";
@@ -1085,6 +1092,7 @@
 "未知主题字体样式" = "Style de police de thème inconnu";
 "未知原因" = "Raison inconnue";
 "未知的 Agent：%@" = "Agent inconnu : %@";
+"未知进程" = "Processus inconnu";
 "未知错误" = "Erreur inconnue";
 "未连接" = "Non connecté";
 "未配置 %@，无法访问命名会话注册表。" = "%@ n'est pas configuré ; impossible d'accéder au registre de Sessions nommées.";
@@ -1139,6 +1147,7 @@
 "标题权限" = "Autorisation de titre";
 "标题栏文字" = "Texte de la barre de titre";
 "标题栏背景" = "Arrière-plan de la barre de titre";
+"标题颜色" = "Couleur du titre";
 "根据 OSC 7 目录变化更新本机 frecency 排名；忽略列表中的目录不会重新出现" = "Met à jour le classement frecency local en fonction des changements de dossier OSC 7 ; les dossiers de la liste d'exclusion ne réapparaîtront pas";
 "格式" = "Format";
 "检查已取消。" = "Inspection annulée.";
@@ -1146,7 +1155,9 @@
 "检测" = "Détecter";
 "检测到密码输入时启用系统安全键盘" = "Activer le clavier sécurisé du système lorsqu'une saisie de mot de passe est détectée";
 "检测到：%@\n\n%@" = "Détecté : %@\n\n%@";
+"概览" = "Aperçu";
 "模型周" = "Sem. modèle";
+"橙" = "Orange";
 "次要文字" = "Texte secondaire";
 "正则表达式" = "Expression régulière";
 "正在上传 %@（%@/%@）" = "Téléversement de %@ (%@/%@)";
@@ -1250,6 +1261,7 @@
 "现有运行中服务继续使用自己的二进制实例，不会被本次安装停止。" = "Les services en cours d'exécution continueront d'utiliser leurs propres instances binaires et ne seront pas arrêtés par cette installation.";
 "生成诊断包失败：%@" = "Échec de la génération du paquet de diagnostic : %@";
 "生效中" = "Actif";
+"用户" = "Utilisateur";
 "用逗号分隔，例如 vscode,codex,ssh" = "Séparés par des virgules, par ex. vscode,codex,ssh";
 "用逗号分隔；每项按空白分词前缀匹配，留空即关闭" = "Séparés par des virgules ; chaque élément correspond par préfixe tokenisé sur les espaces, laissez vide pour désactiver";
 "由 全局 → 主题 → 回退 解析得到" = "Résolu selon Global → Thème → Repli";
@@ -1299,6 +1311,7 @@
 "立即更新" = "Mettre à jour maintenant";
 "立即重启" = "Redémarrer maintenant";
 "竖线" = "Barre";
+"端口" = "Ports";
 "端口非法：%@，必须是 1–65535。" = "Port invalide : %@, doit être compris entre 1 et 65535.";
 "第 %@ 行" = "Ligne %@";
 "第一行内容位于中部" = "Première ligne de contenu au milieu";
@@ -1309,6 +1322,7 @@
 "等待输入徽章" = "Badge en attente de saisie";
 "等待输入时通知" = "Notifier en attente de saisie";
 "简体中文" = "Chinois simplifié";
+"粉" = "Rose";
 "粘贴" = "Coller";
 "粘贴 Base64 编码文件…" = "Coller un fichier encodé en Base64…";
 "粘贴为" = "Coller en tant que";
@@ -1328,6 +1342,8 @@
 "系统集成" = "Intégration système";
 "系统默认" = "Par défaut du système";
 "紧凑 (1.0)" = "Compact (1.0)";
+"紫" = "Violet";
+"红" = "Rouge";
 "约 %@ token" = "~%@ tokens";
 "终止信号 %@%@。最后画面已保留。" = "Signal de terminaison %@%@. Le dernier écran a été conservé.";
 "终端" = "Terminal";
@@ -1354,6 +1370,7 @@
 "继续 Task" = "Continuer le Task";
 "继续会话" = "Reprendre la session";
 "继续运行" = "En cours d'exécution";
+"绿" = "Vert";
 "编辑" = "Édition";
 "编辑器" = "Composer";
 "缩放" = "Zoom";
@@ -1387,7 +1404,10 @@
 "自定义 CLI 别名" = "Alias CLI personnalisés";
 "自定义主题的显示名称" = "Personnaliser le nom d'affichage du thème";
 "自定义协议" = "Protocole personnalisé";
+"自定义颜色…" = "Couleur personnalisée…";
 "范围" = "Portée";
+"蓝" = "Bleu";
+"薄荷" = "Menthe";
 "行高" = "Hauteur de ligne";
 "补全数据库" = "Base de données d'autocomplétion";
 "补全数据库已更新：%@。" = "Base de données d'autocomplétion mise à jour : %@.";
@@ -1447,6 +1467,7 @@
 "读取中…" = "Chargement…";
 "调整拆分大小" = "Redimensionner la division";
 "负载" = "Charge";
+"赭" = "Ocre";
 "超时" = "délai dépassé";
 "跟随主题" = "Suivre le thème";
 "跟随末尾设置" = "Suivre le réglage de fin";
@@ -1485,6 +1506,7 @@
 "运行此命令" = "Exécuter cette commande";
 "返回上级" = "Dossier parent";
 "返回会话列表" = "Retour à la liste des sessions";
+"返回进程列表" = "Retour aux processus";
 "还没有 Agent 取用过上下文。" = "Aucun Agent n'a encore consommé de contexte.";
 "进入" = "Ouvrir";
 "进入 Mark Mode" = "Entrer en Mark Mode";
@@ -1493,6 +1515,7 @@
 "进入刚克隆的仓库" = "Entrer dans le dépôt que vous venez de cloner";
 "进入刚创建的目录" = "Entrer dans le dossier que vous venez de créer";
 "进入刚解压出的目录" = "Entrer dans le dossier que vous venez d’extraire";
+"进程" = "Processus";
 "进程（按 CPU）" = "Processus (par processeur)";
 "进程（按内存）" = "Processus (par mémoire)";
 "进行中" = "En cours";
@@ -1537,6 +1560,7 @@
 "连接 %@ 失败。" = "Échec de la connexion à %@.";
 "连接 %@ 超时。" = "Délai de connexion à %@ dépassé.";
 "连接中" = "Connexion en cours";
+"连接失败" = "Échec de la connexion";
 "连接失败：%@" = "Échec de la connexion : %@";
 "连接已取消。" = "Connexion annulée.";
 "连接并保存" = "Connecter et enregistrer";
@@ -1613,6 +1637,7 @@
 "重置安全提示" = "Réinitialiser les invites de sécurité";
 "重试" = "Réessayer";
 "重连中" = "Reconnexion en cours";
+"金" = "Or";
 "链接协议" = "Protocoles de lien";
 "错误退出" = "Sortie en erreur";
 "错误退出时播放声音" = "Jouer un son en cas de sortie en erreur";
@@ -1622,6 +1647,7 @@
 "问题描述（可选）" = "Description du problème (facultatif)";
 "队列提示词超过 64 KiB 上限。" = "Le prompt de la file d’attente dépasse la limite de 64 Kio.";
 "附件…" = "Pièces jointes…";
+"随机标题颜色" = "Couleurs de titre aléatoires";
 "隐藏 Aster" = "Masquer Aster";
 "隐身" = "Incognito";
 "需要 Shell Integration 才能显示命令。请在设置 → Shell 中启用它。" = "Shell Integration est nécessaire pour afficher les commandes. Veuillez l’activer dans Réglages → Shell.";
@@ -1631,6 +1657,9 @@
 "需要处理" = "Nécessite une intervention";
 "需要更新" = "Mise à jour requise";
 "需要认证：开启「SSH 连接复用」并重新连接" = "Authentification requise : activez « Partage de connexion SSH » puis reconnectez-vous";
+"青" = "Sarcelle";
+"青柠" = "Citron vert";
+"靛" = "Indigo";
 "非 root 用户看不到其他用户的进程" = "Les utilisateurs non root ne voient pas les processus des autres utilisateurs";
 "非标准链接会交给本机已注册的应用处理。仅在信任来源时打开。" = "Les liens non standards seront traités par l’application enregistrée localement. N’ouvrez que si vous faites confiance à la source.";
 "非零退出或 OSC 进度错误时显示警告" = "Afficher un avertissement en cas de sortie non nulle ou d'erreur de progression OSC";
@@ -1663,14 +1692,3 @@
 "，系统报告已生成 core dump" = ", le système a signalé la génération d'un core dump";
 "；" = " ; ";
 "；如 PATH 未包含 ~/.local/bin 请自行加入" = "; si le PATH ne contient pas ~/.local/bin, veuillez l'ajouter vous-même";
-"探测失败：%@" = "Échec de la détection : %@";
-"连接失败" = "Échec de la connexion";
-"概览" = "Aperçu";
-"进程" = "Processus";
-"端口" = "Ports";
-"未知进程" = "Processus inconnu";
-"PID" = "PID";
-"用户" = "Utilisateur";
-"内存占比" = "Part de mémoire";
-"命令行" = "Ligne de commande";
-"返回进程列表" = "Retour aux processus";

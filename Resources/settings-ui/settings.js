@@ -310,6 +310,7 @@
         row("view.tabRules.title", t("标题"), t("标签页标题模板。点击变量即可插入到光标处。"), "rules", { field: "title" }),
       ]},
       { title: t("标签页图标与角标"), rows: [
+        row("view.randomTabTitleColors", t("随机标题颜色"), t("新标签自动分配一个和其它标签不重样的标题颜色。关掉只影响自动色，右键标签手动设的颜色仍然保留——右键标签页的「标题颜色」可以挑色、换一个随机色或恢复默认。")),
         row("view.badgePlacement", t("图标与角标"), t("合并时标签页上只有一个指示位：平时显示你的图标，有状态发生时由角标接管。分开时图标在左、角标在右，并隐藏 shell 名称——分屏标签页仍会显示窗格数。"), "select", { options: [["combined", t("合并")], ["separate", t("分开")]] }),
         row("shell.badgeCommandFinish", t("命令完成时"), t("命令完成时在标签上显示强调色圆点")),
         row("shell.badgeCommandFailure", t("命令失败时"), t("命令失败时在标签上显示错误提醒")),

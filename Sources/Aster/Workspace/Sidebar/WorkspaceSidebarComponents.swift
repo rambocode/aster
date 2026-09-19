@@ -72,6 +72,9 @@ final class TabRowButton: NSButton {
   /// 不会被 OSC 标题重新改回完整路径。
   private let displayTitleProvider: () -> String
   private let displayTitleToolTip: String?
+  /// 标题的自定义颜色（用户显式色或随机分配色）；返回 nil 时沿用主题前景色。
+  /// 用闭包而不是固定值：颜色可以在不重建行的前提下就地刷新。
+  private let titleColorProvider: () -> NSColor?
   private let selected: Bool
   private let horizontal: Bool
   private let showsExitStatus: Bool
@@ -136,6 +139,7 @@ final class TabRowButton: NSButton {
     badgePlacement: TabBadgePlacement = .combined,
     displayTitleProvider: (() -> String)? = nil,
     displayTitleToolTip: String? = nil,
+    titleColorProvider: (() -> NSColor?)? = nil,
     onClose: (() -> Void)?,
     action: @escaping () -> Void,
     onDragEnd: @escaping (NSPoint) -> Void
@@ -143,6 +147,7 @@ final class TabRowButton: NSButton {
     self.tab = tab
     self.displayTitleProvider = displayTitleProvider ?? { tab.displayTitle }
     self.displayTitleToolTip = displayTitleToolTip
+    self.titleColorProvider = titleColorProvider ?? { nil }
     self.selected = selected
     self.horizontal = horizontal
     self.showsExitStatus = showsExitStatus
@@ -226,11 +231,13 @@ final class TabRowButton: NSButton {
     // 切换标签时行文案不再在「完整路径 / 短名」之间跳变。
     // 纵向标签字号对齐 Otty `[tab].font-size` 原生默认 13；选中字重跟随主题
     // `tab.active.font-weight`，不再固定 semibold。
+    // 标题颜色：用户色 / 随机色优先，未设置时才用主题前景（选中与否各有一份）。
     let primary = makeLabel(
       self.displayTitleProvider(),
       size: horizontal ? 12 : 13,
       weight: selected ? NSFont.Weight(cssWeight: style.activeFontWeight) : .regular,
-      color: selected ? resolvedActiveForeground : resolvedForeground
+      color: self.titleColorProvider()
+        ?? (selected ? resolvedActiveForeground : resolvedForeground)
     )
     addSubview(primary)
     primary.translatesAutoresizingMaskIntoConstraints = false
@@ -414,6 +421,12 @@ final class TabRowButton: NSButton {
     titleLabel?.stringValue = value
     titleLabel?.toolTip = displayTitleToolTip
     closeButton?.setAccessibilityLabel(L("关闭标签页 \(value)"))
+  }
+
+  /// 标题颜色就地刷新：用户改色或切换随机颜色开关时调用，不重建行与终端视图。
+  func refreshTitleColor() {
+    titleLabel?.textColor =
+      titleColorProvider() ?? (selected ? resolvedActiveForeground : resolvedForeground)
   }
 
   /// 只替换标签的状态附件，不重建 Sidebar、Pane 或长期存活的终端视图。Agent hook

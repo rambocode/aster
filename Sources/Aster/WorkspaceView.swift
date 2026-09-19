@@ -1034,6 +1034,15 @@ final class WorkspaceViewController: NSViewController {
           }
         }
         .store(in: &tabSubscriptions)
+      // 标题颜色同样只刷新行内文字，不重建侧栏与终端。
+      tab.titleColorChanged
+        .sink { [weak self, weak tab] _ in
+          guard let self, let tab else { return }
+          for row in self.tabRowsByID[tab.id] ?? [] where row.window != nil {
+            row.refreshTitleColor()
+          }
+        }
+        .store(in: &tabSubscriptions)
       tab.workingDirectoryChanged
         .sink { [weak self, weak tab] change in
           guard let self, let tab, tab.id == self.model.selectedTabID,
@@ -1412,6 +1421,10 @@ final class WorkspaceViewController: NSViewController {
               : (directory as NSString).abbreviatingWithTildeInPath
           },
           displayTitleToolTip: section.kind == .project(.local) ? tab.workingDirectory : nil,
+          titleColorProvider: { [weak self, weak tab] in
+            guard let self, let tab else { return nil }
+            return self.tabTitleColor(for: tab)
+          },
           onClose: { [weak self, weak tab] in
             guard let tab else { return }
             self?.model.closeTab(id: tab.id)
@@ -1724,6 +1737,10 @@ final class WorkspaceViewController: NSViewController {
           guard let self, let tab else { return "" }
           return self.ruleTitle(for: tab) ?? tab.displayTitle
         },
+        titleColorProvider: { [weak self, weak tab] in
+          guard let self, let tab else { return nil }
+          return self.tabTitleColor(for: tab)
+        },
         onClose: { [weak self, weak tab] in
           guard let tab else { return }
           self?.model.closeTab(id: tab.id)
@@ -1789,6 +1806,78 @@ final class WorkspaceViewController: NSViewController {
     return background
   }
 
+  /// 标签行标题当前应当使用的颜色；随机颜色开关关闭时只保留用户显式色。
+  private func tabTitleColor(for tab: TerminalTabItem) -> NSColor? {
+    let enabled = preferences.configuration.resolvedView.resolvedRandomTabTitleColors
+    return tab.resolvedTitleColor(randomColorsEnabled: enabled).map { NSColor($0) }
+  }
+
+  /// 「标题颜色」子菜单：调色板 + 换一个随机色 + 自定义取色 + 恢复默认。
+  /// 颜色写在标签上，因此不先 `select(tab)`——给后台标签改色不应把焦点抢过去。
+  private func makeTabTitleColorMenu(_ tab: TerminalTabItem) -> NSMenu {
+    let menu = NSMenu()
+    let current = tab.resolvedTitleColor(randomColorsEnabled: true)
+    for option in TabTitleColorPalette.options {
+      let item = ActionMenuItem(title: option.name) { [weak self, weak tab] in
+        guard let self, let tab else { return }
+        model.setTabTitleColor(option.color, for: tab.id)
+      }
+      item.image = Self.makeColorSwatchImage(NSColor(option.color))
+      item.state = option.color == current ? .on : .off
+      menu.addItem(item)
+    }
+    menu.addItem(.separator())
+    menu.addItem(
+      ActionMenuItem(title: L("换一个随机颜色")) { [weak self, weak tab] in
+        guard let self, let tab else { return }
+        model.shuffleTabTitleColor(for: tab.id)
+      })
+    menu.addItem(
+      ActionMenuItem(title: L("自定义颜色…")) { [weak self, weak tab] in
+        guard let self, let tab else { return }
+        presentTabTitleColorPicker(for: tab)
+      })
+    menu.addItem(
+      ActionMenuItem(title: L("恢复默认颜色")) { [weak self, weak tab] in
+        guard let self, let tab else { return }
+        model.setTabTitleColor(nil, for: tab.id)
+      })
+    return menu
+  }
+
+  /// 菜单项里的小色块。NSMenuItem 只接受图片，这里现画一枚圆角方块。
+  private static func makeColorSwatchImage(_ color: NSColor) -> NSImage {
+    let size = NSSize(width: 14, height: 14)
+    return NSImage(size: size, flipped: false) { rect in
+      let path = NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 3, yRadius: 3)
+      color.setFill()
+      path.fill()
+      return true
+    }
+  }
+
+  /// 系统取色面板选自定义标题色。实时回写，关掉面板即完成。
+  private func presentTabTitleColorPicker(for tab: TerminalTabItem) {
+    let anchor = tabRowsByID[tab.id]?.first { $0.window != nil } ?? view
+    let initial = tabTitleColor(for: tab) ?? AsterTheme.ink
+    let picker = InlineColorPickerViewController(
+      title: L("标题颜色"),
+      color: initial
+    ) { [weak self, weak tab] color in
+      guard let self, let tab else { return }
+      // 取色器给的是设备色；统一转 sRGB 再存，避免不同显示器写出不同的十六进制值。
+      model.setTabTitleColor(
+        HexColor(nsColor: color.usingColorSpace(.sRGB) ?? color), for: tab.id)
+    }
+    present(
+      picker,
+      asPopoverRelativeTo: anchor.bounds,
+      of: anchor,
+      preferredEdge: .maxX,
+      behavior: .semitransient
+    )
+  }
+
   private func makeTabContextMenu(_ tab: TerminalTabItem) -> NSMenu {
     let menu = NSMenu()
     menu.addItem(ActionMenuItem(title: L("重命名标签页…")) { [weak self, weak tab] in
@@ -1796,6 +1885,9 @@ final class WorkspaceViewController: NSViewController {
       model.select(tab)
       model.promptRenameSelectedTab()
     })
+    let colorItem = NSMenuItem(title: L("标题颜色"), action: nil, keyEquivalent: "")
+    colorItem.submenu = makeTabTitleColorMenu(tab)
+    menu.addItem(colorItem)
     menu.addItem(ActionMenuItem(title: L("恢复自动标题")) { [weak self, weak tab] in
       guard let self, let tab else { return }
       tab.setTabTitleOverride(.automatic)

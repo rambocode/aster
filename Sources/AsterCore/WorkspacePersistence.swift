@@ -186,6 +186,12 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
   public var agentSessions: [WorkspacePaneAgentSession]?
   /// 快照时各终端 Pane 的恢复命令(复用器附着 / OSC 88 声明 / 前台进程);可选兼容旧快照。
   public var restoreCommands: [WorkspacePaneRestoreCommand]?
+  /// 用户显式设置的标题颜色。与自动色分开存：关掉随机颜色开关时自动色不再显示，
+  /// 用户亲手选的颜色必须保留。
+  public var titleColor: HexColor?
+  /// 自动分配的调色板索引（`TabTitleColorPalette`）。存索引而不是颜色值，
+  /// 调色板调整后老标签跟随新色板，同时保持「窗口内不撞色」的分配结果可复算。
+  public var autoTitleColorIndex: Int?
 
   public init(
     id: UUID,
@@ -195,7 +201,9 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
     createdAt: Date? = nil,
     updatedAt: Date? = nil,
     agentSessions: [WorkspacePaneAgentSession]? = nil,
-    restoreCommands: [WorkspacePaneRestoreCommand]? = nil
+    restoreCommands: [WorkspacePaneRestoreCommand]? = nil,
+    titleColor: HexColor? = nil,
+    autoTitleColorIndex: Int? = nil
   ) {
     self.id = id
     self.title = title
@@ -205,6 +213,8 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
     self.updatedAt = updatedAt
     self.agentSessions = agentSessions
     self.restoreCommands = restoreCommands
+    self.titleColor = titleColor
+    self.autoTitleColorIndex = autoTitleColorIndex
   }
 }
 
