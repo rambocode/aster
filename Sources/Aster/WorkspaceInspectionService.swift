@@ -71,7 +71,7 @@ enum WorkspaceInspectionService {
     case unavailable, launch, cancelled, timedOut, exceededLimit, unexpectedExit
   }
 
-  /// 测试取消/超时语义的内部 seam。生产调用仍只使用下方固定的 `ps`、`lsof` 和
+  /// 测试取消/超时语义的内部 seam。生产调用仍只使用下方固定的 `ps` 和
   /// `git` 绝对路径；该入口不属于模块公开 API。
   static func runForTesting(
     executable: String,
@@ -87,7 +87,7 @@ enum WorkspaceInspectionService {
     )
   }
 
-  /// Info 页只需要进程树与端口。它们有数据依赖（lsof 需要 ps 得到的后代 PID），但
+  /// Info 页只需要进程树与端口。它们有数据依赖（端口扫描需要 ps 得到的后代 PID），但
   /// 不再串入 Git 工作；外层取消通过 cancellation handler 传给阻塞命令任务。
   static func inspectInformation(
     shellProcessIdentifier: Int32?
@@ -123,27 +123,10 @@ enum WorkspaceInspectionService {
           state: .failed(L("无法读取当前终端进程。"))
         )
       }
-      let inspectedPIDs = processes.map(\.processIdentifier)
-      let portRun = runResult(
-        executable: "/usr/sbin/lsof",
-        arguments: [
-          "-nP", "-a", "-p", inspectedPIDs.map(String.init).joined(separator: ","),
-          "-iTCP", "-sTCP:LISTEN", "-Fpcn",
-        ],
-        timeout: 2,
-        maximumBytes: 2 * 1_024 * 1_024,
-        acceptedTerminationStatuses: [0, 1]
-      )
-      guard portRun.failure == nil else {
-        return WorkspaceInformationSnapshot(
-          processes: processes,
-          listeningPorts: [],
-          state: .failed(L("无法读取监听端口。"))
-        )
-      }
+      // 端口直接经 libproc 读取，不再每轮 fork 一个 lsof；读不到的进程静默跳过。
       return WorkspaceInformationSnapshot(
         processes: processes,
-        listeningPorts: ListeningPortParser.parse(portRun.output)
+        listeningPorts: ListeningPortScanner.scan(processes: processes)
       )
     }
   }
