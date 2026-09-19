@@ -163,6 +163,48 @@ import Testing
   #expect(controller.window == nil)
 }
 
+/// 在 Quick Terminal 里敲 `exit` 必须收起窗口并丢弃会话，下次呼出是一个全新的 Shell。
+@MainActor
+@Test func quickTerminalShellExitHidesWindowAndStartsFreshSession() async throws {
+  let suite = "QuickTerminalExitTests.\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suite))
+  defer { defaults.removePersistentDomain(forName: suite) }
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.setCompatibilityValue(.number(0.05), forKey: "quickTerminal.animationDuration")
+  preferences.setCompatibilityValue(.bool(false), forKey: "quickTerminal.autohide")
+  let controller = QuickTerminalController(preferences: preferences)
+  defer { controller.shutdown() }
+  controller.show()
+  let session = try #require(controller.session)
+  let window = try #require(controller.window)
+  for _ in 0..<40 where !session.isRunning { try await Task.sleep(for: .milliseconds(50)) }
+  #expect(session.isRunning)
+
+  // 用 `exit 0` 而不是裸 `exit`：不带参数时退出码沿用上一条命令，测试环境里不保证是 0。
+  session.send("exit 0")
+  for _ in 0..<80 where controller.session != nil { try await Task.sleep(for: .milliseconds(50)) }
+  #expect(controller.session == nil)
+  #expect(!controller.isPresented)
+  #expect(!window.isVisible)
+  // 结束的会话不该在容器里留下已销毁 surface 的宿主视图。
+  #expect(window.contentView?.subviews.isEmpty == true)
+
+  // 再次呼出：窗口复用，会话必须是新起的一个。
+  controller.show()
+  let restarted = try #require(controller.session)
+  #expect(restarted !== session)
+  #expect(controller.window === window)
+  #expect(controller.isPresented)
+  for _ in 0..<40 where !restarted.isRunning { try await Task.sleep(for: .milliseconds(50)) }
+  #expect(restarted.isRunning)
+
+  // 反面：刚起就以非零码退出（配置写坏）不是用户意图，窗口与画面必须留着供排查。
+  restarted.simulateProcessExitForTesting(code: 1, uptime: 0)
+  try await Task.sleep(for: .milliseconds(150))
+  #expect(controller.isPresented)
+  #expect(controller.session === restarted)
+}
+
 @MainActor
 @Test func quickTerminalHotKeyReportsConflictAndReleasesRegistration() {
   let first = QuickTerminalHotKey()

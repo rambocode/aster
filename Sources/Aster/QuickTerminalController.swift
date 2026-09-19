@@ -15,6 +15,8 @@ final class QuickTerminalController: NSObject, NSWindowDelegate, WorkspaceTermin
   private var previousApplication: NSRunningApplication?
   private var animationGeneration = 0
   private var reportedShortcutFailure: String?
+  /// Shell 已自行退出、等待收尾的标记。隐藏动画结束后才真正丢弃会话。
+  private var pendingSessionDiscard = false
   var workingDirectory: () -> String = { FileManager.default.homeDirectoryForCurrentUser.path }
 
   init(preferences: AppPreferences) {
@@ -69,6 +71,8 @@ final class QuickTerminalController: NSObject, NSWindowDelegate, WorkspaceTermin
 
   func show() {
     guard !isPresented else { return }
+    // 上一轮 Shell 退出后的收尾还没跑完就被再次呼出：先丢弃，否则会把已结束的画面拿出来。
+    if pendingSessionDiscard { discardSession() }
     if let app = NSWorkspace.shared.frontmostApplication,
       app.processIdentifier != ProcessInfo.processInfo.processIdentifier
     {
@@ -103,15 +107,13 @@ final class QuickTerminalController: NSObject, NSWindowDelegate, WorkspaceTermin
       panel.delegate = self
       panel.onHide = { [weak self] in self?.hide() }
       window = panel
-      let terminal = TerminalSession(workingDirectory: workingDirectory())
-      session = terminal
       let container = NSView()
       container.wantsLayer = true
       terminalContainer = container
       // 先挂 contentView 再装 host：容器此时才拿到 contentRect，host 的初始 frame 才算得对。
       panel.contentView = container
-      installTerminalHost(terminal.makeTerminalHost(preferences: preferences))
     }
+    installSession()
     guard let window else { return }
     refresh()
     positionWindow()
@@ -124,6 +126,43 @@ final class QuickTerminalController: NSObject, NSWindowDelegate, WorkspaceTermin
       context.duration = animationDuration
       window.animator().alphaValue = 1
     }
+  }
+
+  /// 创建会话并把终端 host 装进内边距容器。
+  ///
+  /// 窗口在 Shell 退出后保留而会话被丢弃，所以建窗口和建会话必须分开，呼出时才能只补建缺的那一半。
+  private func installSession() {
+    guard window != nil, session == nil else { return }
+    let terminal = TerminalSession(workingDirectory: workingDirectory())
+    // 用户主动结束 Shell（`exit` / Ctrl+D）时收起窗口。信号终止、启动即失败不走这条回调，
+    // 画面保留供排查，仍可经窗口菜单显式重启。
+    terminal.onRequestCloseAfterExit = { [weak self] in self?.handleShellExit() }
+    session = terminal
+    installTerminalHost(terminal.makeTerminalHost(preferences: preferences))
+  }
+
+  /// Shell 自行退出：收起窗口并丢弃会话，下次呼出得到一个干净的 Shell。
+  ///
+  /// 回调发自会话自己的退出处理，必须延后一轮再销毁 surface，否则会在它收尾前释放内存。
+  /// 窗口不销毁：淡出动画还要用它，位置与尺寸记忆也留着。
+  private func handleShellExit() {
+    pendingSessionDiscard = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self, self.pendingSessionDiscard else { return }
+      // 已经隐藏时没有动画可等，直接收尾；否则等淡出结束再拆 surface，避免露出空白窗口。
+      if self.isPresented { self.hide() } else { self.discardSession() }
+    }
+  }
+
+  /// 丢弃当前会话并清空终端容器。窗口、快捷键与尺寸记忆都保留。
+  private func discardSession() {
+    pendingSessionDiscard = false
+    guard let session else { return }
+    session.onRequestCloseAfterExit = nil
+    self.session = nil
+    session.stop(immediately: true)
+    // stop() 只放弃对 host 的引用，不会把它摘出视图树；留着会挡住下一个会话的终端。
+    terminalContainer?.subviews.forEach { $0.removeFromSuperview() }
   }
 
   /// 隐藏是可逆的展示操作；只有 shutdown 才销毁进程。代次阻止旧动画隐藏新窗口。
@@ -141,6 +180,7 @@ final class QuickTerminalController: NSObject, NSWindowDelegate, WorkspaceTermin
         window.orderOut(nil)
         if restoreFocus { self.previousApplication?.activate(options: []) }
         self.previousApplication = nil
+        if self.pendingSessionDiscard { self.discardSession() }
       }
     }
   }
@@ -301,6 +341,7 @@ final class QuickTerminalController: NSObject, NSWindowDelegate, WorkspaceTermin
   func shutdown() {
     hotKey.stop()
     animationGeneration += 1
+    pendingSessionDiscard = false
     isPresented = false
     window?.orderOut(nil)
     session?.stop(immediately: true)
