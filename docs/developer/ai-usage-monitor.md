@@ -73,8 +73,10 @@ Claude 读钥匙串凭据里的 `rateLimitTier`（`default_claude_max_20x` → `
   要求 CSRF 且不再暴露 token，社区工具普遍受影响——这也是静默降级的一种。
   响应给的是 `remainingFraction`（剩余比例），要反算成已用百分比；一个账号可能有很多模型桶，
   按已用降序只留 4 条，面板放不下更多。
-  **只有 Antigravity.app 这条能指望**：`agy` CLI 从 1.2.2 起强制校验 CSRF 且不再把 token 放进
-  命令行（本机是 1.2.7），所以 CLI 起的那个服务读不到；App 仍会在 argv 里带 `--csrf_token`。
+  **这条路从未真机验证过，可能永远不亮**：`agy` CLI 从 1.2.2 起强制校验 CSRF 且不再把 token
+  放进命令行（本机是 1.2.7），所以 CLI 起的那个服务读不到；只剩「Antigravity.app 仍在 argv 里
+  带 `--csrf_token`」这一个假设，而它没被验证过。解析逻辑有单测，失败路径是静默消失，
+  所以留着不影响别家；但不要把它当成能用的能力。要验就打开 Antigravity.app 后跑下面的冒烟。
   IDE 版的 `RetrieveUserQuotaSummary` 会 404，靠两个回退端点兜。
   **不做** `cloudcode-pa.googleapis.com` 的 OAuth 直连兜底，两个理由，第二个是实测的：
   一是它要用 Antigravity 自己的 OAuth client id/secret（社区做法是从二进制里逆向扒出来再
@@ -180,7 +182,7 @@ mach 绝对时间单位，Apple Silicon 上换算系数不是 1。
 ```sh
 ASTER_CODEX_SMOKE=1  ./scripts/test.sh --filter 'codexAppServerLiveSmoke'
 ASTER_CURSOR_SMOKE=1 ./scripts/test.sh --filter 'CursorQuotaClientTests/liveSmoke'
-ASTER_AGY_SMOKE=1    ./scripts/test.sh --filter 'AntigravityQuotaSmoke'   # 需先打开 Antigravity
+ASTER_AGY_SMOKE=1    ./scripts/test.sh --filter 'AntigravityQuotaSmoke'   # 需先打开 Antigravity.app；未打开时输出「未找到本地 language server」
 ```
 
 真机验收要看：数值与 Claude `/usage` 一致；Token 页第二次打开接近瞬时；冷扫期间终端打字不卡；
