@@ -412,7 +412,8 @@ final class WorkspaceViewController: NSViewController {
     updateInspectorToggleVisibility(animated: false)
     // 非活动窗口里的终端停止光标闪烁；后台标签的会话一并同步，切回来时状态已正确。
     for tab in model.tabs {
-      for runtime in tab.runtimes.values {
+      // 画中画小窗里的终端跟随小窗自己的键盘焦点，不跟工作区窗口。
+      for runtime in tab.runtimes.values where runtime.id != model.floatingPaneID {
         runtime.terminalSession?.setWindowActive(isActive)
       }
     }
@@ -1150,6 +1151,8 @@ final class WorkspaceViewController: NSViewController {
     for (paneID, host) in paneHosts {
       let isActive = paneID == tab.activePaneID
       host.isActivePane = isActive
+      // 小窗里的终端始终按活动 Pane 处理；工作区里切换焦点不能让它的光标停闪。
+      guard paneID != model.floatingPaneID else { continue }
       tab.runtime(for: paneID)?.terminalSession?.setPaneActive(isActive)
     }
   }
@@ -2483,6 +2486,9 @@ final class WorkspaceViewController: NSViewController {
     guard let session = runtime.terminalSession else {
       return makeCenteredMessage(title: L("终端不可用"), symbol: "terminal")
     }
+    // 可交互画中画期间终端 Host 挂在小窗里。这里必须在 `makeTerminalHost` 之前返回：
+    // 下面的 `host.removeFromSuperview()` 会把正在小窗里输入的终端抢回工作区。
+    if model.floatingPaneID == runtime.id { return makeFloatingPanePlaceholder() }
     session.onRequestFind = { [weak self] in
       self?.model.isFindPresented = true
     }
@@ -2537,6 +2543,23 @@ final class WorkspaceViewController: NSViewController {
       recoveryOverlay.pinEdges(to: host)
     }
     return host
+  }
+
+  /// 可交互画中画占用的 Pane 在工作区里的占位：说明终端去向，并提供收回入口。
+  private func makeFloatingPanePlaceholder() -> NSView {
+    let host = makeCenteredMessage(title: L("此 Pane 正在画中画小窗中"), symbol: "pip")
+    host.identifier = NSUserInterfaceItemIdentifier("floating-pane-placeholder")
+    let button = NSButton(
+      title: L("收回到工作区"), target: self, action: #selector(closeFloatingPane(_:)))
+    button.bezelStyle = .rounded
+    button.controlSize = .small
+    // 占位的图标与文案在 `makeCenteredMessage` 的竖向 stack 里，按钮接在同一个 stack 末尾。
+    (host.subviews.first as? NSStackView)?.addArrangedSubview(button)
+    return host
+  }
+
+  @objc private func closeFloatingPane(_ sender: Any?) {
+    model.onRequestClosePictureInPicture?()
   }
 
   private func makeEditorPane(_ runtime: WorkspacePaneRuntime, tab: TerminalTabItem) -> NSView {

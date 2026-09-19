@@ -1486,6 +1486,10 @@ final class AppModel: ObservableObject {
   var onRequestNewWindow: ((PaneDescriptor?) -> Bool)?
   var onRequestToggleWindowPin: (() -> Void)?
   var onRequestPictureInPicture: ((Bool) -> Void)?
+  var onRequestClosePictureInPicture: (() -> Void)?
+  /// 正在可交互画中画小窗里的 Pane。终端视图同一时刻只能挂在一处，工作区据此改画占位，
+  /// 不去抢回终端 Host。只由 `PaneFloatingTerminalController` 经 `setFloatingPane` 写入。
+  @Published private(set) var floatingPaneID: UUID?
   /// 控制协议 `pane.focus` 需要把本窗口前置；AppKit 窗口由 AppDelegate 持有，模型只发意图。
   var onRequestWindowFocus: (() -> Void)?
   private let defaults: UserDefaults
@@ -1678,6 +1682,12 @@ final class AppModel: ObservableObject {
         "crash_count": "\(crashCount)",
       ]
     )
+  }
+
+  /// 登记或清除可交互画中画占用的 Pane；值未变时不发布，避免无谓的工作区重建。
+  func setFloatingPane(_ paneID: UUID?) {
+    guard floatingPaneID != paneID else { return }
+    floatingPaneID = paneID
   }
 
   func ensureInitialTab() {

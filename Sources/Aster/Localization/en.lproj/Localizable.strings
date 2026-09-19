@@ -773,6 +773,7 @@
 "当前" = "Current";
 "当前 Agent 尚未报告会话 ID，无法 Fork。" = "The current Agent has not reported a session ID. Cannot fork.";
 "当前 Pane" = "Current Pane";
+"当前 Pane 不是终端，无法放入画中画小窗" = "The current pane is not a terminal and cannot be moved into a Picture in Picture window";
 "当前 Pane 没有可镜像的终端画面" = "The current Pane has no terminal surface to mirror";
 "当前 Pane 画中画" = "Picture in Picture for Current Pane";
 "当前主题" = "Current Theme";
@@ -918,6 +919,7 @@
 "操作已过期，请重试" = "The operation has expired; please try again";
 "操作未完成" = "Operation Incomplete";
 "收到通知时跳动" = "Bounce on Notification";
+"收回到工作区" = "Return to Workspace";
 "收起详情面板" = "Collapse Details Panel";
 "收起输入" = "Collapse Input";
 "收起输出" = "Collapse Output";
@@ -1185,6 +1187,7 @@
 "正在读取项目记忆…" = "Reading project memory…";
 "正在运行" = "Running";
 "此 Agent 不支持 Branch。" = "This Agent does not support branching.";
+"此 Pane 正在画中画小窗中" = "This pane is in a Picture in Picture window";
 "此 Pane 没有 Outline。" = "This pane has no Outline.";
 "此 Pane 没有终端进程。" = "This Pane has no terminal process.";
 "此会话没有可展示的事件。" = "No events to display for this session.";

@@ -195,6 +195,31 @@ final class AppPreferences: ObservableObject {
     }
   }
 
+  /// 画中画呈现方式。`mirror` 是系统画中画（只看不能输入），`interactive` 把真实终端
+  /// 搬进置顶小窗。未知值按镜像处理，导入的旧配置不会意外移动终端视图。
+  var pictureInPictureStyle: PictureInPictureStyle {
+    PictureInPictureStyle(
+      rawValue: compatibilityString(forKey: "pictureInPicture.style", default: "mirror")) ?? .mirror
+  }
+
+  /// 可交互画中画小窗上一次的位置与尺寸。刻意不用 @Published：拖动结束时写入，
+  /// 不能触发工作区重建。读取方负责把它夹回当前屏幕。
+  var pictureInPictureFloatingFrame: NSRect? {
+    get {
+      guard let stored = defaults.string(forKey: Keys.pictureInPictureFloatingFrame) else { return nil }
+      let frame = NSRectFromString(stored)
+      guard frame.width > 0, frame.height > 0 else { return nil }
+      return frame
+    }
+    set {
+      guard let newValue, newValue.width > 0, newValue.height > 0 else {
+        defaults.removeObject(forKey: Keys.pictureInPictureFloatingFrame)
+        return
+      }
+      defaults.set(NSStringFromRect(newValue), forKey: Keys.pictureInPictureFloatingFrame)
+    }
+  }
+
   /// Quick Terminal 上一次生效的布局设置签名。手动尺寸只在设置未变时沿用；
   /// 签名随设置一起落盘，因此重启后仍能区分“用户改了设置”与“首次读取”。
   var quickTerminalLayoutSignature: String? {
@@ -1059,6 +1084,7 @@ final class AppPreferences: ObservableObject {
     static let sidebarCollapsedGroups = "aster.sidebar.collapsed-groups.v1"
     static let quickTerminalManualSize = "aster.quick-terminal.manual-size.v1"
     static let quickTerminalLayoutSignature = "aster.quick-terminal.layout-signature.v1"
+    static let pictureInPictureFloatingFrame = "aster.picture-in-picture.floating-frame.v1"
     static let inspectorPresented = "aster.inspector.presented.v1"
     static let inspectorSection = "aster.inspector.section.v1"
     static let inspectorCustomSection = "aster.inspector.custom-section.v1"

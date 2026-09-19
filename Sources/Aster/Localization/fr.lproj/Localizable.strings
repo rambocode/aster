@@ -773,6 +773,7 @@
 "当前" = "Actuel";
 "当前 Agent 尚未报告会话 ID，无法 Fork。" = "L’Agent actuel n’a pas signalé d’identifiant de session. Impossible de fork.";
 "当前 Pane" = "Panneau actuel";
+"当前 Pane 不是终端，无法放入画中画小窗" = "Le Pane actuel n’est pas un terminal et ne peut pas être placé dans une fenêtre Picture in Picture";
 "当前 Pane 没有可镜像的终端画面" = "Le panneau actuel n’a pas de surface de terminal à reproduire";
 "当前 Pane 画中画" = "Incrustation du panneau actuel";
 "当前主题" = "Thème actuel";
@@ -918,6 +919,7 @@
 "操作已过期，请重试" = "L'opération a expiré ; veuillez réessayer";
 "操作未完成" = "Opération incomplète";
 "收到通知时跳动" = "Rebondir à la réception d'une notification";
+"收回到工作区" = "Ramener dans l’espace de travail";
 "收起详情面板" = "Réduire le panneau de détails";
 "收起输入" = "Réduire la saisie";
 "收起输出" = "Réduire la sortie";
@@ -1185,6 +1187,7 @@
 "正在读取项目记忆…" = "Lecture de la mémoire du projet…";
 "正在运行" = "En cours d'exécution";
 "此 Agent 不支持 Branch。" = "Cet Agent ne prend pas en charge le Branch.";
+"此 Pane 正在画中画小窗中" = "Ce Pane se trouve dans une fenêtre Picture in Picture";
 "此 Pane 没有 Outline。" = "Ce panneau n’a pas d’Outline.";
 "此 Pane 没有终端进程。" = "Ce panneau n’a pas de processus terminal.";
 "此会话没有可展示的事件。" = "Aucun événement à afficher pour cette session.";

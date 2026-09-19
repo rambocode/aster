@@ -16,6 +16,32 @@
 - 再次选择同一模式会关闭；切换模式等待旧系统浮窗关闭后再启动。
 - 系统恢复按钮激活源工作区与 Pane。源不存在时不猜测另一会话。
 
+## 可交互小窗
+
+系统画中画是视频层，系统拒绝它成为键盘窗口，所以镜像永远不能输入。设置项
+`pictureInPicture.style`（`mirror` 默认 / `interactive`）让用户改用可交互小窗；未知值按镜像处理。
+只有「当前 Pane」模式会走小窗，「跟随活动 Pane」始终走镜像：在小窗里输入时「活动 Pane」
+没有稳定语义。两种呈现方式都实现 `PictureInPicturePresenting`，AppDelegate 只持有这个接口，
+「再次选择即关闭」「等旧的关闭后再启动」两条路径共用。
+
+- 一个 Ghostty surface 只能挂在一个 `NSView` 上，小窗不是第二份画面，而是把终端 Host 借走。
+  因此上面「不移动 `NSView`、不改网格」的规则只对镜像成立；小窗期间网格跟随小窗尺寸，
+  PTY、会话与 Pane 身份不变。
+- 展示所有权只有一个真值：`AppModel.floatingPaneID`，只由 `PaneFloatingTerminalController`
+  写入。`show()` 必须先登记再搬 Host；`WorkspaceViewController.makeTerminalPane` 在
+  `makeTerminalHost` 之前看到它就改画占位。顺序反了，工作区下一轮重建的
+  `host.removeFromSuperview()` 会把正在输入的终端抢回去。
+- 关闭时清空 `floatingPaneID`，工作区重建自然把 Host 挂回原 Pane；控制器不直接操作工作区视图树。
+- 焦点状态跟小窗走：工作区的 `updateWindowActivationOverlay` 与 `updatePaneActivationOverlays`
+  都跳过该 Pane，由小窗的 key 状态驱动 `setWindowActive`，Pane 始终按活动处理，光标不会停闪。
+- 面板配方与 Quick Terminal 相同：`.nonactivatingPanel`、`level = .floating`、
+  `[.canJoinAllSpaces, .fullScreenAuxiliary]`、`canBecomeKey == true`。不激活 Aster 也能输入。
+- 小窗是键盘窗口时，`⌘W` / `⌥⌘W` 由 AppDelegate 改成收回小窗，不能落到工作区的活动 Pane 上。
+- 源 Pane 被关闭、Shell 退出收尾、标签移到别的窗口或源窗口关闭，都按正常生命周期收起小窗，
+  不弹错误，也不换成别的 Pane。`stop()` 不会把 Host 摘出视图树，`close()` 统一清空容器；
+  surface 的释放仍走 `destroySurface()`（见 Ghostty 终端引擎核心规则 11）。
+- 位置与尺寸存在 `aster.picture-in-picture.floating-frame.v1`，读取时夹回仍存在的屏幕。
+
 ## 数据流
 
 ```mermaid
@@ -59,6 +85,7 @@ surface 释放时等待所有 GPU completion 结束，回调不得访问 AppKit 
 ## 验证
 
 - `PanePictureInPictureTests`：固定/跟随源身份、关闭后不复活、真实 GPU 帧、原视图与网格保留。
+- `PaneFloatingTerminalTests`：Host 借出与归还、工作区重建不抢回、源 Pane 关闭时收起、设置回退与位置夹紧。
 - `GhosttyPictureInPictureFramesTests`：深复制、源重用、限帧、停用与非法格式。
 - 系统浮窗需在有桌面会话的 Mac 显式运行：
   `ASTER_TEST_SYSTEM_PIP=1 ./scripts/test.sh --no-parallel --filter pictureInPictureSystemWindowStartsAndStops`。

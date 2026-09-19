@@ -91,6 +91,9 @@
           row("quickTerminal.autohide", t("失焦时隐藏"), t("切换到其他窗口时收起，不结束任务")),
           row("quickTerminal.followSpaces", t("跟随桌面空间"), t("在当前桌面及全屏应用上显示")),
         ]},
+        { title: "Picture in Picture", rows: [
+          row("pictureInPicture.style", t("画中画方式"), t("镜像沿用系统画中画，只能观看。可交互小窗把当前 Pane 的终端搬进置顶小窗，可以直接输入，终端网格随小窗变化；「跟随活动 Pane」始终使用镜像"), "select", { options: [["mirror", t("镜像（只能观看）")], ["interactive", t("可交互小窗")]] }),
+        ]},
         { title: t("关闭确认"), rows: [
           row("general.closeTabConfirmation", t("关闭标签页"), t("何时在关闭标签页前询问"), "select", { options: options.confirm }),
           row("general.closeWindowConfirmation", t("关闭窗口"), t("何时在关闭窗口前询问"), "select", { options: options.confirm }),

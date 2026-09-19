@@ -240,7 +240,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 而不是依赖 Dictionary 的不稳定遍历顺序。
   private var activeWorkspaceWindowOrder: [ObjectIdentifier] = []
   private lazy var quickTerminalController = QuickTerminalController(preferences: preferences)
-  private var pictureInPictureController: PanePictureInPictureController?
+  private var pictureInPictureController: (any PictureInPicturePresenting)?
   /// sheet 必须被应用生命周期强持有，避免系统动画期间控制器提前释放。
   private var feedbackSheetController: FeedbackSheetController?
   /// CLI 使用受保护文件传输而非常驻 socket。正常路径由目录 vnode 事件按需唤醒，
@@ -969,6 +969,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         mode: follows ? .followActivePane : .currentPane
       )
     }
+    workspaceModel.onRequestClosePictureInPicture = { [weak self] in
+      self?.closePictureInPicture(nil)
+    }
   }
 
   /// 标签拖放以屏幕坐标判断目标工作区。落在另一个 Aster 工作区时直接转移现有
@@ -1042,13 +1045,21 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// ⌘W：标签内还有分屏时只关闭聚焦面板，最后一个面板才关闭整个标签页。
   @objc private func closePaneOrTab(_ sender: Any?) {
     if quickTerminalController.ownsKeyWindow { quickTerminalController.hide() }
+    else if floatingPictureInPictureOwnsKeyWindow { closePictureInPicture(nil) }
     else { activeWorkspaceModel.closeSelectedPaneOrTab() }
   }
   @objc private func splitRight(_ sender: Any?) { activeWorkspaceModel.splitSelectedTab(.right) }
   @objc private func splitLeft(_ sender: Any?) { activeWorkspaceModel.splitSelectedTab(.left) }
   @objc private func splitDown(_ sender: Any?) { activeWorkspaceModel.splitSelectedTab(.down) }
   @objc private func splitUp(_ sender: Any?) { activeWorkspaceModel.splitSelectedTab(.up) }
-  @objc private func closePane(_ sender: Any?) { activeWorkspaceModel.closeActivePane() }
+  @objc private func closePane(_ sender: Any?) {
+    if floatingPictureInPictureOwnsKeyWindow { closePictureInPicture(nil) }
+    else { activeWorkspaceModel.closeActivePane() }
+  }
+  /// 键盘焦点在可交互画中画小窗里时，关闭类快捷键收回小窗，不能误关工作区的活动 Pane。
+  private var floatingPictureInPictureOwnsKeyWindow: Bool {
+    (pictureInPictureController as? PaneFloatingTerminalController)?.ownsKeyWindow == true
+  }
   /// 「分离」与「结束受管终端」是两个独立入口：分离保留后台任务，结束才终止进程。
   /// 「文件 ▸ 添加机器…」：转交当前工作区窗口的机器分区动作，两条入口共用同一事务。
   @objc private func addRemoteMachine(_ sender: Any?) {
@@ -1301,6 +1312,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
     if let previous = pictureInPictureController, !previous.isClosed {
       // AVKit 关闭是异步的；等旧浮窗真正消失后再启动，避免两种模式互相抢系统会话。
+      // 可交互小窗同步关闭，`onClose` 在 `close()` 返回前就已触发，同一条路径照样成立。
       previous.onClose = { [weak self, weak workspaceModel] in
         guard let self, let workspaceModel else { return }
         self.pictureInPictureController = nil
@@ -1316,8 +1328,14 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     model workspaceModel: AppModel,
     mode: PanePictureInPictureController.Mode
   ) {
-    let controller = PanePictureInPictureController(
-      model: workspaceModel, preferences: preferences, mode: mode)
+    // 可交互小窗只服务「当前 Pane」；跟随模式在小窗里输入时没有稳定语义，仍走系统镜像。
+    let controller: any PictureInPicturePresenting
+    if mode == .currentPane, preferences.pictureInPictureStyle == .interactive {
+      controller = PaneFloatingTerminalController(model: workspaceModel, preferences: preferences)
+    } else {
+      controller = PanePictureInPictureController(
+        model: workspaceModel, preferences: preferences, mode: mode)
+    }
     controller.onFailure = { message in
       let alert = NSAlert()
       alert.messageText = L("无法打开画中画")

@@ -3055,6 +3055,7 @@ private enum SettingsWebBridge {
     "quickTerminal.animationDuration": .number(0.15),
     "quickTerminal.autohide": .bool(true),
     "quickTerminal.followSpaces": .bool(true),
+    "pictureInPicture.style": .string("mirror"),
     "general.shell": .string(ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"),
     "general.hideDirtyIndicator": .bool(false),
     "general.windowWorkingDirectory": .string("home"),
