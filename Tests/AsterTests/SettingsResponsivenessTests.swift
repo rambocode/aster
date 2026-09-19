@@ -618,3 +618,23 @@ func settingsAgentControlCardMatchesBridge() throws {
     #expect((value as? [String: Any])?["status"] as? String != nil)
   }
 }
+
+/// 剪贴板建议开关同样横跨网页清单与 Swift 桥两份手写清单：
+/// 少写一边就是开关能点但不生效（或根本读不到状态），只能靠文本断言锁住。
+@Test("剪贴板建议开关在网页清单与 Swift 桥两侧都有对应键")
+func settingsClipboardSuggestionMatchesBridge() throws {
+  let root = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+  let script = try String(
+    contentsOf: root.appendingPathComponent("Resources/settings-ui/settings.js"), encoding: .utf8)
+  let bridge = try String(
+    contentsOf: root.appendingPathComponent("Sources/Aster/SettingsView.swift"), encoding: .utf8)
+
+  #expect(script.contains("row(\"controls.clipboardSuggestion\""), "settings.js 缺少剪贴板建议行")
+  #expect(
+    bridge.contains("\"controls.clipboardSuggestion\": configuration.controls.resolvedClipboardSuggestion"),
+    "SettingsView 快照缺少 controls.clipboardSuggestion")
+  #expect(
+    bridge.contains("case \"controls.clipboardSuggestion\""),
+    "SettingsView 缺少 controls.clipboardSuggestion 的写回分支")
+}

@@ -347,14 +347,14 @@ func legacyControlConfigurationDefaultsScrollBoundaries() throws {
   #expect(decoded.resolvedScrollPastFirstLine == .disabled)
 }
 
-@Test("旧控制配置缺少 Autocomplete 字段时使用隐私友好的兼容默认值")
+@Test("旧控制配置缺少 Autocomplete 与剪贴板建议字段时使用兼容默认值")
 func legacyControlConfigurationDefaultsAutocomplete() throws {
   let data = try JSONEncoder().encode(ControlConfiguration())
   var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
   for key in [
     "autocompleteShortcut", "autocompleteCandidatePanel", "autocompleteInlineSuggestion",
     "autocompleteOnDeviceLearning", "autocompleteHistoryIgnore",
-    "autocompleteDescriptionLanguage",
+    "autocompleteDescriptionLanguage", "clipboardSuggestion",
   ] {
     object.removeValue(forKey: key)
   }
@@ -369,6 +369,7 @@ func legacyControlConfigurationDefaultsAutocomplete() throws {
   #expect(decoded.resolvedAutocompleteOnDeviceLearning)
   #expect(decoded.resolvedAutocompleteHistoryIgnore.isEmpty)
   #expect(decoded.resolvedAutocompleteDescriptionLanguage == .system)
+  #expect(decoded.resolvedClipboardSuggestion)
 }
 
 @Test("配置规范化移除空白、控制字符和超限历史忽略模式")

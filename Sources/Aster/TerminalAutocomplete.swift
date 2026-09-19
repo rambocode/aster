@@ -15,6 +15,8 @@ protocol TerminalAutocompleteHost: AnyObject {
   func sendAutocompleteBytes(_ bytes: ArraySlice<UInt8>) -> Bool
   func visiblePromptEnds(with text: String) -> Bool
   func visibleShellSuggestion(after text: String) -> String?
+  /// 输入法是否正在组字。组字期间的回车是「上屏」，绝不能被补全吞掉。
+  var autocompleteHasMarkedText: Bool { get }
 }
 
 /// 按目录推荐的整行「项目命令」（目前是该项目最近一次 Agent 会话的 resume 命令）。
@@ -58,6 +60,7 @@ extension AsterTerminalView: TerminalAutocompleteHost {
       skipNullCellsFollowingWide: true)
     return prefix.hasSuffix(text) && suffix.trimmingCharacters(in: .whitespaces).isEmpty
   }
+  var autocompleteHasMarkedText: Bool { hasMarkedText() }
   func visibleShellSuggestion(after text: String) -> String? {
     let terminal = getTerminal()
     guard let line = terminal.getLine(row: terminal.buffer.y) else { return nil }
@@ -115,6 +118,7 @@ extension GhosttySurfaceView: TerminalAutocompleteHost {
     else { return false }
     return prefix.trimmingCharacters(in: .newlines).hasSuffix(text)
   }
+  var autocompleteHasMarkedText: Bool { hasMarkedText() }
   func visibleShellSuggestion(after text: String) -> String? {
     guard let info = bufferInfo(), !info.alternate_screen, info.cursor.column > 0,
       info.cursor.screen_row >= info.viewport_top,
@@ -188,6 +192,8 @@ final class TerminalAutocompleteController {
   private let sessionIdentifier: String
   private let controls: () -> ControlConfiguration
   private let currentDirectory: () -> String
+  /// 可注入的时钟，供测试跳过剪贴板建议的防误触延迟。
+  private let now: () -> ContinuousClock.Instant
   private let tracker = PromptInputTracker()
   private let overlay = TerminalAutocompleteOverlayView()
 
@@ -217,6 +223,14 @@ final class TerminalAutocompleteController {
   var onCommandSubmitted: ((String) -> Void)?
   /// 目录 → 项目命令首选项。每次刷新按当前目录查询，返回 nil 时不插入任何候选。
   var projectCommandProvider: ((String) -> ProjectCommandSuggestion?)?
+  /// 尚未被接受或忽略的剪贴板文本。返回 nil 表示当前没有可提示的新内容。
+  ///
+  /// 用闭包而不是直接持有监视器：键盘焦点、安全输入这些「该不该提示」的前置条件
+  /// 全部由提供方判断，控制器只关心「有没有可提示的文本」。测试因此既不必造真窗口，
+  /// 也不必碰真实的 `NSPasteboard`。
+  var clipboardSuggestionProvider: (() -> String?)?
+  /// 剪贴板建议被接受或被忽略时回调，由调用方标记同一份内容不再提示。
+  var onClipboardSuggestionConsumed: (() -> Void)?
 
   private var refreshTask: Task<Void, Never>?
   private var helpProbeTask: Task<Void, Never>?
@@ -240,25 +254,75 @@ final class TerminalAutocompleteController {
   /// 跟踪器也必须保留它，不能因 prompt 尚未就绪而丢掉命令前缀。
   private var pendingPromptInput: [UInt8]?
   private var pendingPromptInputOverflowed = false
+  /// 剪贴板 ghost 真正画到屏幕上的时刻；未显示时为 nil。
+  private var clipboardSuggestionShownAt: ContinuousClock.Instant?
+  /// 应用重新激活时重算候选的观察者。用户通常是在别处复制完再切回来，
+  /// 这一刻剪贴板才有新内容，而终端侧没有任何事件会触发刷新。
+  nonisolated(unsafe) private var activationObserver: (any NSObjectProtocol)?
+  /// Aster 自己写剪贴板时重算候选的观察者。终端里「选中即复制」既不切换应用也不产生
+  /// OSC 133，没有它，用户在当前 Pane 复制完就等不到建议。
+  nonisolated(unsafe) private var localClipboardObserver: (any NSObjectProtocol)?
+
+  /// 剪贴板 ghost 出现后多久才允许被回车接受。
+  ///
+  /// 回车在空提示符上原本只是换一行，用户会连按。没有这段延迟，「恰好与 ghost 同时
+  /// 落下的那次回车」会被当成接受，紧接着的第二次回车就把剪贴板内容执行了——这是本
+  /// 功能唯一可能导致误执行命令的路径。
+  private static let clipboardSuggestionArmDelay = Duration.milliseconds(300)
+
+  /// 剪贴板 ghost 是否已显示足够久，可以被回车接受。
+  private var clipboardSuggestionArmed: Bool {
+    guard let shownAt = clipboardSuggestionShownAt else { return false }
+    return shownAt.duration(to: now()) >= Self.clipboardSuggestionArmDelay
+  }
 
   init(
     service: AutocompleteService,
     sessionIdentifier: String,
     controls: @escaping () -> ControlConfiguration,
-    currentDirectory: @escaping () -> String
+    currentDirectory: @escaping () -> String,
+    now: @escaping () -> ContinuousClock.Instant = { .now }
   ) {
     self.service = service
     self.sessionIdentifier = sessionIdentifier
     self.controls = controls
     self.currentDirectory = currentDirectory
+    self.now = now
     overlay.onCandidateSelected = { [weak self] index in
       self?.acceptCandidate(at: index)
+    }
+    activationObserver = NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in self?.refreshForClipboardChange() }
+    }
+    localClipboardObserver = NotificationCenter.default.addObserver(
+      forName: ClipboardSuggestionMonitor.clipboardDidChangeLocally, object: nil, queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in self?.refreshForClipboardChange() }
     }
   }
 
   deinit {
     refreshTask?.cancel()
     helpProbeTask?.cancel()
+    // deinit 不在 MainActor 上，观察者句柄因此标记 nonisolated：它只在 init 写入、
+    // 在这里读取一次，`NotificationCenter` 本身线程安全。
+    if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
+    if let localClipboardObserver {
+      NotificationCenter.default.removeObserver(localClipboardObserver)
+    }
+  }
+
+  /// 剪贴板可能在终端之外发生变化，那时没有任何输入或 OSC 事件会触发刷新。
+  ///
+  /// 只有「正停在空提示符上、且功能开着」才值得重算：其它状态下剪贴板建议根本不会
+  /// 显示，白跑一轮候选计算只会在应用启动、切换窗口这些本就忙碌的时刻抢占主线程。
+  private func refreshForClipboardChange() {
+    guard promptActive, tracker.line.isEmpty, controls().resolvedClipboardSuggestion else {
+      return
+    }
+    scheduleRefresh()
   }
 
   func attach(to terminalView: any TerminalAutocompleteHost) {
@@ -391,6 +455,9 @@ final class TerminalAutocompleteController {
     if case .open(.automatic, _) = panelState {
       panelState = .open(origin: .automatic, userSelected: false)
     }
+    // 用户开始打字，说明他此刻不要剪贴板里那份内容。标记为已忽略，否则他退格回空行
+    // 时同一条建议又会跳出来。
+    if currentResult.candidates.first?.kind == .clipboard { onClipboardSuggestionConsumed?() }
     // 候选重算有 debounce，而 PTY 回显会在这段窗口内继续推进终端网格。若保留上一轮
     // ghost，旧后缀会短暂覆盖新输入；先清空可见候选，待新输入回显并重算后再显示。
     clearCandidatesForRefilter()
@@ -437,11 +504,19 @@ final class TerminalAutocompleteController {
 
   @discardableResult
   func handleKeyDown(_ event: NSEvent) -> Bool {
-    handle(TerminalAutocompleteKey.resolve(event))
+    // 只有「干净的一次回车」才可能被剪贴板建议接受：带修饰键的 Return 属于 Shell 或
+    // 应用快捷键（Cmd-Return 尤其——Command 分支在本回调之后才执行），长按重复的回车
+    // 是用户在刷屏，输入法组字中的回车是上屏。这三种都必须原样放行。
+    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    let plain = modifiers.isEmpty && !event.isARepeat
+      && terminalView?.autocompleteHasMarkedText != true
+    return handle(TerminalAutocompleteKey.resolve(event), plainKeyPress: plain)
   }
 
+  /// - Parameter plainKeyPress: 该按键是否为无修饰、非重复、非组字状态下的单次按下。
+  ///   仅剪贴板建议的回车接受依赖它；其余分支的语义不受影响。
   @discardableResult
-  func handle(_ key: TerminalAutocompleteKey) -> Bool {
+  func handle(_ key: TerminalAutocompleteKey, plainKeyPress: Bool = true) -> Bool {
     if key == .backspace {
       // Backspace 本身仍交给 Shell；这里只清掉旧候选，输入回调随后按新文本重算。
       // 面板保持打开:Otty 的退格是“清掉 ghost”,不是“关掉下拉”。
@@ -483,6 +558,17 @@ final class TerminalAutocompleteController {
       default:
         break
       }
+    }
+
+    // 剪贴板建议由回车接受：只把内容写进输入行，**不发送换行**，执行仍需用户再按一次。
+    // 这里吞掉的回车原本只会在空 prompt 上换一行，代价极小；ghost 不可见、行已有内容、
+    // 或 ghost 刚出现还没「解除保险」时，回车一律照常交给 Shell。
+    if key == .enter, plainKeyPress, tracker.line.isEmpty, clipboardSuggestionArmed,
+      currentResult.candidates.first?.kind == .clipboard, inlineCandidateIndex == 0,
+      inlineSuggestionDisplayable
+    {
+      onClipboardSuggestionConsumed?()
+      return acceptCandidate(at: 0)
     }
 
     let configuration = controls()
@@ -527,6 +613,8 @@ final class TerminalAutocompleteController {
     }
 
     if key == .escape, currentResult.ghostText != nil, inlineSuggestionDisplayable {
+      // Esc 关掉剪贴板 ghost 就是「我不要这份内容」，同一份内容不再在任何 Pane 上出现。
+      if currentResult.candidates.first?.kind == .clipboard { onClipboardSuggestionConsumed?() }
       inlineDismissed = true
       render()
       return true
@@ -634,6 +722,30 @@ final class TerminalAutocompleteController {
         replacementStart: 0
       )
     }
+    // 用户几秒前显式复制的内容，是此刻最明确的意图，只让位给「上条命令刚打错」的纠错。
+    // 只在空 prompt 上出现；「是否该由本 Pane 提示」由 provider 判断（见其注释）。
+    // 还要看得出这确实是条命令：复制一段话、一个 URL、一段日志时提示「回车粘贴」毫无
+    // 意义。写法自证（选项、管道、赋值、路径、单个词）的直接放行，剩下「几个普通单词」
+    // 的情况才回去查规格库 / 别名 / 历史 / PATH。
+    if configuration.resolvedClipboardSuggestion,
+      let clipboard = clipboardSuggestionProvider?(),
+      let text = ClipboardSuggestionPolicy.suggestion(clipboard: clipboard, line: tracker.line),
+      let token = ClipboardSuggestionPolicy.commandToken(in: text),
+      ClipboardSuggestionPolicy.isSelfEvidentCommand(text)
+        || service.knowsCommand(token, aliases: aliases)
+    {
+      let candidate = AutocompleteCandidate(
+        insertText: text,
+        description: L("粘贴剪贴板内容"),
+        kind: .clipboard,
+        score: Double.greatestFiniteMagnitude,
+        replacement: .fullLine
+      )
+      var candidates = result.candidates.filter { $0.insertText != text }
+      let insertionIndex = candidates.first?.kind == .correction ? 1 : 0
+      candidates.insert(candidate, at: min(insertionIndex, candidates.count))
+      result = AutocompleteResult.make(candidates: candidates, line: tracker.line)
+    }
     // 项目命令（最近一次 Agent 会话的 resume）排在首位；上一条命令的纠错意图更强，
     // 两者同时存在时纠错保持第一，项目命令紧随其后。
     if let project = projectCommandProvider?(currentDirectory()),
@@ -647,7 +759,7 @@ final class TerminalAutocompleteController {
         replacement: .fullLine
       )
       var candidates = result.candidates.filter { $0.insertText != project.command }
-      let insertionIndex = candidates.first.map { $0.kind == .correction || $0.kind == .followUp } == true ? 1 : 0
+      let insertionIndex = candidates.prefix(while: { Self.isStrongIntentKind($0.kind) }).count
       candidates.insert(candidate, at: insertionIndex)
       result = AutocompleteResult.make(candidates: candidates, line: tracker.line)
     }
@@ -864,13 +976,19 @@ final class TerminalAutocompleteController {
     return terminalView.visiblePromptEnds(with: tracker.line)
   }
 
+  /// 「一定是用户想要的整行」这一类候选：纠错、剪贴板、下一步。它们即使旁边还有
+  /// 历史候选也直接画 ghost，并按此顺序占据候选表开头。
+  private static func isStrongIntentKind(_ kind: AutocompleteCandidateKind) -> Bool {
+    kind == .correction || kind == .clipboard || kind == .followUp
+  }
+
   /// Otty 的预览语义：只有一个候选，或用户已明确选中某条候选时，才画灰色后缀。
   private var inlineCandidateIndex: Int? {
     if panelVisible, hasUserSelection, currentResult.candidates.indices.contains(selectedIndex) {
       return selectedIndex
     }
     // 工具明确给出的失败纠错是一个确定建议，不被同时存在的历史候选稀释。
-    if let kind = currentResult.candidates.first?.kind, kind == .correction || kind == .followUp {
+    if let kind = currentResult.candidates.first?.kind, Self.isStrongIntentKind(kind) {
       return 0
     }
     return currentResult.candidates.count == 1 ? 0 : nil
@@ -889,13 +1007,16 @@ final class TerminalAutocompleteController {
   private func render() {
     guard let terminalView else { return }
     let candidate = inlineCandidateIndex.map { currentResult.candidates[$0] }
+    let showsClipboard = candidate?.kind == .clipboard && inlineSuggestionDisplayable
     let displayResult = AutocompleteResult(
       candidates: currentResult.candidates,
       ghostText: candidate?.appendableSuffix(from: tracker.line),
       replacementStart: candidate?.replacement.start ?? currentResult.replacementStart)
-    overlay.render(
+    let inlineFits = overlay.render(
       result: displayResult,
       showInline: inlineSuggestionDisplayable,
+      // 灰字本身说不清该按哪个键；剪贴板建议的接受键与其它候选不同，必须显式标注。
+      inlineHint: showsClipboard ? L("⏎ 粘贴") : nil,
       showPanel: panelVisible,
       selectedIndex: selectedIndex,
       showsSelection: hasUserSelection,
@@ -909,6 +1030,14 @@ final class TerminalAutocompleteController {
         ? terminalView.autocompleteBackgroundColor : AsterTheme.panel,
       accent: AsterTheme.accent
     )
+    // 防误触延迟从 ghost **完整画出来**那一刻起算：等待回显期间 ghost 是隐藏的，
+    // Pane 太窄放不下整行时 ghost 又会被裁掉，两种情况下用户都没真正看见内容，
+    // 回车就不该把它当作已确认的建议接受。
+    if showsClipboard, inlineFits {
+      if clipboardSuggestionShownAt == nil { clipboardSuggestionShownAt = now() }
+    } else {
+      clipboardSuggestionShownAt = nil
+    }
   }
 }
 
@@ -928,6 +1057,10 @@ final class TerminalAutocompleteOverlayView: NSView {
 
   var onCandidateSelected: ((Int) -> Void)?
   private let ghostLabel = NSTextField(labelWithString: "")
+  /// 接受键提示（剪贴板建议的「⏎ 粘贴」）。刻意独立成一个 label 而不是混进 ghost 的
+  /// attributedString：提示文字用的字体与终端字体不同，混排会改变 ghostLabel 的
+  /// `frame.height`，而 ghost 的 baseline 是按这个高度对齐 Metal 字形网格的。
+  private let hintLabel = NSTextField(labelWithString: "")
   /// 浮层容器：圆角、描边、投影和背景都挂在它上面。
   /// `panel` 的语义因此收窄为「候选行列表列」，布局验收锁定的行宽不变量继续成立。
   let panelContainer = NSView()
@@ -946,6 +1079,9 @@ final class TerminalAutocompleteOverlayView: NSView {
     ghostLabel.lineBreakMode = .byClipping
     // ghost 必须保持为第一个 subview：布局验收用 `subviews.first` 定位它。
     addSubview(ghostLabel)
+    hintLabel.isHidden = true
+    hintLabel.lineBreakMode = .byClipping
+    addSubview(hintLabel)
     panel.orientation = .vertical
     panel.alignment = .width
     panel.spacing = 0
@@ -971,9 +1107,13 @@ final class TerminalAutocompleteOverlayView: NSView {
     return super.hitTest(point)
   }
 
+  /// - Returns: inline ghost 是否被完整画出（没有因 Pane 宽度不足而裁剪）。
+  ///   调用方据此决定能否把它当作「用户已看见」的建议。
+  @discardableResult
   func render(
     result: AutocompleteResult,
     showInline: Bool,
+    inlineHint: String? = nil,
     showPanel: Bool,
     selectedIndex: Int,
     showsSelection: Bool = true,
@@ -983,11 +1123,12 @@ final class TerminalAutocompleteOverlayView: NSView {
     foreground: NSColor,
     background: NSColor,
     accent: NSColor
-  ) {
+  ) -> Bool {
     ghostLabel.font = font
     ghostLabel.textColor = foreground.withAlphaComponent(0.42)
-    ghostLabel.stringValue = showInline ? (result.ghostText ?? "") : ""
-    ghostLabel.isHidden = ghostLabel.stringValue.isEmpty
+    let ghostText = showInline ? (result.ghostText ?? "") : ""
+    ghostLabel.stringValue = ghostText
+    ghostLabel.isHidden = ghostText.isEmpty
     ghostLabel.sizeToFit()
     let naturalBaselineFromBottom =
       ghostLabel.frame.height - ghostLabel.firstBaselineOffsetFromTop
@@ -1003,7 +1144,12 @@ final class TerminalAutocompleteOverlayView: NSView {
       x: caretFrame.maxX,
       y: caretFrame.minY + alignedBaselineFromBottom - naturalBaselineFromBottom
     )
-    ghostLabel.frame.size.width = min(ghostLabel.frame.width, max(0, bounds.maxX - caretFrame.maxX))
+    let availableGhostWidth = max(0, bounds.maxX - caretFrame.maxX)
+    let inlineFits = ghostLabel.frame.width <= availableGhostWidth
+    ghostLabel.frame.size.width = min(ghostLabel.frame.width, availableGhostWidth)
+    layoutInlineHint(
+      inlineHint, ghostVisible: !ghostLabel.isHidden && inlineFits,
+      caretFrame: caretFrame, font: font, accent: accent)
 
     panel.arrangedSubviews.forEach {
       panel.removeArrangedSubview($0)
@@ -1011,7 +1157,7 @@ final class TerminalAutocompleteOverlayView: NSView {
     }
     guard showPanel, result.candidates.count > 1 else {
       panelContainer.isHidden = true
-      return
+      return inlineFits
     }
 
     // 缩小 Pane 时减少可见行数，不能把整块面板钳进输入行造成遮挡。
@@ -1021,7 +1167,7 @@ final class TerminalAutocompleteOverlayView: NSView {
       Int(max(belowSpace, aboveSpace) / AutocompleteCandidateRow.height))
     guard rows > 0, bounds.width > 16 else {
       panelContainer.isHidden = true
-      return
+      return inlineFits
     }
     let total = result.candidates.count
     let first = TerminalAutocompleteController.clampedFirstVisibleIndex(
@@ -1132,6 +1278,27 @@ final class TerminalAutocompleteOverlayView: NSView {
       scrollThumb.isHidden = true
     }
     panelContainer.isHidden = false
+    return inlineFits
+  }
+
+  /// 把接受键提示排在 ghost 右侧。ghost 被裁、没有提示文案，或提示自己也放不下时
+  /// 整条隐藏——一个半截的提示比没有提示更让人困惑。
+  private func layoutInlineHint(
+    _ hint: String?, ghostVisible: Bool, caretFrame: NSRect, font: NSFont, accent: NSColor
+  ) {
+    guard let hint, ghostVisible else {
+      hintLabel.isHidden = true
+      return
+    }
+    hintLabel.font = .systemFont(ofSize: max(9, font.pointSize - 2))
+    hintLabel.textColor = accent.withAlphaComponent(0.75)
+    hintLabel.stringValue = hint
+    hintLabel.sizeToFit()
+    let originX = ghostLabel.frame.maxX + 8
+    hintLabel.frame.origin = NSPoint(
+      x: originX,
+      y: caretFrame.minY + (caretFrame.height - hintLabel.frame.height) / 2)
+    hintLabel.isHidden = originX + hintLabel.frame.width > bounds.maxX
   }
 }
 
@@ -1337,6 +1504,7 @@ final class AutocompleteCandidateRow: NSButton {
     case .readmeCommand: "book"
     case .correction: "wand.and.stars"
     case .followUp: "arrow.turn.down.right"
+    case .clipboard: "doc.on.clipboard"
     }
     let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
     return image?.withSymbolConfiguration(

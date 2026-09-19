@@ -208,6 +208,7 @@
 "…（已截断，共 %@ 字符）" = "… (truncated, %@ characters total)";
 "…（本条已截断，共 %@ 字符）" = "… (this entry truncated, %@ characters total)";
 "⌘、⌥ 等技术符号；仅在字体按双宽绘制时开启" = "Technical symbols like ⌘, ⌥; only enabled when the font renders at double width";
+"⏎ 粘贴" = "⏎ Paste";
 "①、Ⓐ、ⓐ 等；默认按双宽显示" = "①, Ⓐ, ⓐ, etc.; displayed at double width by default";
 "、" = ", ";
 "「%@」将被永久删除，连同它的来源回链一起消失，无法恢复。\n\n如果只是想让它不再进入 Agent 上下文，用“禁用”即可。" = "\"%@\" will be permanently deleted, along with its source references. This cannot be undone.\n\nIf you only want to remove it from Agent context, use \"Disable\" instead.";
@@ -429,6 +430,7 @@
 "前置全部窗口" = "Bring All to Front";
 "前进" = "Forward";
 "剪切" = "Cut";
+"剪贴板建议" = "Clipboard suggestion";
 "加入 Prompt 队列…" = "Add to Prompt Queue…";
 "加入队列" = "Add to Queue";
 "加入队列失败：%@" = "Failed to enqueue: %@";
@@ -581,6 +583,7 @@
 "备份或保存失败：%@" = "Backup or save failed: %@";
 "复制" = "Copy";
 "复制与粘贴" = "Copy & Paste";
+"复制内容后，在空提示符上以灰字提示剪贴板内容，回车只粘贴不执行" = "After you copy something, show the clipboard text in grey at an empty prompt; Return pastes it without running it";
 "复制到 %@" = "Copy to %@";
 "复制到剪贴板" = "Copy to Clipboard";
 "复制后清除选区" = "Clear Selection After Copying";
@@ -1334,6 +1337,7 @@
 "粘贴为" = "Paste As";
 "粘贴保护" = "Paste Protection";
 "粘贴到终端" = "Paste into Terminal";
+"粘贴剪贴板内容" = "Paste clipboard contents";
 "粘贴多行或含控制字符的内容前先确认" = "Confirm Before Pasting Multi-Line Content or Content with Control Characters";
 "粘贴并在 Composer 中继续" = "Paste and Continue in Composer";
 "粘贴的内容可能立即执行命令" = "Pasted content may immediately execute commands";

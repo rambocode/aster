@@ -1900,6 +1900,7 @@ final class AsterTerminalView: LocalProcessTerminalView {
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
     pasteboard.setString(text, forType: .string)
+    ClipboardSuggestionMonitor.noteLocalChange()
     if clearAfterCopy { selectNone() }
   }
 
@@ -2732,6 +2733,21 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       autocomplete.projectCommandProvider = { [weak self] directory in
         self?.projectCommandSuggestionProvider?(directory)
       }
+      autocomplete.clipboardSuggestionProvider = { [weak view] in
+        // 剪贴板是全局的，建议却只该出现在用户此刻正在打字的那个 Pane：否则分屏时
+        // 每个 Pane 都画同一条灰字，后台标签页里也会悄悄留着一条，用户无从判断回车
+        // 会落在哪儿。
+        guard let view, view.window?.isKeyWindow == true,
+          view.window?.firstResponder === view
+        else { return nil }
+        // 安全输入生效（密码提示符、系统级保护）时一律不提示：这类场景下把剪贴板
+        // 内容画到终端画布上，正好违背用户开启安全输入的意图。
+        guard !SecureInputCoordinator.shared.isSystemProtectionActive else { return nil }
+        return ClipboardSuggestionMonitor.shared.pendingText()
+      }
+      autocomplete.onClipboardSuggestionConsumed = {
+        ClipboardSuggestionMonitor.shared.consume()
+      }
       autocomplete.onCommandSubmitted = { [weak self] command in
         self?.recordSubmittedCommand(command)
       }
@@ -3117,6 +3133,21 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       autocomplete.attach(to: view)
       autocomplete.projectCommandProvider = { [weak self] directory in
         self?.projectCommandSuggestionProvider?(directory)
+      }
+      autocomplete.clipboardSuggestionProvider = { [weak view] in
+        // 剪贴板是全局的，建议却只该出现在用户此刻正在打字的那个 Pane：否则分屏时
+        // 每个 Pane 都画同一条灰字，后台标签页里也会悄悄留着一条，用户无从判断回车
+        // 会落在哪儿。
+        guard let view, view.window?.isKeyWindow == true,
+          view.window?.firstResponder === view
+        else { return nil }
+        // 安全输入生效（密码提示符、系统级保护）时一律不提示：这类场景下把剪贴板
+        // 内容画到终端画布上，正好违背用户开启安全输入的意图。
+        guard !SecureInputCoordinator.shared.isSystemProtectionActive else { return nil }
+        return ClipboardSuggestionMonitor.shared.pendingText()
+      }
+      autocomplete.onClipboardSuggestionConsumed = {
+        ClipboardSuggestionMonitor.shared.consume()
       }
       autocomplete.onCommandSubmitted = { [weak self] command in
         self?.recordSubmittedCommand(command)

@@ -208,6 +208,7 @@
 "…（已截断，共 %@ 字符）" = "… (tronqué, %@ caractères au total)";
 "…（本条已截断，共 %@ 字符）" = "… (cette entrée est tronquée, %@ caractères au total)";
 "⌘、⌥ 等技术符号；仅在字体按双宽绘制时开启" = "Symboles techniques tels que ⌘, ⌥ ; activé uniquement quand la police est rendue en pleine chasse";
+"⏎ 粘贴" = "⏎ Coller";
 "①、Ⓐ、ⓐ 等；默认按双宽显示" = "①, Ⓐ, ⓐ, etc. ; affiché en pleine chasse par défaut";
 "、" = ", ";
 "「%@」将被永久删除，连同它的来源回链一起消失，无法恢复。\n\n如果只是想让它不再进入 Agent 上下文，用“禁用”即可。" = "« %@ » sera définitivement supprimé, ainsi que ses références sources. Cette action est irréversible.\n\nSi vous souhaitez simplement le retirer du contexte Agent, utilisez « Désactiver ».";
@@ -429,6 +430,7 @@
 "前置全部窗口" = "Tout ramener au premier plan";
 "前进" = "Suivant";
 "剪切" = "Couper";
+"剪贴板建议" = "Suggestion du presse-papiers";
 "加入 Prompt 队列…" = "Ajouter à la file de Prompt…";
 "加入队列" = "Ajouter à la file";
 "加入队列失败：%@" = "Échec de la mise en file : %@";
@@ -581,6 +583,7 @@
 "备份或保存失败：%@" = "Échec de la sauvegarde ou de l’enregistrement : %@";
 "复制" = "Copier";
 "复制与粘贴" = "Copier et coller";
+"复制内容后，在空提示符上以灰字提示剪贴板内容，回车只粘贴不执行" = "Après une copie, afficher le contenu du presse-papiers en gris sur une invite vide ; Entrée le colle sans l’exécuter";
 "复制到 %@" = "Copier vers %@";
 "复制到剪贴板" = "Copier dans le presse-papiers";
 "复制后清除选区" = "Effacer la sélection après la copie";
@@ -1334,6 +1337,7 @@
 "粘贴为" = "Coller en tant que";
 "粘贴保护" = "Protection du collage";
 "粘贴到终端" = "Coller dans le terminal";
+"粘贴剪贴板内容" = "Coller le contenu du presse-papiers";
 "粘贴多行或含控制字符的内容前先确认" = "Confirmer avant de coller un contenu multiligne ou contenant des caractères de contrôle";
 "粘贴并在 Composer 中继续" = "Coller et continuer dans le Composer";
 "粘贴的内容可能立即执行命令" = "Le contenu collé pourrait exécuter des commandes immédiatement";

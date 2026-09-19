@@ -420,6 +420,8 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
   public var autocompleteOnDeviceLearning: Bool? = true
   public var autocompleteHistoryIgnore: [String]? = []
   public var autocompleteDescriptionLanguage: AutocompleteDescriptionLanguage? = .system
+  /// 复制内容后在空提示符上以 ghost 提示剪贴板内容，回车只写入不执行。
+  public var clipboardSuggestion: Bool? = true
   /// Pane IPC 写入默认关闭；敏感会话必须在第一层写权限之外再次显式放行。
   public var ipcAllowSendKeys: Bool? = false
   public var ipcAllowSensitiveSessions: Bool? = false
@@ -512,6 +514,10 @@ public struct ControlConfiguration: Codable, Equatable, Sendable {
 
   public var resolvedAutocompleteInlineSuggestion: Bool {
     autocompleteInlineSuggestion ?? true
+  }
+
+  public var resolvedClipboardSuggestion: Bool {
+    clipboardSuggestion ?? true
   }
 
   public var resolvedAutocompleteOnDeviceLearning: Bool {
