@@ -377,7 +377,8 @@ func restoredCommandDeliversViaFallbackAndCancelsOnInput() async throws {
 
   // 场景一：进程就绪后,普通会话没有 promptStart,兜底在延时后把命令写入 PTY。
   let session = TerminalSession(workingDirectory: "/tmp")
-  let view = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  // 只需要视图被创建（挂上 PTY）；场景一不直接操作它。
+  _ = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
   defer { session.stop(immediately: true) }
   session.scheduleRestoredCommand(
     .init(paneID: UUID(), command: "echo FALLBACK_OK", source: .process))

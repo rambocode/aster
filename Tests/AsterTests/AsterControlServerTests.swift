@@ -153,7 +153,9 @@ struct AsterControlServerTests {
     let server = AsterControlServer(socketPath: path, onDisconnect: { _ in disconnected.signal() }) { _, _ in }
     defer { server.stop() }
     #expect(try server.start() == .listening)
-    var client: ControlSocketClient? = try #require(ControlSocketClient(path: path))
+    // 客户端必须只有这一个强引用：下面靠 `client = nil` 析构它来断开连接。
+    var client = ControlSocketClient(path: path)
+    try #require(client != nil)
     client?.writeLine(#"{"id":1,"method":"server.ping"}"#)
     Thread.sleep(forTimeInterval: 0.1)
     #expect(server.connectionCount == 1)

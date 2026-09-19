@@ -416,6 +416,7 @@
 "切换详情面板" = "Detailbereich ein-/ausblenden";
 "刚刚完成" = "Gerade abgeschlossen";
 "创建" = "Erstellen";
+"创建受管终端失败：%@" = "Verwaltetes Terminal konnte nicht erstellt werden: %@";
 "创建可编辑副本" = "Bearbeitbare Kopie erstellen";
 "删除" = "Löschen";
 "删除到行尾" = "Bis Zeilenende löschen";
@@ -488,6 +489,7 @@
 "后台任务继续运行，布局已保留。重新附加即可恢复画面。" = "Hintergrundaufgabe läuft weiter; Layout wurde beibehalten. Erneut anhängen, um die Anzeige wiederherzustellen.";
 "后台会话服务中找不到该终端（服务可能已重启）。点击「重新启动 Shell」恢复。" = "Dieses Terminal wurde im Hintergrundsitzungsdienst nicht gefunden (der Dienst wurde möglicherweise neu gestartet). Klicken Sie auf „Shell neu starten“, um es wiederherzustellen.";
 "后台会话服务已重启，原终端实例不再有效。点击「重新启动 Shell」恢复。" = "Der Hintergrundsitzungsdienst wurde neu gestartet; die ursprüngliche Terminalinstanz ist nicht mehr gültig. Klicken Sie auf „Shell neu starten“, um es wiederherzustellen.";
+"后台服务不可达：%@" = "Hintergrunddienst nicht erreichbar: %@";
 "后退" = "Zurück";
 "向上扩展" = "Nach oben erweitern";
 "向上拆分" = "Nach oben teilen";
@@ -576,6 +578,7 @@
 "处理中" = "Wird verarbeitet";
 "处理中徽章" = "Abzeichen „Wird verarbeitet\"";
 "处理期间阻止睡眠" = "Ruhezustand während der Verarbeitung verhindern";
+"备份或保存失败：%@" = "Sicherung oder Speichern fehlgeschlagen: %@";
 "复制" = "Kopieren";
 "复制与粘贴" = "Kopieren und Einfügen";
 "复制到 %@" = "Nach %@ kopieren";

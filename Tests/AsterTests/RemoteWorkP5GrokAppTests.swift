@@ -1,6 +1,7 @@
 import AppKit
 import AsterCore
 import Foundation
+import os
 import Testing
 
 @testable import Aster
@@ -92,10 +93,12 @@ private func runProcess(
   process.standardError = pipe
   do { try process.run() } catch { return (-1, "launch failed: \(error)") }
   let collector = DispatchQueue(label: "p5.grok.reader")
-  var data = Data()
+  // 读线程与等待线程共享输出缓冲：用锁保护，不靠信号量的先后顺序去「保证」可见性。
+  let output = OSAllocatedUnfairLock(initialState: Data())
   let done = DispatchSemaphore(value: 0)
   collector.async {
-    data = pipe.fileHandleForReading.readDataToEndOfFile()
+    let read = pipe.fileHandleForReading.readDataToEndOfFile()
+    output.withLock { $0 = read }
     done.signal()
   }
   let deadline = Date().addingTimeInterval(timeout)
@@ -107,7 +110,7 @@ private func runProcess(
   }
   process.waitUntilExit()
   _ = done.wait(timeout: .now() + 5)
-  return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+  return (process.terminationStatus, String(decoding: output.withLock { $0 }, as: UTF8.self))
 }
 
 /// 远端 shell 命令。

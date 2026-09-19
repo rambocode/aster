@@ -416,6 +416,7 @@
 "切换详情面板" = "Toggle Details Panel";
 "刚刚完成" = "Just Completed";
 "创建" = "Create";
+"创建受管终端失败：%@" = "Failed to create the managed terminal: %@";
 "创建可编辑副本" = "Create an Editable Copy";
 "删除" = "Delete";
 "删除到行尾" = "Delete to End of Line";
@@ -488,6 +489,7 @@
 "后台任务继续运行，布局已保留。重新附加即可恢复画面。" = "Background task continues to run; layout has been preserved. Reattach to restore the display.";
 "后台会话服务中找不到该终端（服务可能已重启）。点击「重新启动 Shell」恢复。" = "This terminal was not found in the background session service (the service may have restarted). Click \"Restart Shell\" to recover.";
 "后台会话服务已重启，原终端实例不再有效。点击「重新启动 Shell」恢复。" = "The background session service has restarted; the original terminal instance is no longer valid. Click \"Restart Shell\" to recover.";
+"后台服务不可达：%@" = "Background service is unreachable: %@";
 "后退" = "Back";
 "向上扩展" = "Extend Up";
 "向上拆分" = "Split Up";
@@ -576,6 +578,7 @@
 "处理中" = "Processing";
 "处理中徽章" = "Processing Badge";
 "处理期间阻止睡眠" = "Prevent Sleep While Processing";
+"备份或保存失败：%@" = "Backup or save failed: %@";
 "复制" = "Copy";
 "复制与粘贴" = "Copy & Paste";
 "复制到 %@" = "Copy to %@";

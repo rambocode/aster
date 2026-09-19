@@ -138,7 +138,7 @@ struct RemoteAgentStateTests {
       RemoteAgentInfo(terminalID: "t1", provider: .claudeCode, state: .done, unread: true)
     ])
     aggregator.markRead(machineID: machineID, terminalID: "t1")
-    let summaries = aggregator.aggregate(machineID: machineID, agents: [
+    _ = aggregator.aggregate(machineID: machineID, agents: [
       RemoteAgentInfo(terminalID: "t1", provider: .claudeCode, state: .done, unread: true)
     ])
     // aggregate 用新数据覆盖，所以这里重新测试 markRead 效果

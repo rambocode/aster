@@ -207,8 +207,9 @@ private let compatibleVersionLine = "aster-session 0.1.0-dev protocol=1.0"
 
 @Test func remoteCompatibilityDescribesDisabledActions() {
   #expect(RemoteCompatibilityCheck.unavailableActionMessage(missingOptional: []) == nil)
-  let message = try? #require(
-    RemoteCompatibilityCheck.unavailableActionMessage(missingOptional: ["live_handoff", "image_upload"]))
+  let message = RemoteCompatibilityCheck.unavailableActionMessage(
+    missingOptional: ["live_handoff", "image_upload"])
+  #expect(message != nil)
   #expect(message?.contains("实时交接") == true)
   #expect(message?.contains("图片上传") == true)
 }

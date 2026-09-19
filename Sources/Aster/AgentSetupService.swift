@@ -1022,24 +1022,10 @@ struct AgentSetupService {
       throw AgentSetupServiceError.configurationChanged(edit.target.path)
     }
 
-    var wroteContents = false
-    do {
-      // 权限位随内容一次写入；远端实现里 chmod 与 rename 同属一条命令，失败即整体失败。
-      try fileSystem.writeFile(
-        edit.contents, atPath: edit.target.path, permissions: edit.original?.permissions)
-      wroteContents = true
-    } catch {
-      // 权限恢复等后置操作可能在原子替换成功后失败；这种情况下由当前目标自行
-      // 恢复，再交给外层回滚更早的 edit，避免把未写目标误认为本次产物。
-      if wroteContents {
-        do {
-          try restore(edit)
-        } catch {
-          throw AgentSetupServiceError.rollbackFailed(edit.target.path)
-        }
-      }
-      throw error
-    }
+    // 权限位随内容一次写入；远端实现里 chmod 与 rename 同属一条命令，失败即整体失败。
+    // 因此写入抛错时目标一定没被改动，不需要在这里自行恢复；更早的 edit 由外层回滚。
+    try fileSystem.writeFile(
+      edit.contents, atPath: edit.target.path, permissions: edit.original?.permissions)
   }
 
   private func restore(_ edit: PreparedEdit) throws {

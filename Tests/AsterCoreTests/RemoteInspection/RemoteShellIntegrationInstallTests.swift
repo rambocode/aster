@@ -186,9 +186,9 @@ private func sampleScripts() -> [RemoteShellIntegrationShell: String] {
   #expect(RemoteShellIntegrationInstall.parseInspect("Welcome!\nASTER_RI_V1\nhome=/root\n") == nil)
   #expect(RemoteShellIntegrationInstall.parseInspect("") == nil)
 
-  let status = try? #require(
-    RemoteShellIntegrationInstall.parseInspect("ASTER_RI_V1\nhome=/root\nshell=/bin/sh\nbash=installed\n")
-  )
+  let status = RemoteShellIntegrationInstall.parseInspect(
+    "ASTER_RI_V1\nhome=/root\nshell=/bin/sh\nbash=installed\n")
+  #expect(status != nil)
   #expect(status?.bash == .installed)
   // 缺失的行按「未安装」处理，不臆测。
   #expect(status?.zsh == .absent)

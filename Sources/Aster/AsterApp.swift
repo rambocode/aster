@@ -1090,12 +1090,22 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   @objc private func endManagedTerminal(_ sender: Any?) {
     _ = activeWorkspaceModel.terminateActiveManagedTerminal()
   }
+  /// 迁移失败原因的界面文案。错误类型本身只有调试描述：直接插进 `L()` 会把
+  /// `terminalCreationFailed(paneID: …)` 这样的内部写法原样弹给用户，翻译表也匹配不上。
+  private static func migrationFailureText(_ failure: ManagedMigrationError) -> String {
+    switch failure {
+    case .serverUnreachable(let reason): L("后台服务不可达：\(reason)")
+    case .terminalCreationFailed(_, let reason): L("创建受管终端失败：\(reason)")
+    case .persistenceFailed(let reason): L("备份或保存失败：\(reason)")
+    }
+  }
+
   @objc private func migrateWorkspaceToManagedSession(_ sender: Any?) {
     guard let outcome = activeWorkspaceModel.migrateWorkspaceToManagedSession() else { return }
     guard let failure = outcome.failure else { return }
     let alert = NSAlert()
     alert.messageText = L("托管到后台失败")
-    alert.informativeText = L("\(failure)。已回滚，现有终端未受影响。")
+    alert.informativeText = L("\(Self.migrationFailureText(failure))。已回滚，现有终端未受影响。")
     alert.alertStyle = .warning
     alert.runModal()
   }
