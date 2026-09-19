@@ -59,6 +59,11 @@ final class GhosttySurfaceView: NSView {
   private var isFocused = false
   private var isWindowActive = true
   private var isPaneActive = true
+  /// 最近一次上报给 libghostty 的可见性；nil 表示 surface 创建后尚未上报。
+  /// 由 `GhosttySurfaceView+Visibility.swift` 维护，跨文件扩展需要 internal 可见性。
+  var reportedSurfaceVisible: Bool?
+  /// 「变为不可见」的延后确认已排队，避免同一轮主队列重复投递。
+  var surfaceInvisibilityCheckScheduled = false
   private var secureInputEnabled = false
   private var trackingAreaToken: NSTrackingArea?
   /// Ghostty 已在自己的 IO 线程解析和绘制；Aster 的语义 observer 仍经有界总线进入
@@ -161,6 +166,15 @@ final class GhosttySurfaceView: NSView {
     super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
     outputMessageBus = TerminalOutputMessageBus { [weak self] bytes in
       self?.consumeObservedPTYRead(bytes)
+    }
+    // 画中画镜像开关会改变「不可见也要继续画」的判定。start/stop 目前都在主线程调用，
+    // 同步上报才能让紧随其后的 renderNow() 真的画出首帧；其他线程退回主队列。
+    pictureInPictureFrames.setCaptureStateHandler { [weak self] in
+      if Thread.isMainThread {
+        MainActor.assumeIsolated { self?.synchronizeSurfaceVisibility() }
+      } else {
+        DispatchQueue.main.async { self?.synchronizeSurfaceVisibility() }
+      }
     }
     wantsLayer = true
     setAccessibilityElement(true)
@@ -461,6 +475,7 @@ final class GhosttySurfaceView: NSView {
     }
     updateFocusState()
     updateSurfaceGeometry()
+    reportInitialSurfaceVisibility()
     onSurfaceCreated?(true)
   }
 
@@ -531,7 +546,19 @@ final class GhosttySurfaceView: NSView {
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
+    observeWindowOcclusion()
     if window != nil, surface == nil { createSurface() } else { updateSurfaceGeometry() }
+    synchronizeSurfaceVisibility()
+  }
+
+  override func viewDidHide() {
+    super.viewDidHide()
+    synchronizeSurfaceVisibility()
+  }
+
+  override func viewDidUnhide() {
+    super.viewDidUnhide()
+    synchronizeSurfaceVisibility()
   }
 
   override func setFrameSize(_ newSize: NSSize) {

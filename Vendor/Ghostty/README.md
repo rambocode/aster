@@ -28,6 +28,11 @@ Aster 的嵌入式 renderer 额外把 focused display link 改为按需运行：
 `.rearm` 就调用 `CVDisplayLinkStop`，两条线程会互相等待，并在窗口失焦同步 surface focus 时
 进一步锁住 AppKit 主线程。
 
+宿主必须通过上游已有的 `ghostty_surface_set_occlusion` 报告可见性（参数语义是「可见」）。
+renderer 线程在不可见时跳过 `drawFrame`、把 QoS 降到 utility，并且本补丁的 `requestVsync`
+不会为不可见 surface 启动 display link；重新可见时 renderer 立即补画最新一帧。Aster 侧的
+判定规则见 `docs/developer/energy-efficiency.md`。
+
 Pinned patch 还把 dcimgui 的 `ext.cpp` 重命名为唯一的 `dcimgui_ext.cpp`。上游静态库同时
 链接 `pkg/macos/text/ext.c`，两个源文件原本都会生成名为 `ext.o` 的 archive member；Mach-O
 debug map 只保存 member basename，`dsymutil` 会选错对象并误报 ImGui 构造符号不存在。
