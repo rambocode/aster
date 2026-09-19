@@ -144,5 +144,13 @@ struct AgentUsageTests {
     var disabled = decoded
     disabled.usageBarEnabled = false
     #expect(!disabled.resolvedUsageBarEnabled)
+
+    // 状态栏 AI 用量是后加的入口，缺键时必须默认关闭：开着就会起被动轮询。
+    #expect(decoded.usageMenuBarEnabled == nil)
+    #expect(!decoded.resolvedUsageMenuBarEnabled)
+    #expect(!AgentConfiguration().resolvedUsageMenuBarEnabled)
+    var menuBarOn = decoded
+    menuBarOn.usageMenuBarEnabled = true
+    #expect(menuBarOn.resolvedUsageMenuBarEnabled)
   }
 }

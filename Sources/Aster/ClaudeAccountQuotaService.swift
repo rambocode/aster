@@ -30,10 +30,14 @@ final class ClaudeAccountQuotaService: ObservableObject {
   static let minimumRequestInterval: TimeInterval = 90
   /// 轮询周期与最小间隔一致：补拉发生后轮询会顺延到距上次请求满 90s，不会叠加请求。
   static let pollInterval: Duration = .seconds(90)
+  /// 只有被动引用（状态栏 / 用量浮动窗，没有任何 Claude pane 在跑）时的轮询周期。
+  /// 放宽到 300s：没人在用 Claude 的时候配额几乎不变，没必要按 pane 的节奏打接口。
+  static let passivePollInterval: Duration = .seconds(300)
   nonisolated static let keychainService = "Claude Code-credentials"
 
   typealias Fetcher = @Sendable (_ token: String) async -> ClaudeUsageFetchOutcome
-  typealias TokenReader = @Sendable () async -> String?
+  /// 凭据读取一次同时给出 token 与订阅档位：两者在同一份 JSON 里，分两次读等于多敲一次钥匙串。
+  typealias TokenReader = @Sendable () async -> (token: String, planName: String?)?
   /// 限流 / 服务端错误后的退避上限；每次失败翻倍，成功一次即归零。
   nonisolated static let maximumBackoff: TimeInterval = 600
 
@@ -42,20 +46,28 @@ final class ClaudeAccountQuotaService: ObservableObject {
   @Published private(set) var windows: [AgentUsageWindow]?
   /// `windows` 对应的拉取时刻；缓存回填时是上次成功的时间，用量条据此标注数据新旧。
   private(set) var fetchedAt: Date?
+  /// 订阅档位展示名（`Max 20x` / `Pro`）。来自凭据 JSON，只在真正重读钥匙串时更新。
+  private(set) var planName: String?
   static let cacheKey = "aster.claude-quota.cache.v1"
   /// 缓存超过这个时长就不回填：周配额一天内变化有限，隔天的数字只会误导。
   static let cacheMaximumAge: TimeInterval = 24 * 3_600
 
-  /// 本地缓存的载荷：窗口 + 拉取时刻。
+  /// 本地缓存的载荷：窗口 + 拉取时刻 + 订阅档位。
+  /// `planName` 可选，旧版本写的缓存缺这个键也能解码。
   private struct Cache: Codable {
     let windows: [AgentUsageWindow]
     let fetchedAt: Date
+    var planName: String?
   }
 
   private let fetch: Fetcher
   private let readToken: TokenReader
   private let defaults: UserDefaults?
   private var retainCount = 0
+  /// 被动引用数：状态栏与用量浮动窗持有，只要求「有数就行」，不要求 pane 级别的新鲜度。
+  private var passiveRetainCount = 0
+  /// 当前轮询循环使用的周期；nil 表示没有轮询。测试 seam，同时用于判断档位是否变化。
+  private(set) var currentPollInterval: Duration?
   private var pollTask: Task<Void, Never>?
   private var refreshTask: Task<Void, Never>?
   private var lastFetchAt: Date?
@@ -84,13 +96,16 @@ final class ClaudeAccountQuotaService: ObservableObject {
     else { return }
     windows = cache.windows
     fetchedAt = cache.fetchedAt
+    // 档位一起回填：否则重启后要等第一次读钥匙串才显示，卡片上的徽标会闪一下才出现。
+    planName = cache.planName
     // 快速重启也算在同一条请求时间线里：上次成功不到 90s 就不要再立刻打一次接口。
     lastFetchAt = cache.fetchedAt
   }
 
   private func persistCache() {
     guard let defaults, let windows, let fetchedAt,
-      let data = try? JSONEncoder().encode(Cache(windows: windows, fetchedAt: fetchedAt))
+      let data = try? JSONEncoder().encode(
+        Cache(windows: windows, fetchedAt: fetchedAt, planName: planName))
     else { return }
     defaults.set(data, forKey: Self.cacheKey)
   }
@@ -100,7 +115,47 @@ final class ClaudeAccountQuotaService: ObservableObject {
   /// 启动，都不会额外产生请求；已有数据时用量条直接显示共享的上次结果。
   func retain() {
     retainCount += 1
-    guard retainCount == 1 else { return }
+    updatePolling()
+  }
+
+  /// 状态栏 / 用量浮动窗的被动引用：没有任何 Claude pane 时按 `passivePollInterval` 慢速轮询。
+  /// 与 `retain()` 共用同一条请求时间线和同一个轮询循环，不会新增第二个请求源。
+  func retainPassive() {
+    passiveRetainCount += 1
+    updatePolling()
+  }
+
+  /// 释放被动引用。
+  func releasePassive() {
+    passiveRetainCount = max(passiveRetainCount - 1, 0)
+    updatePolling()
+  }
+
+  /// 当前应使用的轮询周期：有 pane 引用按 90s，只有被动引用按 300s，都没有则不轮询。
+  private var desiredPollInterval: Duration? {
+    if retainCount > 0 { return Self.pollInterval }
+    if passiveRetainCount > 0 { return Self.passivePollInterval }
+    return nil
+  }
+
+  /// 按引用情况启动 / 换档 / 停止轮询循环。
+  ///
+  /// 换档必须重启循环，否则在途的 `Task.sleep` 还按旧周期跑，pane 起来后要等到下一拍才提速。
+  /// 重启不会多打一次接口：新循环的首拍同样先等 `secondsUntilNextRequestAllowed()`，而
+  /// `refresh(force:)` 在任何 await 之前就同步写下 `lastFetchAt`，所以即使新旧循环短暂重叠，
+  /// 后进来的那次也会被最小间隔挡掉。
+  private func updatePolling() {
+    let desired = desiredPollInterval
+    guard desired != currentPollInterval else { return }
+    currentPollInterval = desired
+    pollTask?.cancel()
+    pollTask = nil
+    // 没有任何引用了：连补拉也一并取消，彻底回到零请求。
+    guard let desired else {
+      refreshTask?.cancel()
+      refreshTask = nil
+      return
+    }
     pollTask = Task { [weak self] in
       while !Task.isCancelled {
         // 等待时长按上次请求时刻推算：补拉刚发生过就多等一会儿，从没请求过则立即拉。
@@ -108,10 +163,13 @@ final class ClaudeAccountQuotaService: ObservableObject {
         if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
         guard !Task.isCancelled else { return }
         await self?.refresh(force: false)
-        try? await Task.sleep(for: Self.pollInterval)
+        try? await Task.sleep(for: desired)
       }
     }
   }
+
+  /// 诊断 / 测试 seam：当前是否有轮询循环在跑。
+  var hasScheduledPoll: Bool { pollTask != nil }
 
   /// 距下一次允许请求还差多少秒；0 表示现在就可以。
   private func secondsUntilNextRequestAllowed() -> TimeInterval {
@@ -119,14 +177,15 @@ final class ClaudeAccountQuotaService: ObservableObject {
     return max(0, Self.minimumRequestInterval - Date().timeIntervalSince(lastFetchAt))
   }
 
-  /// 最后一个 Claude pane 结束：停止轮询，保留最后数据供下次立刻显示。
+  /// 最后一个 Claude pane 结束：降档或停止轮询，保留最后数据供下次立刻显示。
   func release() {
     retainCount = max(retainCount - 1, 0)
-    guard retainCount == 0 else { return }
-    pollTask?.cancel()
-    pollTask = nil
-    refreshTask?.cancel()
-    refreshTask = nil
+    // 没有 pane 在跑就没有「一轮刚结束」可言，待发的补拉一律取消；轮询的去留交给换档逻辑。
+    if retainCount == 0 {
+      refreshTask?.cancel()
+      refreshTask = nil
+    }
+    updatePolling()
   }
 
   /// Agent 一轮结束后补拉：稍等让服务端记账，且遵守最小间隔。
@@ -152,7 +211,12 @@ final class ClaudeAccountQuotaService: ObservableObject {
       return
     }
     lastFetchAt = now
-    if cachedToken == nil { cachedToken = await readToken() }
+    if cachedToken == nil {
+      let credentials = await readToken()
+      cachedToken = credentials?.token
+      // 档位只在真正重读凭据时更新：token 命中内存缓存就没有新的 JSON 可读，沿用上次的值。
+      if let plan = credentials?.planName { planName = plan }
+    }
     guard let token = cachedToken else {
       DiagnosticsCenter.shared.record(
         "claude_quota.token_unavailable", level: .warning, category: .integration)
@@ -200,9 +264,10 @@ final class ClaudeAccountQuotaService: ObservableObject {
   /// 诊断 seam：当前是否处于退避期。
   var isBackingOff: Bool { backoffUntil.map { Date() < $0 } ?? false }
 
-  /// 测试直接注入窗口，绕过网络。
-  func injectForTesting(_ windows: [AgentUsageWindow]) {
+  /// 测试直接注入窗口（和可选的档位），绕过网络。
+  func injectForTesting(_ windows: [AgentUsageWindow], planName: String? = nil) {
     fetchedAt = Date()
+    if let planName { self.planName = planName }
     self.windows = windows
   }
 
@@ -233,7 +298,7 @@ final class ClaudeAccountQuotaService: ObservableObject {
   /// 再回退 `~/.claude/.credentials.json`。走 `security` 命令而不是 SecItem，行为与
   /// Claude Code 自己一致，也避免把 Aster 的签名加进钥匙串项的 ACL。
   static let readKeychainToken: TokenReader = {
-    await Task.detached(priority: .utility) { () -> String? in
+    await Task.detached(priority: .utility) { () -> (token: String, planName: String?)? in
       let process = Process()
       process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
       process.arguments = ["find-generic-password", "-s", keychainService, "-w"]
@@ -251,8 +316,10 @@ final class ClaudeAccountQuotaService: ObservableObject {
           .appendingPathComponent(".claude/.credentials.json")
         data = try? Data(contentsOf: fallback)
       }
-      guard let data else { return nil }
-      return ClaudeAccountQuotaParser.accessToken(fromCredentials: data)
+      guard let data, let token = ClaudeAccountQuotaParser.accessToken(fromCredentials: data) else {
+        return nil
+      }
+      return (token, ClaudeAccountQuotaParser.planName(fromCredentials: data))
     }.value
   }
 }

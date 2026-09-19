@@ -56,6 +56,16 @@ Fig Autocomplete is distributed under the MIT License. The full license is avail
 
 Aster derives its bundled command-name index from the 715 direct command specifications at revision `aef52acff84c45edde61ae610cc2c964802b9a38`. Aster's local ranking, privacy filters, UI, file completion, help parsing, persistence, and manual update implementation are independent code.
 
+## Tally
+
+Copyright (c) 2026 jetto
+
+Tally is distributed under the MIT License. The full license is available in the upstream repository at <https://github.com/jettoai/tally/blob/main/LICENSE>.
+
+Aster's token statistics core under `Sources/AsterCore/TokenStats/` (the shallow JSON byte scanner, local-day stamping, incremental scan cache, Claude Code and Codex transcript parsing, range summary, and activity heatmap model) is ported from `Tally/Core/TokenStats/` at revision `2fa4b404a92915903631beac52cc1ddf9f37de7d`. Project attribution, the additional agent data sources, the quota service, the session board, process sampling, and all AppKit UI are independent code.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files, to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies, provided that the copyright and permission notice are included in all copies or substantial portions. The software is provided “as is”, without warranty of any kind; the authors are not liable for claims, damages, or other liability arising from its use.
+
 ## Nerd Fonts Symbols Only
 
 Copyright (c) 2014 Ryan L McIntyre; font metadata also credits Ryan McIntyre (2016).

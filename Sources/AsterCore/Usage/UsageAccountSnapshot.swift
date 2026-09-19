@@ -10,22 +10,26 @@ public struct UsageAccountSnapshot: Equatable, Sendable, Identifiable {
   public var provider: AgentProvider
   /// 展示名，例如「Claude」「Codex」。
   public var label: String
+  /// 订阅档位的展示名，例如「Max 20x」「Pro」「Plus」。各家叫法不同，原样展示；拿不到为 nil。
+  public var plan: String?
   public var windows: [AgentUsageWindow]
   /// 这份数据的取得时刻；用于标注「X 前更新」。
   public var fetchedAt: Date?
 
   public init(
-    id: String, provider: AgentProvider, label: String, windows: [AgentUsageWindow], fetchedAt: Date?
+    id: String, provider: AgentProvider, label: String, plan: String? = nil,
+    windows: [AgentUsageWindow], fetchedAt: Date?
   ) {
     self.id = id
     self.provider = provider
     self.label = label
+    self.plan = plan
     self.windows = windows
     self.fetchedAt = fetchedAt
   }
 
   public static func == (lhs: UsageAccountSnapshot, rhs: UsageAccountSnapshot) -> Bool {
     lhs.id == rhs.id && lhs.provider == rhs.provider && lhs.label == rhs.label
-      && lhs.windows == rhs.windows
+      && lhs.plan == rhs.plan && lhs.windows == rhs.windows
   }
 }

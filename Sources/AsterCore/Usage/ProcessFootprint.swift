@@ -47,6 +47,9 @@ public struct ProcessFootprint: Equatable, Sendable {
 }
 
 public enum ProcessFootprintCalculator {
+  /// 一棵树最多遍历的进程数，防止异常的父子关系把这一拍拖成全机扫描。
+  private static let maxProcesses = 2000
+
   /// 计算以 `root` 为根的进程树占用。根进程不在 `current` 里时返回 nil。
   ///
   /// CPU 只统计两次采样里都存在的进程；新出现的进程下一拍才计入，避免把它出生以来的
@@ -54,7 +57,45 @@ public enum ProcessFootprintCalculator {
   public static func footprint(
     root: Int32, current: ProcessSample, previous: ProcessSample?
   ) -> ProcessFootprint? {
-    // 骨架：由「进程占用」任务实现。
-    nil
+    guard current.readings[root] != nil else { return nil }
+
+    // 先按 parentPID 建一次子表：一次 O(n) 换掉 BFS 每层全表扫描，树越深省得越多。
+    var children: [Int32: [Int32]] = [:]
+    children.reserveCapacity(current.readings.count)
+    for reading in current.readings.values {
+      children[reading.parentPID, default: []].append(reading.pid)
+    }
+
+    // BFS 展开进程树。visited 同时承担去重和防环：内核不该给出环，但 pid 回绕或
+    // 采样期间的父进程改写可能让 a↔b 互为父，没有 visited 就会死循环。
+    var visited: Set<Int32> = [root]
+    var queue: [Int32] = [root]
+    var index = 0
+    var memoryBytes: UInt64 = 0
+    var cpuSeconds = 0.0
+    while index < queue.count {
+      let pid = queue[index]
+      index += 1
+      guard let reading = current.readings[pid] else { continue }
+      memoryBytes &+= reading.memoryBytes
+      // 只有上一拍也读到过的进程才贡献 CPU 差值；负差（计数器倒退、pid 复用）按 0 处理。
+      if let previous, let earlier = previous.readings[pid] {
+        cpuSeconds += max(0, reading.cpuSeconds - earlier.cpuSeconds)
+      }
+      for child in children[pid] ?? [] where !visited.contains(child) {
+        guard visited.count < maxProcesses else { break }
+        visited.insert(child)
+        queue.append(child)
+      }
+    }
+
+    // 没有上一拍或间隔非正（时钟未推进）时不报 CPU，避免除以 0 得出无意义的数。
+    var cpuPercent: Double?
+    if let previous {
+      let interval = current.uptime - previous.uptime
+      if interval > 0 { cpuPercent = cpuSeconds / interval * 100 }
+    }
+    return ProcessFootprint(
+      processes: queue.count, cpuPercent: cpuPercent, memoryBytes: memoryBytes)
   }
 }

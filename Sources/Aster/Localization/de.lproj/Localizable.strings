@@ -5,6 +5,7 @@
 " 启动后发送一条消息即可关联当前会话。" = " Nach dem Start eine Nachricht senden, um die aktuelle Sitzung zu verknüpfen.";
 " 没有内置外部终端设置，请安装 Terminal 包后手动指向 Aster" = " hat keine eingebaute externe Terminal-Einstellung; installieren Sie das Terminal-Paket und verweisen Sie manuell auf Aster";
 " 重启 Codex 后请运行 /hooks 审核并信任 Aster hook，再发送一条消息关联会话。" = " Nach dem Neustart von Codex /hooks ausführen, um den Aster-Hook zu prüfen und zu vertrauen, dann eine Nachricht senden, um die Sitzung zu verknüpfen.";
+"%@ · %@ token" = "%@ · %@ Tokens";
 "%@ · %@ 项" = "%@ · %@ Einträge";
 "%@ · 上次检查 %@" = "%@ · Zuletzt geprüft %@";
 "%@ · 已安装集成" = "%@ · Integration installiert";
@@ -22,7 +23,9 @@
 "%@ 个日志文件 · %@（最多保留 7 天或 20 MB）" = "%@ Protokolldateien · %@ (maximal 7 Tage oder 20 MB aufbewahrt)";
 "%@ 会话已结束 · %@ · 在此项目新开终端时补全首选" = "%@-Sitzung beendet · %@ · Bevorzugte Vervollständigung für neue Terminals in diesem Projekt";
 "%@ 分钟" = "%@ Min.";
+"%@ 前更新" = "Vor %@ aktualisiert";
 "%@ 副本" = "%@ Kopie";
+"%@ 后重置" = "Zurücksetzung in %@";
 "%@ 启动命令无效，已保留原设置。" = "Der Startbefehl %@ ist ungültig; die vorherige Einstellung wurde beibehalten.";
 "%@ 处改动" = "%@ Änderungen";
 "%@ 天 %@ 小时" = "%@ T %@ Std.";
@@ -63,6 +66,9 @@
 "(未知命令)" = "(Unbekannter Befehl)";
 "(未知文件)" = "(Unbekannte Datei)";
 "/usr/local/bin 与 ~/.local/bin 都不可写。" = "Weder /usr/local/bin noch ~/.local/bin ist beschreibbar.";
+"30 天" = "30 Tage";
+"7 天" = "7 Tage";
+"AI 用量" = "KI-Nutzung";
 "ANSI 16 色" = "ANSI 16 Farben";
 "ANSI 色位不存在" = "ANSI-Farbplatz existiert nicht";
 "ANSI 调色板保存失败：%@" = "ANSI-Palette konnte nicht gespeichert werden: %@";
@@ -109,6 +115,8 @@
 "CLI 输出缓冲不存在、不是普通文件或读取期间发生变化。" = "CLI-Ausgabepuffer existiert nicht, ist keine reguläre Datei oder wurde während des Lesens geändert.";
 "CLI 输出超过大小上限（%@ bytes）。" = "CLI-Ausgabe überschreitet die Größenobergrenze (%@ Bytes).";
 "CPU" = "CPU";
+"CPU %@ · 内存 %@" = "CPU %@ · Speicher %@";
+"CPU %@ · 内存 %@ · %@ 个进程" = "CPU %@ · Speicher %@ · %@ Prozesse";
 "Claude Code 运行时显示 5 小时 / 每周配额，Codex 另含当前会话上下文占比" = "Claude Code zeigt zur Laufzeit das 5-Stunden-/Wochenkontingent an, Codex enthält zusätzlich den Kontextanteil der aktuellen Sitzung";
 "Comment 超过 8 KiB 上限。" = "Kommentar überschreitet das 8-KiB-Limit.";
 "Composer 发送失败：%@" = "Composer-Senden fehlgeschlagen: %@";
@@ -182,6 +190,7 @@
 "Tab 或 →" = "Tab oder →";
 "Task 把跨 Agent、跨会话的工作过程归成一组。创建后可以用“把当前会话归入 Task”关联终端会话。" = "Ein Task gruppiert Arbeit über Agents und Sitzungen hinweg. Verwenden Sie nach dem Erstellen „Sitzung dem Task zuordnen“, um Terminalsitzungen zu verknüpfen.";
 "Task 标题不能为空。" = "Der Task-Titel darf nicht leer sein.";
+"Token" = "Tokens";
 "Unicode 箭头字符" = "Unicode-Pfeilzeichen";
 "VT100 / xterm、真彩色、鼠标、超链接与本地 PTY" = "VT100 / xterm, True Color, Maus, Hyperlinks und lokales PTY";
 "Vim 按键" = "Vim-Tastenkürzel";
@@ -386,6 +395,8 @@
 "关闭窗口" = "Fenster schließen";
 "关闭面板" = "Bereich schließen";
 "关闭预览" = "Vorschau schließen";
+"其他" = "Sonstige";
+"其它 Agent 没有本地配额数据，只统计 token。" = "Andere Agents speichern keine lokalen Kontingentdaten; es werden nur Tokens gezählt.";
 "内存" = "Arbeitsspeicher";
 "内存占比" = "Speicheranteil";
 "内容" = "Inhalt";
@@ -518,6 +529,7 @@
 "启用 Shell 集成" = "Shell-Integration aktivieren";
 "启用路径：%@（原子切换的 symlink）" = "Aktivierungspfad: %@ (atomar umgeschalteter Symlink)";
 "周" = "Wo.";
+"周期" = "Zyklus";
 "命令" = "Befehl";
 "命令以非零状态退出时发送系统通知" = "Systembenachrichtigung senden, wenn ein Befehl mit einem Status ungleich null endet";
 "命令以非零状态退出时直接播放系统提示音" = "Systemton direkt abspielen, wenn ein Befehl mit einem Status ungleich null endet";
@@ -566,6 +578,7 @@
 "在文本面板左侧显示行号侧栏" = "Zeilennummern-Seitenleiste links im Textbereich anzeigen";
 "在新终端中打开所在目录" = "Enthaltenden Ordner in neuem Terminal öffnen";
 "在本机脱敏记录命令，并允许 README 与沙箱 help 规格学习" = "Befehle lokal mit maskierten sensiblen Daten aufzeichnen und das Lernen von README- und Sandbox-Hilfe-Spezifikationen erlauben";
+"在系统状态栏显示 Claude、Codex 的配额，点击打开用量浮动窗" = "Zeigt das Claude- und Codex-Kontingent in der Menüleiste; ein Klick öffnet das schwebende Nutzungsfenster";
 "在线" = "Online";
 "在终端 cd 过去" = "Im Terminal hierher wechseln";
 "在终端光标后显示最高排名候选的灰色后缀" = "Grauen Suffix des bestplatzierten Kandidaten nach dem Terminal-Cursor anzeigen";
@@ -740,6 +753,8 @@
 "已清空全部记录。" = "Alle Aufzeichnungen wurden gelöscht.";
 "已清除选中的本机补全数据。" = "Die ausgewählten lokalen Autovervollständigungsdaten wurden gelöscht.";
 "已清除链接安全授权。" = "Link-Sicherheitsberechtigungen wurden gelöscht.";
+"已用 %@" = "Verbraucht %@";
+"已用 %@（含赠送 %@）" = "Verbraucht %@ (inkl. %@ Bonus)";
 "已禁用" = "Deaktiviert";
 "已移除 %@。" = "%@ wurde entfernt.";
 "已移除 aster 命令。" = "Der aster-Befehl wurde entfernt.";
@@ -804,6 +819,7 @@
 "快捷键可能已被其他应用占用。请在设置中更换快捷键；仍可通过“窗口 → Quick Terminal”打开。" = "Das Tastenkürzel wird möglicherweise bereits von einer anderen App verwendet. Ändern Sie es in den Einstellungen; Quick Terminal ist weiterhin über Fenster → Quick Terminal erreichbar.";
 "忽略样式" = "Stil ignorieren";
 "总是询问" = "Immer nachfragen";
+"总量" = "Gesamt";
 "恢复 %@ 会话" = "%@-Sitzung wiederherstellen";
 "恢复 tmux / screen 会话" = "tmux-/screen-Sitzungen wiederherstellen";
 "恢复上次会话" = "Letzte Sitzung wiederherstellen";
@@ -892,11 +908,13 @@
 "拷贝会话 ID" = "Sitzungs-ID kopieren";
 "拷贝路径" = "Pfad kopieren";
 "指针悬停的分屏面板自动获得键盘焦点" = "Der Bereich unter dem Zeiger erhält automatisch den Tastaturfokus";
+"按 Agent" = "Nach Agent";
 "按 CPU 排序" = "Nach CPU sortieren";
 "按 SGR 闪烁" = "Blinken über SGR";
 "按住 Cmd 悬停在链接上时，在底部角落显示该链接的完整路径或 URL。关闭后链接仍可点击，但不再显示预览。" = "Beim Halten von Cmd und Hovern über einem Link wird dessen vollständiger Pfad oder URL in der unteren Ecke angezeigt. Bei Deaktivierung bleiben Links klickbar, aber es wird keine Vorschau mehr angezeigt.";
 "按内存排序" = "Nach Speicher sortieren";
 "按名称（点击切换为目录优先）" = "Nach Name (klicken, um nach Verzeichnis zu sortieren)";
+"按项目" = "Nach Projekt";
 "换一个随机颜色" = "Andere Zufallsfarbe wählen";
 "排除" = "Ausschließen";
 "探测失败：%@" = "Erkennung fehlgeschlagen: %@";
@@ -1039,6 +1057,7 @@
 "显式停止/替换服务" = "Dienst explizit stoppen/ersetzen";
 "显式复制后取消选中；选中即复制始终保留选区" = "Nach explizitem Kopieren abwählen; „Bei Auswahl kopieren\" behält die Auswahl immer bei";
 "显示" = "Darstellung";
+"显示 AI 用量" = "KI-Nutzung anzeigen";
 "显示/隐藏 Vi 按键提示" = "Vi-Tastenhinweise ein-/ausblenden";
 "显示/隐藏标签栏" = "Tab-Leiste ein-/ausblenden";
 "显示/隐藏详情面板" = "Detailbereich ein-/ausblenden";
@@ -1057,6 +1076,7 @@
 "暂存全部" = "Alle bereitstellen";
 "更多操作" = "Weitere Aktionen";
 "更新" = "Aktualisieren";
+"更新中" = "Aktualisierung";
 "更新命令规格" = "Befehlsspezifikation aktualisieren";
 "更新检查失败：%@" = "Updateprüfung fehlgeschlagen: %@";
 "更新远端 aster-session 将重启服务" = "Das Aktualisieren von aster-session auf dem Remote startet den Dienst neu";
@@ -1183,6 +1203,8 @@
 "正在渲染会话…" = "Sitzung wird gerendert…";
 "正在生成脱敏诊断包…" = "Bereinigtes Diagnosepaket wird erstellt…";
 "正在索引…" = "Indizierung…";
+"正在统计本机用量…" = "Lokale Nutzung wird gezählt …";
+"正在统计本机用量… %@ / %@" = "Lokale Nutzung wird gezählt … %@ / %@";
 "正在读取 Git 状态…" = "Git-Status wird gelesen…";
 "正在读取 diff…" = "Diff wird gelesen…";
 "正在读取会话记录…" = "Sitzungsaufzeichnungen werden gelesen…";
@@ -1264,8 +1286,10 @@
 "片段将保存为命令型 .asterrecipe；打开时仍遵循 Recipe 重放确认策略。" = "Der Schnipsel wird als befehlsbasierte .asterrecipe gespeichert; beim Öffnen gilt weiterhin die Bestätigungsrichtlinie für die Recipe-Wiedergabe.";
 "版本：%@" = "Version: %@";
 "状态未知" = "Unbekannter Status";
+"状态栏 AI 用量" = "KI-Nutzung in der Menüleiste";
 "状态：%@" = "Status: %@";
 "状态：%@　项目：%@" = "Status: %1$@  Projekt: %2$@";
+"现在没有正在运行的 Agent。" = "Derzeit läuft kein Agent.";
 "现在重新启动 Aster？打开的终端与标签会按你的关闭确认设置处理，稍后也可以手动退出再打开。" = "Aster jetzt neu starten? Offene Terminals und Tabs folgen Ihren Einstellungen zur Schließbestätigung. Sie können Aster auch später manuell beenden und erneut öffnen.";
 "现有运行中服务继续使用自己的二进制实例，不会被本次安装停止。" = "Bestehende laufende Dienste verwenden weiterhin ihre eigenen Binärinstanzen und werden durch diese Installation nicht gestoppt.";
 "生成诊断包失败：%@" = "Diagnosepaket konnte nicht erstellt werden: %@";
@@ -1381,6 +1405,8 @@
 "继续会话" = "Sitzung fortsetzen";
 "继续运行" = "Wird fortgesetzt";
 "绿" = "Grün";
+"缓存写入" = "Cache-Schreiben";
+"缓存读取" = "Cache-Lesen";
 "编辑" = "Bearbeiten";
 "编辑器" = "Composer";
 "缩放" = "Zoomen";
@@ -1491,6 +1517,8 @@
 "跳过" = "Überspringen";
 "跳过命令" = "Befehl überspringen";
 "转义特殊字符后粘贴" = "Mit escapten Sonderzeichen einfügen";
+"输入" = "Eingabe";
+"输入 %@ · 缓存写入 %@ · 缓存读取 %@ · 输出 %@" = "Eingabe %@ · Cache-Schreiben %@ · Cache-Lesen %@ · Ausgabe %@";
 "输入 SSH target（支持 alias、user@host、ssh://user@host:port 和 root@ubuntu@orb）" = "SSH-Ziel eingeben (unterstützt Alias, user@host, ssh://user@host:port und root@ubuntu@orb)";
 "输入不应进入 frecency 的绝对路径，以逗号分隔。" = "Absolute Pfade eingeben, die nicht in die Frecency einfließen sollen, durch Kommas getrennt.";
 "输入内容以搜索当前窗口的全部 Pane。" = "Eingeben, um alle Bereiche im aktuellen Fenster zu durchsuchen.";
@@ -1502,11 +1530,14 @@
 "输入被前台程序拒绝" = "Eingabe vom Vordergrundprogramm abgelehnt";
 "输入要在终端中重放的文本。" = "Text eingeben, der im Terminal wiedergegeben werden soll.";
 "输入路径…" = "Pfad eingeben…";
+"输出" = "Ausgabe";
 "输出摘录" = "Ausgabeauszug";
 "输出正文已被清理，只保留摘录。" = "Der Ausgabetext wurde bereinigt; nur Auszüge wurden beibehalten.";
+"过去一年共 %@ token" = "%@ Tokens im letzten Jahr";
 "运行" = "Ausführen";
 "运行 Recipe 命令？" = "Recipe-Befehl ausführen?";
 "运行下一条 Recipe 命令？" = "Nächsten Recipe-Befehl ausführen?";
+"运行中" = "Aktiv";
 "运行中服务协议主版本 %@ 与客户端 %@ 不兼容，需要显式替换；后台不会停止它。" = "Die Protokoll-Hauptversion %@ des laufenden Dienstes ist mit dem Client %@ inkompatibel; ein explizites Ersetzen ist erforderlich. Er wird im Hintergrund nicht gestoppt.";
 "运行刚准备好的程序" = "Das gerade vorbereitete Programm ausführen";
 "运行刚构建的镜像" = "Das gerade gebaute Image ausführen";
@@ -1518,6 +1549,8 @@
 "返回会话列表" = "Zurück zur Sitzungsliste";
 "返回进程列表" = "Zurück zu Prozessen";
 "还没有 Agent 取用过上下文。" = "Es wurde noch kein Kontext von einem Agent abgerufen.";
+"还没有 token 用量数据。" = "Noch keine Daten zur Token-Nutzung.";
+"还没有配额数据。启动一次 Claude Code 或 Codex 后这里会显示。" = "Noch keine Kontingentdaten. Sie erscheinen hier, sobald Claude Code oder Codex einmal gelaufen ist.";
 "进入" = "Öffnen";
 "进入 Mark Mode" = "Mark Mode aktivieren";
 "进入 Vi Mode" = "Vi Mode aktivieren";
@@ -1623,6 +1656,8 @@
 "配置的 Shell 不可执行，已回退到 /bin/zsh。" = "Die konfigurierte Shell ist nicht ausführbar. Auf /bin/zsh zurückgefallen.";
 "配置的 Shell 不可执行：%@。已回退到 /bin/zsh。" = "Die konfigurierte Shell ist nicht ausführbar: %@. Auf /bin/zsh zurückgefallen.";
 "配色模式" = "Farbschema";
+"配额" = "Kontingent";
+"配额已重置，等 Codex 下次运行后更新" = "Kontingent wurde zurückgesetzt; Aktualisierung beim nächsten Codex-Lauf";
 "重做" = "Wiederholen";
 "重命名" = "Umbenennen";
 "重命名…" = "Umbenennen…";

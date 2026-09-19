@@ -38,8 +38,35 @@ public struct UsageStatusSummary: Equatable, Sendable {
   }
 
   /// 从账号快照折出状态栏内容。没有任何窗口的账号不出段。
-  public static func make(accounts: [UsageAccountSnapshot], blockedAgents: Int) -> UsageStatusSummary {
-    // 骨架：由「配额与开关」任务实现。
-    UsageStatusSummary(segments: [], needsAttention: blockedAgents > 0)
+  ///
+  /// 段的顺序固定按 `AgentProvider.allCases`，不跟随 `accounts` 的到达顺序：状态栏文字很窄，
+  /// Claude 和 Codex 换位置会让人以为数字变了。
+  public static func make(accounts: [UsageAccountSnapshot], blockedAgents: Int) -> UsageStatusSummary
+  {
+    let order = AgentProvider.allCases
+    let segments =
+      accounts
+      .compactMap { account -> Segment? in
+        // 5 小时窗口最能反映「现在还能不能干活」；没有这个窗口的账号退到每周窗口。
+        guard
+          let window = account.windows.first(where: { $0.kind == .fiveHour })
+            ?? account.windows.first(where: { $0.kind == .weekly })
+        else { return nil }
+        return Segment(
+          provider: account.provider, usedPercent: window.usedPercent,
+          severity: severity(forUsedPercent: window.usedPercent))
+      }
+      .sorted {
+        (order.firstIndex(of: $0.provider) ?? order.count)
+          < (order.firstIndex(of: $1.provider) ?? order.count)
+      }
+    return UsageStatusSummary(segments: segments, needsAttention: blockedAgents > 0)
+  }
+
+  /// 已用百分比对应的告警级别。
+  public static func severity(forUsedPercent percent: Double) -> Severity {
+    if percent >= criticalThreshold { return .critical }
+    if percent >= warningThreshold { return .warning }
+    return .normal
   }
 }

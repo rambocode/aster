@@ -1558,6 +1558,12 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         ) { [weak self] value in
           self?.preferences.configuration.agents.usageBarEnabled = value
         },
+        toggleRow(
+          L("状态栏 AI 用量"), L("在系统状态栏显示 Claude、Codex 的配额，点击打开用量浮动窗"),
+          value: preferences.configuration.agents.resolvedUsageMenuBarEnabled
+        ) { [weak self] value in
+          self?.preferences.configuration.agents.usageMenuBarEnabled = value
+        },
       ]),
       sectionTitle(L("通知")),
       card([
@@ -3329,6 +3335,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "agents.badgeTaskComplete": configuration.agents.badgeTaskComplete,
       "agents.badgeAwaitingInput": configuration.agents.badgeAwaitingInput,
       "agents.usageBarEnabled": configuration.agents.resolvedUsageBarEnabled,
+      "agents.usageMenuBarEnabled": configuration.agents.resolvedUsageMenuBarEnabled,
       "agents.notifyTaskComplete": configuration.agents.notifyTaskComplete,
       "agents.notifyAwaitingInput": configuration.agents.notifyAwaitingInput,
       "agents.screenDetectionEnabled": configuration.agents.resolvedScreenDetectionEnabled,
@@ -3871,6 +3878,7 @@ extension SettingsViewController: WKNavigationDelegate {
     case "agents.badgeTaskComplete": preferences.configuration.agents.badgeTaskComplete = try bool()
     case "agents.badgeAwaitingInput": preferences.configuration.agents.badgeAwaitingInput = try bool()
     case "agents.usageBarEnabled": preferences.configuration.agents.usageBarEnabled = try bool()
+    case "agents.usageMenuBarEnabled": preferences.configuration.agents.usageMenuBarEnabled = try bool()
     case "agents.notifyTaskComplete": preferences.configuration.agents.notifyTaskComplete = try bool()
     case "agents.notifyAwaitingInput": preferences.configuration.agents.notifyAwaitingInput = try bool()
     case "agents.screenDetectionEnabled": preferences.configuration.agents.screenDetectionEnabled = try bool()

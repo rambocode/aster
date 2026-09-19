@@ -9,6 +9,9 @@ public enum AgentUsageWindowKind: String, Codable, Equatable, Sendable, CaseIter
   case modelWeekly
   /// 当前会话的上下文窗口占比；目前只有 Codex 提供（来自 rollout 文件）。
   case session
+  /// 订阅计费周期（按月结算的额度），Cursor 用。它既不是 5 小时也不是自然周，
+  /// 套用 `weekly` 会让「多久后重置」差出几周。
+  case billingCycle
 
   /// 用量条上的短标签。
   public var shortLabel: String {
@@ -17,6 +20,7 @@ public enum AgentUsageWindowKind: String, Codable, Equatable, Sendable, CaseIter
     case .weekly: L("周")
     case .modelWeekly: L("模型周")
     case .session: L("会话")
+    case .billingCycle: L("周期")
     }
   }
 }

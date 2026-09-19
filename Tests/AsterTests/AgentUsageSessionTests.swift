@@ -171,7 +171,7 @@ func sessionMergesClaudeAccountQuotaWithSessionWindow() async throws {
       if responses.value.count > 1 { responses.value.removeFirst() }
       return .success(Data(text.utf8))
     },
-    readToken: { "token" },
+    readToken: { ("token", nil) },
     defaults: nil
   )
   let session = TerminalSession(workingDirectory: "/tmp")
@@ -232,7 +232,7 @@ func claudeQuotaServiceBacksOffOnRateLimitAndDropsTokenOnlyOnUnauthorized() asyn
       fetchCount.value += 1
       return outcomes.value.isEmpty ? .failure(status: nil) : outcomes.value.removeFirst()
     },
-    readToken: { tokenReads.value += 1; return "token" },
+    readToken: { tokenReads.value += 1; return ("token", nil) },
     defaults: nil
   )
 
@@ -247,7 +247,7 @@ func claudeQuotaServiceBacksOffOnRateLimitAndDropsTokenOnlyOnUnauthorized() asyn
 
   // 换成 401：必须真正丢 token（下一次会重新读 Keychain）。
   let unauthorized = ClaudeAccountQuotaService(
-    fetch: { _ in .unauthorized }, readToken: { tokenReads.value += 1; return "token" },
+    fetch: { _ in .unauthorized }, readToken: { tokenReads.value += 1; return ("token", nil) },
     defaults: nil)
   tokenReads.value = 0
   await unauthorized.refresh(force: true)
@@ -257,7 +257,7 @@ func claudeQuotaServiceBacksOffOnRateLimitAndDropsTokenOnlyOnUnauthorized() asyn
 
   // 成功一次即清退避并出数。
   let healthy = ClaudeAccountQuotaService(
-    fetch: { _ in .success(Data(#"{"five_hour":{"utilization":18.0}}"#.utf8)) }, readToken: { "token" },
+    fetch: { _ in .success(Data(#"{"five_hour":{"utilization":18.0}}"#.utf8)) }, readToken: { ("token", nil) },
     defaults: nil)
   await healthy.refresh(force: true)
   #expect(healthy.windows?.first?.usedPercent == 18)
@@ -274,7 +274,7 @@ func claudeQuotaServiceSharesRequestTimelineAcrossRetains() async throws {
       fetchCount.value += 1
       return .success(Data(#"{"five_hour":{"utilization":18.0}}"#.utf8))
     },
-    readToken: { "token" }, defaults: nil)
+    readToken: { ("token", nil) }, defaults: nil)
 
   // 第一个 pane：从没请求过，轮询首拍立即拉。
   service.retain()
@@ -304,13 +304,13 @@ func claudeQuotaServiceRestoresRecentCacheAcrossLaunches() async throws {
   defer { defaults.removePersistentDomain(forName: suiteName) }
   let first = ClaudeAccountQuotaService(
     fetch: { _ in .success(Data(#"{"five_hour":{"utilization":33.0}}"#.utf8)) },
-    readToken: { "token" }, defaults: defaults)
+    readToken: { ("token", nil) }, defaults: defaults)
   await first.refresh(force: true)
   #expect(first.windows?.first?.usedPercent == 33)
 
   // 第二个实例即便接口一直 429，也能立刻拿到上次的数字与时刻。
   let second = ClaudeAccountQuotaService(
-    fetch: { _ in .rateLimited(retryAfter: nil) }, readToken: { "token" }, defaults: defaults)
+    fetch: { _ in .rateLimited(retryAfter: nil) }, readToken: { ("token", nil) }, defaults: defaults)
   #expect(second.windows?.first?.usedPercent == 33)
   let fetchedAt = try #require(second.fetchedAt)
   #expect(abs(fetchedAt.timeIntervalSinceNow) < 5)
@@ -322,7 +322,7 @@ func claudeQuotaServiceRestoresRecentCacheAcrossLaunches() async throws {
   stale = try JSONSerialization.data(withJSONObject: object)
   defaults.set(stale, forKey: ClaudeAccountQuotaService.cacheKey)
   let third = ClaudeAccountQuotaService(
-    fetch: { _ in .rateLimited(retryAfter: nil) }, readToken: { "token" }, defaults: defaults)
+    fetch: { _ in .rateLimited(retryAfter: nil) }, readToken: { ("token", nil) }, defaults: defaults)
   #expect(third.windows == nil)
 }
 

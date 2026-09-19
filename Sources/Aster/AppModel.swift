@@ -1632,6 +1632,8 @@ final class AppModel: ObservableObject {
   /// 保持 CLI、命令面板与工作区领域逻辑可在无窗口测试中独立验证。
   var onRequestNewWindow: ((PaneDescriptor?) -> Bool)?
   var onRequestToggleWindowPin: (() -> Void)?
+  /// 打开 AI 用量浮动窗。状态栏图标与浮动窗属于整个应用，由 AppDelegate 持有。
+  var onRequestUsagePanel: (() -> Void)?
   var onRequestPictureInPicture: ((Bool) -> Void)?
   var onRequestClosePictureInPicture: (() -> Void)?
   /// 正在可交互画中画小窗里的 Pane。终端视图同一时刻只能挂在一处，工作区据此改画占位，
@@ -4267,6 +4269,9 @@ final class AppModel: ObservableObject {
       .init(id: "open-quickly", title: "Open Quickly", keywords: ["jump", "recent", "ssh"], scope: .window),
       .init(id: "inspector", title: L("切换详情面板"), keywords: ["git", "info", "outline"], scope: .window),
       .init(id: "pin-window", title: L("切换窗口置顶"), keywords: ["pin", "floating"], scope: .window),
+      .init(
+        id: "show-ai-usage", title: L("显示 AI 用量"),
+        keywords: ["usage", "quota", "token", "claude", "codex", "agent"], scope: .application),
       .init(id: "picture-in-picture", title: L("当前 Pane 画中画"), keywords: ["pip", "float"], scope: .window),
       .init(id: "picture-in-picture-follow", title: L("画中画跟随活动 Pane"), keywords: ["pip", "follow"], scope: .window),
       .init(id: "save-recipe", title: L("保存为 Recipe"), keywords: ["workspace"], scope: .window),
@@ -4325,6 +4330,7 @@ final class AppModel: ObservableObject {
     case "open-quickly": toggleOpenQuickly()
     case "inspector": toggleInspector()
     case "pin-window": onRequestToggleWindowPin?()
+    case "show-ai-usage": onRequestUsagePanel?()
     case "picture-in-picture": onRequestPictureInPicture?(false)
     case "picture-in-picture-follow": onRequestPictureInPicture?(true)
     case "save-recipe": saveRecipe()

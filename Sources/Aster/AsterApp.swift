@@ -252,6 +252,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   private var controlBridge: AsterControlBridge?
   private var controlDispatcher: AsterControlDispatcher?
   private var cliRequestFallbackTimer: Timer?
+  /// AI 用量监控（系统状态栏图标 + 浮动窗）。非核心功能：开关关着时这两个对象都不存在，
+  /// 不订阅、不轮询；只由 `synchronizeUsageMonitor()` 建立与拆除。
+  private var usageMonitor: UsageMonitorCoordinator?
+  private var usageSessionAdapter: UsageSessionBoardAdapter?
   /// 附加窗口各自拥有独立 AppModel/PTY 树；Preferences 仍全局共享。以窗口对象身份
   /// 查找模型，菜单动作始终路由到 key window，不会误操作首个窗口。
   private var additionalWorkspaceWindows: [ObjectIdentifier: WorkspaceWindowRecord] = [:]
@@ -350,12 +354,15 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         ?? FileManager.default.homeDirectoryForCurrentUser.path
     }
     quickTerminalController.refresh()
+    // 排在控制服务与主窗口之后：会话看板的数据来自控制桥，浮动窗不该抢在工作区之前出现。
+    synchronizeUsageMonitor()
     preferences.objectWillChange
       .sink { [weak self] _ in
         DispatchQueue.main.async {
           self?.quickTerminalController.refresh()
           self?.applyAppearance()
           self?.synchronizeWorkspaceConfiguration()
+          self?.synchronizeUsageMonitor()
           ShortcutOverrideApplier.apply(
             to: NSApp.mainMenu,
             values: self?.preferences.settingsCompatibility ?? [:]
@@ -392,6 +399,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     // 结束远端任何终端进程，也不影响 A08 的保活语义。
     stopRemoteEventSubscriptionsInAllWorkspaceWindows()
     quickTerminalController.shutdown()
+    tearDownUsageMonitor()
     themeSwitcherPanelController?.dismiss(commit: false)
     themeSwitcherPanelController = nil
     persistAdditionalWorkspaceSuites()
@@ -958,6 +966,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     workspaceModel.onRequestNewWindow = { [weak self] descriptor in
       self?.createWorkspaceWindow(initialPane: descriptor, sender: nil) ?? false
     }
+    workspaceModel.onRequestUsagePanel = { [weak self] in self?.showUsagePanel(nil) }
     workspaceModel.onRequestToggleWindowPin = { [weak self, weak workspaceModel] in
       guard let self, let workspaceModel else { return }
       self.togglePinWindow(for: workspaceModel)
@@ -1157,6 +1166,41 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   @objc private func openRecipe(_ sender: Any?) { activeWorkspaceModel.openRecipe() }
   @objc private func saveRecipe(_ sender: Any?) { activeWorkspaceModel.saveRecipe() }
   @objc private func toggleInspector(_ sender: Any?) { activeWorkspaceModel.toggleInspector() }
+
+  /// 菜单与命令面板的「显示 AI 用量」。用户明确要看，所以功能还没开时顺手打开开关，
+  /// 不让人先去设置里翻一遍；开关写回配置后由偏好订阅再同步一次，这里先同步保证立刻出窗。
+  @objc private func showUsagePanel(_ sender: Any?) {
+    if !preferences.configuration.agents.resolvedUsageMenuBarEnabled {
+      preferences.configuration.agents.usageMenuBarEnabled = true
+    }
+    synchronizeUsageMonitor()
+    usageMonitor?.showPanel()
+  }
+
+  /// 让 AI 用量监控跟随设置开关。幂等：偏好每次变化都会调到这里。
+  private func synchronizeUsageMonitor() {
+    guard preferences.configuration.agents.resolvedUsageMenuBarEnabled else {
+      tearDownUsageMonitor()
+      return
+    }
+    guard usageMonitor == nil else { return }
+    // 桥每次现取：抢不到控制 socket 的第二实例没有桥，看板为空但配额与 token 页照常可用。
+    let adapter = UsageSessionBoardAdapter { [weak self] in self?.controlBridge }
+    adapter.start()
+    let coordinator = UsageMonitorCoordinator(
+      quotaStore: UsageQuotaStore(), sessions: adapter, tokenService: TokenStatsService())
+    coordinator.setEnabled(true)
+    usageSessionAdapter = adapter
+    usageMonitor = coordinator
+  }
+
+  /// 拆掉状态栏图标、浮动窗与全部订阅。协调器不在 deinit 里清理，释放前必须先关掉。
+  private func tearDownUsageMonitor() {
+    usageMonitor?.setEnabled(false)
+    usageMonitor = nil
+    usageSessionAdapter?.stop()
+    usageSessionAdapter = nil
+  }
   /// 折叠/展开标签栏：与垂直侧栏悬停出现的折叠按钮共用同一配置开关。
   @objc private func toggleTabBarVisibility(_ sender: Any?) {
     preferences.configuration.appearance.showTabBar.toggle()
@@ -1821,6 +1865,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       menuItem("Open Quickly", #selector(openQuickly(_:)), "o", modifiers: [.command, .shift]))
     submenu.addItem(menuItem(L("Open Quickly · 当前"), #selector(openQuicklyCurrent(_:)), "j"))
     submenu.addItem(menuItem(L("显示/隐藏详情面板"), #selector(toggleInspector(_:)), "", modifiers: []))
+    submenu.addItem(menuItem(L("显示 AI 用量"), #selector(showUsagePanel(_:)), "", modifiers: []))
     submenu.addItem(menuItem(L("显示/隐藏标签栏"), #selector(toggleTabBarVisibility(_:)), "", modifiers: []))
     submenu.addItem(.separator())
     submenu.addItem(menuItem(L("增大字号"), #selector(increaseFontSize(_:)), "="))

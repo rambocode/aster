@@ -80,4 +80,14 @@ public enum TokenProject {
   /// 无法归属到任何项目的用量（例如 droid 没有 cwd）。保留成可见的「其他」行，
   /// 保证明细加总等于总数。
   public static let otherKey = ""
+
+  /// 项目行的展示名：默认取路径最后一段，因为完整路径在行里太宽，前面的目录对每个项目又都一样。
+  /// 最后一段重名时把 `components` 加大（`.../web/src` 和 `.../api/src` 是两个项目，
+  /// 不能画成两行一模一样的字）。
+  public static func displayName(forKey key: String, components: Int = 1) -> String {
+    guard key != otherKey else { return L("其他") }
+    let parts = key.split(separator: "/")
+    guard !parts.isEmpty else { return key }
+    return parts.suffix(max(1, components)).joined(separator: "/")
+  }
 }

@@ -23,6 +23,23 @@ public enum ClaudeAccountQuotaParser {
     return token
   }
 
+  /// 订阅档位展示名，取自同一份凭据 JSON，所以不产生任何新的 Keychain / 文件访问。
+  ///
+  /// 优先 `rateLimitTier`（`default_claude_max_20x` → `Max 20x`），它比 `subscriptionType`
+  /// 精确：后者只区分 `max` / `pro`，看不出 5x 还是 20x。两个都没有时返回 nil。
+  public static func planName(fromCredentials data: Data) -> String? {
+    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      return nil
+    }
+    let oauth = object["claudeAiOauth"] as? [String: Any] ?? object
+    if let tier = oauth["rateLimitTier"] as? String,
+      let name = UsagePlanName.normalized(tier, strippingPrefixes: ["default_", "claude_"])
+    {
+      return name
+    }
+    return UsagePlanName.normalized(oauth["subscriptionType"] as? String)
+  }
+
   /// `five_hour` / `seven_day` 的 `utilization` 已是百分比（0–100），`resets_at` 是带时区的
   /// ISO 8601（含小数秒）。所有窗口都缺失时返回 nil，让调用方保留上一份数据。
   public static func windows(fromUsageResponse data: Data) -> [AgentUsageWindow]? {
