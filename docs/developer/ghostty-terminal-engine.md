@@ -86,6 +86,18 @@ Aster 补丁面记录在 `UPSTREAM.md`。
 配置，完成解析后立即删除文件。任何诊断都视为启动失败，避免拼错配置被静默忽略。
 libghostty 没有公开 config 所有权契约，因此已经交给 core 的 config 保留到进程结束。
 
+**字体回退必须写进配置。** `GhosttyConfiguration` 在主字体之后逐行写出 `font-family`：先是
+`appearance.fontFamilyFallback`，最后垫一个 `systemHanFallbackFamily` 的结果（用
+`CTFontCreateForString` 询问 CoreText 当前语言环境下汉字落到哪个字体族，不硬编码语言表；
+与主字体或已有条目重复时去掉）。原因是 libghostty 的运行时发现与出现顺序有关：U+4E00–9FFF
+走 CoreText 并尊重系统语言，但区块之外的字符（`⏺`、`，`、`「`）按“有该字 → 等宽 → 字形数”
+打分，会选中任意已装的等宽 CJK 字体（实测为日文版 Sarasa Mono J）；该字体一旦加载就排在
+后续汉字的查找顺序最前面，整段中文变成日文字形，`复` 这类非日文字又窄又淡。写进配置的
+字体先于运行时发现被查找，结果不再依赖哪个字符先出现。排查手段：
+`ghostty +show-face --config-default-files=false --font-family=<主字体> --string='⏺法复测'`。
+粗体、斜体的逐样式回退（`fontFamilyFallbackBold` 等）目前不投影：libghostty 对非常规样式
+缺字会先回到常规字体列表，普通回退已经覆盖。
+
 ### Surface 与输入
 
 `GhosttySurfaceView` 在尺寸有效后创建 surface，并保持 working directory、环境变量和 C
