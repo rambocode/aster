@@ -76,9 +76,14 @@ Claude 读钥匙串凭据里的 `rateLimitTier`（`default_claude_max_20x` → `
   **只有 Antigravity.app 这条能指望**：`agy` CLI 从 1.2.2 起强制校验 CSRF 且不再把 token 放进
   命令行（本机是 1.2.7），所以 CLI 起的那个服务读不到；App 仍会在 argv 里带 `--csrf_token`。
   IDE 版的 `RetrieveUserQuotaSummary` 会 404，靠两个回退端点兜。
-  **不做** `cloudcode-pa.googleapis.com` 的 OAuth 直连兜底：它要用 Antigravity 自己的
-  OAuth client id/secret，社区做法是从已安装的 App 二进制里逆向扒出来——太脆，也超出
-  「只读用户已有凭据」的边界。
+  **不做** `cloudcode-pa.googleapis.com` 的 OAuth 直连兜底，两个理由，第二个是实测的：
+  一是它要用 Antigravity 自己的 OAuth client id/secret（社区做法是从二进制里逆向扒出来再
+  硬编码），把另一家的客户端密钥放进签名公证的发布产物，性质已经不是「只读用户已有凭据」；
+  二是 2026-09-19 用本机钥匙串里的 Antigravity token（`service=gemini` / `account=antigravity`，
+  值带 `go-keyring-base64:` 前缀）实测 `v1internal:retrieveUserQuotaSummary`，返回
+  `403 PERMISSION_DENIED` / `SUBSCRIPTION_REQUIRED`（"You do not have a valid license of this
+  product"，domain `cloudaicompanion.googleapis.com`）。该账号 agy 日常可用，说明个人版的
+  配额压根不由这个企业向端点提供。**这条路已经验证过走不通，不要再试。**
   **端点刻意不缓存**：定位是一次 `ps`（找不到进程就此结束）加最多一次 `lsof`，实测约 32 毫秒，
   摊到 300 秒一轮可以忽略；而缓存住「没找到」会让用户刚打开 Antigravity 后迟迟看不到卡片，
   缓存住旧端口则会在它重启后一直打错地方。
