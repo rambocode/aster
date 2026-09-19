@@ -503,10 +503,15 @@ final class TabRowButton: NSButton {
       || tab.runtimes.values.contains { $0.terminalSession?.explicitBadge != nil }
   }
 
-  /// 运行动画样式（对齐 Otty）：Claude Code 半圆 ◑ 旋转；Codex 2×2 点阵循环；
-  /// 其它 Agent / 普通命令暂时沿用半圆旋转。动画只画活动 Pane 的 Agent，样式也随之。
+  /// 运行动画样式：Claude Code 橙色星芒（对齐它自己的 CLI）；Codex 2×2 点阵循环
+  /// （对齐 Otty）；其它 Agent / 普通命令沿用半圆旋转。动画只画活动 Pane 的 Agent，
+  /// 样式也随之。
   private var runningAnimationStyle: TabActivitySpinnerView.Style {
-    activePaneAgentProvider == .codex ? .dots : .spin
+    switch activePaneAgentProvider {
+    case .codex: .dots
+    case .claudeCode: .sparkle
+    default: .spin
+    }
   }
 
   /// 展示标题本身已带 Agent 的 spinner 字符（Claude 的 ✳/◐ 前缀会自己翻转）时为 true；
@@ -556,7 +561,13 @@ final class TabRowButton: NSButton {
   private func activityBadgeKey() -> String {
     switch tab.activityBadge {
     case .running where showsRunningAnimation:
-      return runningAnimationStyle == .dots ? "running-dots" : "running-spin"
+      // 键必须区分三种样式：只写 "running" 的话，从 Codex Pane 切到 Claude Code Pane
+      // 时附件视图会被当成等价结果复用，动画不会跟着换。
+      switch runningAnimationStyle {
+      case .dots: return "running-dots"
+      case .sparkle: return "running-sparkle"
+      case .spin: return "running-spin"
+      }
     case .awaitingInput where showsAwaitingInput && hasBadgeOwner:
       return "awaiting-input"
     case .error where showsFailure && showsExitStatus:
@@ -710,14 +721,22 @@ final class TabRowButton: NSButton {
 /// 视图自己的 layer 时 AppKit 会改写 anchorPoint/position，图标会绕着行内打转。
 @MainActor
 final class TabActivitySpinnerView: NSView {
-  /// `.spin`：半实心圆 ◑ 绕竖轴左右翻转（Claude Code / 默认）；`.dots`：2×2 点阵，
-  /// 三亮一暗，暗点顺时针轮转（Codex）。
+  /// `.spin`：半实心圆 ◑ 绕竖轴左右翻转（默认，其它 Agent 与机器连接状态）；
+  /// `.dots`：2×2 点阵，三亮一暗，暗点顺时针轮转（Codex）；
+  /// `.sparkle`：星芒逐帧长大再缩回，对齐 Claude Code CLI 的 `·✢✳∗✻✽`（Claude Code）。
   enum Style: Equatable {
     case spin
     case dots
+    case sparkle
   }
 
-  private let style: Style
+  /// Claude Code 的品牌橙。`.sparkle` 刻意不跟随主题前景色——它是「这个 Pane 在跑
+  /// Claude Code」的身份标识，颜色跟着主题变就失去了识别作用，因此忽略 `tint`。
+  static let claudeSparkleTint = NSColor(
+    srgbRed: 217 / 255, green: 119 / 255, blue: 87 / 255, alpha: 1)
+
+  /// 测试据此断言「哪个 Agent 用哪种动画」；动画本身无法在单元测试里观测。
+  let style: Style
   private let tint: NSColor
   private var glyphs: [CALayer] = []
   /// `.spin` 样式里真正翻转的半圆层；圆环留在 glyphs[0] 上不动。
@@ -739,6 +758,7 @@ final class TabActivitySpinnerView: NSView {
     switch style {
     case .spin: buildSpinGlyph()
     case .dots: buildDotGlyphs()
+    case .sparkle: buildSparkleGlyph()
     }
   }
 
@@ -788,6 +808,50 @@ final class TabActivitySpinnerView: NSView {
     }
   }
 
+  /// 单层实心星芒，逐帧换 `path`（帧序见 `sparkleFramePaths`）。不用字符渲染：
+  /// `✳ ∗ ✻ ✽` 这些码位在多数等宽字体里缺字形，会退化成豆腐块。
+  private func buildSparkleGlyph() {
+    let glyph = CAShapeLayer()
+    glyph.path = Self.sparkleFramePaths.first
+    glyph.fillColor = Self.claudeSparkleTint.cgColor
+    glyph.strokeColor = nil
+    glyph.bounds = CGRect(x: 0, y: 0, width: 14, height: 14)
+    glyph.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+    glyph.position = CGPoint(x: 7, y: 7)
+    layer?.addSublayer(glyph)
+    glyphs = [glyph]
+  }
+
+  /// 六帧星芒，由小到大：圆点 → 4 芒 → 8 芒 → 6 芒（三档逐渐饱满），对应 CLI 里的
+  /// `·✢✳∗✻✽`。路径只依赖常量，整个进程算一次。
+  static let sparkleFramePaths: [CGPath] = [
+    CGPath(ellipseIn: CGRect(x: 5.8, y: 5.8, width: 2.4, height: 2.4), transform: nil),
+    starPath(points: 4, outerRadius: 3.2, innerRadius: 0.9),
+    starPath(points: 8, outerRadius: 4.4, innerRadius: 1.2),
+    starPath(points: 6, outerRadius: 5.0, innerRadius: 1.3),
+    starPath(points: 6, outerRadius: 5.6, innerRadius: 1.8),
+    starPath(points: 6, outerRadius: 6.0, innerRadius: 2.2),
+  ]
+
+  /// 以视图中心 (7,7) 为心，外顶点与内顶点交替连成的实心星形。第一个外顶点指向正
+  /// 上方（`-.pi / 2` 起算），各帧芒数不同也能视觉对齐同一根轴。
+  private static func starPath(points: Int, outerRadius: CGFloat, innerRadius: CGFloat) -> CGPath {
+    let center = CGPoint(x: 7, y: 7)
+    let path = CGMutablePath()
+    let step = CGFloat.pi / CGFloat(points)
+    for index in 0..<(points * 2) {
+      let radius = index.isMultiple(of: 2) ? outerRadius : innerRadius
+      let angle = -CGFloat.pi / 2 + step * CGFloat(index)
+      let point = CGPoint(
+        x: center.x + cos(angle) * radius,
+        y: center.y + sin(angle) * radius
+      )
+      if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+    }
+    path.closeSubpath()
+    return path
+  }
+
   /// 进入窗口时启动动画；离开窗口时 CoreAnimation 会丢弃动画，回来必须重新加。
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
@@ -820,13 +884,24 @@ final class TabActivitySpinnerView: NSView {
         fade.isRemovedOnCompletion = false
         dot.add(fade, forKey: "aster-dots")
       }
+    case .sparkle:
+      // 逐帧换 path 必须 `.discrete`：各帧顶点数不同，插值会画出撕裂的中间形状。
+      // autoreverses 让它长大后原路缩回，而不是缩到最小时硬跳一下。
+      let pulse = CAKeyframeAnimation(keyPath: "path")
+      pulse.values = Self.sparkleFramePaths
+      pulse.calculationMode = .discrete
+      pulse.duration = 0.72
+      pulse.autoreverses = true
+      pulse.repeatCount = .infinity
+      pulse.isRemovedOnCompletion = false
+      glyphs.first?.add(pulse, forKey: "aster-sparkle")
     }
   }
 
   /// sublayer 始终钉在视图中心（点阵按各自偏移），视图 frame 变化不影响动画中心。
   override func layout() {
     super.layout()
-    guard style == .spin else { return }
+    guard style != .dots else { return }
     glyphs.first?.position = CGPoint(x: bounds.midX, y: bounds.midY)
   }
 }

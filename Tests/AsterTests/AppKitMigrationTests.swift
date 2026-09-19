@@ -1159,6 +1159,64 @@ func verticalSidebarActivityAccessoryTracksAllStates() async throws {
   #expect(try tabRow(for: tab, in: controller) === lifecycleRow)
 }
 
+/// 运行动画按 Agent 区分身份：Claude Code 星芒、Codex 点阵。动画本身无法在单元测试里
+/// 观测，因此断言附件视图拿到的 `style`。
+@Test("运行动画样式跟随活动 Pane 的 Agent：Claude Code 星芒、Codex 点阵")
+@MainActor
+func runningSpinnerStyleFollowsAgentProvider() async throws {
+  let defaults = isolatedDefaults()
+  let model = AppModel(defaults: defaults)
+  let preferences = AppPreferences(defaults: defaults)
+  preferences.configuration.agents.badgeProcessing = true
+  model.ensureInitialTab()
+  let tab = try #require(model.selectedTab)
+  let session = try #require(tab.activeSession)
+  let controller = WorkspaceViewController(model: model, preferences: preferences)
+  let window = makeTestWindow(content: controller, size: NSSize(width: 1_180, height: 760))
+  window.contentView?.layoutSubtreeIfNeeded()
+  let terminalView = try #require(
+    session.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  defer { session.stop(immediately: true) }
+
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .claudeCode, signal: .processing)
+  )
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(
+    (try visibleTabAccessory(for: tab, in: controller) as? TabActivitySpinnerView)?.style
+      == .sparkle
+  )
+
+  // Codex 必须另开一个标签：会话一旦认定 provider 就拒绝其它 provider 的指令
+  // （`TerminalSession.handleAgentTerminalDirective`），同一个 Pane 里换不了 Agent。
+  model.newTab()
+  // 新标签的 Pane 视图在下一轮主队列才挂载，太早取到的视图还没接上会话回调，
+  // 指令会被 `onAgentTerminalDirective?` 的可选链默默丢掉。
+  try await Task.sleep(for: .milliseconds(100))
+  window.contentView?.layoutSubtreeIfNeeded()
+  let codexTab = try #require(model.selectedTab)
+  #expect(codexTab !== tab)
+  let codexSession = try #require(codexTab.activeSession)
+  let codexView = try #require(
+    codexSession.makeTerminalView(preferences: preferences) as? AsterTerminalView
+  )
+  defer { codexSession.stop(immediately: true) }
+  codexView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .codex, signal: .processing)
+  )
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(
+    (try visibleTabAccessory(for: codexTab, in: controller) as? TabActivitySpinnerView)?.style
+      == .dots
+  )
+  // 第一个标签退到后台后仍然是星芒：动画属于 Pane 的 Agent，不随选中状态变化。
+  #expect(
+    (try visibleTabAccessory(for: tab, in: controller) as? TabActivitySpinnerView)?.style
+      == .sparkle
+  )
+}
+
 /// 普通命令（无 Agent、无显式徽章）只在失败时占用状态槽：成功收尾不画 ● / ✓，
 /// 否则每跑一条脚本行前都多一个与用户无关的符号。
 @Test("无 Agent 的普通命令只在失败时显示状态徽章")
