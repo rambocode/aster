@@ -17,6 +17,10 @@ enum GhosttyConfiguration {
         ?? preferences.terminalFontVariants.normal.fontName,
       fallback: "Menlo"
     )
+    let fallbackFonts = fallbackFontFamilies(
+      primary: font,
+      configured: appearance.resolvedFontFamilyFallback,
+      systemHan: systemHanFallbackFamily(base: preferences.terminalFontVariants.normal))
     let cursorStyle =
       switch appearance.cursorStyle {
       case .bar: "bar"
@@ -49,6 +53,13 @@ enum GhosttyConfiguration {
       // Aster 提供环境与登录参数，直接托管子进程才能获得真实退出状态。
       "aster-direct-child = true",
       "font-family = \(font)",
+    ]
+    // 回退字体必须紧跟主字体写成多行 font-family：libghostty 先按这个顺序查已加载字体，
+    // 全部缺字才走运行时发现。不写的话，第一个触发发现的符号（如 `⏺`、`，`）会按
+    // “等宽 + 字形最多”选中任意已装字体（例如日文版 Sarasa Mono J），之后所有汉字都
+    // 粘在那个字体上，出现日文字形、个别简体字又窄又淡。
+    lines += fallbackFonts.map { "font-family = \($0)" }
+    lines += [
       "font-size = \(format(appearance.fontSize))",
       "adjust-cell-height = \(lineHeightAdjustment)%",
       "foreground = \(rgb(theme.foreground))",
@@ -104,6 +115,33 @@ enum GhosttyConfiguration {
         .replacingOccurrences(of: "`", with: "\\`")
       return "\"" + escaped + "\""
     }.joined(separator: " ")
+  }
+
+  /// 汇总写给 libghostty 的回退字体族：用户配置的回退在前，系统汉字默认字体垫底；
+  /// 去掉与主字体或彼此重复的条目（不分大小写），非法字体名直接丢弃。
+  static func fallbackFontFamilies(
+    primary: String, configured: [String], systemHan: String?
+  ) -> [String] {
+    var seen: Set<String> = [primary.lowercased()]
+    return (configured + [systemHan].compactMap { $0 }).compactMap { raw in
+      let name = safeText(raw, fallback: "")
+      guard !name.isEmpty, seen.insert(name.lowercased()).inserted else { return nil }
+      return name
+    }
+  }
+
+  /// 询问 CoreText：当前语言环境下，`base` 缺汉字时系统会落到哪个字体族。
+  ///
+  /// 用系统答案而不是硬编码语言表：简体、繁体、日文、韩文用户各自得到本地字形，
+  /// `base` 的 cascade 里已有覆盖汉字的用户回退字体时也会原样返回它（随后被去重）。
+  /// LastResort 与以 `.` 开头的隐藏系统字体不是可写入配置的稳定名字，视为没有答案。
+  static func systemHanFallbackFamily(base: NSFont) -> String? {
+    let probe = "一" as CFString
+    let resolved = CTFontCreateForString(
+      base as CTFont, probe, CFRange(location: 0, length: CFStringGetLength(probe)))
+    let family = CTFontCopyFamilyName(resolved) as String
+    guard family != "LastResort", !family.hasPrefix(".") else { return nil }
+    return family
   }
 
   private static func rgb(_ color: HexColor) -> String {
