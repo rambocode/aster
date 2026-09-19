@@ -18,13 +18,16 @@ final class AgentScreenDetectionMonitor {
     var processExited: @MainActor () -> Bool
   }
 
-  /// 轮询节奏。生产固定 300ms / 3s；测试用短值验证链路而不真等待。
+  /// 轮询节奏。生产固定 300ms / 3s，静止期 2s 兜底；测试用短值验证链路而不真等待。
   struct Timing: Sendable {
     var pollInterval: Duration = AgentScreenDetectionPublisher.pollInterval
     var pendingIdleRecheck: Duration = AgentScreenDetectionPublisher.pendingIdleRecheck
     var startupGrace: Duration = AgentScreenDetectionPublisher.startupGraceWindow
+    /// 静止期（已发布 idle、内容序号自上次读屏未变）的兜底轮询间隔；nil 表示沿用
+    /// `pollInterval`。静止期的正常唤醒来源是 `contentDidChange()`，这个间隔只防事件遗漏。
+    var quiescentPollInterval: Duration? = nil
 
-    static let production = Timing()
+    static let production = Timing(quiescentPollInterval: .seconds(2))
   }
 
   typealias PublishedState = AgentScreenDetectionPublisher.PublishedState
@@ -44,6 +47,9 @@ final class AgentScreenDetectionMonitor {
   private let source: Source
   private var publisher = AgentScreenDetectionPublisher()
   private var task: Task<Void, Never>?
+  /// 静止期的可打断睡眠；`contentDidChange()` 取消它即可提前叫醒轮询循环。
+  private var quiescentSleeper: Task<Void, Never>?
+  private var wokenByContentChange = false
 
   init(manifest: CompiledAgentManifest, source: Source, timing: Timing = .production) {
     self.manifest = manifest
@@ -55,6 +61,9 @@ final class AgentScreenDetectionMonitor {
   func start() {
     task?.cancel()
     task = nil
+    quiescentSleeper?.cancel()
+    quiescentSleeper = nil
+    wokenByContentChange = false
     publisher.reset()
     publisher.beginStartupGrace(now: .now, window: timing.startupGrace)
     isInStartupGrace = true
@@ -63,19 +72,64 @@ final class AgentScreenDetectionMonitor {
     task = Task { @MainActor [weak self] in
       while !Task.isCancelled {
         guard let self else { return }
-        let interval = self.publisher.pendingIdle.isActive
-          ? self.timing.pendingIdleRecheck : self.timing.pollInterval
-        try? await Task.sleep(for: interval)
+        if let quiescentInterval = self.quiescentInterval() {
+          // 挂着不动的 Agent TUI 可能一开就是几小时：屏幕没变时 300ms 轮询每一轮都是
+          // 空转，却让进程每秒多醒三次。静止期改成慢兜底，由 PTY 输出事件提前叫醒。
+          await self.sleepUntilContentChanges(atMost: quiescentInterval)
+          guard !Task.isCancelled else { return }
+          if self.wokenByContentChange {
+            // 被输出叫醒后按正常节奏再等一拍，让一阵连续输出合并成一次读屏。
+            self.wokenByContentChange = false
+            try? await Task.sleep(for: self.timing.pollInterval)
+          }
+        } else {
+          let interval = self.publisher.pendingIdle.isActive
+            ? self.timing.pendingIdleRecheck : self.timing.pollInterval
+          try? await Task.sleep(for: interval)
+        }
         guard !Task.isCancelled else { return }
         self.tick(now: .now)
       }
     }
   }
 
+  /// PTY 内容序号变化时由 Session 调用；只在静止期睡眠中才有动作，其余时候是空操作。
+  func contentDidChange() {
+    guard let sleeper = quiescentSleeper else { return }
+    quiescentSleeper = nil
+    wokenByContentChange = true
+    sleeper.cancel()
+  }
+
+  /// 当前是否处于静止期；是则返回兜底间隔。判定条件与发布层「跳过读屏」一致，
+  /// 因此静止期内被省掉的每一轮，本来也不会读屏。
+  private func quiescentInterval() -> Duration? {
+    guard published.state == .idle, !isInStartupGrace, !publisher.pendingIdle.isActive,
+      publisher.lastScreenScanContentSequence == source.contentSequence()
+    else { return nil }
+    return timing.quiescentPollInterval ?? timing.pollInterval
+  }
+
+  /// 最多睡 `limit`，期间可被 `contentDidChange()` 或 `stop()` 提前结束。
+  private func sleepUntilContentChanges(atMost limit: Duration) async {
+    let sleeper = Task { @MainActor in
+      _ = try? await Task.sleep(for: limit)
+    }
+    quiescentSleeper = sleeper
+    // 判定静止到登记 sleeper 之间若已有输出到达，那次 `contentDidChange()` 找不到 sleeper；
+    // 这里补查一次序号，避免这批输出要等满兜底间隔才被读到。
+    if publisher.lastScreenScanContentSequence != source.contentSequence() { contentDidChange() }
+    await sleeper.value
+    if quiescentSleeper == sleeper { quiescentSleeper = nil }
+  }
+
   /// 停止轮询并清空发布层状态；同时解除回调，切断 Session ↔ monitor 之间的保留环。
   func stop() {
     task?.cancel()
     task = nil
+    quiescentSleeper?.cancel()
+    quiescentSleeper = nil
+    wokenByContentChange = false
     isRunning = false
     isInStartupGrace = false
     publisher.reset()

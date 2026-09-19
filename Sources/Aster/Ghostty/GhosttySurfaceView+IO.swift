@@ -126,8 +126,11 @@ extension GhosttySurfaceView: NSMenuItemValidation {
       return nil
     }
     guard let maximumLines, maximumLines > 0 else { return value }
-    var lines = value.components(separatedBy: "\n")
-    while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true {
+    // Substring 切片不复制每一行；`components(separatedBy:)` 会为整屏每行各建一个 String。
+    var lines = value.split(separator: "\n", omittingEmptySubsequences: false)
+    while let last = lines.last,
+      last.unicodeScalars.allSatisfy({ CharacterSet.whitespaces.contains($0) })
+    {
       lines.removeLast()
     }
     return lines.suffix(maximumLines).joined(separator: "\n")
