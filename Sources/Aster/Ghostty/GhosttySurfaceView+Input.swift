@@ -216,7 +216,11 @@ extension GhosttySurfaceView {
   /// mouseUp 不会再送到这里；不补发，Ghostty 会把后续所有移动当成拖选。
   override func viewWillMove(toWindow newWindow: NSWindow?) {
     super.viewWillMove(toWindow: newWindow)
-    if newWindow == nil { releaseStaleLeftMouseButton(mods: GHOSTTY_MODS_NONE, force: true) }
+    if newWindow == nil {
+      releaseStaleLeftMouseButton(mods: GHOSTTY_MODS_NONE, force: true)
+      // Pane 被拆下时提示没有意义；留着它会在下次装回窗口时闪一下残留数字。
+      ghosttyResizeOverlay.hideImmediately()
+    }
   }
 
   /// 若 Ghostty 侧仍记着左键按下、而系统已无左键按住（或 `force`：视图正被拆离），

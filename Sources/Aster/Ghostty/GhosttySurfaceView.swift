@@ -146,6 +146,9 @@ final class GhosttySurfaceView: NSView {
   var ghosttyHintMatcher = TerminalHintMatcher(labels: [])
   var ghosttyShowsViKeyHints = true
   lazy var ghosttyModeHUD = TerminalPaneModeHUD(frame: bounds)
+  lazy var ghosttyResizeOverlay = TerminalResizeOverlay(frame: bounds)
+  /// 只在行列数真的变化时提示；首次网格与 surface 建立初期的自动收敛都不提示。
+  var ghosttyResizeAnnouncer = TerminalResizeAnnouncer()
 
   init(
     workingDirectory: String,
@@ -571,6 +574,24 @@ final class GhosttySurfaceView: NSView {
     }
     ghostty_surface_set_content_scale(surface, scale, scale)
     ghostty_surface_set_size(surface, UInt32(pixelSize.width), UInt32(pixelSize.height))
+    announceGridSize(of: surface)
+  }
+
+  /// 行列数变化时在 Pane 中央提示网格尺寸。
+  ///
+  /// 行列数直接读回 Ghostty 自己算出的结果，不在宿主侧重复一遍 padding 与 cell 取整规则，
+  /// 否则提示的数字会和终端实际网格差一行一列。
+  private func announceGridSize(of surface: ghostty_surface_t) {
+    let size = ghostty_surface_size(surface)
+    let columns = Int(size.columns)
+    let rows = Int(size.rows)
+    guard columns > 0, rows > 0 else { return }
+    guard ghosttyResizeAnnouncer.shouldAnnounce(columns: columns, rows: rows) else { return }
+    if ghosttyResizeOverlay.superview !== self {
+      ghosttyResizeOverlay.frame = bounds
+      addSubview(ghosttyResizeOverlay)
+    }
+    ghosttyResizeOverlay.show(columns: columns, rows: rows)
   }
 
   // MARK: - Focus and pointer tracking

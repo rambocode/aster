@@ -107,6 +107,16 @@ Pinned renderer patch 保留 `window-vsync=true`，但把无自定义 shader 的
 callback 正在同步通知同一个 completion 时会形成互等，随后窗口失焦的 focus 消息会把主线程
 也拖进死锁，表现为 Dock 再激活无响应。
 
+### 网格尺寸提示
+
+`updateSurfaceGeometry` 每次 `ghostty_surface_set_size` 之后读回
+`ghostty_surface_size` 的 `columns`/`rows`，交给 `TerminalResizeAnnouncer` 判定是否提示：
+首次网格不提示，surface 建立后 0.5 秒内的自动收敛也不提示，之后只有行列真正变化才触发。
+行列数必须取 Ghostty 的计算结果，宿主侧不重复 padding 与 cell 取整规则，否则提示数字会
+和终端实际网格差一行一列。`TerminalResizeOverlay` 是不接收鼠标事件的覆盖层，居中显示
+`列 x 行`，最后一次变化后 0.75 秒淡出；拖动期间连续调用只顺延隐藏时间，并把透明度复位，
+避免上一次淡出动画让提示越来越暗。Pane 拆离窗口时立即收起，防止装回时闪出旧数字。
+
 ### Aster extension ABI v1
 
 固定补丁在 Ghostty internal C interface 之外提供：
