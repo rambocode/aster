@@ -164,7 +164,7 @@ SwiftTerm 的 Core Graphics/Metal 测试与本地 target 仅作为迁移期对�
 
 `PaneLayout` 是间接枚举：叶节点保存 `PaneDescriptor`，容器保存方向、两个子树和比例。`PersistedSplitView` 使用原生 `NSSplitView` 按该比例布局递归子树，只在用户拖动期间把限制在 `0.05...0.95` 的比例写回快照。`WorkspacePaneRuntime` 以 Pane ID 关联终端或文档缓冲，避免把 UI 树和进程生命周期耦合。
 
-分屏导航与重排全部建模为 `PaneLayout` 的纯函数：`path(toPane:)` / `node(at:)` 定位子树，`adjacentPaneID(from:direction:)` 做方向聚焦，`nearestSplitPath(fromPane:axis:)` + `splitRatio(at:)` 支撑移动分隔条，`equalizingRatios()` 做等分，`neighborPaneID(ofPane:)` 决定关闭后的焦点归属，`swappingPanes(_:_:)` / `movingPane(_:nextTo:direction:)` 承担拖放重排。拖放只搬描述符：交换是对两个叶做映射（结构与比例都不动），移动是「先 `removing` 再 `splitting`」（摘除自动提升兄弟节点，不留空容器）。两者都保持面板 ID 不变，因此运行态跟着一起搬，PTY 不重启。方向聚焦采用树式回溯（自底向上找第一个「轴向匹配且当前子树位于移动方向来源侧」的祖先分屏，再进入对侧子树取靠近分隔条的叶），而不是屏幕坐标比较——领域层没有真实帧尺寸，窗口未完成布局时坐标法还会给出错误结果。
+分屏导航与重排全部建模为 `PaneLayout` 的纯函数：`path(toPane:)` / `node(at:)` 定位子树，`adjacentPaneID(from:direction:)` 做方向聚焦，`nearestSplitPath(fromPane:axis:)` + `splitRatio(at:)` 支撑移动分隔条，`equalizingRatios()` 做等分，`neighborPaneID(ofPane:)` 决定关闭后的焦点归属，`swappingPanes(_:_:)` / `movingPane(_:nextTo:direction:)` 承担拖放重排。拖放只搬描述符：交换是对两个叶做映射（结构与比例都不动），移动是「先 `removing` 再 `splitting`」（摘除自动提升兄弟节点，不留空容器）。两者都保持面板 ID 不变，因此运行态跟着一起搬，PTY 不重启。`inserting(_:nextTo:direction:)` 把一整棵子树插到目标叶的一侧，是「标签并入 Pane」的树操作；`splitting` 是它只插单叶的特例。插入前统一校验面板 ID 不冲突——重复 ID 会让两个叶共用一份运行态。方向聚焦采用树式回溯（自底向上找第一个「轴向匹配且当前子树位于移动方向来源侧」的祖先分屏，再进入对侧子树取靠近分隔条的叶），而不是屏幕坐标比较——领域层没有真实帧尺寸，窗口未完成布局时坐标法还会给出错误结果。
 
 `TerminalTabItem` 持有两项纯 UI 运行态：`activePaneID`（当前聚焦面板）和 `zoomedPaneID`（缩放拆分），两者都不进快照——恢复会话应当回到完整分屏，而不是停在某次临时放大上。拆分新面板或把焦点移到其它面板都会自动退出放大态，否则新面板会藏在不可见的分屏里。
 

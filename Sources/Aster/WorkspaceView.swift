@@ -80,6 +80,10 @@ final class WorkspaceViewController: NSViewController {
   /// 当前渲染出来的面板容器。焦点切换只更新这里的状态与 first responder，
   /// 不重建视图树。
   private var paneHosts: [UUID: ActivePaneHostView] = [:]
+  /// 当前渲染出来的标签栏（左侧栏或横向标签条）；Pane 拖到它上面会变成独立标签。
+  private weak var tabBarView: NSView?
+  /// 标签拖入 Pane 时的落点高亮层；只在拖动期间存在。
+  private weak var tabDropOverlay: PaneDropOverlayView?
   private var editorTextViews: [UUID: NSTextView] = [:]
   /// 每个终端 Pane 的 Agent 用量条订阅与视图；与 paneHosts 同生命周期，refresh() 整体清空。
   /// 不复用 tabSubscriptions：按 paneID 才能定位到具体 host 做原地更新。
@@ -1106,6 +1110,7 @@ final class WorkspaceViewController: NSViewController {
     NSCursor.closedHand.push()
 
     var target: PaneDropTarget?
+    var dropsOnTabBar = false
     window.trackEvents(
       matching: [.leftMouseDragged, .leftMouseUp],
       timeout: .greatestFiniteMagnitude,
@@ -1116,13 +1121,25 @@ final class WorkspaceViewController: NSViewController {
         return
       }
       let point = self.view.convert(tracked.locationInWindow, from: nil)
-      target = self.paneDropTarget(at: point, source: paneID)
-      overlay.highlight = target.map { ($0.rect, $0.isSwap) }
+      // 标签栏是第二类落点：整块高亮，松手后 Pane 变成独立标签。
+      if let tabBarRect = self.tabBarDropRect(at: point, source: paneID) {
+        target = nil
+        dropsOnTabBar = true
+        overlay.highlight = (tabBarRect, false)
+      } else {
+        dropsOnTabBar = false
+        target = self.paneDropTarget(at: point, source: paneID)
+        overlay.highlight = target.map { ($0.rect, $0.isSwap) }
+      }
       if tracked.type == .leftMouseUp { stop.pointee = true }
     }
 
     overlay.removeFromSuperview()
     NSCursor.pop()
+    if dropsOnTabBar {
+      model.movePaneToNewTab(paneID)
+      return
+    }
     guard let target else { return }
     if let direction = target.direction {
       model.movePane(paneID, nextTo: target.paneID, direction: direction)
@@ -1131,9 +1148,18 @@ final class WorkspaceViewController: NSViewController {
     }
   }
 
+  /// 指针压在标签栏（左侧栏或横向标签条）上、且这个 Pane 可以拖成独立标签时，返回
+  /// 标签栏在根视图里的 frame；标签栏被收起时没有这个落点。
+  private func tabBarDropRect(at point: NSPoint, source: UUID) -> NSRect? {
+    guard let tabBarView, tabBarView.window != nil, model.canMovePaneToNewTab(source)
+    else { return nil }
+    let frame = tabBarView.convert(tabBarView.bounds, to: view)
+    return frame.contains(point) ? frame : nil
+  }
+
   /// 命中落点：指针在目标面板四边 25% 以内时插到该侧，否则落在中心表示交换。
   /// 拖回自己身上没有任何有效语义，直接不返回落点（覆盖层也就不会高亮）。
-  private func paneDropTarget(at point: NSPoint, source: UUID) -> PaneDropTarget? {
+  private func paneDropTarget(at point: NSPoint, source: UUID?) -> PaneDropTarget? {
     for (paneID, host) in paneHosts where paneID != source {
       guard host.window != nil else { continue }
       let frame = host.convert(host.bounds, to: view)
@@ -1142,6 +1168,56 @@ final class WorkspaceViewController: NSViewController {
       return PaneDropTarget(paneID: paneID, direction: zone.direction, rect: zone.rect)
     }
     return nil
+  }
+
+  // MARK: - 标签拖入 Pane
+
+  /// 标签拖到本窗口某个 Pane 上时的落点。标签之间没有「交换」语义：落在中心按默认
+  /// 拆分方向并到右侧，高亮的就是松手后新内容占据的那一半。
+  private func tabDropTarget(tabID: UUID, screenPoint: NSPoint) -> PaneDropTarget? {
+    guard let window = view.window, model.canMergeTab(id: tabID) else { return nil }
+    let point = view.convert(window.convertPoint(fromScreen: screenPoint), from: nil)
+    guard let target = paneDropTarget(at: point, source: nil) else { return nil }
+    guard target.isSwap else { return target }
+    var rightHalf = target.rect
+    rightHalf.origin.x = target.rect.midX
+    rightHalf.size.width = target.rect.width / 2
+    return PaneDropTarget(paneID: target.paneID, direction: .right, rect: rightHalf)
+  }
+
+  /// 拖动过程中刷新落点高亮。覆盖层懒创建；拖动期间工作区若被重建，它会随旧视图树
+  /// 一起移除，这里发现它脱离层级就重新挂上。
+  private func updateTabDrag(tabID: UUID, screenPoint: NSPoint) {
+    let overlay: PaneDropOverlayView
+    if let existing = tabDropOverlay, existing.superview === view {
+      overlay = existing
+    } else {
+      overlay = PaneDropOverlayView(frame: view.bounds)
+      overlay.autoresizingMask = [.width, .height]
+      view.addSubview(overlay)
+      tabDropOverlay = overlay
+    }
+    let target = tabDropTarget(tabID: tabID, screenPoint: screenPoint)
+    overlay.highlight = target.map { ($0.rect, false) }
+  }
+
+  /// 松手：落在本窗口的 Pane 上就并入；落在本窗口其它位置只当作一次点击；
+  /// 落在窗口之外沿用原有语义（移到别的 Aster 窗口，或新开窗口）。
+  private func finishTabDrag(_ tab: TerminalTabItem, screenPoint: NSPoint) {
+    tabDropOverlay?.removeFromSuperview()
+    tabDropOverlay = nil
+    if let target = tabDropTarget(tabID: tab.id, screenPoint: screenPoint),
+      let direction = target.direction
+    {
+      model.mergeTab(id: tab.id, intoPane: target.paneID, direction: direction)
+      return
+    }
+    if let window = view.window, window.frame.contains(screenPoint) {
+      model.select(tab)
+      return
+    }
+    (NSApp.delegate as? AsterAppDelegate)?.moveTab(
+      tab.id, from: model, toScreenPoint: screenPoint)
   }
 
   /// 切换聚焦 Pane 时只更新路由状态，不重建视图树。视觉反馈是未聚焦 Pane 的内容
@@ -1300,6 +1376,7 @@ final class WorkspaceViewController: NSViewController {
     let theme = preferences.activeTheme
     let background = ThemeVisualEffectView()
     background.identifier = NSUserInterfaceItemIdentifier("workspace-sidebar")
+    tabBarView = background
     background.apply(
       material: theme.style.sidebarMaterial ?? theme.palette.material,
       tint: theme.resolvedColor(forSlot: "sidebar.background")
@@ -1436,10 +1513,13 @@ final class WorkspaceViewController: NSViewController {
             guard let tab else { return }
             self?.model.select(tab)
           },
+          onDragMove: { [weak self, weak tab] point in
+            guard let self, let tab else { return }
+            self.updateTabDrag(tabID: tab.id, screenPoint: point)
+          },
           onDragEnd: { [weak self, weak tab] point in
             guard let self, let tab else { return }
-            (NSApp.delegate as? AsterAppDelegate)?.moveTab(
-              tab.id, from: self.model, toScreenPoint: point)
+            self.finishTabDrag(tab, screenPoint: point)
           }
         )
         button.menu = makeTabContextMenu(tab)
@@ -1700,6 +1780,7 @@ final class WorkspaceViewController: NSViewController {
     let theme = preferences.activeTheme
     let background = ThemeVisualEffectView()
     background.identifier = NSUserInterfaceItemIdentifier("workspace-tabbar")
+    tabBarView = background
     background.apply(
       material: theme.style.horizontalTabBarMaterial ?? theme.palette.material,
       tint: theme.resolvedColor(forSlot: "tabbar.background")
@@ -1752,10 +1833,13 @@ final class WorkspaceViewController: NSViewController {
           guard let tab else { return }
           self?.model.select(tab)
         },
+        onDragMove: { [weak self, weak tab] point in
+          guard let self, let tab else { return }
+          self.updateTabDrag(tabID: tab.id, screenPoint: point)
+        },
         onDragEnd: { [weak self, weak tab] point in
           guard let self, let tab else { return }
-          (NSApp.delegate as? AsterAppDelegate)?.moveTab(
-            tab.id, from: self.model, toScreenPoint: point)
+          self.finishTabDrag(tab, screenPoint: point)
         }
       )
       button.menu = makeTabContextMenu(tab)

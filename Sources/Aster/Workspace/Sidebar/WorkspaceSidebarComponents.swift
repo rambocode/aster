@@ -92,6 +92,8 @@ final class TabRowButton: NSButton {
   private let resolvedActiveBackground: NSColor
   private let resolvedActiveBorder: NSColor
   private let handler: () -> Void
+  /// 拖动过程中的屏幕坐标；工作区据此高亮落点。
+  private let onDragMove: (NSPoint) -> Void
   private let onDragEnd: (NSPoint) -> Void
   private var tracking: NSTrackingArea?
   /// 状态附件与其固定槽位；纵横两种方向共用同一套「附件 ↔ 关闭按钮」切换。
@@ -142,6 +144,7 @@ final class TabRowButton: NSButton {
     titleColorProvider: (() -> NSColor?)? = nil,
     onClose: (() -> Void)?,
     action: @escaping () -> Void,
+    onDragMove: @escaping (NSPoint) -> Void = { _ in },
     onDragEnd: @escaping (NSPoint) -> Void
   ) {
     self.tab = tab
@@ -180,6 +183,7 @@ final class TabRowButton: NSButton {
         ?? theme.resolvedColor(forSlot: "tab.activeBorderColor") ?? theme.palette.panelBackground
     )
     handler = action
+    self.onDragMove = onDragMove
     self.onDragEnd = onDragEnd
     super.init(frame: .zero)
     title = ""
@@ -369,11 +373,17 @@ final class TabRowButton: NSButton {
     }
   }
 
-  /// 在 mouseDown 立即派发选择，不依赖 mouseUp 的 target/action：终端输出会触发
-  /// 侧栏整树重建，若等到 mouseUp，按钮可能已在按下与抬起之间被销毁，点击就会丢失。
+  /// 按下后由本地事件循环接管到抬起：没拖动就是一次点击，抬起时派发选择；拖过阈值
+  /// 则全程上报屏幕坐标，由工作区决定落点（并入 Pane、移到别的窗口或新开窗口）。
+  ///
+  /// 选择不能放在按下那一刻：拖动标签是要把它并进「当前」标签的 Pane，按下就切换
+  /// 会让被拖的标签自己变成当前标签，落点就没有意义了。循环跑在本方法栈内，终端输出
+  /// 触发侧栏重建、按钮在按下与抬起之间被移出视图树，也不会丢掉这次点击。
   override func mouseDown(with event: NSEvent) {
-    handler()
-    guard let window else { return }
+    guard let window else {
+      handler()
+      return
+    }
     let origin = event.locationInWindow
     var draggedPoint: NSPoint?
     window.trackEvents(
@@ -385,20 +395,22 @@ final class TabRowButton: NSButton {
         stop.pointee = true
         return
       }
+      let screenPoint = window.convertPoint(toScreen: tracked.locationInWindow)
       if tracked.type == .leftMouseDragged {
         let delta = hypot(
           tracked.locationInWindow.x - origin.x,
           tracked.locationInWindow.y - origin.y
         )
-        if delta >= 5 { draggedPoint = window.convertPoint(toScreen: tracked.locationInWindow) }
+        // 5pt 以内算手抖；一旦越过阈值，之后拖回原位也仍是拖动。
+        guard draggedPoint != nil || delta >= 5 else { return }
+        draggedPoint = screenPoint
+        self.onDragMove(screenPoint)
       } else if tracked.type == .leftMouseUp {
-        if draggedPoint != nil {
-          draggedPoint = window.convertPoint(toScreen: tracked.locationInWindow)
-        }
+        if draggedPoint != nil { draggedPoint = screenPoint }
         stop.pointee = true
       }
     }
-    if let draggedPoint { onDragEnd(draggedPoint) }
+    if let draggedPoint { onDragEnd(draggedPoint) } else { handler() }
   }
 
   required init?(coder: NSCoder) { nil }

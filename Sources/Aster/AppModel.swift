@@ -185,6 +185,9 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
   /// Editor Pane 恢复后默认可编辑，保持既有快照兼容性。
   @Published private(set) var isReadOnly = false
   private var documentBuffer: DocumentBuffer?
+  /// 受管终端绑定完成的出口，由当前持有该运行态的标签设置。Pane 搬到别的标签后
+  /// 由新标签覆盖，引用因此写进正确的布局。
+  var onManagedTerminalBound: ((ManagedTerminalReference) -> Void)?
 
   init(descriptor: PaneDescriptor) {
     id = descriptor.id
@@ -320,6 +323,17 @@ final class WorkspacePaneRuntime: ObservableObject, Identifiable {
   }
 }
 
+/// 一个标签交出的全部 Pane：布局子树加上与之对应的运行态和每 Pane 标题状态。
+/// 只在同一窗口的两个标签之间传递，不进快照。
+@MainActor
+struct PaneMergePayload {
+  let layout: PaneLayout
+  let runtimes: [UUID: WorkspacePaneRuntime]
+  let titleStates: [UUID: TerminalTitleState]
+  let agentSessionTitles: [UUID: String]
+  let activePaneID: UUID
+}
+
 /// 一个标签页的递归分屏树及其运行态资源。
 @MainActor
 final class TerminalTabItem: ObservableObject, Identifiable {
@@ -413,7 +427,9 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   private(set) var runtimes: [UUID: WorkspacePaneRuntime] = [:]
   /// 每个 Pane 保留自己的程序标题；只有活动 Pane 的状态投影到标签和窗口。
   private var paneTitleStates: [UUID: TerminalTitleState] = [:]
-  private var cancellables: Set<AnyCancellable> = []
+  /// 每个 Pane 对自己运行态的订阅单独成桶。Pane 关闭或搬到别的标签时整桶释放，
+  /// 旧标签不会再收到已经不属于它的会话事件。
+  private var paneCancellables: [UUID: Set<AnyCancellable>] = [:]
 
   /// 任一分屏的终端有前台命令在运行即视为「标签在运行任务」，驱动侧栏 spinner。
   var hasRunningCommand: Bool {
@@ -510,7 +526,8 @@ final class TerminalTabItem: ObservableObject, Identifiable {
     createdAt: Date = Date(),
     updatedAt: Date? = nil,
     titleColor: HexColor? = nil,
-    autoTitleColorIndex: Int? = nil
+    autoTitleColorIndex: Int? = nil,
+    adoptedPanes: PaneMergePayload? = nil
   ) {
     self.id = id
     self.createdAt = createdAt
@@ -526,10 +543,36 @@ final class TerminalTabItem: ObservableObject, Identifiable {
         PaneDescriptor(kind: .terminal, workingDirectory: workingDirectory)
       )
     self.layout = initial
-    activePaneID = initial.firstPaneID ?? UUID()
+    activePaneID = adoptedPanes?.activePaneID ?? initial.firstPaneID ?? UUID()
     paneTitleStates[activePaneID] = initialTitleState
-    // 传入 layout 表示这是恢复/模板实例化；未传则是全新默认 Pane。
-    rebuildRuntimes(for: initial, isRestored: layout != nil)
+    if let adoptedPanes {
+      // 布局里的 Pane 已经有活着的运行态：直接接线，不能再各建一份新的 Shell。
+      adopt(adoptedPanes)
+    } else {
+      // 传入 layout 表示这是恢复/模板实例化；未传则是全新默认 Pane。
+      rebuildRuntimes(for: initial, isRestored: layout != nil)
+    }
+  }
+
+  /// 用别的标签交出的 Pane 建一个新标签（把 Pane 拖成独立标签的语义）。
+  ///
+  /// 标题沿用那个 Pane 自己的程序标题与目录回退；固定名/前缀是原标签的设置，不带过来。
+  convenience init(adopting payload: PaneMergePayload) {
+    let directory =
+      payload.layout.descriptor(forPane: payload.activePaneID)?.workingDirectory
+      ?? FileManager.default.homeDirectoryForCurrentUser.path
+    var state =
+      payload.titleStates[payload.activePaneID]
+      ?? TerminalTitleState(fallback: Self.displayName(forDirectory: directory))
+    state.tabOverride = .automatic
+    state.windowOverride = .automatic
+    self.init(
+      title: state.tabTitle,
+      workingDirectory: directory,
+      layout: payload.layout,
+      titleState: state,
+      adoptedPanes: payload
+    )
   }
 
   convenience init(snapshot: WorkspaceTabSnapshot) {
@@ -962,18 +1005,107 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   func closePane(id paneID: UUID) -> Bool {
     guard layout.allPanes.count > 1 else { return false }
     guard runtimes[paneID]?.confirmCloseIfNeeded() != false else { return false }
-    guard let updated = layout.removing(paneID: paneID) else { return false }
+    guard let removed = detachPaneForTransfer(paneID) else { return false }
+    removed.runtimes[paneID]?.stop()
+    return true
+  }
+
+  /// 把一个 Pane 从本标签摘下来并交出它的运行态；关闭 Pane 和把 Pane 拖成独立标签
+  /// 共用这一步。标签至少要留一个 Pane，摘最后一个返回 nil。
+  ///
+  /// 运行态**不会**被停止：调用方要么自己 `stop()`（关闭），要么把载荷交给别的标签。
+  /// 摘的是聚焦 Pane 时，焦点落到它在分屏树里最近的邻居。
+  func detachPaneForTransfer(_ paneID: UUID) -> PaneMergePayload? {
+    guard layout.allPanes.count > 1,
+      let descriptor = layout.descriptor(forPane: paneID),
+      let runtime = runtimes[paneID],
+      let updated = layout.removing(paneID: paneID)
+    else { return nil }
     // 焦点先于删除计算：删除后原 Pane 的兄弟关系已经消失，无法再定位相邻面板。
     let successor = layout.neighborPaneID(ofPane: paneID) ?? updated.firstPaneID
-    runtimes.removeValue(forKey: paneID)?.stop()
+    // 描述符取布局里那份：目录变化与受管终端引用只写回布局，runtime 上的是创建时的旧值。
+    let payload = PaneMergePayload(
+      layout: .leaf(descriptor),
+      runtimes: [paneID: runtime],
+      titleStates: paneTitleStates[paneID].map { [paneID: $0] } ?? [:],
+      agentSessionTitles: paneAgentSessionTitles[paneID].map { [paneID: $0] } ?? [:],
+      activePaneID: paneID
+    )
+    paneCancellables.removeValue(forKey: paneID)
+    runtimes.removeValue(forKey: paneID)
     paneTitleStates.removeValue(forKey: paneID)
     paneAgentSessionTitles.removeValue(forKey: paneID)
     if zoomedPaneID == paneID { zoomedPaneID = nil }
     layout = updated
-    guard paneID == activePaneID else { return true }
-    activePaneID = successor ?? activePaneID
+    if paneID == activePaneID {
+      activePaneID = successor ?? activePaneID
+      if let state = paneTitleStates[activePaneID] { applyActiveTitleState(state) }
+    }
+    return payload
+  }
+
+  // MARK: - 跨标签搬运 Pane
+
+  /// 交出本标签的全部 Pane，供并入另一个标签。
+  ///
+  /// 运行态对象原样交出，PTY、滚动历史和编辑缓冲都不重建。交出后本标签不再持有
+  /// 任何运行态和订阅，调用方必须随即把它从窗口里移除，不能再当作可用标签。
+  func detachAllPanesForMerge() -> PaneMergePayload {
+    let payload = PaneMergePayload(
+      layout: layout,
+      runtimes: runtimes,
+      titleStates: paneTitleStates,
+      agentSessionTitles: paneAgentSessionTitles,
+      activePaneID: activePaneID
+    )
+    paneCancellables.removeAll()
+    runtimes.removeAll()
+    paneTitleStates.removeAll()
+    paneAgentSessionTitles.removeAll()
+    zoomedPaneID = nil
+    return payload
+  }
+
+  /// 把另一个标签交出的 Pane 并到 `targetID` 的指定一侧，并聚焦对方原来的活动 Pane。
+  ///
+  /// 目标不存在或面板 ID 冲突时返回 false 且不改动任何状态，调用方可以把载荷还给
+  /// 源标签（`restoreDetachedPanes`）。
+  @discardableResult
+  func receivePanes(
+    _ payload: PaneMergePayload,
+    nextTo targetID: UUID,
+    direction: SplitDirection
+  ) -> Bool {
+    guard let updated = layout.inserting(payload.layout, nextTo: targetID, direction: direction)
+    else { return false }
+    adopt(payload)
+    layout = updated
+    zoomedPaneID = nil
+    activePaneID = payload.activePaneID
     if let state = paneTitleStates[activePaneID] { applyActiveTitleState(state) }
     return true
+  }
+
+  /// 并入失败时把载荷原样接回源标签；布局没有变过，只需要重新接线。
+  func restoreDetachedPanes(_ payload: PaneMergePayload) {
+    adopt(payload)
+  }
+
+  /// 接收载荷里的运行态与标题状态。固定名/前缀是标签级设置，搬来的 Pane 改用本标签的。
+  private func adopt(_ payload: PaneMergePayload) {
+    for (paneID, state) in payload.titleStates {
+      var adopted = state
+      adopted.tabOverride = titleState.tabOverride
+      adopted.windowOverride = titleState.windowOverride
+      paneTitleStates[paneID] = adopted
+    }
+    for (paneID, title) in payload.agentSessionTitles {
+      paneAgentSessionTitles[paneID] = title
+    }
+    for pane in payload.layout.allPanes {
+      guard let runtime = payload.runtimes[pane.id] else { continue }
+      attach(runtime)
+    }
   }
 
   func stop(
@@ -1075,22 +1207,37 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   private func addRuntime(for descriptor: PaneDescriptor, isRestored: Bool = false) {
     guard runtimes[descriptor.id] == nil else { return }
     let runtime = WorkspacePaneRuntime(descriptor: descriptor)
-    runtimes[descriptor.id] = runtime
     if let session = runtime.terminalSession {
-      let paneID = descriptor.id
+      // 绑定可能跨一次 SSH 往返才完成，期间 Pane 可能已被搬到别的标签。回调经
+      // runtime 转发给「当前」持有它的标签，而不是创建它的标签。
       ManagedTerminalBinder.bind(
         session: session,
         descriptor: descriptor,
         isRestored: isRestored,
         shell: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-      ) { [weak self] reference in
-        // 引用写回布局后才会随工作区快照持久化，重开 App 才能查真实状态。
-        guard let self else { return }
-        self.layout = self.layout.updatingPane(paneID: paneID) { descriptor in
-          var updated = descriptor
-          updated.managedTerminal = reference
-          return updated
-        }
+      ) { [weak runtime] reference in
+        runtime?.onManagedTerminalBound?(reference)
+      }
+    }
+    attach(runtime)
+  }
+
+  /// 把一个运行态接到本标签：登记、补标题状态、重写会话回调并建立订阅。
+  ///
+  /// 新建 Pane 与接收从别的标签搬来的 Pane 共用这一条路径。回调全部覆盖写入，
+  /// 订阅进入该 Pane 自己的桶，因此对同一个 runtime 重复接线不会叠加旧标签的监听。
+  private func attach(_ runtime: WorkspacePaneRuntime) {
+    let descriptor = runtime.descriptor
+    runtimes[descriptor.id] = runtime
+    var cancellables: Set<AnyCancellable> = []
+    defer { paneCancellables[descriptor.id] = cancellables }
+    runtime.onManagedTerminalBound = { [weak self] reference in
+      // 引用写回布局后才会随工作区快照持久化，重开 App 才能查真实状态。
+      guard let self else { return }
+      self.layout = self.layout.updatingPane(paneID: descriptor.id) { pane in
+        var updated = pane
+        updated.managedTerminal = reference
+        return updated
       }
     }
     if paneTitleStates[descriptor.id] == nil {
@@ -1934,10 +2081,12 @@ final class AppModel: ObservableObject {
     insertTab(tab, position: .end, hasContent: true)
   }
 
+  /// - Parameter select: 是否切到新标签。把 Pane 拖成标签时留在原标签，传 false。
   private func insertTab(
     _ tab: TerminalTabItem,
     position: NewTabPosition? = nil,
-    hasContent: Bool
+    hasContent: Bool,
+    select: Bool = true
   ) {
     let selectedIndex = tabs.firstIndex { $0.id == selectedTabID }
     let sectionEndIndex = selectedIndex.flatMap { currentIndex in
@@ -1966,7 +2115,7 @@ final class AppModel: ObservableObject {
     // 显式选择的视图层排序，插入标签不得改写它——早期在这里自动切到 manual，
     // 导致整理菜单的 ORDER 选项每开一个新标签就悄悄失效。
     configurePersistence(for: tab)
-    selectedTabID = tab.id
+    if select { selectedTabID = tab.id }
     persistWorkspace()
   }
 
@@ -2286,6 +2435,63 @@ final class AppModel: ObservableObject {
       return
     }
     persistWorkspace()
+  }
+
+  /// 某个标签能否被拖进当前标签的 Pane。自己不能并进自己；远端机器的标签结构归
+  /// 服务端所有，本地不能凭空改树。
+  func canMergeTab(id tabID: UUID) -> Bool {
+    guard remoteStructureHandler == nil, tabID != selectedTabID,
+      let source = tabs.first(where: { $0.id == tabID })
+    else { return false }
+    return source.remoteTabID == nil && selectedTab?.remoteTabID == nil
+  }
+
+  /// 把侧栏里的一个标签整棵并入当前标签：落在 `targetPaneID` 的 `direction` 一侧。
+  ///
+  /// 运行态对象直接搬家，PTY、滚动历史、编辑草稿和 Agent 状态都不重建；源标签随后
+  /// 从窗口移除，但**不**进「最近关闭」——它没有被关闭，只是换了位置。
+  @discardableResult
+  func mergeTab(id tabID: UUID, intoPane targetPaneID: UUID, direction: SplitDirection) -> Bool {
+    guard canMergeTab(id: tabID), let target = selectedTab,
+      let index = tabs.firstIndex(where: { $0.id == tabID })
+    else { return false }
+    let source = tabs[index]
+    // 小窗控制器订阅的是源标签；标签消失前先让终端回到工作区，避免它挂在失效的标签上。
+    if let floatingPaneID, source.runtime(for: floatingPaneID) != nil {
+      onRequestClosePictureInPicture?()
+    }
+    let payload = source.detachAllPanesForMerge()
+    guard target.receivePanes(payload, nextTo: targetPaneID, direction: direction) else {
+      source.restoreDetachedPanes(payload)
+      return false
+    }
+    dividerAfterTabIDs.remove(source.id)
+    tabs.remove(at: index)
+    persistWorkspace()
+    return true
+  }
+
+  /// 当前标签里的某个 Pane 能否被拖成独立标签。标签至少要留一个 Pane；远端机器的
+  /// 标签结构归服务端所有。
+  func canMovePaneToNewTab(_ paneID: UUID) -> Bool {
+    guard remoteStructureHandler == nil, let tab = selectedTab, tab.remoteTabID == nil
+    else { return false }
+    return tab.layout.allPanes.count > 1 && tab.runtime(for: paneID) != nil
+  }
+
+  /// 把当前标签里的一个 Pane 拖成独立标签，插在当前标签之后；当前标签保持选中。
+  ///
+  /// 和并入相反的方向，同样只搬运行态对象：PTY、滚动历史和 Agent 状态都不重建，
+  /// 也不记入「最近关闭」。
+  @discardableResult
+  func movePaneToNewTab(_ paneID: UUID) -> Bool {
+    guard canMovePaneToNewTab(paneID), let source = selectedTab else { return false }
+    // 终端视图同一时刻只能挂在一处：Pane 正在小窗里时先让它回到工作区。
+    if floatingPaneID == paneID { onRequestClosePictureInPicture?() }
+    guard let payload = source.detachPaneForTransfer(paneID) else { return false }
+    insertTab(TerminalTabItem(adopting: payload), position: .afterCurrent, hasContent: true,
+      select: false)
+    return true
   }
 
   /// 当前标签是否处于可分屏操作的状态，供菜单项启用状态判断。

@@ -250,3 +250,43 @@ func localAndSSHProjectsHaveDistinctTypesAndIdentities() {
   #expect(local.title == "cortex-work")
   #expect(remote.title == "127.0.0.1")
 }
+
+@Test("整棵子树可以插到目标面板的任意一侧并保留内部结构", arguments: SplitDirection.allCases)
+func paneLayoutInsertsSubtreeNextToTarget(direction: SplitDirection) throws {
+  let target = PaneDescriptor(kind: .terminal, workingDirectory: "/tmp/target")
+  let other = PaneDescriptor(kind: .terminal, workingDirectory: "/tmp/other")
+  let movedA = PaneDescriptor(kind: .terminal, workingDirectory: "/tmp/moved-a")
+  let movedB = PaneDescriptor(kind: .editor, workingDirectory: "/tmp", resourcePath: "/tmp/b.md")
+  let host = PaneLayout.split(
+    axis: .horizontal, first: .leaf(other), second: .leaf(target), ratio: 0.3)
+  let subtree = PaneLayout.split(
+    axis: .vertical, first: .leaf(movedA), second: .leaf(movedB), ratio: 0.7)
+
+  let result = try #require(host.inserting(subtree, nextTo: target.id, direction: direction))
+
+  // 外层分屏和比例不动；目标叶被替换成「目标 + 子树」的等分分屏，子树原样保留。
+  guard case .split(.horizontal, .leaf(other), let replaced, 0.3) = result else {
+    Issue.record("外层分屏结构被改动：\(result)")
+    return
+  }
+  let insertsFirst = direction == .left || direction == .up
+  #expect(
+    replaced
+      == .split(
+        axis: direction.isHorizontal ? .horizontal : .vertical,
+        first: insertsFirst ? subtree : .leaf(target),
+        second: insertsFirst ? .leaf(target) : subtree,
+        ratio: 0.5
+      ))
+}
+
+@Test("目标面板不存在或面板 ID 冲突时拒绝插入子树")
+func paneLayoutRejectsInvalidSubtreeInsertion() {
+  let target = PaneDescriptor(kind: .terminal, workingDirectory: "/tmp/target")
+  let moved = PaneDescriptor(kind: .terminal, workingDirectory: "/tmp/moved")
+  let host = PaneLayout.leaf(target)
+
+  #expect(host.inserting(.leaf(moved), nextTo: UUID(), direction: .right) == nil)
+  // 同一个 ID 出现两次会让两个叶共用一份运行态，必须在树层面拦住。
+  #expect(host.inserting(.leaf(target), nextTo: target.id, direction: .right) == nil)
+}

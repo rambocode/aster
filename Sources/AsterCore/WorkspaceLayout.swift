@@ -224,33 +224,48 @@ public indirect enum PaneLayout: Codable, Equatable, Sendable {
     direction: SplitDirection,
     with newPane: PaneDescriptor
   ) -> PaneLayout? {
+    inserting(.leaf(newPane), nextTo: paneID, direction: direction)
+  }
+
+  /// 把一整棵子树插到目标面板的指定一侧（把标签并入 Pane 的语义）。
+  ///
+  /// 子树内部的分屏结构与比例原样保留，新分隔按 0.5 等分。目标面板不存在，或子树
+  /// 与当前树有重复的面板 ID 时返回 nil：重复 ID 会让两个叶共用一份运行态。
+  public func inserting(
+    _ subtree: PaneLayout,
+    nextTo paneID: UUID,
+    direction: SplitDirection
+  ) -> PaneLayout? {
+    let existingIDs = Set(allPanes.map(\.id))
+    guard subtree.allPanes.allSatisfy({ !existingIDs.contains($0.id) }) else { return nil }
+    return insertingUnchecked(subtree, nextTo: paneID, direction: direction)
+  }
+
+  /// `inserting` 的递归部分；ID 冲突已由入口统一校验，这里只负责定位目标叶。
+  private func insertingUnchecked(
+    _ subtree: PaneLayout,
+    nextTo paneID: UUID,
+    direction: SplitDirection
+  ) -> PaneLayout? {
     switch self {
     case .leaf(let pane):
       guard pane.id == paneID else { return nil }
       let existing = PaneLayout.leaf(pane)
-      let inserted = PaneLayout.leaf(newPane)
-      let first = direction == .left || direction == .up ? inserted : existing
-      let second = direction == .left || direction == .up ? existing : inserted
+      let insertsFirst = direction == .left || direction == .up
       return .split(
         axis: direction.isHorizontal ? .horizontal : .vertical,
-        first: first,
-        second: second,
+        first: insertsFirst ? subtree : existing,
+        second: insertsFirst ? existing : subtree,
         ratio: 0.5
       )
 
     case .split(let axis, let first, let second, let ratio):
-      if let updatedFirst = first.splitting(
-        paneID: paneID,
-        direction: direction,
-        with: newPane
-      ) {
+      if let updatedFirst = first.insertingUnchecked(subtree, nextTo: paneID, direction: direction) {
         return .split(axis: axis, first: updatedFirst, second: second, ratio: ratio)
       }
-      if let updatedSecond = second.splitting(
-        paneID: paneID,
-        direction: direction,
-        with: newPane
-      ) {
+      if let updatedSecond = second.insertingUnchecked(
+        subtree, nextTo: paneID, direction: direction)
+      {
         return .split(axis: axis, first: first, second: updatedSecond, ratio: ratio)
       }
       return nil

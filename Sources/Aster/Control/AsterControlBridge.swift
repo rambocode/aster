@@ -112,7 +112,10 @@ final class AsterControlBridge {
       // 旧短 ID 作为别名保留；否则视为关闭。
       let stillOwned = attachedModels.contains { $0 !== model && $0.tabs.contains { $0.id == removed } }
       if !stillOwned {
-        for paneUUID in tabPaneIDs[removed] ?? [] { closePane(paneUUID, emit: emit) }
+        // 标签被并进别的标签时，它的 Pane 只是换了归属，短 ID 和订阅都要留着。
+        for paneUUID in tabPaneIDs[removed] ?? [] where !isPaneAlive(paneUUID) {
+          closePane(paneUUID, emit: emit)
+        }
         registry.retire(tab: removed)
       }
       tabSubscriptions[removed] = nil
@@ -158,17 +161,29 @@ final class AsterControlBridge {
     for paneUUID in panes where !previous.contains(paneUUID) {
       guard let runtime = tab.runtime(for: paneUUID) else { continue }
       registered.append(paneUUID)
+      // 已有缓存说明它是从别的标签搬来的：沿用短 ID、改订到新标签，不重复宣告「新建」。
+      let isMoved = paneCache[paneUUID] != nil
       _ = registry.paneID(for: paneUUID, inWindow: model.windowID)
       observePane(runtime, tab: tab, model: model)
-      if let info = projectPane(paneUUID) {
+      if isMoved {
+        refreshPane(paneUUID)
+      } else if let info = projectPane(paneUUID) {
         paneCache[paneUUID] = info
         if emit { hub.publish(.paneCreated, encoding: info) }
       }
     }
-    for paneUUID in previous where !panes.contains(paneUUID) {
+    for paneUUID in previous where !panes.contains(paneUUID) && !isPaneAlive(paneUUID) {
       closePane(paneUUID, emit: emit)
     }
     tabPaneIDs[tab.id] = previous.filter { panes.contains($0) } + registered
+  }
+
+  /// Pane 是否仍挂在某个已接入窗口的标签里。只看运行态归属：交出 Pane 的标签已经
+  /// 清空了自己的运行态表，不会被误判成仍然持有。
+  private func isPaneAlive(_ paneUUID: UUID) -> Bool {
+    attachedModels.contains { model in
+      model.tabs.contains { $0.runtime(for: paneUUID) != nil }
+    }
   }
 
   private func closePane(_ paneUUID: UUID, emit: Bool) {
