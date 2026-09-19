@@ -2298,7 +2298,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private(set) var agentOSCTitle = ""
   private(set) var agentOSCProgress = ""
   /// PTY 每收到一段非空输出就 +1；idle 且序号未变时轮询跳过读屏。
-  private(set) var detectionContentSequence: UInt64 = 0
+  private(set) var detectionContentSequence: UInt64 = 0 {
+    // 屏幕检测在静止期不再固定轮询，靠这里的输出事件叫醒。
+    didSet { agentScreenMonitor?.contentDidChange() }
+  }
   /// 测试 seam：注入假屏幕来源，绕过 Ghostty 读屏。生产恒为 nil。
   var agentScreenDetectionSourceOverride: AgentScreenDetectionMonitor.Source?
   /// 诊断 seam：屏幕检测轮询是否在运行。
@@ -2337,6 +2340,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private(set) var recipeCommandCandidates: [WorkflowRecipeCommandCandidate] = []
   private var activityOutputTail = ""
   private var awaitingInputTask: Task<Void, Never>?
+  /// Ghostty 输出活动探针的节流状态，见 `scheduleActivityProbe(on:)`。
+  private var activityProbeTask: Task<Void, Never>?
+  private var lastActivityProbeAt: ContinuousClock.Instant?
+  private static let activityProbeInterval: Duration = .milliseconds(250)
   /// 工作区恢复时待重连的 Agent 会话。真正的 resume 命令在 shell 首个 prompt 出现时
   /// 才发送（此时 PTY 与 rc 都已就绪）；用户在此之前的任何输入都会取消重连。
   private var pendingRestoredAgentResume: (provider: AgentProvider, sessionID: String)?
@@ -3073,9 +3080,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       self.autocompleteController?.receiveOutput(bytes)
       // 记录层是 PTY 字节的并列消费者：只做拷贝转发，解析在后台管线完成。
       self.eventRecorder?.receivePTYOutput(id: self.id, bytes: bytes)
-      if let line = view.readText(includeScrollback: false, maximumLines: 1) {
-        self.receiveActivityOutput(line)
-      }
+      self.scheduleActivityProbe(on: view)
     }
     view.onPTYWrite = { [weak self] bytes in
       self?.autocompleteController?.receiveInput(bytes)
@@ -5086,6 +5091,38 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       configuration: shell,
       sourceTabIsFocused: focused
     )
+  }
+
+  /// 输出活动探针的节流入口。
+  ///
+  /// 探针要经 Ghostty formatter 整屏取文本，还会和 IO / renderer 线程争同一把终端锁；
+  /// Agent 流式输出时每秒有几十批 PTY 数据，逐批读屏纯属浪费。空闲后的第一批立即读
+  /// （保持单次输出的即时性），连续输出期间最多每 `activityProbeInterval` 读一次，
+  /// 并保证最后一批输出之后一定还有一次读取，下游 1.5s 的等待输入判定不会漏掉末态。
+  private func scheduleActivityProbe(on view: GhosttySurfaceView) {
+    guard activityProbeTask == nil else { return }
+    let now = ContinuousClock.now
+    if let last = lastActivityProbeAt, now - last < Self.activityProbeInterval {
+      let delay = Self.activityProbeInterval - (now - last)
+      activityProbeTask = Task { @MainActor [weak self, weak view] in
+        try? await Task.sleep(for: delay)
+        guard let self else { return }
+        self.activityProbeTask = nil
+        // 会话已终止时 surface 已销毁，readText 返回 nil，这里自然成为空操作。
+        guard !Task.isCancelled, let view else { return }
+        self.runActivityProbe(on: view)
+      }
+      return
+    }
+    runActivityProbe(on: view)
+  }
+
+  /// 读取可见区最后一行非空文本并交给活动检测。
+  private func runActivityProbe(on view: GhosttySurfaceView) {
+    lastActivityProbeAt = .now
+    if let line = view.readText(includeScrollback: false, maximumLines: 1) {
+      receiveActivityOutput(line)
+    }
   }
 
   private func receiveActivityOutput(_ visibleCursorLine: String) {

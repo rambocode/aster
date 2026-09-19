@@ -791,6 +791,13 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       guard let self, !Task.isCancelled, self.isPresentationActive, self.selection == .info else {
         return
       }
+      // 窗口最小化、被完全遮住或在其他 Space 时没人看得到 Info：跳过这一轮的 ps 与
+      // 端口扫描，只保留定时器，窗口重新可见后的下一轮自然补上。视图尚未进窗口
+      // （测试宿主）时按可见处理，保持原有刷新语义。
+      if let window = self.viewIfLoaded?.window, !window.occlusionState.contains(.visible) {
+        self.scheduleInformationRefresh()
+        return
+      }
       self.refreshInformation()
     }
   }

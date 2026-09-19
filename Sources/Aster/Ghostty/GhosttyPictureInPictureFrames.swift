@@ -14,24 +14,43 @@ final class GhosttyPictureInPictureFrames: @unchecked Sendable {
   private var nextCaptureTime: TimeInterval = 0
   private var latest: CVPixelBuffer?
   private var failure: String?
+  private var captureStateHandler: (@Sendable () -> Void)?
+
+  /// 镜像是否正在消费 renderer 的帧。宿主据此让不可见的源 surface 继续绘制。
+  var isCapturing: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return enabled
+  }
+
+  /// 采集开关变化后的通知。回调在锁外、start/stop 的调用线程上执行，只设置一次。
+  func setCaptureStateHandler(_ handler: @escaping @Sendable () -> Void) {
+    lock.lock()
+    defer { lock.unlock() }
+    captureStateHandler = handler
+  }
 
   func start() {
     lock.lock()
-    defer { lock.unlock() }
     generation &+= 1
     enabled = true
     nextCaptureTime = 0
     latest = nil
     failure = nil
+    let handler = captureStateHandler
+    lock.unlock()
+    handler?()
   }
 
   func stop() {
     lock.lock()
-    defer { lock.unlock() }
     generation &+= 1
     enabled = false
     latest = nil
     failure = nil
+    let handler = captureStateHandler
+    lock.unlock()
+    handler?()
   }
 
   /// Metal 编码结束前预留一帧；返回 false 时 renderer 不做额外的 GPU/CPU 同步。

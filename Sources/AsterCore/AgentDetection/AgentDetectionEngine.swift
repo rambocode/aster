@@ -314,6 +314,9 @@ public final class CompiledAgentManifest: @unchecked Sendable {
   final class RegionText {
     let text: String
     private(set) lazy var lower: String = text.lowercased()
+    /// 小写文本的 UTF-8 字节。`contains` 门每 300ms 对每条规则求值一次；Foundation 的
+    /// `String.contains` 按字素逐位比较，在整屏文本上比字节搜索慢一个数量级。
+    private(set) lazy var lowerUTF8: ContiguousArray<UInt8> = ContiguousArray(lower.utf8)
     /// 交给 NSRegularExpression 的副本：先桥接成 NSString 再包回 String，之后每次
     /// firstMatch 的 String→NSString 桥接就是 O(1)，避免每条规则都整块拷贝。
     private(set) lazy var regexText: String = (text as NSString) as String
@@ -357,7 +360,8 @@ public final class CompiledAgentManifest: @unchecked Sendable {
     let all: [CompiledGate]
     let any: [CompiledGate]
     let not: [CompiledGate]
-    let contains: [String]
+    /// 已转小写的 needle 的 UTF-8 字节，与 `RegionText.lowerUTF8` 做字节级子串搜索。
+    let contains: [ContiguousArray<UInt8>]
     let regex: [NSRegularExpression]
     let lineRegex: [NSRegularExpression]
 
@@ -365,15 +369,15 @@ public final class CompiledAgentManifest: @unchecked Sendable {
       all = try gate.all.map(CompiledGate.init)
       any = try gate.any.map(CompiledGate.init)
       not = try gate.not.map(CompiledGate.init)
-      contains = gate.contains.map { $0.lowercased() }
+      contains = gate.contains.map { ContiguousArray($0.lowercased().utf8) }
       regex = try gate.regex.map(AgentDetectionRegex.compile)
       lineRegex = try gate.lineRegex.map(AgentDetectionRegex.compile)
     }
 
     func matches(_ region: RegionText) -> Bool {
       if !contains.isEmpty {
-        let lower = region.lower
-        if !contains.allSatisfy({ lower.contains($0) }) { return false }
+        let haystack = region.lowerUTF8
+        if !contains.allSatisfy({ Self.bytes(haystack, contain: $0) }) { return false }
       }
       if !regex.isEmpty {
         let text = region.regexText
@@ -392,6 +396,30 @@ public final class CompiledAgentManifest: @unchecked Sendable {
       if !any.isEmpty, !any.contains(where: { $0.matches(region) }) { return false }
       if not.contains(where: { $0.matches(region) }) { return false }
       return true
+    }
+
+    /// 字节级子串搜索。UTF-8 自同步，needle 是完整字符序列时不会匹配到字符中间；
+    /// 空 needle 与 `String.contains("")` 一样视为不命中。
+    static func bytes(
+      _ haystack: ContiguousArray<UInt8>, contain needle: ContiguousArray<UInt8>
+    ) -> Bool {
+      guard let first = needle.first, haystack.count >= needle.count else { return false }
+      return haystack.withUnsafeBufferPointer { hay in
+        needle.withUnsafeBufferPointer { pin in
+          let last = hay.count - pin.count
+          var index = 0
+          while index <= last {
+            // 先用首字节快速跳过，命中后才逐字节比对剩余部分。
+            if hay[index] == first {
+              var offset = 1
+              while offset < pin.count, hay[index + offset] == pin[offset] { offset += 1 }
+              if offset == pin.count { return true }
+            }
+            index += 1
+          }
+          return false
+        }
+      }
     }
   }
 }

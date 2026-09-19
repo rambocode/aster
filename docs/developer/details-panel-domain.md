@@ -16,7 +16,9 @@ History 是**跨会话的工程记录**：它读的不是当前 Pane 的运行�
 - Info 的结果区分成功（允许空进程或空端口）、不可用和检查失败。终端进程树以该 Pane
   的 shell PID 为根，包含 shell 本身；端口只来自该本地树的 TCP listener，并按 PID 与
   endpoint 去重。
-- Info 只在当前可见时每三秒刷新；切换页、切换 Pane 或收起 Inspector 时取消未完成工作。
+- Info 只在当前可见时每三秒刷新；切换页、切换 Pane 或收起 Inspector 时取消未完成工作。窗口最小化、
+  被完全遮住或在其他 Space 时跳过当轮检查；监听端口由 `ListeningPortScanner` 经 libproc 读取，
+  不再每轮 fork `lsof`（见 [能耗与后台唤醒](energy-efficiency.md)）。
   所有外部检查固定调用绝对路径的只读工具，带输出上限、超时和 cancellation。
 - Agent 行动要求 lifecycle hook 提供的 provider 与 session ID 精确绑定当前 Pane；禁止按
   `claude` 等可执行文件名、工作目录或最近历史猜测。Fork 是否可用由 provider capability

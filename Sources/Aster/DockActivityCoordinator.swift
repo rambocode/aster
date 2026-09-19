@@ -174,10 +174,14 @@ final class DockActivityCoordinator {
       prepareImageView()
       NSApp.dockTile.contentView = dockContentView
       advanceAnimation()
-      animationTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: true) {
+      // Timer 挂在主 run loop 上，回调本来就在主线程；直接执行可省掉每帧一次的 Task
+      // 分配与额外一轮主队列唤醒。tolerance 让系统把这次唤醒和邻近的定时器合并。
+      let timer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: true) {
         [weak self] _ in
-        Task { @MainActor [weak self] in self?.advanceAnimation() }
+        MainActor.assumeIsolated { self?.advanceAnimation() }
       }
+      timer.tolerance = 0.05
+      animationTimer = timer
     }
   }
 
