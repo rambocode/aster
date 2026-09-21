@@ -3,6 +3,28 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.6.10</title>
+            <pubDate>Mon, 21 Sep 2026 10:46:31 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>29</sparkle:version>
+            <sparkle:shortVersionString>0.6.10</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 改进
+
+- AI 用量面板改成菜单栏控件的手感。点状态栏图标时，面板每次都从图标正下方展开，不再记住上次位置——多屏或换 Space 后不会再出现在与图标无关的屏幕上（只记住你调过的尺寸）。展开时有一段从菜单栏拉出来的高度动画，指针离开面板和图标 0.35 秒后自动收起，不用再点一次关闭；系统开了「减弱动态效果」就不播动画。拖尺寸中、有弹出窗口时不会误收起。
+- 移除 Pane 底部的 Agent 用量条。菜单栏的 AI 用量面板已经覆盖配额、Token 与会话三块内容，底部再放一条重复且占用终端行数；旧的用量条还只认 Claude 与 Codex 两家，跑 Codex 时可能显示成 Claude 的用量。顺带去掉每个 Agent Pane 的后台文件监听。
+
+## 修复
+
+- 修复从别的程序切回 Aster 会被拉到出错标签的问题。点 Dock 图标、点程序坞条目或 `open -a` 都会触发这段逻辑，旧实现只要还有标签挂着上一条命令的失败徽章就把焦点抢走，即使这个失败你早就看过、即使「出错时变红」是关着的。现在只有 Dock 图标真的标红时才跳一次。
+- 网格尺寸提示（Pane 中央的「列 × 行」）只在拖动窗口边缘改变窗口大小时出现。此前切换标签或 Pane 时也会闪一下，因为那些操作同样会改变终端行列数。
+- 修复网格尺寸提示里的文字上下留白不对称，看起来贴着气泡顶部。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.10/Aster-0.6.10.dmg" length="44206117" type="application/octet-stream" sparkle:edSignature="RPDGnTPxg7jnfjx8Lh17JHQSN0/r7b08Dt2qm7AFPXPsDHcMq/ExC5LiAEndKwab+wDWWJNPXN80wMCt3i9UAQ=="/>
+        </item>
+        <item>
             <title>0.6.9</title>
             <pubDate>Sat, 19 Sep 2026 17:39:49 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -114,25 +136,6 @@
 - 拖动分屏分隔条前，悬停时分隔条会显示系统强调色，更明确地提示可以拖动。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.6/Aster-0.6.6.dmg" length="43573525" type="application/octet-stream" sparkle:edSignature="GvJYEifckEbLL9oqTtGedzT9lJ8KXIbGmAFYGdBS1B45Ars6tmg+IKko5zEwrd409CbjfPy6vToUooLIHY/UDA=="/>
-        </item>
-        <item>
-            <title>0.6.5</title>
-            <pubDate>Thu, 17 Sep 2026 00:43:02 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>24</sparkle:version>
-            <sparkle:shortVersionString>0.6.5</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## 修复
-
-- 在 Aster 终端里运行的程序崩溃（例如测试进程或 ffmpeg 段错误）时，Aster 自己会一起无声退出，重新打开后连续几次还会不恢复上次的工作区。现在终端里的程序崩溃只影响它自己，Aster 继续运行。
-
-## 新增
-
-- 「设置 → 通用 → 诊断 → 发送崩溃报告」：打开后，Aster 崩溃或异常退出时会把崩溃转储和最近的诊断事件发给开发者，帮助定位问题。默认关闭；报告不含终端内容、命令、路径或账号信息。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.5/Aster-0.6.5.dmg" length="41364745" type="application/octet-stream" sparkle:edSignature="qQuAFTIb9gXBEXurmf3UXN02jwwsUzcGws//yruSZNYCO3keYiiBjSPjKtvcRQ54awm1UXHuf/Otuir76lwtDw=="/>
         </item>
     </channel>
 </rss>
