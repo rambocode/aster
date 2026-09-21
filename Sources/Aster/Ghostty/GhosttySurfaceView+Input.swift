@@ -86,6 +86,21 @@ extension GhosttySurfaceView {
     }
   }
 
+  /// 把 Ctrl+Return 直接交给终端，拦下系统的「显示上下文菜单」快捷键。
+  ///
+  /// macOS 15 起 AppKit 把 Ctrl+Return 当成键盘弹出上下文菜单的等效键，事件在
+  /// performKeyEquivalent 阶段就被吃掉，keyDown 收不到，Claude Code 等 TUI 的
+  /// 「ctrl+enter 立即发送」因此失效。只在本视图是第一响应者时接管，避免抢走其他视图的按键。
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    guard event.type == .keyDown, window?.firstResponder === self,
+      flags.intersection([.control, .command, .option]) == .control,
+      event.charactersIgnoringModifiers == "\r" || event.charactersIgnoringModifiers == "\u{3}"
+    else { return super.performKeyEquivalent(with: event) }
+    keyDown(with: event)
+    return true
+  }
+
   override func doCommand(by selector: Selector) {}
 
   override func keyUp(with event: NSEvent) {
