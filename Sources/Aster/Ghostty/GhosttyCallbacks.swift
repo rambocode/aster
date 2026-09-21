@@ -92,6 +92,11 @@ final class GhosttyCallbacks: @unchecked Sendable {
         value = ""
       }
       DispatchQueue.main.async { view.handleMouseOverLink(value) }
+    case GHOSTTY_ACTION_SCROLLBAR:
+      let payload = action.action.scrollbar
+      let state = GhosttyScrollbarState(
+        total: payload.total, offset: payload.offset, length: payload.len)
+      DispatchQueue.main.async { view.handleScrollbar(state) }
     case GHOSTTY_ACTION_MOUSE_SHAPE:
       let shape = action.action.mouse_shape
       DispatchQueue.main.async { view.applyMouseShape(shape) }

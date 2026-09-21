@@ -152,6 +152,8 @@ final class GhosttySurfaceView: NSView {
   var ghosttyShowsViKeyHints = true
   lazy var ghosttyModeHUD = TerminalPaneModeHUD(frame: bounds)
   lazy var ghosttyResizeOverlay = TerminalResizeOverlay(frame: bounds)
+  /// 右侧滚动条，首次收到 libghostty 位置上报时才挂上；见 `GhosttySurfaceView+Scrollbar.swift`。
+  lazy var ghosttyScrollbar = makeGhosttyScrollbar()
   /// 只在行列数真的变化时提示；首次网格与 surface 建立初期的自动收敛都不提示。
   var ghosttyResizeAnnouncer = TerminalResizeAnnouncer()
 

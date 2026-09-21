@@ -134,6 +134,17 @@ callback 正在同步通知同一个 completion 时会形成互等，随后窗�
 胶囊背景画在独立容器上，文字只占自身内容高度并按基线加 cap height 的光学中心对齐容器
 中心；直接把 `NSTextField` 撑高当内边距会让文字贴顶，上下留白不对称。
 
+### 滚动条
+
+libghostty 在视口或 scrollback 变化时发 `GHOSTTY_ACTION_SCROLLBAR`（`total`/`offset`/`len`，
+单位是行）。`GhosttyCallbacks` 在回调内复制成 `GhosttyScrollbarState` 再切回主线程，
+`GhosttySurfaceView+Scrollbar` 把它交给 `GhosttyScrollbar`。滚动条是贴在 surface 右边缘的
+overlay `NSScroller`，不占终端网格宽度，显示或隐藏不会触发 reflow；`total <= len`
+（内容不足一屏，或 alternate screen）时隐藏。拖动滑块按比例换算成视口首行，经 ABI 的
+`ghostty_aster_surface_scroll_to_row` 滚动；点击轨道空白处按一屏翻页。拖动期间忽略回传的
+位置，否则异步回写会让滑块在指针下抖动。滚动条有自己的 cursor tracking area，
+避免 surface 的 I-beam 盖住箭头。
+
 ### Aster extension ABI v1
 
 固定补丁在 Ghostty internal C interface 之外提供：
