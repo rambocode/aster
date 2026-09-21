@@ -483,71 +483,176 @@ struct UsageStatusItemTooltipTests {
   }
 }
 
-@Suite("UsageMonitor 浮动窗定位")
+@Suite("UsageMonitor 浮动窗定位与自动收起")
 @MainActor
 struct UsagePanelFrameTests {
   /// 屏幕的可见区域：1080 高的屏幕去掉顶部 25pt 菜单栏。状态栏按钮在它的上方。
   private static let screen = NSRect(x: 0, y: 0, width: 1_920, height: 1_055)
+  private static let size = UsagePanelController.defaultSize
 
-  @Test("首次出现贴在状态栏按钮下方且不出屏")
-  func 首次贴靠状态栏() {
+  @Test("每次展开都贴在状态栏按钮下方且不出屏")
+  func 贴靠状态栏() {
     let anchor = NSRect(x: 1_880, y: 1_058, width: 48, height: 22)
     let frame = UsagePanelController.resolveFrame(
-      saved: nil, anchor: anchor, screens: [Self.screen])
+      size: Self.size, anchor: anchor, screens: [Self.screen])
     #expect(frame.maxX <= Self.screen.maxX)
     #expect(frame.minX >= Self.screen.minX)
     #expect(frame.maxY <= anchor.minY)
-    #expect(frame.size == UsagePanelController.defaultSize)
+    #expect(frame.size == Self.size)
   }
 
-  @Test("状态栏条目刚创建、锚点还没落到菜单栏时，退回右上角而不是左下角")
+  @Test("状态栏条目刚创建、锚点还没落到菜单栏时，退回程序所在屏幕的右上角")
   func 未就位的锚点被忽略() {
     // 条目创建的那一拍，按钮窗口还在 (0,0)；照它定位会把浮动窗夹到屏幕左下角。
     let unplaced = NSRect(x: 0, y: 0, width: 48, height: 22)
+    let second = NSRect(x: 1_920, y: 0, width: 1_440, height: 855)
     let frame = UsagePanelController.resolveFrame(
-      saved: nil, anchor: unplaced, screens: [Self.screen])
-    #expect(frame.maxX > Self.screen.maxX - 40)
-    #expect(frame.maxY > Self.screen.maxY - 40)
+      size: Self.size, anchor: unplaced, screens: [Self.screen, second],
+      preferred: second)
+    #expect(second.contains(frame))
+    #expect(frame.maxX > second.maxX - 40)
+    #expect(frame.maxY > second.maxY - 40)
   }
 
-  @Test("保存的位置越界时夹回屏幕内")
-  func 越界恢复() {
-    let saved = NSRect(x: 1_900, y: -400, width: 380, height: 460)
+  @Test("锚点所在屏幕换了，面板跟着换屏")
+  func 跟随锚点所在屏幕() {
+    let second = NSRect(x: 1_920, y: 0, width: 1_440, height: 855)
+    let anchor = NSRect(x: 3_300, y: 858, width: 48, height: 22)
     let frame = UsagePanelController.resolveFrame(
-      saved: saved, anchor: nil, screens: [Self.screen])
-    #expect(Self.screen.contains(frame))
-  }
-
-  @Test("保存的位置所在屏幕已消失时回到状态栏下方")
-  func 屏幕消失回退锚点() {
-    let saved = NSRect(x: 5_000, y: 5_000, width: 380, height: 460)
-    let anchor = NSRect(x: 600, y: 1_058, width: 48, height: 22)
-    let frame = UsagePanelController.resolveFrame(
-      saved: saved, anchor: anchor, screens: [Self.screen])
-    #expect(Self.screen.contains(frame))
+      size: Self.size, anchor: anchor, screens: [Self.screen, second])
+    #expect(second.contains(frame))
     #expect(frame.maxY <= anchor.minY)
   }
 
-  @Test("拖动后的位置写回 defaults，下次打开沿用")
-  func 位置持久化() throws {
-    let defaults = try makeDefaults()
-    let controller = UsagePanelController(
-      content: NSViewController(), defaults: defaults, anchor: { nil })
-    controller.show()
-    let moved = UsagePanelController.clamp(
-      NSRect(x: 120, y: 140, width: 400, height: 480),
-      to: NSScreen.main?.visibleFrame ?? Self.screen)
-    controller.window.setFrame(moved, display: false)
-    controller.hide()
+  @Test("尺寸超过屏幕时夹回可见区域")
+  func 越界夹回() {
+    let oversized = NSSize(width: 3_000, height: 2_000)
+    let frame = UsagePanelController.resolveFrame(
+      size: oversized, anchor: nil, screens: [Self.screen])
+    #expect(Self.screen.contains(frame))
+  }
 
-    let saved = try #require(defaults.string(forKey: UsagePanelController.frameDefaultsKey))
-    #expect(NSRectFromString(saved) == moved)
+  @Test("调过的尺寸写回 defaults，下次展开沿用尺寸但位置回到锚点下方")
+  func 尺寸记忆() throws {
+    let defaults = try makeDefaults()
+    let visible = NSScreen.main?.visibleFrame ?? Self.screen
+    let anchor = NSRect(x: visible.midX, y: visible.maxY + 3, width: 48, height: 22)
+    let controller = UsagePanelController(
+      content: NSViewController(), defaults: defaults, anchor: { anchor })
+    controller.show()
+    #expect(controller.isVisible)
+    // 展开动画只改高度，宽度与顶边从第一帧起就是最终值。
+    #expect(controller.window.frame.maxY <= anchor.minY)
+
+    let resized = NSRect(x: 100, y: 100, width: 500, height: 520)
+    controller.window.setFrame(resized, display: false)
+    controller.windowDidEndLiveResize(
+      Notification(name: NSWindow.didEndLiveResizeNotification, object: controller.window))
+    controller.hide(animated: false)
+    #expect(!controller.isVisible)
+    let stored = NSSizeFromString(
+      try #require(defaults.string(forKey: UsagePanelController.sizeDefaultsKey)))
+    #expect(stored == resized.size)
 
     let restored = UsagePanelController(
-      content: NSViewController(), defaults: defaults, anchor: { nil })
+      content: NSViewController(), defaults: defaults, anchor: { anchor })
     restored.show()
-    #expect(restored.window.frame == moved)
-    restored.hide()
+    #expect(restored.window.frame.width == resized.width)
+    #expect(restored.window.frame.maxY <= anchor.minY)
+    restored.hide(animated: false)
+  }
+
+  @Test("0.6.9 记的整块 frame 只迁移尺寸，不再复用位置")
+  func 旧位置键只迁尺寸() throws {
+    let defaults = try makeDefaults()
+    let legacy = NSRect(x: 40, y: 60, width: 460, height: 540)
+    defaults.set(NSStringFromRect(legacy), forKey: UsagePanelController.legacyFrameDefaultsKey)
+    let visible = NSScreen.main?.visibleFrame ?? Self.screen
+    let anchor = NSRect(x: visible.midX, y: visible.maxY + 3, width: 48, height: 22)
+    let controller = UsagePanelController(
+      content: NSViewController(), defaults: defaults, anchor: { anchor })
+    controller.show()
+    #expect(controller.window.frame.width == legacy.width)
+    #expect(controller.window.frame.minY != legacy.minY)
+    controller.hide(animated: false)
+  }
+
+  // MARK: - 自动收起
+
+  private static let panelFrame = NSRect(x: 800, y: 400, width: 440, height: 600)
+  private static let anchorFrame = NSRect(x: 980, y: 1_058, width: 48, height: 22)
+  private static let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+  @Test("指针在面板内：记下「进入过」，不收起")
+  func 指针在面板内() {
+    let decision = UsagePanelController.evaluateAutoHide(
+      pointer: NSPoint(x: 1_000, y: 700), panelFrame: Self.panelFrame, anchor: Self.anchorFrame,
+      hasEntered: false, isInteracting: false, leftAt: nil, now: Self.now)
+    #expect(decision.hasEntered)
+    #expect(decision.leftAt == nil)
+    #expect(!decision.shouldHide)
+  }
+
+  @Test("指针离开超过宽限时间才收起")
+  func 离开后延迟收起() {
+    let outside = NSPoint(x: 200, y: 200)
+    let left = UsagePanelController.evaluateAutoHide(
+      pointer: outside, panelFrame: Self.panelFrame, anchor: Self.anchorFrame,
+      hasEntered: true, isInteracting: false, leftAt: nil, now: Self.now)
+    #expect(!left.shouldHide)
+    #expect(left.leftAt == Self.now)
+
+    let soon = UsagePanelController.evaluateAutoHide(
+      pointer: outside, panelFrame: Self.panelFrame, anchor: Self.anchorFrame,
+      hasEntered: true, isInteracting: false, leftAt: left.leftAt,
+      now: Self.now.addingTimeInterval(UsagePanelController.autoHideDelay / 2))
+    #expect(!soon.shouldHide)
+
+    let late = UsagePanelController.evaluateAutoHide(
+      pointer: outside, panelFrame: Self.panelFrame, anchor: Self.anchorFrame,
+      hasEntered: true, isInteracting: false, leftAt: left.leftAt,
+      now: Self.now.addingTimeInterval(UsagePanelController.autoHideDelay + 0.1))
+    #expect(late.shouldHide)
+  }
+
+  @Test("指针短暂划出后回到面板，计时清零")
+  func 划出后回来不收起() {
+    let left = UsagePanelController.evaluateAutoHide(
+      pointer: NSPoint(x: 200, y: 200), panelFrame: Self.panelFrame, anchor: Self.anchorFrame,
+      hasEntered: true, isInteracting: false, leftAt: nil, now: Self.now)
+    let back = UsagePanelController.evaluateAutoHide(
+      pointer: NSPoint(x: 1_000, y: 700), panelFrame: Self.panelFrame, anchor: Self.anchorFrame,
+      hasEntered: true, isInteracting: false, leftAt: left.leftAt,
+      now: Self.now.addingTimeInterval(0.3))
+    #expect(back.leftAt == nil)
+    #expect(!back.shouldHide)
+  }
+
+  @Test("指针从没进过面板时不自动收起（菜单命令打开的情形）")
+  func 没进过面板不收起() {
+    let decision = UsagePanelController.evaluateAutoHide(
+      pointer: NSPoint(x: 200, y: 200), panelFrame: Self.panelFrame, anchor: Self.anchorFrame,
+      hasEntered: false, isInteracting: false, leftAt: nil,
+      now: Self.now.addingTimeInterval(10))
+    #expect(!decision.hasEntered)
+    #expect(!decision.shouldHide)
+  }
+
+  @Test("指针停在状态栏图标上、或正在拖尺寸时不收起")
+  func 锚点与交互中不收起() {
+    let onAnchor = UsagePanelController.evaluateAutoHide(
+      pointer: NSPoint(x: Self.anchorFrame.midX, y: Self.anchorFrame.midY),
+      panelFrame: Self.panelFrame, anchor: Self.anchorFrame,
+      hasEntered: true, isInteracting: false, leftAt: Self.now.addingTimeInterval(-10),
+      now: Self.now)
+    #expect(!onAnchor.shouldHide)
+    #expect(onAnchor.leftAt == nil)
+
+    let busy = UsagePanelController.evaluateAutoHide(
+      pointer: NSPoint(x: 200, y: 200), panelFrame: Self.panelFrame, anchor: Self.anchorFrame,
+      hasEntered: true, isInteracting: true, leftAt: Self.now.addingTimeInterval(-10),
+      now: Self.now)
+    #expect(!busy.shouldHide)
   }
 }
 

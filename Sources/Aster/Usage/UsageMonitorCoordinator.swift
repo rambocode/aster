@@ -113,7 +113,7 @@ final class UsageMonitorCoordinator {
   /// 顺序有讲究：先收起浮动窗让当前页走到 `suspend()`，再释放窗口与订阅，
   /// 否则页面里的在途任务会失去被取消的机会。
   private func teardown() {
-    panel?.hide()
+    panel?.hide(animated: false)
     panel = nil
     content = nil
     subscriptions.removeAll()

@@ -165,9 +165,30 @@ mach 绝对时间单位，Apple Silicon 上换算系数不是 1。
 拆除。协调器不在 `deinit` 里清理（不在主线程隔离上），释放前必须先 `setEnabled(false)`。
 菜单「显示 → 显示 AI 用量」和命令面板 `show-ai-usage` 会顺手打开开关。
 
-浮动窗是 `.nonactivatingPanel` + `.floating` 的 `NSPanel`，可加入所有 Space；首次贴在状态栏
-图标下方，之后记住位置（`aster.usage.panel-frame.v1`），屏幕布局变了就夹回可见区域。
-默认 560×680：每个配额窗口占两行（名称+条+百分比 / 接近上限+重置时间），380pt 宽会挤成一团。
+浮动窗是 `.nonactivatingPanel` + `.floating` 的 `NSPanel`，可加入所有 Space。交互模型照
+菜单栏 popover 做，三件事连在一起，改一件要连带想另外两件：
+
+- **每次展开都跟着状态栏图标走**，不再记位置。锚点不可信（状态栏条目刚创建那一拍按钮
+  窗口还在 (0,0) 附近）时退回 Aster 当前窗口所在那块屏的右上角，而不是 `screens.first`。
+  只记尺寸（`aster.usage.panel-size.v1`）；0.6.9 的 `aster.usage.panel-frame.v1` 只读不写，
+  用来把老用户调过的尺寸迁过来。
+- **展开动画改窗口高度**：顶边钉死在锚点下方，高度从 55% 长到 100% 并淡入（0.18s，
+  easeOut；收起是 0.12s 淡出）。内容不随窗口一起重排——`contentView` 是一层会裁切的
+  `UsagePanelClipView`，动画期间内容尺寸冻结在最终值、顶边跟着容器（`.minYMargin`），
+  底部被裁掉。代价是窗口不托管 `contentViewController`，响应链要手动接回去。
+  系统开了「减弱动态效果」时两个动画都跳过。
+- **指针离开自动收起**：0.12s 采样一次 `NSEvent.mouseLocation`，离开面板与状态栏图标
+  超过 0.35s 才收（算上采样与淡出，真机上手感约 0.8 秒）（判定是纯函数 `evaluateAutoHide`，好测）。两条硬性豁免：指针从没进过
+  面板不收（菜单命令打开时指针根本不在这儿），正在拖尺寸 / 有 sheet 或模态窗时不收。
+  用轮询而不是 `NSTrackingArea`：面板之外还要认状态栏按钮那块区域，而且窗口浮在别的
+  Space 或全屏应用之上时进出事件并不可靠。轮询只在面板可见期间存在，`hide()` 停掉；
+  控制器不在 `deinit` 里清理，释放前必须先收起。
+
+动画期间窗口 frame 是中间态，所以落盘尺寸写的是 `presentedSize` 而不是 `panel.frame`，
+否则展开途中点关闭会把打折高度记成用户尺寸。对外的显示态一律看 `isVisible`
+（逻辑态），淡出动画还没跑完时 `panel.isVisible` 仍是 true。
+
+默认 440×600：每个配额窗口占两行（名称+条+百分比 / 接近上限+重置时间），380pt 宽会挤成一团。
 
 ## 界面
 
