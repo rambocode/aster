@@ -83,13 +83,20 @@ final class DockActivityCoordinator {
     }
   }
 
+  /// Dock 点击的失败标签跳转入口；只在图标真的处于红色错误态时切换标签。
+  ///
+  /// `applicationShouldHandleReopen` 不只在「有新错误」时触发：点 Dock 图标、点
+  /// 程序坞里的 Aster、`open -a` 都会调用它。因此这里必须用 `currentState` 把
+  /// 「普通的切回 Aster」挡在外面——否则只要某个标签还挂着上一条命令的失败徽章，
+  /// 每次切回来都会把焦点从用户最后使用的标签上抢走。已确认过的失败同理：确认后
+  /// `refresh()` 会把它降级成 `.none`，图标不红，跳转也就不再发生。
   @discardableResult
   func acknowledgeAndSelectNextError() -> Bool {
+    guard currentState == .error else { return false }
     let failing = models.values.flatMap { model in
       model.tabs.filter { $0.activityBadge == .error }.map { (model, $0) }
     }
     guard let target = failing.first(where: { !acknowledgedErrorTabIDs.contains($0.1.id) })
-      ?? failing.first
     else { return false }
     target.0.select(target.1)
     acknowledgedErrorTabIDs.formUnion(failing.map { $0.1.id })

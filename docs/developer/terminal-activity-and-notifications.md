@@ -34,7 +34,7 @@ flowchart LR
 
 SwiftTerm 的 `registerOscObserver` 是非消费 seam：Aster 可观察 OSC 9/99/777，而内建 `OSC 9;4` 顶部进度条继续执行。`TerminalOSCStreamLimiter` 在 parser 前对通知序列施加约 8 KiB 独立上限；领域解析器在完整 payload 上再次复验。Kitty capability response 直接写 PTY，不进入用户输入、Autocomplete 或学习路径。
 
-等待输入只在任务运行时检测输出末行的 password、`[y/n]`、yes/no 与 Press Enter 提示，并要求 1.5 秒静默；任何键盘输入立即清除。Dock 聚合不持久化，点击应用图标选择一个失败标签并确认当前错误，新错误仍会再次标红。Dock 图标由 `DockIconArtwork` 按 `Resources/AsterIcon.svg` 的几何分图层重画，而不是给 `NSApp.applicationIconImage` 这张拍平位图加滤镜——只有分图层才能让**中央星芒单独旋转**、**底板整块换成红色**。Working 旋转动画按需缓存 12 个离散角度、每帧 30°，正好走满一圈，首尾无缝衔接；完成一圈后 timer 只切换已有 `NSImage`。Dock tile 尺寸变化会清空缓存，避免把旧帧拉伸成糊图。出错态刻意用不透明红底板而不是叠半透明红：珊瑚品牌色本身偏红，叠色混出来仍然是橙的，用户看不出状态变了。
+等待输入只在任务运行时检测输出末行的 password、`[y/n]`、yes/no 与 Press Enter 提示，并要求 1.5 秒静默；任何键盘输入立即清除。Dock 聚合不持久化。`applicationShouldHandleReopen` 会在点 Dock 图标、点程序坞条目和 `open -a` 时统一触发，因此 `acknowledgeAndSelectNextError()` 以 `currentState == .error` 为唯一门槛：只有图标真的标红（存在未确认失败且开着「出错时变红」）才选择一个失败标签并确认当前错误，其余情况一律不动用户最后使用的标签；确认后该标签在 `refresh()` 里降级为 `.none`，新错误仍会再次标红。Dock 图标由 `DockIconArtwork` 按 `Resources/AsterIcon.svg` 的几何分图层重画，而不是给 `NSApp.applicationIconImage` 这张拍平位图加滤镜——只有分图层才能让**中央星芒单独旋转**、**底板整块换成红色**。Working 旋转动画按需缓存 12 个离散角度、每帧 30°，正好走满一圈，首尾无缝衔接；完成一圈后 timer 只切换已有 `NSImage`。Dock tile 尺寸变化会清空缓存，避免把旧帧拉伸成糊图。出错态刻意用不透明红底板而不是叠半透明红：珊瑚品牌色本身偏红，叠色混出来仍然是橙的，用户看不出状态变了。
 
 对未取得权威 lifecycle hook 的 Claude Code / Codex Pane，长寿命 TUI 进程存活本身不代表仍在处理。`TerminalSession` 以命令启动、用户输入与 PTY 输出刷新回退 processing，连续 5 秒无活动后只清除 Agent 运行徽章，不伪造命令退出或触发 Prompt Queue。任意合法 hook 一旦到达就取消该超时，之后 `processing / awaiting-input / idle` 完全以 hook 为准，因此无输出的真实推理不会被误清。
 
