@@ -124,10 +124,15 @@ callback 正在同步通知同一个 completion 时会形成互等，随后窗�
 `updateSurfaceGeometry` 每次 `ghostty_surface_set_size` 之后读回
 `ghostty_surface_size` 的 `columns`/`rows`，交给 `TerminalResizeAnnouncer` 判定是否提示：
 首次网格不提示，surface 建立后 0.5 秒内的自动收敛也不提示，之后只有行列真正变化才触发。
+再加一个前提：窗口必须处于 live resize。判定取 `window?.inLiveResize` 而非视图自身的
+`inLiveResize`——拖动分栏 divider 只有视图在 live resize，切换标签或 Pane 时视图重新挂载、
+重新布局两者都为 false。没有这个前提，切标签与切 Pane 会因为网格变化闪出提示。
 行列数必须取 Ghostty 的计算结果，宿主侧不重复 padding 与 cell 取整规则，否则提示数字会
 和终端实际网格差一行一列。`TerminalResizeOverlay` 是不接收鼠标事件的覆盖层，居中显示
 `列 x 行`，最后一次变化后 0.75 秒淡出；拖动期间连续调用只顺延隐藏时间，并把透明度复位，
 避免上一次淡出动画让提示越来越暗。Pane 拆离窗口时立即收起，防止装回时闪出旧数字。
+胶囊背景画在独立容器上，文字只占自身内容高度并按基线加 cap height 的光学中心对齐容器
+中心；直接把 `NSTextField` 撑高当内边距会让文字贴顶，上下留白不对称。
 
 ### Aster extension ABI v1
 

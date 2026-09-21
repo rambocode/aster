@@ -10,6 +10,9 @@ final class TerminalResizeOverlay: NSView {
   static let visibleDuration: TimeInterval = 0.75
   private static let fadeDuration: TimeInterval = 0.2
 
+  /// 胶囊背景与文字分开：NSTextField 在超出自身内容高度的 frame 里贴顶绘制，
+  /// 直接把 label 撑高当内边距会让上下留白不对称。
+  private let bubble = NSView()
   private let label = NSTextField(labelWithString: "")
   private var hideTask: DispatchWorkItem?
   private var removeTask: DispatchWorkItem?
@@ -19,13 +22,15 @@ final class TerminalResizeOverlay: NSView {
     autoresizingMask = [.width, .height]
     wantsLayer = true
 
+    bubble.wantsLayer = true
+    bubble.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.62).cgColor
+    bubble.layer?.cornerRadius = 6
+    addSubview(bubble)
+
     label.font = .monospacedSystemFont(ofSize: 13, weight: .medium)
     label.textColor = .white
     label.alignment = .center
-    label.wantsLayer = true
-    label.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.62).cgColor
-    label.layer?.cornerRadius = 6
-    addSubview(label)
+    bubble.addSubview(label)
 
     isHidden = true
   }
@@ -42,6 +47,13 @@ final class TerminalResizeOverlay: NSView {
 
   /// 当前显示的文本，供测试与调试读取。
   var displayedText: String { label.stringValue }
+
+  /// 可见字形到胶囊上下边的留白，供测试校验垂直对称性。
+  var glyphVerticalInsets: (top: CGFloat, bottom: CGFloat) {
+    let capHeight = label.font?.capHeight ?? label.frame.height
+    let baselineY = label.frame.minY + label.frame.height - label.firstBaselineOffsetFromTop
+    return (bubble.frame.height - (baselineY + capHeight), baselineY)
+  }
 
   /// 显示一次提示。拖动过程中会被连续调用，每次都顺延隐藏时间，停手后才淡出。
   func show(columns: Int, rows: Int) {
@@ -89,23 +101,40 @@ final class TerminalResizeOverlay: NSView {
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.fadeDuration, execute: task)
   }
 
+  /// 按文字的光学中心摆放胶囊内容：「147 x 41」这类字形没有下伸部，
+  /// 若按整行行盒居中，descender 留白会全部压到上方，看起来文字偏上。
+  /// 改用基线加 cap height 求出可见字形的中心，再对齐胶囊中心。
   private func layoutLabel() {
     let size = label.intrinsicContentSize
-    let width = max(70, size.width + 22)
-    let height = max(28, size.height + 10)
-    label.frame = NSRect(
-      x: (bounds.width - width) / 2,
-      y: (bounds.height - height) / 2,
+    let labelHeight = ceil(size.height)
+    let width = max(70, ceil(size.width) + 22)
+    let height = max(28, labelHeight + 10)
+
+    bubble.frame = NSRect(
+      x: ((bounds.width - width) / 2).rounded(),
+      y: ((bounds.height - height) / 2).rounded(),
       width: width,
       height: height
+    )
+
+    let capHeight = label.font?.capHeight ?? labelHeight
+    // firstBaselineOffsetFromTop 由字体度量给出，换算成基线到 label 底边的距离。
+    let baselineFromBottom = labelHeight - label.firstBaselineOffsetFromTop
+    let glyphCenterFromBottom = baselineFromBottom + capHeight / 2
+    label.frame = NSRect(
+      x: 0,
+      y: (height / 2 - glyphCenterFromBottom).rounded(),
+      width: width,
+      height: labelHeight
     )
   }
 }
 
-/// 决定何时提示网格尺寸：首次网格不提示，surface 建立初期的自动调整也不提示。
+/// 决定何时提示网格尺寸：只有用户正在拖动窗口边框改变大小时才提示。
 ///
 /// Ghostty surface 刚创建时会从默认网格连续收敛到真实网格，那些变化不是用户操作；
-/// 开窗即闪一次提示只会干扰。稳定期过后才把行列变化当成用户调整窗口或分栏。
+/// 切换标签或 Pane 时视图重新挂载、重新布局同样会改变网格。这些都不该闪提示，
+/// 所以除了首次网格与建立初期的抑制窗口，还要求窗口处于 live resize 状态。
 struct TerminalResizeAnnouncer {
   /// surface 建立后的抑制窗口。
   static let settleInterval: TimeInterval = 0.5
@@ -119,12 +148,21 @@ struct TerminalResizeAnnouncer {
   }
 
   /// 返回本次网格是否应该提示；无论是否提示都会记录为最新网格。
-  mutating func shouldAnnounce(columns: Int, rows: Int, now: Date = Date()) -> Bool {
+  ///
+  /// - Parameter isLiveResizing: 窗口是否正在被用户拖动改变大小。非拖动期间的网格变化
+  ///   （切换标签、切换 Pane、重新挂载 surface）只更新记录，不提示。
+  mutating func shouldAnnounce(
+    columns: Int,
+    rows: Int,
+    isLiveResizing: Bool,
+    now: Date = Date()
+  ) -> Bool {
     let grid = GridSize(columns: columns, rows: rows)
     defer {
       lastGrid = grid
       if firstSeen == nil { firstSeen = now }
     }
+    guard isLiveResizing else { return false }
     guard let firstSeen else { return false }
     guard now.timeIntervalSince(firstSeen) >= Self.settleInterval else { return false }
     return lastGrid != grid

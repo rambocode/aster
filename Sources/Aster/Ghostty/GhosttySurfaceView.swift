@@ -611,12 +611,23 @@ final class GhosttySurfaceView: NSView {
   ///
   /// 行列数直接读回 Ghostty 自己算出的结果，不在宿主侧重复一遍 padding 与 cell 取整规则，
   /// 否则提示的数字会和终端实际网格差一行一列。
+  ///
+  /// 只在窗口 live resize 期间提示。用 window 而非 self 的 `inLiveResize`：拖动分栏
+  /// divider 时只有视图在 live resize，那不算拖窗口；切换标签或 Pane 引起的重新布局
+  /// 两者都为 false，因此不会再闪提示。
   private func announceGridSize(of surface: ghostty_surface_t) {
     let size = ghostty_surface_size(surface)
     let columns = Int(size.columns)
     let rows = Int(size.rows)
     guard columns > 0, rows > 0 else { return }
-    guard ghosttyResizeAnnouncer.shouldAnnounce(columns: columns, rows: rows) else { return }
+    let isLiveResizing = window?.inLiveResize ?? false
+    guard
+      ghosttyResizeAnnouncer.shouldAnnounce(
+        columns: columns,
+        rows: rows,
+        isLiveResizing: isLiveResizing
+      )
+    else { return }
     if ghosttyResizeOverlay.superview !== self {
       ghosttyResizeOverlay.frame = bounds
       addSubview(ghosttyResizeOverlay)

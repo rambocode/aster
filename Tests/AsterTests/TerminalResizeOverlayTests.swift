@@ -60,9 +60,13 @@ func resizeAnnouncerSuppressesInitialSettling() {
   var announcer = TerminalResizeAnnouncer()
   let start = Date()
 
-  #expect(announcer.shouldAnnounce(columns: 80, rows: 24, now: start) == false)
-  #expect(announcer.shouldAnnounce(columns: 75, rows: 24, now: start.addingTimeInterval(0.1)) == false)
-  #expect(announcer.shouldAnnounce(columns: 70, rows: 24, now: start.addingTimeInterval(0.4)) == false)
+  #expect(announcer.shouldAnnounce(columns: 80, rows: 24, isLiveResizing: true, now: start) == false)
+  #expect(
+    announcer.shouldAnnounce(
+      columns: 75, rows: 24, isLiveResizing: true, now: start.addingTimeInterval(0.1)) == false)
+  #expect(
+    announcer.shouldAnnounce(
+      columns: 70, rows: 24, isLiveResizing: true, now: start.addingTimeInterval(0.4)) == false)
 }
 
 @Test("稳定期之后的行列变化才提示,重复尺寸不提示")
@@ -70,11 +74,44 @@ func resizeAnnouncerSuppressesInitialSettling() {
 func resizeAnnouncerReportsRealChanges() {
   var announcer = TerminalResizeAnnouncer()
   let start = Date()
-  _ = announcer.shouldAnnounce(columns: 80, rows: 24, now: start)
+  _ = announcer.shouldAnnounce(columns: 80, rows: 24, isLiveResizing: true, now: start)
   let settled = start.addingTimeInterval(TerminalResizeAnnouncer.settleInterval)
 
-  #expect(announcer.shouldAnnounce(columns: 80, rows: 24, now: settled) == false)
-  #expect(announcer.shouldAnnounce(columns: 75, rows: 24, now: settled) == true)
-  #expect(announcer.shouldAnnounce(columns: 75, rows: 24, now: settled) == false)
-  #expect(announcer.shouldAnnounce(columns: 75, rows: 20, now: settled) == true)
+  #expect(
+    announcer.shouldAnnounce(columns: 80, rows: 24, isLiveResizing: true, now: settled) == false)
+  #expect(
+    announcer.shouldAnnounce(columns: 75, rows: 24, isLiveResizing: true, now: settled) == true)
+  #expect(
+    announcer.shouldAnnounce(columns: 75, rows: 24, isLiveResizing: true, now: settled) == false)
+  #expect(
+    announcer.shouldAnnounce(columns: 75, rows: 20, isLiveResizing: true, now: settled) == true)
+}
+
+@Test("不是拖动窗口时的网格变化不提示,但仍记录为最新网格")
+@MainActor
+func resizeAnnouncerIgnoresNonLiveResize() {
+  var announcer = TerminalResizeAnnouncer()
+  let start = Date()
+  _ = announcer.shouldAnnounce(columns: 80, rows: 24, isLiveResizing: true, now: start)
+  let settled = start.addingTimeInterval(TerminalResizeAnnouncer.settleInterval)
+
+  // 切换标签/Pane 引起的重新布局：网格确实变了,但不该提示。
+  #expect(
+    announcer.shouldAnnounce(columns: 100, rows: 30, isLiveResizing: false, now: settled) == false)
+  // 已记录为最新网格,随后拖动窗口回到同一尺寸也不该补一次提示。
+  #expect(
+    announcer.shouldAnnounce(columns: 100, rows: 30, isLiveResizing: true, now: settled) == false)
+  #expect(
+    announcer.shouldAnnounce(columns: 99, rows: 30, isLiveResizing: true, now: settled) == true)
+}
+
+@Test("文字在胶囊里上下留白对称")
+@MainActor
+func resizeOverlayCentersLabelVertically() {
+  let overlay = TerminalResizeOverlay(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+  overlay.show(columns: 147, rows: 41)
+
+  let insets = overlay.glyphVerticalInsets
+  // 允许 1pt 的像素对齐误差,超过就说明文字偏向了某一侧。
+  #expect(abs(insets.top - insets.bottom) <= 1)
 }
