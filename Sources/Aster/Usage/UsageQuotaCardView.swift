@@ -182,7 +182,7 @@ final class UsagePlanBadgeView: NSView {
 /// 配额卡里的一个窗口，占两行：
 /// 上行是「窗口名 + 可伸缩进度条 + 百分比」，下行是「接近上限（仅危险时）+ X 后重置」。
 ///
-/// 不复用 Pane 用量条的 `AgentUsageMeterView`：那里的轨道固定 56pt，在浮动窗里会留下大片空白。
+/// 轨道宽度随浮动窗伸缩，不用固定宽度：窄窗里固定宽度会留下大片空白。
 /// 填充用 `CALayer` 直接设 frame，因为 Auto Layout 的 multiplier 不可变，改比例得重建约束。
 @MainActor
 final class UsageQuotaWindowRow: NSView {
@@ -216,6 +216,19 @@ final class UsageQuotaWindowRow: NSView {
   /// 是否有重置倒计时。没有的话这一行的文字不随时间变化。
   var hasCountdown: Bool { usageWindow.resetsAt != nil }
 
+  /// 悬停提示：窗口名与已用百分比 + 重置时刻（本地时间与相对时长）+ 服务端给的补充说明。
+  static func tooltip(for window: AgentUsageWindow, now: Date = Date()) -> String {
+    var parts = [L("\(window.displayLabel) 已用 \(String(Int(window.usedPercent.rounded())))%%")]
+    if let resetsAt = window.resetsAt {
+      let formatter = DateFormatter()
+      formatter.dateStyle = .short
+      formatter.timeStyle = .short
+      parts.append(L("重置于 \(formatter.string(from: resetsAt))（\(RelativeTime.string(since: resetsAt, relativeTo: now))）"))
+    }
+    if let detail = window.detail { parts.append(detail) }
+    return parts.joined(separator: "\n")
+  }
+
   init(window: AgentUsageWindow, accountID: String, displayMode: UsageDisplayMode) {
     usageWindow = window
     self.displayMode = displayMode
@@ -232,7 +245,7 @@ final class UsageQuotaWindowRow: NSView {
     resetLabel.identifier = NSUserInterfaceItemIdentifier("usage-quota-reset-\(suffix)")
     track.identifier = NSUserInterfaceItemIdentifier("usage-quota-track-\(suffix)")
     translatesAutoresizingMaskIntoConstraints = false
-    toolTip = AgentUsageMeterView.tooltip(for: window)
+    toolTip = Self.tooltip(for: window)
 
     let nameLabel = makeLabel(window.displayLabel, size: 11, color: AsterTheme.secondaryInk)
     // 窗口名按内容宽度占位，但比进度条更该保留：模型周窗口的名字可能较长，

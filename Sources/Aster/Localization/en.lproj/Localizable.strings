@@ -47,7 +47,6 @@
 "%@ 次失败" = "%@ failures";
 "%@ 正在等待确认或输入。" = "%@ is waiting for confirmation or input.";
 "%@ 没有可用的屏幕检测结果：该 Agent 没有检测清单，或当前终端不支持读屏。" = "%@ has no screen detection results: this Agent has no detection manifest, or the current terminal does not support screen reading.";
-"%@ 用量 " = "%@ usage ";
 "%@ 的主机密钥不在 known_hosts 中。Aster 不会自动接受主机密钥，请先手动 ssh 一次确认指纹。" = "The host key for %@ is not in known_hosts. Aster does not automatically accept host keys; please SSH manually once to verify the fingerprint.";
 "%@ 的主机密钥与 known_hosts 记录不符，连接已终止。请先确认是否为预期变更。" = "The host key for %@ does not match the known_hosts record; the connection has been terminated. Please verify whether this is an expected change.";
 "%@ 的每周配额，与总周配额分开计算" = "Weekly quota for %@, counted separately from the total weekly quota";
@@ -117,7 +116,6 @@
 "CPU" = "CPU";
 "CPU %@ · 内存 %@" = "CPU %@ · Memory %@";
 "CPU %@ · 内存 %@ · %@ 个进程" = "CPU %@ · Memory %@ · %@ processes";
-"Claude Code 运行时显示 5 小时 / 每周配额，Codex 另含当前会话上下文占比" = "Claude Code shows the 5-hour / weekly quota at runtime; Codex also includes the current session's context usage";
 "Comment 超过 8 KiB 上限。" = "Comment exceeds the 8 KiB limit.";
 "Composer 发送失败：%@" = "Composer send failed: %@";
 "Composer 草稿超过大小上限。" = "Composer draft exceeds the size limit.";
@@ -151,7 +149,6 @@
 "PTY 未取得可靠退出状态。最后画面已保留，可以重新启动 Shell。" = "PTY did not obtain a reliable exit status. The last screen has been preserved; you can restart the shell.";
 "Pane 处于 Vi/Hint 模式" = "Pane is in Vi/Hint mode";
 "Pane 处于只读模式" = "Pane is in read-only mode";
-"Pane 底部用量条" = "Pane Bottom Usage Bar";
 "Prompt 队列…" = "Prompt Queue…";
 "Quick Terminal 快捷键无法注册" = "Quick Terminal Shortcut Cannot Be Registered";
 "Rebase 到分支" = "Rebase onto Branch";
@@ -957,7 +954,6 @@
 "收起输出" = "Collapse Output";
 "改变这个 Task 的状态" = "Change this task's status";
 "数学运算符；仅在字体按双宽绘制时开启" = "Math Operators; Only Enabled When the Font Renders at Double Width";
-"数据更新于 %@" = "Data updated %@";
 "整理标签" = "Organize Tabs";
 "文件" = "File";
 "文件 Pane 只能打开本机文件。%@ 上的文件请在该机器的终端里操作；远端文件服务尚未提供。" = "File Pane can only open local files. For files on %@, please use the terminal on that Machine; remote file service is not yet available.";
@@ -1286,7 +1282,6 @@
 "滚过末尾" = "Scroll Past the End";
 "激活刚创建的虚拟环境" = "Activate the virtual environment you just created";
 "点击修改快捷键" = "Click to Change Shortcut";
-"点击在 %@ 中运行 %@ 查看统计" = "Click to run %@ in %@ to view stats";
 "点按 Dock 图标时，若没有窗口则自动新建" = "Automatically Create a New Window When Clicking the Dock Icon If None Exists";
 "焦点跟随鼠标" = "Focus Follows Mouse";
 "片段内容" = "Snippet Content";

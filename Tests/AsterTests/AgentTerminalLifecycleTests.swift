@@ -881,7 +881,7 @@ func agentSessionIsBoundFromSessionFileWithoutHooks() async throws {
     .appendingPathComponent("AgentLifecycleHome.\(UUID().uuidString)", isDirectory: true)
   try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
   defer { try? FileManager.default.removeItem(at: home) }
-  session.agentUsageHomeDirectory = home
+  session.agentHomeDirectory = home
   let terminal = try #require(
     session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
   defer { session.stop(immediately: true) }
@@ -927,7 +927,7 @@ func agentSessionFallsBackToContinueLatest() throws {
   let home = FileManager.default.temporaryDirectory
     .appendingPathComponent("AgentLifecycleHome.\(UUID().uuidString)", isDirectory: true)
   defer { try? FileManager.default.removeItem(at: home) }
-  session.agentUsageHomeDirectory = home
+  session.agentHomeDirectory = home
   let terminal = try #require(
     session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
   defer { session.stop(immediately: true) }
@@ -997,7 +997,7 @@ func endedAgentSessionIsRecordedAndSuggestedForProject() throws {
   let home = FileManager.default.temporaryDirectory
     .appendingPathComponent("AgentLifecycleHome.\(UUID().uuidString)", isDirectory: true)
   defer { try? FileManager.default.removeItem(at: home) }
-  session.agentUsageHomeDirectory = home
+  session.agentHomeDirectory = home
   let terminal = try #require(
     session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
   defer { session.stop(immediately: true) }
@@ -1031,4 +1031,43 @@ func endedAgentSessionIsRecordedAndSuggestedForProject() throws {
   // 记录随 defaults 持久化，新 AppModel 也能读到。
   let reloaded = AppModel(defaults: defaults)
   #expect(reloaded.latestProjectAgentSession(for: directory)?.sessionID == "sess-42")
+}
+
+// SessionEnd hook 是没有 shell integration（嵌套 shell、ssh、未装集成）时唯一能收掉
+// Agent 绑定的路径：陌生 PTY 上的 ended 不建立关联，其它 provider 的 ended 也不能拆掉
+// 当前关联，只有同一个 provider 的 ended 才按真实会话 ID 登记并清空。
+@Test("SessionEnd hook（ended）在没有 shell integration 时也能收掉 Agent 绑定")
+@MainActor
+func endedDirectiveClearsAgentBindingWithoutShellIntegration() async throws {
+  let (suiteName, defaults) = try agentLifecycleDefaults()
+  defer { defaults.removePersistentDomain(forName: suiteName) }
+  let preferences = AppPreferences(defaults: defaults)
+  let session = TerminalSession(workingDirectory: "/tmp")
+  session.claudeAccountQuota = offlineClaudeQuotaService()
+  let terminalView = try #require(session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
+  defer { session.stop(immediately: true) }
+
+  // 陌生 PTY 上的 ended：不建立关联，也不报错。
+  terminalView.onAgentTerminalDirective?(AgentTerminalDirective(provider: .claudeCode, signal: .ended))
+  #expect(session.activeAgentProvider == nil)
+
+  // 只有 hook、没有 OSC 133：SessionStart 建立关联。
+  terminalView.onAgentTerminalDirective?(
+    AgentTerminalDirective(provider: .claudeCode, signal: .idle, sessionID: "sess-ended-1"))
+  #expect(session.activeAgentProvider == .claudeCode)
+  #expect(session.activeAgentSessionID == "sess-ended-1")
+
+  // 其它 provider 的 ended 不能拆掉 Claude 的关联。
+  terminalView.onAgentTerminalDirective?(AgentTerminalDirective(provider: .codex, signal: .ended))
+  #expect(session.activeAgentProvider == .claudeCode)
+
+  // Claude 退出：SessionEnd → ended。会话按真实 ID 登记，provider 与状态全部收掉。
+  var ended: (AgentProvider, String?)?
+  session.onAgentSessionEnded = { provider, sessionID in ended = (provider, sessionID) }
+  terminalView.onAgentTerminalDirective?(AgentTerminalDirective(provider: .claudeCode, signal: .ended))
+  #expect(session.activeAgentProvider == nil)
+  #expect(session.activeAgentSessionID == nil)
+  #expect(session.agentTaskState == .idle)
+  #expect(ended?.0 == .claudeCode)
+  #expect(ended?.1 == "sess-ended-1")
 }

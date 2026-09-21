@@ -680,17 +680,12 @@ public struct AgentConfiguration: Codable, Equatable, Sendable {
   /// 是否可以把 hook 报告的 processing 覆盖为 awaiting-input。缺省开启。
   public var screenDetectionOverridesHook: Bool?
 
-  /// Pane 底部 Agent 用量条（Claude Code 的 5 小时 / 每周配额，Codex 另有会话上下文占比）。
-  /// Optional 保持旧配置可解码，缺省开启；关闭只隐藏条，不停用任何 Agent 集成。
-  public var usageBarEnabled: Bool?
-
   /// 系统状态栏的 AI 用量入口（图标 + 配额文字，点击打开用量浮动窗）。
   /// Optional 保持旧配置可解码；缺省关闭，关着时不起任何轮询、不发任何请求。
   public var usageMenuBarEnabled: Bool?
 
   public var resolvedScreenDetectionEnabled: Bool { screenDetectionEnabled ?? true }
   public var resolvedScreenDetectionOverridesHook: Bool { screenDetectionOverridesHook ?? true }
-  public var resolvedUsageBarEnabled: Bool { usageBarEnabled ?? true }
   public var resolvedUsageMenuBarEnabled: Bool { usageMenuBarEnabled ?? false }
 
   public func launchComponents(for provider: AgentProvider) -> [String] {

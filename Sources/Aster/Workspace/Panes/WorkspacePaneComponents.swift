@@ -449,12 +449,10 @@ final class ActivePaneHostView: NSView {
   private var externalDropZone: ExternalPaneDropZone?
   private weak var contentView: NSView?
   private var contentTopConstraint: NSLayoutConstraint?
-  /// 底部两槽：`bottomAccessory`（Prompt Queue，带内边距）在上，`statusStrip`（Agent 用量条，
-  /// 贴边）在最下。内容底边跟随最上面那个存在的槽，整条约束链每次整体重建。
+  /// 底部槽：`bottomAccessory`（Prompt Queue，带内边距）。内容底边跟随它，
+  /// 整条约束链每次整体重建。
   private var bottomAccessory: NSView?
   private var bottomAccessoryInset: CGFloat = 8
-  private var statusStrip: NSView?
-  private var statusStripHeight: CGFloat = 0
   private var bottomChain: [NSLayoutConstraint] = []
   /// 非聚焦 Pane 的内容整体透明度。用 alpha 而不是颜色遮罩：透明主题的 window 色
   /// 自带 alpha，`withAlphaComponent` 会把它画成近黑色块；alpha 褪色让内容朝下层
@@ -521,21 +519,7 @@ final class ActivePaneHostView: NSView {
     rebuildBottomChain()
   }
 
-  /// 安装或移除最底部的状态条（Agent 用量条）。与 Prompt Queue 一样占布局空间，贴 Pane
-  /// 左右与底边；高度用显式常量，避免首帧按固有尺寸再弹一次让终端收到两次 resize。
-  func setStatusStrip(_ strip: NSView?, height: CGFloat = 20) {
-    guard statusStrip !== strip else { return }
-    statusStrip?.removeFromSuperview()
-    statusStrip = strip
-    statusStripHeight = height
-    if let strip {
-      addSubview(strip)
-      strip.translatesAutoresizingMaskIntoConstraints = false
-    }
-    rebuildBottomChain()
-  }
-
-  /// 自上而下 content → [accessory] → [strip] → host 底边。每次整链重建，不残留半条约束。
+  /// 自上而下 content → [accessory] → host 底边。每次整链重建，不残留半条约束。
   private func rebuildBottomChain() {
     NSLayoutConstraint.deactivate(bottomChain)
     bottomChain.removeAll()
@@ -543,15 +527,6 @@ final class ActivePaneHostView: NSView {
     var chain: [NSLayoutConstraint] = []
     var floorAnchor = bottomAnchor
     var floorInset: CGFloat = 0
-    if let strip = statusStrip {
-      chain += [
-        strip.leadingAnchor.constraint(equalTo: leadingAnchor),
-        strip.trailingAnchor.constraint(equalTo: trailingAnchor),
-        strip.bottomAnchor.constraint(equalTo: bottomAnchor),
-        strip.heightAnchor.constraint(equalToConstant: statusStripHeight),
-      ]
-      floorAnchor = strip.topAnchor
-    }
     if let accessory = bottomAccessory {
       chain += [
         accessory.leadingAnchor.constraint(equalTo: leadingAnchor, constant: bottomAccessoryInset),

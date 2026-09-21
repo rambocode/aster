@@ -43,8 +43,8 @@ Aster 会长期承载多个终端、文件 Pane、Agent 状态和本机 CLI。�
    外接显示器风险。空闲停止必须等 `draw_now` completion 返回并重新 armed 后执行，不能在
    `drawNowCallback` 内同步调用 `CVDisplayLinkStop`。
 8. AI 用量监控（默认关闭）按可见性分三档：开关关闭时不存在任何对象；只开着状态栏图标时
-   唯一的周期性工作是 Claude 配额的被动轮询（300 秒一次，与 Pane 用量条共用同一条请求
-   时间线），红点由既有的 `pane.*` 事件驱动；token 扫描与每 3 秒一次的进程采样只在对应
+   唯一的周期性工作是 Claude 配额的被动轮询（300 秒一次；有 Claude Pane 在跑时同一条
+   请求时间线提高到 90 秒），红点由既有的 `pane.*` 事件驱动；token 扫描与每 3 秒一次的进程采样只在对应
    页面可见时运行，`suspend()` 必须取消全部任务。细节见 [AI 用量监控](ai-usage-monitor.md)。
 
 8. Ghostty surface 的可见性只有一个判定入口 `isSurfaceVisibleToUser`：视图在窗口里、没有隐藏

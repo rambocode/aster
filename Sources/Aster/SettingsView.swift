@@ -1553,12 +1553,6 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
           self?.preferences.configuration.agents.badgeAwaitingInput = value
         },
         toggleRow(
-          L("Pane 底部用量条"), L("Claude Code 运行时显示 5 小时 / 每周配额，Codex 另含当前会话上下文占比"),
-          value: preferences.configuration.agents.resolvedUsageBarEnabled
-        ) { [weak self] value in
-          self?.preferences.configuration.agents.usageBarEnabled = value
-        },
-        toggleRow(
           L("状态栏 AI 用量"), L("在系统状态栏显示 Claude、Codex 的配额，点击打开用量浮动窗"),
           value: preferences.configuration.agents.resolvedUsageMenuBarEnabled
         ) { [weak self] value in
@@ -3334,7 +3328,6 @@ extension SettingsViewController: WKNavigationDelegate {
       "agents.badgeProcessing": configuration.agents.badgeProcessing,
       "agents.badgeTaskComplete": configuration.agents.badgeTaskComplete,
       "agents.badgeAwaitingInput": configuration.agents.badgeAwaitingInput,
-      "agents.usageBarEnabled": configuration.agents.resolvedUsageBarEnabled,
       "agents.usageMenuBarEnabled": configuration.agents.resolvedUsageMenuBarEnabled,
       "agents.notifyTaskComplete": configuration.agents.notifyTaskComplete,
       "agents.notifyAwaitingInput": configuration.agents.notifyAwaitingInput,
@@ -3877,7 +3870,6 @@ extension SettingsViewController: WKNavigationDelegate {
     case "agents.badgeProcessing": preferences.configuration.agents.badgeProcessing = try bool()
     case "agents.badgeTaskComplete": preferences.configuration.agents.badgeTaskComplete = try bool()
     case "agents.badgeAwaitingInput": preferences.configuration.agents.badgeAwaitingInput = try bool()
-    case "agents.usageBarEnabled": preferences.configuration.agents.usageBarEnabled = try bool()
     case "agents.usageMenuBarEnabled": preferences.configuration.agents.usageMenuBarEnabled = try bool()
     case "agents.notifyTaskComplete": preferences.configuration.agents.notifyTaskComplete = try bool()
     case "agents.notifyAwaitingInput": preferences.configuration.agents.notifyAwaitingInput = try bool()

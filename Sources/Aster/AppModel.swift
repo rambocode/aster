@@ -2879,7 +2879,7 @@ final class AppModel: ObservableObject {
       return AgentSessionTitleTracker.Binding(
         provider: provider, sessionID: sessionID,
         workingDirectory: session.resolvedCurrentWorkingDirectory(),
-        homeDirectory: session.agentUsageHomeDirectory)
+        homeDirectory: session.agentHomeDirectory)
     }
     return nil
   }

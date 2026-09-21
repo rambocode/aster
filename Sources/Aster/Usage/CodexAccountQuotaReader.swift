@@ -4,9 +4,8 @@ import Foundation
 
 /// Codex 没有配额接口，账号用量只能从它自己写的 rollout JSONL 里回读。
 ///
-/// 与 `CodexUsageFileMonitor` 的分工：那个绑定某个 pane 正在跑的会话并持续监听；这里是
-/// 「当前账号还剩多少」的一次性快照，不认会话、不监听文件，由调用方在需要时（功能开启、
-/// 浮动窗打开）主动调用。全部是同步文件 IO，必须放在后台任务里执行。
+/// 这是「当前账号还剩多少」的一次性快照：不认会话、不监听文件，由调用方在需要时
+/// （功能开启、浮动窗打开）主动调用。全部是同步文件 IO，必须放在后台任务里执行。
 enum CodexAccountQuotaReader {
   /// 最多回看多少个日目录：当天没跑过 Codex 就往前找，但再旧的数据已经没有参考价值。
   static let maximumDayLookback = 7

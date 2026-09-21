@@ -2223,12 +2223,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     didSet { if oldValue != activeAgentProvider { syncClaudeAccountQuota() } }
   }
   /// session ID 通常比「Agent 在跑」的证据晚到：标题或屏幕先确认 TUI 已起来，rollout /
-  /// transcript 要等首条 prompt 落盘才能定位出 ID。`confirmAgentRuntime` 只在首次确认时
-  /// 跑一次同步，那一刻 ID 多半还是 nil，所以这里必须自己再驱动一次，否则 Codex 的
-  /// rollout 监听永远不会启动、用量条也就一直不出现。
-  @Published private(set) var activeAgentSessionID: String? {
-    didSet { if oldValue != activeAgentSessionID { syncCodexUsageMonitor() } }
-  }
+  /// transcript 要等首条 prompt 落盘才能定位出 ID。
+  @Published private(set) var activeAgentSessionID: String?
   @Published private(set) var agentTaskState = AgentTaskState.idle {
     // Claude 一轮结束（回到 idle 或等输入）说明刚有 API 响应记账，补拉一次账号配额。
     didSet {
@@ -2240,14 +2236,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     }
   }
   @Published private(set) var agentTaskCompletionUnread = false
-  /// 当前 Agent 的用量快照（5h / 周 / 会话上下文占比）。刻意不并入 TerminalTabItem 的
-  /// objectWillChange 聚合：轮询与 rollout 追加会高频重发，视图层按 Pane 订阅做原地更新。
-  @Published private(set) var agentUsage: AgentUsageSnapshot?
-  /// Codex 用量来自 rollout 文件，绑定 session 后监听；provider 结束时停止。
-  private var codexUsageMonitor: CodexUsageFileMonitor?
-  private var codexUsageMonitorSessionID: String?
-  /// Codex rollout 的根目录来源；测试注入临时 home。
-  var agentUsageHomeDirectory = FileManager.default.homeDirectoryForCurrentUser
+  /// Agent 会话文件（Claude transcript / Codex rollout）的根目录来源；测试注入临时 home。
+  var agentHomeDirectory = FileManager.default.homeDirectoryForCurrentUser
   /// Claude 账号级 5h / 周配额服务（官方 /usage 接口）；测试注入假服务。
   var claudeAccountQuota: ClaudeAccountQuotaService = .shared
   /// 当前 Agent 命令开始的时刻；会话文件定位据此只认「这次运行期间写过」的文件。
@@ -2255,7 +2245,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 没有 hook 上报 ID 时，从 Agent 落盘的会话文件里补绑定 session ID 的后台任务。
   private var agentSessionFileBindingTask: Task<Void, Never>?
   private var claudeAccountQuotaRetained = false
-  private var claudeAccountQuotaSubscription: AnyCancellable?
   /// Hook 是否已成为该 Pane 的权威状态源。Prompt Queue 的自动派发只接受 hook 结论：
   /// 输出探针推断出来的 idle 只说明屏幕安静了一会儿，据此写入会打断运行中的 TUI。
   var hasAuthoritativeAgentLifecycle: Bool { agentLifecycleIsAuthoritative }
@@ -2309,11 +2298,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// provider 只由标题补识别得出（弱证据）。命令结束、标题不再匹配且没有 hook /
   /// 屏幕 working·blocked 证据时要撤销，避免普通 shell 标题把 Pane 永久标成 Agent。
   private var agentProviderIsTitleEvidenceOnly = false
-  /// 本轮是否已确认 Agent 进程真的在跑：hook 指令、屏幕检测发布、标题匹配、会话文件绑定
-  /// 或服务端状态任一到达即为 true。命令首词识别只是「用户敲了 claude/codex」，此时 TUI
-  /// 还没起来（也可能只是 `claude --version`），用量条不能凭这点就显示。随 provider 生命周期重置。
-  private var agentRuntimeConfirmed = false
-
   private var foregroundPollTask: Task<Void, Never>?
   /// 诊断 seam：true 仅表示尚未取得权威 Shell Integration、仍需周期探测前台进程。
   /// UI 不依赖该值；回归测试用它防止 Ghostty 已有 OSC 133 时重新引入空闲轮询。
@@ -3447,7 +3431,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     activeAgentProvider = nil
     activeAgentSessionID = nil
     agentCommandStartedAt = nil
-    clearAgentUsage()
     agentTaskState = .idle
     clearFallbackAgentActivity()
     foregroundPollTask?.cancel()
@@ -3698,18 +3681,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     pendingCommandOrigin = .recipeReplay
     send(command)
     return true
-  }
-
-  /// 向正在运行的 Agent TUI 提交斜杠命令（如 `/stats`）。命令文本与回车分两次写入并
-  /// 间隔片刻：Claude Code 输入 `/` 后会弹出命令菜单，同一块数据里的回车会被当作粘贴
-  /// 或在菜单尚未过滤时选中错误项。不走 `send`：这不是 shell 命令，不该进入命令记录。
-  func submitAgentSlashCommand(_ command: String) {
-    guard activeAgentProvider != nil else { return }
-    typeText(command)
-    Task { @MainActor [weak self] in
-      try? await Task.sleep(for: .milliseconds(80))
-      self?.typeText("\r")
-    }
   }
 
   /// 把文本原样写入 PTY（不带回车）：用于把命令预填到提示符，执行与否由用户确认。
@@ -4139,7 +4110,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       agentProviderIsTitleEvidenceOnly = false
       if agentCommandStartedAt == nil { agentCommandStartedAt = Date() }
     }
-    confirmAgentRuntime()
     if let nativeSession = info.nativeSession, !nativeSession.isEmpty {
       activeAgentSessionID = nativeSession
     }
@@ -4409,8 +4379,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     reportAgentSessionEndedIfNeeded()
     activeAgentSessionID = nil
     agentCommandStartedAt = nil
-    // Pane 关闭：停掉用量监听。
-    clearAgentUsage()
     // 用户关闭 Pane/标签不会经过 GHOSTTY 的 child-exited 回调（destroySurface 直接
     // 释放并清空回调）。必须在拆 surface 前显式闭合记录会话，否则 sessions 行永远
     // 停在 active，挂在会话结束链上的 Memory 提炼永远不会发生。记录层按 id 幂等，
@@ -4602,7 +4570,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     agentCommandStartedAt = nil
     agentSessionFileBindingTask?.cancel()
     agentSessionFileBindingTask = nil
-    clearAgentUsage()
     agentTaskState = .idle
     agentTaskCompletionUnread = false
     agentLifecycleIsAuthoritative = false
@@ -4835,8 +4802,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private func detectAgentProviderFromTitle(_ title: String) {
     let detected = Self.agentProvider(fromTitle: title)
     if let activeAgentProvider {
-      // 标题与已识别的 provider 一致：TUI 已经起来，可以显示用量。
-      if detected == activeAgentProvider { confirmAgentRuntime() }
       guard agentProviderIsTitleEvidenceOnly, detected != activeAgentProvider,
         !agentLifecycleIsAuthoritative, !agentHasWorkEvidence
       else { return }
@@ -4846,7 +4811,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     guard hasRunningCommand, let detected else { return }
     activeAgentProvider = detected
     agentProviderIsTitleEvidenceOnly = true
-    confirmAgentRuntime()
     if agentCommandStartedAt == nil { agentCommandStartedAt = Date() }
     syncAgentSessionFileBinding()
     syncAgentScreenMonitor()
@@ -4858,7 +4822,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     stopAgentScreenMonitor()
     clearFallbackAgentActivity()
     activeAgentProvider = nil
-    clearAgentUsage()
     agentProviderIsTitleEvidenceOnly = false
     agentHasWorkEvidence = false
     updateAgentTaskState()
@@ -4947,7 +4910,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       } else {
         activeAgentProvider = nil
       }
-      clearAgentUsage()
       agentProviderIsTitleEvidenceOnly = false
       agentHasWorkEvidence = false
       agentLifecycleIsAuthoritative = false
@@ -4985,7 +4947,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       reportAgentSessionEndedIfNeeded()
       activeAgentProvider = nil
       agentCommandStartedAt = nil
-      clearAgentUsage()
       agentProviderIsTitleEvidenceOnly = false
       agentHasWorkEvidence = false
       activeAgentSessionID = nil
@@ -5366,8 +5327,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       if state.state == .working || state.state == .blocked {
         self.agentHasWorkEvidence = true
       }
-      // 屏幕上认出了 Agent 的界面（哪怕是 idle 提示）就是进程在跑的证据。
-      if state.state != .unknown { self.confirmAgentRuntime() }
       self.updateAgentTaskState()
     }
     monitor.onStartupGraceEnded = { [weak self, weak monitor] in
@@ -5486,7 +5445,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     }
     switch AgentSessionFileLocator.resolve(
       provider: provider, projectDirectory: resolvedCurrentWorkingDirectory(),
-      homeDirectory: agentUsageHomeDirectory, startedAfter: agentCommandStartedAt)
+      homeDirectory: agentHomeDirectory, startedAfter: agentCommandStartedAt)
     {
     case .session(let id): onAgentSessionEnded?(provider, id)
     case .latestUnknown: onAgentSessionEnded?(provider, nil)
@@ -5497,7 +5456,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// hook 没上报 session ID 时，从 Agent 自己写的会话文件里补绑定。
   ///
   /// Claude Code 2.1.x 的 hook 子进程没有控制终端，信号常常到不了 Aster；没装 hook 的用户
-  /// 更是从没有 ID。而会话标题、Fork / 复制 ID、Codex 用量、结束后的 resume 全都挂在
+  /// 更是从没有 ID。而会话标题、Fork / 复制 ID、结束后的 resume 全都挂在
   /// `activeAgentSessionID` 上。会话文件在首条 prompt 之后才出现，所以按递增间隔重试；
   /// hook 先到、provider 切换或命令结束都会取消任务。只支持 Claude / Codex。
   private func syncAgentSessionFileBinding() {
@@ -5509,7 +5468,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       return
     }
     guard agentSessionFileBindingTask == nil else { return }
-    let home = agentUsageHomeDirectory
+    let home = agentHomeDirectory
     let startedAt = agentCommandStartedAt
     agentSessionFileBindingTask = Task { @MainActor [weak self] in
       // 首条 prompt 通常几秒内发出；之后逐渐放慢，长时间空闲的 TUI 不值得每秒扫目录。
@@ -5538,13 +5497,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     }
   }
 
-  /// 把会话文件定位到的 ID 当作精确绑定：与 hook 上报走同一条下游（标题解析、记录、Codex 用量）。
+  /// 把会话文件定位到的 ID 当作精确绑定：与 hook 上报走同一条下游（标题解析、记录）。
   private func bindAgentSessionID(_ sessionID: String, provider: AgentProvider) {
     agentSessionFileBindingTask = nil
     activeAgentSessionID = sessionID
     eventRecorder?.agentChanged(id: id, provider: provider.rawValue, agentSessionID: sessionID)
-    // 会话文件只会由 Agent 自己写出：找到它就等于进程在跑。
-    confirmAgentRuntime()
   }
 
   /// 用户在 prompt 出现前接管终端（输入任何内容）时放弃自动重连。
@@ -5636,7 +5593,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     if let sessionID = directive.sessionID { activeAgentSessionID = sessionID }
     if agentCommandStartedAt == nil { agentCommandStartedAt = Date() }
     syncAgentSessionFileBinding()
-    confirmAgentRuntime()
     agentLifecycleIsAuthoritative = true
     clearFallbackAgentActivity()
     eventRecorder?.agentChanged(
@@ -5659,78 +5615,31 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     updateAgentTaskState()
   }
 
-  /// provider 变为 Claude 时引用账号配额服务并订阅；离开 Claude 时释放。
+  /// provider 变为 Claude 时引用账号配额服务，离开 Claude 时释放。
+  ///
+  /// 这里只决定轮询节奏：状态栏 AI 用量面板与它共用同一条 `/usage` 请求时间线，
+  /// 有 Claude 在跑时提高频率；Pane 自身不再消费这份数据。
   private func syncClaudeAccountQuota() {
     let wantsQuota = activeAgentProvider == .claudeCode
     if wantsQuota, !claudeAccountQuotaRetained {
       claudeAccountQuotaRetained = true
       claudeAccountQuota.retain()
-      claudeAccountQuotaSubscription = claudeAccountQuota.$windows
-        .receive(on: RunLoop.main)
-        .sink { [weak self] _ in self?.recomputeClaudeUsage() }
     } else if !wantsQuota, claudeAccountQuotaRetained {
       claudeAccountQuotaRetained = false
-      claudeAccountQuotaSubscription = nil
       claudeAccountQuota.release()
     }
   }
 
-  /// 测试直接注入快照（绕过 rollout / 网络）。provider 必须已识别且一致。
-  func injectUsageForTesting(_ snapshot: AgentUsageSnapshot) {
-    guard activeAgentProvider == snapshot.provider else { return }
-    if agentUsage != snapshot { agentUsage = snapshot }
-  }
-
-  /// Claude 快照 = 账号级 5h / 周窗口；还没拿到数据时不显示条。
-  private func recomputeClaudeUsage() {
-    guard activeAgentProvider == .claudeCode, claudeAccountQuotaRetained, agentRuntimeConfirmed
-    else { return }
-    let snapshot = claudeAccountQuota.windows.map {
-      AgentUsageSnapshot(
-        provider: .claudeCode, windows: $0, updatedAt: claudeAccountQuota.fetchedAt ?? Date())
-    }
-    // `==` 忽略 updatedAt，缓存回填后拿到同样数字时不会重绘；这里只在数值变化时发布。
-    if agentUsage != snapshot { agentUsage = snapshot }
-  }
-
-  /// Codex 绑定 session 后监听其 rollout；session 变化时重建，非 Codex 或无 session 时停止。
-  private func syncCodexUsageMonitor() {
-    guard activeAgentProvider == .codex, agentRuntimeConfirmed, let sessionID = activeAgentSessionID
-    else {
-      stopCodexUsageMonitor()
-      return
-    }
-    guard codexUsageMonitorSessionID != sessionID else { return }
-    stopCodexUsageMonitor()
-    codexUsageMonitorSessionID = sessionID
-    let monitor = CodexUsageFileMonitor(
-      agentSessionID: sessionID,
-      homeDirectory: agentUsageHomeDirectory
-    ) { [weak self] snapshot in
-      guard let self, self.activeAgentProvider == .codex else { return }
-      if self.agentUsage != snapshot { self.agentUsage = snapshot }
-    }
-    codexUsageMonitor = monitor
-    monitor.start()
-  }
-
-  private func stopCodexUsageMonitor() {
-    codexUsageMonitor?.stop()
-    codexUsageMonitor = nil
-    codexUsageMonitorSessionID = nil
-  }
-
   /// hook 报告 Agent 进程已退出（SessionEnd）：按 commandFinished 的 Agent 半边收尾——
-  /// 登记会话、清 provider / session / 用量、停读屏、状态回 idle。有 shell integration 时
+  /// 登记会话、清 provider / session、停读屏、状态回 idle。有 shell integration 时
   /// 随后的 commandFinished 会再走一遍，各步对 nil provider 都是 no-op；没有 shell
-  /// integration（嵌套 shell、ssh、未装集成）时这是唯一能收掉用量条与 Agent 徽章的路径。
+  /// integration（嵌套 shell、ssh、未装集成）时这是唯一能收掉 Agent 徽章的路径。
   private func finishAgentLifecycle() {
     stopAgentScreenMonitor()
     reportAgentSessionEndedIfNeeded()
     activeAgentProvider = nil
     activeAgentSessionID = nil
     agentCommandStartedAt = nil
-    clearAgentUsage()
     agentProviderIsTitleEvidenceOnly = false
     agentHasWorkEvidence = false
     agentLifecycleIsAuthoritative = false
@@ -5739,22 +5648,6 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     agentTaskState = .idle
     agentTaskCompletionUnread = false
     outlineChanged.send()
-  }
-
-  /// provider 生命周期结束：停掉 Codex 监听并让用量条消失；下一轮要重新取得运行证据。
-  private func clearAgentUsage() {
-    agentRuntimeConfirmed = false
-    stopCodexUsageMonitor()
-    if agentUsage != nil { agentUsage = nil }
-  }
-
-  /// 首次拿到「Agent 进程在跑」的证据：放行用量条——Claude 立刻用账号配额的共享结果
-  /// 重算，Codex 开始监听 rollout。重复调用是 no-op。
-  private func confirmAgentRuntime() {
-    guard !agentRuntimeConfirmed, activeAgentProvider != nil else { return }
-    agentRuntimeConfirmed = true
-    recomputeClaudeUsage()
-    syncCodexUsageMonitor()
   }
 
   private func showCompletedFlash() {
@@ -5895,7 +5788,6 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
       self.activeAgentProvider = nil
       self.activeAgentSessionID = nil
       self.agentCommandStartedAt = nil
-      self.clearAgentUsage()
       self.agentTaskState = .idle
       self.clearFallbackAgentActivity()
       self.clearSSHRemoteEndpoint()

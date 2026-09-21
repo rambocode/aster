@@ -85,10 +85,6 @@ final class WorkspaceViewController: NSViewController {
   /// 标签拖入 Pane 时的落点高亮层；只在拖动期间存在。
   private weak var tabDropOverlay: PaneDropOverlayView?
   private var editorTextViews: [UUID: NSTextView] = [:]
-  /// 每个终端 Pane 的 Agent 用量条订阅与视图；与 paneHosts 同生命周期，refresh() 整体清空。
-  /// 不复用 tabSubscriptions：按 paneID 才能定位到具体 host 做原地更新。
-  private var paneUsageSubscriptions: [UUID: AnyCancellable] = [:]
-  private var usageBars: [UUID: AgentUsageBarView] = [:]
   /// Prompt Queue 叠在单个活动 Pane 底部，不参与外层工作区 stack 的尺寸推导；这样
   /// 显隐不会拆下其它 Pane 或重启终端容器。
   private weak var promptQueueBar: PromptQueueBarView?
@@ -790,7 +786,7 @@ final class WorkspaceViewController: NSViewController {
     let shell = preferences.configuration.shell
     return [
       shell.badgeExitStatus, shell.resolvedBadgeCommandFinish, shell.resolvedBadgeCommandFailure,
-      shell.badgeAwaitingInput, preferences.configuration.agents.resolvedUsageBarEnabled,
+      shell.badgeAwaitingInput,
     ]
   }
 
@@ -841,8 +837,6 @@ final class WorkspaceViewController: NSViewController {
     workspaceTitlePopover = nil
     retainedObjects.removeAll()
     paneHosts.removeAll()
-    paneUsageSubscriptions.removeAll()
-    usageBars.removeAll()
     editorTextViews.removeAll()
     tabRowsByID.removeAll(keepingCapacity: true)
     // 设置控制器跨展示复用，保留分类、搜索和滚动位置；只重建工作区临时子控制器。
@@ -2414,9 +2408,6 @@ final class WorkspaceViewController: NSViewController {
       content = controller.view
     }
     host.installContent(content)
-    if descriptor.kind == .terminal, let session = runtime.terminalSession {
-      installUsageBar(on: host, session: session, paneID: descriptor.id)
-    }
     // 单 Pane 无处可拖；只有分屏时安装顶部拖动把手。Pane 背景始终由主题负责，
     // 非聚焦 Pane 的变灰由 host 内容 alpha 表达，不叠加改变颜色的遮罩。
     if tab.layout.allPanes.count > 1 {
@@ -2432,39 +2423,6 @@ final class WorkspaceViewController: NSViewController {
       }
     }
     return host
-  }
-
-  /// 订阅 Pane 会话的用量快照，把用量条作为 host 最底部的状态条挂上。对所有有 Agent 的
-  /// Pane 生效（不限焦点 Pane）；`$agentUsage` 订阅即回放当前值，整树重建后立即恢复。
-  /// 关闭设置时不订阅，配置变化触发的 refresh() 即移除全部用量条。
-  private func installUsageBar(on host: ActivePaneHostView, session: TerminalSession, paneID: UUID) {
-    guard preferences.configuration.agents.resolvedUsageBarEnabled else { return }
-    paneUsageSubscriptions[paneID] = session.$agentUsage
-      .removeDuplicates()
-      .sink { [weak self, weak host, weak session] snapshot in
-        guard let self, let host, let session else { return }
-        self.applyUsageSnapshot(snapshot, on: host, paneID: paneID, session: session)
-      }
-  }
-
-  private func applyUsageSnapshot(
-    _ snapshot: AgentUsageSnapshot?, on host: ActivePaneHostView, paneID: UUID, session: TerminalSession
-  ) {
-    guard let snapshot else {
-      usageBars[paneID] = nil
-      host.setStatusStrip(nil)
-      return
-    }
-    if let bar = usageBars[paneID] {
-      bar.apply(snapshot)
-      return
-    }
-    let bar = AgentUsageBarView(snapshot: snapshot)
-    bar.onOpenStats = { [weak session] command in
-      session?.submitAgentSlashCommand(command)
-    }
-    usageBars[paneID] = bar
-    host.setStatusStrip(bar, height: AgentUsageBarView.preferredHeight)
   }
 
   /// Finder/浏览器/其它 App 的标准拖放入口。目录在绿色内半区创建继承该目录的终端，

@@ -282,7 +282,6 @@
         row("agents.badgeProcessing", t("处理中显示角标"), t("Agent 执行任务期间显示状态")),
         row("agents.badgeTaskComplete", t("任务完成显示角标"), t("完成一轮任务后显示圆点")),
         row("agents.badgeAwaitingInput", t("等待输入显示角标"), t("Agent 等待批准或输入时显示状态")),
-        row("agents.usageBarEnabled", t("Pane 底部显示用量条"), t("Claude Code 运行时显示 5 小时 / 每周配额（用 Claude Code 的登录凭据读官方 /usage，与 Claude 的 /usage 面板同值；首次会请求一次钥匙串访问授权），Codex 另含当前会话上下文占比；关闭只隐藏，不改动 Agent 配置")),
         row("agents.usageMenuBarEnabled", t("状态栏 AI 用量"), t("在系统状态栏显示 Claude、Codex 的配额，点击打开用量浮动窗。")),
         row("agents.notifyTaskComplete", t("任务完成时通知"), t("Agent 完成任务后发送系统通知")),
         row("agents.notifyAwaitingInput", t("等待输入时通知"), t("Agent 等待用户时发送系统通知")),

@@ -47,7 +47,6 @@
 "%@ 次失败" = "%@ échecs";
 "%@ 正在等待确认或输入。" = "%@ attend une confirmation ou une saisie.";
 "%@ 没有可用的屏幕检测结果：该 Agent 没有检测清单，或当前终端不支持读屏。" = "%@ n’a aucun résultat de détection d’écran : cet Agent n’a pas de manifeste de détection, ou le terminal actuel ne prend pas en charge la lecture d’écran.";
-"%@ 用量 " = "Utilisation de %@ ";
 "%@ 的主机密钥不在 known_hosts 中。Aster 不会自动接受主机密钥，请先手动 ssh 一次确认指纹。" = "La clé d'hôte de %@ n'est pas dans known_hosts. Aster n'accepte pas automatiquement les clés d'hôte ; veuillez d'abord vous connecter manuellement en SSH pour vérifier l'empreinte.";
 "%@ 的主机密钥与 known_hosts 记录不符，连接已终止。请先确认是否为预期变更。" = "La clé d'hôte de %@ ne correspond pas à l'enregistrement known_hosts ; la connexion a été interrompue. Veuillez vérifier s'il s'agit d'un changement attendu.";
 "%@ 的每周配额，与总周配额分开计算" = "Quota hebdomadaire pour %@, calculé séparément du quota hebdomadaire total";
@@ -117,7 +116,6 @@
 "CPU" = "CPU";
 "CPU %@ · 内存 %@" = "CPU %@ · Mémoire %@";
 "CPU %@ · 内存 %@ · %@ 个进程" = "CPU %@ · Mémoire %@ · %@ processus";
-"Claude Code 运行时显示 5 小时 / 每周配额，Codex 另含当前会话上下文占比" = "Claude Code affiche le quota de 5 heures / hebdomadaire à l'exécution ; Codex inclut aussi le taux d'utilisation du contexte de la session en cours";
 "Comment 超过 8 KiB 上限。" = "Le commentaire dépasse la limite de 8 Kio.";
 "Composer 发送失败：%@" = "Échec de l'envoi Composer : %@";
 "Composer 草稿超过大小上限。" = "Le brouillon Composer dépasse la limite de taille.";
@@ -151,7 +149,6 @@
 "PTY 未取得可靠退出状态。最后画面已保留，可以重新启动 Shell。" = "Le PTY n'a pas obtenu de statut de sortie fiable. Le dernier écran a été conservé ; vous pouvez redémarrer le Shell.";
 "Pane 处于 Vi/Hint 模式" = "Le panneau est en mode Vi/Hint";
 "Pane 处于只读模式" = "Le panneau est en lecture seule";
-"Pane 底部用量条" = "Barre d'utilisation en bas du panneau";
 "Prompt 队列…" = "File d’attente Prompt…";
 "Quick Terminal 快捷键无法注册" = "Impossible d’enregistrer le raccourci Quick Terminal";
 "Rebase 到分支" = "Rebaser sur la branche";
@@ -957,7 +954,6 @@
 "收起输出" = "Réduire la sortie";
 "改变这个 Task 的状态" = "Modifier le statut de cette tâche";
 "数学运算符；仅在字体按双宽绘制时开启" = "Opérateurs mathématiques ; activé uniquement quand la police est rendue en pleine chasse";
-"数据更新于 %@" = "Données mises à jour %@";
 "整理标签" = "Organiser les onglets";
 "文件" = "Fichier";
 "文件 Pane 只能打开本机文件。%@ 上的文件请在该机器的终端里操作；远端文件服务尚未提供。" = "Le Panneau de fichiers ne peut ouvrir que des fichiers locaux. Pour les fichiers sur %@, utilisez le terminal de cette Machine ; le service de fichiers distant n'est pas encore disponible.";
@@ -1286,7 +1282,6 @@
 "滚过末尾" = "Défiler au-delà de la fin";
 "激活刚创建的虚拟环境" = "Activer l’environnement virtuel que vous venez de créer";
 "点击修改快捷键" = "Cliquer pour modifier le raccourci";
-"点击在 %@ 中运行 %@ 查看统计" = "Cliquer pour exécuter %@ dans %@ et afficher les statistiques";
 "点按 Dock 图标时，若没有窗口则自动新建" = "Créer automatiquement une nouvelle fenêtre en cliquant sur l'icône du Dock s'il n'y en a aucune";
 "焦点跟随鼠标" = "Le focus suit la souris";
 "片段内容" = "Contenu de l'extrait";

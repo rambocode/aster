@@ -187,7 +187,7 @@ func claudeSessionTitleAppearsOnTabAfterFirstPrompt() async throws {
   model.ensureInitialTab()
   let tab = try #require(model.selectedTab)
   let session = try #require(tab.activeSession)
-  session.agentUsageHomeDirectory = home.url
+  session.agentHomeDirectory = home.url
   let terminal = try #require(
     session.makeTerminalView(preferences: preferences) as? AsterTerminalView)
   defer { session.stop(immediately: true) }

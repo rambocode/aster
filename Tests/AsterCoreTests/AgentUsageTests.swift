@@ -130,22 +130,18 @@ struct AgentUsageTests {
     #expect(zero == nil)
   }
 
-  @Test("用量条配置缺键时默认开启")
-  func agentConfigurationUsageBarDefaultsToEnabled() throws {
-    // 旧配置文件没有 usageBarEnabled 键：解码后应视为开启。
+  @Test("状态栏 AI 用量缺键时默认关闭，旧配置里的遗留键不影响解码")
+  func agentConfigurationUsageMenuBarDefaultsToDisabled() throws {
+    // 旧配置文件可能仍带着已移除的 usageBarEnabled 键：解码必须忽略它而不是失败。
     let legacy = Data("""
       {"enabledAgents":["claude"],"badgeProcessing":true,"badgeTaskComplete":true,"badgeAwaitingInput":true,\
-      "notifyTaskComplete":true,"notifyAwaitingInput":true,"preventSleepWhileProcessing":false,"resumeSessions":true}
+      "usageBarEnabled":true,"notifyTaskComplete":true,"notifyAwaitingInput":true,\
+      "preventSleepWhileProcessing":false,"resumeSessions":true}
       """.utf8)
     let decoded = try JSONDecoder().decode(AgentConfiguration.self, from: legacy)
-    #expect(decoded.usageBarEnabled == nil)
-    #expect(decoded.resolvedUsageBarEnabled)
-    #expect(AgentConfiguration().resolvedUsageBarEnabled)
-    var disabled = decoded
-    disabled.usageBarEnabled = false
-    #expect(!disabled.resolvedUsageBarEnabled)
+    #expect(decoded.badgeProcessing)
 
-    // 状态栏 AI 用量是后加的入口，缺键时必须默认关闭：开着就会起被动轮询。
+    // 状态栏 AI 用量缺键时必须默认关闭：开着就会起被动轮询。
     #expect(decoded.usageMenuBarEnabled == nil)
     #expect(!decoded.resolvedUsageMenuBarEnabled)
     #expect(!AgentConfiguration().resolvedUsageMenuBarEnabled)

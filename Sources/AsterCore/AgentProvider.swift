@@ -59,16 +59,6 @@ public enum AgentProvider: String, CaseIterable, Codable, Equatable, Sendable {
   }
 
   /// 面向用户的产品名；只用于展示，不参与命令拼装或 provider 检测。
-  /// 点击用量条时提交给 Agent 的斜杠命令，用于打开它自己的用量/统计面板。
-  /// 只有确认存在该命令的 provider 才提供；nil 表示用量条不可点击。
-  public var usageStatsCommand: String? {
-    switch self {
-    case .claudeCode: "/stats"
-    case .codex: "/status"
-    default: nil
-    }
-  }
-
   public var displayName: String {
     switch self {
     case .claudeCode: "Claude Code"
