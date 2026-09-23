@@ -61,7 +61,10 @@ pub const Filter = struct {
                     } else if (byte == 0x1b) self.state = .osc_escape else if (self.osc_header) {
                         if (byte == ';') {
                             self.osc_header = false;
-                            self.osc_allowed = self.osc_code == 0 or self.osc_code == 1 or self.osc_code == 2 or self.osc_code == 7 or self.osc_code == 8;
+                            // 133（shell 集成提示符标记）与 6974（Aster 私有 Agent/徽章指令）只改客户端
+                            // 状态、没有宿主副作用；不放行的话受管 Pane 收不到命令边界与 hook 信号。
+                            self.osc_allowed = self.osc_code == 0 or self.osc_code == 1 or self.osc_code == 2 or self.osc_code == 7 or self.osc_code == 8 or
+                                self.osc_code == 133 or self.osc_code == 6974;
                         } else if (byte >= '0' and byte <= '9' and self.osc_code < 10000) {
                             self.osc_code = self.osc_code * 10 + byte - '0';
                         } else {
@@ -140,7 +143,7 @@ fn safeCSI(parameters: []const u8, final: u8) bool {
 }
 
 test "ordinary terminal drawing is eligible but queries and host side effects are not" {
-    for ([_][]const u8{ "hello中\r\n", "\x1b[2;3H\x1b[31mred\x1b[0m", "\x1b[?2004h", "\x1b[>1u", "\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\" }) |value| {
+    for ([_][]const u8{ "hello中\r\n", "\x1b[2;3H\x1b[31mred\x1b[0m", "\x1b[?2004h", "\x1b[>1u", "\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\", "\x1b]133;A\x07prompt", "\x1b]6974;AgentState=processing;Provider=codex;SessionID=abc\x07" }) |value| {
         var filter: Filter = .{};
         try std.testing.expect(filter.consume(value));
     }

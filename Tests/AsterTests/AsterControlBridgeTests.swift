@@ -28,12 +28,18 @@ struct AsterControlBridgeTests {
     #expect(environment["ASTER_ENV"] == "1")
     #expect(environment["ASTER_PANE_ID"] == "w1:p1")
     #expect(environment["ASTER_BIN_PATH"] == "/usr/local/bin/aster-cli")
-    // 完整环境拼接：ASTER_SESSION_ID 仍是 UUID，ASTER_PANE_ID 被短 ID 覆盖。
+    // 完整环境拼接：ASTER_PANE_ID 被短 ID 覆盖；ASTER_SESSION_ID 是 Pane 描述符 UUID
+    //（跨重启稳定），而不是会话对象 ID——后台保活的 shell 重启后 hook 仍要能按它命中 Pane。
+    let paneUUID = try #require(workspace.model.selectedTab?.activePaneID)
+    #expect(context.paneUUID == paneUUID.uuidString)
     let full = TerminalIdentityPolicy.environment(
       inherited: [:], term: "xterm", version: "1", paneIdentifier: session.id.uuidString,
       bundledTerminfoDirectories: [], controlContext: context)
-    #expect(full["ASTER_SESSION_ID"] == session.id.uuidString)
+    #expect(full["ASTER_SESSION_ID"] == paneUUID.uuidString)
+    #expect(full["ASTER_SESSION_ID"] != session.id.uuidString)
     #expect(full["ASTER_PANE_ID"] == "w1:p1")
+    // 旧 selector 形态 `p_<描述符 UUID>` 必须解析到同一个 pane。
+    #expect(try bridge.resolve(selector: "p_\(paneUUID.uuidString)").runtime.id == paneUUID)
     // 未接桥的模型：不注入。
     let bare = TerminalIdentityPolicy.environment(
       inherited: [:], term: "xterm", version: "1", paneIdentifier: "x", bundledTerminfoDirectories: [])

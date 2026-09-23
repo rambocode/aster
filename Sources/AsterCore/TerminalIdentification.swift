@@ -57,6 +57,7 @@ public struct TerminalControlContext: Equatable, Sendable {
   public static let windowIDKey = "ASTER_WINDOW_ID"
   public static let tabIDKey = "ASTER_TAB_ID"
   public static let paneIDKey = "ASTER_PANE_ID"
+  public static let sessionIDKey = "ASTER_SESSION_ID"
 
   public let windowID: String
   public let tabID: String
@@ -64,23 +65,35 @@ public struct TerminalControlContext: Equatable, Sendable {
   public let socketPath: String
   /// `aster-cli` 二进制路径；开发构建（swift run）可能没有，此时不注入 ASTER_BIN_PATH。
   public let binaryPath: String?
+  /// Pane 描述符 UUID（持久化布局里的 `PaneDescriptor.id`，跨重启恢复保持不变）。
+  ///
+  /// 后台保活的受管终端在 App 重启后由新的 `TerminalSession` 重新附着，shell 环境里
+  /// 的值却是当初启动时写入的：若写的是 `TerminalSession.id`，恢复后 hook 用
+  /// `p_<UUID>` 上报就会 not_found，只能退回写 tty 的通道。写描述符 UUID 则始终能命中。
+  public let paneUUID: String?
 
-  public init(windowID: String, tabID: String, paneID: String, socketPath: String, binaryPath: String?) {
+  public init(
+    windowID: String, tabID: String, paneID: String, socketPath: String, binaryPath: String?,
+    paneUUID: String? = nil
+  ) {
     self.windowID = windowID
     self.tabID = tabID
     self.paneID = paneID
     self.socketPath = socketPath
     self.binaryPath = binaryPath
+    self.paneUUID = paneUUID
   }
 
   /// 写入环境字典。`ASTER_PANE_ID` 从 0.4.x 的 UUID 升级为短 ID；`ASTER_SESSION_ID` 保留 UUID
-  /// 供旧脚本使用，两者由服务端 selector 解析同时兼容。
+  /// 供旧脚本使用，两者由服务端 selector 解析同时兼容。有 `paneUUID` 时 `ASTER_SESSION_ID`
+  /// 取跨重启稳定的 Pane 描述符 UUID，覆盖调用方传入的会话对象 ID。
   public func apply(to environment: inout [String: String]) {
     environment[Self.environmentFlagKey] = "1"
     environment[Self.socketPathKey] = socketPath
     environment[Self.windowIDKey] = windowID
     environment[Self.tabIDKey] = tabID
     environment[Self.paneIDKey] = paneID
+    if let paneUUID, !paneUUID.isEmpty { environment[Self.sessionIDKey] = paneUUID }
     if let binaryPath { environment[Self.binaryPathKey] = binaryPath }
   }
 }
@@ -160,8 +173,9 @@ public enum TerminalIdentityPolicy {
     result["ASTER_PANE_ID"] = paneIdentifier
     // 0.4.x 已公开 ASTER_SESSION_ID；保留别名避免现有脚本升级后失效。
     result["ASTER_SESSION_ID"] = paneIdentifier
-    // 控制协议上下文最后写入：它会用短 ID 覆盖 ASTER_PANE_ID。第二实例（socket 被占）
-    // 不提供 context，则不注入 ASTER_ENV，CLI 会拒绝 agent.* 调用。
+    // 控制协议上下文最后写入：它会用短 ID 覆盖 ASTER_PANE_ID，并把 ASTER_SESSION_ID 换成
+    // 跨重启稳定的 Pane 描述符 UUID。第二实例（socket 被占）不提供 context，则不注入
+    // ASTER_ENV，CLI 会拒绝 agent.* 调用。
     controlContext?.apply(to: &result)
 
     var terminfoDirectories: [String] = bundledTerminfoDirectories.filter { !$0.isEmpty }

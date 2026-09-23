@@ -3305,6 +3305,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         case .clear: explicitBadge = nil
         }
       } else if let directive = AgentTerminalDirective(payload: value) {
+        // 显示桥会把 hook 写进 PTY 的 OSC 6974 透传过来。远端受管 Pane 的 Agent 状态由
+        // 服务端解析同一条指令后经 agent.changed 权威下发（P5），这里再消费一次会和它
+        // 竞争；本机受管 Pane 没有事件订阅，这条透传就是 hook 唯一的回退通道
+        //（例如 shell 环境里残留的旧 Pane ID 让 socket 上报 not_found 时）。
+        guard remoteManagedMachineLabel == nil else { return }
         handleAgentTerminalDirective(directive)
       }
     default:

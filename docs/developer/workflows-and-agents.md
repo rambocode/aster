@@ -137,8 +137,10 @@ socket（目录 `0700`、socket `0600`，`accept` 后用 `getpeereid` 校验对�
 
 **环境变量**：每个 pane 子进程注入 `ASTER_ENV=1`、`ASTER_SOCKET_PATH`、`ASTER_BIN_PATH`
 （`aster-cli` 路径，开发构建可能缺省）、`ASTER_WINDOW_ID` / `ASTER_TAB_ID` / `ASTER_PANE_ID`（短 ID），
-并保留 0.4.x 的 `ASTER_SESSION_ID` 别名（见 `TerminalControlContext`）。socket 被另一实例占用时
-第二个实例不注入 `ASTER_ENV`。
+并保留 0.4.x 的 `ASTER_SESSION_ID` 别名（见 `TerminalControlContext`）：它的值是持久化布局里的
+Pane 描述符 UUID，跨 App 重启稳定——后台保活的受管 shell 在重启后由新的 `TerminalSession`
+重新附着，环境变量却是启动时写死的，hook 用 `p_<UUID>` 上报必须仍能命中该 Pane（短 ID 重启后
+会重排，不能用于持久引用）。socket 被另一实例占用时第二个实例不注入 `ASTER_ENV`。
 
 **安全门禁**（`AsterControlWriteGate`，与旧 CLI 的 `permitsWorkflowCLIWrite` 同源）：写方法需
 「设置 → 控制 → IPC 允许发送输入」，否则 `write_not_allowed`；SSH/sudo 等敏感会话还需

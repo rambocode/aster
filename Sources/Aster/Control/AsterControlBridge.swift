@@ -283,7 +283,7 @@ final class AsterControlBridge {
     let pane = registry.paneID(for: paneID, inWindow: model.windowID)
     return TerminalControlContext(
       windowID: windowID.description, tabID: tab.description, paneID: pane.description,
-      socketPath: socketPath, binaryPath: binaryPath)
+      socketPath: socketPath, binaryPath: binaryPath, paneUUID: paneID.uuidString)
   }
 
   /// 全部已登记的 pane（按窗口号、标签号、布局顺序）。
