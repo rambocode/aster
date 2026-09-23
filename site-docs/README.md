@@ -14,6 +14,8 @@ npm run docs:build   # 构建到 ../site/docs/
 - 落地页在 `../site/index.html`（手写静态，不经构建）；文档站构建输出到
   `../site/docs/`，两者合起来以 `site/` 为根目录部署或本地预览
   （`./scripts/serve-site.sh`）。
+- `docs:build` 同时生成 `site/docs/sitemap.xml`；站点根目录的
+  `site/sitemap.xml` 汇总首页与文档站两个 sitemap。新增文档页会随构建自动进入索引。
 - 新增章节：直接在 `help.md` 里加「## 标题」即可出现在文档站；想要固定的
   英文 slug 和侧栏分组，在 `scripts/split-help.mjs` 的 `SLUGS` / `GROUPS`
   里补一行，否则会以 `section-NN` 落到「其他」分组。

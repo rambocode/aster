@@ -2,7 +2,15 @@
 
 [English](README.md) | 简体中文
 
-Aster 是一个完全使用 AppKit 构建的原生 macOS 终端工作区，采用轻量标签导航、弱化标题栏、纸张色画布和克制的苔绿色状态反馈。它使用独立品牌、图标和从零编写的工作区实现，不包含 Otty 的品牌资源或私有代码。
+**在一个原生 macOS 工作区里并排使用终端、文件和预览。** Aster 以 AppKit 构建，
+用递归分屏把基于 Ghostty 的终端、文件浏览器、编辑器和预览放在一起，支持 macOS 14 及以上版本。
+
+[查看官网](https://aster.foo/) · [下载最新 DMG](https://github.com/rambocode/aster/releases/latest) · [阅读使用帮助](docs/user/help.md)
+
+新建标签后，用 `⌘D` 或 `⇧⌘D` 分屏，再用 `⌘O` 打开文件。工作区可保存为
+`.asterrecipe`，并在下次启动时恢复。
+
+Aster 使用独立品牌、图标和从零编写的工作区实现，不包含 Otty 的品牌资源或私有代码。
 
 ## 能力
 

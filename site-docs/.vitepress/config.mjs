@@ -16,6 +16,7 @@ export default defineConfig({
   // 官网整体以 site/ 为根：落地页在 /，文档站构建到 site/docs/
   base: "/docs/",
   outDir: "../site/docs",
+  sitemap: { hostname: "https://aster.foo/docs/" },
 
   // guide/ 下的生成页提升到文档站根路径
   rewrites: { "guide/:page": ":page" },
