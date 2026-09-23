@@ -15,7 +15,7 @@ pub fn capture(allocator: std.mem.Allocator, terminal: *const vt.Terminal, maxim
     if (active == .alternate) {
         const primary = (try terminal.formatScreen(allocator, .primary, true, maximum)) orelse return error.PrimaryScreenMissing;
         defer allocator.free(primary);
-        try append(allocator, &output, primary, maximum);
+        try appendAligned(allocator, &output, terminal, .primary, primary, false, maximum);
         const primary_cursor = try terminal.cursorReplay(allocator, .primary, maximum);
         defer allocator.free(primary_cursor);
         try append(allocator, &output, primary_cursor, maximum);
@@ -28,7 +28,7 @@ pub fn capture(allocator: std.mem.Allocator, terminal: *const vt.Terminal, maxim
     } else {
         const primary = try terminal.formatActiveScreen(allocator, true, maximum);
         defer allocator.free(primary);
-        try append(allocator, &output, primary, maximum);
+        try appendAligned(allocator, &output, terminal, .primary, primary, true, maximum);
         if (try terminal.formatScreen(allocator, .alternate, true, maximum)) |alternate| {
             defer allocator.free(alternate);
             try append(allocator, &output, "\x1b[?47h\x1b[0\"q", maximum);
@@ -48,6 +48,47 @@ pub fn capture(allocator: std.mem.Allocator, terminal: *const vt.Terminal, maxim
 fn append(allocator: std.mem.Allocator, output: *std.ArrayList(u8), bytes: []const u8, maximum: usize) !void {
     if (bytes.len > maximum - output.items.len) return error.FrameTooLarge;
     try output.appendSlice(allocator, bytes);
+}
+
+/// 写入整屏格式化输出，并把接收端补齐到源终端的物理总行数。
+///
+/// Ghostty 格式化器总是裁掉末尾空行。活动区底部有空行而滚动历史又非空时（Codex 等
+/// 内联 TUI 先用 DECSTBM 把旧内容推进历史，再 `ESC [ J` 清掉下方），接收端就少滚动了
+/// 这些行：它的顶行落在历史里，而不是源终端活动区的顶行。之后所有按活动区坐标写的
+/// 内容——光标回放、增量里的绝对定位——都会整体上移，用户看到的就是光标飘在提示符
+/// 上方十几行的空行里。这里按格式化输出实际含有的行数补发换行，让接收端恰好滚动
+/// 「历史行数」次；没有历史时输出与原来逐字节相同。
+///
+/// `restore_terminal_state`：`formatActiveScreen` 会在内容之后带上滚动区/原点模式等
+/// 终端级状态，补行前必须先中和它们（否则换行只在区内滚动），补完再由 `screenState`
+/// 原样恢复；`formatScreen` 只含屏幕级状态，无需处理。
+fn appendAligned(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    terminal: *const vt.Terminal,
+    screen: vt.Screen,
+    formatted: []const u8,
+    restore_terminal_state: bool,
+    maximum: usize,
+) !void {
+    try append(allocator, output, formatted, maximum);
+    const metrics = try terminal.metricsForScreen(screen);
+    if (metrics.total_rows <= metrics.rows or metrics.rows == 0) return;
+    // VT 输出中每个非末尾物理行恰好以一个 `\r\n` 结束（含中间空行），末行的换行被
+    // 格式化器延后并最终省略；其它状态序列都不含 `\r\n`。
+    const emitted = std.mem.count(u8, formatted, "\r\n") + 1;
+    const trailing = metrics.total_rows -| emitted;
+    if (trailing == 0) return;
+    if (restore_terminal_state) try append(allocator, output, "\x1b[?6l\x1b[?69l\x1b[r", maximum);
+    var buffer: [32]u8 = undefined;
+    const home = try std.fmt.bufPrint(&buffer, "\x1b[{d};1H", .{@min(emitted, metrics.rows)});
+    try append(allocator, output, home, maximum);
+    for (0..trailing) |_| try append(allocator, output, "\r\n", maximum);
+    if (restore_terminal_state) {
+        const state = try terminal.screenState(allocator, screen, false, maximum - output.items.len);
+        defer allocator.free(state);
+        try append(allocator, output, state, maximum);
+    }
 }
 
 test "reconnecting in alternate screen retains primary text and cursor" {
@@ -344,3 +385,114 @@ test "restore keeps per-screen cursor shape for primary and alternate" {
     try std.testing.expect(block > enter_alt);
 }
 
+
+/// 对齐断言：总行数、活动区光标、每一行内容都一致，且之后的增量输出继续落在同一位置。
+fn expectAligned(source: *vt.Terminal) !void {
+    const a = std.testing.allocator;
+    const bytes = try capture(a, source, 65536);
+    defer a.free(bytes);
+    var destination = try vt.Terminal.init(10, 4, 100);
+    defer destination.deinit();
+    destination.write(bytes);
+    try expectSameScreens(source, &destination);
+    // 增量是原始字节直通：只有活动区对齐，后续输出才会落在同一行。
+    source.write("\r\nnext");
+    destination.write("\r\nnext");
+    try expectSameScreens(source, &destination);
+}
+
+fn expectSameScreens(source: *const vt.Terminal, destination: *const vt.Terminal) !void {
+    const a = std.testing.allocator;
+    const metrics = try source.screenMetrics();
+    try std.testing.expectEqual(metrics.total_rows, (try destination.screenMetrics()).total_rows);
+    try std.testing.expectEqual(try source.cursorRow(), try destination.cursorRow());
+    try std.testing.expectEqual(try source.cursorColumn(), try destination.cursorColumn());
+    for (0..metrics.total_rows) |row| {
+        const expected = try source.formatRow(a, .primary, @intCast(row), 4096);
+        defer a.free(expected);
+        const actual = try destination.formatRow(a, .primary, @intCast(row), 4096);
+        defer a.free(actual);
+        try std.testing.expectEqualStrings(expected, actual);
+    }
+}
+
+test "history with blank rows below the cursor keeps the receiver aligned" {
+    var source = try vt.Terminal.init(10, 4, 100);
+    defer source.deinit();
+    // 六行把两行推进历史，再像内联 TUI 那样清掉活动区，只在首行留一个字符：
+    // 活动区末尾三行为空，格式化器会把它们裁掉。
+    source.write("R1\r\nR2\r\nR3\r\nR4\r\nR5\r\nR6\x1b[H\x1b[JX");
+    try std.testing.expectEqual(@as(u16, 0), try source.cursorRow());
+    try expectAligned(&source);
+}
+
+test "alignment padding survives an active scroll region and origin mode" {
+    var source = try vt.Terminal.init(10, 4, 100);
+    defer source.deinit();
+    source.write("R1\r\nR2\r\nR3\r\nR4\r\nR5\r\nR6\x1b[H\x1b[JX\x1b[2;3r\x1b[?6h\x1b[1;2HY");
+    try expectAligned(&source);
+}
+
+test "entirely blank active area with history still scrolls the receiver into place" {
+    var source = try vt.Terminal.init(10, 4, 100);
+    defer source.deinit();
+    source.write("R1\r\nR2\r\nR3\r\nR4\r\nR5\r\nR6\x1b[H\x1b[J");
+    try expectAligned(&source);
+}
+
+test "primary screen alignment is restored when reconnecting inside the alternate screen" {
+    const a = std.testing.allocator;
+    var source = try vt.Terminal.init(10, 4, 100);
+    defer source.deinit();
+    source.write("R1\r\nR2\r\nR3\r\nR4\r\nR5\r\nR6\x1b[H\x1b[JX\x1b[?1049hALT");
+    const bytes = try capture(a, &source, 65536);
+    defer a.free(bytes);
+    var destination = try vt.Terminal.init(10, 4, 100);
+    defer destination.deinit();
+    destination.write(bytes);
+    source.write("\x1b[?1049l\r\nback");
+    destination.write("\x1b[?1049l\r\nback");
+    try expectSameScreens(&source, &destination);
+}
+
+test "snapshot without history is unchanged by alignment" {
+    const a = std.testing.allocator;
+    var source = try vt.Terminal.init(10, 4, 100);
+    defer source.deinit();
+    source.write("ONE\r\nTWO");
+    const bytes = try capture(a, &source, 65536);
+    defer a.free(bytes);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\x1b[?69l") == null);
+    var destination = try vt.Terminal.init(10, 4, 100);
+    defer destination.deinit();
+    destination.write(bytes);
+    try expectSameScreens(&source, &destination);
+}
+
+test "alignment counting survives wrapped rows, wide characters and styled blank rows" {
+    const a = std.testing.allocator;
+    const scripts = [_][]const u8{
+        // 恰好占满一行 + 软换行两行 + 宽字符跨行边界。
+        "0123456789ABCDEFGHIJ\r\n中文中文中文\r\nX\r\nY\r\nZ\r\nW\x1b[H\x1b[JQ",
+        // 带背景色的空格行与 EL 清出的行夹在中间。
+        "A\r\n\x1b[41m          \x1b[0m\r\n\x1b[2K\r\nB\r\nC\r\nD\r\nE\x1b[H\x1b[JQ",
+        // 顶部空行 + 尾部宽字符占位。
+        "\r\n\r\nA\r\nB\r\nC\r\nD\r\n123456789中\x1b[H\x1b[JQ\x1b[2;1H",
+        // 光标停在待换行位（pending wrap）。
+        "A\r\nB\r\nC\r\nD\r\nE\r\nF\x1b[H\x1b[J0123456789",
+    };
+    for (scripts) |script| {
+        var source = try vt.Terminal.init(10, 4, 100);
+        defer source.deinit();
+        source.write(script);
+        const bytes = try capture(a, &source, 65536);
+        defer a.free(bytes);
+        var destination = try vt.Terminal.init(10, 4, 100);
+        defer destination.deinit();
+        destination.write(bytes);
+        try expectSameScreens(&source, &destination);
+        source.write("\r\nnext 中");
+        destination.write("\r\nnext 中");
+        try expectSameScreens(&source, &destination);
+    }
+}

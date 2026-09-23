@@ -538,6 +538,14 @@ pub const Terminal = struct {
             return error.TerminalReadFailed;
         return column;
     }
+
+    /// 活动区内的光标行（0 起）；与 cursorColumn 一样只读，供快照对齐测试比对。
+    pub fn cursorRow(self: *const Terminal) !u16 {
+        var row: u16 = 0;
+        if (c.ghostty_terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_CURSOR_Y, &row) != c.GHOSTTY_SUCCESS)
+            return error.TerminalReadFailed;
+        return row;
+    }
 };
 
 test "headless VT preserves partial UTF-8 and wide-character cursor width" {

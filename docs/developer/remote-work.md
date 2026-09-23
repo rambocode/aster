@@ -65,7 +65,7 @@ Windows 客户端/服务器、Web 仪表盘、独立手机 App 不在本次范�
 
 后台服务持有 PTY master、进程组、终端状态和布局。连接断开只回收连接资源，服务进程与 PTY 不依附 SSH 会话。每个命名会话运行独立后台服务，故障及停止操作限定在该会话。
 
-Ghostty surface 启动本地 `aster-session bridge` 子进程；bridge 使用 raw 模式，把规范化终端画面输出到本地 PTY，并把键盘、鼠标和尺寸传回服务。控制协议通过独立通道传输，不混入可见终端内容。关闭 surface 只结束 bridge。增量过滤器（`SessionRuntime/src/delta_filter.zig`）只放行 OSC 0/1/2/7/8：OSC 7 必须放行，远端 Shell 上报的工作目录才能镜像到本地 Pane，详情面板的远端 Files 页据此跟随受管终端的 `cd`；其余 OSC（剪贴板、通知、下载等有副作用的序列）继续拦截，规则见第 5 节「远端 OSC 视为不可信数据」。以此接入当前 Ghostty 进程模型，不假定存在尚未实现的外部 PTY 注入 API。
+Ghostty surface 启动本地 `aster-session bridge` 子进程；bridge 使用 raw 模式，把规范化终端画面输出到本地 PTY，并把键盘、鼠标和尺寸传回服务。控制协议通过独立通道传输，不混入可见终端内容。关闭 surface 只结束 bridge。增量过滤器（`SessionRuntime/src/delta_filter.zig`）只放行 OSC 0/1/2/7/8：OSC 7 必须放行，远端 Shell 上报的工作目录才能镜像到本地 Pane，详情面板的远端 Files 页据此跟随受管终端的 `cd`；其余 OSC（剪贴板、通知、下载等有副作用的序列）继续拦截，规则见第 5 节「远端 OSC 视为不可信数据」。快照（`display_snapshot.zig`）按源终端物理总行数补齐末尾空行：Ghostty 格式化器裁掉末尾空行，有滚动历史时接收端会少滚动，活动区坐标（光标回放、增量绝对定位）随之整体上移——Codex 等内联 TUI 用 DECSTBM 推历史再清屏后退出，正是这种画面。以此接入当前 Ghostty 进程模型，不假定存在尚未实现的外部 PTY 注入 API。
 
 终端池持有每个 PTY/VT 的唯一所有权，不以客户端引用计数决定是否销毁。公开创建适配层先解析
 执行路径并合并执行机器的环境，再传入独立 argv/envp；启动失败不占槽位。默认限制为 32 个记录、
