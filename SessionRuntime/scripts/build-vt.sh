@@ -53,6 +53,11 @@ for patch in patches[matching_prefix:]:
     git('apply', '--check', patch)
     git('apply', patch)
 PYVERIFY
+# Zig 0.15.2 与 macOS 27 SDK 不兼容时改用 macOS 26 SDK，原因见仓库 scripts/zig-macos-sdk.sh。
+source "$runtime_dir/../scripts/zig-macos-sdk.sh"
+shim_dir="$(mktemp -d)"
+trap 'rm -rf "$shim_dir"' EXIT
+zig_path_prefix="$(aster_zig_sdk_path_prefix "$shim_dir")"
 cd "$source_dir"
-zig build -Demit-lib-vt=true -Demit-xcframework=false -Doptimize=ReleaseFast \
+PATH="$zig_path_prefix$PATH" zig build -Demit-lib-vt=true -Demit-xcframework=false -Doptimize=ReleaseFast \
   -Dtarget="$target" --prefix "$output"
