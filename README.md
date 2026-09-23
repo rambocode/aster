@@ -2,10 +2,17 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Aster is a native macOS terminal workspace built entirely with AppKit — lightweight tab
-navigation, a minimal title bar, a paper-toned canvas, and restrained moss-green status
-accents. It ships its own brand, icon, and a workspace implementation written from
-scratch; it contains no Otty brand assets or proprietary code.
+**One native macOS workspace for your terminal, files, and previews.** Arrange
+Ghostty-powered terminals beside a file browser, editor, or preview with recursive
+splits. Aster is built with AppKit and runs on macOS 14 or later.
+
+[Explore the website](https://aster.foo/) · [Download the latest DMG](https://github.com/rambocode/aster/releases/latest) · [Read the user guide](docs/user/help.md)
+
+Start with a tab, split it with `⌘D` or `⇧⌘D`, then open a file with `⌘O`.
+Your workspace can be saved as an `.asterrecipe` and restored on launch.
+
+Aster has its own brand, icon, and workspace implementation. It contains no Otty
+brand assets or proprietary code.
 
 ## Features
 
