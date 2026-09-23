@@ -38,20 +38,27 @@ public enum AgentSessionFileLocator {
 
   /// 找出该项目目录里最近一次会话。`startedAfter` 是 Agent 命令开始的时刻；传 nil 时只按
   /// 修改时间取最新。只支持 Claude Code 与 Codex，其它 provider 返回 `.none`。
+  /// `excludingSessionIDs` 是已被其它 Pane 绑定的会话：同一目录开两个 Agent 时，
+  /// 「最新修改」的文件可能属于另一个 Pane，跳过它们才不会两个 Pane 绑到同一个会话。
   public static func resolve(
     provider: AgentProvider,
     projectDirectory: String,
     homeDirectory: URL,
-    startedAfter: Date?
+    startedAfter: Date?,
+    excludingSessionIDs: Set<String> = []
   ) -> Resolution {
     guard let normalized = AgentProjectSessionRegistry.normalizePath(projectDirectory) else {
       return .none
     }
     switch provider {
     case .claudeCode:
-      return resolveClaude(projectDirectory: normalized, homeDirectory: homeDirectory, startedAfter: startedAfter)
+      return resolveClaude(
+        projectDirectory: normalized, homeDirectory: homeDirectory, startedAfter: startedAfter,
+        excluding: excludingSessionIDs)
     case .codex:
-      return resolveCodex(projectDirectory: normalized, homeDirectory: homeDirectory, startedAfter: startedAfter)
+      return resolveCodex(
+        projectDirectory: normalized, homeDirectory: homeDirectory, startedAfter: startedAfter,
+        excluding: excludingSessionIDs)
     default:
       return .none
     }
@@ -61,15 +68,18 @@ public enum AgentSessionFileLocator {
 
   /// `~/.claude/projects/<编码目录>/<session-id>.jsonl`：文件名就是 session ID。
   private static func resolveClaude(
-    projectDirectory: String, homeDirectory: URL, startedAfter: Date?
+    projectDirectory: String, homeDirectory: URL, startedAfter: Date?, excluding: Set<String>
   ) -> Resolution {
     let directory = homeDirectory
       .appendingPathComponent(".claude/projects", isDirectory: true)
       .appendingPathComponent(claudeProjectDirectoryName(for: projectDirectory), isDirectory: true)
     let candidates = sessionFiles(in: directory).filter { $0.url.pathExtension == "jsonl" }
     guard !candidates.isEmpty else { return .none }
-    let matched = candidates.filter { isWithinRun($0.modifiedAt, startedAfter: startedAfter) }
-      .max { $0.modifiedAt < $1.modifiedAt }
+    let matched = candidates.filter {
+      isWithinRun($0.modifiedAt, startedAfter: startedAfter)
+        && !excluding.contains($0.url.deletingPathExtension().lastPathComponent)
+    }
+    .max { $0.modifiedAt < $1.modifiedAt }
     guard let matched else { return .latestUnknown }
     let stem = matched.url.deletingPathExtension().lastPathComponent
     return isValidSessionID(stem) ? .session(id: stem) : .latestUnknown
@@ -80,7 +90,7 @@ public enum AgentSessionFileLocator {
   /// `~/.codex/sessions/年/月/日/rollout-<时间>-<id>.jsonl`，首行 `session_meta` 里有 `cwd`。
   /// 按日期目录从今天往回看，命中 cwd 的最新文件即为结果。
   private static func resolveCodex(
-    projectDirectory: String, homeDirectory: URL, startedAfter: Date?
+    projectDirectory: String, homeDirectory: URL, startedAfter: Date?, excluding: Set<String>
   ) -> Resolution {
     let root = homeDirectory.appendingPathComponent(".codex/sessions", isDirectory: true)
     var calendar = Calendar(identifier: .gregorian)
@@ -105,7 +115,9 @@ public enum AgentSessionFileLocator {
     for file in ordered.prefix(64) {
       guard let meta = codexSessionMetadata(at: file.url), meta.cwd == projectDirectory else { continue }
       sawProjectSession = true
-      if isWithinRun(file.modifiedAt, startedAfter: startedAfter), isValidSessionID(meta.id) {
+      if isWithinRun(file.modifiedAt, startedAfter: startedAfter), isValidSessionID(meta.id),
+        !excluding.contains(meta.id)
+      {
         return .session(id: meta.id)
       }
     }

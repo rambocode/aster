@@ -2244,6 +2244,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private var agentCommandStartedAt: Date?
   /// 没有 hook 上报 ID 时，从 Agent 落盘的会话文件里补绑定 session ID 的后台任务。
   private var agentSessionFileBindingTask: Task<Void, Never>?
+  /// 本进程内所有存活的终端会话（弱引用，释放后自动移除）。会话文件定位要避开
+  /// 其它 Pane（包括其它窗口）已绑定的会话 ID。
+  private static let liveSessions = NSHashTable<TerminalSession>.weakObjects()
+  /// 按前台进程 argv 补识别 / 纠正 provider 的后台任务；命令结束或识别完成即停。
+  private var foregroundAgentProbeTask: Task<Void, Never>?
+  /// 诊断 seam：测试注入前台进程 argv；nil 时读取真实前台进程。
+  var foregroundCommandArgumentsOverride: (() -> [String]?)?
   private var claudeAccountQuotaRetained = false
   /// Hook 是否已成为该 Pane 的权威状态源。Prompt Queue 的自动派发只接受 hook 结论：
   /// 输出探针推断出来的 idle 只说明屏幕安静了一会儿，据此写入会打断运行中的 TUI。
@@ -2596,6 +2603,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     self.agentScreenDetectionTiming = agentScreenDetectionTiming
     self.sshEndpointResolver = sshEndpointResolver
     super.init()
+    Self.liveSessions.add(self)
   }
 
   /// makeTerminalView 的调用计数；随诊断上报,用于区分缓存命中与全新 PTY 创建路径。
@@ -4105,8 +4113,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// 状态映射：working→processing, blocked→awaitingInput, done(unread)→idle+completionUnread,
   /// idle→idle, unknown→不变（stale 不伪造完成）。
   func applyRemoteAgentState(_ info: RemoteAgentInfo) {
-    // 与本地 hook 指令相同的 provider 关联规则：已识别 provider 后拒绝其它 provider 改写。
-    if let activeAgentProvider, activeAgentProvider != info.provider { return }
+    // 与本地 hook 指令相同的 provider 关联规则：已识别 provider 后拒绝其它 provider 改写，
+    // 只有标题得出的弱证据让位于服务端上报。
+    if let activeAgentProvider, activeAgentProvider != info.provider,
+      !yieldTitleEvidenceAgentProvider()
+    {
+      return
+    }
     if activeAgentProvider == nil {
       activeAgentProvider = info.provider
       agentProviderIsTitleEvidenceOnly = false
@@ -4572,6 +4585,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     agentCommandStartedAt = nil
     agentSessionFileBindingTask?.cancel()
     agentSessionFileBindingTask = nil
+    foregroundAgentProbeTask?.cancel()
+    foregroundAgentProbeTask = nil
     agentTaskState = .idle
     agentTaskCompletionUnread = false
     agentLifecycleIsAuthoritative = false
@@ -4817,12 +4832,86 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     syncAgentSessionFileBinding()
     syncAgentScreenMonitor()
     if agentScreenMonitor == nil { markFallbackAgentActivity() }
+    // 标题只是弱证据，用前台进程 argv 核实：确认则升级为精确识别，不符则改正。
+    startForegroundAgentProbe()
+  }
+
+  /// 按前台进程 argv 识别 Agent（与 tty7 相同的做法）。
+  ///
+  /// 命令首词识别不了（alias、wrapper、没有 shell integration 时的轮询兜底）或只有标题
+  /// 弱证据时启动。进程刚 fork 时前台可能还是 Shell，所以按递增间隔读几次；
+  /// 读到 Agent 就停，命令结束或 provider 已被精确识别也停。
+  private func startForegroundAgentProbe() {
+    foregroundAgentProbeTask?.cancel()
+    foregroundAgentProbeTask = Task { @MainActor [weak self] in
+      for delay in [Duration.milliseconds(300), .seconds(1), .seconds(3)] {
+        try? await Task.sleep(for: delay)
+        guard !Task.isCancelled, let self, self.hasRunningCommand else { return }
+        if self.activeAgentProvider != nil, !self.agentProviderIsTitleEvidenceOnly { break }
+        guard let argv = self.foregroundCommandArguments(),
+          let provider = AgentProvider.detect(commandTokens: argv)
+        else { continue }
+        self.adoptForegroundAgentProvider(provider)
+        break
+      }
+      self?.foregroundAgentProbeTask = nil
+    }
+  }
+
+  /// 前台命令（不是登录 Shell 本身）的 argv；没有前台命令或读不到时返回 nil。
+  private func foregroundCommandArguments() -> [String]? {
+    if let foregroundCommandArgumentsOverride { return foregroundCommandArgumentsOverride() }
+    let foreground: Int32?
+    let shell: Int32?
+    if let ghosttyView {
+      foreground = ghosttyView.foregroundProcessIdentifier
+      shell = ghosttyShellProcessIdentifier
+    } else if let process = terminalView?.process, process.running, process.childfd >= 0 {
+      let group = tcgetpgrp(process.childfd)
+      foreground = group > 0 ? group : nil
+      shell = process.shellPid
+    } else {
+      return nil
+    }
+    guard let foreground, foreground != shell else { return nil }
+    return ProcessArgumentsReader.arguments(of: foreground)
+  }
+
+  /// 采用 argv 识别出的 provider。它是进程自身的身份，强于标题：标题弱证据相同则升级，
+  /// 不同则先撤销再改正；hook 或命令首词已精确识别时不动。
+  private func adoptForegroundAgentProvider(_ provider: AgentProvider) {
+    if let activeAgentProvider {
+      guard agentProviderIsTitleEvidenceOnly else { return }
+      if activeAgentProvider == provider {
+        agentProviderIsTitleEvidenceOnly = false
+        return
+      }
+      clearTitleEvidenceAgentProvider()
+    }
+    activeAgentProvider = provider
+    agentProviderIsTitleEvidenceOnly = false
+    if agentCommandStartedAt == nil { agentCommandStartedAt = Date() }
+    syncAgentSessionFileBinding()
+    syncAgentScreenMonitor()
+    if agentScreenMonitor == nil { markFallbackAgentActivity() } else { updateAgentTaskState() }
+  }
+
+  /// 当前 provider 只是标题弱证据时撤销它，让更强的来源（hook、远端上报、进程 argv）
+  /// 接手；返回是否已让位。精确识别的 provider 不让位。
+  private func yieldTitleEvidenceAgentProvider() -> Bool {
+    guard activeAgentProvider != nil, agentProviderIsTitleEvidenceOnly else { return false }
+    clearTitleEvidenceAgentProvider()
+    return true
   }
 
   /// 撤销仅凭标题得出的 provider：停读屏、清回退探针、回到普通命令状态。
+  /// 按旧 provider 找到的会话 ID 和定位任务一并作废：换成别的 provider 后它们指向错误的会话。
   private func clearTitleEvidenceAgentProvider() {
     stopAgentScreenMonitor()
     clearFallbackAgentActivity()
+    agentSessionFileBindingTask?.cancel()
+    agentSessionFileBindingTask = nil
+    activeAgentSessionID = nil
     activeAgentProvider = nil
     agentProviderIsTitleEvidenceOnly = false
     agentHasWorkEvidence = false
@@ -4835,19 +4924,19 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     "agent", "pi", "amp", "omp", "muse", "maki", "cline", "kilo", "droid", "cursor",
   ]
 
-  /// 标题 → provider 的纯函数。Claude 的 ✳ / 盲文 / 半圆 spinner 前缀直接判 Claude；
-  /// 其余要求去空白后的小写标题**以别名开头**，且别名之后是结尾、空格、`:` 或 `—`
+  /// 标题 → provider 的纯函数。Claude 的 ✳ / 半圆 spinner 前缀直接判 Claude；
+  /// 其余要求去掉通用 spinner 后的小写标题**以别名开头**，且别名之后是结尾、空格、`:` 或 `—`
   /// （`codex-helper`、`codex.py` 都不算）。
   nonisolated static func agentProvider(fromTitle title: String) -> AgentProvider? {
     let trimmed = title.trimmingCharacters(in: .whitespaces)
     guard let first = trimmed.unicodeScalars.first else { return nil }
-    // ✳ U+2733；盲文 U+2800–U+28FF；半圆 spinner U+25D0–U+25D3（Claude 2.1.228+）。
-    if first.value == 0x2733 || (0x2800...0x28FF).contains(first.value)
-      || (0x25D0...0x25D3).contains(first.value)
-    {
+    // ✳ U+2733；半圆 spinner U+25D0–U+25D3（Claude 2.1.228+）。
+    if first.value == 0x2733 || (0x25D0...0x25D3).contains(first.value) {
       return .claudeCode
     }
-    let lowered = trimmed.lowercased()
+    // 盲文 spinner（U+2800–U+28FF）是多个 TUI 共用的忙碌动画：Codex 的标题就是
+    // `⠙ <项目名>`，不能当成 Claude 的证据，只剥掉后再按别名匹配。
+    let lowered = AsterControlTitleNormalizer.stripped(trimmed).lowercased()
     for provider in AgentProvider.allCases {
       for alias in provider.executableAliases
       where !titleDetectionExcludedAliases.contains(alias) && lowered.hasPrefix(alias) {
@@ -4921,6 +5010,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       clearFallbackAgentActivity()
       agentCommandStartedAt = activeAgentProvider == nil ? nil : Date()
       syncAgentSessionFileBinding()
+      if activeAgentProvider == nil {
+        startForegroundAgentProbe()
+      } else {
+        foregroundAgentProbeTask?.cancel()
+        foregroundAgentProbeTask = nil
+      }
       // 有清单的 provider 优先走屏幕检测；monitor 启动后 5s 静默兜底自动禁用。
       syncAgentScreenMonitor()
       if activeAgentProvider != nil, agentScreenMonitor == nil {
@@ -4945,6 +5040,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       }
       clearAwaitingInput()
       stopAgentScreenMonitor()
+      foregroundAgentProbeTask?.cancel()
+      foregroundAgentProbeTask = nil
       agentTaskState = .idle
       reportAgentSessionEndedIfNeeded()
       activeAgentProvider = nil
@@ -5473,6 +5570,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     let home = agentHomeDirectory
     let startedAt = agentCommandStartedAt
     agentSessionFileBindingTask = Task { @MainActor [weak self] in
+      defer { if !Task.isCancelled { self?.agentSessionFileBindingTask = nil } }
       // 首条 prompt 通常几秒内发出；之后逐渐放慢，长时间空闲的 TUI 不值得每秒扫目录。
       let delays: [Duration] = [.seconds(3), .seconds(5), .seconds(12), .seconds(30), .seconds(60)]
       var attempt = 0
@@ -5481,10 +5579,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         guard !Task.isCancelled, let self, self.activeAgentProvider == provider else { return }
         if self.activeAgentSessionID != nil { return }
         let directory = self.resolvedCurrentWorkingDirectory()
+        let claimed = self.agentSessionIDsClaimedByOtherPanes(provider: provider)
         let resolution = await Task.detached(priority: .utility) {
           AgentSessionFileLocator.resolve(
             provider: provider, projectDirectory: directory, homeDirectory: home,
-            startedAfter: startedAt)
+            startedAfter: startedAt, excludingSessionIDs: claimed)
         }.value
         guard !Task.isCancelled, self.activeAgentProvider == provider,
           self.activeAgentSessionID == nil
@@ -5497,6 +5596,14 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         if attempt >= 20 { return }
       }
     }
+  }
+
+  /// 其它存活 Pane 已绑定的同 provider 会话 ID。
+  private func agentSessionIDsClaimedByOtherPanes(provider: AgentProvider) -> Set<String> {
+    Set(
+      Self.liveSessions.allObjects.compactMap { other in
+        other !== self && other.activeAgentProvider == provider ? other.activeAgentSessionID : nil
+      })
   }
 
   /// 把会话文件定位到的 ID 当作精确绑定：与 hook 上报走同一条下游（标题解析、记录）。
@@ -5583,8 +5690,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   private func handleAgentTerminalDirective(_ directive: AgentTerminalDirective) {
     // 已由 shell command 精确识别 provider 时，拒绝其它 provider 向同一 PTY 注入状态；
-    // wrapper 命令无法识别时则允许首个合法 hook 建立关联。
-    if let activeAgentProvider, activeAgentProvider != directive.provider { return }
+    // wrapper 命令无法识别时则允许首个合法 hook 建立关联。标题得出的弱证据可能猜错，
+    // hook 是 Agent 进程自己报的身份，必须能纠正它，否则一次误判会一直错到命令结束。
+    if let activeAgentProvider, activeAgentProvider != directive.provider {
+      guard directive.signal != .ended, yieldTitleEvidenceAgentProvider() else { return }
+    }
     if directive.signal == .ended {
       // 进程退出：只对已建立关联的 provider 生效，陌生 PTY 上的 ended 不建立再拆除。
       if activeAgentProvider == directive.provider { finishAgentLifecycle() }

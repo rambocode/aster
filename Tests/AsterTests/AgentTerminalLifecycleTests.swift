@@ -692,7 +692,9 @@ func oscTitleFeedsDetectionWhenShellControlledTitleIsOff() throws {
 @Test("标题补识别只认别名前缀与 Claude glyph，不吃普通 shell 标题")
 func agentProviderFromTitleMatchesAliasPrefixOnly() {
   #expect(TerminalSession.agentProvider(fromTitle: "✳ Claude Code") == .claudeCode)
-  #expect(TerminalSession.agentProvider(fromTitle: "⠋ project") == .claudeCode)
+  // 盲文 spinner 是通用忙碌动画：Codex 自己写的标题就是 `⠙ <项目名>`，不能判成 Claude。
+  #expect(TerminalSession.agentProvider(fromTitle: "⠋ project") == nil)
+  #expect(TerminalSession.agentProvider(fromTitle: "⠙ codex") == .codex)
   #expect(TerminalSession.agentProvider(fromTitle: "◐ Initial conversation") == .claudeCode)
   #expect(TerminalSession.agentProvider(fromTitle: "codex") == .codex)
   #expect(TerminalSession.agentProvider(fromTitle: "  Codex: ~/src  ") == .codex)
