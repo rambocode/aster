@@ -116,16 +116,24 @@ similarity index 100%
 rename from pkg/dcimgui/ext.cpp
 rename to pkg/dcimgui/dcimgui_ext.cpp
 diff --git a/src/Surface.zig b/src/Surface.zig
-index 5d16f33..10174a0 100644
+index 5d16f33..d93a056 100644
 --- a/src/Surface.zig
 +++ b/src/Surface.zig
 @@ -19,0 +20 @@ const builtin = @import("builtin");
 +const build_config = @import("build_config.zig");
-@@ -322,0 +324,3 @@ const DerivedConfig = struct {
+@@ -254,0 +256,7 @@ const Mouse = struct {
++    /// Aster: vertical wheel reports (or alternate-scroll arrow keys) sent
++    /// since the program last produced output, and when the last one went
++    /// out. See `asterWheelBudget`.
++    aster_wheel_inflight: usize = 0,
++    aster_wheel_seen_seq: u64 = 0,
++    aster_wheel_last: ?std.time.Instant = null,
++
+@@ -322,0 +331,3 @@ const DerivedConfig = struct {
 +    aster_smooth_scroll: bool,
 +    aster_scroll_past_last: terminal.Screen.AsterScrollPastLast,
 +    aster_scroll_past_first: terminal.Screen.AsterScrollPastFirst,
-@@ -401,0 +406,7 @@ const DerivedConfig = struct {
+@@ -401,0 +413,7 @@ const DerivedConfig = struct {
 +            .aster_smooth_scroll = config.@"aster-smooth-scroll",
 +            .aster_scroll_past_last = switch (config.@"aster-scroll-past-last-line") {
 +                inline else => |tag| @field(terminal.Screen.AsterScrollPastLast, @tagName(tag)),
@@ -133,16 +141,16 @@ index 5d16f33..10174a0 100644
 +            .aster_scroll_past_first = switch (config.@"aster-scroll-past-first-line") {
 +                inline else => |tag| @field(terminal.Screen.AsterScrollPastFirst, @tagName(tag)),
 +            },
-@@ -661,0 +673 @@ pub fn init(
+@@ -661,0 +680 @@ pub fn init(
 +            .aster_direct_child = config.@"aster-direct-child",
-@@ -686,0 +699,6 @@ pub fn init(
+@@ -686,0 +706,6 @@ pub fn init(
 +            .aster_observer = if (comptime build_config.artifact == .lib) .{
 +                .userdata = rt_surface.userdata,
 +                .pty_read = rt_surface.aster_pty_read_cb,
 +                .pty_write = rt_surface.aster_pty_write_cb,
 +                .osc = rt_surface.aster_osc_cb,
 +            } else .{},
-@@ -2371,0 +2390,185 @@ fn setSelection(self: *Surface, sel_: ?terminal.Selection) !void {
+@@ -2371,0 +2397,220 @@ fn setSelection(self: *Surface, sel_: ?terminal.Selection) !void {
 +/// Aster extension entrypoint for setting or clearing an exact terminal
 +/// selection. The caller constructs untracked pins while holding no locks;
 +/// `Screen.select` converts them to tracked pins before this method returns.
@@ -179,6 +187,41 @@ index 5d16f33..10174a0 100644
 +        return false;
 +    };
 +    return true;
++}
++
++/// Aster: wheel reports allowed in flight before the program answers.
++const aster_wheel_max_inflight = 2;
++
++/// Aster: after this long without an answer the budget refills anyway, so a
++/// program that ignores a report (e.g. already at its top) keeps scrolling.
++const aster_wheel_release_ns = 100 * std.time.ns_per_ms;
++
++/// Aster: how many vertical wheel reports may go out now. Programs such as
++/// Claude Code's fullscreen UI redraw the whole screen for every report and
++/// scroll one line each; a fast trackpad fling sends more reports than they
++/// can draw, so the backlog kept the view moving long after the finger
++/// stopped. Reports beyond the budget are dropped rather than queued, which
++/// paces scrolling to the program's own drawing speed and stops with the
++/// gesture. Any PTY output counts as an answer and refills the budget.
++fn asterWheelBudget(self: *Surface) usize {
++    const seq = self.renderer_state.aster_output_seq.load(.monotonic);
++    const stale = stale: {
++        const last = self.mouse.aster_wheel_last orelse break :stale true;
++        const now = std.time.Instant.now() catch break :stale true;
++        break :stale now.since(last) >= aster_wheel_release_ns;
++    };
++    if (stale or seq != self.mouse.aster_wheel_seen_seq) {
++        self.mouse.aster_wheel_seen_seq = seq;
++        self.mouse.aster_wheel_inflight = 0;
++    }
++    return aster_wheel_max_inflight -| self.mouse.aster_wheel_inflight;
++}
++
++/// Aster: record reports sent against the budget.
++fn asterWheelSent(self: *Surface, count: usize) void {
++    if (count == 0) return;
++    self.mouse.aster_wheel_inflight += count;
++    self.mouse.aster_wheel_last = std.time.Instant.now() catch null;
 +}
 +
 +/// Aster: grid offset in rows from the viewport's top row (fraction plus
@@ -328,7 +371,7 @@ index 5d16f33..10174a0 100644
 +    return lhs.y > rhs.y or (lhs.y == rhs.y and lhs.x > rhs.x);
 +}
 +
-@@ -3414,0 +3618,10 @@ pub fn scrollCallback(
+@@ -3414,0 +3660,10 @@ pub fn scrollCallback(
 +    // Aster: precision devices report pixels. With smooth scrolling the
 +    // primary screen follows them as fractional rows; the row-based amount
 +    // below is still computed for the alternate screen and mouse reporting.
@@ -339,7 +382,19 @@ index 5d16f33..10174a0 100644
 +    else
 +        0;
 +
-@@ -3568 +3781,14 @@ pub fn scrollCallback(
+@@ -3533 +3788,2 @@ pub fn scrollCallback(
+-                for (0..y.magnitude()) |_| {
++                const count = @min(y.magnitude(), self.asterWheelBudget());
++                for (0..count) |_| {
+@@ -3535,0 +3792 @@ pub fn scrollCallback(
++                self.asterWheelSent(count);
+@@ -3547 +3804,2 @@ pub fn scrollCallback(
+-            for (0..@abs(y.delta)) |_| {
++            const count = @min(@abs(y.delta), self.asterWheelBudget());
++            for (0..count) |_| {
+@@ -3553,0 +3812 @@ pub fn scrollCallback(
++            self.asterWheelSent(count);
+@@ -3568 +3827,14 @@ pub fn scrollCallback(
 -        if (y.delta != 0) {
 +        // Aster: the overscroll settings travel with each scroll so a
 +        // configuration change applies to the next gesture.
@@ -355,7 +410,7 @@ index 5d16f33..10174a0 100644
 +            // Aster: row-based scrolling may also pass the first/last line.
 +            self.io.terminal.scrollViewportFractional(@floatFromInt(-y.delta));
 +        } else if (y.delta != 0) {
-@@ -4947 +5173,16 @@ pub fn posToViewport(self: Surface, xpos: f64, ypos: f64) terminal.point.Coordin
+@@ -4947 +5219,16 @@ pub fn posToViewport(self: Surface, xpos: f64, ypos: f64) terminal.point.Coordin
 -    return .{ .x = grid.x, .y = grid.y };
 +
 +    // Aster: a fractional scroll draws the grid shifted up by `frac` rows
@@ -743,16 +798,20 @@ index 6c7432d..da0059d 100644
 +    host.msgSend(void, objc.sel("asterDidRenderPictureInPictureFrame:"), .{target.surface});
 +}
 diff --git a/src/renderer/State.zig b/src/renderer/State.zig
-index 22cae8f..6c3fe85 100644
+index 22cae8f..8b2b65c 100644
 --- a/src/renderer/State.zig
 +++ b/src/renderer/State.zig
-@@ -32,0 +33,7 @@ mouse: Mouse = .{},
+@@ -32,0 +33,11 @@ mouse: Mouse = .{},
 +/// Aster: bit patterns (`f64`) of the fractional scroll row and overscroll
 +/// rows the renderer last painted. Hit testing reads them without the mutex
 +/// (the cursor callback maps positions before locking) and matches what is
 +/// on screen.
 +aster_painted_scroll_row_frac: std.atomic.Value(u64) = .init(0),
 +aster_painted_overscroll_rows: std.atomic.Value(u64) = .init(0),
++
++/// Aster: bumped by the IO thread for every PTY read. Wheel reporting uses
++/// it to tell whether the program has answered the reports already sent.
++aster_output_seq: std.atomic.Value(u64) = .init(0),
 +
 diff --git a/src/renderer/Thread.zig b/src/renderer/Thread.zig
 index 5087213..a6e63ba 100644
@@ -1710,7 +1769,7 @@ index a6bf8c4..f470e91 100644
 +/// Versioned Aster observation hooks. Other runtimes leave this empty.
 +aster_observer: AsterObserver = .{},
 diff --git a/src/termio/Termio.zig b/src/termio/Termio.zig
-index 1d1bfe2..8919790 100644
+index 1d1bfe2..02b5a06 100644
 --- a/src/termio/Termio.zig
 +++ b/src/termio/Termio.zig
 @@ -55,0 +56,5 @@ surface_mailbox: apprt.surface.Mailbox,
@@ -1724,11 +1783,12 @@ index 1d1bfe2..8919790 100644
 +        .aster_osc_scanner = .init(opts.aster_observer),
 @@ -416,0 +424 @@ pub inline fn queueWrite(
 +    self.aster_observer.notifyPtyWrite(data);
-@@ -643,0 +652,3 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
+@@ -643,0 +652,4 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
 +    // Observation happens before taking the renderer mutex. Callbacks are
 +    // synchronous and must copy borrowed bytes before returning.
 +    self.aster_observer.notifyPtyRead(buf);
-@@ -650,0 +662,208 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
++    _ = self.renderer_state.aster_output_seq.fetchAdd(1, .monotonic);
+@@ -650,0 +663,208 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
 +/// Streaming OSC scanner used only by the Aster extension ABI. Ghostty's
 +/// parser still receives every original byte; malformed and over-limit OSCs
 +/// are dropped only from this observer channel.
@@ -1937,7 +1997,7 @@ index 1d1bfe2..8919790 100644
 +    try std.testing.expectEqual(AsterOSCScanner.State.ground, scanner.state);
 +}
 +
-@@ -689,0 +909,15 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
+@@ -689,0 +910,15 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
 +            if (self.aster_observer.osc != null) {
 +                if (self.aster_osc_scanner.next(byte)) |event| self.notifyAsterOSC(event);
 +            }
@@ -1953,9 +2013,9 @@ index 1d1bfe2..8919790 100644
 +                self.notifyAsterOSC(event);
 +                segment_start = i + 1;
 +            }
-@@ -690,0 +925 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
+@@ -690,0 +926 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
 +        if (segment_start < buf.len) self.terminal_stream.nextSlice(buf[segment_start..]);
-@@ -702,0 +938,12 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
+@@ -702,0 +939,12 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
 +fn notifyAsterOSC(self: *Termio, event: AsterOSCScanner.Event) void {
 +    const screen = self.terminal.screens.active;
 +    const pin = screen.cursor.page_pin.*;

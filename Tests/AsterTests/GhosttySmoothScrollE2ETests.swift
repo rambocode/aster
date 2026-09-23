@@ -257,3 +257,70 @@ func ghosttyScrollPastFirstLineOverscrollsAboveTop() async throws {
   #expect(plainView.bufferInfo()?.viewport_top == 0)
   #expect(ghostty_aster_surface_visual_offset_rows(plainSurface) == 0)
 }
+
+/// 在终端里跑一个开启 SGR 鼠标上报的小程序，统计收到的滚轮事件。`echo` 为真时每收到一个
+/// 事件就输出一个点（模拟会重画的程序），否则一直沉默；静默 1 秒后打印 `WHEEL=<数量>` 退出。
+@MainActor
+private func runWheelCounter(echo: Bool, events: Int, gapMilliseconds: Int) async throws -> Int {
+  let (session, window, view) = try await makeScrolledSurface(smoothScrolling: true)
+  defer {
+    window.orderOut(nil)
+    session.stop(immediately: true)
+  }
+  let script = FileManager.default.temporaryDirectory
+    .appendingPathComponent("aster-wheel-\(UUID().uuidString).py")
+  defer { try? FileManager.default.removeItem(at: script) }
+  try """
+    import os, sys, tty, select, time
+    tty.setraw(0)
+    os.write(1, b"\\x1b[?1000h\\x1b[?1006h")
+    os.write(1, b"READY\\r\\n")
+    count, buf, last = 0, b"", time.monotonic()
+    while time.monotonic() - last < 1.0:
+        r, _, _ = select.select([0], [], [], 0.05)
+        if not r: continue
+        data = os.read(0, 4096); buf += data; last = time.monotonic()
+        n = buf.count(b"\\x1b[<64;") + buf.count(b"\\x1b[<65;")
+        if \(echo ? "True" : "False") and n > count: os.write(1, b"." * (n - count))
+        count = n
+    os.write(1, b"\\x1b[?1000l\\x1b[?1006l")
+    os.write(1, b"\\r\\nWHEEL=%d\\r\\n" % count)
+    """.write(to: script, atomically: true, encoding: .utf8)
+  #expect(view.typeText("clear; python3 \(script.path)\n"))
+  for _ in 0..<150 where view.readText(includeScrollback: false)?.contains("READY") != true {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  let cellHeight = try cellHeightPoints(view)
+  let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+  view.scrollWheel(with: try trackpadScroll(deltaY: 0, phase: 1, windowPoint: point))
+  for _ in 0..<events {
+    view.scrollWheel(
+      with: try trackpadScroll(deltaY: Double(cellHeight), phase: 2, windowPoint: point))
+    if gapMilliseconds > 0 { try await Task.sleep(for: .milliseconds(gapMilliseconds)) }
+  }
+  view.scrollWheel(with: try trackpadScroll(deltaY: 0, phase: 4, windowPoint: point))
+  var reported: Int?
+  for _ in 0..<200 where reported == nil {
+    try await Task.sleep(for: .milliseconds(20))
+    if let text = view.readText(includeScrollback: true),
+      let range = text.range(of: "WHEEL=")
+    {
+      reported = Int(text[range.upperBound...].prefix { $0.isNumber })
+    }
+  }
+  return try #require(reported)
+}
+
+@Test("鼠标上报程序不回应时最多两个滚轮事件在路上，快速滑动不再积压")
+@MainActor
+func ghosttyWheelReportsPauseWhileProgramIsBusy() async throws {
+  let received = try await runWheelCounter(echo: false, events: 20, gapMilliseconds: 0)
+  #expect(received >= 1 && received <= 2, "received \(received)")
+}
+
+@Test("程序随滚轮事件重画时，每一行滚动都送达")
+@MainActor
+func ghosttyWheelReportsFlowWhenProgramAnswers() async throws {
+  let received = try await runWheelCounter(echo: true, events: 20, gapMilliseconds: 30)
+  #expect(received == 20, "received \(received)")
+}

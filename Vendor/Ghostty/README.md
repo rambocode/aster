@@ -32,6 +32,10 @@ renderer 用 `content_offset` uniform 把网格整体上移，并把刚画出的
 上限由 `aster-scroll-past-last-line` / `aster-scroll-past-first-line` 与主屏内容决定（最后或第一行有字
 的行、光标行），renderer 把它并入 `content_offset`，露出的部分是空白 padding；整数滚动清零。
 
+鼠标上报与 alternate scroll 的纵向滚轮事件按程序回应节流：IO 线程每次 PTY 读取递增
+`renderer.State.aster_output_seq`，`Surface` 在程序没有新输出时最多留 2 个事件在路上，多余的丢弃，
+100ms 无回应自动放行，避免 Claude Code 全屏这类每事件整屏重画的程序积压。
+
 Aster 的嵌入式 renderer 额外把 focused display link 改为按需运行：普通终端收到状态、
 光标或尺寸变化时启动，完成最新帧并再确认一轮没有新请求后停止；持续输出会在相邻刷新间
 重新置位请求，因此仍按屏幕节奏合并呈现。只有启用自定义 shader 动画时保持连续 vsync。
