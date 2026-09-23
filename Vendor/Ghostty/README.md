@@ -24,9 +24,13 @@ v2 新增像素滚动（设计参考上游未合并的 #14210 / #14122）：`Scr
 renderer 用 `content_offset` uniform 把网格整体上移，并把刚画出的小数行发布到
 `renderer.State` 的原子变量；`posToViewport` 读它做命中测试（光标回调在加锁前就要换算坐标）；
 `aster-smooth-scroll` 配置只让精确设备在主屏、未开启鼠标上报时走像素路径。新增 C 接口
-`ghostty_aster_surface_scroll_row_frac`、`ghostty_aster_surface_scroll_rows`、
+`ghostty_aster_surface_visual_offset_rows`、`ghostty_aster_surface_scroll_rows`、
 `ghostty_aster_surface_snap_scroll_row` 供宿主做手势结束后的整行对齐。Zig 定向测试覆盖小数行
 的钳制、到底清零、整数滚动清零、对齐取整、额外行采集与独立脏标记。
+
+同一视觉位置还承载「滚过末尾 / 开头」：`Screen.aster_overscroll_rows` 记录越过 scrollback 两端的行数，
+上限由 `aster-scroll-past-last-line` / `aster-scroll-past-first-line` 与主屏内容决定（最后或第一行有字
+的行、光标行），renderer 把它并入 `content_offset`，露出的部分是空白 padding；整数滚动清零。
 
 Aster 的嵌入式 renderer 额外把 focused display link 改为按需运行：普通终端收到状态、
 光标或尺寸变化时启动，完成最新帧并再确认一轮没有新请求后停止；持续输出会在相邻刷新间

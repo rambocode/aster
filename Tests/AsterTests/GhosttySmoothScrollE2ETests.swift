@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import Aster
+import AsterCore
 
 /// 独立 defaults suite，避免污染 .standard。
 @MainActor
@@ -23,9 +24,18 @@ private extension NSView {
 }
 
 /// 构造一次触控板滚动事件。`phase` 取 CGScrollPhase 的原始值：1 开始、2 变化、4 结束。
-private func trackpadScroll(deltaY: Double, phase: Int64) throws -> NSEvent {
+/// `windowPoint` 是事件落点（窗口坐标）；鼠标上报只在指针位于视图内时发送。
+@MainActor
+private func trackpadScroll(
+  deltaY: Double, phase: Int64, windowPoint: NSPoint? = nil
+) throws -> NSEvent {
   let event = try #require(
     CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 0, wheel2: 0, wheel3: 0))
+  if let windowPoint {
+    // 无窗口的 NSEvent 把 CG 全局坐标（左上原点）翻转成 locationInWindow（左下原点）。
+    let height = NSScreen.screens.first?.frame.height ?? 0
+    event.location = CGPoint(x: windowPoint.x, y: height - windowPoint.y)
+  }
   event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
   event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
   event.setDoubleValueField(.scrollWheelEventPointDeltaAxis1, value: deltaY)
@@ -36,12 +46,16 @@ private func trackpadScroll(deltaY: Double, phase: Int64) throws -> NSEvent {
 /// 在窗口里挂一个运行中的 Ghostty Pane，并写满 scrollback。
 @MainActor
 private func makeScrolledSurface(
-  smoothScrolling: Bool
+  smoothScrolling: Bool,
+  scrollPastLastLine: TerminalScrollPastLastLine = .disabled,
+  scrollPastFirstLine: TerminalScrollPastFirstLine = .disabled
 ) async throws -> (TerminalSession, NSWindow, GhosttySurfaceView) {
   _ = NSApplication.shared
   let preferences = AppPreferences(defaults: isolatedDefaults())
   preferences.configuration.controls.autocompleteOnDeviceLearning = false
   preferences.configuration.controls.smoothScrolling = smoothScrolling
+  preferences.configuration.controls.scrollPastLastLine = scrollPastLastLine
+  preferences.configuration.controls.scrollPastFirstLine = scrollPastFirstLine
   // 拖选会触发 copy-on-select，测试不能改写用户的系统剪贴板。
   preferences.configuration.controls.copyOnSelect = false
   let session = TerminalSession(workingDirectory: "/tmp")
@@ -112,7 +126,7 @@ func ghosttySmoothScrollFollowsPixelsAndSettlesOnRealSurface() async throws {
   #expect(changed.hasPreciseScrollingDeltas)
   view.scrollWheel(with: changed)
 
-  let fraction = ghostty_aster_surface_scroll_row_frac(surface)
+  let fraction = ghostty_aster_surface_visual_offset_rows(surface)
   let moved = try #require(view.bufferInfo())
   #expect(fraction > 0.55 && fraction < 0.65)
   #expect(Double(moved.viewport_top) == bottom - 3)
@@ -149,11 +163,11 @@ func ghosttySmoothScrollFollowsPixelsAndSettlesOnRealSurface() async throws {
   let ended = try trackpadScroll(deltaY: 0, phase: 4)
   #expect(ended.phase == .ended)
   view.scrollWheel(with: ended)
-  for _ in 0..<60 where ghostty_aster_surface_scroll_row_frac(surface) != 0 {
+  for _ in 0..<60 where ghostty_aster_surface_visual_offset_rows(surface) != 0 {
     try await Task.sleep(for: .milliseconds(20))
   }
   let settled = try #require(view.bufferInfo())
-  #expect(ghostty_aster_surface_scroll_row_frac(surface) == 0)
+  #expect(ghostty_aster_surface_visual_offset_rows(surface) == 0)
   #expect(Double(settled.viewport_top) == bottom - 2)
   #expect(!view.ghosttyScrollSettler.isSettling)
 }
@@ -172,7 +186,74 @@ func ghosttySmoothScrollDisabledKeepsWholeRows() async throws {
   view.scrollWheel(with: try trackpadScroll(deltaY: 0, phase: 1))
   view.scrollWheel(with: try trackpadScroll(deltaY: Double(cellHeight) * 2.4, phase: 2))
   let moved = try #require(view.bufferInfo())
-  #expect(ghostty_aster_surface_scroll_row_frac(surface) == 0)
+  #expect(ghostty_aster_surface_visual_offset_rows(surface) == 0)
   // 按行模式截断到 2 行，余量留待下一次事件累积。
   #expect(moved.viewport_top == start.viewport_top - 2)
+}
+
+@Test("真实 surface：开启滚过末尾后能越过底部留出空白，输入立即回到底部")
+@MainActor
+func ghosttyScrollPastLastLineOverscrollsAndResetsOnInput() async throws {
+  let (session, window, view) = try await makeScrolledSurface(
+    smoothScrolling: true, scrollPastLastLine: .lastLineWithContent)
+  defer {
+    window.orderOut(nil)
+    session.stop(immediately: true)
+  }
+  let surface = try #require(view.surface)
+  let start = try #require(view.bufferInfo())
+  let cellHeight = try cellHeightPoints(view)
+
+  // 已在底部，继续向下滚（内容上移）3 行：视口仍在 active 区，网格上移 3 行。
+  view.scrollWheel(with: try trackpadScroll(deltaY: 0, phase: 1))
+  view.scrollWheel(with: try trackpadScroll(deltaY: -Double(cellHeight) * 3, phase: 2))
+  let moved = try #require(view.bufferInfo())
+  #expect(moved.viewport_top == start.viewport_top)
+  let offset = ghostty_aster_surface_visual_offset_rows(surface)
+  #expect(offset > 2.9 && offset < 3.1)
+
+  // 大幅继续下滚只到上限：最后一行有字的行（提示符）停在视口顶部。
+  view.scrollWheel(with: try trackpadScroll(deltaY: -Double(cellHeight) * 500, phase: 2))
+  let capped = ghostty_aster_surface_visual_offset_rows(surface)
+  #expect(capped <= Double(moved.viewport_rows - 1) && capped > 3)
+
+  // 输入把视口带回底部并清掉越界。
+  view.scrollWheel(with: try trackpadScroll(deltaY: 0, phase: 4))
+  #expect(view.typeText("x"))
+  for _ in 0..<50 where ghostty_aster_surface_visual_offset_rows(surface) != 0 {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(ghostty_aster_surface_visual_offset_rows(surface) == 0)
+}
+
+@Test("真实 surface：开启滚过开头后能越过顶部，关闭时停在第一行")
+@MainActor
+func ghosttyScrollPastFirstLineOverscrollsAboveTop() async throws {
+  let (session, window, view) = try await makeScrolledSurface(
+    smoothScrolling: false, scrollPastFirstLine: .firstLineWithContent)
+  defer {
+    window.orderOut(nil)
+    session.stop(immediately: true)
+  }
+  let surface = try #require(view.surface)
+  let cellHeight = try cellHeightPoints(view)
+  // 按行模式也能越界：一次向上滚很多行，停在顶部之上且不超过视口高度减一。
+  view.scrollWheel(with: try trackpadScroll(deltaY: 0, phase: 1))
+  view.scrollWheel(with: try trackpadScroll(deltaY: Double(cellHeight) * 2_000, phase: 2))
+  let info = try #require(view.bufferInfo())
+  let offset = ghostty_aster_surface_visual_offset_rows(surface)
+  #expect(info.viewport_top == 0)
+  #expect(offset < 0 && offset >= -Double(info.viewport_rows - 1))
+  #expect(offset == offset.rounded())
+
+  let (plainSession, plainWindow, plainView) = try await makeScrolledSurface(smoothScrolling: false)
+  defer {
+    plainWindow.orderOut(nil)
+    plainSession.stop(immediately: true)
+  }
+  let plainSurface = try #require(plainView.surface)
+  plainView.scrollWheel(with: try trackpadScroll(deltaY: 0, phase: 1))
+  plainView.scrollWheel(with: try trackpadScroll(deltaY: Double(cellHeight) * 2_000, phase: 2))
+  #expect(plainView.bufferInfo()?.viewport_top == 0)
+  #expect(ghostty_aster_surface_visual_offset_rows(plainSurface) == 0)
 }

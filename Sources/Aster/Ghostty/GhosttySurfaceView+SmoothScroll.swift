@@ -32,17 +32,18 @@ extension GhosttySurfaceView {
     return settler
   }
 
-  /// 视觉滚动位置：视口首行（从 scrollback 顶端算起）加小数行。
+  /// 视觉滚动位置：视口首行（从 scrollback 顶端算起）加小数行与越界行；滚过开头时为负。
   func smoothScrollPosition() -> Double? {
     guard let surface, let info = bufferInfo() else { return nil }
-    return Double(info.viewport_top) + ghostty_aster_surface_scroll_row_frac(surface)
+    return Double(info.viewport_top) + ghostty_aster_surface_visual_offset_rows(surface)
   }
 
-  /// 小数行让网格整体上移的距离（点）。命中测试与叠加层必须加上它，才能和渲染对齐；
-  /// 此时视口下方还多画了一行，可见行数按 `viewport_rows + 1` 计算。
+  /// 网格相对视口首行的整体位移（点），向上为正：小数行与「滚过末尾」为正，「滚过开头」为负。
+  /// 命中测试与叠加层必须加上它才能和渲染对齐；有小数行时视口下方还多画一行，
+  /// 可见行数按 `viewport_rows + 1` 计算，越界露出的空白处没有行。
   func scrollRowOffset(cellHeight: CGFloat) -> CGFloat {
     guard let surface else { return 0 }
-    return CGFloat(ghostty_aster_surface_scroll_row_frac(surface)) * cellHeight
+    return CGFloat(ghostty_aster_surface_visual_offset_rows(surface)) * cellHeight
   }
 
   /// 交给 Ghostty 的滚动量。Ghostty 把精确滚动量当作像素，AppKit 给的是点；

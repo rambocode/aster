@@ -177,7 +177,17 @@ Ghostty 配置 `aster-smooth-scroll`，打开后主屏 scrollback 按像素跟�
   动画期间视口被别处挪动时直接精确对齐，不在新视口上叠加旧增量；帧回调迟迟不来（窗口被遮挡）
   时 250ms 兜底对齐。视图离开窗口或关闭「平滑滚动」时立即对齐。
 
-「滚过末尾」「滚过开头」两项设置目前只在 SwiftTerm 回归适配器里生效，Ghostty 路径尚未实现。
+### 滚过末尾 / 开头
+
+「滚过末尾」「滚过开头」（`controls.scrollPastLastLine` / `scrollPastFirstLine`）投影为
+`aster-scroll-past-last-line` / `aster-scroll-past-first-line`，「与末尾相同」在 Swift 侧按 SwiftTerm
+适配器的规则换算。引擎把它们并进同一个视觉位置：`Screen.aster_overscroll_rows` 为正表示越过末尾
+（视口仍在 active 区、网格上移、下方留空），为负表示越过开头（视口停在第 0 行、网格下移、
+上方留空）。上限按主屏内容计算：越过末尾时最后一行有字的行（或光标行）最多升到视口顶部或
+中部，越过开头时第一行有字的行最多降到底部或中部；alternate screen 始终为 0。滚轮与按行模式的
+触控板也能越界，平滑滚动时越界位置同样在手势结束后对齐到整行。任何整数滚动（输入回到底部、
+跳转、搜索、滚动条）都清零；内容变化让上限缩小时，已越界的位置只能往回走、不会被强行拉回。
+越界露出的是网格外的 padding，按背景色画空白；命中测试把空白处夹到最近的行。
 
 ### Aster extension ABI v2
 
@@ -186,7 +196,7 @@ Ghostty 配置 `aster-smooth-scroll`，打开后主屏 scrollback 按像素跟�
 - 原始 PTY read/write callback，以及支持 BEL、ESC ST、C1 ST 和 64 KiB 上限的任意数字 OSC observer。observer 的流式扫描在 ground 与 payload 状态都跟踪 UTF-8 多字节序列，0x9C/0x9D 处于续字节位置时不会被误判为 C1 终止符（否则 OSC 0 标题里的 "✳"（E2 9C B3）会被截成 U+FFFD）；
 - OSC 发生位置的稳定 page anchor、绝对 retained-screen 坐标和 scrollback 裁剪后的重新解析；
 - buffer geometry、固定宽度 cell row、selection get/set/clear 和绝对 row 滚动；
-- v2 起：像素滚动的小数行读取（`ghostty_aster_surface_scroll_row_frac`）、按小数行滚动
+- v2 起：像素滚动与越界滚动的视觉偏移读取（`ghostty_aster_surface_visual_offset_rows`）、按小数行滚动
   （`ghostty_aster_surface_scroll_rows`）与对齐到整行（`ghostty_aster_surface_snap_scroll_row`），
   以及启用它的 `aster-smooth-scroll` 配置；
 - literal/regex、大小写、前后方向的完整搜索，以及精确总数、选中序号和 match range；

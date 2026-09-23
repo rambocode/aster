@@ -177,3 +177,31 @@ func ghosttyScrollDeltasConvertPreciseDeltasToPixels() throws {
   let wheelY: Double = view.ghosttyScrollDeltas(for: wheelEvent).y
   #expect(wheelY == Double(wheelEvent.scrollingDeltaY))
 }
+
+@Test("滚过末尾 / 开头投影为 Ghostty 配置，「与末尾相同」按末尾模式换算")
+@MainActor
+func ghosttyConfigurationProjectsScrollPastSettings() {
+  typealias Config = GhosttyConfiguration
+  #expect(Config.scrollPastLastLine(.disabled) == "disabled")
+  #expect(Config.scrollPastLastLine(.lastLineWithContent) == "last-line-with-content")
+  #expect(Config.scrollPastLastLine(.lastLineInMiddle) == "last-line-in-middle")
+  #expect(Config.scrollPastLastLine(.cursorLine) == "cursor-line")
+  #expect(Config.scrollPastFirstLine(.firstLineWithContent, last: .disabled) == "first-line-with-content")
+  #expect(Config.scrollPastFirstLine(.firstLineInMiddle, last: .disabled) == "first-line-in-middle")
+  #expect(Config.scrollPastFirstLine(.sameAsLastLine, last: .disabled) == "disabled")
+  #expect(Config.scrollPastFirstLine(.sameAsLastLine, last: .lastLineInMiddle) == "first-line-in-middle")
+  #expect(Config.scrollPastFirstLine(.sameAsLastLine, last: .cursorLine) == "first-line-with-content")
+
+  let suite = "aster.tests.ghostty-scroll-past.\(UUID().uuidString)"
+  let defaults = UserDefaults(suiteName: suite)!
+  defer { defaults.removePersistentDomain(forName: suite) }
+  let preferences = AppPreferences(defaults: defaults)
+  let initial = Config.make(preferences: preferences)
+  #expect(initial.contains("aster-scroll-past-last-line = disabled\n"))
+  #expect(initial.contains("aster-scroll-past-first-line = disabled\n"))
+  preferences.configuration.controls.scrollPastLastLine = .lastLineInMiddle
+  preferences.configuration.controls.scrollPastFirstLine = .sameAsLastLine
+  let updated = Config.make(preferences: preferences)
+  #expect(updated.contains("aster-scroll-past-last-line = last-line-in-middle\n"))
+  #expect(updated.contains("aster-scroll-past-first-line = first-line-in-middle\n"))
+}
