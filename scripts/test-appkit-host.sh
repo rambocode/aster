@@ -6,8 +6,10 @@ set -euo pipefail
 PROJECT_DIR="${0:A:h:h}"
 BUILD_DIR="${ASTER_BUILD_PATH:-$PROJECT_DIR/.build}"
 cd "$PROJECT_DIR"
-swift build --build-tests --scratch-path "$BUILD_DIR" >/dev/null
-BIN_DIR="$(swift build --show-bin-path --scratch-path "$BUILD_DIR")"
+# Swift 6.4 默认的 swiftbuild 按 target 拆测试包且缺 libXCTestSwiftSupport，宿主加载不了；固定用 native。
+SWIFT_BUILD_SYSTEM=(--build-system native)
+swift build "${SWIFT_BUILD_SYSTEM[@]}" --build-tests --scratch-path "$BUILD_DIR" >/dev/null
+BIN_DIR="$(swift build "${SWIFT_BUILD_SYSTEM[@]}" --show-bin-path --scratch-path "$BUILD_DIR")"
 PLATFORM_DIR="$(xcrun --sdk macosx --show-sdk-platform-path)"
 SPARKLE_FRAMEWORK=$(/usr/bin/find "$BUILD_DIR/artifacts" -maxdepth 5 -type d -name Sparkle.framework -print -quit)
 if [[ -z "$SPARKLE_FRAMEWORK" ]]; then

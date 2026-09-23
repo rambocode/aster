@@ -94,7 +94,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     base = [args.host, "--test-bundle-path", args.bundle]
     discovery = args.output / "inventory.jsonl"
-    code = run(base + forwarded + ["--list-tests", "--event-stream-output-path", str(discovery)],
+    code = run(base + forwarded + ["--list-tests", "--event-stream-version", "0", "--event-stream-output-path", str(discovery)],
                args.output / "discovery.log")
     if code:
         raise RuntimeError(f"Discovery failed ({code}); see {args.output / 'discovery.log'}")
@@ -113,7 +113,7 @@ def main():
         output = args.output / f"batch-{number:03}.log"
         pattern = "^(?:" + "|".join(selector(item) for item in assigned) + r")(?:/[^/]+\.swift:\d+:\d+)?$"
         code = run(base + execution_args + ["--no-parallel", "--filter", pattern,
-                   "--event-stream-output-path", str(event_path)], output)
+                   "--event-stream-version", "0", "--event-stream-output-path", str(event_path)], output)
         try:
             result = audit(set(assigned), records(event_path), code)
         except (OSError, ValueError, KeyError) as error:
