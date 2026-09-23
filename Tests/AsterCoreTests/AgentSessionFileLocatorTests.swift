@@ -101,3 +101,41 @@ func locatorResolvesCodexRolloutByCwd() throws {
       provider: .codex, projectDirectory: "/Users/me/nothing", homeDirectory: home, startedAfter: started)
       == .none)
 }
+
+@Test("同目录两个 Agent：跳过已被其它 Pane 绑定的会话，不让两个 Pane 绑到同一个 ID")
+func locatorSkipsSessionsClaimedByOtherPanes() throws {
+  let home = try makeHome()
+  defer { try? FileManager.default.removeItem(at: home) }
+  let started = Date()
+  let claude = home.appendingPathComponent(".claude/projects/-Users-me-proj", isDirectory: true)
+  try write(claude.appendingPathComponent("first-1.jsonl"), "{}", modifiedAt: started.addingTimeInterval(10))
+  try write(claude.appendingPathComponent("second-2.jsonl"), "{}", modifiedAt: started.addingTimeInterval(20))
+  #expect(
+    AgentSessionFileLocator.resolve(
+      provider: .claudeCode, projectDirectory: "/Users/me/proj", homeDirectory: home,
+      startedAfter: started, excludingSessionIDs: ["second-2"])
+      == .session(id: "first-1"))
+  // 本次运行的文件全被占用：不借用别人的会话。
+  #expect(
+    AgentSessionFileLocator.resolve(
+      provider: .claudeCode, projectDirectory: "/Users/me/proj", homeDirectory: home,
+      startedAfter: started, excludingSessionIDs: ["first-1", "second-2"])
+      == .latestUnknown)
+
+  var calendar = Calendar(identifier: .gregorian)
+  calendar.timeZone = .current
+  let parts = calendar.dateComponents([.year, .month, .day], from: Date())
+  let day = home.appendingPathComponent(
+    String(format: ".codex/sessions/%04d/%02d/%02d", parts.year!, parts.month!, parts.day!),
+    isDirectory: true)
+  func meta(_ id: String) -> String {
+    #"{"type":"session_meta","payload":{"id":"\#(id)","cwd":"/Users/me/proj"}}"# + "\n"
+  }
+  try write(day.appendingPathComponent("rollout-a.jsonl"), meta("codex-a"), modifiedAt: started.addingTimeInterval(10))
+  try write(day.appendingPathComponent("rollout-b.jsonl"), meta("codex-b"), modifiedAt: started.addingTimeInterval(20))
+  #expect(
+    AgentSessionFileLocator.resolve(
+      provider: .codex, projectDirectory: "/Users/me/proj", homeDirectory: home,
+      startedAfter: started, excludingSessionIDs: ["codex-b"])
+      == .session(id: "codex-a"))
+}

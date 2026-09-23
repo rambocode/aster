@@ -142,6 +142,9 @@ import Testing
       ],
       nil
     ),
+    // npm 安装的 Codex：前台进程组组长是 node，脚本路径才是真实身份。
+    (["node", "/opt/homebrew/bin/codex", "--profile", "dev"], .codex),
+    (["node", "/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js"], .codex),
     // shell / python 脚本路径。
     (["/bin/sh", "/tmp/test-bin/pi"], .pi),
     (["python3", "/tmp/codex", "--model", "gpt-5"], .codex),
