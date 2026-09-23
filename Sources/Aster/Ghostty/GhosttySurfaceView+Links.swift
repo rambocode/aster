@@ -125,12 +125,16 @@ extension GhosttySurfaceView {
     guard linkDetectionEnabled, bounds.contains(local), let info = bufferInfo(),
       let metrics = cellMetrics()
     else { return nil }
-    let rowInViewport = Int((bounds.maxY - local.y) / metrics.height)
+    // 小数行滚动时网格整体上移、底部多画一行，命中必须按同样的偏移换算。
+    let offset = scrollRowOffset(cellHeight: metrics.height)
+    let paintedRows = Int(info.viewport_rows) + (offset > 0 ? 1 : 0)
+    let rowInViewport = Int(floor((bounds.maxY - local.y + offset) / metrics.height))
     let column = Int(local.x / metrics.width)
-    guard rowInViewport >= 0, rowInViewport < Int(info.viewport_rows),
+    let screenRow = Int(clamping: info.viewport_top) + rowInViewport
+    guard rowInViewport >= 0, rowInViewport < paintedRows,
+      screenRow < Int(clamping: info.screen_rows),
       column >= 0, column < Int(info.columns)
     else { return nil }
-    let screenRow = Int(clamping: info.viewport_top) + rowInViewport
     return inlineLinkTargets(screenRow: screenRow, columns: Int(info.columns))
       .first { column >= $0.startColumn && column <= $0.endColumn }
   }
@@ -227,8 +231,11 @@ extension GhosttySurfaceView {
       linkUnderlineOverlay?.update(segments: [])
       return
     }
+    // 小数行滚动时网格整体上移、底部多画一行，下划线跟着同样偏移。
+    let offset = scrollRowOffset(cellHeight: metrics.height)
     let first = Int(clamping: info.viewport_top)
-    let last = min(Int(clamping: info.screen_rows), first + Int(info.viewport_rows))
+    let paintedRows = Int(info.viewport_rows) + (offset > 0 ? 1 : 0)
+    let last = min(Int(clamping: info.screen_rows), first + paintedRows)
     var segments: [NSRect] = []
     for screenRow in first..<last {
       for target in inlineLinkTargets(screenRow: screenRow, columns: Int(info.columns)) {
@@ -236,7 +243,7 @@ extension GhosttySurfaceView {
         segments.append(
           NSRect(
             x: CGFloat(target.startColumn) * metrics.width,
-            y: bounds.maxY - CGFloat(row + 1) * metrics.height,
+            y: bounds.maxY - CGFloat(row + 1) * metrics.height + offset,
             width: CGFloat(target.endColumn - target.startColumn + 1) * metrics.width,
             height: metrics.height
           ))

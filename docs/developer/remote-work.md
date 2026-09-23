@@ -48,7 +48,7 @@ Windows 客户端/服务器、Web 仪表盘、独立手机 App 不在本次范�
 - `AsterCore/WorkspaceLayout.swift` 的 `PaneDescriptor` 保存目录和资源；`WorkspacePersistence.swift` 保存本地布局。
 - `TerminalSession.stop` 销毁 Ghostty surface。当前退出链路不能直接复用为远端结束操作。
 - `Ghostty/GhosttySurfaceView.swift` 创建拥有子进程的 surface；PTY observer 是观察接口，不视为可直接注入外部 PTY 的接口。
-- `Vendor/Ghostty/README.md` 锁定 revision `4dcb09ada0c0909717d92547623b26eafa50ca8a`、Zig 0.15.2 和 Aster 扩展 ABI v1。跨平台 headless 使用尚未验证，必须完成 P0。
+- `Vendor/Ghostty/README.md` 锁定 revision `4dcb09ada0c0909717d92547623b26eafa50ca8a`、Zig 0.15.2 和 Aster 扩展 ABI v2。跨平台 headless 使用尚未验证，必须完成 P0。
 - `ssh -o BatchMode=yes -o ConnectTimeout=8 root@ubuntu@orb` 已登录 Ubuntu 26.04 LTS x86_64、root。Git/Python 3 可用；当次 PATH 检查未找到 herdr、tmux、screen、swift、zig、cargo。实施前重新探测，不把该快照作为永久配置。
 
 ## 3. 固定架构决策

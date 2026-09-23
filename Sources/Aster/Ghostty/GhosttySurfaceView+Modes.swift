@@ -450,15 +450,17 @@ extension GhosttySurfaceView {
     guard let surface, let info = bufferInfo() else { return nil }
     let row = screenRow - Int(clamping: info.viewport_top)
     let size = ghostty_surface_size(surface)
-    guard row >= 0, row < Int(info.viewport_rows), column >= 0, column < Int(info.columns),
-      size.cell_width_px > 0, size.cell_height_px > 0
-    else { return nil }
+    guard size.cell_width_px > 0, size.cell_height_px > 0 else { return nil }
     let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
     let width = CGFloat(size.cell_width_px) / scale
     let height = CGFloat(size.cell_height_px) / scale
+    // 小数行滚动时网格整体上移、底部多画一行，标签跟着同样偏移。
+    let offset = scrollRowOffset(cellHeight: height)
+    let paintedRows = Int(info.viewport_rows) + (offset > 0 ? 1 : 0)
+    guard row >= 0, row < paintedRows, column >= 0, column < Int(info.columns) else { return nil }
     return NSRect(
       x: CGFloat(column) * width,
-      y: bounds.maxY - CGFloat(row + 1) * height,
+      y: bounds.maxY - CGFloat(row + 1) * height + offset,
       width: width,
       height: height
     )

@@ -86,6 +86,8 @@ enum GhosttyConfiguration {
       "mouse-hide-while-typing = \(boolean(controls.resolvedMouseHideWhileTyping))",
       "focus-follows-mouse = false",
       "mouse-shift-capture = \(mouseShiftCapture)",
+      // 触控板按像素滚动主屏 scrollback；滚轮、alternate screen 与鼠标上报仍按整行。
+      "aster-smooth-scroll = \(boolean(controls.smoothScrolling))",
       "right-click-action = \(controls.resolvedRightClickAction.rawValue)",
       "cursor-click-to-move = \(boolean(controls.resolvedCursorClickToMove))",
       // 普通文字 URL 与路径由 Aster 侧统一识别（下划线、预览、Command 点击、scheme 策略），

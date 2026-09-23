@@ -113,9 +113,10 @@ headers=("$staging_dir"/GhosttyKit.xcframework/macos-*/Headers/ghostty.h)
 libraries=("$staging_dir"/GhosttyKit.xcframework/macos-*/libghostty-internal-fat.a)
 shopt -u nullglob
 if [[ "${#headers[@]}" -ne 1 ]] ||
-   ! /usr/bin/grep -q 'GHOSTTY_ASTER_EXTENSION_ABI_VERSION 1u' "${headers[0]}" ||
-   ! /usr/bin/grep -q 'ghostty_aster_surface_search' "${headers[0]}"; then
-  echo "error: generated GhosttyKit is missing the required Aster ABI v1" >&2
+   ! /usr/bin/grep -q 'GHOSTTY_ASTER_EXTENSION_ABI_VERSION 2u' "${headers[0]}" ||
+   ! /usr/bin/grep -q 'ghostty_aster_surface_search' "${headers[0]}" ||
+   ! /usr/bin/grep -q 'ghostty_aster_surface_scroll_rows' "${headers[0]}"; then
+  echo "error: generated GhosttyKit is missing the required Aster ABI v2" >&2
   exit 1
 fi
 if [[ "${#libraries[@]}" -ne 1 ]]; then

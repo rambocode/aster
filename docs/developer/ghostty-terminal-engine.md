@@ -150,13 +150,45 @@ screen）时隐藏。平时 `alphaValue` 为 0 且 `hitTest` 返回 nil；只有
 位置，否则异步回写会让滑块在指针下抖动。滚动条有自己的 cursor tracking area，
 避免 surface 的 I-beam 盖住箭头。
 
-### Aster extension ABI v1
+### 像素滚动
+
+上游 Ghostty 只按整行滚动：触控板的像素量先累积，够一行才动一次，60Hz 屏幕上慢速滚动
+表现为停几帧、跳一行。设置里的「平滑滚动」（`controls.smoothScrolling`，默认开）投影为
+Ghostty 配置 `aster-smooth-scroll`，打开后主屏 scrollback 按像素跟手：
+
+- **位置模型。** `Screen.scroll_row_frac`（`0 <= frac < 1`）与整数视口首行一起构成视觉位置
+  `offset + frac`。任何整数滚动（输入回到底部、跳转、搜索、滚动条拖动、ABI 的
+  `scroll_to_row`）都把它清零；到达底部时也强制为 0，视口因此照常跟随新输出。
+- **渲染。** `frac > 0` 时 `RenderState` 在视口下方多带一行，cell 缓冲与 `grid_size` 随之多一行，
+  着色器统一加 `content_offset = (0, -frac * cell_height)`：网格整体上移，底部空出的部分由多带
+  的那一行填上。只改小数行的帧不重建 cell，只刷新 uniform；跨行时和原来一样整屏重建。
+  blank padding 仍按真实网格行数计算。
+- **输入。** `scrollCallback` 只在精确设备、主屏、未开启鼠标上报时走像素路径；滚轮、alternate
+  screen 的方向键转换与鼠标上报保持上游按行语义。Ghostty 把精确滚动量当作像素，而 AppKit
+  给的是点，`GhosttySurfaceView` 先按 backing scale 换算（`ghosttyScrollDeltas`），内容才 1:1
+  跟手；此前直接传点，Retina 屏上内容只走手指一半的距离。
+- **命中测试。** renderer 每帧把刚画出的小数行写进 `renderer.State` 的原子变量，
+  `posToViewport` 读它换算，并允许落在多带的那一行，点击、拖选与 OSC 8 悬停和画面一致。
+  用原子变量而不是读终端状态，是因为光标回调在加锁之前就要换算坐标。Aster 侧的链接下划线、Command 点击与 Hint 标签也经
+  `scrollRowOffset(cellHeight:)` 加上偏移。
+- **收尾对齐。** `GhosttyScrollSettler` 按手势阶段决定何时对齐到整行：惯性结束或被取消立即
+  对齐；抬手后等 80ms，没有惯性跟上再对齐；没有阶段信息的设备空闲 250ms 后对齐。对齐是约
+  120ms 的 ease-out 动画，由 `NSView.displayLink` 按显示器节奏推进；新的触碰或滚动立即停下，
+  动画期间视口被别处挪动时直接精确对齐，不在新视口上叠加旧增量；帧回调迟迟不来（窗口被遮挡）
+  时 250ms 兜底对齐。视图离开窗口或关闭「平滑滚动」时立即对齐。
+
+「滚过末尾」「滚过开头」两项设置目前只在 SwiftTerm 回归适配器里生效，Ghostty 路径尚未实现。
+
+### Aster extension ABI v2
 
 固定补丁在 Ghostty internal C interface 之外提供：
 
 - 原始 PTY read/write callback，以及支持 BEL、ESC ST、C1 ST 和 64 KiB 上限的任意数字 OSC observer。observer 的流式扫描在 ground 与 payload 状态都跟踪 UTF-8 多字节序列，0x9C/0x9D 处于续字节位置时不会被误判为 C1 终止符（否则 OSC 0 标题里的 "✳"（E2 9C B3）会被截成 U+FFFD）；
 - OSC 发生位置的稳定 page anchor、绝对 retained-screen 坐标和 scrollback 裁剪后的重新解析；
 - buffer geometry、固定宽度 cell row、selection get/set/clear 和绝对 row 滚动；
+- v2 起：像素滚动的小数行读取（`ghostty_aster_surface_scroll_row_frac`）、按小数行滚动
+  （`ghostty_aster_surface_scroll_rows`）与对齐到整行（`ghostty_aster_surface_snap_scroll_row`），
+  以及启用它的 `aster-smooth-scroll` 配置；
 - literal/regex、大小写、前后方向的完整搜索，以及精确总数、选中序号和 match range；
 - 无活动 display link 时保留 surface、仅关闭 vsync 的嵌入式降级。
 - focused 静态 surface 的按需 display link；光标、输入、PTY 输出和 resize 请求下一帧，
