@@ -1532,7 +1532,11 @@ func workspaceTitlePopoverExposesWorkingActions() throws {
 
   let find = try #require(buttons.first { $0.identifier?.rawValue == "workspace-title-find" })
   find.performClick(nil)
-  #expect(model.isFindPresented)
+  // 活动 Pane 是编辑器，“查找”打开文件自己的查找栏，而不是终端查找栏。
+  #expect(!model.isFindPresented)
+  #expect(controller.view.descendants.contains {
+    $0.identifier?.rawValue == "file-pane-findbar"
+  })
   let global = try #require(buttons.first {
     $0.identifier?.rawValue == "workspace-title-global-find"
   })

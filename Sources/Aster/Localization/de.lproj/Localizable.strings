@@ -220,6 +220,7 @@
 "「%@」将被永久删除，连同它的来源回链一起消失，无法恢复。\n\n如果只是想让它不再进入 Agent 上下文，用“禁用”即可。" = "„%@“ wird zusammen mit seinen Quellverweisen dauerhaft gelöscht. Dies kann nicht rückgängig gemacht werden.\n\nWenn Sie es nur aus dem Agent-Kontext entfernen möchten, verwenden Sie „Deaktivieren“.";
 "一次最多上传 %@ 个文件" = "Es können höchstens %@ Dateien auf einmal hochgeladen werden";
 "三级文字" = "Tertiärer Text";
+"上一个" = "Vorheriger";
 "上一条命令" = "Vorheriger Befehl";
 "上传" = "Hochladen";
 "上传到此目录…" = "In diesen Ordner hochladen…";
@@ -227,6 +228,7 @@
 "上传完成" = "Hochladen abgeschlossen";
 "上排标准色，下排高亮色" = "Obere Reihe Standardfarben, untere Reihe helle Farben";
 "上移分隔条" = "Trennlinie nach oben bewegen";
+"下一个" = "Nächster";
 "下一条命令" = "Nächster Befehl";
 "下一步" = "Weiter";
 "下划线" = "Unterstrich";
@@ -577,6 +579,7 @@
 "在当前目录创建新的 Agent 会话" = "Neue Agent-Sitzung im aktuellen Verzeichnis erstellen";
 "在当前终端中 cd 到所在目录" = "Im aktuellen Terminal zum enthaltenden Ordner wechseln";
 "在文件 / 编辑器面板中启用模态编辑" = "Modale Bearbeitung im Datei-/Editorbereich aktivieren";
+"在文件中查找" = "In Datei suchen";
 "在文本面板左侧显示行号侧栏" = "Zeilennummern-Seitenleiste links im Textbereich anzeigen";
 "在新终端中打开所在目录" = "Enthaltenden Ordner in neuem Terminal öffnen";
 "在本机脱敏记录命令，并允许 README 与沙箱 help 规格学习" = "Befehle lokal mit maskierten sensiblen Daten aufzeichnen und das Lernen von README- und Sandbox-Hilfe-Spezifikationen erlauben";
@@ -985,6 +988,7 @@
 "方块" = "Block";
 "方块、竖线、下划线或空心方块" = "Block, Balken, Unterstrich oder Blockumriss";
 "无 agent" = "Kein Agent";
+"无匹配" = "Keine Treffer";
 "无可用工作目录" = "Kein Arbeitsverzeichnis verfügbar";
 "无效或不受支持的 Aster 深链。" = "Ungültiger oder nicht unterstützter Aster-Deeplink.";
 "无效的 ssh 链接。" = "Ungültiger SSH-Link.";
@@ -1101,6 +1105,7 @@
 "最近使用的参数" = "Kürzlich verwendetes Argument";
 "最近文件夹" = "Zuletzt verwendete Ordner";
 "最近标签页" = "Zuletzt verwendete Tabs";
+"有匹配" = "Gefunden";
 "有命令仍在运行。关闭%@会终止它。" = "Ein Befehl wird noch ausgeführt. Das Schließen von %@ beendet ihn.";
 "有多个标签页时" = "Bei mehreren Tabs";
 "有运行中的进程时" = "Bei laufendem Prozess";
@@ -1225,6 +1230,7 @@
 "此会话没有可展示的事件。" = "Keine Ereignisse für diese Sitzung anzuzeigen.";
 "此平台不提供该项" = "Auf dieser Plattform nicht verfügbar";
 "此文件没有可索引的结构。" = "Diese Datei hat keine indexierbare Struktur.";
+"此文件类型不支持查找" = "Suchen ist für diesen Dateityp nicht verfügbar";
 "此构建未启用自动更新" = "Automatische Updates für diesen Build nicht aktiviert";
 "此构建未启用自动更新。请从项目发布页下载最新版本。" = "In diesem Build sind automatische Updates nicht aktiviert. Bitte die neueste Version von der Release-Seite des Projekts herunterladen.";
 "此标签页有 %@ 个 Pane" = "Dieser Tab hat %@ Bereiche";
