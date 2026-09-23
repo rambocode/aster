@@ -1,5 +1,6 @@
 // 验证终端滚动条的显示条件、滑块换算与拖动回调。
 import AppKit
+import Foundation
 import Testing
 
 @testable import Aster
@@ -47,4 +48,31 @@ func ghosttySurfaceMountsScrollbarOnReport() {
   #expect(scrollbar.frame.maxX == view.bounds.maxX)
   #expect(scrollbar.frame.height == view.bounds.height)
   #expect(scrollbar.doubleValue == 0)
+}
+
+@Test("滚动条平时淡出且点击穿透，只有视口滚动才淡入，输出增长不闪出")
+@MainActor
+func ghosttyScrollbarRevealsOnlyOnViewportScroll() {
+  let scrollbar = GhosttyScrollbar(frame: NSRect(x: 0, y: 0, width: 16, height: 300))
+  scrollbar.apply(GhosttyScrollbarState(total: 200, offset: 160, length: 40))
+  #expect(!scrollbar.isHidden)
+  #expect(!scrollbar.isRevealed)
+  #expect(scrollbar.hitTest(NSPoint(x: 8, y: 150)) == nil)
+  // 停在底部时输出增长：total 与 offset 一起变，不算用户滚动。
+  scrollbar.apply(GhosttyScrollbarState(total: 210, offset: 170, length: 40))
+  #expect(!scrollbar.isRevealed)
+  // 内容不变、视口上移才淡入。
+  scrollbar.apply(GhosttyScrollbarState(total: 210, offset: 100, length: 40))
+  #expect(scrollbar.isRevealed)
+}
+
+@Test("Ghostty 配置在右侧留出与滚动条同宽的槽位，文字不会进入滚动条下方")
+@MainActor
+func ghosttyConfigurationReservesScrollbarGutter() {
+  let suite = "aster.tests.ghostty-scrollbar-gutter.\(UUID().uuidString)"
+  let defaults = UserDefaults(suiteName: suite)!
+  defer { defaults.removePersistentDomain(forName: suite) }
+  let text = GhosttyConfiguration.make(preferences: AppPreferences(defaults: defaults))
+  #expect(text.contains("window-padding-x = 0,\(Int(GhosttyScrollbar.reservedWidth))\n"))
+  #expect(GhosttyScrollbar.width == GhosttyScrollbar.reservedWidth)
 }

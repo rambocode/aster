@@ -139,8 +139,13 @@ callback 正在同步通知同一个 completion 时会形成互等，随后窗�
 libghostty 在视口或 scrollback 变化时发 `GHOSTTY_ACTION_SCROLLBAR`（`total`/`offset`/`len`，
 单位是行）。`GhosttyCallbacks` 在回调内复制成 `GhosttyScrollbarState` 再切回主线程，
 `GhosttySurfaceView+Scrollbar` 把它交给 `GhosttyScrollbar`。滚动条是贴在 surface 右边缘的
-overlay `NSScroller`，不占终端网格宽度，显示或隐藏不会触发 reflow；`total <= len`
-（内容不足一屏，或 alternate screen）时隐藏。拖动滑块按比例换算成视口首行，经 ABI 的
+`NSScroller`，放在 `GhosttyConfiguration` 用 `window-padding-x = 0,<reservedWidth>` 在右侧固定
+让出的槽位里（`GhosttyScrollbar.reservedWidth`，整数 point，Ghostty padding 只解析整数）：网格不伸进
+槽里，滚动条永远不压字，显示或隐藏也不触发 reflow。`total <= len`（内容不足一屏，或 alternate
+screen）时隐藏。平时 `alphaValue` 为 0 且 `hitTest` 返回 nil；只有 `total`/`len` 不变而 `offset`
+变化（用户滚动视口）或指针进入槽位时淡入，停下约 1 秒后淡出，输出增长不触发淡入。滑块自绘：
+独立的 overlay `NSScroller` 不在 `NSScrollView` 里时系统不拉起滑块透明度，默认绘制看不到滑块，
+系统「始终显示滚动条」时又会画出不透明轨道。拖动滑块按比例换算成视口首行，经 ABI 的
 `ghostty_aster_surface_scroll_to_row` 滚动；点击轨道空白处按一屏翻页。拖动期间忽略回传的
 位置，否则异步回写会让滑块在指针下抖动。滚动条有自己的 cursor tracking area，
 避免 surface 的 I-beam 盖住箭头。

@@ -94,7 +94,8 @@ enum GhosttyConfiguration {
       "title-report = \(boolean(shell.resolvedTitleReport))",
       "scrollback-limit = \(scrollbackBytes)",
       "shell-integration = \(shell.shellIntegration ? "detect" : "none")",
-      "window-padding-x = 0",
+      // 右侧固定留出滚动条槽位：网格不伸进槽里，滚动条出现或消失都不遮字，也不触发 reflow。
+      "window-padding-x = 0,\(Int(GhosttyScrollbar.reservedWidth))",
       "window-padding-y = 0",
       "unfocused-split-opacity = \(format(appearance.resolvedUnfocusedSplitOpacity))",
       "confirm-close-surface = false",
