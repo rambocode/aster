@@ -25,6 +25,8 @@ pub const Session = struct {
     /// cannot clear this flag because they do not restore the viewport offset.
     viewport_snapshot_required: bool = false,
     delta_bytes: std.ArrayList(u8) = .empty,
+    /// 上一轮读到、但止于未完成序列/半个 UTF-8 字符的尾巴；下一轮放回 `delta_bytes` 开头再判。
+    delta_carry: std.ArrayList(u8) = .empty,
     delta_filter: @import("delta_filter.zig").Filter = .{},
     eof: bool = false,
     exit_status: ?u32 = null,
@@ -175,6 +177,7 @@ pub const Session = struct {
         self.terminal.deinit();
         self.pending_input.deinit(self.allocator);
         self.delta_bytes.deinit(self.allocator);
+        self.delta_carry.deinit(self.allocator);
         for (self.agent_directives.items) |bytes| self.allocator.free(bytes);
         self.agent_directives.deinit(self.allocator);
         self.directive_carry.deinit(self.allocator);
@@ -334,6 +337,11 @@ pub const Session = struct {
         self.delta_base = self.output_sequence;
         self.delta_safe = false;
         self.delta_bytes.clearRetainingCapacity();
+        // 上一轮留下的尾巴排在最前：它对 VT 还没有可见效果，客户端也还没收到。
+        if (self.delta_carry.items.len != 0) {
+            try self.delta_bytes.appendSlice(self.allocator, self.delta_carry.items);
+            self.delta_carry.clearRetainingCapacity();
+        }
         var changed = false;
         if (!self.eof) {
             var descriptors = [_]std.posix.pollfd{.{
@@ -385,8 +393,38 @@ pub const Session = struct {
             }
         }
         try self.pollExit();
-        if (self.delta_bytes.items.len != 0) self.delta_safe = self.delta_filter.consume(self.delta_bytes.items) and !self.viewport_snapshot_required;
-        return changed;
+        if (self.delta_bytes.items.len != 0) try self.finishDelta();
+        // 读到的全是未完成尾巴时可见状态没变，不算变化；退出仍须让轮询方看到。
+        return changed and (self.delta_bytes.items.len != 0 or self.eof);
+    }
+
+    /// 尾巴超过这个长度（例如 kitty 图形传输、超长 OSC）就不再等它完整，退回逐块判定。
+    const carry_limit: usize = 65536;
+
+    /// 把本轮字节切成「可交付前缀 + 未完成尾巴」。
+    ///
+    /// PTY 每次 read 约 1 KiB，TUI 的一帧常被切在转义序列或 UTF-8 中间；以前切开的两半各自
+    /// 都过不了检查，一帧就变成两次全量快照（RIS 会清掉客户端回滚历史并跳回底部，用户往上翻
+    /// 时画面不停闪）。尾巴对 VT 尚无可见效果，所以留到下一轮和后续字节一起判定是无损的：
+    /// 即使中间发了快照，快照里也不含尾巴的效果，下一轮重放尾巴不会重复作用。
+    fn finishDelta(self: *Session) !void {
+        const split = self.delta_filter.consumeSplit(self.delta_bytes.items);
+        const tail = self.delta_bytes.items.len - split.complete;
+        if (tail != 0 and tail <= carry_limit) {
+            try self.delta_carry.appendSlice(self.allocator, self.delta_bytes.items[split.complete..]);
+            self.delta_bytes.shrinkRetainingCapacity(split.complete);
+            // 切点是 ground 边界：尾巴下一轮从头解析，过滤器回到初始态。
+            self.delta_filter = .{};
+        }
+        if (self.delta_bytes.items.len == 0) {
+            // 全是尾巴：把本轮的序号推进撤回，客户端与服务端仍视为同一状态。
+            self.output_sequence = self.delta_base;
+            self.delta_safe = false;
+            return;
+        }
+        // 尾巴过长没有切走时块不自洽（止于序列中间），只能走快照；过滤器保留解析状态继续判后续块。
+        const self_contained = self.delta_bytes.items.len == split.complete;
+        self.delta_safe = split.allowed and self_contained and !self.viewport_snapshot_required;
     }
 
     /// Extracts complete `ESC ] 6974 ; payload (BEL | ESC \\)` sequences from one
@@ -772,4 +810,34 @@ test "scope session delayed TERM handler runs once across cleanup polling" {
     try std.testing.expect(std.mem.indexOf(u8, bytes, "TERM_COUNT=1") != null);
     try std.testing.expect(std.posix.W.IFEXITED(session.exit_status.?));
     try std.testing.expectEqual(@as(u8, 0), std.posix.W.EXITSTATUS(session.exit_status.?));
+}
+
+test "a frame split across reads is delivered as one safe delta instead of two snapshots" {
+    // 第一段止于 CSI 中间，第二段补完并继续输出。
+    const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", "printf 'ok\\033[3'; sleep 0.3; printf '1mred\\033[0m'; sleep 0.3" };
+    const env = [_:null]?[*:0]const u8{"PATH=/usr/bin:/bin"};
+    const session = try Session.create(std.testing.allocator, "/", "/bin/sh", &argv, &env, 24, 80);
+    defer session.destroy();
+    var delivered: std.ArrayList(u8) = .empty;
+    defer delivered.deinit(std.testing.allocator);
+    var unsafe_rounds: usize = 0;
+    var sequence_before_tail: ?u64 = null;
+    var timer = try std.time.Timer.start();
+    while (!(session.eof and session.exit_status != null) and timer.read() < 3 * std.time.ns_per_s) {
+        const changed = try session.tick(20, 65536);
+        if (session.delta_bytes.items.len != 0) {
+            if (session.delta_safe) try delivered.appendSlice(std.testing.allocator, session.delta_bytes.items) else unsafe_rounds += 1;
+        }
+        if (session.delta_carry.items.len != 0) {
+            try std.testing.expectEqualStrings("\x1b[3", session.delta_carry.items);
+            // 本轮只有尾巴、没有可交付前缀时序号不推进，客户端不会被要求重同步。
+            if (session.delta_bytes.items.len == 0) try std.testing.expectEqual(session.delta_base, session.output_sequence);
+            sequence_before_tail = session.output_sequence;
+        }
+        _ = changed;
+    }
+    try std.testing.expect(sequence_before_tail != null);
+    try std.testing.expectEqual(@as(usize, 0), unsafe_rounds);
+    try std.testing.expectEqualStrings("ok\x1b[31mred\x1b[0m", delivered.items);
+    try std.testing.expectEqual(@as(usize, 0), session.delta_carry.items.len);
 }
