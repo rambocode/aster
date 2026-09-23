@@ -21,6 +21,9 @@ func ghosttyClaimsControlReturnWhenFocused() {
     contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
     styleMask: [.titled], backing: .buffered, defer: false)
   let view = GhosttySurfaceView(workingDirectory: "/tmp", environment: [:], configurationText: "")
+  // 挂进窗口会自动建 surface 并起 Shell。结束时必须先 destroySurface：带着活 surface 随窗口
+  // 释放时，libghostty 线程的回调会和视图 dealloc 赛跑，偶发拖垮后续用例所在的测试进程。
+  defer { view.destroySurface() }
   window.contentView?.addSubview(view)
 
   window.makeFirstResponder(view)

@@ -154,6 +154,17 @@ final class GhosttySurfaceView: NSView {
   lazy var ghosttyResizeOverlay = TerminalResizeOverlay(frame: bounds)
   /// 右侧滚动条，首次收到 libghostty 位置上报时才挂上；见 `GhosttySurfaceView+Scrollbar.swift`。
   lazy var ghosttyScrollbar = makeGhosttyScrollbar()
+  /// 平滑滚动开关（controls.smoothScrolling）：触控板按像素滚动，手势结束后对齐整行。
+  /// 引擎侧由 `aster-smooth-scroll` 配置启用；视图负责收尾对齐，关闭时立即回到整行。
+  var smoothScrollingEnabled = true {
+    didSet {
+      guard oldValue != smoothScrollingEnabled, !smoothScrollingEnabled else { return }
+      existingScrollSettler?.settle(animated: false)
+    }
+  }
+  /// 小数行对齐动画，第一次精确滚动时才创建；见 `GhosttySurfaceView+SmoothScroll.swift`。
+  /// 拆离窗口与销毁路径只处理已存在的实例：视图可能正在 dealloc，此时再创建会对 self 取弱引用。
+  var existingScrollSettler: GhosttyScrollSettler?
   /// 只在行列数真的变化时提示；首次网格与 surface 建立初期的自动收敛都不提示。
   var ghosttyResizeAnnouncer = TerminalResizeAnnouncer()
 
@@ -484,6 +495,7 @@ final class GhosttySurfaceView: NSView {
   /// 永久销毁 surface。libghostty 自己持有 PTY monitor，free 后负责关闭 child 和回收资源。
   func destroySurface() {
     guard !isDestroyed else { return }
+    existingScrollSettler?.interrupt()
     handleLinkHoverMouseExited()
     removeLinkPreview()
     isDestroyed = true

@@ -150,13 +150,65 @@ screen）时隐藏。平时 `alphaValue` 为 0 且 `hitTest` 返回 nil；只有
 位置，否则异步回写会让滑块在指针下抖动。滚动条有自己的 cursor tracking area，
 避免 surface 的 I-beam 盖住箭头。
 
-### Aster extension ABI v1
+### 像素滚动
+
+上游 Ghostty 只按整行滚动：触控板的像素量先累积，够一行才动一次，60Hz 屏幕上慢速滚动
+表现为停几帧、跳一行。设置里的「平滑滚动」（`controls.smoothScrolling`，默认开）投影为
+Ghostty 配置 `aster-smooth-scroll`，打开后主屏 scrollback 按像素跟手：
+
+- **位置模型。** `Screen.scroll_row_frac`（`0 <= frac < 1`）与整数视口首行一起构成视觉位置
+  `offset + frac`。任何整数滚动（输入回到底部、跳转、搜索、滚动条拖动、ABI 的
+  `scroll_to_row`）都把它清零；到达底部时也强制为 0，视口因此照常跟随新输出。
+- **渲染。** `frac > 0` 时 `RenderState` 在视口下方多带一行，cell 缓冲与 `grid_size` 随之多一行，
+  着色器统一加 `content_offset = (0, -frac * cell_height)`：网格整体上移，底部空出的部分由多带
+  的那一行填上。只改小数行的帧不重建 cell，只刷新 uniform；跨行时和原来一样整屏重建。
+  blank padding 仍按真实网格行数计算。
+- **输入。** `scrollCallback` 只在精确设备、主屏、未开启鼠标上报时走像素路径；滚轮、alternate
+  screen 的方向键转换与鼠标上报保持上游按行语义。Ghostty 把精确滚动量当作像素，而 AppKit
+  给的是点，`GhosttySurfaceView` 先按 backing scale 换算（`ghosttyScrollDeltas`），内容才 1:1
+  跟手；此前直接传点，Retina 屏上内容只走手指一半的距离。
+- **命中测试。** renderer 每帧把刚画出的小数行写进 `renderer.State` 的原子变量，
+  `posToViewport` 读它换算，并允许落在多带的那一行，点击、拖选与 OSC 8 悬停和画面一致。
+  用原子变量而不是读终端状态，是因为光标回调在加锁之前就要换算坐标。Aster 侧的链接下划线、Command 点击与 Hint 标签也经
+  `scrollRowOffset(cellHeight:)` 加上偏移。
+- **收尾对齐。** `GhosttyScrollSettler` 按手势阶段决定何时对齐到整行：惯性结束或被取消立即
+  对齐；抬手后等 80ms，没有惯性跟上再对齐；没有阶段信息的设备空闲 250ms 后对齐。对齐是约
+  120ms 的 ease-out 动画，由 `NSView.displayLink` 按显示器节奏推进；新的触碰或滚动立即停下，
+  动画期间视口被别处挪动时直接精确对齐，不在新视口上叠加旧增量；帧回调迟迟不来（窗口被遮挡）
+  时 250ms 兜底对齐。视图离开窗口或关闭「平滑滚动」时立即对齐。
+
+### 滚过末尾 / 开头
+
+「滚过末尾」「滚过开头」（`controls.scrollPastLastLine` / `scrollPastFirstLine`）投影为
+`aster-scroll-past-last-line` / `aster-scroll-past-first-line`，「与末尾相同」在 Swift 侧按 SwiftTerm
+适配器的规则换算。引擎把它们并进同一个视觉位置：`Screen.aster_overscroll_rows` 为正表示越过末尾
+（视口仍在 active 区、网格上移、下方留空），为负表示越过开头（视口停在第 0 行、网格下移、
+上方留空）。上限按主屏内容计算：越过末尾时最后一行有字的行（或光标行）最多升到视口顶部或
+中部，越过开头时第一行有字的行最多降到底部或中部；alternate screen 始终为 0。滚轮与按行模式的
+触控板也能越界，平滑滚动时越界位置同样在手势结束后对齐到整行。任何整数滚动（输入回到底部、
+跳转、搜索、滚动条）都清零；内容变化让上限缩小时，已越界的位置只能往回走、不会被强行拉回。
+越界露出的是网格外的 padding，按背景色画空白；命中测试把空白处夹到最近的行。
+
+### 鼠标上报程序的滚轮节流
+
+开启鼠标上报或 alternate scroll 的程序（Claude Code 全屏模式 `tui: fullscreen`、vim、less）自己管理
+滚动，终端只转发滚轮事件（或方向键），像素滚动与滚动条都用不上。实测 Claude Code 全屏模式每个
+滚轮事件滚 1 行、整屏重画约 5KB、耗时 5–10ms；触控板快速滑动每秒一百多个事件，超过它的处理
+能力，事件在它那边排队，手指停下后画面还要追几百毫秒。补丁因此按程序的回应节流纵向滚轮事件：
+发出后若程序还没有任何 PTY 输出，最多留 2 个在路上，多余的直接丢弃而不排队；任何输出都算回应，
+100ms 没有回应也会放行（程序可能已滚到头而不重画）。滚动速度因此跟随程序自己的绘制速度，手势
+一停画面就停。计数用 `renderer.State.aster_output_seq`（IO 线程每次 PTY 读取加一）。
+
+### Aster extension ABI v2
 
 固定补丁在 Ghostty internal C interface 之外提供：
 
 - 原始 PTY read/write callback，以及支持 BEL、ESC ST、C1 ST 和 64 KiB 上限的任意数字 OSC observer。observer 的流式扫描在 ground 与 payload 状态都跟踪 UTF-8 多字节序列，0x9C/0x9D 处于续字节位置时不会被误判为 C1 终止符（否则 OSC 0 标题里的 "✳"（E2 9C B3）会被截成 U+FFFD）；
 - OSC 发生位置的稳定 page anchor、绝对 retained-screen 坐标和 scrollback 裁剪后的重新解析；
 - buffer geometry、固定宽度 cell row、selection get/set/clear 和绝对 row 滚动；
+- v2 起：像素滚动与越界滚动的视觉偏移读取（`ghostty_aster_surface_visual_offset_rows`）、按小数行滚动
+  （`ghostty_aster_surface_scroll_rows`）与对齐到整行（`ghostty_aster_surface_snap_scroll_row`），
+  以及启用它的 `aster-smooth-scroll` 配置；
 - literal/regex、大小写、前后方向的完整搜索，以及精确总数、选中序号和 match range；
 - 无活动 display link 时保留 surface、仅关闭 vsync 的嵌入式降级。
 - focused 静态 surface 的按需 display link；光标、输入、PTY 输出和 resize 请求下一帧，

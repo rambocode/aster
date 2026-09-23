@@ -86,6 +86,10 @@ enum GhosttyConfiguration {
       "mouse-hide-while-typing = \(boolean(controls.resolvedMouseHideWhileTyping))",
       "focus-follows-mouse = false",
       "mouse-shift-capture = \(mouseShiftCapture)",
+      // 触控板按像素滚动主屏 scrollback；滚轮、alternate screen 与鼠标上报仍按整行。
+      "aster-smooth-scroll = \(boolean(controls.smoothScrolling))",
+      "aster-scroll-past-last-line = \(scrollPastLastLine(controls.resolvedScrollPastLastLine))",
+      "aster-scroll-past-first-line = \(scrollPastFirstLine(controls.resolvedScrollPastFirstLine, last: controls.resolvedScrollPastLastLine))",
       "right-click-action = \(controls.resolvedRightClickAction.rawValue)",
       "cursor-click-to-move = \(boolean(controls.resolvedCursorClickToMove))",
       // 普通文字 URL 与路径由 Aster 侧统一识别（下划线、预览、Command 点击、scheme 策略），
@@ -104,6 +108,34 @@ enum GhosttyConfiguration {
       lines.append("palette = \(index)=\(rgb(color))")
     }
     return lines.joined(separator: "\n") + "\n"
+  }
+
+  /// 「滚过末尾」投影为 Ghostty 的 `aster-scroll-past-last-line` 值。
+  static func scrollPastLastLine(_ mode: TerminalScrollPastLastLine) -> String {
+    switch mode {
+    case .disabled: "disabled"
+    case .lastLineWithContent: "last-line-with-content"
+    case .lastLineInMiddle: "last-line-in-middle"
+    case .cursorLine: "cursor-line"
+    }
+  }
+
+  /// 「滚过开头」投影为 `aster-scroll-past-first-line` 值。「与末尾相同」按末尾模式换算，
+  /// 规则与 SwiftTerm 适配器一致：末尾停在中部时开头也停中部，其余停在底部。
+  static func scrollPastFirstLine(
+    _ mode: TerminalScrollPastFirstLine, last: TerminalScrollPastLastLine
+  ) -> String {
+    switch mode {
+    case .disabled: return "disabled"
+    case .firstLineWithContent: return "first-line-with-content"
+    case .firstLineInMiddle: return "first-line-in-middle"
+    case .sameAsLastLine:
+      switch last {
+      case .disabled: return "disabled"
+      case .lastLineInMiddle: return "first-line-in-middle"
+      case .lastLineWithContent, .cursorLine: return "first-line-with-content"
+      }
+    }
   }
 
   /// C surface command 是 Shell 文本。双引号兼容 Ghostty 的 Shell 探测器，

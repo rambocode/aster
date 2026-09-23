@@ -21,7 +21,9 @@ if [[ -z "$ZIG" || "$("$ZIG" version)" != "0.15.2" ]]; then
 fi
 
 vt_prefix="$RUNTIME_DIR/.build/vt-host"
-if [[ "${ASTER_SESSION_RUNTIME_REBUILD_VT:-0}" == "1" || ! -f "$vt_prefix/lib/libghostty-vt.a" ]]; then
+# 头文件也要检查：构建中途失败可能只装好了静态库，只看 .a 会一直跳过重建、链接时找不到 vt.h。
+if [[ "${ASTER_SESSION_RUNTIME_REBUILD_VT:-0}" == "1" || ! -f "$vt_prefix/lib/libghostty-vt.a" ||
+      ! -f "$vt_prefix/include/ghostty/vt.h" ]]; then
   echo "== aster-session: building libghostty-vt (native)"
   (cd "$RUNTIME_DIR" && PATH="$(dirname "$ZIG"):$PATH" scripts/build-vt.sh native)
 fi

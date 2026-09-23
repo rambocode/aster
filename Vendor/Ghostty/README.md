@@ -5,19 +5,36 @@ Aster 的主终端引擎使用 Ghostty 的 internal C interface。上游尚未�
 可重放的 Aster extension patch；不提交临时 clone。
 
 - 固定 revision：`4dcb09ada0c0909717d92547623b26eafa50ca8a`
-- 扩展 ABI：`GHOSTTY_ASTER_EXTENSION_ABI_VERSION == 1`
+- 扩展 ABI：`GHOSTTY_ASTER_EXTENSION_ABI_VERSION == 2`
 - 补丁：`patches/0001-aster-extension-abi.patch`
 - 生成命令：`./scripts/setup-ghostty.sh`
 - 编译器：Zig 0.15.2 与 Xcode Metal Toolchain
 - 产物：`Vendor/GhosttyKit.xcframework`
 - 运行时资源：`Sources/Aster/Ghostty/Resources/{ghostty,terminfo}`
 
-ABI v1 在上游 internal interface 之外补充：原始 PTY read/write observer、任意数字
+ABI v2 在上游 internal interface 之外补充：原始 PTY read/write observer、任意数字
 OSC 的非消费式 observer、稳定 page anchor 与绝对缓冲区坐标、固定宽度 cell row、
 精确 selection、绝对 row 滚动，以及 literal/regex、大小写、前后方向的完整搜索。
 无活动 macOS display link 时 surface 保持可用并仅关闭 vsync。observer payload 只在
 同步 callback 期间有效，宿主跨线程保留前必须复制；page anchor 仅在对应 page 仍被
 scrollback 保留时可解析。
+
+v2 新增像素滚动（设计参考上游未合并的 #14210 / #14122）：`Screen.scroll_row_frac` 记录视口的
+小数行，任何整数滚动与到达底部都会清零；`RenderState` 在小数行非 0 时多带视口下方一行，
+renderer 用 `content_offset` uniform 把网格整体上移，并把刚画出的小数行发布到
+`renderer.State` 的原子变量；`posToViewport` 读它做命中测试（光标回调在加锁前就要换算坐标）；
+`aster-smooth-scroll` 配置只让精确设备在主屏、未开启鼠标上报时走像素路径。新增 C 接口
+`ghostty_aster_surface_visual_offset_rows`、`ghostty_aster_surface_scroll_rows`、
+`ghostty_aster_surface_snap_scroll_row` 供宿主做手势结束后的整行对齐。Zig 定向测试覆盖小数行
+的钳制、到底清零、整数滚动清零、对齐取整、额外行采集与独立脏标记。
+
+同一视觉位置还承载「滚过末尾 / 开头」：`Screen.aster_overscroll_rows` 记录越过 scrollback 两端的行数，
+上限由 `aster-scroll-past-last-line` / `aster-scroll-past-first-line` 与主屏内容决定（最后或第一行有字
+的行、光标行），renderer 把它并入 `content_offset`，露出的部分是空白 padding；整数滚动清零。
+
+鼠标上报与 alternate scroll 的纵向滚轮事件按程序回应节流：IO 线程每次 PTY 读取递增
+`renderer.State.aster_output_seq`，`Surface` 在程序没有新输出时最多留 2 个事件在路上，多余的丢弃，
+100ms 无回应自动放行，避免 Claude Code 全屏这类每事件整屏重画的程序积压。
 
 Aster 的嵌入式 renderer 额外把 focused display link 改为按需运行：普通终端收到状态、
 光标或尺寸变化时启动，完成最新帧并再确认一轮没有新请求后停止；持续输出会在相邻刷新间
@@ -40,6 +57,13 @@ debug map 只保存 member basename，`dsymutil` 会选错对象并误报 ImGui 
 `setup-ghostty.sh` 会拒绝任何仍含重复 member basename 的生成库，把 debug-map 兼容性作为
 与 ABI header、terminfo 和 runtime resources 同级的产物门禁。
 
+Zig 0.15.2 自带的 clang `float.h` 早于 macOS 27 SDK：27 SDK 的 `math.h` 在启用 modules 时改由
+`<float.h>` 的 `__need_infinity_nan` 提供 `INFINITY`，Zig 的头文件不支持，libc++ 子编译会报
+`use of undeclared identifier 'INFINITY'`。`scripts/zig-macos-sdk.sh` 检测到这种 SDK 时，只把 Zig
+探测 SDK 的 `xcrun --sdk macosx --show-sdk-path` 改指到命令行工具里的 macOS 26 SDK，metal 等其余
+调用仍用 Xcode；没有可用的 26 SDK 时明确失败。`setup-ghostty.sh` 与
+`SessionRuntime/scripts/build-vt.sh` 共用它。升级到修复了该问题的 Zig 后应删除这段回退。
+
 构建 stamp 同时包含 revision 与 patch SHA-256，因此改动补丁后不会误复用旧二进制。
 更新 revision 时先在干净 clone 中执行 `git apply --check`，解决冲突后重新生成补丁，
 再运行 Zig 定向测试、完整 Swift 测试与 release App 验收，并核对导出的 ABI 版本。
@@ -48,12 +72,12 @@ debug map 只保存 member basename，`dsymutil` 会选错对象并误报 ImGui 
 `asterWantsPictureInPictureFrame` / `asterDidRenderPictureInPictureFrame:` host selector
 交付已完成的 IOSurface。只有预留了采样时隙的帧才需要 CPU 同步；独显 managed texture
 在 GPU 完成前编码 synchronizeResource。回调在 swap-chain 槽释放前深复制像素，不允许
-异步借用会被 GPU 重写的源。未实现 selector 的宿主保持原行为，C ABI v1 布局不变。
+异步借用会被 GPU 重写的源。未实现 selector 的宿主保持原行为，C ABI 布局不变。
 线程、生命周期与测试契约见 `docs/developer/picture-in-picture.md`。
 
 ## Aster 子进程启动
 
-Pinned patch 提供默认关闭的 `aster-direct-child` 配置，不改变 C ABI v1 布局。
+Pinned patch 提供默认关闭的 `aster-direct-child` 配置，不改变 C ABI 布局。
 Aster 显式启用后跳过 macOS `login(1)` 包装，使用现有环境构造器和 Shell 登录/交互
 参数；其他 Ghostty 宿主保持默认行为。macOS 的 login 包装会把子 Shell 的非零退出码
 变成 0，直接等待启动命令才能使异常退出卡片和进程事件反映真实结果。

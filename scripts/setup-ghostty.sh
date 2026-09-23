@@ -47,6 +47,10 @@ fi
 build_dir="$(mktemp -d)"
 trap 'rm -rf "$build_dir"' EXIT
 
+# Zig 0.15.2 与 macOS 27 SDK 不兼容时改用 macOS 26 SDK，原因见 zig-macos-sdk.sh。
+source "$repo_root/scripts/zig-macos-sdk.sh"
+zig_path_prefix="$(aster_zig_sdk_path_prefix "$build_dir")"
+
 echo "Fetching Ghostty $ghostty_revision"
 git init -q "$build_dir"
 git -C "$build_dir" remote add origin "$ghostty_repo"
@@ -62,7 +66,7 @@ git -C "$build_dir" apply --unidiff-zero "$patch_file"
 echo "Building GhosttyKit.xcframework"
 (
   cd "$build_dir"
-  "$zig_binary" build \
+  PATH="$zig_path_prefix$PATH" "$zig_binary" build \
     -Doptimize=ReleaseFast \
     -Demit-xcframework=true \
     -Dxcframework-target=native \
@@ -81,9 +85,10 @@ headers=("$staging_dir"/GhosttyKit.xcframework/macos-*/Headers/ghostty.h)
 libraries=("$staging_dir"/GhosttyKit.xcframework/macos-*/libghostty-internal-fat.a)
 shopt -u nullglob
 if [[ "${#headers[@]}" -ne 1 ]] ||
-   ! /usr/bin/grep -q 'GHOSTTY_ASTER_EXTENSION_ABI_VERSION 1u' "${headers[0]}" ||
-   ! /usr/bin/grep -q 'ghostty_aster_surface_search' "${headers[0]}"; then
-  echo "error: generated GhosttyKit is missing the required Aster ABI v1" >&2
+   ! /usr/bin/grep -q 'GHOSTTY_ASTER_EXTENSION_ABI_VERSION 2u' "${headers[0]}" ||
+   ! /usr/bin/grep -q 'ghostty_aster_surface_search' "${headers[0]}" ||
+   ! /usr/bin/grep -q 'ghostty_aster_surface_scroll_rows' "${headers[0]}"; then
+  echo "error: generated GhosttyKit is missing the required Aster ABI v2" >&2
   exit 1
 fi
 if [[ "${#libraries[@]}" -ne 1 ]]; then

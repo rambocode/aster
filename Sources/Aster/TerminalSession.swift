@@ -3096,6 +3096,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       self?.autocompleteController?.dismissForPaneMode()
     }
     view.focusFollowsMouse = preferences.configuration.controls.focusFollowsMouse
+    view.smoothScrollingEnabled = preferences.configuration.controls.smoothScrolling
     view.pasteProtectionEnabled = preferences.configuration.controls.pasteProtection
     view.pasteBracketedSafe = preferences.configuration.controls.resolvedPasteBracketedSafe
     view.onPasteIntoComposer = onPasteIntoComposer
@@ -3643,6 +3644,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     if let ghosttyView {
       let controls = preferences.configuration.controls
       ghosttyView.focusFollowsMouse = controls.focusFollowsMouse
+      ghosttyView.smoothScrollingEnabled = controls.smoothScrolling
       ghosttyView.pasteProtectionEnabled = controls.pasteProtection
       ghosttyView.pasteBracketedSafe = controls.resolvedPasteBracketedSafe
       applyLinkDetectionSettings(preferences, to: ghosttyView)

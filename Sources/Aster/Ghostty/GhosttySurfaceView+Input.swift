@@ -233,6 +233,8 @@ extension GhosttySurfaceView {
     super.viewWillMove(toWindow: newWindow)
     if newWindow == nil {
       releaseStaleLeftMouseButton(mods: GHOSTTY_MODS_NONE, force: true)
+      // 离开窗口后显示器帧回调不再到达，对齐动画会悬在半路；直接落到整行。
+      existingScrollSettler?.settle(animated: false)
       // Pane 被拆下时提示没有意义；留着它会在下次装回窗口时闪一下残留数字。
       ghosttyResizeOverlay.hideImmediately()
     }
@@ -270,8 +272,9 @@ extension GhosttySurfaceView {
     reportMousePosition(event)
     var scrollModifiers: ghostty_input_scroll_mods_t = 0
     if event.hasPreciseScrollingDeltas { scrollModifiers |= 1 }
-    ghostty_surface_mouse_scroll(
-      surface, event.scrollingDeltaX, event.scrollingDeltaY, scrollModifiers)
+    let deltas = ghosttyScrollDeltas(for: event)
+    ghostty_surface_mouse_scroll(surface, deltas.x, deltas.y, scrollModifiers)
+    trackSmoothScrollGesture(event)
     // 滚动改变视口行，Command 下划线要跟着重扫。
     scheduleLinkUnderlineRefresh()
   }

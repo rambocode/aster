@@ -1,5 +1,5 @@
 diff --git a/include/ghostty.h b/include/ghostty.h
-index b099741fc..04ece525a 100644
+index b099741..f598451 100644
 --- a/include/ghostty.h
 +++ b/include/ghostty.h
 @@ -442,0 +443,48 @@ typedef struct {
@@ -56,7 +56,7 @@ index b099741fc..04ece525a 100644
 +// ABI for capabilities that are intentionally not part of libghostty's internal
 +// embedding API. Callback payloads are borrowed and only valid for the duration
 +// of the callback; embedders must copy data they retain.
-+#define GHOSTTY_ASTER_EXTENSION_ABI_VERSION 1u
++#define GHOSTTY_ASTER_EXTENSION_ABI_VERSION 2u
 +
 +typedef void (*ghostty_aster_pty_io_cb)(void*, const uint8_t*, size_t);
 +typedef void (*ghostty_aster_osc_cb)(void*,
@@ -73,7 +73,7 @@ index b099741fc..04ece525a 100644
 +// Returns the ABI version of the Aster-only extension symbols and fields.
 +GHOSTTY_API uint32_t ghostty_aster_extension_abi_version(void);
 +
-@@ -1163,0 +1231,22 @@ GHOSTTY_API void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
+@@ -1163,0 +1231,30 @@ GHOSTTY_API void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
 +// Aster extension: current retained buffer geometry and tracked selection.
 +GHOSTTY_API bool ghostty_aster_surface_buffer_info(
 +    ghostty_surface_t, ghostty_aster_buffer_info_s*);
@@ -83,6 +83,14 @@ index b099741fc..04ece525a 100644
 +    ghostty_surface_t, const ghostty_aster_buffer_range_s*);
 +GHOSTTY_API void ghostty_aster_surface_clear_selection(ghostty_surface_t);
 +GHOSTTY_API bool ghostty_aster_surface_scroll_to_row(ghostty_surface_t, uint64_t);
++// ABI v2: pixel-precise scrollback. The visual position is the integer
++// viewport row plus an offset: a fraction in [0, 1) (the renderer paints one
++// extra row below the viewport) and, when "scroll past last/first line" is
++// enabled, overscroll rows beyond either end (negative above the first line).
++// Integer scrolls reset the offset to 0.
++GHOSTTY_API double ghostty_aster_surface_visual_offset_rows(ghostty_surface_t);
++GHOSTTY_API double ghostty_aster_surface_scroll_rows(ghostty_surface_t, double);
++GHOSTTY_API void ghostty_aster_surface_snap_scroll_row(ghostty_surface_t);
 +GHOSTTY_API bool ghostty_aster_surface_resolve_point(
 +    ghostty_surface_t, ghostty_aster_buffer_point_s*);
 +GHOSTTY_API bool ghostty_aster_surface_point_at(
@@ -97,7 +105,7 @@ index b099741fc..04ece525a 100644
 +    ghostty_aster_search_result_s*);
 +
 diff --git a/pkg/dcimgui/build.zig b/pkg/dcimgui/build.zig
-index 924e7c932..772f591b7 100644
+index 924e7c9..772f591 100644
 --- a/pkg/dcimgui/build.zig
 +++ b/pkg/dcimgui/build.zig
 @@ -184 +184 @@ pub fn build(b: *std.Build) !void {
@@ -108,21 +116,41 @@ similarity index 100%
 rename from pkg/dcimgui/ext.cpp
 rename to pkg/dcimgui/dcimgui_ext.cpp
 diff --git a/src/Surface.zig b/src/Surface.zig
-index 5d16f3326..c30389f40 100644
+index 5d16f33..d93a056 100644
 --- a/src/Surface.zig
 +++ b/src/Surface.zig
 @@ -19,0 +20 @@ const builtin = @import("builtin");
 +const build_config = @import("build_config.zig");
-@@ -661,0 +663 @@ pub fn init(
+@@ -254,0 +256,7 @@ const Mouse = struct {
++    /// Aster: vertical wheel reports (or alternate-scroll arrow keys) sent
++    /// since the program last produced output, and when the last one went
++    /// out. See `asterWheelBudget`.
++    aster_wheel_inflight: usize = 0,
++    aster_wheel_seen_seq: u64 = 0,
++    aster_wheel_last: ?std.time.Instant = null,
++
+@@ -322,0 +331,3 @@ const DerivedConfig = struct {
++    aster_smooth_scroll: bool,
++    aster_scroll_past_last: terminal.Screen.AsterScrollPastLast,
++    aster_scroll_past_first: terminal.Screen.AsterScrollPastFirst,
+@@ -401,0 +413,7 @@ const DerivedConfig = struct {
++            .aster_smooth_scroll = config.@"aster-smooth-scroll",
++            .aster_scroll_past_last = switch (config.@"aster-scroll-past-last-line") {
++                inline else => |tag| @field(terminal.Screen.AsterScrollPastLast, @tagName(tag)),
++            },
++            .aster_scroll_past_first = switch (config.@"aster-scroll-past-first-line") {
++                inline else => |tag| @field(terminal.Screen.AsterScrollPastFirst, @tagName(tag)),
++            },
+@@ -661,0 +680 @@ pub fn init(
 +            .aster_direct_child = config.@"aster-direct-child",
-@@ -686,0 +689,6 @@ pub fn init(
+@@ -686,0 +706,6 @@ pub fn init(
 +            .aster_observer = if (comptime build_config.artifact == .lib) .{
 +                .userdata = rt_surface.userdata,
 +                .pty_read = rt_surface.aster_pty_read_cb,
 +                .pty_write = rt_surface.aster_pty_write_cb,
 +                .osc = rt_surface.aster_osc_cb,
 +            } else .{},
-@@ -2371,0 +2380,155 @@ fn setSelection(self: *Surface, sel_: ?terminal.Selection) !void {
+@@ -2371,0 +2397,220 @@ fn setSelection(self: *Surface, sel_: ?terminal.Selection) !void {
 +/// Aster extension entrypoint for setting or clearing an exact terminal
 +/// selection. The caller constructs untracked pins while holding no locks;
 +/// `Screen.select` converts them to tracked pins before this method returns.
@@ -151,13 +179,78 @@ index 5d16f3326..c30389f40 100644
 +/// clamps rows above or below the valid range to its top/active viewport.
 +pub fn asterScrollToRow(self: *Surface, row: usize) bool {
 +    self.renderer_state.mutex.lock();
-+    self.io.terminal.screens.active.pages.scroll(.{ .row = row });
++    // Screen.scroll (not PageList.scroll) so a fractional row is cleared too.
++    self.io.terminal.screens.active.scroll(.{ .row = row });
 +    self.renderer_state.mutex.unlock();
 +    self.queueRender() catch |err| {
 +        log.warn("Aster viewport render failed err={}", .{err});
 +        return false;
 +    };
 +    return true;
++}
++
++/// Aster: wheel reports allowed in flight before the program answers.
++const aster_wheel_max_inflight = 2;
++
++/// Aster: after this long without an answer the budget refills anyway, so a
++/// program that ignores a report (e.g. already at its top) keeps scrolling.
++const aster_wheel_release_ns = 100 * std.time.ns_per_ms;
++
++/// Aster: how many vertical wheel reports may go out now. Programs such as
++/// Claude Code's fullscreen UI redraw the whole screen for every report and
++/// scroll one line each; a fast trackpad fling sends more reports than they
++/// can draw, so the backlog kept the view moving long after the finger
++/// stopped. Reports beyond the budget are dropped rather than queued, which
++/// paces scrolling to the program's own drawing speed and stops with the
++/// gesture. Any PTY output counts as an answer and refills the budget.
++fn asterWheelBudget(self: *Surface) usize {
++    const seq = self.renderer_state.aster_output_seq.load(.monotonic);
++    const stale = stale: {
++        const last = self.mouse.aster_wheel_last orelse break :stale true;
++        const now = std.time.Instant.now() catch break :stale true;
++        break :stale now.since(last) >= aster_wheel_release_ns;
++    };
++    if (stale or seq != self.mouse.aster_wheel_seen_seq) {
++        self.mouse.aster_wheel_seen_seq = seq;
++        self.mouse.aster_wheel_inflight = 0;
++    }
++    return aster_wheel_max_inflight -| self.mouse.aster_wheel_inflight;
++}
++
++/// Aster: record reports sent against the budget.
++fn asterWheelSent(self: *Surface, count: usize) void {
++    if (count == 0) return;
++    self.mouse.aster_wheel_inflight += count;
++    self.mouse.aster_wheel_last = std.time.Instant.now() catch null;
++}
++
++/// Aster: grid offset in rows from the viewport's top row (fraction plus
++/// overscroll; negative above the first line).
++pub fn asterVisualOffsetRows(self: *Surface) f64 {
++    self.renderer_state.mutex.lock();
++    defer self.renderer_state.mutex.unlock();
++    return self.io.terminal.asterVisualOffsetRows();
++}
++
++/// Aster: scroll the primary screen's scrollback by a fractional number of
++/// rows (up is negative). The alternate screen has no scrollback, so the
++/// call is a no-op there. Returns the resulting visual offset rows.
++pub fn asterScrollRowsFractional(self: *Surface, delta_rows: f64) f64 {
++    self.renderer_state.mutex.lock();
++    const t: *terminal.Terminal = self.renderer_state.terminal;
++    if (t.screens.active_key == .primary) t.scrollViewportFractional(delta_rows);
++    const frac = t.asterVisualOffsetRows();
++    self.renderer_state.mutex.unlock();
++    self.queueRender() catch |err| log.warn("Aster viewport render failed err={}", .{err});
++    return frac;
++}
++
++/// Aster: round a fractional scroll position to the nearest whole row.
++pub fn asterSnapScrollRow(self: *Surface) void {
++    self.renderer_state.mutex.lock();
++    const changed = self.io.terminal.snapScrollRow();
++    self.renderer_state.mutex.unlock();
++    if (changed) self.queueRender() catch |err| log.warn("Aster viewport render failed err={}", .{err});
 +}
 +
 +pub const AsterSearchOptions = struct {
@@ -278,8 +371,65 @@ index 5d16f3326..c30389f40 100644
 +    return lhs.y > rhs.y or (lhs.y == rhs.y and lhs.x > rhs.x);
 +}
 +
+@@ -3414,0 +3660,10 @@ pub fn scrollCallback(
++    // Aster: precision devices report pixels. With smooth scrolling the
++    // primary screen follows them as fractional rows; the row-based amount
++    // below is still computed for the alternate screen and mouse reporting.
++    const smooth_rows: f64 = if (self.config.aster_smooth_scroll and
++        scroll_mods.precision and yoff != 0)
++        yoff * self.config.mouse_scroll_multiplier.precision /
++            @as(f64, @floatFromInt(@max(self.size.cell.height, 1)))
++    else
++        0;
++
+@@ -3533 +3788,2 @@ pub fn scrollCallback(
+-                for (0..y.magnitude()) |_| {
++                const count = @min(y.magnitude(), self.asterWheelBudget());
++                for (0..count) |_| {
+@@ -3535,0 +3792 @@ pub fn scrollCallback(
++                self.asterWheelSent(count);
+@@ -3547 +3804,2 @@ pub fn scrollCallback(
+-            for (0..@abs(y.delta)) |_| {
++            const count = @min(@abs(y.delta), self.asterWheelBudget());
++            for (0..count) |_| {
+@@ -3553,0 +3812 @@ pub fn scrollCallback(
++            self.asterWheelSent(count);
+@@ -3568 +3827,14 @@ pub fn scrollCallback(
+-        if (y.delta != 0) {
++        // Aster: the overscroll settings travel with each scroll so a
++        // configuration change applies to the next gesture.
++        self.io.terminal.aster_scroll_past_last = self.config.aster_scroll_past_last;
++        self.io.terminal.aster_scroll_past_first = self.config.aster_scroll_past_first;
++
++        if (smooth_rows != 0) {
++            // Aster: move the viewport by the exact pixel delta. The pending
++            // row remainder only serves row-based scrolling, so drop it.
++            self.mouse.pending_scroll_y = 0;
++            self.io.terminal.scrollViewportFractional(-smooth_rows);
++        } else if (y.delta != 0 and self.io.terminal.asterOverscrollEnabled()) {
++            // Aster: row-based scrolling may also pass the first/last line.
++            self.io.terminal.scrollViewportFractional(@floatFromInt(-y.delta));
++        } else if (y.delta != 0) {
+@@ -4947 +5219,16 @@ pub fn posToViewport(self: Surface, xpos: f64, ypos: f64) terminal.point.Coordin
+-    return .{ .x = grid.x, .y = grid.y };
++
++    // Aster: a fractional scroll draws the grid shifted up by `frac` rows
++    // plus one extra row below the viewport. Hit testing uses the fraction
++    // the renderer last painted, so clicks and selections land on the row
++    // under the pointer. It is atomic because some callers map positions
++    // before taking the renderer mutex.
++    // Overscroll shifts the grid the same way; blank space beyond the
++    // content clamps to the nearest painted row.
++    const frac: f64 = @bitCast(self.renderer_state.aster_painted_scroll_row_frac.load(.monotonic));
++    const overscroll: f64 = @bitCast(self.renderer_state.aster_painted_overscroll_rows.load(.monotonic));
++    if (frac == 0 and overscroll == 0) return .{ .x = grid.x, .y = grid.y };
++    const term = coord.convert(.terminal, self.size).terminal;
++    const cell_height: f64 = @floatFromInt(@max(self.size.cell.height, 1));
++    const last_row: f64 = @floatFromInt(self.size.grid().rows - @intFromBool(frac == 0));
++    const row = std.math.clamp(@floor(@max(0, term.y) / cell_height + frac + overscroll), 0, last_row);
++    return .{ .x = grid.x, .y = @intFromFloat(row) };
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index 730913eba..9a9f9f8ba 100644
+index 730913e..e3dac0f 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
 @@ -412,0 +413,3 @@ pub const Surface = struct {
@@ -363,10 +513,10 @@ index 730913eba..9a9f9f8ba 100644
 @@ -1540,0 +1615,5 @@ pub const CAPI = struct {
 +    /// Version gate for the Aster-only extension ABI.
 +    export fn ghostty_aster_extension_abi_version() u32 {
-+        return 1;
++        return 2;
 +    }
 +
-@@ -1682,0 +1762,190 @@ pub const CAPI = struct {
+@@ -1682,0 +1762,207 @@ pub const CAPI = struct {
 +    export fn ghostty_aster_surface_buffer_info(
 +        surface: *Surface,
 +        result: *AsterBufferInfo,
@@ -437,6 +587,23 @@ index 730913eba..9a9f9f8ba 100644
 +    export fn ghostty_aster_surface_scroll_to_row(surface: *Surface, row: u64) bool {
 +        const target = std.math.cast(usize, row) orelse return false;
 +        return surface.core_surface.asterScrollToRow(target);
++    }
++
++    /// Grid offset in rows from the viewport's top row: the fraction plus
++    /// overscroll (negative above the first line).
++    export fn ghostty_aster_surface_visual_offset_rows(surface: *Surface) f64 {
++        return surface.core_surface.asterVisualOffsetRows();
++    }
++
++    /// Scroll the primary scrollback by fractional rows (up is negative) and
++    /// return the resulting visual offset rows. Non-finite deltas are ignored.
++    export fn ghostty_aster_surface_scroll_rows(surface: *Surface, delta_rows: f64) f64 {
++        return surface.core_surface.asterScrollRowsFractional(delta_rows);
++    }
++
++    /// Round a fractional scroll position to the nearest whole row.
++    export fn ghostty_aster_surface_snap_scroll_row(surface: *Surface) void {
++        surface.core_surface.asterSnapScrollRow();
 +    }
 +
 +    export fn ghostty_aster_surface_resolve_point(
@@ -558,17 +725,49 @@ index 730913eba..9a9f9f8ba 100644
 +    }
 +
 diff --git a/src/config/Config.zig b/src/config/Config.zig
-index 5b1d73deb..97ca99c7f 100644
+index 5b1d73d..302d9e7 100644
 --- a/src/config/Config.zig
 +++ b/src/config/Config.zig
-@@ -1358,0 +1359,5 @@ input: RepeatableReadableIO = .{},
+@@ -1358,0 +1359,21 @@ input: RepeatableReadableIO = .{},
 +/// Aster supplies the child environment and explicit login-shell arguments.
 +/// Bypass macOS login(1), which discards the child's exit status. Other hosts
 +/// retain upstream login/session behavior unless they explicitly opt in.
 +@"aster-direct-child": bool = false,
 +
++/// Aster: trackpad and other precision scroll devices move the primary
++/// screen's scrollback by pixels instead of whole rows. The renderer shifts
++/// the grid by the fractional row and paints one extra row below the
++/// viewport. Discrete wheels, the alternate screen and mouse reporting keep
++/// upstream row-based behavior. Other hosts keep upstream behavior.
++@"aster-smooth-scroll": bool = false,
++
++/// Aster: let the primary screen scroll past its last line so the last
++/// content line (or the cursor line) can rise to the top or middle of the
++/// viewport, leaving blank space below. Typing returns to the bottom.
++@"aster-scroll-past-last-line": AsterScrollPastLastLine = .disabled,
++
++/// Aster: let the primary screen scroll above its first line so the first
++/// content line can sink to the bottom or middle of the viewport.
++@"aster-scroll-past-first-line": AsterScrollPastFirstLine = .disabled,
++
+@@ -10218,0 +10240,15 @@ pub const ScrollToBottom = packed struct {
++/// See aster-scroll-past-last-line. Tags mirror terminal.Screen.AsterScrollPastLast.
++pub const AsterScrollPastLastLine = enum {
++    disabled,
++    @"last-line-with-content",
++    @"last-line-in-middle",
++    @"cursor-line",
++};
++
++/// See aster-scroll-past-first-line. Tags mirror terminal.Screen.AsterScrollPastFirst.
++pub const AsterScrollPastFirstLine = enum {
++    disabled,
++    @"first-line-with-content",
++    @"first-line-in-middle",
++};
++
 diff --git a/src/renderer/Metal.zig b/src/renderer/Metal.zig
-index 6c7432d21..da0059d5f 100644
+index 6c7432d..da0059d 100644
 --- a/src/renderer/Metal.zig
 +++ b/src/renderer/Metal.zig
 @@ -42,0 +43,5 @@ layer: IOSurfaceLayer,
@@ -598,8 +797,24 @@ index 6c7432d21..da0059d5f 100644
 +    const host = self.aster_frame_host orelse return;
 +    host.msgSend(void, objc.sel("asterDidRenderPictureInPictureFrame:"), .{target.surface});
 +}
+diff --git a/src/renderer/State.zig b/src/renderer/State.zig
+index 22cae8f..8b2b65c 100644
+--- a/src/renderer/State.zig
++++ b/src/renderer/State.zig
+@@ -32,0 +33,11 @@ mouse: Mouse = .{},
++/// Aster: bit patterns (`f64`) of the fractional scroll row and overscroll
++/// rows the renderer last painted. Hit testing reads them without the mutex
++/// (the cursor callback maps positions before locking) and matches what is
++/// on screen.
++aster_painted_scroll_row_frac: std.atomic.Value(u64) = .init(0),
++aster_painted_overscroll_rows: std.atomic.Value(u64) = .init(0),
++
++/// Aster: bumped by the IO thread for every PTY read. Wheel reporting uses
++/// it to tell whether the program has answered the reports already sent.
++aster_output_seq: std.atomic.Value(u64) = .init(0),
++
 diff --git a/src/renderer/Thread.zig b/src/renderer/Thread.zig
-index 508721379..a6e63baf9 100644
+index 5087213..a6e63ba 100644
 --- a/src/renderer/Thread.zig
 +++ b/src/renderer/Thread.zig
 @@ -69,0 +70,6 @@ draw_now_c: xev.Completion = .{},
@@ -656,7 +871,7 @@ index 508721379..a6e63baf9 100644
 +    }
 +
 diff --git a/src/renderer/generic.zig b/src/renderer/generic.zig
-index 0f4a294bc..832294fcc 100644
+index 0f4a294..ec3f887 100644
 --- a/src/renderer/generic.zig
 +++ b/src/renderer/generic.zig
 @@ -117,0 +118,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
@@ -678,7 +893,9 @@ index 0f4a294bc..832294fcc 100644
 +                        log.warn("unable to create display link, disabling vsync err={}", .{err});
 +                        break :fallback null;
 +                    }
-@@ -1025,0 +1041,33 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -723,0 +739 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
++                    .content_offset = .{ 0, 0 },
+@@ -1025,0 +1042,33 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +        /// Arm the macOS display link for the next synchronized frame. Repeated
 +        /// updates before the next refresh coalesce into the same presentation.
 +        pub fn requestVsync(self: *Self) void {
@@ -712,13 +929,61 @@ index 0f4a294bc..832294fcc 100644
 +            display_link.stop() catch {};
 +        }
 +
-@@ -1032,0 +1081 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -1032,0 +1082 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +            self.vsync_requested = focus;
-@@ -1053,0 +1103,2 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -1053,0 +1104,2 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +            self.visible = visible;
 +            self.vsync_requested = visible and self.focused;
+@@ -1204,0 +1257,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
++                // Aster: publish the painted fraction for lock-free hit testing.
++                state.aster_painted_scroll_row_frac.store(
++                    @bitCast(self.terminal_state.scroll_row_frac),
++                    .monotonic,
++                );
++                state.aster_painted_overscroll_rows.store(
++                    @bitCast(self.terminal_state.aster_overscroll_rows),
++                    .monotonic,
++                );
++
+@@ -1418,0 +1481,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
++
++                // Aster: sub-row scroll and overscroll shift the whole grid
++                // (up for positive). Set every frame and force a draw when only
++                // the offset changed, since no cell was rebuilt then. Space
++                // revealed by overscroll is outside the grid and stays blank.
++                const content_offset_y: f32 = @floatCast(
++                    -(self.terminal_state.scroll_row_frac + self.terminal_state.aster_overscroll_rows) *
++                        @as(f64, @floatFromInt(self.grid_metrics.cell_height)),
++                );
++                if (self.uniforms.content_offset[1] != content_offset_y) {
++                    self.uniforms.content_offset = .{ 0, content_offset_y };
++                    self.cells_rebuilt = true;
++                }
+@@ -1941,0 +2017,2 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
++            // Aster: the cell buffer may hold one extra row for a fractional
++            // scroll; the blank padding is always measured on the real grid.
+@@ -1946 +2023 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+-                    .rows = self.cells.size.rows,
++                    .rows = self.terminal_state.rows,
+@@ -2322,0 +2400,3 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
++            // Aster: a fractional scroll paints one extra row below the
++            // viewport, so the cell buffer follows the painted row count.
++            const paint_rows: terminal.size.CellCountInt = @intCast(state.row_data.len);
+@@ -2324 +2404 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+-                self.cells.size.rows != state.rows or
++                self.cells.size.rows != paint_rows or
+@@ -2329 +2409 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+-                new_size.rows = state.rows;
++                new_size.rows = paint_rows;
+@@ -2377 +2457 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+-                state.rows,
++                state.row_data.len,
+@@ -2388,0 +2469 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
++                if (cursor_vp.y >= row_dirty.len) break :preedit null;
+@@ -2457,0 +2539 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
++                if (cursor_vp.y >= state.row_data.len) break :cursor;
 diff --git a/src/renderer/metal/Frame.zig b/src/renderer/metal/Frame.zig
-index 388b4f9ed..7486b2715 100644
+index 388b4f9..7486b27 100644
 --- a/src/renderer/metal/Frame.zig
 +++ b/src/renderer/metal/Frame.zig
 @@ -50,0 +51 @@ pub fn begin(
@@ -738,8 +1003,693 @@ index 388b4f9ed..7486b2715 100644
 +        blit.msgSend(void, objc.sel("synchronizeResource:"), .{self.block.target.texture.value});
 +        blit.msgSend(void, objc.sel("endEncoding"), .{});
 +    }
+diff --git a/src/renderer/metal/shaders.zig b/src/renderer/metal/shaders.zig
+index 0be0235..598b0c0 100644
+--- a/src/renderer/metal/shaders.zig
++++ b/src/renderer/metal/shaders.zig
+@@ -206,0 +207,4 @@ pub const Uniforms = extern struct {
++    /// Aster: pixel offset applied to the whole grid for a sub-row scroll,
++    /// `(0, -frac * cell_height)`. Must match `content_offset` in the shader.
++    content_offset: [2]f32 align(8) = .{ 0, 0 },
++
+diff --git a/src/renderer/opengl/shaders.zig b/src/renderer/opengl/shaders.zig
+index 68c1f36..2134956 100644
+--- a/src/renderer/opengl/shaders.zig
++++ b/src/renderer/opengl/shaders.zig
+@@ -173,0 +174,4 @@ pub const Uniforms = extern struct {
++    /// Aster: pixel offset applied to the whole grid for a sub-row scroll,
++    /// `(0, -frac * cell_height)`. Must match `content_offset` in the shader.
++    content_offset: [2]f32 align(8) = .{ 0, 0 },
++
+diff --git a/src/renderer/shaders/glsl/cell_bg.f.glsl b/src/renderer/shaders/glsl/cell_bg.f.glsl
+index fa48c67..d265c46 100644
+--- a/src/renderer/shaders/glsl/cell_bg.f.glsl
++++ b/src/renderer/shaders/glsl/cell_bg.f.glsl
+@@ -15 +15 @@ vec4 cell_bg() {
+-    ivec2 grid_pos = ivec2(floor((gl_FragCoord.xy - grid_padding.wx) / cell_size));
++    ivec2 grid_pos = ivec2(floor((gl_FragCoord.xy - grid_padding.wx - content_offset) / cell_size));
+diff --git a/src/renderer/shaders/glsl/cell_text.v.glsl b/src/renderer/shaders/glsl/cell_text.v.glsl
+index 7e38e2f..f846c0a 100644
+--- a/src/renderer/shaders/glsl/cell_text.v.glsl
++++ b/src/renderer/shaders/glsl/cell_text.v.glsl
+@@ -50 +50 @@ void main() {
+-    vec2 cell_pos = cell_size * vec2(grid_pos);
++    vec2 cell_pos = cell_size * vec2(grid_pos) + content_offset;
+diff --git a/src/renderer/shaders/glsl/common.glsl b/src/renderer/shaders/glsl/common.glsl
+index 1a7ea03..af19992 100644
+--- a/src/renderer/shaders/glsl/common.glsl
++++ b/src/renderer/shaders/glsl/common.glsl
+@@ -17,0 +18 @@ layout(binding = 1, std140) uniform Globals {
++    uniform vec2 content_offset;
+diff --git a/src/renderer/shaders/glsl/image.v.glsl b/src/renderer/shaders/glsl/image.v.glsl
+index 779fae3..9849386 100644
+--- a/src/renderer/shaders/glsl/image.v.glsl
++++ b/src/renderer/shaders/glsl/image.v.glsl
+@@ -43 +43 @@ void main() {
+-    vec2 image_pos = (cell_size * grid_pos) + cell_offset;
++    vec2 image_pos = (cell_size * grid_pos) + cell_offset + content_offset;
+diff --git a/src/renderer/shaders/shaders.metal b/src/renderer/shaders/shaders.metal
+index 4e02b63..e98c305 100644
+--- a/src/renderer/shaders/shaders.metal
++++ b/src/renderer/shaders/shaders.metal
+@@ -15,0 +16 @@ struct Uniforms {
++  float2 content_offset;
+@@ -456 +457 @@ fragment float4 cell_bg_fragment(
+-  int2 grid_pos = int2(floor((in.position.xy - uniforms.grid_padding.wx) / uniforms.cell_size));
++  int2 grid_pos = int2(floor((in.position.xy - uniforms.grid_padding.wx - uniforms.content_offset) / uniforms.cell_size));
+@@ -563 +564 @@ vertex CellTextVertexOut cell_text_vertex(
+-  float2 cell_pos = uniforms.cell_size * float2(in.grid_pos);
++  float2 cell_pos = uniforms.cell_size * float2(in.grid_pos) + uniforms.content_offset;
+@@ -823 +824 @@ vertex ImageVertexOut image_vertex(
+-  float2 image_pos = (uniforms.cell_size * in.grid_pos) + in.cell_offset;
++  float2 image_pos = (uniforms.cell_size * in.grid_pos) + in.cell_offset + uniforms.content_offset;
+diff --git a/src/terminal/Screen.zig b/src/terminal/Screen.zig
+index 39fdd61..8fb2a0b 100644
+--- a/src/terminal/Screen.zig
++++ b/src/terminal/Screen.zig
+@@ -40,0 +41,14 @@ pages: PageList,
++/// Aster: fractional part of the scroll row (`0 <= value < 1`). Combined
++/// with the integer viewport pin this is the visual scroll position; the
++/// renderer shifts the grid up by this fraction of a cell and paints one
++/// extra row below the viewport. `0` is row-aligned. It is ignored while
++/// the viewport is at the bottom, where `scrollRowFrac` always returns `0`.
++scroll_row_frac: f64 = 0,
++
++/// Aster: rows the viewport is scrolled beyond the scrollback ("scroll past
++/// last/first line"). Positive is past the bottom: the viewport stays on the
++/// active area and the grid shifts up, leaving blank space below. Negative
++/// is past the top: the viewport stays on row 0 and the grid shifts down,
++/// leaving blank space above. Any integer scroll resets it.
++aster_overscroll_rows: f64 = 0,
++
+@@ -351,0 +366,2 @@ pub fn assertIntegrity(self: *const Screen) void {
++        assert(self.scroll_row_frac >= 0 and self.scroll_row_frac < 1);
++        assert(std.math.isFinite(self.aster_overscroll_rows));
+@@ -379,0 +396,2 @@ pub fn reset(self: *Screen) void {
++    self.scroll_row_frac = 0;
++    self.aster_overscroll_rows = 0;
+@@ -1267,0 +1286,4 @@ pub const Scroll = union(enum) {
++
++    /// Aster: scroll by a fractional number of rows, positive is toward
++    /// the bottom like `delta_row`. Updates `scroll_row_frac`.
++    delta_f: f64,
+@@ -1273,0 +1296,12 @@ pub inline fn scroll(self: *Screen, behavior: Scroll) void {
++    switch (behavior) {
++        .delta_f => |delta_rows| {
++            self.scrollDeltaF(delta_rows);
++            return;
++        },
++        else => {},
++    }
++
++    // Integer viewport motion is always row-aligned and inside the scrollback.
++    self.scroll_row_frac = 0;
++    self.aster_overscroll_rows = 0;
++
+@@ -1287,0 +1322 @@ pub inline fn scroll(self: *Screen, behavior: Scroll) void {
++        .delta_f => unreachable,
+@@ -1295,0 +1331,2 @@ pub inline fn scrollClear(self: *Screen) !void {
++    self.scroll_row_frac = 0;
++    self.aster_overscroll_rows = 0;
+@@ -1311,0 +1349,163 @@ pub inline fn viewportIsBottom(self: Screen) bool {
++/// Aster: fractional part of the scroll row. Always `0` at the bottom.
++pub fn scrollRowFrac(self: *const Screen) f64 {
++    if (self.viewportIsBottom()) return 0;
++    return self.scroll_row_frac;
++}
++
++/// Aster: set the fractional part of the scroll row. Values outside
++/// `0 < value < 1` store `0`.
++pub fn setScrollRowFrac(self: *Screen, frac: f64) void {
++    defer self.assertIntegrity();
++    self.scroll_row_frac = if (frac > 0 and frac < 1) frac else 0;
++    if (comptime build_options.kitty_graphics) {
++        // Placements are positioned relative to the shifted grid.
++        self.kitty_images.dirty = true;
++    }
++}
++
++/// Aster: how far the viewport may scroll past the last line, mirroring the
++/// host's "scroll past last line" setting.
++pub const AsterScrollPastLast = enum {
++    disabled,
++    @"last-line-with-content",
++    @"last-line-in-middle",
++    @"cursor-line",
++};
++
++/// Aster: how far the viewport may scroll above the first line.
++pub const AsterScrollPastFirst = enum {
++    disabled,
++    @"first-line-with-content",
++    @"first-line-in-middle",
++};
++
++/// Aster: overscroll allowance in rows beyond each end of the scrollback.
++pub const AsterOverscrollLimits = struct {
++    top: usize = 0,
++    bottom: usize = 0,
++};
++
++/// Aster: overscroll allowance for the given modes. Past the bottom, the
++/// last content line (or the cursor line) may rise to the top or middle of
++/// the viewport; past the top, the first content line may sink to the
++/// bottom or middle. Matches the SwiftTerm adapter's rules.
++pub fn asterOverscrollLimits(
++    self: *const Screen,
++    last: AsterScrollPastLast,
++    first: AsterScrollPastFirst,
++) AsterOverscrollLimits {
++    const rows: usize = self.pages.rows;
++    if (rows == 0) return .{};
++
++    const bottom: usize = switch (last) {
++        .disabled => 0,
++        .@"cursor-line" => self.cursor.y,
++        .@"last-line-with-content" => self.asterLastContentActiveRow(),
++        .@"last-line-in-middle" => self.asterLastContentActiveRow() -| rows / 2,
++    };
++
++    const top: usize = switch (first) {
++        .disabled => 0,
++        .@"first-line-with-content" => (rows - 1) -| @min(rows - 1, self.asterFirstContentRow()),
++        .@"first-line-in-middle" => (rows / 2) -| @min(rows - 1, self.asterFirstContentRow()),
++    };
++
++    return .{ .top = top, .bottom = bottom };
++}
++
++/// Aster: active-area index of the last row holding text, 0 if none.
++fn asterLastContentActiveRow(self: *const Screen) usize {
++    var it = self.pages.rowIterator(.left_up, .{ .active = .{} }, null);
++    var y: usize = self.pages.rows;
++    while (it.next()) |pin| {
++        y -|= 1;
++        if (asterRowHasText(pin)) return y;
++    }
++    return 0;
++}
++
++/// Aster: screen index of the first row holding text. Only the first
++/// viewport's worth of rows matters for the limit, so the scan is bounded.
++fn asterFirstContentRow(self: *const Screen) usize {
++    var it = self.pages.rowIterator(.right_down, .{ .screen = .{} }, null);
++    var y: usize = 0;
++    while (it.next()) |pin| : (y += 1) {
++        if (y >= self.pages.rows) break;
++        if (asterRowHasText(pin)) return y;
++    }
++    return y;
++}
++
++fn asterRowHasText(pin: Pin) bool {
++    const rac = pin.rowAndCell();
++    for (pin.node.data.getCells(rac.row)) |cell| {
++        if (cell.hasText()) return true;
++    }
++    return false;
++}
++
++/// Aster: round the visual position to the nearest whole row (a fraction
++/// of one half or more rounds toward the bottom). Returns true if the
++/// viewport changed.
++pub fn snapScrollRow(self: *Screen) bool {
++    const pos = self.asterPosition();
++    const target = @floor(pos + 0.5);
++    if (target == pos) return false;
++    self.asterSetPosition(target);
++    return true;
++}
++
++/// Aster: scroll by a (possibly fractional) number of rows within the
++/// scrollback. See `asterScrollVisual`.
++fn scrollDeltaF(self: *Screen, delta_rows: f64) void {
++    self.asterScrollVisual(delta_rows, .{});
++}
++
++/// Aster: scroll the visual position by `delta_rows` (positive is toward
++/// the bottom), allowing `limits` rows beyond each end. The integer pin,
++/// `scroll_row_frac` and `aster_overscroll_rows` move together. Reaching
++/// the bottom leaves the fraction at 0 so the viewport follows new output.
++/// A position already outside shrunken limits may move back inward but
++/// never further out.
++pub fn asterScrollVisual(
++    self: *Screen,
++    delta_rows: f64,
++    limits: AsterOverscrollLimits,
++) void {
++    if (delta_rows == 0 or !std.math.isFinite(delta_rows)) return;
++
++    const sb = self.pages.scrollbar();
++    const max_off: f64 = @floatFromInt(sb.total -| sb.len);
++    const lo = -@as(f64, @floatFromInt(limits.top));
++    const hi = max_off + @as(f64, @floatFromInt(limits.bottom));
++    const cur = self.asterPosition();
++    const next = std.math.clamp(cur + delta_rows, @min(lo, cur), @max(hi, cur));
++    if (next == cur) return;
++    self.asterSetPosition(next);
++}
++
++/// Aster: current visual position (see `asterScrollVisual`).
++pub fn asterPosition(self: *Screen) f64 {
++    const sb = self.pages.scrollbar();
++    return @as(f64, @floatFromInt(sb.offset)) + self.scrollRowFrac() + self.aster_overscroll_rows;
++}
++
++/// Aster: move to an absolute visual position. Positions above row 0 or
++/// below the last viewport row become overscroll; the rest is split into
++/// the integer viewport row and the fraction.
++fn asterSetPosition(self: *Screen, position: f64) void {
++    defer self.assertIntegrity();
++    const sb = self.pages.scrollbar();
++    const max_off_int: usize = sb.total -| sb.len;
++    const max_off: f64 = @floatFromInt(max_off_int);
++    const base = std.math.clamp(position, 0, max_off);
++    const new_off: usize = @intFromFloat(@floor(base));
++    const new_frac = base - @as(f64, @floatFromInt(new_off));
++    const off_delta: isize =
++        @as(isize, @intCast(new_off)) - @as(isize, @intCast(sb.offset));
++
++    if (off_delta != 0) self.scroll(.{ .delta_row = off_delta });
++    self.setScrollRowFrac(if (new_off >= max_off_int) 0 else new_frac);
++    self.aster_overscroll_rows = position - base;
++}
++
+@@ -4593,0 +4794,172 @@ test "Screen: scrolling moves viewport" {
++test "Screen: Aster scroll row frac" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++
++    var s = try init(alloc, .{ .cols = 10, .rows = 3, .max_scrollback = 10_000 });
++    defer s.deinit();
++    try s.testWriteString("A\nB\nC\nD\nE");
++
++    // At the bottom a fraction is always reported as 0.
++    try testing.expect(s.viewportIsBottom());
++    s.setScrollRowFrac(0.25);
++    try testing.expectEqual(@as(f64, 0), s.scrollRowFrac());
++
++    s.scroll(.top);
++    s.setScrollRowFrac(0.25);
++    try testing.expectEqual(@as(f64, 0.25), s.scrollRowFrac());
++
++    // Values outside (0, 1) store 0.
++    s.setScrollRowFrac(1);
++    try testing.expectEqual(@as(f64, 0), s.scrollRowFrac());
++    s.setScrollRowFrac(-0.1);
++    try testing.expectEqual(@as(f64, 0), s.scrollRowFrac());
++
++    // Integer viewport motion is row-aligned.
++    s.setScrollRowFrac(0.5);
++    s.scroll(.{ .delta_row = 1 });
++    try testing.expectEqual(@as(f64, 0), s.scrollRowFrac());
++}
++
++test "Screen: Aster scroll delta_f" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++
++    var s = try init(alloc, .{ .cols = 10, .rows = 3, .max_scrollback = 10_000 });
++    defer s.deinit();
++    try s.testWriteString("A\nB\nC\nD\nE\nF\nG");
++
++    try testing.expect(s.viewportIsBottom());
++    const max_off = s.pages.scrollbar().offset;
++    try testing.expect(max_off >= 3);
++
++    // Scrolling down at the bottom stays at the bottom, row-aligned.
++    s.scroll(.{ .delta_f = 1 });
++    try testing.expect(s.viewportIsBottom());
++    try testing.expectEqual(@as(f64, 0), s.scrollRowFrac());
++
++    s.scroll(.{ .delta_f = -0.25 });
++    try testing.expect(!s.viewportIsBottom());
++    try testing.expectEqual(max_off - 1, s.pages.scrollbar().offset);
++    try testing.expectEqual(@as(f64, 0.75), s.scrollRowFrac());
++
++    // Returning to the bottom follows output again.
++    s.scroll(.{ .delta_f = 0.25 });
++    try testing.expect(s.viewportIsBottom());
++    try testing.expectEqual(@as(f64, 0), s.scrollRowFrac());
++
++    s.scroll(.{ .delta_f = -2.25 });
++    try testing.expectEqual(max_off - 3, s.pages.scrollbar().offset);
++    try testing.expectEqual(@as(f64, 0.75), s.scrollRowFrac());
++
++    // Clamped at the top and bottom.
++    s.scroll(.{ .delta_f = -10_000 });
++    try testing.expectEqual(@as(usize, 0), s.pages.scrollbar().offset);
++    try testing.expectEqual(@as(f64, 0), s.scrollRowFrac());
++    s.scroll(.{ .delta_f = 10_000 });
++    try testing.expect(s.viewportIsBottom());
++    try testing.expectEqual(@as(f64, 0), s.scrollRowFrac());
++
++    // Non-finite deltas are ignored.
++    s.scroll(.{ .delta_f = std.math.nan(f64) });
++    try testing.expect(s.viewportIsBottom());
++}
++
++test "Screen: Aster snap scroll row" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++
++    var s = try init(alloc, .{ .cols = 10, .rows = 3, .max_scrollback = 10_000 });
++    defer s.deinit();
++    try s.testWriteString("A\nB\nC\nD\nE\nF\nG");
++    const max_off = s.pages.scrollbar().offset;
++
++    // 0.75 rounds up to the next row.
++    s.scroll(.{ .delta_f = -2.25 });
++    try testing.expect(s.snapScrollRow());
++    try testing.expectEqual(max_off - 2, s.pages.scrollbar().offset);
++    try testing.expectEqual(@as(f64, 0), s.scrollRowFrac());
++
++    // 0.25 rounds down and keeps the row.
++    s.scroll(.{ .delta_f = 0.25 });
++    try testing.expect(s.snapScrollRow());
++    try testing.expectEqual(max_off - 2, s.pages.scrollbar().offset);
++    try testing.expectEqual(@as(f64, 0), s.scrollRowFrac());
++
++    // Already aligned: nothing to do.
++    try testing.expect(!s.snapScrollRow());
++}
++
++test "Screen: Aster overscroll past last line" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++
++    var s = try init(alloc, .{ .cols = 10, .rows = 3, .max_scrollback = 10_000 });
++    defer s.deinit();
++    try s.testWriteString("A\nB\nC\nD\nE\nF\nG");
++
++    // The last content line G sits on the last active row.
++    const limits = s.asterOverscrollLimits(.@"last-line-with-content", .disabled);
++    try testing.expectEqual(@as(usize, 2), limits.bottom);
++    try testing.expectEqual(@as(usize, 0), limits.top);
++    try testing.expectEqual(@as(usize, 1), s.asterOverscrollLimits(.@"last-line-in-middle", .disabled).bottom);
++    try testing.expectEqual(@as(usize, 2), s.asterOverscrollLimits(.@"cursor-line", .disabled).bottom);
++
++    // Past the bottom the viewport stays on the active area.
++    const max_off: f64 = @floatFromInt(s.pages.scrollbar().offset);
++    s.asterScrollVisual(1.5, limits);
++    try testing.expect(s.viewportIsBottom());
++    try testing.expectEqual(@as(f64, 0), s.scrollRowFrac());
++    try testing.expectEqual(@as(f64, 1.5), s.aster_overscroll_rows);
++    try testing.expectEqual(max_off + 1.5, s.asterPosition());
++
++    // Clamped at the limit; rounding keeps the half toward the bottom.
++    s.asterScrollVisual(10, limits);
++    try testing.expectEqual(@as(f64, 2), s.aster_overscroll_rows);
++    s.asterScrollVisual(-0.5, limits);
++    try testing.expect(s.snapScrollRow());
++    try testing.expectEqual(@as(f64, 2), s.aster_overscroll_rows);
++
++    // Shrunken limits may move inward but never further out.
++    s.asterScrollVisual(1, .{});
++    try testing.expectEqual(@as(f64, 2), s.aster_overscroll_rows);
++    s.asterScrollVisual(-0.5, .{});
++    try testing.expectEqual(@as(f64, 1.5), s.aster_overscroll_rows);
++
++    // Integer scrolling (typing returns to the bottom) resets it.
++    s.scroll(.active);
++    try testing.expectEqual(@as(f64, 0), s.aster_overscroll_rows);
++}
++
++test "Screen: Aster overscroll above first line" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++
++    var s = try init(alloc, .{ .cols = 10, .rows = 3, .max_scrollback = 10_000 });
++    defer s.deinit();
++    try s.testWriteString("A\nB\nC\nD\nE\nF\nG");
++
++    const limits = s.asterOverscrollLimits(.disabled, .@"first-line-with-content");
++    try testing.expectEqual(@as(usize, 2), limits.top);
++    try testing.expectEqual(@as(usize, 0), limits.bottom);
++    try testing.expectEqual(@as(usize, 1), s.asterOverscrollLimits(.disabled, .@"first-line-in-middle").top);
++
++    s.asterScrollVisual(-100, limits);
++    try testing.expectEqual(@as(usize, 0), s.pages.scrollbar().offset);
++    try testing.expectEqual(@as(f64, -2), s.aster_overscroll_rows);
++    try testing.expectEqual(@as(f64, -2), s.asterPosition());
++
++    // -1.6 rounds to -2; -1.4 rounds to -1.
++    s.asterScrollVisual(0.4, limits);
++    try testing.expect(s.snapScrollRow());
++    try testing.expectEqual(@as(f64, -2), s.aster_overscroll_rows);
++    s.asterScrollVisual(0.6, limits);
++    try testing.expect(s.snapScrollRow());
++    try testing.expectEqual(@as(f64, -1), s.aster_overscroll_rows);
++
++    // Moving back into the scrollback clears the overscroll.
++    s.asterScrollVisual(2.25, limits);
++    try testing.expectEqual(@as(f64, 0), s.aster_overscroll_rows);
++    try testing.expectEqual(@as(usize, 1), s.pages.scrollbar().offset);
++    try testing.expectEqual(@as(f64, 0.25), s.scrollRowFrac());
++}
++
+diff --git a/src/terminal/Terminal.zig b/src/terminal/Terminal.zig
+index f6268c7..0948638 100644
+--- a/src/terminal/Terminal.zig
++++ b/src/terminal/Terminal.zig
+@@ -45,0 +46,4 @@ screens: ScreenSet,
++/// Aster: host "scroll past last/first line" settings for the primary screen.
++aster_scroll_past_last: Screen.AsterScrollPastLast = .disabled,
++aster_scroll_past_first: Screen.AsterScrollPastFirst = .disabled,
++
+@@ -1755,0 +1760,40 @@ pub fn scrollViewport(self: *Terminal, behavior: ScrollViewport) void {
++/// Aster: scroll the viewport by a fractional number of rows (up is
++/// negative), allowing overscroll per `aster_scroll_past` on the primary
++/// screen. Kept out of `ScrollViewport` so the libghostty-vt C union and its
++/// tags stay unchanged.
++pub fn scrollViewportFractional(self: *Terminal, delta_rows: f64) void {
++    self.screens.active.asterScrollVisual(delta_rows, self.asterOverscrollLimits());
++}
++
++/// Aster: overscroll allowance of the active screen. The alternate screen
++/// never scrolls past its content.
++pub fn asterOverscrollLimits(self: *const Terminal) Screen.AsterOverscrollLimits {
++    if (self.screens.active_key != .primary) return .{};
++    return self.screens.active.asterOverscrollLimits(
++        self.aster_scroll_past_last,
++        self.aster_scroll_past_first,
++    );
++}
++
++/// Aster: true when either overscroll setting is enabled.
++pub fn asterOverscrollEnabled(self: *const Terminal) bool {
++    return self.aster_scroll_past_last != .disabled or self.aster_scroll_past_first != .disabled;
++}
++
++/// Aster: fractional part of the active screen's scroll row.
++pub fn scrollRowFrac(self: *const Terminal) f64 {
++    return self.screens.active.scrollRowFrac();
++}
++
++/// Aster: grid offset in rows from the viewport's top row: the fraction
++/// plus any overscroll (negative above the first line).
++pub fn asterVisualOffsetRows(self: *const Terminal) f64 {
++    const screen = self.screens.active;
++    return screen.scrollRowFrac() + screen.aster_overscroll_rows;
++}
++
++/// Aster: round the active screen's scroll position to a whole row.
++pub fn snapScrollRow(self: *Terminal) bool {
++    return self.screens.active.snapScrollRow();
++}
++
+diff --git a/src/terminal/render.zig b/src/terminal/render.zig
+index 98e1422..2c591be 100644
+--- a/src/terminal/render.zig
++++ b/src/terminal/render.zig
+@@ -68 +68,13 @@ pub const RenderState = struct {
+-    /// The rows (y=0 is top) of the viewport. Guaranteed to be `rows` length.
++    /// Aster: fractional part of the scroll row copied from the screen on
++    /// update. `0` is row-aligned. When non-zero, `row_data` holds one extra
++    /// document row below the viewport so a renderer shifting the grid up by
++    /// this fraction of a cell can fill the gap at the bottom edge.
++    scroll_row_frac: f64 = 0,
++
++    /// Aster: overscroll rows copied from the screen on update; positive
++    /// shifts the grid up past the last line, negative down past the first.
++    /// Only the renderer's offset changes; no rows are added for it.
++    aster_overscroll_rows: f64 = 0,
++
++    /// The rows (y=0 is top) of the viewport. Guaranteed to be `rows` length
++    /// when `scroll_row_frac` is 0 and `rows + 1` otherwise.
+@@ -269,0 +282,13 @@ pub const RenderState = struct {
++
++        // Aster: a fractional scroll paints the row below the viewport too.
++        // `extra_row` is null when the fraction is 0 or no such row exists,
++        // in which case the grid is drawn row-aligned.
++        const extra_row: ?PageList.Pin = extra: {
++            if (s.scrollRowFrac() == 0) break :extra null;
++            const br = s.pages.getBottomRight(.viewport) orelse break :extra null;
++            var below = br.down(1) orelse break :extra null;
++            below.x = 0;
++            break :extra below;
++        };
++        const paint_rows: usize = @as(usize, s.pages.rows) + @intFromBool(extra_row != null);
++
+@@ -291 +316,2 @@ pub const RenderState = struct {
+-            // If our dimensions changed, we do a full rebuild.
++            // If our dimensions changed, we do a full rebuild. The painted
++            // row count changes when a fractional scroll starts or ends.
+@@ -293 +319,2 @@ pub const RenderState = struct {
+-                self.cols != s.pages.cols)
++                self.cols != s.pages.cols or
++                self.row_data.len != paint_rows)
+@@ -308,0 +336,2 @@ pub const RenderState = struct {
++        self.scroll_row_frac = if (extra_row != null) s.scrollRowFrac() else 0;
++        self.aster_overscroll_rows = s.aster_overscroll_rows;
+@@ -345 +374 @@ pub const RenderState = struct {
+-        if (self.row_data.len != self.rows) {
++        if (self.row_data.len != paint_rows) {
+@@ -348 +377 @@ pub const RenderState = struct {
+-            if (self.row_data.len < self.rows) {
++            if (self.row_data.len < paint_rows) {
+@@ -352 +381 @@ pub const RenderState = struct {
+-                try self.row_data.resize(alloc, self.rows);
++                try self.row_data.resize(alloc, paint_rows);
+@@ -357 +386 @@ pub const RenderState = struct {
+-                for (old_len..self.rows) |y| {
++                for (old_len..paint_rows) |y| {
+@@ -371,2 +400,2 @@ pub const RenderState = struct {
+-                    row_data.items(.arena)[self.rows..],
+-                    row_data.items(.cells)[self.rows..],
++                    row_data.items(.arena)[paint_rows..],
++                    row_data.items(.cells)[paint_rows..],
+@@ -378 +407 @@ pub const RenderState = struct {
+-                self.row_data.shrinkRetainingCapacity(self.rows);
++                self.row_data.shrinkRetainingCapacity(paint_rows);
+@@ -396,6 +425,10 @@ pub const RenderState = struct {
+-        // Go through and setup our rows.
+-        var row_it = s.pages.rowIterator(
+-            .right_down,
+-            .{ .viewport = .{} },
+-            null,
+-        );
++        // Go through and setup our rows. With a fractional scroll the
++        // iteration continues through the extra row below the viewport.
++        var row_it = if (extra_row) |limit|
++            viewport_pin.rowIterator(.right_down, limit)
++        else
++            s.pages.rowIterator(
++                .right_down,
++                .{ .viewport = .{} },
++                null,
++            );
+@@ -554 +587 @@ pub const RenderState = struct {
+-        assert(y == self.rows);
++        assert(y == paint_rows);
+@@ -1465,0 +1499,105 @@ test "dirty row resets highlights" {
++
++test "Aster: scroll row frac collects extra row" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++
++    var t = try Terminal.init(alloc, .{ .cols = 10, .rows = 3 });
++    defer t.deinit(alloc);
++
++    var s = t.vtStream();
++    defer s.deinit();
++    s.nextSlice("A\r\nB\r\nC\r\nD\r\nE");
++
++    var state: RenderState = .empty;
++    defer state.deinit(alloc);
++
++    try state.update(alloc, &t);
++    try testing.expectEqual(3, state.rows);
++    try testing.expectEqual(3, state.row_data.len);
++    try testing.expectEqual(@as(f64, 0), state.scroll_row_frac);
++
++    // At the bottom a fraction is ignored: no extra row.
++    t.screens.active.setScrollRowFrac(0.25);
++    try state.update(alloc, &t);
++    try testing.expectEqual(3, state.row_data.len);
++    try testing.expectEqual(@as(f64, 0), state.scroll_row_frac);
++
++    t.scrollViewport(.top);
++    t.screens.active.setScrollRowFrac(0.25);
++    try state.update(alloc, &t);
++    try testing.expectEqual(3, state.rows);
++    try testing.expectEqual(4, state.row_data.len);
++    try testing.expectEqual(@as(f64, 0.25), state.scroll_row_frac);
++
++    const cells = state.row_data.items(.cells);
++    try testing.expectEqual('A', cells[0].get(0).raw.codepoint());
++    try testing.expectEqual('D', cells[3].get(0).raw.codepoint());
++
++    t.screens.active.setScrollRowFrac(0);
++    try state.update(alloc, &t);
++    try testing.expectEqual(3, state.row_data.len);
++    try testing.expectEqual(@as(f64, 0), state.scroll_row_frac);
++}
++
++test "Aster: scroll row frac extra row dirties independently" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++
++    var t = try Terminal.init(alloc, .{ .cols = 10, .rows = 3 });
++    defer t.deinit(alloc);
++
++    var s = t.vtStream();
++    defer s.deinit();
++    s.nextSlice("A\r\nB\r\nC\r\nD\r\nE");
++
++    var state: RenderState = .empty;
++    defer state.deinit(alloc);
++
++    t.scrollViewport(.{ .delta = -1 });
++    t.screens.active.setScrollRowFrac(0.5);
++    try state.update(alloc, &t);
++    try testing.expectEqual(4, state.row_data.len);
++    try testing.expectEqual('B', state.row_data.items(.cells)[0].get(0).raw.codepoint());
++    try testing.expectEqual('E', state.row_data.items(.cells)[3].get(0).raw.codepoint());
++    try testing.expectEqual(3, state.cursor.viewport.?.y);
++
++    state.dirty = .false;
++    @memset(state.row_data.items(.dirty), false);
++
++    // Output on the cursor row only dirties the extra row.
++    s.nextSlice("X");
++    try state.update(alloc, &t);
++    try testing.expectEqual(.partial, state.dirty);
++    const dirty = state.row_data.items(.dirty);
++    try testing.expect(!dirty[0]);
++    try testing.expect(!dirty[1]);
++    try testing.expect(!dirty[2]);
++    try testing.expect(dirty[3]);
++}
++
++test "Aster: overscroll is copied without extra rows" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++
++    var t = try Terminal.init(alloc, .{ .cols = 10, .rows = 3 });
++    defer t.deinit(alloc);
++
++    var s = t.vtStream();
++    defer s.deinit();
++    s.nextSlice("A\r\nB\r\nC\r\nD\r\nE");
++
++    var state: RenderState = .empty;
++    defer state.deinit(alloc);
++
++    t.aster_scroll_past_last = .@"cursor-line";
++    t.scrollViewportFractional(1);
++    try state.update(alloc, &t);
++    try testing.expectEqual(3, state.row_data.len);
++    try testing.expectEqual(@as(f64, 0), state.scroll_row_frac);
++    try testing.expectEqual(@as(f64, 1), state.aster_overscroll_rows);
++    try testing.expectEqual(@as(f64, 1), t.asterVisualOffsetRows());
++
++    t.scrollViewport(.bottom);
++    try state.update(alloc, &t);
++    try testing.expectEqual(@as(f64, 0), state.aster_overscroll_rows);
++}
 diff --git a/src/termio/Exec.zig b/src/termio/Exec.zig
-index 87d47807c..5517d175c 100644
+index 87d4780..5517d17 100644
 --- a/src/termio/Exec.zig
 +++ b/src/termio/Exec.zig
 @@ -566,0 +567 @@ pub const Config = struct {
@@ -776,7 +1726,7 @@ index 87d47807c..5517d175c 100644
 +    try testing.expectEqualStrings("-i", result[2]);
 +}
 diff --git a/src/termio/Options.zig b/src/termio/Options.zig
-index a6bf8c4d4..f470e9129 100644
+index a6bf8c4..f470e91 100644
 --- a/src/termio/Options.zig
 +++ b/src/termio/Options.zig
 @@ -8,0 +9,34 @@ const termio = @import("../termio.zig");
@@ -819,7 +1769,7 @@ index a6bf8c4d4..f470e9129 100644
 +/// Versioned Aster observation hooks. Other runtimes leave this empty.
 +aster_observer: AsterObserver = .{},
 diff --git a/src/termio/Termio.zig b/src/termio/Termio.zig
-index 1d1bfe25a..8919790ba 100644
+index 1d1bfe2..02b5a06 100644
 --- a/src/termio/Termio.zig
 +++ b/src/termio/Termio.zig
 @@ -55,0 +56,5 @@ surface_mailbox: apprt.surface.Mailbox,
@@ -833,11 +1783,12 @@ index 1d1bfe25a..8919790ba 100644
 +        .aster_osc_scanner = .init(opts.aster_observer),
 @@ -416,0 +424 @@ pub inline fn queueWrite(
 +    self.aster_observer.notifyPtyWrite(data);
-@@ -643,0 +652,3 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
+@@ -643,0 +652,4 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
 +    // Observation happens before taking the renderer mutex. Callbacks are
 +    // synchronous and must copy borrowed bytes before returning.
 +    self.aster_observer.notifyPtyRead(buf);
-@@ -650,0 +662,208 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
++    _ = self.renderer_state.aster_output_seq.fetchAdd(1, .monotonic);
+@@ -650,0 +663,208 @@ pub fn processOutput(self: *Termio, buf: []const u8) void {
 +/// Streaming OSC scanner used only by the Aster extension ABI. Ghostty's
 +/// parser still receives every original byte; malformed and over-limit OSCs
 +/// are dropped only from this observer channel.
@@ -1046,7 +1997,7 @@ index 1d1bfe25a..8919790ba 100644
 +    try std.testing.expectEqual(AsterOSCScanner.State.ground, scanner.state);
 +}
 +
-@@ -689,0 +909,15 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
+@@ -689,0 +910,15 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
 +            if (self.aster_observer.osc != null) {
 +                if (self.aster_osc_scanner.next(byte)) |event| self.notifyAsterOSC(event);
 +            }
@@ -1062,9 +2013,9 @@ index 1d1bfe25a..8919790ba 100644
 +                self.notifyAsterOSC(event);
 +                segment_start = i + 1;
 +            }
-@@ -690,0 +925 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
+@@ -690,0 +926 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
 +        if (segment_start < buf.len) self.terminal_stream.nextSlice(buf[segment_start..]);
-@@ -702,0 +938,12 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
+@@ -702,0 +939,12 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
 +fn notifyAsterOSC(self: *Termio, event: AsterOSCScanner.Event) void {
 +    const screen = self.terminal.screens.active;
 +    const pin = screen.cursor.page_pin.*;
