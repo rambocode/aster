@@ -343,6 +343,22 @@ final class ManagedTerminalCoordinator {
     return status
   }
 
+  /// 异步结束受管终端：语义与 `terminate` 相同，但阻塞的 `terminal terminate` 子进程往返
+  /// 放在后台线程，供关 Pane 这类必须立即响应的界面路径使用。
+  @discardableResult
+  func terminateAsync(_ reference: ManagedTerminalReference) async -> ManagedTerminalStatus? {
+    guard let endpoint else { return nil }
+    let client = self.client
+    let terminalID = reference.terminalID
+    let result = await Task.detached(priority: .userInitiated) {
+      try? client.terminateTerminal(endpoint, terminalID: terminalID)
+    }.value
+    guard let status = result else { return nil }
+    _ = lifecycle.handle(.serverReportedEnd(status))
+    shellProcessIdentifiers.removeValue(forKey: terminalID)
+    return status
+  }
+
   /// 分离：只释放本客户端资源，服务端进程与布局保留，不写结束事件。
   func detach(_ reference: ManagedTerminalReference) {
     _ = lifecycle.handle(.clientDetached(reference))

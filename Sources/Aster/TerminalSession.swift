@@ -4387,10 +4387,18 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         finishManagedDetach(immediately: immediately)
         return
       case .terminated:
-        if let status = ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal)
-          .terminate(managedTerminal)
-        {
-          eventRecorder?.sessionEnded(id: id, exitCode: status.exitCode)
+        let coordinator = ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal)
+        if immediately {
+          // 应用即将退出：主事件循环不会等异步任务，必须同步结束远端进程。
+          if let status = coordinator.terminate(managedTerminal) {
+            eventRecorder?.sessionEnded(id: id, exitCode: status.exitCode)
+          }
+        } else {
+          // 关 Pane：`terminal terminate` 是一次子进程往返（本机数百毫秒、SSH 数秒、
+          // 超时 15s），不能挂在主线程上让界面等它。先拆 surface，结束请求在后台完成；
+          // 下面的 sessionEnded(nil) 按 id 幂等闭合记录，服务端退出码不再回填。
+          let reference = managedTerminal
+          Task { @MainActor in _ = await coordinator.terminateAsync(reference) }
         }
       }
     }
