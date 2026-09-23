@@ -18,6 +18,9 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
   private let preferences: AppPreferences
   private let renderer: any FileRendering
   private let contentHost = NSView()
+  /// 工具条与内容区所在的纵向容器；查找栏按需插在两者之间。
+  private weak var column: NSStackView?
+  private var findBar: FilePaneFindBar?
   private let titleLabel = NSTextField(labelWithString: "")
   private let statusLabel = NSTextField(labelWithString: "")
   private let modeControl = NSSegmentedControl(
@@ -87,6 +90,7 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
     // 工具条与内容区始终跟随 Pane 宽度（规则 5：容器两个方向都要有确定尺寸）。
     column.alignment = .width
     column.spacing = 0
+    self.column = column
     root.addSubview(column)
     column.pinEdges(to: root)
     view = root
@@ -234,6 +238,10 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
       self?.observedDocumentError = error
       self?.updateToolbar()
     }.store(in: &cancellables)
+    model.fileFindRequested.sink { [weak self] request in
+      guard let self, request.paneID == runtime.id else { return }
+      toggleFindBar(forceVisible: !request.toggle)
+    }.store(in: &cancellables)
     model.agentHistoriesChanged.sink { [weak self] _ in
       guard let self else { return }
       let previous = presentationKind
@@ -300,6 +308,37 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
     modeControl.setToolTip(canPreview ? "Preview" : "Lock editing", forSegment: 1)
     modeControl.selectedSegment =
       canPreview ? (showingPreview ? 1 : 0) : (observedReadOnly ? 1 : 0)
+  }
+
+  /// ⌘F 的文件 Pane 版本：显示查找栏并聚焦输入框；已显示时再按一次关闭。
+  /// `forceVisible` 用于命令面板等「只打开不关闭」的入口。
+  private func toggleFindBar(forceVisible: Bool) {
+    if let findBar {
+      guard forceVisible else { return closeFindBar() }
+      findBar.focusField()
+      return
+    }
+    guard FilePaneFindTarget.resolve(in: contentHost) != nil, let column else {
+      model.notice = L("此文件类型不支持查找")
+      return
+    }
+    let bar = FilePaneFindBar(
+      resolveTarget: { [weak self] in
+        guard let self else { return nil }
+        return FilePaneFindTarget.resolve(in: contentHost)
+      },
+      onClose: { [weak self] in self?.closeFindBar() }
+    )
+    column.insertArrangedSubview(bar, at: 1)
+    findBar = bar
+    bar.focusField()
+  }
+
+  /// 关闭查找栏，并把焦点还给源码视图，方便接着编辑找到的位置。
+  private func closeFindBar() {
+    findBar?.removeFromSuperview()
+    findBar = nil
+    if !showingPreview, let sourceTextView { view.window?.makeFirstResponder(sourceTextView) }
   }
 
   private func toggleReadOnly() {

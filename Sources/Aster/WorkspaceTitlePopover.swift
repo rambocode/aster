@@ -367,7 +367,7 @@ final class WorkspaceTitlePopoverViewController: NSViewController {
     content.addArrangedSubview(makeDivider())
     content.addArrangedSubview(makeRow(
       "Find", identifier: "workspace-title-find", shortcut: "⌘F"
-    ) { [weak self] _ in self?.model.isFindPresented = true })
+    ) { [weak self] _ in self?.model.presentFind() })
     content.addArrangedSubview(makeRow(
       "Find in All Tabs", identifier: "workspace-title-global-find", shortcut: "⌘⇧F"
     ) { [weak self] _ in self?.model.toggleGlobalFind() })

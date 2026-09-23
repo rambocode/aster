@@ -72,6 +72,8 @@ File Pane 的顶部工具栏负责模式、Send to Chat、Share、保存状态�
 
 Pane 通过目标文件父目录的 vnode 事件检查 `contentModificationDate`，同时覆盖原位写入和 atomic replace；只有目录监听无法建立时才回退为带 tolerance 的一秒检测。没有本地改动时自动重载；存在 dirty 内容时显示 `Modified on Disk`，由用户从菜单明确 Reload 后才丢弃内存内容。保存继续使用 `DocumentBuffer` 原子替换，读取只接受普通、非符号链接文件，编辑缓冲上限仍为 10 MiB；超大或二进制预览只读取有界前缀。
 
+活动 Pane 是 Editor / Preview 时，`⌘F`、命令面板与标题菜单的“查找”由 `AppModel.toggleFind` / `presentFind` 经 `fileFindRequested` 按 Pane ID 转给该 File Pane，不打开终端查找栏。`FilePaneFindBar` 插在工具栏与内容区之间，每次查找都从当前内容树重新解析目标（`FilePaneFindTarget`），Source/Preview 切换后自动作用于新视图：源码 `NSTextView` 由 `AsterCore.DocumentTextSearch` 以 UTF-16 区间计算全部匹配（支持区分大小写和正则，零长度正则匹配跳过，最多 1 万处），选中、滚动并显示系统查找指示器；Markdown/HTML/SVG 预览与 Agent transcript 用 `WKWebView.find`，WebKit 不给总数，只显示是否命中；PDF 用 PDFKit `findString` 并缓存结果。Web 与 PDF 不支持正则，开关置灰。图片、二进制和 Quick Look 富文档不提供查找。查找栏属于 Pane 运行态，不写入快照。
+
 ## 关键实现与失败语义
 
 ### 链接协议设置交互

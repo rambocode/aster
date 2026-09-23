@@ -1578,6 +1578,8 @@ final class AppModel: ObservableObject {
   /// 历史扫描可能在启动后任意时刻完成；独立事件只更新消费历史的局部面板，避免一次
   /// 后台 I/O 完成把整个终端工作区重建。
   let agentHistoriesChanged = PassthroughSubject<[AgentSessionHistory], Never>()
+  /// 文件 Pane 的查找请求：`toggle` 为 false 时只打开不关闭。对应 Pane 自己订阅并处理。
+  let fileFindRequested = PassthroughSubject<(paneID: UUID, toggle: Bool), Never>()
   private(set) var agentHistories: [AgentSessionHistory] = [] {
     didSet {
       agentHistoriesChanged.send(agentHistories)
@@ -2538,7 +2540,31 @@ final class AppModel: ObservableObject {
   }
 
   func toggleInspector() { isInspectorPresented.toggle() }
-  func toggleFind() { isFindPresented.toggle() }
+  /// ⌘F：活动 Pane 是打开的文件时交给该 Pane 自己的查找栏，否则切换终端查找栏。
+  func toggleFind() {
+    if let paneID = activeFilePaneID {
+      fileFindRequested.send((paneID: paneID, toggle: true))
+    } else {
+      isFindPresented.toggle()
+    }
+  }
+
+  /// 只打开不关闭的查找入口（命令面板、标题菜单）；路由规则与 `toggleFind` 相同。
+  func presentFind() {
+    if let paneID = activeFilePaneID {
+      fileFindRequested.send((paneID: paneID, toggle: false))
+    } else {
+      isFindPresented = true
+    }
+  }
+
+  /// 当前标签的活动 Pane 是编辑器或预览时返回其 ID。
+  private var activeFilePaneID: UUID? {
+    guard let runtime = selectedTab?.activeRuntime,
+      runtime.descriptor.kind == .editor || runtime.descriptor.kind == .preview
+    else { return nil }
+    return runtime.id
+  }
   func toggleComposer() { isComposerPresented.toggle() }
 
   /// Prompt 队列是当前终端 Pane 的手动输入工作流，不依赖 Claude/Codex 的识别结果。
@@ -4325,7 +4351,7 @@ final class AppModel: ObservableObject {
     case "files":
       selectedTab?.openFileBrowser()
       persistWorkspace()
-    case "find": isFindPresented = true
+    case "find": presentFind()
     case "global-find": toggleGlobalFind()
     case "open-quickly": toggleOpenQuickly()
     case "inspector": toggleInspector()
