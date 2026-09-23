@@ -47,6 +47,38 @@ fi
 build_dir="$(mktemp -d)"
 trap 'rm -rf "$build_dir"' EXIT
 
+# Zig 0.15.2 自带的 clang float.h 早于 macOS 27 SDK。27 SDK 的 math.h 在启用 modules 时
+# 改由 <float.h> 的 __need_infinity_nan 提供 INFINITY，而 Zig 的 float.h 在 -std=c++17 下
+# 不定义它，libc++ 子编译随即报 "use of undeclared identifier 'INFINITY'"。遇到这种 SDK 时
+# 改用命令行工具里的 macOS 26 SDK：只拦截 Zig 探测 SDK 的那一条 xcrun 查询，metal 等其余
+# 调用仍然交给 Xcode。
+zig_path_prefix=""
+default_sdk="$(xcrun --sdk macosx --show-sdk-path)"
+if /usr/bin/grep -q '__need_infinity_nan' "$default_sdk/usr/include/math.h"; then
+  fallback_sdk=""
+  for candidate in /Library/Developer/CommandLineTools/SDKs/MacOSX26*.sdk; do
+    [[ -d "$candidate" ]] || continue
+    /usr/bin/grep -q '__need_infinity_nan' "$candidate/usr/include/math.h" && continue
+    fallback_sdk="$candidate"
+  done
+  if [[ -z "$fallback_sdk" ]]; then
+    echo "error: Zig 0.15.2 cannot build libc++ against $(basename "$default_sdk"); install Command Line Tools with a macOS 26 SDK" >&2
+    exit 1
+  fi
+  echo "Using $(basename "$fallback_sdk") for Zig (Zig 0.15.2 is incompatible with $(basename "$default_sdk"))"
+  mkdir -p "$build_dir/xcrun-shim"
+  cat > "$build_dir/xcrun-shim/xcrun" <<SHIM
+#!/bin/sh
+if [ "\$1" = "--sdk" ] && [ "\$2" = "macosx" ] && [ "\$3" = "--show-sdk-path" ]; then
+  echo "$fallback_sdk"
+  exit 0
+fi
+exec /usr/bin/xcrun "\$@"
+SHIM
+  chmod +x "$build_dir/xcrun-shim/xcrun"
+  zig_path_prefix="$build_dir/xcrun-shim:"
+fi
+
 echo "Fetching Ghostty $ghostty_revision"
 git init -q "$build_dir"
 git -C "$build_dir" remote add origin "$ghostty_repo"
@@ -62,7 +94,7 @@ git -C "$build_dir" apply --unidiff-zero "$patch_file"
 echo "Building GhosttyKit.xcframework"
 (
   cd "$build_dir"
-  "$zig_binary" build \
+  PATH="$zig_path_prefix$PATH" "$zig_binary" build \
     -Doptimize=ReleaseFast \
     -Demit-xcframework=true \
     -Dxcframework-target=native \

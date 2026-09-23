@@ -40,6 +40,12 @@ debug map 只保存 member basename，`dsymutil` 会选错对象并误报 ImGui 
 `setup-ghostty.sh` 会拒绝任何仍含重复 member basename 的生成库，把 debug-map 兼容性作为
 与 ABI header、terminfo 和 runtime resources 同级的产物门禁。
 
+Zig 0.15.2 自带的 clang `float.h` 早于 macOS 27 SDK：27 SDK 的 `math.h` 在启用 modules 时改由
+`<float.h>` 的 `__need_infinity_nan` 提供 `INFINITY`，Zig 的头文件不支持，libc++ 子编译会报
+`use of undeclared identifier 'INFINITY'`。`setup-ghostty.sh` 检测到这种 SDK 时，只把 Zig 探测
+SDK 的 `xcrun --sdk macosx --show-sdk-path` 改指到命令行工具里的 macOS 26 SDK，metal 等其余调用
+仍用 Xcode；没有可用的 26 SDK 时明确失败。升级到修复了该问题的 Zig 后应删除这段回退。
+
 构建 stamp 同时包含 revision 与 patch SHA-256，因此改动补丁后不会误复用旧二进制。
 更新 revision 时先在干净 clone 中执行 `git apply --check`，解决冲突后重新生成补丁，
 再运行 Zig 定向测试、完整 Swift 测试与 release App 验收，并核对导出的 ABI 版本。
