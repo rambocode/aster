@@ -3,6 +3,33 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.6.12</title>
+            <pubDate>Wed, 23 Sep 2026 18:06:41 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>31</sparkle:version>
+            <sparkle:shortVersionString>0.6.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 新功能
+
+- 打开的文件支持 ⌘F 查找内容。源码、Markdown / HTML / SVG 预览、Agent 会话记录和 PDF 都能查。输入即查，↩ 下一个，⇧↩ 上一个，Esc 关闭；源码里显示「当前 / 总数」，并支持区分大小写和正则。
+- Ghostty 终端的触控板滚动改为按像素平滑滚动，不再一行一行地跳；手势结束后自动对齐到整行。滚动距离也按屏幕缩放换算，Retina 屏上内容跟手移动。
+- Ghostty 终端支持「滚过末尾 / 开头」。这两项设置以前只在旧终端引擎里生效。
+
+## 改进
+
+- Claude Code 全屏模式下快速滑动触控板，手指停下后画面马上停，不再继续追滚约 0.2 秒。
+
+## 修复
+
+- 修复 Codex 有时被识别成 Claude Code 的问题。Codex 的终端标题以转圈动画开头，以前被当成 Claude 的标志；现在不再这样判断，并会读取前台进程确认是哪个 Agent。识别错了也会被 Agent 自己的上报纠正。
+- 修复同一目录开两个 Agent 时，侧栏标签显示成另一个会话标题的问题。
+- 修复终端滚动条遮挡最右几列文字的问题。滚动条现在有自己的位置，平时隐藏，滚动或指针移到右侧时出现。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.12/Aster-0.6.12.dmg" length="44173789" type="application/octet-stream" sparkle:edSignature="52l5iRfW27lrQ9gAS0EUvgN0DJJW0mkHdGlOVT6UTMsyR+o+up2zrevNxtvem0QUAoPAjDSIw8Msmlqb3+rECQ=="/>
+        </item>
+        <item>
             <title>0.6.11</title>
             <pubDate>Mon, 21 Sep 2026 20:55:59 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -99,35 +126,6 @@
 - 修复 Shell 退出后偶发崩溃。终端画面释放时如果正好还有一帧待绘制，系统会在已释放的渲染器上重绘并直接崩掉。之前手动关 Pane 慢一步碰不到，配上这版的「退出自动关 Pane」会必现，已在释放前摘掉渲染层。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.8/Aster-0.6.8.dmg" length="42260217" type="application/octet-stream" sparkle:edSignature="JQH08LC5OsJGJ8JgeLrr76lrHMgKRRUDCONQCTbvYUo55lIUEPy9PVi9KtIxqsdE2VtA5+iC6t92qrbjcUiEDw=="/>
-        </item>
-        <item>
-            <title>0.6.7</title>
-            <pubDate>Fri, 18 Sep 2026 10:09:00 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>26</sparkle:version>
-            <sparkle:shortVersionString>0.6.7</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## 新增
-
-- SSH 到服务器后，右侧详情面板的 Files 页变成「服务器文件」、Info 页变成「服务器监控」，`exit` 回到本机后自动恢复本地内容。远程工作模式下的远端终端同样可用。
-- **服务器文件**：跟随远端 Shell 上报的当前目录，在终端里 `cd` 过去面板就跟着走。可以进子目录、返回上级、复制路径、把 `cd` 预填到终端、下载文件到本机，也能拖文件进面板上传到当前目录。目录超过 2000 项会标注「已显示 2000 / N 项，已截断」。
-- **服务器监控**：分「概览 / 磁盘 / 进程 / 端口」四页，点页签切换，一次只看一类指标。概览是主机名与系统版本、运行时长、负载与 CPU、内存和 Swap；磁盘列出各挂载点用量（同一块盘挂到多个路径时只列一条）；进程是一张三列表格（进程 / CPU / 内存），点表头排序、箭头朝下是从大到小，点某一行能看它的 PID、用户、占用和完整命令行；端口列出监听中的 TCP/UDP 与占用它的进程。面板可见时每 3 秒刷新，切页不会重连服务器。
-- 远端目录要靠远端 Shell 上报。面板会提示「未收到远端目录上报」并提供「安装远端集成」，点一下就把集成脚本装到远端 `~/.config/aster/`，安装前会列出将要改动的远端文件让你确认。装完重新登录或执行 `exec $SHELL` 生效。不想装也可以直接浏览 `$HOME` 或手动输入路径。
-- 新增设置「Shell → Shell 集成 → SSH 连接复用」（默认开启，需要「SSH 集成」也开着）：Aster 启动的终端里 `ssh` 会自动带上 OpenSSH 的 ControlMaster 选项，把已认证的连接复用给上面两个面板，面板因此不需要再认证一次。你自己定义的 `ssh` 函数或别名优先，Aster 不会替换它。开关只影响之后新建的终端。
-
-## 修复
-
-- 在一个 Pane 里拖选文字后点另一个 Pane，终端不再卡在选择模式，新 Pane 立刻能正常输入。
-- 拖完分屏分隔线后把指针移开，光标会复位成箭头，不再一直停在左右箭头的拖动形态。
-- 用 ↑ 调出历史里的 `ssh` 命令再执行，左侧标签重新按远端主机分组。之前这种情况下键盘记录拿不到完整命令，第二次执行同一条 `ssh` 就不再建立远端分组了；接受 Shell 自动建议或 Tab 补全后执行也是同样的问题。
-
-## 优化
-
-- 详情面板拖窄之后会自动精简次要列：进程隐去 PID、端口隐去监听地址、文件隐去修改时间，把宽度让给真正要读的那一列；拉宽后自动恢复。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.7/Aster-0.6.7.dmg" length="42198244" type="application/octet-stream" sparkle:edSignature="NCDBjxsSx7lXYOlsZKRL/Z1phQCdytoROs7B5+yXs3Zz41A5uMEVhpk7vnQ9KrSNyDppy2lxIZVfWG9GO36pCA=="/>
         </item>
     </channel>
 </rss>
