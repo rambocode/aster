@@ -104,7 +104,12 @@ func settingsHostsPageRendersAndSaves() async throws {
   try await fixture.evaluate("""
     const dialog = document.querySelector('.hosts-dialog');
     const user = [...dialog.querySelectorAll('.hosts-field')].find(f => f.textContent.startsWith('用户')).querySelector('input');
+    const byLabel = text => [...dialog.querySelectorAll('.hosts-field')].find(f => f.textContent.startsWith(text));
     user.value = 'admin';
+    byLabel('只用指定私钥').querySelector('select').value = 'true';
+    const knownHosts = byLabel('known_hosts 文件').querySelector('textarea');
+    if (!knownHosts.placeholder.includes('~/.ssh/known_hosts')) throw new Error('placeholder');
+    knownHosts.value = '~/.orbstack/ssh/known_hosts\\n\\n  ~/.ssh/known_hosts ';
     [...dialog.querySelectorAll('button')].find(b => b.textContent === '保存').click(); ''
     """)
   try await fixture.wait("!document.querySelector('.hosts-dialog')")
@@ -112,6 +117,8 @@ func settingsHostsPageRendersAndSaves() async throws {
   let updated = try #require(saved.first { $0.id == web.id })
   #expect(updated.user == "admin")
   #expect(updated.port == 2222 && updated.jumpHostID == bastion.id && updated.group == "prod")
+  #expect(updated.identitiesOnly == true)
+  #expect(updated.knownHostsFiles == ["~/.orbstack/ssh/known_hosts", "~/.ssh/known_hosts"])
 }
 
 @Test("主机行菜单按口令状态显示「忘记口令」，删除确认列出受影响主机后才删除")

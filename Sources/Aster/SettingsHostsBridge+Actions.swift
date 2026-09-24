@@ -26,6 +26,7 @@ extension SettingsHostsBridge {
   /// 网页回传的主机对象最大字节数；远大于任何正常配置，只挡异常输入。
   static let maximumPayloadBytes = 64 * 1024
   static let maximumForwards = 64
+  /// 私钥文件与 known_hosts 文件各自的最多行数。
   static let maximumIdentityFiles = 16
 
   /// 分发一个 `hosts.` 前缀的动作。未知动作 toast 报错并回执失败。
@@ -73,18 +74,21 @@ extension SettingsHostsBridge {
     }
     let data = try JSONSerialization.data(withJSONObject: object)
     guard data.count <= maximumPayloadBytes else { throw SettingsHostsError.invalidPayload }
-    let profile: SSHHostProfile
+    var profile: SSHHostProfile
     do { profile = try JSONDecoder().decode(SSHHostProfile.self, from: data) } catch {
       throw SettingsHostsError.invalidPayload
     }
+    // 空 known_hosts 列表与 nil 同义（都继承默认项），统一存成 nil，文件里不留空数组。
+    if profile.knownHostsFiles?.isEmpty == true { profile.knownHostsFiles = nil }
     guard profile.forwards.count <= maximumForwards,
-      profile.identityFiles.count <= maximumIdentityFiles
+      profile.identityFiles.count <= maximumIdentityFiles,
+      (profile.knownHostsFiles?.count ?? 0) <= maximumIdentityFiles
     else { throw SettingsHostsError.invalidPayload }
     // `SSHHostStore.validate` 只查 host/user/group 的换行；这里补齐其余会进入 argv 或
     // 配置文件的文本字段，任何控制字符都拒绝。
     let texts =
       [profile.name, profile.host, profile.user, profile.group ?? "", profile.proxyCommand ?? ""]
-      + profile.identityFiles
+      + profile.identityFiles + (profile.knownHostsFiles ?? [])
       + [profile.socksProxy?.host ?? "", profile.httpProxy?.host ?? ""]
       + profile.forwards.flatMap { [$0.bind.host, $0.target.host, $0.description] }
     let hasControl = texts.contains { text in
@@ -146,10 +150,11 @@ extension SettingsHostsBridge {
         group: source.group == SSHHostProfile.importedGroup ? nil : source.group,
         host: source.host, port: source.port, user: source.user, jumpHostID: source.jumpHostID,
         proxyCommand: source.proxyCommand, socksProxy: source.socksProxy, httpProxy: source.httpProxy,
-        auth: source.auth, identityFiles: source.identityFiles, agentForward: source.agentForward,
-        forwards: source.forwards, keepaliveInterval: source.keepaliveInterval,
-        keepaliveCountMax: source.keepaliveCountMax, connectTimeout: source.connectTimeout,
-        verifyHostKeys: source.verifyHostKeys)
+        auth: source.auth, identityFiles: source.identityFiles,
+        identitiesOnly: source.identitiesOnly, knownHostsFiles: source.knownHostsFiles,
+        agentForward: source.agentForward, forwards: source.forwards,
+        keepaliveInterval: source.keepaliveInterval, keepaliveCountMax: source.keepaliveCountMax,
+        connectTimeout: source.connectTimeout, verifyHostKeys: source.verifyHostKeys)
       try directory.upsert(copy)
       pushSnapshot()
       complete(true)

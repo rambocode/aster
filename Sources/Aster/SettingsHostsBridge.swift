@@ -184,6 +184,8 @@ final class SettingsHostsBridge {
         "connectTimeout": 10,
         "verifyHostKeys": true,
         "agentForward": false,
+        "identitiesOnly": false,
+        "knownHostsFiles": ["~/.ssh/known_hosts"],
       ] as [String: Any],
       "importedGroup": SSHHostProfile.importedGroup,
       "sshConfigPath": (dependencies.sshConfigURL.path as NSString).abbreviatingWithTildeInPath,
@@ -253,6 +255,8 @@ final class SettingsHostsBridge {
     object["keepaliveCountMax"] = profile.keepaliveCountMax
     object["connectTimeout"] = profile.connectTimeout
     object["verifyHostKeys"] = profile.verifyHostKeys
+    object["identitiesOnly"] = profile.identitiesOnly
+    object["knownHostsFiles"] = profile.knownHostsFiles
     return object
   }
 
