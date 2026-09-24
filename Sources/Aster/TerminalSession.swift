@@ -2513,6 +2513,14 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     }
   }
 
+  /// 原生 SSH Pane 的连接目标；nil 表示普通本地 Shell。必须在首次挂载前绑定。
+  private(set) var nativeSSH: NativeSSHPaneSpec?
+
+  /// 绑定原生 SSH 目标。surface 创建时据此把启动命令换成 `aster-ssh client`。
+  func bindNativeSSH(_ spec: NativeSSHPaneSpec?) {
+    nativeSSH = spec
+  }
+
   func bindManagedTerminal(_ reference: ManagedTerminalReference?) {
     managedTerminal = reference
     managedFailure = nil
@@ -2961,6 +2969,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         quitAt: banner.quitAt, restoredAt: banner.restoredAt)
     }
     pendingRestoreBanner = nil
+    // 原生 SSH Pane：子进程直接是 `aster-ssh client`，不经登录 Shell。端点每次启动现取，
+    // 因为 broker socket 路径随 App 启动而变；恢复横幅在这里被整体覆盖，与受管桥一致。
+    if let nativeSSH, managedTerminal == nil {
+      applyNativeSSHLaunch(nativeSSH, to: view)
+    }
     // 受管终端的 surface 子进程是显示桥，不是任务本身：关闭 surface 只结束桥，
     // 后台服务持有的 PTY 与进程组继续运行。
     if let managedTerminal,
@@ -5834,6 +5847,25 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       }
     }
     return result
+  }
+
+  /// 按当前引擎决定原生 SSH Pane 的启动命令；引擎不可用时保留登录 Shell 并敲入 ssh 回退。
+  private func applyNativeSSHLaunch(_ spec: NativeSSHPaneSpec, to view: GhosttySurfaceView) {
+    let endpoint = Result { try NativeSSHPaneLaunch.endpointProvider() }
+    switch NativeSSHPaneLaunch.plan(for: spec, endpoint: endpoint, hosts: SSHHostDirectory.shared.hosts) {
+    case .native(let executable, let arguments):
+      view.command = GhosttyConfiguration.launchCommand(shell: executable, arguments: arguments)
+    case .openssh(let target, let reason):
+      appendStartupWarning(reason)
+      let command = NativeSSHPaneLaunch.typedSSHCommand(target: target)
+      // 与新建回退标签相同：等 Shell 出提示符后再预填命令，不带回车。
+      Task { @MainActor [weak self] in
+        do { try await Task.sleep(for: .milliseconds(800)) } catch { return }
+        self?.typeText(command)
+      }
+    case .unavailable(let reason):
+      appendStartupWarning(reason)
+    }
   }
 
   private static func launchArguments(forShell shell: String) -> [String] {

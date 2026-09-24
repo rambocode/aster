@@ -1207,7 +1207,10 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   private func addRuntime(for descriptor: PaneDescriptor, isRestored: Bool = false) {
     guard runtimes[descriptor.id] == nil else { return }
     let runtime = WorkspacePaneRuntime(descriptor: descriptor)
-    if let session = runtime.terminalSession {
+    if let session = runtime.terminalSession, let nativeSSH = descriptor.nativeSSH {
+      // 原生 SSH Pane 的子进程就是 aster-ssh client，不能再被托管成本机受管终端。
+      session.bindNativeSSH(nativeSSH)
+    } else if let session = runtime.terminalSession {
       // 绑定可能跨一次 SSH 往返才完成，期间 Pane 可能已被搬到别的标签。回调经
       // runtime 转发给「当前」持有它的标签，而不是创建它的标签。
       ManagedTerminalBinder.bind(
@@ -2086,7 +2089,8 @@ final class AppModel: ObservableObject {
   }
 
   /// - Parameter select: 是否切到新标签。把 Pane 拖成标签时留在原标签，传 false。
-  private func insertTab(
+  /// 对 `AppModel+NativeSSH` 开放（跨文件扩展看不到 private），其它调用仍应走 `newTab`。
+  func insertTab(
     _ tab: TerminalTabItem,
     position: NewTabPosition? = nil,
     hasContent: Bool,

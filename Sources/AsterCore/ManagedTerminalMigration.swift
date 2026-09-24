@@ -42,10 +42,13 @@ public enum ManagedTerminalMigration {
   /// 找出可迁移的 Pane：仅终端类且尚未持有受管引用。
   ///
   /// 文件、编辑器、预览与 Web Pane 由客户端管理，不进入共享结构，因此排除在外。
+  /// 原生 SSH Pane 的子进程是到另一台主机的连接，迁移成本机受管 Shell 会丢掉它，同样排除。
   public static func candidates(in tabs: [WorkspaceTabSnapshot]) -> [ManagedMigrationCandidate] {
     tabs.flatMap { tab in
       tab.layout.allPanes.compactMap { pane in
-        guard pane.kind == .terminal, pane.managedTerminal == nil else { return nil }
+        guard pane.kind == .terminal, pane.managedTerminal == nil, pane.nativeSSH == nil else {
+          return nil
+        }
         return ManagedMigrationCandidate(
           tabID: tab.id, paneID: pane.id, workingDirectory: pane.workingDirectory)
       }
