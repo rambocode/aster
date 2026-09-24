@@ -294,15 +294,8 @@ enum NewWorkspaceSheet {
   }
 
   /// 打开设置并定位到「主机」分类。
-  ///
-  /// 按原始值取分类而不是直接写 `.hosts`：「主机」分类由设置包添加，合并前这里退回只打开设置窗口。
   private static func openHostSettings() {
-    guard let delegate = NSApplication.shared.delegate as? AsterAppDelegate else { return }
-    if let section = SettingsViewController.Section(rawValue: "主机") {
-      delegate.showSettings(section: section)
-    } else {
-      delegate.showSettings(nil)
-    }
+    (NSApplication.shared.delegate as? AsterAppDelegate)?.showSettings(section: .hosts)
   }
 
   /// 已添加的远端机器（带连接状态）。Local 不在其中，它是下拉第一项「本机」。
