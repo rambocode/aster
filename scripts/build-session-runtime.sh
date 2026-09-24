@@ -3,7 +3,7 @@
 # 供 build-app.sh 复制进 Contents/MacOS/。没有它，打包版的 Local 受管模式（关窗口不杀进程、
 # 冷恢复、Agent 原生恢复）整个不可用。
 #
-# libghostty-vt（.build/vt-host）只跟锁定的 ghostty revision 与补丁集有关，构建一次长期复用；
+# libghostty-vt（.build/vt-host）只跟锁定的 ghostty revision 与补丁集有关，产物键不变时复用；
 # ASTER_SESSION_RUNTIME_REBUILD_VT=1 强制重建。
 #
 # 用法：scripts/build-session-runtime.sh [输出目录]   默认 .build/release
@@ -22,8 +22,11 @@ fi
 
 vt_prefix="$RUNTIME_DIR/.build/vt-host"
 # 头文件也要检查：构建中途失败可能只装好了静态库，只看 .a 会一直跳过重建、链接时找不到 vt.h。
+# 补丁集变化（产物键不符）也必须重建，否则新补丁不会进入 aster-session。
+vt_key="$("$RUNTIME_DIR/scripts/build-vt.sh" --key)"
 if [[ "${ASTER_SESSION_RUNTIME_REBUILD_VT:-0}" == "1" || ! -f "$vt_prefix/lib/libghostty-vt.a" ||
-      ! -f "$vt_prefix/include/ghostty/vt.h" ]]; then
+      ! -f "$vt_prefix/include/ghostty/vt.h" ||
+      "$(cat "$vt_prefix/.aster-vt-key" 2>/dev/null)" != "$vt_key" ]]; then
   echo "== aster-session: building libghostty-vt (native)"
   (cd "$RUNTIME_DIR" && PATH="$(dirname "$ZIG"):$PATH" scripts/build-vt.sh native)
 fi
