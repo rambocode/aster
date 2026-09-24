@@ -1,4 +1,4 @@
-// 「新建工作区」表单（⌘⇧N）：名称 + 主机下拉（本机 / 机器 / 已保存主机 / ssh 别名 / 添加主机…）+「在新窗口中打开」。
+// 「新建工作区」表单（⌘⇧N）：名称 + 主机下拉（本机 / 机器 / 已保存主机 / ssh 别名 / 添加主机…）+「在新窗口打开」。
 import AppKit
 import AsterCore
 
@@ -16,7 +16,7 @@ enum NewWorkspaceHostChoice: Equatable {
   /// 打开设置的「主机」分类。
   case addHost
 
-  /// 选中后才需要连到远端的目标；只有这些目标「在新窗口中打开」才有意义。
+  /// 选中后才需要连到远端的目标；只有这些目标「在新窗口打开」才有意义。
   var isRemote: Bool {
     switch self {
     case .machine, .savedHost, .sshAlias: true
@@ -132,7 +132,7 @@ enum NewWorkspaceSheet {
   private final class Form: NSObject {
     let nameField: NSTextField
     let hostPopUp = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 300, height: 26), pullsDown: false)
-    let newWindowCheckbox = NSButton(checkboxWithTitle: L("在新窗口中打开"), target: nil, action: nil)
+    let newWindowCheckbox = NSButton(checkboxWithTitle: L("在新窗口打开"), target: nil, action: nil)
     /// 与下拉菜单项的 tag 一一对应。
     private var choices: [NewWorkspaceHostChoice] = []
     weak var alert: NSAlert?

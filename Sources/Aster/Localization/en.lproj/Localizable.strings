@@ -629,7 +629,6 @@
 "在文件 / 编辑器面板中启用模态编辑" = "Enable Modal Editing in the File / Editor Pane";
 "在文件中查找" = "Find in File";
 "在文本面板左侧显示行号侧栏" = "Show a Line Number Sidebar on the Left of the Text Pane";
-"在新窗口中打开" = "Open in New Window";
 "在新窗口打开" = "Open in New Window";
 "在新终端中打开所在目录" = "Open Containing Directory in New Terminal";
 "在本机脱敏记录命令，并允许 README 与沙箱 help 规格学习" = "Record commands locally with sensitive data redacted, and allow README and sandboxed help spec learning";

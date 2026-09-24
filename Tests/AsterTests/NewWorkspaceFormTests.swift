@@ -94,7 +94,7 @@ func newWorkspaceFormRejectsInvalidNames() {
 }
 
 @MainActor
-@Test("新建表单：只有远端目标才允许「在新窗口中打开」")
+@Test("新建表单：只有远端目标才允许「在新窗口打开」")
 func newWorkspaceFormRemoteChoices() {
   #expect(NewWorkspaceHostChoice.machine(UUID()).isRemote)
   #expect(NewWorkspaceHostChoice.savedHost(id: UUID(), name: "a").isRemote)

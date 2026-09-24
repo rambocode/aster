@@ -6,6 +6,10 @@
 AppKit 或翻译资源；应用启动时由 `AppLocalization` 解析语言设置并安装对应资源表的
 翻译函数。未安装函数时使用源语言兜底，CLI 和 MCP 无须加载应用资源。
 
+`python3 scripts/check-localizations.py check` 同时检查两处：Swift 的 `L("…")` 是否在五个
+`Localizable.strings` 里都有翻译；网页设置页 `Resources/settings-ui/*.js` 里的 `t("…")` 是否在
+`i18n.js` 的五种语言里都有翻译。新增任一侧文案后都要补齐，缺一条脚本就会以非零状态退出。
+
 ```mermaid
 flowchart LR
   A[启动时解析语言设置] --> B[AppLocalization 安装翻译函数]

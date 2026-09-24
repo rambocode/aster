@@ -90,7 +90,7 @@
     // 常用字段。
     const common = element("div", "hosts-form-grid");
     if (!isDefaults) {
-      common.appendChild(field(t("名称"), input("name", profile.name, t("例如 生产数据库"))));
+      common.appendChild(field(t("名称"), input("name", profile.name, t("例如：生产数据库"))));
       const groupInput = input("group", profile.group, t("未分组"));
       const list = element("datalist");
       list.id = `hosts-groups-${profile.id}`;
