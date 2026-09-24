@@ -12,7 +12,7 @@ use std::sync::Arc;
 use russh::client::{AuthResult, Handle, KeyboardInteractiveAuthResponse};
 use russh::keys::agent::client::AgentClient;
 use russh::keys::agent::AgentIdentity;
-use russh::keys::{HashAlg, PrivateKey, PrivateKeyWithHashAlg};
+use russh::keys::{HashAlg, PrivateKey, PrivateKeyWithHashAlg, PublicKey};
 use russh::{MethodKind, MethodSet};
 use sha2::{Digest, Sha512};
 use zeroize::Zeroizing;
@@ -253,11 +253,23 @@ async fn try_agent(
             return Ok(Outcome::Skipped);
         }
     };
+    // IdentitiesOnly：agent 只能为 identityFiles 里的密钥签名，不能把 agent 里其它密钥逐个试一遍
+    // （服务器的 MaxAuthTries 可能因此在轮到正确密钥前就断开）。
+    let allowed: Option<Vec<PublicKey>> = ctx.spec.identities_only.then(|| {
+        ctx.spec
+            .identity_files
+            .iter()
+            .filter_map(|f| identity_public_key(&expand_identity(f, ctx)))
+            .collect()
+    });
     let mut outcome = Outcome::Skipped;
     for identity in identities {
         let AgentIdentity::PublicKey { key, .. } = identity else {
             continue;
         };
+        if allowed.as_ref().is_some_and(|keys| !keys.contains(&key)) {
+            continue;
+        }
         let hash = rsa_hash(handle, key.algorithm().is_rsa()).await;
         match handle
             .authenticate_publickey_with(ctx.spec.user.clone(), key, hash, &mut agent)
@@ -271,6 +283,24 @@ async fn try_agent(
         }
     }
     Ok(outcome)
+}
+
+/// 私钥文件对应的公钥：优先读旁边的 `.pub`，没有时从未加密的私钥推出；
+/// 加密私钥又没有 `.pub` 时无从得知，返回 None。
+fn identity_public_key(path: &Path) -> Option<PublicKey> {
+    let mut pub_path = path.as_os_str().to_owned();
+    pub_path.push(".pub");
+    if let Ok(text) = std::fs::read_to_string(PathBuf::from(pub_path)) {
+        if let Some(b64) = text.split_whitespace().nth(1) {
+            if let Ok(key) = russh::keys::parse_public_key_base64(b64) {
+                return Some(key);
+            }
+        }
+    }
+    let secret = Zeroizing::new(std::fs::read_to_string(path).ok()?);
+    russh::keys::decode_secret_key(&secret, None)
+        .ok()
+        .map(|k| k.public_key().clone())
 }
 
 /// 依次尝试一组私钥文件。

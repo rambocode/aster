@@ -123,6 +123,8 @@ broker 的 stderr 只写脱敏日志。未知 `type` 必须忽略（向前兼容
   "host":"10.0.0.5","port":22,"user":"deploy",
   "auth":"auto",                       // auto | password | publicKey | agent | keyboardInteractive
   "identityFiles":["/Users/me/.ssh/id_ed25519"],   // 已展开 ~ 与 %h/%r
+  "identitiesOnly":false,              // 可省略，缺省 false。true：只用 identityFiles，见下
+  "knownHostsFiles":[],                // 可省略，已展开的路径；见下
   "agentForward":false,
   "proxyCommand":null,                 // 字符串，经 /bin/sh -c 执行，%h/%p/%r 由 broker 展开
   "socksProxy":null,"httpProxy":null,  // {"host","port"}
@@ -134,6 +136,19 @@ broker 的 stderr 只写脱敏日志。未知 `type` 必须忽略（向前兼容
 }
 ```
 
+`knownHostsFiles`（对应 OpenSSH `UserKnownHostsFile`）：
+- 空数组或缺省：用 `$HOME/.ssh/known_hosts`。
+- 多个文件：依次查。优先级：`@revoked` > 任一文件有同一把密钥（匹配）> 任一文件有同算法不同密钥（changed）> unknown。
+  用户接受新密钥时只写**第一个**文件（changed 时替换其中的旧行，没有旧行则追加）。
+- `["none"]`：没有用户级文件（`UserKnownHostsFile none`）。与 OpenSSH 一致：主机仍按 unknown 处理，
+  交互确认后**本次连接**照常进行但不写任何文件（下次新连接还会再问），非交互直接失败。
+- 系统级文件 `/etc/ssh/ssh_known_hosts`、`/etc/ssh/ssh_known_hosts2` 始终只读参与校验；`--target`
+  经 ssh_config 解析时改用其中的 `GlobalKnownHostsFile`。
+
+`identitiesOnly`（对应 OpenSSH `IdentitiesOnly`）：agent 里只用与 identityFiles 同一把公钥的身份签名
+（公钥取自旁边的 `.pub`，没有时从未加密私钥推出），不逐个尝试 agent 里的其它密钥。
+与 OpenSSH 一样，identityFiles 为空时仍回落到默认密钥（`~/.ssh/id_ed25519` 等）。
+
 endpoint 身份（凭证共享、连接复用的键）：`user@host:port`；有跳板时连接复用键再拼上跳板链，
 但凭证键仍是目标自身的 `user@host:port`。
 
@@ -143,10 +158,21 @@ endpoint 身份（凭证共享、连接复用的键）：`user@host:port`；有�
 // aster-ssh config list --json
 {"hosts":[{"alias":"orb","hostName":"127.0.0.1","user":"root","port":32222,
            "identityFiles":["…"],"proxyJump":null,"proxyCommand":null,
-           "forwards":[…],"keepaliveInterval":null,"keepaliveCountMax":null}],
+           "forwards":[…],"keepaliveInterval":null,"keepaliveCountMax":null,
+           "forwardAgent":null,"connectTimeout":null,"strictHostKeyChecking":null,
+           "userKnownHostsFiles":["~/.orbstack/ssh/known_hosts"],"globalKnownHostsFiles":[],
+           "identitiesOnly":true}],
  "ignored":[{"file":"~/.ssh/config","line":12,"option":"Match","reason":"unsupported"}]}
 
 // aster-ssh config resolve <alias> --json   → 单个上面的 host 对象；无匹配退出码 1
 ```
 
 `ignored` 就是导入时展示给用户的 ImportReport。
+
+字段都是 ssh_config 的原文（第一个出现的指令生效），`~` 与 `%` token 由使用方展开：
+- `forwardAgent`、`identitiesOnly`：布尔，没写为 null。
+- `connectTimeout`：秒，没写或 `none` 为 null。
+- `strictHostKeyChecking`：归一化为 `yes | no | ask | accept-new`，没写为 null。
+- `userKnownHostsFiles`、`globalKnownHostsFiles`：路径数组，可多个；`none` 写成 `["none"]`；没写为空数组。
+
+新增字段一律可省略，旧版 JSON 仍能解码。

@@ -259,6 +259,57 @@ fn keepalive_and_extra_fields() {
     );
 }
 
+#[test]
+fn known_hosts_files_and_identities_only() {
+    let home = home_with(concat!(
+        "Host orb\n",
+        "  UserKnownHostsFile ~/.orbstack/ssh/known_hosts \"~/with space/kh\"\n",
+        "  UserKnownHostsFile ~/ignored_second_directive\n",
+        "  GlobalKnownHostsFile /etc/custom_known_hosts\n",
+        "  IdentitiesOnly yes\n",
+        "Host blind\n",
+        "  UserKnownHostsFile none\n",
+        "  IdentitiesOnly no\n",
+        "Host bad\n",
+        "  UserKnownHostsFile none ~/x\n",
+        "  IdentitiesOnly maybe\n",
+    ));
+    let orb = resolve(&home, "orb").unwrap();
+    assert_eq!(
+        orb.user_known_hosts_files,
+        vec!["~/.orbstack/ssh/known_hosts", "~/with space/kh"],
+        "原文保留，第一个指令生效"
+    );
+    assert_eq!(
+        orb.global_known_hosts_files,
+        vec!["/etc/custom_known_hosts"]
+    );
+    assert_eq!(orb.identities_only, Some(true));
+    let blind = resolve(&home, "blind").unwrap();
+    assert_eq!(blind.user_known_hosts_files, vec!["none"]);
+    assert_eq!(blind.identities_only, Some(false));
+    assert_eq!(
+        resolve(&home, "bad").unwrap().user_known_hosts_files,
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        ignored(&list(&home)),
+        vec![
+            ("~/.ssh/config", 10, "UserKnownHostsFile", "invalidValue"),
+            ("~/.ssh/config", 11, "IdentitiesOnly", "invalidValue"),
+        ],
+        "这两项不再记为 unsupported"
+    );
+    let json = serde_json::to_value(&orb).unwrap();
+    assert_eq!(
+        json["userKnownHostsFiles"][0],
+        "~/.orbstack/ssh/known_hosts"
+    );
+    assert_eq!(json["identitiesOnly"], true);
+    let old: HostEntry = serde_json::from_str(r#"{"alias":"x","hostName":null,"user":null,"port":null,"identityFiles":[],"proxyJump":null,"proxyCommand":null,"forwards":[],"keepaliveInterval":null,"keepaliveCountMax":null}"#).unwrap();
+    assert!(old.user_known_hosts_files.is_empty() && old.identities_only.is_none());
+}
+
 // MARK: - 端口转发
 
 #[test]

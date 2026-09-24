@@ -22,6 +22,11 @@ pub(super) enum Setting {
     ConnectTimeout(Option<u32>),
     /// 归一化成 yes | no | ask | accept-new。
     StrictHostKeyChecking(String),
+    /// 原文路径列表（可多个）；`none` 保留为单个 `"none"`。
+    UserKnownHostsFile(Vec<String>),
+    /// 同上，系统级 known_hosts；broker 只读不写。
+    GlobalKnownHostsFile(Vec<String>),
+    IdentitiesOnly(bool),
 }
 
 /// 指令没有被采用的原因。
@@ -73,7 +78,35 @@ pub(super) fn parse_setting(key: &str, rest: &str) -> Result<Setting, Rejected> 
         "stricthostkeychecking" => single(rest)
             .and_then(|v| strict_host_key_checking(&v))
             .map(Setting::StrictHostKeyChecking),
+        "userknownhostsfile" => known_hosts_files(rest).map(Setting::UserKnownHostsFile),
+        "globalknownhostsfile" => known_hosts_files(rest).map(Setting::GlobalKnownHostsFile),
+        "identitiesonly" => single(rest)
+            .and_then(|v| yes_no(&v))
+            .map(Setting::IdentitiesOnly),
         _ => Err(Rejected::Unsupported),
+    }
+}
+
+/// UserKnownHostsFile / GlobalKnownHostsFile：空格分隔的多个路径；`none` 只能单独出现，统一写成 `"none"`。
+fn known_hosts_files(rest: &str) -> Result<Vec<String>, Rejected> {
+    let list = words(rest)?;
+    if list.is_empty() {
+        return Err(Rejected::Invalid);
+    }
+    let has_none = list.iter().any(|w| w.eq_ignore_ascii_case("none"));
+    match (has_none, list.len()) {
+        (true, 1) => Ok(vec!["none".to_string()]),
+        (true, _) => Err(Rejected::Invalid),
+        (false, _) => Ok(list),
+    }
+}
+
+/// yes/true 与 no/false（大小写不敏感）。
+fn yes_no(value: &str) -> Result<bool, Rejected> {
+    match value.to_ascii_lowercase().as_str() {
+        "yes" | "true" => Ok(true),
+        "no" | "false" => Ok(false),
+        _ => Err(Rejected::Invalid),
     }
 }
 

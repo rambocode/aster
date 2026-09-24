@@ -59,6 +59,9 @@ Aster 的原生 SSH 运行时（Rust，基于 crates.io 上的 [russh](https://c
 - client 连 broker 时，socket 不存在或拒绝连接会在 2 秒内每 75ms 重试一次（App 先公布端点再拉起 broker）。
 - ProxyCommand 子进程的 stdin/stdout 是 SSH 传输流，stderr 进 broker 日志，永远不继承 broker 的
   stdout（控制通道）。
+- known_hosts 按 spec 的 `knownHostsFiles` 依次查、写入第一个，`["none"]` 表示不写任何文件；
+  系统级 `/etc/ssh/ssh_known_hosts{,2}`（或 ssh_config 的 GlobalKnownHostsFile）只读参与校验。
+- `identitiesOnly`：agent 只为 identityFiles 里的同一把公钥签名，不逐个试 agent 里的其它密钥。
 - 键盘交互的回答只看 `responses`：数组是回答（条数必须与提示一致，否则按取消处理并回报
   `accepted=false`），null 是取消。
 

@@ -106,10 +106,13 @@ fn resolved_spec_sample_round_trips() {
         "host":"10.0.0.5","port":22,"user":"deploy",
         "auth":"auto",
         "identityFiles":["/Users/me/.ssh/id_ed25519"],
+        "identitiesOnly":true,
+        "knownHostsFiles":["/Users/me/.orbstack/ssh/known_hosts","/Users/me/.ssh/known_hosts"],
         "agentForward":false,
         "proxyCommand":null,
         "socksProxy":null,"httpProxy":null,
         "jump":{"host":"bastion","port":2222,"user":"ops","auth":"publicKey","identityFiles":[],
+                "identitiesOnly":false,"knownHostsFiles":[],
                 "agentForward":false,"proxyCommand":null,"socksProxy":null,"httpProxy":null,
                 "jump":null,"forwards":[],"keepaliveInterval":15,"keepaliveCountMax":3,
                 "connectTimeout":10,"verifyHostKeys":true},
@@ -121,6 +124,8 @@ fn resolved_spec_sample_round_trips() {
     let spec: ResolvedSpec = serde_json::from_value(sample.clone()).unwrap();
     assert_eq!(spec.jump.as_ref().unwrap().auth, AuthMode::PublicKey);
     assert_eq!(spec.jump_depth(), 1);
+    assert!(spec.identities_only);
+    assert_eq!(spec.known_hosts_files.len(), 2);
     assert_eq!(serde_json::to_value(&spec).unwrap(), sample);
     assert_eq!(
         spec.connection_key(),

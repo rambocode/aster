@@ -10,8 +10,10 @@ use crate::control::Control;
 /// 连接建立过程中各模块共享的环境。
 pub struct Env {
     pub control: Arc<Control>,
-    /// known_hosts 文件路径。
+    /// 缺省的用户级 known_hosts 文件路径（spec 没指定 knownHostsFiles 时使用）。
     pub known_hosts: PathBuf,
+    /// 缺省的系统级 known_hosts 文件，只读。
+    pub global_known_hosts: Vec<PathBuf>,
     /// 用来展开 `~` 与查找默认密钥的主目录。
     pub home: PathBuf,
     /// ssh-agent socket；None 表示不使用 agent。
@@ -25,6 +27,7 @@ pub struct Env {
 pub struct Paths {
     pub home: PathBuf,
     pub known_hosts: PathBuf,
+    pub global_known_hosts: Vec<PathBuf>,
     pub agent_sock: Option<PathBuf>,
     pub local_user: String,
 }
@@ -42,6 +45,11 @@ impl Paths {
             .unwrap_or_else(|| home.join(".ssh").join("known_hosts"));
         Self {
             known_hosts,
+            // OpenSSH 的 GlobalKnownHostsFile 缺省值；只读，文件不存在时视为空。
+            global_known_hosts: vec![
+                PathBuf::from("/etc/ssh/ssh_known_hosts"),
+                PathBuf::from("/etc/ssh/ssh_known_hosts2"),
+            ],
             agent_sock: non_empty_env("SSH_AUTH_SOCK").map(PathBuf::from),
             local_user: current_user(),
             home,

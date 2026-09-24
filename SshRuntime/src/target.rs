@@ -141,6 +141,12 @@ impl Resolver<'_> {
                         .into_owned()
                 })
                 .collect();
+            spec.identities_only = e.identities_only.unwrap_or(false);
+            spec.known_hosts_files = self.expand_paths(&e.user_known_hosts_files, &spec);
+            if !e.global_known_hosts_files.is_empty() {
+                spec.global_known_hosts_files =
+                    Some(self.expand_paths(&e.global_known_hosts_files, &spec));
+            }
             spec.proxy_command = e
                 .proxy_command
                 .clone()
@@ -162,6 +168,28 @@ impl Resolver<'_> {
             }
         }
         Ok(spec)
+    }
+
+    /// 展开 known_hosts 这类路径列表里的 `~` 与 `%` token；`none` 原样保留（表示没有文件）。
+    fn expand_paths(&self, raw: &[String], spec: &ResolvedSpec) -> Vec<String> {
+        raw.iter()
+            .map(|f| {
+                if f.eq_ignore_ascii_case("none") {
+                    return "none".to_string();
+                }
+                let expanded = expand_tokens(
+                    f,
+                    &spec.host,
+                    spec.port,
+                    &spec.user,
+                    self.local_user,
+                    self.home,
+                );
+                expand_tilde(&expanded, self.home)
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
     }
 
     /// `a,b,c` 形式的跳板链：连接顺序是 a → b → c → 目标，所以 c 的上一跳是 b，b 的是 a。
@@ -285,6 +313,12 @@ mod tests {
                 keepalive_interval: Some(30),
                 forward_agent: Some(true),
                 strict_host_key_checking: Some("accept-new".into()),
+                user_known_hosts_files: vec![
+                    "~/.orbstack/ssh/known_hosts".into(),
+                    "/kh/%h_%p".into(),
+                ],
+                global_known_hosts_files: vec!["none".into()],
+                identities_only: Some(true),
                 ..Default::default()
             }),
             "slow" => Some(HostEntry {
@@ -334,6 +368,18 @@ mod tests {
         assert_eq!(spec.connect_timeout, 7);
         assert!(spec.agent_forward);
         assert!(spec.accept_new_host_keys);
+        assert!(spec.identities_only);
+        assert_eq!(
+            spec.known_hosts_files,
+            vec![
+                "/home/me/.orbstack/ssh/known_hosts".to_string(),
+                "/kh/127.0.0.1_32222".to_string()
+            ]
+        );
+        assert_eq!(
+            spec.global_known_hosts_files,
+            Some(vec!["none".to_string()])
+        );
         assert_eq!(spec.forwards.len(), 1);
         let j2 = spec.jump.as_deref().unwrap();
         assert_eq!((j2.host.as_str(), j2.user.as_str()), ("j2", "me"));
@@ -378,6 +424,7 @@ mod tests {
         assert_eq!(spec.connect_timeout, 42);
         assert!(!spec.accept_new_host_keys, "yes keeps asking");
         assert!(!spec.agent_forward);
+        assert!(spec.known_hosts_files.is_empty() && !spec.identities_only);
         assert_eq!(no_flag.resolve("unknown").unwrap().connect_timeout, 10);
     }
 }

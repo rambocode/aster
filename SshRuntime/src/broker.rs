@@ -53,6 +53,7 @@ impl Broker {
         let env = Arc::new(Env {
             control: Arc::new(control),
             known_hosts: paths.known_hosts,
+            global_known_hosts: paths.global_known_hosts,
             home: paths.home,
             agent_sock: paths.agent_sock,
             local_user: paths.local_user,

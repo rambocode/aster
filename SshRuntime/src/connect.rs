@@ -5,7 +5,6 @@
 //! 实现按本仓库需要重写：ProxyCommand 改为经 shell 执行。
 
 use std::borrow::Cow;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -318,14 +317,17 @@ pub async fn http_connect_handshake<S: AsyncRead + AsyncWrite + Unpin>(
 ///
 /// 排序是为了不让「默认优先 ed25519」把一台只以 RSA 记录在案的主机当成未知主机
 /// （OpenSSH `order_hostkeyalgs()` 的做法，参考 tty7 connect.rs@458c923）。
-pub fn client_config(spec: &ResolvedSpec, known_hosts: &Path) -> Arc<russh::client::Config> {
+pub fn client_config(
+    spec: &ResolvedSpec,
+    known_hosts: &known_hosts::KnownHostsFiles,
+) -> Arc<russh::client::Config> {
     let mut config = russh::client::Config::default();
     if spec.keepalive_interval > 0 {
         config.keepalive_interval = Some(Duration::from_secs(u64::from(spec.keepalive_interval)));
         config.keepalive_max = spec.keepalive_count_max.max(1) as usize;
     }
     config.nodelay = true;
-    let known = known_hosts::known_algorithms(known_hosts, &spec.host, spec.port);
+    let known = known_hosts.known_algorithms(&spec.host, spec.port);
     if !known.is_empty() {
         let same_key = |a: &russh::keys::Algorithm, b: &russh::keys::Algorithm| {
             matches!(

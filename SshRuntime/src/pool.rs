@@ -20,6 +20,7 @@ use crate::connect;
 use crate::env::Env;
 use crate::forward::{ForwardSet, RemoteForwards};
 use crate::handler::ClientHandler;
+use crate::known_hosts::KnownHostsFiles;
 use crate::protocol::{
     BrokerEvent, FailureKind, LinkState, LinkStateEvent, ResolvedSpec, SshFailure, MAX_JUMP_DEPTH,
 };
@@ -303,11 +304,13 @@ impl Pool {
         let prompting = Arc::new(AtomicBool::new(false));
         let remote_forwards = RemoteForwards::default();
         let (closed_tx, closed_rx) = oneshot::channel();
+        let known_hosts = KnownHostsFiles::for_spec(spec, &self.env);
         let handler = ClientHandler {
             spec_host: spec.host.clone(),
             spec_port: spec.port,
             verify_host_keys: spec.verify_host_keys,
             accept_new_host_keys: spec.accept_new_host_keys,
+            known_hosts: known_hosts.clone(),
             interactive: req.interactive,
             env: self.env.clone(),
             verdict: verdict.clone(),
@@ -316,7 +319,7 @@ impl Pool {
             agent_forward: spec.agent_forward,
             closed: Some(closed_tx),
         };
-        let config = connect::client_config(spec, &self.env.known_hosts);
+        let config = connect::client_config(spec, &known_hosts);
         let limit = Duration::from_secs(u64::from(spec.connect_timeout.max(1)));
         let handshake = connect::with_handshake_deadline(
             russh::client::connect_stream(config, stream, handler),
