@@ -76,7 +76,7 @@ private struct LinkSettingsFixture {
   }
 
   func openControls() async throws {
-    try await wait("document.querySelectorAll('.nav-item').length === 10")
+    try await wait("document.querySelectorAll('.nav-item').length === 11")
     try await evaluate(
       "window.AsterSettings.receive({type:'selectSection',section:'controls'}); ''")
     try await wait("document.querySelector('[data-setting-key=\"controls.linkSchemes\"] select')")

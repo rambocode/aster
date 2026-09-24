@@ -11,36 +11,70 @@ import Foundation
 /// - 远端命令逐参数做 POSIX 单引号转义，因为 OpenSSH 必然把远端命令交给登录 Shell。
 /// - 后台连接非交互；认证失败、主机密钥未知都直接失败并归类，不弹无限等待提示。
 
-/// 远端连接所需的全部非凭据信息。凭据由 OpenSSH（密钥、agent、known_hosts）负责，
-/// 本类型不保存也不传递任何密码或私钥。
+/// 远端连接所需的全部非凭据信息。凭据由 OpenSSH（密钥、agent、known_hosts）或
+/// aster-ssh broker（经 App 读钥匙串）负责，本类型不保存也不传递任何密码或私钥。
+///
+/// 两种引擎共用这一个类型：`native` 为 nil 时走 OpenSSH，argv、私有配置与 ControlMaster
+/// 与改造前逐字节一致；非 nil 时可执行文件换成 `aster-ssh`，argv 由
+/// `NativeSSHClientInvocation` 生成，连接复用交给 broker。
 public struct RemoteSessionTransport: Sendable {
   /// 已通过前置校验的 SSH target。
   public var target: RemoteSSHTarget
   /// 连接策略（超时、保活、是否管理 SSH 配置）。
   public var policy: RemoteSSHPolicy
-  /// 私有临时配置；`manageSSHConfig=false` 时为 nil，直接用用户 OpenSSH 配置。
+  /// 私有临时配置；`manageSSHConfig=false` 或原生引擎时为 nil。
   public var managedConfiguration: RemoteSSHManagedConfiguration?
-  /// 额外的 `-o key=value`。只用于验收场景注入确定的失败条件，生产路径为空。
+  /// 额外的 `-o key=value`。只用于验收场景注入确定的失败条件，生产路径为空；原生引擎忽略。
   public var extraOptions: [String]
+  /// 原生引擎端点（aster-ssh 与 broker socket）；nil 表示 OpenSSH。
+  public var native: NativeSSHEndpoint?
+  /// 机器绑定的已保存主机。原生引擎下有值时用 `--host-id` 连接，否则用 target 原文。
+  public var hostID: UUID?
 
   public init(
     target: RemoteSSHTarget,
     policy: RemoteSSHPolicy = RemoteSSHPolicy(),
     managedConfiguration: RemoteSSHManagedConfiguration? = nil,
-    extraOptions: [String] = []
+    extraOptions: [String] = [],
+    native: NativeSSHEndpoint? = nil,
+    hostID: UUID? = nil
   ) {
     self.target = target
     self.policy = policy
     self.managedConfiguration = managedConfiguration
     self.extraOptions = extraOptions
+    self.native = native
+    self.hostID = hostID
   }
 
-  /// 生成一次远端调用的完整 ssh argv。
+  /// 当前传输使用的引擎。
+  public var engine: SSHEngine { native == nil ? .openssh : .native }
+
+  /// 本传输 argv 对应的可执行文件：OpenSSH 是 `/usr/bin/ssh`，原生是 `aster-ssh`。
+  /// 所有 exec 点都必须从这里取，不能再写死 `RemoteSSHInvocation.executablePath`。
+  public var executablePath: String { native?.executablePath ?? RemoteSSHInvocation.executablePath }
+
+  /// 与本传输配套的短命命令执行器。
+  public func makeProcessRunner() -> RemoteSSHProcessRunner {
+    RemoteSSHProcessRunner(executablePath: executablePath)
+  }
+
+  /// 与本传输配套的流式执行器。
+  public func makeStreamRunner() -> RemoteSSHStreamRunner {
+    RemoteSSHStreamRunner(executablePath: executablePath)
+  }
+
+  /// 生成一次远端调用的完整 argv（后台、非交互）。
   ///
   /// - Parameter multiplexed: 是否允许走 ControlMaster 复用连接。短命控制命令用
   ///   复用省掉握手；**长命流（显示桥、事件订阅）必须传 false**，理由见下。
+  ///   原生引擎由 broker 统一复用连接、client 一断就关 channel，因此忽略这个参数。
   public func sshArguments(remoteCommand: [String], multiplexed: Bool = true) -> [String] {
-    RemoteSSHInvocation(
+    if let native {
+      return nativeInvocation(native, remoteCommand: remoteCommand, tty: false, noPrompt: true)
+        .arguments()
+    }
+    return RemoteSSHInvocation(
       target: target,
       // 只有开启 SSH 配置管理时才注入 `-F`；关闭时完全使用用户配置。
       configurationFile: policy.manageSSHConfig ? managedConfiguration?.configurationPath : nil,
@@ -51,6 +85,35 @@ public struct RemoteSessionTransport: Sendable {
       remoteCommand: remoteCommand,
       connectTimeout: policy.connectTimeout
     ).arguments()
+  }
+
+  /// 用户可见 Pane（显示桥）的 argv：请求远端 pty，不复用连接。
+  ///
+  /// OpenSSH 是 `-tt` 加独立连接；原生引擎是 `--tty`，并且**允许交互认证**（不带
+  /// `--no-prompt`）：它就是用户眼前的 Pane，缺口令时由 App 弹认证表单，而不是直接失败。
+  public func interactiveArguments(remoteCommand: [String]) -> [String] {
+    if let native {
+      return nativeInvocation(native, remoteCommand: remoteCommand, tty: true, noPrompt: false)
+        .arguments()
+    }
+    return ["-tt"] + sshArguments(remoteCommand: remoteCommand, multiplexed: false)
+  }
+
+  /// 原生 client 调用描述。
+  ///
+  /// 绑定主机时不传 `--connect-timeout`：超时属于主机配置，已随 `profiles.sync` 下发，
+  /// 命令行覆盖会让用户在主机表单里设的值失效；按 target 文本连接时沿用策略超时，
+  /// 与 OpenSSH 的 `ConnectTimeout` 对齐。
+  private func nativeInvocation(
+    _ endpoint: NativeSSHEndpoint, remoteCommand: [String], tty: Bool, noPrompt: Bool
+  ) -> NativeSSHClientInvocation {
+    NativeSSHClientInvocation(
+      endpoint: endpoint,
+      target: hostID.map { .host($0) } ?? .text(target.rawText),
+      tty: tty,
+      noPrompt: noPrompt,
+      connectTimeout: hostID == nil ? policy.connectTimeout : nil,
+      remoteCommand: remoteCommand)
   }
 }
 
@@ -63,13 +126,14 @@ public struct RemoteManagedSessionClient: ManagedSessionClient {
   /// 单次控制命令的最大等待时间；超时按结果未知处理，不重复创建资源。
   public var timeout: TimeInterval
 
+  /// - Parameter runner: 缺省时按传输选择可执行文件（`/usr/bin/ssh` 或 `aster-ssh`）。
   public init(
     transport: RemoteSessionTransport,
-    runner: any RemoteSSHRunning = RemoteSSHProcessRunner(),
+    runner: (any RemoteSSHRunning)? = nil,
     timeout: TimeInterval = 20
   ) {
     self.transport = transport
-    self.runner = runner
+    self.runner = runner ?? transport.makeProcessRunner()
     self.timeout = timeout
   }
 
@@ -144,7 +208,7 @@ public struct RemoteManagedSessionClient: ManagedSessionClient {
       result, server: identity.reference, serverEpoch: identity.serverEpoch)
   }
 
-  /// 显示桥 argv：本地执行的是 `ssh`，远端命令是 `terminal attach/observe`。
+  /// 显示桥 argv：本地执行的是 `ssh`（或 `aster-ssh client`），远端命令是 `terminal attach/observe`。
   ///
   /// 桥必须要求分配 TTY（`-tt`），否则远端 attach 无法进入 raw 模式；同时
   /// 显式关闭 `RequestTTY` 之外的交互，让桥退出后本地终端可正常恢复。
@@ -154,22 +218,20 @@ public struct RemoteManagedSessionClient: ManagedSessionClient {
   /// `terminal attach` 会一直活着、每 5 秒续租写租约，直到 `ControlPersist` 到期
   /// 才退出（OrbStack 实测 62 秒）。这期间重新附加必被 `lease_busy retry=never`
   /// 拒绝，画面停在错误文本上。独立连接时本机进程一死 TCP 就断，远端 2 秒内退出
-  /// 并释放租约（实测）。
+  /// 并释放租约（实测）。原生引擎由 broker 保证 client 一退出就关 channel（PROTOCOL §2）。
   public func bridgeArguments(
     _ endpoint: ManagedSessionEndpoint,
     terminalID: String,
     readOnly: Bool
   ) -> [String] {
-    var argv = ["-tt"]
-    argv += transport.sshArguments(
+    transport.interactiveArguments(
       remoteCommand: [endpoint.binaryPath]
-        + ManagedSessionCommand.bridge(endpoint, terminalID: terminalID, readOnly: readOnly),
-      multiplexed: false)
-    return argv
+        + ManagedSessionCommand.bridge(endpoint, terminalID: terminalID, readOnly: readOnly))
   }
 
+  /// 桥的可执行文件与 argv 同源，取自传输。
   public func bridgeExecutablePath(_ endpoint: ManagedSessionEndpoint) -> String {
-    RemoteSSHInvocation.executablePath
+    transport.executablePath
   }
 
   /// 事件订阅经同一条 ssh 转发。
@@ -183,7 +245,7 @@ public struct RemoteManagedSessionClient: ManagedSessionClient {
     -> ManagedSessionInvocation
   {
     ManagedSessionInvocation(
-      executablePath: RemoteSSHInvocation.executablePath,
+      executablePath: transport.executablePath,
       arguments: transport.sshArguments(
         remoteCommand: [endpoint.binaryPath] + ManagedSessionCommand.eventSubscribe(endpoint),
         multiplexed: false))
@@ -292,7 +354,7 @@ public struct RemoteManagedSessionClient: ManagedSessionClient {
     let sshArgs = transport.sshArguments(remoteCommand: remoteCommand)
 
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: RemoteSSHInvocation.executablePath)
+    process.executableURL = URL(fileURLWithPath: transport.executablePath)
     process.arguments = sshArgs
     var environment = ProcessInfo.processInfo.environment
     environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"

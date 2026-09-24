@@ -13,6 +13,8 @@ struct MachineFleetRow: Equatable, Identifiable {
   var sessionName: String
   /// 原始 SSH target；Local 为 nil。
   var sshTarget: String?
+  /// 绑定的已保存主机；未绑定（按 target 连接）与 Local 为 nil。
+  var hostID: UUID? = nil
   var isLocal: Bool
   var enabled: Bool
   var state: SessionConnectionState
@@ -86,6 +88,11 @@ protocol MachineFleetServices: Sendable {
   /// 执行完整的远端设置事务（P3 已交付的 `RemoteMachineSetup.run`）。
   func runSetup(rawTarget: String, label: String, sessionName: String, profileID: UUID) async throws
     -> RemoteSetupOutcome
+  /// 绑定已保存主机的设置事务：原生引擎下按 `hostID` 连接。缺省实现忽略 `hostID`，
+  /// 只关心流程的测试替身不必区分引擎。
+  func runSetup(
+    rawTarget: String, hostID: UUID?, label: String, sessionName: String, profileID: UUID
+  ) async throws -> RemoteSetupOutcome
   /// 为一台机器构造命名会话注册表的访问入口。
   func registry(for profile: MachineProfile) throws -> MachineRegistryAccess
   /// 本机可安装到该平台的服务产物；没有返回 nil，有但不可用（平台不符、清单坏）抛错。
@@ -100,8 +107,15 @@ protocol MachineFleetServices: Sendable {
     profile: MachineProfile, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
     acceptDevelopmentArtifact: Bool
   ) async throws -> RemoteReplacementOutcome
+  /// 同上，绑定已保存主机。缺省实现忽略 `hostID`。
+  func installService(
+    rawTarget: String, hostID: UUID?, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
+    acceptDevelopmentArtifact: Bool
+  ) async throws -> RemoteInstallOutcome
   /// 远端某个文件的 SHA256（小写 hex），用于判断是否已是同一份二进制；拿不到返回 nil。
   func remoteBinaryDigest(rawTarget: String, path: String) async throws -> String?
+  /// 同上，绑定已保存主机。缺省实现忽略 `hostID`。
+  func remoteBinaryDigest(rawTarget: String, hostID: UUID?, path: String) async throws -> String?
   /// 远端 Agent 集成：`install` 为 nil 只探测；否则上传 hook 脚本并为这些 provider 合并配置。
   func agentIntegration(for profile: MachineProfile, install: [AgentProvider]?) async throws
     -> RemoteAgentIntegrationReport
@@ -132,6 +146,23 @@ extension MachineFleetServices {
     throw ManagedSessionError.runtimeUnavailable(L("本服务实现不支持远端服务替换。"))
   }
   func remoteBinaryDigest(rawTarget: String, path: String) async throws -> String? { nil }
+  func runSetup(
+    rawTarget: String, hostID: UUID?, label: String, sessionName: String, profileID: UUID
+  ) async throws -> RemoteSetupOutcome {
+    try await runSetup(
+      rawTarget: rawTarget, label: label, sessionName: sessionName, profileID: profileID)
+  }
+  func installService(
+    rawTarget: String, hostID: UUID?, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
+    acceptDevelopmentArtifact: Bool
+  ) async throws -> RemoteInstallOutcome {
+    try await installService(
+      rawTarget: rawTarget, report: report, artifact: artifact,
+      acceptDevelopmentArtifact: acceptDevelopmentArtifact)
+  }
+  func remoteBinaryDigest(rawTarget: String, hostID: UUID?, path: String) async throws -> String? {
+    try await remoteBinaryDigest(rawTarget: rawTarget, path: path)
+  }
   func agentIntegration(for profile: MachineProfile, install: [AgentProvider]?) async throws
     -> RemoteAgentIntegrationReport
   {
@@ -184,6 +215,8 @@ final class MachineFleetModel: ObservableObject {
   private let supervisor: MachineConnectionSupervisor
   private let localStateProvider: () -> SessionConnectionState
   private let localErrorProvider: () -> String?
+  /// 已保存主机 → 机器保存的 OpenSSH target 文本。主机不存在或无法解析时抛错。
+  private let hostTarget: (UUID) throws -> String
 
   private(set) var profiles: [MachineProfile] = []
   /// 编排器状态的本地缓存；`refreshStatuses()` 从 actor 拉过来后重建行。
@@ -217,6 +250,9 @@ final class MachineFleetModel: ObservableObject {
     localErrorProvider: @escaping () -> String? = {
       ManagedTerminalCoordinatorRegistry.coordinator(forMachine: MachineProfile.localProfileID)
         .lastError
+    },
+    hostTarget: @escaping (UUID) throws -> String = {
+      try MachineFleetModel.openSSHTarget(forHost: $0, in: SSHHostDirectory.shared.hosts)
     }
   ) {
     self.store = store
@@ -224,7 +260,22 @@ final class MachineFleetModel: ObservableObject {
     self.supervisor = supervisor
     self.localStateProvider = localStateProvider
     self.localErrorProvider = localErrorProvider
+    self.hostTarget = hostTarget
     rebuildRows()
+  }
+
+  /// 已保存主机对应的 OpenSSH target 文本（写进机器配置的 `sshTarget`）。
+  ///
+  /// 按合并默认项后的规格生成，保证 openssh 引擎连到的与原生引擎 `--host-id` 是同一个
+  /// `user@host:port`。端口不是 22 或主机是 IPv6 字面量时必须用 `ssh://` URI：OpenSSH
+  /// 的非 URI 形式没有 `host:port` 语法，`user@host:2222` 会被当成主机名解析失败。
+  nonisolated static func openSSHTarget(forHost id: UUID, in hosts: [SSHHostProfile]) throws -> String {
+    let spec = try SSHHostResolver.resolve(id, in: hosts)
+    let isIPv6 = spec.host.contains(":")
+    let userPart = spec.user.isEmpty ? "" : "\(spec.user)@"
+    guard spec.port != 22 || isIPv6 else { return userPart + spec.host }
+    let hostPart = isIPv6 ? "[\(spec.host)]" : spec.host
+    return "ssh://\(userPart)\(hostPart)" + (spec.port == 22 ? "" : ":\(spec.port)")
   }
 
   deinit { statusPollTask?.cancel() }
@@ -381,6 +432,45 @@ final class MachineFleetModel: ObservableObject {
     try await remoteAgentCatalog(id)
   }
 
+  // MARK: - broker 连接状态
+
+  /// 接收 aster-ssh broker 的 `link.state`，作为连接编排的加速信号。
+  ///
+  /// 编排器仍是连接状态的唯一权威：这里不直接改状态，只做两件事——
+  /// 1. 链路恢复 `connected` 时，把处于退避、失联或 attention 的机器立即重连，
+  ///    不必等下一档退避（例如用户在 Pane 里输完口令后，机器马上恢复在线）；
+  /// 2. 链路 `failed` 且原因需要用户处理（认证、主机密钥）时，立即投递 attention，
+  ///    而不是等心跳连续失败三次。瞬时失败留给编排器自己的退避。
+  /// 匹配规则：绑定主机的机器按 `hostID`，其余按 target 原文。
+  func handleLinkState(_ event: SSHLinkStateEvent) {
+    let matches = profiles.filter { profile in
+      guard profile.enabled else { return false }
+      if let hostID = event.hostID { return profile.hostID == hostID }
+      guard let target = event.target else { return false }
+      return profile.hostID == nil && profile.sshTarget == target
+    }
+    for profile in matches {
+      switch event.state {
+      case .connected:
+        let state = statuses[profile.id]?.state
+        guard state == .reconnecting || state == .attention || state == .disconnected else {
+          continue
+        }
+        Task { [supervisor] in await supervisor.start(profile: profile) }
+      case .failed:
+        guard let kind = event.errorKind, kind.requiresExplicitSetup else { continue }
+        let outcome = MachineConnectionOutcome.from(
+          sshKind: kind, detail: event.detail ?? kind.rawValue)
+        Task { [supervisor] in
+          let generation = await supervisor.currentGeneration(profileID: profile.id)
+          await supervisor.deliver(profileID: profile.id, generation: generation, outcome: outcome)
+        }
+      case .connecting, .reconnecting, .closed:
+        continue
+      }
+    }
+  }
+
   // MARK: - 动作
 
   /// 添加机器（P4.3 / §4.1 第 2 条）。
@@ -388,28 +478,43 @@ final class MachineFleetModel: ObservableObject {
   /// 顺序固定：输入解析 → SSH 验证 → 平台/二进制探测 → 服务握手 → 命名会话启动。
   /// 只有 `RemoteMachineSetup` 返回 `.ready` 才写配置文件；需要安装或需要接受开发
   /// 产物时先经 `confirm` 让用户看到目标、版本与进程影响，取消即什么都不保存。
+  ///
+  /// `hostID` 有值时机器绑定该已保存主机：`sshTarget` 参数被忽略，改取主机的连接串，
+  /// 配置里同时写入 `hostID`，原生引擎据此按主机规格连接。
   func addMachine(
     label: String,
-    sshTarget: String,
+    sshTarget rawSSHTarget: String,
     sessionName: String,
+    hostID: UUID? = nil,
     confirm: (MachineSetupConfirmation) -> Bool
   ) async -> MachineSetupResult {
     let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmedSession = sessionName.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedLabel.isEmpty else { return .failed(L("机器标签不能为空。")) }
     guard !trimmedSession.isEmpty else { return .failed(L("必须指定要绑定的命名会话。")) }
+    let sshTarget: String
+    if let hostID {
+      do { sshTarget = try hostTarget(hostID) } catch {
+        return .failed(L("所选主机无法使用：\(Self.describe(error))"))
+      }
+    } else {
+      sshTarget = rawSSHTarget
+    }
 
     let profileID = UUID()
     let outcome: RemoteSetupOutcome
     switch await setupOutcome(
-      rawTarget: sshTarget, label: trimmedLabel, sessionName: trimmedSession, profileID: profileID)
+      rawTarget: sshTarget, hostID: hostID, label: trimmedLabel, sessionName: trimmedSession,
+      profileID: profileID)
     {
     case .success(let value): outcome = value
     case .failure(let failure): return .failed(failure.message)
     }
 
     switch outcome {
-    case .ready(let profile, _, _):
+    case .ready(var profile, _, _):
+      // 替身与旧实现可能不认识 hostID；落盘前统一补上，保证绑定关系不丢。
+      profile.hostID = hostID
       return await saveNewProfile(profile)
 
     case .installationRequired(let report, let reason):
@@ -432,13 +537,13 @@ final class MachineFleetModel: ObservableObject {
       guard accepted else { return .cancelled }
       do {
         _ = try await services.installService(
-          rawTarget: sshTarget, report: report, artifact: artifact,
+          rawTarget: sshTarget, hostID: hostID, report: report, artifact: artifact,
           acceptDevelopmentArtifact: accepted)
       } catch {
         return .failed(L("安装失败：\(RemoteSetupDescription.text(for: error))"))
       }
       return await completeSetup(
-        rawTarget: sshTarget, label: trimmedLabel, sessionName: trimmedSession,
+        rawTarget: sshTarget, hostID: hostID, label: trimmedLabel, sessionName: trimmedSession,
         profileID: profileID)
 
     case .incompatibleServerRunning(let report, let reason):
@@ -461,7 +566,8 @@ final class MachineFleetModel: ObservableObject {
       // 运行时路径取不兼容的那个候选（它就是正在运行的服务）。
       let pending = MachineProfile(
         id: profileID, label: trimmedLabel, sshTarget: sshTarget, sessionName: trimmedSession,
-        remoteBinaryPath: report.candidates.first { $0.protocolMajor != nil }?.path)
+        remoteBinaryPath: report.candidates.first { $0.protocolMajor != nil }?.path,
+        hostID: hostID)
       do {
         _ = try await services.replaceService(
           profile: pending, report: report, artifact: artifact,
@@ -470,7 +576,7 @@ final class MachineFleetModel: ObservableObject {
         return .failed(L("服务替换失败：\(RemoteSetupDescription.text(for: error))"))
       }
       return await completeSetup(
-        rawTarget: sshTarget, label: trimmedLabel, sessionName: trimmedSession,
+        rawTarget: sshTarget, hostID: hostID, label: trimmedLabel, sessionName: trimmedSession,
         profileID: profileID)
     }
   }
@@ -489,8 +595,8 @@ final class MachineFleetModel: ObservableObject {
     // 复用设置事务做探测与握手：拿到平台、候选与运行中服务身份。
     let outcome: RemoteSetupOutcome
     switch await setupOutcome(
-      rawTarget: target, label: profile.label, sessionName: profile.sessionName,
-      profileID: profile.id)
+      rawTarget: target, hostID: profile.hostID, label: profile.label,
+      sessionName: profile.sessionName, profileID: profile.id)
     {
     case .success(let value): outcome = value
     case .failure(let failure): return .failed(failure.message)
@@ -519,7 +625,8 @@ final class MachineFleetModel: ObservableObject {
 
     // 远端已经在跑同一份二进制：不停服务、不上传。
     if let runningBinaryPath,
-      let digest = try? await services.remoteBinaryDigest(rawTarget: target, path: runningBinaryPath),
+      let digest = try? await services.remoteBinaryDigest(
+        rawTarget: target, hostID: profile.hostID, path: runningBinaryPath),
       digest == artifact.manifest.sha256
     {
       return .upToDate(L("远端服务已是本机的这一份（\(artifact.manifest.displaySummary)），无需更新。"))
@@ -550,7 +657,7 @@ final class MachineFleetModel: ObservableObject {
         updated.remoteBinaryPath = replacement.installOutcome.installedPath
       } else {
         let install = try await services.installService(
-          rawTarget: target, report: report, artifact: artifact,
+          rawTarget: target, hostID: profile.hostID, report: report, artifact: artifact,
           acceptDevelopmentArtifact: accepted)
         updated.remoteBinaryPath = install.installedPath
       }
@@ -622,12 +729,13 @@ final class MachineFleetModel: ObservableObject {
 
   /// 跑一次设置事务并把两类错误统一成 `RemoteSetupFailure`。
   private func setupOutcome(
-    rawTarget: String, label: String, sessionName: String, profileID: UUID
+    rawTarget: String, hostID: UUID?, label: String, sessionName: String, profileID: UUID
   ) async -> Result<RemoteSetupOutcome, RemoteSetupFailure> {
     do {
       return .success(
         try await services.runSetup(
-          rawTarget: rawTarget, label: label, sessionName: sessionName, profileID: profileID))
+          rawTarget: rawTarget, hostID: hostID, label: label, sessionName: sessionName,
+          profileID: profileID))
     } catch let failure as RemoteSetupFailure {
       return .failure(failure)
     } catch {
@@ -642,13 +750,16 @@ final class MachineFleetModel: ObservableObject {
   /// 到这里还需要安装或替换，说明刚装的二进制没被探测到或仍不兼容，直接报失败，
   /// 不再弹第二次确认。
   private func completeSetup(
-    rawTarget: String, label: String, sessionName: String, profileID: UUID
+    rawTarget: String, hostID: UUID?, label: String, sessionName: String, profileID: UUID
   ) async -> MachineSetupResult {
     switch await setupOutcome(
-      rawTarget: rawTarget, label: label, sessionName: sessionName, profileID: profileID)
+      rawTarget: rawTarget, hostID: hostID, label: label, sessionName: sessionName,
+      profileID: profileID)
     {
     case .failure(let failure): return .failed(failure.message)
-    case .success(.ready(let profile, _, _)): return await saveNewProfile(profile)
+    case .success(.ready(var profile, _, _)):
+      profile.hostID = hostID
+      return await saveNewProfile(profile)
     case .success(.installationRequired(_, let reason)):
       return .failed(L("安装完成后远端仍未发现可用的 aster-session：\(reason)"))
     case .success(.incompatibleServerRunning(_, let reason)):
@@ -881,6 +992,7 @@ final class MachineFleetModel: ObservableObject {
           label: profile.label,
           sessionName: profile.sessionName,
           sshTarget: profile.sshTarget,
+          hostID: profile.hostID,
           isLocal: false,
           enabled: profile.enabled,
           state: state,
@@ -937,9 +1049,15 @@ enum MachineFleetError: Error, Equatable {
 /// `RemoteMachineSetup`，不在 App 侧复制服务端领域逻辑。
 struct RemoteMachineFleetServices: MachineFleetServices {
   private let environment: [String: String]
+  /// 引擎路由：有原生端点时传输走 aster-ssh，否则走 OpenSSH。
+  private let routing: SSHEngineRouting
 
-  init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+  init(
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    routing: SSHEngineRouting = .shared
+  ) {
     self.environment = environment
+    self.routing = routing
   }
 
   /// 受管运行时的远端二进制路径来源。缺失时设置事务会走探测流程。
@@ -950,7 +1068,15 @@ struct RemoteMachineFleetServices: MachineFleetServices {
   func runSetup(rawTarget: String, label: String, sessionName: String, profileID: UUID) async throws
     -> RemoteSetupOutcome
   {
-    let transport = try makeTransport(rawTarget)
+    try await runSetup(
+      rawTarget: rawTarget, hostID: nil, label: label, sessionName: sessionName,
+      profileID: profileID)
+  }
+
+  func runSetup(
+    rawTarget: String, hostID: UUID?, label: String, sessionName: String, profileID: UUID
+  ) async throws -> RemoteSetupOutcome {
+    let transport = try makeTransport(rawTarget, hostID: hostID)
     // 状态目录不再是前置条件：环境变量只作覆盖，缺省由设置事务按远端 $HOME 推导并创建。
     // 模板里的路径只是占位，`ensureSession` 会用最终确定的目录覆盖它。
     let setup = RemoteMachineSetup(
@@ -964,7 +1090,8 @@ struct RemoteMachineFleetServices: MachineFleetServices {
       explicitRemoteBinaryPath: explicitBinary,
       explicitStateParentPath: stateParent)
     return try setup.run(
-      rawTarget: rawTarget, label: label, sessionName: sessionName, profileID: profileID)
+      rawTarget: rawTarget, label: label, sessionName: sessionName, profileID: profileID,
+      hostID: hostID)
   }
 
   func registry(for profile: MachineProfile) throws -> MachineRegistryAccess {
@@ -984,7 +1111,8 @@ struct RemoteMachineFleetServices: MachineFleetServices {
     }
     let runtime = try RemoteRuntimeLocation.resolve(profile: profile, environment: environment)
     return MachineRegistryAccess(
-      client: RemoteManagedSessionClient(transport: try makeTransport(rawTarget)),
+      client: RemoteManagedSessionClient(
+        transport: try makeTransport(rawTarget, hostID: profile.hostID)),
       endpoint: ManagedRegistryEndpoint(
         machineProfileID: profile.id, binaryPath: runtime.binaryPath,
         stateParentPath: runtime.stateParentPath))
@@ -1015,7 +1143,16 @@ struct RemoteMachineFleetServices: MachineFleetServices {
     rawTarget: String, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
     acceptDevelopmentArtifact: Bool
   ) async throws -> RemoteInstallOutcome {
-    let transport = try makeTransport(rawTarget)
+    try await installService(
+      rawTarget: rawTarget, hostID: nil, report: report, artifact: artifact,
+      acceptDevelopmentArtifact: acceptDevelopmentArtifact)
+  }
+
+  func installService(
+    rawTarget: String, hostID: UUID?, report: RemoteProbeReport, artifact: RemoteServiceArtifact,
+    acceptDevelopmentArtifact: Bool
+  ) async throws -> RemoteInstallOutcome {
+    let transport = try makeTransport(rawTarget, hostID: hostID)
     let executor = RemoteSSHInstallExecutor(transport: transport)
     let plan = RemoteInstallPlan(
       targetDescription: rawTarget,
@@ -1042,7 +1179,7 @@ struct RemoteMachineFleetServices: MachineFleetServices {
     acceptDevelopmentArtifact: Bool
   ) async throws -> RemoteReplacementOutcome {
     guard let rawTarget = profile.sshTarget else { throw MachineFleetError.machineNotFound }
-    let transport = try makeTransport(rawTarget)
+    let transport = try makeTransport(rawTarget, hostID: profile.hostID)
     // 停止/重启走当前运行中的服务端点；二进制路径优先取配置里的实测值。
     let stateParent = Self.nonEmpty(environment[RemoteEnvironmentKeys.stateDirectory])
       ?? Self.nonEmpty(profile.stateParentPath)
@@ -1090,7 +1227,7 @@ struct RemoteMachineFleetServices: MachineFleetServices {
       FileManager.default.isReadableFile(atPath: script.path)
     else { throw AgentSetupServiceError.integrationResourceUnavailable }
     let installer = RemoteAgentIntegrationInstaller(
-      transport: try makeTransport(rawTarget), localHookScriptURL: script)
+      transport: try makeTransport(rawTarget, hostID: profile.hostID), localHookScriptURL: script)
     // 探测与安装都是多次阻塞的 SSH 往返，必须离开主线程。
     return try await Task.detached(priority: .userInitiated) {
       if let install { return try installer.install(providers: install) }
@@ -1100,9 +1237,9 @@ struct RemoteMachineFleetServices: MachineFleetServices {
 
   func remoteAgentCatalog(for profile: MachineProfile) async throws -> RemoteAgentProbeResult {
     guard let rawTarget = profile.sshTarget else { throw MachineFleetError.machineNotFound }
-    let transport = try makeTransport(rawTarget)
+    let transport = try makeTransport(rawTarget, hostID: profile.hostID)
     return try await Task.detached(priority: .userInitiated) {
-      let result = try RemoteSSHProcessRunner().run(
+      let result = try transport.makeProcessRunner().run(
         arguments: transport.sshArguments(remoteCommand: RemoteAgentProbe.probeCommand()),
         timeout: 30)
       guard let probe = RemoteAgentProbe.parse(result.standardOutput) else {
@@ -1113,12 +1250,16 @@ struct RemoteMachineFleetServices: MachineFleetServices {
   }
 
   func remoteBinaryDigest(rawTarget: String, path: String) async throws -> String? {
-    let transport = try makeTransport(rawTarget)
+    try await remoteBinaryDigest(rawTarget: rawTarget, hostID: nil, path: path)
+  }
+
+  func remoteBinaryDigest(rawTarget: String, hostID: UUID?, path: String) async throws -> String? {
+    let transport = try makeTransport(rawTarget, hostID: hostID)
     let quoted = RemoteSSHInvocation.quote(path)
     let script =
       "command -v sha256sum >/dev/null 2>&1 && sha256sum \(quoted) || shasum -a 256 \(quoted)"
     let result = try await Task.detached(priority: .userInitiated) {
-      try RemoteSSHProcessRunner().run(
+      try transport.makeProcessRunner().run(
         arguments: transport.sshArguments(remoteCommand: ["/bin/sh", "-c", script]),
         timeout: TimeInterval(transport.policy.connectTimeout + 20))
     }.value
@@ -1154,8 +1295,11 @@ struct RemoteMachineFleetServices: MachineFleetServices {
     return value
   }
 
-  /// 构造 SSH 传输。私有临时配置只在 `manage_ssh_config` 开启时创建。
-  func makeTransport(_ rawTarget: String) throws -> RemoteSessionTransport {
+  /// 构造 SSH 传输。
+  ///
+  /// 引擎按路由决定：有原生端点时走 aster-ssh（绑定主机时用 `--host-id`），不创建私有
+  /// OpenSSH 配置；否则与改造前完全一致，私有临时配置只在 `manage_ssh_config` 开启时创建。
+  func makeTransport(_ rawTarget: String, hostID: UUID? = nil) throws -> RemoteSessionTransport {
     let target: RemoteSSHTarget
     do { target = try RemoteSSHTarget.parse(rawTarget) } catch let error as RemoteSSHTargetError {
       throw RemoteSetupFailure(
@@ -1163,6 +1307,9 @@ struct RemoteMachineFleetServices: MachineFleetServices {
         message: RemoteSetupDescription.targetText(error))
     }
     let policy = RemoteSSHPolicy.fromEnvironment(environment)
+    if let native = routing.nativeEndpoint {
+      return RemoteSessionTransport(target: target, policy: policy, native: native, hostID: hostID)
+    }
     let managed =
       policy.manageSSHConfig
       ? try? RemoteSSHConfigurationManager.makePrivateConfiguration(policy: policy) : nil
@@ -1220,7 +1367,8 @@ struct RemoteMachineConnectionDriver: MachineConnectionDriving {
         stage: .sessionPreparation, requiresExplicitSetup: true,
         message: RemoteSetupDescription.text(for: error))
     }
-    let client = RemoteManagedSessionClient(transport: try services.makeTransport(rawTarget))
+    let client = RemoteManagedSessionClient(
+      transport: try services.makeTransport(rawTarget, hostID: profile.hostID))
     return try client.serverStatus(
       ManagedSessionEndpoint(
         machineProfileID: profile.id, binaryPath: runtime.binaryPath,
