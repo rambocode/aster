@@ -3,6 +3,7 @@
 
 check: 扫描 Sources/**/*.swift 里的 `L("…")` 调用，推导 .strings 的 key，
        核对每个 <lang>.lproj/Localizable.strings 是否都有翻译；缺失即失败。
+       同时扫描网页设置页 Resources/settings-ui/*.js 里的 `t("…")`，核对 i18n.js 的 5 语字典。
 merge: 把 l10n-work/*.json（key → {lang: value}）合并写入各语言的 .strings（按 key 排序）。
 
 key 规则：Swift 字面量原文，`\\(…)` 插值处写 `%@`；带插值的文案里字面 `%` 写作 `%%`，
@@ -15,6 +16,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LPROJ_DIR = os.path.join(ROOT, "Sources/Aster/Localization")
 LANGS = ["en", "ja", "fr", "de", "zh-Hant"]
 SOURCE_DIRS = ["Sources/Aster", "Sources/AsterCore", "Sources/AsterMemory"]
+WEB_DIR = os.path.join(ROOT, "Resources/settings-ui")
+WEB_I18N = os.path.join(WEB_DIR, "i18n.js")
 
 
 def extract_keys(text, path):
@@ -110,6 +113,38 @@ def all_source_keys():
     return keys, problems
 
 
+def web_source_keys():
+    """扫描设置页脚本里字面量形式的 `t("…")`，返回 key → 首次出现的文件；t(变量) 无法静态推导，跳过。"""
+    keys = {}
+    pattern = re.compile(r'(?<![A-Za-z0-9_$.])t\(\s*"((?:[^"\\]|\\.)*)"')
+    for path in sorted(glob.glob(os.path.join(WEB_DIR, "*.js"))):
+        if path == WEB_I18N:
+            continue
+        for m in pattern.finditer(open(path, encoding="utf-8").read()):
+            keys.setdefault(json.loads(f'"{m.group(1)}"'), os.path.relpath(path, ROOT))
+    return keys
+
+
+def web_tables():
+    """读取 i18n.js：文件体是 `window.AsterI18n = <JSON>;`，去掉赋值外壳后按 JSON 解析。"""
+    text = open(WEB_I18N, encoding="utf-8").read()
+    body = text[text.index("{"): text.rindex("}") + 1]
+    return json.loads(body)
+
+
+def check_web():
+    """网页设置页：每个 `t("…")` 字面量都要在 i18n.js 的每种语言里有翻译；返回是否有缺失。"""
+    keys, tables, failed = web_source_keys(), web_tables(), False
+    for lang in LANGS:
+        missing = [k for k in keys if k not in tables.get(lang, {})]
+        print(f"[web:{lang}] keys={len(tables.get(lang, {}))} missing={len(missing)}")
+        for k in missing:
+            print(f"  MISSING ({keys[k]}): {k}")
+            failed = True
+    print(f"web source keys: {len(keys)}")
+    return failed
+
+
 def cmd_check(args):
     keys, problems = all_source_keys()
     extra = set()
@@ -129,6 +164,7 @@ def cmd_check(args):
         for k in unused[: 20 if "-v" not in sys.argv else None]:
             print(f"  unused: {k}")
     print(f"source keys: {len(keys)}")
+    failed = check_web() or failed
     sys.exit(1 if failed else 0)
 
 
