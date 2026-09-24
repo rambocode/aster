@@ -7,7 +7,7 @@ revision=4dcb09ada0c0909717d92547623b26eafa50ca8a
 patch_files=("$runtime_dir/patches/0001-formatter-cursor-order.patch" "$runtime_dir/patches/0002-screen-export.patch" "$runtime_dir/patches/0003-history-budget.patch" "$runtime_dir/patches/0004-history-pages.patch" "$runtime_dir/patches/0005-history-page-release.patch" "$runtime_dir/patches/0006-graphics-metadata-budget.patch" "$runtime_dir/patches/0007-cursor-shape-replay.patch" "$runtime_dir/patches/0008-formatter-blank-style.patch")
 # 产物键 = revision + 补丁集摘要。调用方比对产物目录里的 .aster-vt-key 决定是否重建，
 # 否则新增补丁后会一直复用旧的 libghostty-vt，补丁静默不生效。
-artifact_key="$revision:$(/usr/bin/shasum -a 256 "${patch_files[@]}" | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
+artifact_key="$revision:$(/bin/cat "${patch_files[@]}" | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
 if [[ "${1:-}" == "--key" ]]; then
   echo "$artifact_key"
   exit 0
