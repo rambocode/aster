@@ -233,16 +233,16 @@ extension WorkspaceViewController {
 
   // MARK: - 动作
 
-  /// 添加机器：面板 → `RemoteMachineSetup` 事务 → 成功才保存配置。
+  /// 添加机器：走共享的 `MachineSetupFlow`（面板 → 设置事务 → 成功才保存配置），
+  /// 成功后在本窗口接着做侧栏刷新与远端 Agent 集成。
   @objc func presentAddMachine() {
-    guard let draft = MachineSetupSheet.promptForNewMachine(in: view.window) else { return }
     let window = view.window
+    let fleet = machineFleet
     Task { @MainActor [weak self] in
-      guard let self else { return }
-      let result = await self.machineFleet.addMachine(
-        label: draft.label, sshTarget: draft.sshTarget, sessionName: draft.sessionName,
-        confirm: { MachineSetupSheet.confirm($0, in: window) })
-      self.present(result, in: window)
+      guard let id = await MachineSetupFlow.presentAddMachine(fleet: fleet, in: window),
+        let profile = fleet.profiles.first(where: { $0.id == id })
+      else { return }
+      self?.present(.added(profile), in: window)
     }
   }
 
