@@ -75,6 +75,13 @@ Zig 0.15.2 自带的 clang `float.h` 早于 macOS 27 SDK：27 SDK 的 `math.h` �
 异步借用会被 GPU 重写的源。未实现 selector 的宿主保持原行为，C ABI 布局不变。
 线程、生命周期与测试契约见 `docs/developer/picture-in-picture.md`。
 
+## RIS 后的光标样式
+
+上游 `Screen.reset()` 把光标形状写死为 block，`StreamHandler.fullReset` 不再套用配置的
+`cursor-style`。Pinned patch 在 RIS 之后调用 `setCursorStyle(.default)`，恢复配置的光标形状与
+闪烁，与新建 surface 的初始状态一致。本机后台保活恢复 Pane 时，每份画面快照都以 RIS 开头，
+缺这一步时首个 Pane 的光标会变成方块，新开的 Pane 才正常。
+
 ## Aster 子进程启动
 
 Pinned patch 提供默认关闭的 `aster-direct-child` 配置，不改变 C ABI 布局。
