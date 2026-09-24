@@ -413,7 +413,7 @@
         action("reloadConfig", t("重新加载配置"), t("校验成功后原子替换当前设置"), t("重新加载")),
       ]},
       { title: "SSH", rows: [
-        row("shell.sshEngine", t("SSH 引擎"), t("远程机器与原生 SSH 使用的连接方式；出现问题时可切回 OpenSSH。手动输入的 ssh 命令不受影响"), "select", { options: options.sshEngine }),
+        row("shell.sshEngine", t("SSH 引擎"), t("远程机器与原生 SSH 使用的连接方式；出现问题时可切回 OpenSSH。重新启动 Aster 后生效；手动输入的 ssh 命令不受影响"), "select", { options: options.sshEngine }),
       ]},
       { title: t("终端兼容性"), rows: [
         row("advanced.autoProgressCommands", t("自动进度命令"), t("逗号分隔；按命令 token 前缀识别长任务，留空即关闭"), "text"),
