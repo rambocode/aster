@@ -592,7 +592,7 @@ func settingsUsesWebContainerAndEditorCategory() throws {
 
   controller.loadViewIfNeeded()
 
-  #expect(controller.sections == [.general, .shell, .controls, .editor, .agents, .view,
+  #expect(controller.sections == [.general, .shell, .controls, .editor, .agents, .hosts, .view,
                                   .appearance, .recipes, .shortcuts, .advanced])
   let webView = try #require(controller.settingsWebViewForTesting)
   #expect(webView.superview === controller.view)
