@@ -5,7 +5,7 @@ import Testing
 @testable import Aster
 @testable import AsterCore
 
-// 设置页「主机」分类的桥接：快照形状、保存与校验。
+// 设置页「主机」分类的桥接：快照形状、保存与校验、`shell.sshEngine` 读写。
 // 全部用临时 hosts.json 与假钥匙串，不碰用户真实文件与钥匙串。
 
 /// 假钥匙串：只记录口令是否存在与删除调用。
@@ -177,4 +177,27 @@ func settingsHostsRejectsControlCharacters() throws {
   object["proxyCommand"] = nil
   object["identityFiles"] = Array(repeating: "~/.ssh/id", count: SettingsHostsBridge.maximumIdentityFiles + 1)
   #expect(throws: SettingsHostsError.invalidPayload) { try SettingsHostsBridge.decodeProfile(object) }
+}
+
+@Test("shell.sshEngine 经设置桥读写，非法值被拒绝")
+@MainActor
+func settingsSSHEngineRoundTrips() throws {
+  let suite = "SettingsHosts.\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suite))
+  defer { defaults.removePersistentDomain(forName: suite) }
+  let fixture = try HostsBridgeFixture()
+  defer { fixture.cleanUp() }
+  let preferences = AppPreferences(defaults: defaults)
+  let controller = SettingsViewController(preferences: preferences, hostsBridge: fixture.bridge)
+  controller.loadViewIfNeeded()
+
+  var values = try #require(controller.settingsSnapshotForTesting()["values"] as? [String: Any])
+  #expect(values["shell.sshEngine"] as? String == "native")
+  try controller.applySettingForTesting(key: "shell.sshEngine", value: "openssh")
+  #expect(preferences.configuration.shell.resolvedSSHEngine == .openssh)
+  values = try #require(controller.settingsSnapshotForTesting()["values"] as? [String: Any])
+  #expect(values["shell.sshEngine"] as? String == "openssh")
+  #expect(throws: (any Error).self) { try controller.applySettingForTesting(key: "shell.sshEngine", value: "putty") }
+  #expect(preferences.configuration.shell.resolvedSSHEngine == .openssh)
+  #expect(controller.settingsSnapshotForTesting()["hosts"] is [String: Any])
 }

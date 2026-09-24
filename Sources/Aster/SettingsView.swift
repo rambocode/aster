@@ -3282,6 +3282,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "shell.shellIntegration": configuration.shell.shellIntegration,
       "shell.sshIntegration": configuration.shell.sshIntegration,
       "shell.sshConnectionSharing": configuration.shell.resolvedSSHConnectionSharing,
+      "shell.sshEngine": configuration.shell.resolvedSSHEngine.rawValue,
       "shell.frecencyAutoRecord": configuration.shell.resolvedFrecencyAutoRecord,
       "shell.restoreMultiplexerSessions": configuration.shell.restoreMultiplexerSessions,
       "shell.localManagedTerminals": configuration.shell.resolvedLocalManagedTerminals,
@@ -3751,6 +3752,8 @@ extension SettingsViewController: WKNavigationDelegate {
     case "shell.sshIntegration": preferences.configuration.shell.sshIntegration = try bool()
     case "shell.sshConnectionSharing":
       preferences.configuration.shell.sshConnectionSharing = try bool()
+    case "shell.sshEngine":
+      preferences.configuration.shell.sshEngine = try enumValue(string(), as: SSHEngine.self)
     case "shell.frecencyAutoRecord": preferences.configuration.shell.frecencyAutoRecord = try bool()
     case "shell.restoreMultiplexerSessions": preferences.configuration.shell.restoreMultiplexerSessions = try bool()
     case "shell.localManagedTerminals": preferences.configuration.shell.localManagedTerminals = try bool()
