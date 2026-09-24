@@ -250,6 +250,26 @@ final class RemoteWorkspaceController: ObservableObject {
     }
   }
 
+  /// 重命名工作区事务。冲突时按同一意图（同一标题）重试，不覆盖竞争方的结构修改。
+  @discardableResult
+  func updateWorkspace(workspaceID: String, title: String) async throws -> RemoteWorkspace {
+    try await submit { client, expected in
+      try client.withConflictRetry(expectedRevision: expected) { revision in
+        try client.updateWorkspace(workspaceID: workspaceID, expectedRevision: revision, title: title)
+      }
+    }
+  }
+
+  /// 关闭工作区事务。这是**资源关闭**语义：服务端结束其中全部终端的远端进程。
+  @discardableResult
+  func closeWorkspace(workspaceID: String) async throws -> Bool {
+    try await submit { client, expected in
+      try client.withConflictRetry(expectedRevision: expected) { revision in
+        try client.closeWorkspace(workspaceID: workspaceID, expectedRevision: revision)
+      }
+    }
+  }
+
   /// 分屏事务。
   @discardableResult
   func splitPane(

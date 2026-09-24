@@ -7,6 +7,7 @@
 
 - **领域模型与 AppKit 解耦。** `Sources/AsterCore` 放工作区、会话、配置及协议等可复用模型和规则，不依赖 AppKit、GhosttyKit、Sparkle 或应用 UI。现有 PTY 与 Markdown 依赖遵循 `Package.swift` 的 target 边界，不把 Core 当成任意基础设施的入口。
 - **应用层负责协调与呈现。** `Sources/Aster` 使用 AppKit，不引入 SwiftUI。窗口、视图和控制器负责事件转换、校验、编排与渲染；可复用业务规则下沉到 Core，存储与外部系统调用通过明确接口隔离。
+- **SSH 连接走原生运行时。** 远程机器与原生 SSH 标签经 `aster-ssh`（`SshRuntime/`，Rust + russh）连接；秘密只进钥匙串（`SSHCredentialStore`），broker 不落盘；OpenSSH 只作为回退引擎，手敲的 `ssh` 不受影响。
 - **终端引擎桥接集中管理。** Ghostty 桥接保留在 `Sources/Aster/Ghostty`；PTY 原语在 `Sources/AsterPTY`。产品终端使用 Ghostty，SwiftTerm 仅作为迁移期回归适配器，不重新挂入产品工作区。生命周期与 ABI 约束见 [Ghostty 终端引擎](developer/ghostty-terminal-engine.md)。
 - **存储、查询与控制分开。** `AsterMemory` 负责 SQLite 编解码与文件布局，领域模型留在 Core；`AsterMemoryMCP` 保持只读查询；`AsterCLI` 通过既有协议控制应用，不依赖 AppKit。细节见 [会话记忆](developer/session-memory-domain.md) 与 [工作流和代理](developer/workflows-and-agents.md)。
 - **输入与渲染不能被辅助功能阻塞。** 网络、数据库与耗时计算不能占用主线程；异步结果按发起时的会话或 Pane 身份回写，处理取消、超时、关闭和过期响应，避免切换焦点后写入错误会话。
@@ -60,7 +61,7 @@
 ## 提交前检查
 
 - 先检查 `git worktree list` 与 `git status --short`，确认当前任务归属并保留其他改动；提交前核对暂存差异、忽略规则和敏感信息边界。
-- 开发环境要求 macOS 14+、Swift 6.2、Zig 0.15.2 与 Xcode Metal Toolchain。Ghostty 依赖通过 `./scripts/setup-ghostty.sh` 准备，使用 `swift build` 验证构建。
+- 开发环境要求 macOS 14+、Swift 6.2、Zig 0.15.2、Rust 工具链（cargo）与 Xcode Metal Toolchain。原生 SSH 运行时在 `SshRuntime/`，改动后运行 `cd SshRuntime && cargo test`，Swift 与 Rust 两侧的契约以 `SshRuntime/PROTOCOL.md` 为准；见 [原生 SSH](developer/native-ssh.md)。Ghostty 依赖通过 `./scripts/setup-ghostty.sh` 准备，使用 `swift build` 验证构建。
 - 测试使用 Swift Testing（`import Testing`、`@Test`、`#expect`），不新增 XCTest 用例。AppKit 测试通常标记 `@MainActor`；偏好设置测试使用独立 `UserDefaults` suite。
 - 代码改动先运行 `./scripts/test.sh --filter <name>` 定向验证，提交前运行 `./scripts/test.sh --no-parallel` 全量检查。必须使用封装脚本，以提供 Sparkle 动态库路径与 AppKit 测试宿主；检查最终测试汇总，不能只看退出码。详见 [测试执行与完整性审计](developer/testing.md)。
 - 纯文档改动检查链接、命令与 `git diff --check`，不为文案新增测试或运行无关应用构建。其他改动按影响执行静态检查、资源检查与实际环境验收；跳过或未运行的检查必须说明。

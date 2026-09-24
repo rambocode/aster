@@ -59,6 +59,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     case controls = "控制"
     case editor = "编辑器"
     case agents = "智能体"
+    case hosts = "主机"
     case view = "视图"
     case appearance = "外观"
     case recipes = "Recipes"
@@ -72,6 +73,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       case .controls: "cursorarrow.motionlines"
       case .editor: "doc.text"
       case .agents: "sparkles"
+      case .hosts: "server.rack"
       case .view: "square.grid.2x2"
       case .appearance: "paintpalette"
       case .recipes: "square.grid.2x2"
@@ -87,6 +89,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private let agentSetupService: AgentSetupService
   /// 生产环境是 SoftwareUpdateService.shared；开发构建与测试为 nil / stub。
   private let updateController: (any SoftwareUpdateControlling)?
+  /// 「主机」分类的快照与动作协作者；回调在 viewDidLoad 接线，不向它开放本类的 private 成员。
+  private let hostsBridge: SettingsHostsBridge
   private var selection: Section = .general
   private var searchText = ""
   private var focusedThemeID: String?
@@ -130,6 +134,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private var settingsMessageProxy: SettingsScriptMessageProxy?
   private var webRevision = 0
   private var webReady = false
+  /// 等网页就绪后要打开编辑表单的主机（「编辑主机…」深链）。
+  private var pendingHostEditID: UUID?
   /// Session Memory 目录的已用空间文本。目录遍历是磁盘 IO，绝不能落在快照构建里
   /// （每次设置改动都会重建快照）；这里只缓存后台算好的结果。
   private var memoryStoreSizeText = L("计算中…")
@@ -226,12 +232,14 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     preferences: AppPreferences,
     panelLayoutBinding: WorkspacePanelSettingsBinding = WorkspacePanelSettingsBinding(),
     agentSetupService: AgentSetupService = AgentSetupService(),
-    updateController: (any SoftwareUpdateControlling)? = SoftwareUpdateService.shared
+    updateController: (any SoftwareUpdateControlling)? = SoftwareUpdateService.shared,
+    hostsBridge: SettingsHostsBridge? = nil
   ) {
     self.preferences = preferences
     self.panelLayoutBinding = panelLayoutBinding
     self.agentSetupService = agentSetupService
     self.updateController = updateController
+    self.hostsBridge = hostsBridge ?? SettingsHostsBridge(dependencies: .live())
     super.init(nibName: nil, bundle: nil)
   }
 
@@ -308,6 +316,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         self.scheduleRefresh()
       }
       .store(in: &cancellables)
+    connectHostsBridge()
     TerminalNotificationService.shared.refreshAuthorizationStatus()
     refreshMemoryStoreSize()
     refreshMemoryMCPState()
@@ -322,6 +331,20 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       "type": "selectSection",
       "section": section.webIdentifier,
     ])
+  }
+
+  /// 切到「主机」分类并打开指定主机的编辑表单；网页尚未就绪时等 `ready` 后再发。
+  func showHost(_ id: UUID) {
+    showSection(.hosts)
+    pendingHostEditID = id
+    flushPendingHostEdit()
+  }
+
+  /// 网页就绪后发出待处理的主机编辑请求。快照先于它送达，网页能找到这台主机。
+  private func flushPendingHostEdit() {
+    guard webReady, let id = pendingHostEditID else { return }
+    pendingHostEditID = nil
+    sendWebMessage(["type": "hostsEdit", "id": id.uuidString])
   }
 
   private func scheduleRefresh() {
@@ -601,6 +624,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     case .controls: controlViews()
     case .editor: editorViews()
     case .agents: agentViews()
+    case .hosts: hostViews()
     case .view: viewViews()
     case .appearance: appearanceViews()
     case .recipes: recipeViews()
@@ -1483,6 +1507,32 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
         ) { [weak self] value in
           self?.preferences.configuration.editor.previewRichDocuments = value
         },
+      ]),
+    ]
+  }
+
+  // MARK: - 主机
+
+  /// 把「主机」协作者接到本页的快照推送、toast 与网页消息上，并开始监听主机目录。
+  private func connectHostsBridge() {
+    hostsBridge.pushSnapshot = { [weak self] in self?.pushWebSnapshot() }
+    hostsBridge.scheduleRefresh = { [weak self] in self?.scheduleRefresh() }
+    hostsBridge.toast = { [weak self] text, isError in
+      self?.sendWebToast(text, level: isError ? "error" : "info")
+    }
+    hostsBridge.postMessage = { [weak self] message in self?.sendWebMessage(message) }
+    hostsBridge.window = { [weak self] in self?.view.window }
+    hostsBridge.start()
+  }
+
+  /// 原生回退页只做说明：主机列表与编辑表单只在网页设置页中提供。
+  private func hostViews() -> [NSView] {
+    [
+      sectionTitle(L("主机")),
+      card([
+        infoRow(
+          L("已保存的 SSH 主机"), L("主机列表与编辑表单只在网页设置页中提供"),
+          "\(hostsBridge.directory.savedHosts.count)")
       ]),
     ]
   }
@@ -3150,6 +3200,7 @@ extension SettingsViewController: WKNavigationDelegate {
     case "ready":
       webReady = true
       pushWebSnapshot()
+      flushPendingHostEdit()
     case "set":
       handleWebSet(message)
     case "action":
@@ -3248,6 +3299,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "shell.shellIntegration": configuration.shell.shellIntegration,
       "shell.sshIntegration": configuration.shell.sshIntegration,
       "shell.sshConnectionSharing": configuration.shell.resolvedSSHConnectionSharing,
+      "shell.sshEngine": configuration.shell.resolvedSSHEngine.rawValue,
       "shell.frecencyAutoRecord": configuration.shell.resolvedFrecencyAutoRecord,
       "shell.restoreMultiplexerSessions": configuration.shell.restoreMultiplexerSessions,
       "shell.localManagedTerminals": configuration.shell.resolvedLocalManagedTerminals,
@@ -3432,6 +3484,7 @@ extension SettingsViewController: WKNavigationDelegate {
       "agentControl": agentControlStatus.jsonValue,
       "recipes": makeWebRecipes(),
       "shortcuts": makeWebShortcuts(),
+      "hosts": hostsBridge.snapshot(),
     ]
   }
 
@@ -3573,6 +3626,8 @@ extension SettingsViewController: WKNavigationDelegate {
   private func makeWebShortcuts() -> [[String: Any]] {
     let shortcuts: [(String, String, String, String)] = [
       ("new-window", L("窗口"), L("新建窗口"), "⌘N"),
+      ("new-workspace", L("工作区"), L("新建工作区"), "⇧⌘N"),
+      ("switch-workspace", L("工作区"), L("切换工作区"), "⌥⌘O"),
       ("new-tab", L("窗口"), L("新建标签页"), "⌘T"),
       ("close", L("窗口"), L("关闭当前项"), "⌘W"),
       ("open-file", L("文件"), L("打开文件"), "⌘O"),
@@ -3716,6 +3771,8 @@ extension SettingsViewController: WKNavigationDelegate {
     case "shell.sshIntegration": preferences.configuration.shell.sshIntegration = try bool()
     case "shell.sshConnectionSharing":
       preferences.configuration.shell.sshConnectionSharing = try bool()
+    case "shell.sshEngine":
+      preferences.configuration.shell.sshEngine = try enumValue(string(), as: SSHEngine.self)
     case "shell.frecencyAutoRecord": preferences.configuration.shell.frecencyAutoRecord = try bool()
     case "shell.restoreMultiplexerSessions": preferences.configuration.shell.restoreMultiplexerSessions = try bool()
     case "shell.localManagedTerminals": preferences.configuration.shell.localManagedTerminals = try bool()
@@ -4382,6 +4439,11 @@ extension SettingsViewController: WKNavigationDelegate {
     case "installAgentSkill": installAgentSkill(providerRawValue: payload["provider"] as? String)
     case "uninstallAgentSkill": uninstallAgentSkill(providerRawValue: payload["provider"] as? String)
     case "clearWebPaneData": clearWebPaneBrowsingData()
+    case _ where action.hasPrefix("hosts."):
+      // 主机动作可能异步完成（导入、打开编辑器），回执由协作者在真正结束时触发。
+      hostsBridge.handle(action: action, payload: payload) { [weak self] succeeded in
+        self?.completeWebMutation(request, succeeded: succeeded)
+      }
     case "resetAdvanced":
       for key in SettingsWebBridge.compatibilityDefaults.keys where key.hasPrefix("advanced.") {
         if let value = SettingsWebBridge.compatibilityDefaults[key] { preferences.setCompatibilityValue(value, forKey: key) }
@@ -5337,6 +5399,8 @@ private enum SettingsWebBridgeError: LocalizedError {
 enum ShortcutOverrideApplier {
   private static var menuTitles: [String: String] { [
     "new-window": L("新建窗口"),
+    "new-workspace": L("新建工作区…"),
+    "switch-workspace": L("切换工作区…"),
     "new-tab": L("新建标签页"),
     "close": L("关闭"),
     "open-file": L("打开文件…"),
@@ -5418,6 +5482,7 @@ private extension SettingsViewController.Section {
     case .controls: "controls"
     case .editor: "editor"
     case .agents: "agents"
+    case .hosts: "hosts"
     case .view: "view"
     case .appearance: "appearance"
     case .recipes: "recipes"

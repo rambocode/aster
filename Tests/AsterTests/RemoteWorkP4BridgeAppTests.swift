@@ -334,6 +334,7 @@ func remoteWorkP4BridgeDrivesRealDisplayBridgeEndToEnd() async throws {
   let environment = try #require(RemoteWorkP4BridgeEnvironment.current())
   environment.note("bridge e2e 开始：target=\(environment.sshTarget) state=\(environment.stateDirectory) session=\(environment.sessionName)")
 
+  try await RemoteWorkP4NativeEngine.startIfRequested()
   let fixture = try makeBridgeFixture(environment)
   defer { fixture.tearDown() }
 

@@ -47,6 +47,8 @@ enum RemoteSideChannelResolver {
         label: endpoint.hostName
       )
     case .managed(let reference, let label, _):
+      // 场景 B 与受管终端共用同一个传输：引擎（OpenSSH / aster-ssh）、可执行文件与
+      // 绑定主机都随协调器，不在这里重新判断。
       let coordinator = ManagedTerminalCoordinatorRegistry.coordinator(for: reference)
       guard let transport = coordinator.remoteTransport else { return nil }
       return RemoteSideChannel.managed(
@@ -63,7 +65,7 @@ enum RemoteSideChannelResolver {
   /// 刚刚建立连接、socket 还没落盘。阻塞调用，必须在后台任务里跑。
   static func controlMasterIsAvailable(_ channel: RemoteSideChannel) -> Bool {
     guard let arguments = channel.controlCheckArguments else {
-      // 场景 B 自带私有配置与复用策略，没有需要探测的外部 socket。
+      // 场景 B 自带私有配置或 broker 连接复用，没有需要探测的外部 socket。
       return true
     }
     guard let result = try? channel.runner.run(arguments: arguments, timeout: 5) else {

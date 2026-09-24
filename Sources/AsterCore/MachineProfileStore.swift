@@ -58,6 +58,7 @@ public final class MachineProfileStore: @unchecked Sendable {
   /// 配置文件里允许出现的键。写出与读入都以它为准，多一个键就说明有东西不该被保存。
   public static let allowedKeys: Set<String> = [
     "id", "label", "sshTarget", "sessionName", "enabled", "remoteBinaryPath", "stateParentPath",
+    "hostID",
   ]
 
   /// 默认配置路径：`~/Library/Application Support/Aster/machines.json`。
@@ -194,6 +195,15 @@ public final class MachineProfileStore: @unchecked Sendable {
         runtimePaths[key] = text
       }
       if runtimeInvalid { continue }
+      // 绑定的主机 ID：可选，出现就必须是合法 UUID。
+      var hostID: UUID?
+      if let value = object["hostID"] {
+        guard let text = value as? String, let parsed = UUID(uuidString: text) else {
+          reasons.append("[\(index)] invalid hostID")
+          continue
+        }
+        hostID = parsed
+      }
       guard seenIDs.insert(id).inserted else {
         reasons.append("[\(index)] duplicate id")
         continue
@@ -202,7 +212,7 @@ public final class MachineProfileStore: @unchecked Sendable {
         MachineProfile(
           id: id, label: label, sshTarget: sshTarget, sessionName: sessionName, enabled: enabled,
           remoteBinaryPath: runtimePaths["remoteBinaryPath"],
-          stateParentPath: runtimePaths["stateParentPath"]))
+          stateParentPath: runtimePaths["stateParentPath"], hostID: hostID))
     }
     guard reasons.isEmpty else {
       throw MachineProfileStoreError.invalidProfiles(reasons: reasons)
@@ -262,6 +272,8 @@ public final class MachineProfileStore: @unchecked Sendable {
       if let target = profile.sshTarget { object["sshTarget"] = target }
       if let binary = profile.remoteBinaryPath { object["remoteBinaryPath"] = binary }
       if let stateParent = profile.stateParentPath { object["stateParentPath"] = stateParent }
+      // 只在绑定了主机时写出：旧版本见到未知键会整份拒绝，未用新功能的配置保持可降级。
+      if let hostID = profile.hostID { object["hostID"] = hostID.uuidString }
       return object
     }
     do {
@@ -277,7 +289,7 @@ public final class MachineProfileStore: @unchecked Sendable {
   /// 计算需要重连的变更集合。
   ///
   /// **只改 label 的重命名不在结果里**（§4.1 第 7 条：重命名只改标签）。连接相关字段
-  /// 只有 `sshTarget` 与 `sessionName`：前者决定连到哪台机器，后者决定绑定哪个命名会话。
+  /// 是 `sshTarget`、`hostID` 与 `sessionName`：前两者决定连到哪台机器，后者决定绑定哪个命名会话。
   public static func diff(old: [MachineProfile], new: [MachineProfile]) -> Set<MachineProfileChange>
   {
     let oldByID = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -289,7 +301,9 @@ public final class MachineProfileStore: @unchecked Sendable {
         changes.insert(.added(id))
         continue
       }
-      if previous.sshTarget != profile.sshTarget || previous.sessionName != profile.sessionName {
+      if previous.sshTarget != profile.sshTarget || previous.sessionName != profile.sessionName
+        || previous.hostID != profile.hostID
+      {
         changes.insert(.connectionChanged(id))
       }
       if previous.enabled != profile.enabled {

@@ -160,3 +160,63 @@ public enum RemoteWorkspaceProjection {
     }
   }
 }
+
+// MARK: - 命名工作区选中项
+
+/// 远端机器上一个工作区的摘要：供切换器、侧栏与 CLI 列表使用，全部取自缓存投影。
+public struct RemoteWorkspaceSummary: Codable, Equatable, Sendable {
+  public var workspaceID: String
+  public var title: String
+  public var tabCount: Int
+  /// 该工作区全部标签里受管终端的数量；关闭工作区会结束这些远端进程。
+  public var terminalCount: Int
+  public var isSelected: Bool
+  /// 每个标签的标题，按服务端顺序；切换器按标签名搜索工作区时用它。
+  public var tabTitles: [String]
+
+  public init(
+    workspaceID: String, title: String, tabCount: Int, terminalCount: Int, isSelected: Bool,
+    tabTitles: [String]
+  ) {
+    self.workspaceID = workspaceID
+    self.title = title
+    self.tabCount = tabCount
+    self.terminalCount = terminalCount
+    self.isSelected = isSelected
+    self.tabTitles = tabTitles
+  }
+}
+
+extension ProjectedRemoteSession {
+  /// 按偏好解析出实际选中的工作区 ID。
+  ///
+  /// 偏好的工作区仍在投影里就用它；不在（被其它客户端关闭、或偏好为空）时退回第一个。
+  /// 投影里没有任何工作区时返回 nil。规则集中在这里，避免界面各处各自「取 first」。
+  public func resolvedWorkspaceID(preferred: String?) -> String? {
+    if let preferred, workspaces.contains(where: { $0.workspaceID == preferred }) {
+      return preferred
+    }
+    return workspaces.first?.workspaceID
+  }
+
+  /// 按 ID 取投影里的工作区。
+  public func workspace(withID workspaceID: String?) -> ProjectedRemoteWorkspace? {
+    guard let workspaceID else { return nil }
+    return workspaces.first { $0.workspaceID == workspaceID }
+  }
+
+  /// 生成全部工作区的摘要；`selectedWorkspaceID` 应是 `resolvedWorkspaceID` 的结果。
+  public func summaries(selectedWorkspaceID: String?) -> [RemoteWorkspaceSummary] {
+    workspaces.map { workspace in
+      RemoteWorkspaceSummary(
+        workspaceID: workspace.workspaceID,
+        title: workspace.title,
+        tabCount: workspace.tabs.count,
+        terminalCount: workspace.tabs.reduce(0) { count, tab in
+          count + tab.layout.allPanes.filter { $0.managedTerminal != nil }.count
+        },
+        isSelected: workspace.workspaceID == selectedWorkspaceID,
+        tabTitles: workspace.tabs.map(\.title))
+    }
+  }
+}

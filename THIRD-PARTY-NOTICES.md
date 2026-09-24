@@ -95,3 +95,21 @@ with Otty 1.3.1. Office Code Pro is distributed under the SIL Open Font License 
 license is included at `Resources/fonts/OfficeCodePro-OFL.txt`.
 
 Source: https://github.com/nathco/Office-Code-Pro
+
+## tty7
+
+The native SSH runtime (`SshRuntime/`, shipped as `Aster.app/Contents/MacOS/aster-ssh`) and the
+saved SSH host model are adapted from tty7 (revision 458c923aaa43c3ef581b290d38935993928e0520),
+copyright the tty7 authors, distributed under the Apache License 2.0. Files that adapt tty7 code
+carry a header naming the original path. See `SshRuntime/README.md` for details.
+
+Source: https://github.com/l0ng-ai/tty7
+
+## russh and Rust crates bundled in aster-ssh
+
+`aster-ssh` statically links russh and russh-sftp (Apache License 2.0), tokio, serde and
+serde_json (MIT or Apache License 2.0), and their transitive dependencies. The complete list of
+crates and versions is pinned in `SshRuntime/Cargo.lock`; each crate's license is available in its
+published package on crates.io.
+
+Sources: https://github.com/Eugeny/russh, https://crates.io

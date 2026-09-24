@@ -224,10 +224,9 @@ struct MachineControlCommandsTests {
   /// 只用于验证参数解析与用法错误：这些路径在连接 socket **之前**就返回，
   /// 因此不需要运行中的 App，也不会碰用户真实工作区。
   private func runCLI(_ arguments: [String]) throws -> (Int32, String, String) {
-    let binary = URL(fileURLWithPath: Bundle.main.bundlePath)
-      .deletingLastPathComponent().appendingPathComponent("aster-cli")
-    guard FileManager.default.isExecutableFile(atPath: binary.path) else {
-      throw MachineCLITestSkip.binaryMissing(binary.path)
+    // 与 host/workspace 组共用定位逻辑；找不到产物就抛错让用例失败，不再静默跳过。
+    guard let binary = asterCLIBinary() else {
+      throw MachineCLITestSkip.binaryMissing(Bundle.main.bundlePath)
     }
     let process = Process()
     process.executableURL = binary
@@ -270,7 +269,7 @@ struct MachineControlCommandsTests {
       ["session", "create", "--machine", "orb"],
     ]
     for arguments in cases {
-      guard let result = try? runCLI(arguments) else { return }
+      let result = try runCLI(arguments)
       #expect(result.0 == Self.cliUsageExitCode, "\(arguments) 应返回用法错误")
       #expect(result.2.contains("machine list"), "\(arguments) 的错误里应带用法说明")
     }
@@ -288,7 +287,7 @@ struct MachineControlCommandsTests {
       ["session", "delete", "--machine", "orb", "--name", "work"],
     ]
     for arguments in cases {
-      guard let result = try? runCLI(arguments) else { return }
+      let result = try runCLI(arguments)
       #expect(result.0 != Self.cliUsageExitCode, "\(arguments) 不应是用法错误：\(result.2)")
     }
   }

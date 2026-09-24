@@ -11,14 +11,22 @@ extension WorkspaceViewController {
   /// 当前窗口使用的机器编排。测试替换 `MachineFleetModel.shared` 以隔离配置目录。
   var machineFleet: MachineFleetModel { MachineFleetModel.shared }
 
-  /// 侧栏左下角的机器切换器：显示当前活动机器与状态，点开是机器列表弹出层。
+  /// 侧栏左下角的机器切换器：显示「机器名 · 工作区名」与状态，点开是机器列表弹出层。
   func makeMachineSwitcher() -> NSView {
     let theme = preferences.activeTheme
-    let row = machineFleet.rows.first { $0.id == machineFleet.activeMachineID }
+    var row = machineFleet.rows.first { $0.id == machineFleet.activeMachineID }
+    // 胶囊只认 `row.label` 这一个文字来源；把工作区名拼进去，按钮本身不用改。
+    let workspaceTitle = capsuleWorkspaceTitle()
+    if let workspaceTitle, let machine = row {
+      row?.label = Self.capsuleTitle(machine: machine.label, workspace: workspaceTitle)
+    }
     let button = MachineSwitcherButton(row: row, theme: theme) { [weak self] in
       self?.makeMachineSection() ?? NSView()
     }
-    let host = NSView()
+    let host = MachineSwitcherHostView(
+      renderedWorkspaceTitle: workspaceTitle,
+      currentWorkspaceTitle: { [weak self] in self?.capsuleWorkspaceTitle() },
+      onStale: { [weak self] in self?.scheduleRefresh() })
     host.identifier = NSUserInterfaceItemIdentifier("machine-switcher-host")
     host.addSubview(button)
     let padding = CGFloat(theme.style.resolvedSidebarPadding.leading)
@@ -29,6 +37,25 @@ extension WorkspaceViewController {
       button.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -10),
     ])
     return host
+  }
+
+  /// 胶囊文字「机器名 · 工作区名」。
+  static func capsuleTitle(machine: String, workspace: String) -> String {
+    "\(machine) · \(workspace)"
+  }
+
+  /// 当前窗口正在看的工作区名：本机取本地注册表里这个窗口的工作区，远端取协调器缓存里的选中项。
+  ///
+  /// 远端只读已建出的协调器：只用本机的窗口不能因为画侧栏就构造协调器。
+  func capsuleWorkspaceTitle() -> String? {
+    let machineID = machineFleet.activeMachineID
+    guard machineID == MachineProfile.localProfileID else {
+      return loadedRemoteWorkspaces?.selectedWorkspaceTitle(machineID: machineID)
+    }
+    guard let window = view.window, let directory = WorkspaceSwitcherActions.appDirectory,
+      let id = directory.workspaceID(for: window)
+    else { return nil }
+    return directory.workspace(id)?.name
   }
 
   /// 机器列表（弹出层内容）：组头 + Local 与全部保存的机器行 + 「添加机器」。
@@ -233,16 +260,16 @@ extension WorkspaceViewController {
 
   // MARK: - 动作
 
-  /// 添加机器：面板 → `RemoteMachineSetup` 事务 → 成功才保存配置。
+  /// 添加机器：走共享的 `MachineSetupFlow`（面板 → 设置事务 → 成功才保存配置），
+  /// 成功后在本窗口接着做侧栏刷新与远端 Agent 集成。
   @objc func presentAddMachine() {
-    guard let draft = MachineSetupSheet.promptForNewMachine(in: view.window) else { return }
     let window = view.window
+    let fleet = machineFleet
     Task { @MainActor [weak self] in
-      guard let self else { return }
-      let result = await self.machineFleet.addMachine(
-        label: draft.label, sshTarget: draft.sshTarget, sessionName: draft.sessionName,
-        confirm: { MachineSetupSheet.confirm($0, in: window) })
-      self.present(result, in: window)
+      guard let id = await MachineSetupFlow.presentAddMachine(fleet: fleet, in: window),
+        let profile = fleet.profiles.first(where: { $0.id == id })
+      else { return }
+      self?.present(.added(profile), in: window)
     }
   }
 
@@ -451,4 +478,51 @@ extension WorkspaceViewController {
 
   /// 机器分区的折叠状态键。加下划线前缀，避免与用户目录分组标题碰撞。
   static var machineSectionKey: String { "__machines__" }
+}
+
+/// 机器胶囊的宿主视图：监听本地与远端工作区的变化，工作区名真的变了才请求刷新侧栏。
+///
+/// 本地目录每次窗口获得焦点都会发变化通知，直接刷新会让所有窗口整树重建；这里先比较
+/// 文字，不变就什么也不做。订阅跟着宿主视图走，侧栏重建时旧视图释放，订阅随之取消。
+@MainActor
+final class MachineSwitcherHostView: NSView {
+  private let renderedWorkspaceTitle: String?
+  private let currentWorkspaceTitle: () -> String?
+  private let onStale: () -> Void
+  private var subscriptions: Set<AnyCancellable> = []
+
+  /// `renderedWorkspaceTitle` 是胶囊当前显示的工作区名；`onStale` 在它过期时调用。
+  init(
+    renderedWorkspaceTitle: String?, currentWorkspaceTitle: @escaping () -> String?,
+    onStale: @escaping () -> Void
+  ) {
+    self.renderedWorkspaceTitle = renderedWorkspaceTitle
+    self.currentWorkspaceTitle = currentWorkspaceTitle
+    self.onStale = onStale
+    super.init(frame: .zero)
+    let names = [
+      NamedWorkspaceDirectory.didChangeNotification,
+      RemoteWorkspaceCoordinator.selectedWorkspaceDidChange,
+      RemoteWorkspaceCoordinator.remoteWorkspacesDidChange,
+    ]
+    for name in names {
+      NotificationCenter.default.publisher(for: name)
+        .sink { [weak self] _ in self?.refreshIfStale() }
+        .store(in: &subscriptions)
+    }
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  /// 窗口挂上之后本地工作区名才查得到（映射按窗口记），此时补一次比较。
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    if window != nil { refreshIfStale() }
+  }
+
+  /// 工作区名与已显示的不同才请求刷新。
+  private func refreshIfStale() {
+    guard currentWorkspaceTitle() != renderedWorkspaceTitle else { return }
+    onStale()
+  }
 }

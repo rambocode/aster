@@ -30,6 +30,9 @@ public struct MachineProfile: Codable, Equatable, Sendable, Identifiable {
   /// 设置事务确定的远端私有状态父目录（默认 `<远端 $HOME>/.local/state/aster`）；
   /// 同上，Local 与旧数据为 nil，`ASTER_SESSION_STATE_DIR` 可覆盖。
   public var stateParentPath: String?
+  /// 绑定的已保存 SSH 主机（`SSHHostProfile.id`）。有值时原生引擎按主机配置连接；
+  /// nil（旧数据）时把 `sshTarget` 当作 alias 或 `user@host:port` 解析。
+  public var hostID: UUID?
 
   public init(
     id: UUID = UUID(),
@@ -38,7 +41,8 @@ public struct MachineProfile: Codable, Equatable, Sendable, Identifiable {
     sessionName: String = "default",
     enabled: Bool = true,
     remoteBinaryPath: String? = nil,
-    stateParentPath: String? = nil
+    stateParentPath: String? = nil,
+    hostID: UUID? = nil
   ) {
     self.id = id
     self.label = label
@@ -47,6 +51,7 @@ public struct MachineProfile: Codable, Equatable, Sendable, Identifiable {
     self.enabled = enabled
     self.remoteBinaryPath = remoteBinaryPath
     self.stateParentPath = stateParentPath
+    self.hostID = hostID
   }
 
   /// 本地默认配置。P2 只向专用测试配置开放受管终端，默认终端策略保持不变。

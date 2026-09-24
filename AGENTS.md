@@ -10,10 +10,11 @@ This repository is indexed by CodeGraph through `.codegraph/`. When locating or 
 
 ## Build, Test, and Development Commands
 
-The project requires macOS 14+, Swift 6.2, Zig 0.15.2, and the Xcode Metal Toolchain.
+The project requires macOS 14+, Swift 6.2, Zig 0.15.2, a Rust toolchain (cargo), and the Xcode Metal Toolchain.
 
 - `./scripts/setup-ghostty.sh` builds the pinned Ghostty XCFramework and resources; `build-app.sh` also runs it.
 - `swift build` creates a debug build.
+- `./scripts/build-ssh-runtime.sh .build/debug` builds the native SSH runtime `aster-ssh` (Rust, `SshRuntime/`) next to the debug app; `build-app.sh` runs it for packaging. Its broker protocol is `SshRuntime/PROTOCOL.md`; run `cd SshRuntime && cargo test` after Rust changes.
 - `./scripts/test.sh --no-parallel` runs the full suite safely; PTY lifecycle tests are concurrency-sensitive.
   Use this wrapper instead of bare `swift test`: the xctest host lives outside the `.app` layout, so it needs
   `DYLD_FRAMEWORK_PATH` injected to load the Sparkle framework.

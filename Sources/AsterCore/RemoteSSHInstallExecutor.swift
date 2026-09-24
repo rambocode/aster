@@ -13,14 +13,15 @@ public struct RemoteSSHInstallExecutor: RemoteInstallExecuting {
   /// 上传超时。大产物需要更长的窗口，所以与命令超时分开。
   public var uploadTimeout: TimeInterval
 
+  /// - Parameter runner: 缺省时按传输选择可执行文件（`/usr/bin/ssh` 或 `aster-ssh`）。
   public init(
     transport: RemoteSessionTransport,
-    runner: any RemoteSSHRunning = RemoteSSHProcessRunner(),
+    runner: (any RemoteSSHRunning)? = nil,
     commandTimeout: TimeInterval = 30,
     uploadTimeout: TimeInterval = 300
   ) {
     self.transport = transport
-    self.runner = runner
+    self.runner = runner ?? transport.makeProcessRunner()
     self.commandTimeout = commandTimeout
     self.uploadTimeout = uploadTimeout
   }
@@ -45,7 +46,7 @@ public struct RemoteSSHInstallExecutor: RemoteInstallExecuting {
       "umask 077; cat > \(RemoteSSHInvocation.quote(remotePath))",
     ]
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: RemoteSSHInvocation.executablePath)
+    process.executableURL = URL(fileURLWithPath: transport.executablePath)
     process.arguments = transport.sshArguments(remoteCommand: remoteCommand)
     var environment = ProcessInfo.processInfo.environment
     environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"

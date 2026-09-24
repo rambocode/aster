@@ -3,10 +3,16 @@ import Foundation
 public enum OpenQuicklyKind: String, CaseIterable, Codable, Sendable {
   /// 已打开的工作区窗口。与 `.opened`(标签)同属「已打开」过滤器,排在标签之前。
   case window
+  /// 命名工作区（本地注册表条目与各机器的远端工作区），排在窗口之后。
+  case workspace
   case opened
   case recent
   case folder
   case ssh
+  /// 已添加的受管机器（装有 aster-session），与 `.ssh`、`.host` 同属 SSH 过滤器。
+  case machine
+  /// 已保存的原生 SSH 主机。
+  case host
   case agent
   case current
   /// 当前 Pane 所跑 Agent 会话的近期提示词,只出现在「当前」与「全部」过滤器下。
@@ -18,6 +24,8 @@ public enum OpenQuicklyKind: String, CaseIterable, Codable, Sendable {
 
 public enum OpenQuicklyFilter: String, CaseIterable, Codable, Sendable {
   case all
+  /// 命名工作区切换器（⌥⌘O 直接带着它打开）。
+  case workspace
   case opened
   case recent
   case folder
@@ -35,6 +43,7 @@ public enum OpenQuicklyFilter: String, CaseIterable, Codable, Sendable {
     case .all: true
     case .current: kind == .current || kind == .prompt
     case .opened: kind == .window || kind == .opened
+    case .ssh: kind == .ssh || kind == .machine || kind == .host
     default: rawValue == kind.rawValue
     }
   }
@@ -114,21 +123,24 @@ public struct OpenQuicklyIndex: Sendable {
     return result
   }
 
-  /// 小节顺序的唯一真值:窗口 → 标签页 → 最近标签页 → 最近文件夹 → 当前 → 提示词
-  /// → Recipes → SSH → 智能体 → 文件。文件必须垫底,否则工作目录里的几千个文件会把
+  /// 小节顺序的唯一真值:窗口 → 工作区 → 标签页 → 最近标签页 → 最近文件夹 → 当前 → 提示词
+  /// → Recipes → 机器 → 主机 → SSH → 智能体 → 文件。文件必须垫底,否则工作目录里的几千个文件会把
   /// 其它类型整体挤出 50 条结果上限。
   private static func priority(_ kind: OpenQuicklyKind) -> Int {
     switch kind {
     case .window: 0
-    case .opened: 1
-    case .recent: 2
-    case .folder: 3
-    case .current: 4
-    case .prompt: 5
-    case .recipe: 6
-    case .ssh: 7
-    case .agent: 8
-    case .file: 9
+    case .workspace: 1
+    case .opened: 2
+    case .recent: 3
+    case .folder: 4
+    case .current: 5
+    case .prompt: 6
+    case .recipe: 7
+    case .machine: 8
+    case .host: 9
+    case .ssh: 10
+    case .agent: 11
+    case .file: 12
     }
   }
 

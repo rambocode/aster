@@ -1,6 +1,6 @@
 # 网页设置架构
 
-当前设置界面有十类 WebKit 分类（含编辑器），由 AppKit 根容器和标题栏拖动条承载；原生设置控件保留为开发诊断回退。
+当前设置界面有十一类 WebKit 分类（含编辑器、主机），由 AppKit 根容器和标题栏拖动条承载；原生设置控件保留为开发诊断回退。
 ## 背景
 
 Aster 设置页以 Otty 1.3.1 应用包内的 `settings-ui.html` 为功能与视觉基准，并以应用自有 HTML、CSS 和 JavaScript 实现。外观分类逐段对应原页的布局选择、标签页、窗口、主题详情、文本、四级字体来源、光标和 Dock 图标；主题详情同时覆盖语义 token 与 ANSI 16 色。
@@ -10,7 +10,7 @@ Aster 设置页以 Otty 1.3.1 应用包内的 `settings-ui.html` 为功能与视
 ## 领域边界
 
 - `Resources/settings-ui/index.html`：静态入口与 CSP，只允许同目录脚本、样式和图片，禁止网络连接、对象、表单和外部 base URL。
-- `Resources/settings-ui/settings.js`：十类字段清单、搜索、Otty 外观页专用渲染器、主题/Agent/Recipe/快捷键列表和消息协议。
+- `Resources/settings-ui/settings.js`：十一类字段清单、搜索、Otty 外观页专用渲染器、主题/Agent/Recipe/快捷键列表和消息协议。
 - `Resources/settings-ui/settings.css`：Otty 风格的 200px 侧栏、单列卡片、外观预览、明暗外观、键盘焦点和响应式布局。
 - `SettingsViewController`：创建非持久化 `WKWebView`，只允许 `settings-ui` 目录内的 file URL 导航；接收消息、校验字段和执行 allowlist action。
 - `AppPreferences`：强类型 `AsterConfiguration` 是运行时真值；尚未进入运行时模型的跨平台字段由 `SettingsCompatibilityValue` 按 Bool、Number 或 String 原类型持久化。
@@ -55,7 +55,7 @@ flowchart LR
 
 ## 验证
 
-`SettingsResponsivenessTests` 与 `AppKitMigrationTests` 覆盖窗口几何、原生标题栏拖动边界、设置打开期间 Tab/Pane 与标签栏布局实时刷新、单一非持久化 WebView、CSP/十类资源、Otty 外观页结构与范围控件真值、主题详情快照、Windows capability、强类型与复合字段写入、动态 Agent 字段、菜单快捷键、兼容字段持久化和活动工作区 Panel 宽度。软件更新一组另有专门回归：`settingsBridgeRoutesUpdateSettingsToUpdaterAndPreferences`（真值归属）、`settingsSnapshotExposesUpdateStatusAndCapability`（状态点与取反派生键）、`settingsUpdateActionTriggersCheck`（action allowlist 与重入）、`settingsUpdateSectionMatchesBridge`（网页清单与 Swift 桥、CSS 状态色一致）。发布前还需运行：
+`SettingsResponsivenessTests` 与 `AppKitMigrationTests` 覆盖窗口几何、原生标题栏拖动边界、设置打开期间 Tab/Pane 与标签栏布局实时刷新、单一非持久化 WebView、CSP/十一类资源、Otty 外观页结构与范围控件真值、主题详情快照、Windows capability、强类型与复合字段写入、动态 Agent 字段、菜单快捷键、兼容字段持久化和活动工作区 Panel 宽度。软件更新一组另有专门回归：`settingsBridgeRoutesUpdateSettingsToUpdaterAndPreferences`（真值归属）、`settingsSnapshotExposesUpdateStatusAndCapability`（状态点与取反派生键）、`settingsUpdateActionTriggersCheck`（action allowlist 与重入）、`settingsUpdateSectionMatchesBridge`（网页清单与 Swift 桥、CSS 状态色一致）。发布前还需运行：
 
 ```bash
 node --check Resources/settings-ui/settings.js
@@ -75,3 +75,13 @@ scripts/build-app.sh
 - 网页窗格：`WebPaneDataStorePolicy` 决定 `WKWebsiteDataStore`（持久 / 进程内共享的非持久），`clearAllBrowsingData()` 清两者；动作 `clearWebPaneData` 经 toast 回报真实结果。
 - 详情面板：`DetailsPanelViewController` 按 `resolvedDetailsPanelEntries` 生成 chip，`synchronizeSectionsIfNeeded()` 在偏好变化后重建；自定义视图由 `DetailsPanelCustomViewController` 承载——TUI 走 `GhosttySurfaceView.command`（libghostty surface `command` 字段，`wait_after_command`），网页走独立 WKWebView（移动版 = 自定义 UA）。选中态用 `inspectorSection` + `inspectorCustomSection` 两个键持久化。
 - 网页键：`view.rulesArrangement`、`view.badgePlacement`、`view.randomTabTitleColors`、`view.webPanePersistData`、`view.tabRules`（对象数组整体回写）、`view.detailsPanelSections`、`view.detailsPanelCustomViews`、`view.detailsPanelOrder`（`builtin:<id>` / `custom:<uuid>`，快照含隐藏项）。角标三个开关沿用 `shell.badge*` 键，只是从 Shell 分类移到了视图分类。
+
+## 「主机」分类
+
+「主机」排在「智能体」之后，使用 `special:"hosts"` 渲染器（`Resources/settings-ui/hosts.js`，表单在 `hosts-form.js`）。Swift 侧是协作者 `SettingsHostsBridge`（`SettingsHostsBridge.swift` 与 `+Actions.swift`），`SettingsView` 只负责接线，没有放宽任何 private 成员。
+
+- 快照键 `hosts`：`defaults`、`hosts[{profile, connect, hasPassword, machines, jumpDependents, credentialSharedWith, jumpName}]`、`groups`、`builtin`、`importedGroup`、`sshConfigPath`、`loadError`。主机对象的键与 `SSHHostProfile` 的 Codable 键一致。
+- 动作白名单：`hosts.` 前缀，包括 `save`、`duplicate`、`delete`、`forgetPassword`、`addMachine`、`import`、`editSSHConfig`。成功后先推快照再发回执；`hosts.json` 或机器引用在外部变化时另行刷新。
+- 导入：调用 `aster-ssh config list --json`，合并规则是纯函数 `SSHConfigImport.merge`，只更新 `~/.ssh/config` 导入组，保留用户改过的认证方式、代理和主机密钥校验。汇总通过 `hostsImportReport` 消息展示，其中包括 ignored 列表。
+- 「高级 → SSH → SSH 引擎」（`shell.sshEngine`）走普通 set 管线。**重启后生效**。
+- 验证：`SettingsHostsBridgeTests`、`SettingsHostsBridgeActionTests`、`SettingsHostsPageTests`（真实 WKWebView）、`SSHConfigImportTests`。

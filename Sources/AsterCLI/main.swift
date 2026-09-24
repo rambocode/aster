@@ -16,16 +16,48 @@ signal(SIGPIPE, SIG_IGN)
 let environment = ProcessInfo.processInfo.environment
 let rawArguments = Array(CommandLine.arguments.dropFirst())
 
-// 机器与命名会话命令在旧解析器之前拦截：它们的作用域是客户端配置与某台机器上的
-// 注册表，与 agent/pane/events 的「当前工作区」作用域不同，参数规则也不一样。
-if MachineCommands.matches(rawArguments) {
+/// 摘出全局 `--socket <path>` / `--socket=<path>`（与旧解析器的全局选项同义），其余参数原样保留。
+/// 分组命令（machine/host/workspace）按首个参数匹配，不先摘掉它，`aster --socket X host list`
+/// 就会落到旧解析器报「未知命令」。
+func extractSocketOption(_ arguments: [String]) -> (rest: [String], socket: String?) {
+  var rest: [String] = []
+  var socket: String?
+  var index = arguments.startIndex
+  while index < arguments.endIndex {
+    let argument = arguments[index]
+    if argument == "--socket", arguments.index(after: index) < arguments.endIndex {
+      socket = arguments[arguments.index(after: index)]
+      index = arguments.index(index, offsetBy: 2)
+      continue
+    }
+    if argument.hasPrefix("--socket=") {
+      socket = String(argument.dropFirst("--socket=".count))
+    } else {
+      rest.append(argument)
+    }
+    index = arguments.index(after: index)
+  }
+  return (rest, socket)
+}
+
+let (groupArguments, explicitSocket) = extractSocketOption(rawArguments)
+
+// 机器、命名会话、主机与命名工作区命令在旧解析器之前拦截：它们的作用域是客户端配置、
+// 某台机器上的注册表或工作区注册表，与 agent/pane/events 的「当前工作区」作用域不同，
+// 参数规则也不一样。
+let routedParser: (([String]) throws -> MachineCommands.Invocation)? =
+  if MachineCommands.matches(groupArguments) { MachineCommands.parse }
+  else if HostCommands.matches(groupArguments) { HostCommands.parse }
+  else if WorkspaceCommands.matches(groupArguments) { WorkspaceCommands.parse }
+  else { nil }
+if let routedParser {
   do {
     // 先摘掉输出格式开关，再交给本模块的解析器；否则 `--format json` 的取值会被
     // 当成位置参数。摘取按「标志 + 取值」成对进行，不做全局字符串过滤。
-    let (commandArguments, wantsJSON) = MachineCommands.extractOutputFormat(rawArguments)
-    let invocation = try MachineCommands.parse(commandArguments)
+    let (commandArguments, wantsJSON) = MachineCommands.extractOutputFormat(groupArguments)
+    let invocation = try routedParser(commandArguments)
     let client = ControlClient(
-      socketPath: try ControlClient.resolveSocketPath(explicit: nil, environment: environment),
+      socketPath: try ControlClient.resolveSocketPath(explicit: explicitSocket, environment: environment),
       environment: environment)
     let result = try client.call(invocation.method, params: invocation.params)
     printLine(wantsJSON ? try prettyJSON(result) : try invocation.render(result))

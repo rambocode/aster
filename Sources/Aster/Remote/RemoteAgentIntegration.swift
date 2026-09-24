@@ -43,14 +43,15 @@ struct RemoteAgentIntegrationInstaller: Sendable {
   /// 本机 bundle 内的 hook 脚本；上传到远端后由远端 Agent 执行。
   let localHookScriptURL: URL
 
+  /// `runner` 缺省时按传输选择可执行文件（`/usr/bin/ssh` 或 `aster-ssh`）。
   init(
     transport: RemoteSessionTransport,
     localHookScriptURL: URL,
-    runner: any RemoteSSHRunning = RemoteSSHProcessRunner()
+    runner: (any RemoteSSHRunning)? = nil
   ) {
     self.transport = transport
     self.localHookScriptURL = localHookScriptURL
-    self.runner = runner
+    self.runner = runner ?? transport.makeProcessRunner()
   }
 
   /// hook 脚本在远端的固定位置（私有安装目录下，与服务二进制并列）。

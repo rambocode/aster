@@ -41,12 +41,20 @@ final class ManagedTerminalCoordinator {
   /// 远端 SSH target 的环境变量；设置后受管终端走 SSH 传输而不是本机传输。
   static let remoteTargetEnvironmentKey = "ASTER_REMOTE_SSH_TARGET"
 
+  /// - Parameters:
+  ///   - hostID: 远端机器绑定的已保存主机；原生引擎下用它连接，OpenSSH 下不参与。
+  ///   - routing: 引擎路由；有原生端点时远端传输走 aster-ssh。
   init(
     client: (any ManagedSessionClient)? = nil,
     environment: [String: String] = ProcessInfo.processInfo.environment,
-    machineProfileID: UUID = MachineProfile.localProfileID
+    machineProfileID: UUID = MachineProfile.localProfileID,
+    hostID: UUID? = nil,
+    routing: SSHEngineRouting = .shared
   ) {
-    self.client = client ?? Self.makeClient(environment: environment)
+    self.client =
+      client
+      ?? Self.makeClient(
+        environment: environment, hostID: hostID, native: routing.nativeEndpoint)
     self.environment = environment
     self.machineProfileID = machineProfileID
   }
@@ -56,11 +64,20 @@ final class ManagedTerminalCoordinator {
   /// target 解析失败时**不回退到本机传输**：那会让用户以为连上了远端，实际在本机
   /// 建进程。这里保留本机客户端只是为了让协调器仍能构造，真正的拒绝发生在
   /// `remoteTransport` 为 nil 时——此时 `endpoint` 也不会被使用。
-  private static func makeClient(environment: [String: String]) -> any ManagedSessionClient {
+  ///
+  /// 原生端点非 nil 时走 aster-ssh，不创建私有 OpenSSH 配置。
+  private static func makeClient(
+    environment: [String: String], hostID: UUID?, native: NativeSSHEndpoint?
+  ) -> any ManagedSessionClient {
     guard let raw = environment[remoteTargetEnvironmentKey], !raw.isEmpty,
       let target = try? RemoteSSHTarget.parse(raw)
     else { return LocalManagedSessionClient() }
     let policy = RemoteSSHPolicy.fromEnvironment(environment)
+    if let native {
+      return RemoteManagedSessionClient(
+        transport: RemoteSessionTransport(
+          target: target, policy: policy, native: native, hostID: hostID))
+    }
     // 私有临时配置只在 manage_ssh_config 开启时创建；关闭时直接用用户 OpenSSH 配置。
     let managed =
       policy.manageSSHConfig
@@ -80,8 +97,8 @@ final class ManagedTerminalCoordinator {
 
   /// 远端受管模式的 SSH 传输参数；本机模式返回 nil。
   ///
-  /// 详情面板的旁路查询用它生成 argv，从而复用受管终端已经建立的 ControlMaster
-  /// 连接，不需要用户再认证一次。返回的是值类型副本，调用方不能借它改传输状态。
+  /// 详情面板的旁路查询用它生成 argv，从而复用受管终端已经建立的连接（OpenSSH 的
+  /// ControlMaster 或 aster-ssh broker），不需要用户再认证一次。返回的是值类型副本，调用方不能借它改传输状态。
   var remoteTransport: RemoteSessionTransport? {
     (client as? RemoteManagedSessionClient)?.transport
   }
@@ -378,7 +395,7 @@ final class ManagedTerminalCoordinator {
     guard let endpoint else { return nil }
     let arguments = client.bridgeArguments(
       endpoint, terminalID: reference.terminalID, readOnly: readOnly)
-    // 桥的可执行文件由传输实现决定：本机是 aster-session 本身，SSH 是 /usr/bin/ssh。
+    // 桥的可执行文件由传输实现决定：本机是 aster-session 本身，SSH 是 /usr/bin/ssh 或 aster-ssh。
     return GhosttyConfiguration.launchCommand(
       shell: client.bridgeExecutablePath(endpoint), arguments: arguments)
   }

@@ -74,7 +74,7 @@ func settingsUsesOneEphemeralWebView() throws {
   #expect(controller.view.subviews.last is SettingsTitlebarDragStrip)
   #expect(!webView.configuration.websiteDataStore.isPersistent)
   #expect(webView.identifier?.rawValue == "settings-web-view")
-  #expect(controller.sections.count == 10)
+  #expect(controller.sections.count == 11)
 }
 
 @MainActor
@@ -87,7 +87,7 @@ private func evaluateString(_ script: String, in webView: WKWebView) async throw
   }
 }
 
-@Test("本地设置文档通过 CSP 加载并渲染十类导航")
+@Test("本地设置文档通过 CSP 加载并渲染十一类导航")
 @MainActor
 func settingsDocumentLoadsAndRendersNavigation() async throws {
   let defaults = isolatedSettingsDefaults()
@@ -102,12 +102,12 @@ func settingsDocumentLoadsAndRendersNavigation() async throws {
       in: webView
     )) {
       count = value
-      if count == 9 { break }
+      if count == 11 { break }
     }
     try await Task.sleep(for: .milliseconds(20))
   }
 
-  #expect(count == 10)
+  #expect(count == 11)
   #expect(try await evaluateString("document.querySelector('.page-title')?.textContent ?? ''", in: webView) == "通用")
   #expect(Int(try await evaluateString("String(document.querySelectorAll('.setting-row').length)", in: webView)) ?? 0 > 10)
 
@@ -148,7 +148,7 @@ func settingsWebAssetsAreBundledAndSelfContained() throws {
   #expect(html.contains("default-src 'none'"))
   #expect(html.contains("connect-src 'none'"))
   #expect(!html.contains("http://") && !html.contains("https://"))
-  for section in ["general", "shell", "controls", "editor", "agents", "appearance", "recipes", "shortcuts", "advanced"] {
+  for section in ["general", "shell", "controls", "editor", "agents", "hosts", "view", "appearance", "recipes", "shortcuts", "advanced"] {
     #expect(script.contains("id: \"\(section)\""))
   }
   let controlGroupTitles = ["自动补全", "选择", "滚动", "打开方式", "链接协议", "键盘", "鼠标", "安全输入", "剪贴板"]
