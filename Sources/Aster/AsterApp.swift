@@ -348,7 +348,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     // 原生 SSH 必须在工作区（机器连接、受管终端）之前就绪：先监听主机目录，再按设置拉起
     // aster-ssh broker；找不到二进制时回退 OpenSSH。引擎只在启动时决定。
     SSHHostDirectory.shared.startWatching()
-    // 认证与主机密钥请求交给钥匙串协调者；没接上时 broker 的请求一律被取消。
+    // 认证与主机密钥请求交给钥匙串协调者，且必须在拉起 broker 之前接上：
+    // ready 之后的第一条 auth.request 可能立刻到达，没接上时请求一律被取消。
     SSHBrokerSupervisor.shared.authCoordinator = SSHAuthCoordinator.shared
     SSHBrokerSupervisor.shared.start(preferredEngine: preferences.configuration.shell.resolvedSSHEngine)
     configureWorkspaceModel(model)
