@@ -2028,3 +2028,14 @@ index 1d1bfe2..02b5a06 100644
 +    });
 +}
 +
+diff --git a/src/termio/stream_handler.zig b/src/termio/stream_handler.zig
+index fb3a6b3..0d6697c 100644
+--- a/src/termio/stream_handler.zig
++++ b/src/termio/stream_handler.zig
+@@ -950,0 +951,6 @@ pub const StreamHandler = struct {
++        // Aster: Screen.reset() puts the cursor back to the hard-coded block.
++        // RIS means "back to defaults", so reapply the configured cursor-style
++        // and blink, as a new surface would. Managed session replay starts
++        // every snapshot with RIS, which otherwise leaves restored panes with
++        // a block cursor.
++        try self.setCursorStyle(.default);

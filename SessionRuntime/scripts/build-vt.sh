@@ -4,6 +4,14 @@ set -euo pipefail
 runtime_dir="$(cd "$(dirname "$0")/.." && pwd)"
 source_dir="$runtime_dir/.build/ghostty"
 revision=4dcb09ada0c0909717d92547623b26eafa50ca8a
+patch_files=("$runtime_dir/patches/0001-formatter-cursor-order.patch" "$runtime_dir/patches/0002-screen-export.patch" "$runtime_dir/patches/0003-history-budget.patch" "$runtime_dir/patches/0004-history-pages.patch" "$runtime_dir/patches/0005-history-page-release.patch" "$runtime_dir/patches/0006-graphics-metadata-budget.patch" "$runtime_dir/patches/0007-cursor-shape-replay.patch" "$runtime_dir/patches/0008-formatter-blank-style.patch")
+# 产物键 = revision + 补丁集摘要。调用方比对产物目录里的 .aster-vt-key 决定是否重建，
+# 否则新增补丁后会一直复用旧的 libghostty-vt，补丁静默不生效。
+artifact_key="$revision:$(/usr/bin/shasum -a 256 "${patch_files[@]}" | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
+if [[ "${1:-}" == "--key" ]]; then
+  echo "$artifact_key"
+  exit 0
+fi
 target="${1:-native}"
 case "$target" in
   native) output="$runtime_dir/.build/vt-host" ;;
@@ -26,7 +34,6 @@ fi
 # Verify the complete sequential patch result in an isolated Git index. This
 # also permits upgrading an exactly matching earlier prefix of our patch set;
 # unrelated local changes are never reset or overwritten.
-patch_files=("$runtime_dir/patches/0001-formatter-cursor-order.patch" "$runtime_dir/patches/0002-screen-export.patch" "$runtime_dir/patches/0003-history-budget.patch" "$runtime_dir/patches/0004-history-pages.patch" "$runtime_dir/patches/0005-history-page-release.patch" "$runtime_dir/patches/0006-graphics-metadata-budget.patch" "$runtime_dir/patches/0007-cursor-shape-replay.patch")
 if [[ -z "$(git -C "$source_dir" status --porcelain --untracked-files=no)" ]]; then
   git -C "$source_dir" -c advice.detachedHead=false checkout -q "$revision"
 fi
@@ -61,3 +68,4 @@ zig_path_prefix="$(aster_zig_sdk_path_prefix "$shim_dir")"
 cd "$source_dir"
 PATH="$zig_path_prefix$PATH" zig build -Demit-lib-vt=true -Demit-xcframework=false -Doptimize=ReleaseFast \
   -Dtarget="$target" --prefix "$output"
+echo "$artifact_key" > "$output/.aster-vt-key"

@@ -151,6 +151,7 @@ VT 使用 Ghostty revision `4dcb09ada0c0909717d92547623b26eafa50ca8a`。构建�
 - `patches/0005-history-page-release.patch`：lib侧释放已淘汰页面，避免每终端保留历史page arena峰值；reset保留active缓冲。
 - `patches/0006-graphics-metadata-budget.patch`：headless库每屏限制4096张图像和8192个placement；数量满后拒绝新增、允许替换，替换和逐出时释放tracked pin。像素配额与元数据数量分别限制。
 - `patches/0007-cursor-shape-replay.patch`：headless VT 按屏记录程序最后一次 DECSCUSR 请求，光标回放末尾原样补发；从未请求过的屏不发，客户端沿用自己的默认光标样式。修复恢复的 Pane 光标退回方块、要到下一次提示符才变回竖线。
+- `patches/0008-formatter-blank-style.patch`：格式化器补写行内空白格前先关闭上一格的样式。修复恢复的 Pane 里带背景色的色块后面紧跟空白时，空白被涂成同一底色（Claude Code 标志右侧的黑块）。
 - PNG 使用同 revision 的 `src/stb/stb_image.h`，仅编译内存 PNG 解码。输入与解码像素各限 16 MiB，活跃工作分配含头部限 64 MiB。
 - 分发运行时二进制时携带 `THIRD_PARTY_NOTICES.md`。
 

@@ -42,9 +42,10 @@ for target in "${targets[@]}"; do
     *) echo "error: unsupported target $target" >&2; exit 2 ;;
   esac
 
-  # libghostty-vt 只跟锁定的 ghostty revision 与补丁集有关，构建一次可长期复用；
-  # 已有产物时跳过，ASTER_REMOTE_SERVICE_REBUILD_VT=1 强制重建。
-  if [[ "${ASTER_REMOTE_SERVICE_REBUILD_VT:-0}" == "1" || ! -f "$vt_prefix/lib/libghostty-vt.a" ]]; then
+  # libghostty-vt 只跟锁定的 ghostty revision 与补丁集有关，产物键（.aster-vt-key）不变时复用；
+  # 补丁集变化自动重建，ASTER_REMOTE_SERVICE_REBUILD_VT=1 强制重建。
+  if [[ "${ASTER_REMOTE_SERVICE_REBUILD_VT:-0}" == "1" || ! -f "$vt_prefix/lib/libghostty-vt.a" ||
+        "$(cat "$vt_prefix/.aster-vt-key" 2>/dev/null)" != "$("$RUNTIME_DIR/scripts/build-vt.sh" --key)" ]]; then
     echo "== $target: building libghostty-vt"
     (cd "$RUNTIME_DIR" && PATH="$(dirname "$ZIG"):$PATH" scripts/build-vt.sh "$target")
   else
