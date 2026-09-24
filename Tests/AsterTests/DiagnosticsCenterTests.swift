@@ -79,7 +79,10 @@ func terminalTerminationWritesPrivacySafeDiagnostics() async throws {
   defer { session.stop(immediately: true) }
   _ = session.makeTerminalView(preferences: preferences)
   session.send("exit 7")
-  for _ in 0..<100 where session.statusIsRunning {
+  // 等到会话真正结束（最多 5 秒）。不能写成 `for … where statusIsRunning`：Shell 还没进入
+  // 运行状态时条件为假，循环一次都不等就空转结束，负载高时用例随机失败。
+  for _ in 0..<250 {
+    if case .ended = session.lifecycleState { break }
     try await Task.sleep(for: .milliseconds(20))
   }
 
