@@ -79,8 +79,8 @@ func hostControlListReportsLoadError() async throws {
 ///
 /// `scripts/test.sh` 的宿主是 `.build/aster-appkit-test-host`，产物在它旁边的 `debug/` 里；
 /// 直接跑 xctest 时产物与测试 bundle 同目录。只看 `Bundle.main` 的父目录会找不到产物，
-/// 让 CLI 用例全部静默跳过，所以几处都找，找不到就让用例失败。
-private func asterCLIBinary() -> URL? {
+/// 让 CLI 用例全部静默跳过，所以几处都找，找不到就让用例失败。machine 组的 CLI 用例也用它。
+func asterCLIBinary() -> URL? {
   let host = Bundle.main.executableURL.map { [$0.deletingLastPathComponent()] } ?? []
   let roots = host + Bundle.allBundles.filter { $0.bundlePath.hasSuffix(".xctest") }
     .map { URL(fileURLWithPath: $0.bundlePath).deletingLastPathComponent() }
