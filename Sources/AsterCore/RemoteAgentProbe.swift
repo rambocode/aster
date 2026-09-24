@@ -144,7 +144,7 @@ public enum RemoteAgentProbe {
   public static func probe(transport: RemoteSessionTransport) async throws
     -> RemoteAgentProbeResult
   {
-    let runner = RemoteSSHProcessRunner()
+    let runner = transport.makeProcessRunner()
     let result = try runner.run(
       arguments: transport.sshArguments(remoteCommand: probeCommand()),
       timeout: 30

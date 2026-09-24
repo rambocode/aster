@@ -68,9 +68,35 @@ public struct RemoteSSHResult: Equatable, Sendable {
 public enum RemoteSSHDiagnostics {
   /// 由 stderr 与退出码判定失败类型。
   ///
+  /// 原生引擎（aster-ssh）传输失败时退出码 255，并在 stderr 最后一行写结构化错误，
+  /// 这时直接用它的 kind；否则（OpenSSH，或结构化行缺失/损坏）退回文本分类。
+  public static func classify(standardError: String, exitStatus: Int32) -> RemoteSSHFailureKind {
+    if let structured = structuredError(standardError: standardError, exitStatus: exitStatus) {
+      return structured.kind
+    }
+    return classifyText(standardError: standardError, exitStatus: exitStatus)
+  }
+
+  /// 原生引擎的结构化错误行。
+  ///
+  /// 只认「退出码 255 且 stderr 最后一个非空行就是结构化行」：协议规定它只出现在传输层
+  /// 失败的最后一行。远端命令自己往 stderr 打出同样前缀时，要么退出码不是 255，要么后面
+  /// 还有别的输出，都不会被误当成传输层结论；OpenSSH 路径因此保持原来的文本分类。
+  public static func structuredError(standardError: String, exitStatus: Int32) -> NativeSSHErrorLine? {
+    guard exitStatus == 255,
+      let last = standardError.split(whereSeparator: \.isNewline).last(where: {
+        !$0.trimmingCharacters(in: .whitespaces).isEmpty
+      }),
+      last.hasPrefix(NativeSSHErrorLine.prefix)
+    else { return nil }
+    return NativeSSHErrorLine.parse(standardError: String(last))
+  }
+
+  /// OpenSSH stderr 的文本分类。
+  ///
   /// 顺序有意义：主机密钥问题必须优先于泛化的“认证失败”，否则
   /// `Host key verification failed` 会被 permission-denied 分支吞掉。
-  public static func classify(standardError: String, exitStatus: Int32) -> RemoteSSHFailureKind {
+  public static func classifyText(standardError: String, exitStatus: Int32) -> RemoteSSHFailureKind {
     let text = standardError.lowercased()
     if text.contains("host key verification failed") || text.contains("no matching host key") {
       return .hostKeyUnknown
@@ -112,7 +138,15 @@ public enum RemoteSSHDiagnostics {
   ]
 
   /// 生成脱敏诊断文本：只保留白名单标记本身，不保留原始行。
+  ///
+  /// 原生引擎的结构化错误行自带已脱敏的 `detail`，优先用它；为防远端伪造同样前缀的行
+  /// 把任意文本带进日志，这里再去掉控制字符并截断到 200 个字符。
   public static func redact(_ standardError: String) -> String {
+    if let structured = structuredError(standardError: standardError, exitStatus: 255) {
+      let cleaned = String(
+        structured.detail.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) })
+      return String(cleaned.prefix(200))
+    }
     let lowered = standardError.lowercased()
     let hits = safeMarkers.filter { lowered.contains($0) }
     if hits.isEmpty { return "" }
@@ -279,23 +313,31 @@ public enum RemoteSSHConfigurationManager {
   }
 }
 
-/// SSH 进程执行接口。测试用替身注入，生产用真实 `/usr/bin/ssh`。
+/// SSH 进程执行接口。测试用替身注入，生产用真实 `/usr/bin/ssh` 或 `aster-ssh client`。
 public protocol RemoteSSHRunning: Sendable {
   /// 执行一次 `ssh`，返回退出码与两路输出。超时按 `timeout` 失败。
   func run(arguments: [String], timeout: TimeInterval) throws -> RemoteSSHResult
 }
 
-/// 真实 SSH 执行器：直接 exec `/usr/bin/ssh`，argv 由调用方给出，不经过 Shell。
+/// 真实 SSH 执行器：直接 exec 可执行文件，argv 由调用方给出，不经过 Shell。
+///
+/// 可执行文件默认是 `/usr/bin/ssh`；原生引擎下由 `RemoteSessionTransport.makeProcessRunner()`
+/// 换成 `aster-ssh`，argv 形状由同一个传输生成，两者必须配套。
 public struct RemoteSSHProcessRunner: RemoteSSHRunning {
-  public init() {}
+  /// 被执行的二进制绝对路径。不从 PATH 搜索，避免被环境劫持。
+  public var executablePath: String
+
+  public init(executablePath: String = RemoteSSHInvocation.executablePath) {
+    self.executablePath = executablePath
+  }
 
   public func run(arguments: [String], timeout: TimeInterval) throws -> RemoteSSHResult {
-    guard FileManager.default.isExecutableFile(atPath: RemoteSSHInvocation.executablePath) else {
+    guard FileManager.default.isExecutableFile(atPath: executablePath) else {
       throw RemoteSSHError(
-        kind: .transportFailure, target: "", detail: "缺少 \(RemoteSSHInvocation.executablePath)")
+        kind: .transportFailure, target: "", detail: "缺少 \(executablePath)")
     }
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: RemoteSSHInvocation.executablePath)
+    process.executableURL = URL(fileURLWithPath: executablePath)
     process.arguments = arguments
     // 固定工具搜索路径与 locale，保证 stderr 关键字稳定可分类；保留 HOME/SSH_AUTH_SOCK
     // 以便使用用户的 known_hosts、密钥和 ssh-agent。

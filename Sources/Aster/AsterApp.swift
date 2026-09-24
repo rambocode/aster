@@ -334,6 +334,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
           "startup.shell_integration_disabled", level: .warning, category: .integration, error: error)
       }
     }
+    // 原生 SSH 必须在工作区（机器连接、受管终端）之前就绪：先监听主机目录，再按设置拉起
+    // aster-ssh broker；找不到二进制时回退 OpenSSH。引擎只在启动时决定。
+    SSHHostDirectory.shared.startWatching()
+    SSHBrokerSupervisor.shared.start(preferredEngine: preferences.configuration.shell.resolvedSSHEngine)
     configureWorkspaceModel(model)
     model.beginApplicationSession(launchBehavior: preferences.configuration.launchBehavior)
     DiagnosticsCenter.shared.record("application.launched", level: .notice, category: .lifecycle)
@@ -398,6 +402,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     // 结束掉，否则每退出一次就留下一条孤儿连接。它只是一条只读控制连接，结束它不会
     // 结束远端任何终端进程，也不影响 A08 的保活语义。
     stopRemoteEventSubscriptionsInAllWorkspaceWindows()
+    // broker 读到 shutdown / stdin EOF 即断开全部原生 SSH 连接并退出。
+    SSHBrokerSupervisor.shared.shutdown()
     quickTerminalController.shutdown()
     tearDownUsageMonitor()
     themeSwitcherPanelController?.dismiss(commit: false)
