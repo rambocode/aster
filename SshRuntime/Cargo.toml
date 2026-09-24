@@ -22,6 +22,12 @@ glob = "0.3"
 libc = "0.2"
 anyhow = "1"
 thiserror = "2"
+# 以下四个都已经是 russh 的传递依赖，不引入新代码：
+# known_hosts 的 hashed 条目（HMAC-SHA1 + base64）与秘密内存清零。
+hmac = "0.13"
+sha1 = "0.11"
+data-encoding = "2"
+zeroize = "1"
 
 [dev-dependencies]
 tempfile = "3"

@@ -77,17 +77,21 @@ name = "aster-ssh"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "data-encoding",
  "glob",
  "hex",
+ "hmac",
  "libc",
  "russh",
  "russh-sftp",
  "serde",
  "serde_json",
+ "sha1",
  "sha2 0.10.9",
  "tempfile",
  "thiserror",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]
