@@ -12,6 +12,13 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RUNTIME_DIR="$PROJECT_DIR/SshRuntime"
 BUILD_DIR="${ASTER_BUILD_PATH:-$PROJECT_DIR/.build}"
 OUT_DIR="${1:-$BUILD_DIR/release}"
+# PATH 上常见的是 Homebrew 的 cargo，它只带本机架构的标准库；装了 rustup 时改用 rustup
+# 工具链（连同对应的 rustc），它才有 `rustup target add` 装好的其它架构。
+if [[ -z "${CARGO:-}" ]] && command -v rustup >/dev/null 2>&1 && rustup which cargo >/dev/null 2>&1; then
+  CARGO="$(rustup which cargo)"
+  RUSTC="$(rustup which rustc)"
+  export RUSTC
+fi
 CARGO="${CARGO:-$(command -v cargo || true)}"
 if [[ -z "$CARGO" ]]; then
   echo "error: cargo is required to build aster-ssh (brew install rust 或 rustup)" >&2
