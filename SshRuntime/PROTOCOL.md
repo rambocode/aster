@@ -103,7 +103,8 @@ broker 的 stderr 只写脱敏日志。未知 `type` 必须忽略（向前兼容
 // 全量替换已保存主机的解析后规格（已合并「默认」项、已展开跳板链）。
 {"type":"profiles.sync","profiles":{"UUID":{ /* ResolvedSpec */ }}}
 
-// secret 为 null 表示用户取消；keyboardInteractive 用 responses（与 prompts 一一对应）。
+// password / passphrase：secret 为 null 表示取消。
+// keyboardInteractive：secret 恒为 null，按 responses 判断——数组（可为空）是回答，null 是取消。
 {"type":"auth.answer","id":"a1","secret":"…"|null,"responses":["…"]|null}
 
 // accept=true：unknown 追加到 ~/.ssh/known_hosts；changed 替换旧行。

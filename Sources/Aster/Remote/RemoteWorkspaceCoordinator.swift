@@ -41,8 +41,11 @@ final class RemoteMachineWorkspace {
   let controller: RemoteWorkspaceController
   /// 远端 tabID → 本地标签实例。刷新时据此复用实例，避免整树重建 Ghostty surface。
   var tabsByRemoteID: [String: TerminalTabItem] = [:]
-  /// 最近一次投影里第一个工作区的 ID；新建标签事务需要它。
-  var workspaceID: String?
+  /// 本客户端选中的远端工作区 ID（命名工作区）。只有它的标签交给标签栏显示；
+  /// 新建标签、Agent 标签与回退 cwd 都落在它上面。选中项消失时退回第一个工作区。
+  var selectedWorkspaceID: String?
+  /// 最近一次通知出去的工作区摘要；只有变化时才再通知切换器与侧栏。
+  var lastSummaries: [RemoteWorkspaceSummary] = []
   /// 该机器最近一次刷新的错误；界面显示明确原因而不是空标签栏。
   var lastError: String?
   /// 空会话的首个工作区是否已经请求过。失败后不自动重试，避免「刷新 → 建 → 失败 → 刷新」循环。
@@ -51,9 +54,19 @@ final class RemoteMachineWorkspace {
   /// 恢复失败、或服务端已恢复过却仍失效时不再自旋，窗格保持明确的错误卡等待用户重试。
   var restoreAttemptedForStale: Set<String> = []
 
-  init(machineProfileID: UUID, controller: RemoteWorkspaceController) {
+  init(
+    machineProfileID: UUID, controller: RemoteWorkspaceController, selectedWorkspaceID: String? = nil
+  ) {
     self.machineProfileID = machineProfileID
     self.controller = controller
+    self.selectedWorkspaceID = selectedWorkspaceID
+  }
+
+  /// 缓存投影里当前实际选中的工作区（选中项已消失时是第一个）；尚无快照或没有工作区时为 nil。
+  var selectedRemoteWorkspace: ProjectedRemoteWorkspace? {
+    guard let projection = controller.projection else { return nil }
+    return projection.workspace(
+      withID: projection.resolvedWorkspaceID(preferred: selectedWorkspaceID))
   }
 }
 
@@ -72,10 +85,21 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
   /// 会直接崩溃（实测 "Attempted to read an unowned reference but object was already
   /// destroyed"）。模型不在了就说明这个窗口的界面已经没有了，依赖模型的动作应当安静
   /// 放弃，而不是让 App 崩掉。
-  private weak var model: AppModel?
+  /// 读权限对 `+Named` 扩展开放（跨文件扩展看不到 private），写仍只在本文件。
+  private(set) weak var model: AppModel?
   /// 本客户端 ID。焦点属于客户端：切换机器不改变其它客户端的焦点，重连也不抢焦点。
   private let clientID: String
-  private var workspaces: [UUID: RemoteMachineWorkspace] = [:]
+  /// 机器 → 投影状态。读权限对 `+Named` 扩展开放，写仍只在本文件。
+  private(set) var workspaces: [UUID: RemoteMachineWorkspace] = [:]
+  /// 远端选中工作区的按机器持久化；测试注入独立 UserDefaults suite。
+  let selectionStore: RemoteWorkspaceSelectionStore
+  /// 把窗口切到某台机器的侧栏入口（校验机器存在且已启用，并同步侧栏高亮）。
+  ///
+  /// 默认走共享的 `MachineFleetModel`，与侧栏「选机器」同一条校验；返回失败原因或 nil。
+  /// 测试替换成无副作用实现。
+  var machineSelector: @MainActor (UUID) -> String? = { id in
+    MachineFleetModel.shared.selectMachine(id)
+  }
   /// 每台机器一条事件订阅（P4.2 事件流）。
   ///
   /// 刻意与画面订阅分开保存：切走机器只取消画面订阅，事件订阅必须继续跑，否则
@@ -91,7 +115,7 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
   /// 事务收尾、连接结束回调。这些任务如果在窗口已经拆掉之后才执行，就会去动早已释放的
   /// Ghostty 画面——实测下一次主线程跑事件循环时会崩在 CoreAnimation 提交里
   /// （`os_unfair_lock is corrupt`）。所以收尾之后一律让它们变成空操作。
-  private var isStopped = false
+  private(set) var isStopped = false
 
   /// 「重新启动 Shell」对受管失败窗格的转发观察者（见 `retryStalePanes`）。
   /// `nonisolated(unsafe)`：只在 init 写入、deinit 读取，两处都不会与主线程并发。
@@ -99,9 +123,13 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
   /// 结束卡「关闭标签」的转发观察者：受管 Pane 的关闭是服务端事务。
   nonisolated(unsafe) private var managedCloseObserver: (any NSObjectProtocol)?
 
-  init(model: AppModel, clientID: String = RemoteClientIdentity.clientID()) {
+  init(
+    model: AppModel, clientID: String = RemoteClientIdentity.clientID(),
+    selectionStore: RemoteWorkspaceSelectionStore = RemoteWorkspaceSelectionStore()
+  ) {
     self.model = model
     self.clientID = clientID
+    self.selectionStore = selectionStore
     // 受管终端失败的窗格点「重新启动 Shell」时，重启本地 surface 只会再次渲染同一错误；
     // 真正能救回它的是重新对账 + 冷恢复，这件事只有协调器能做。
     managedRetryObserver = NotificationCenter.default.addObserver(
@@ -371,14 +399,22 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
   private func session(forTerminalID terminalID: String, machineProfileID: UUID)
     -> TerminalSession?
   {
-    guard let model else { return nil }
-    for tab in model.tabs(forMachine: machineProfileID) {
+    for tab in allTabs(forMachine: machineProfileID) {
       for pane in tab.layout.allPanes
       where pane.managedTerminal?.terminalID == terminalID {
         return tab.runtime(for: pane.id)?.terminalSession
       }
     }
     return nil
+  }
+
+  /// 某台机器持有的全部远端标签实例，包括未选中工作区里不在标签栏上的标签。
+  ///
+  /// Agent 状态、断线 stale 与画面订阅都按终端身份找会话：隐藏工作区的终端仍在远端运行，
+  /// 只查标签栏会漏掉它们。尚未建立投影状态时退回模型里的标签。
+  private func allTabs(forMachine machineProfileID: UUID) -> [TerminalTabItem] {
+    if let workspace = workspaces[machineProfileID] { return Array(workspace.tabsByRemoteID.values) }
+    return model?.tabs(forMachine: machineProfileID) ?? []
   }
 
   /// 远端 Agent 通知使用的默认 Shell 配置。远端 Agent 事件不与本地 Pane 的偏好绑定——
@@ -429,9 +465,8 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
   /// 机器断线时标记其所有 Agent 为 stale（不伪造完成）。
   private func staleAgentsForMachine(_ machineProfileID: UUID) {
     agentAggregator.staleAllForMachine(machineID: machineProfileID)
-    // 清除该机器所有 session 的远端权威标记
-    guard let model else { return }
-    for tab in model.tabs(forMachine: machineProfileID) {
+    // 清除该机器所有 session 的远端权威标记（含隐藏工作区）
+    for tab in allTabs(forMachine: machineProfileID) {
       for pane in tab.layout.allPanes where pane.managedTerminal != nil {
         tab.runtime(for: pane.id)?.terminalSession?.clearRemoteAgentState()
       }
@@ -536,17 +571,21 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
 
   // MARK: - 投影渲染
 
-  /// 把投影结果对齐成标签集合。
+  /// 把投影结果对齐成标签集合，只把**选中工作区**的标签交给标签栏。
   ///
   /// 复用既有 `TerminalTabItem` 实例（按远端 tabID 匹配）而不是重建：重建会连同 Ghostty
   /// surface 一起换掉，等于每来一次快照就把用户的终端画面清空一次。
-  private func apply(projection: ProjectedRemoteSession, to workspace: RemoteMachineWorkspace) {
-    workspace.workspaceID = projection.workspaces.first?.workspaceID
-    var aligned: [TerminalTabItem] = []
+  /// 未选中工作区的标签实例同样留在 `tabsByRemoteID` 里，只是不显示：它们的终端按
+  /// 「分离」语义取消画面订阅，远端进程照常运行，切回时复用同一实例重新附加。
+  /// 对 `+Named` 扩展开放：选中缓存里已有的工作区时直接重新渲染，不必再取快照。
+  func apply(projection: ProjectedRemoteSession, to workspace: RemoteMachineWorkspace) {
+    let selectedID = reconcileSelection(with: projection, for: workspace)
+    var shown: [TerminalTabItem] = []
     var byRemoteID: [String: TerminalTabItem] = [:]
     var visibleTerminals: Set<String> = []
 
     for remoteWorkspace in projection.workspaces {
+      let isSelected = remoteWorkspace.workspaceID == selectedID
       for tab in remoteWorkspace.tabs {
         // 来源客户端的本地资源关联在这里被复原；其它客户端 `localAssociations` 为空，
         // 因此渲染出来的结构里不会出现来源客户端的 resourcePath（P4.2a）。
@@ -560,8 +599,9 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
             title: tab.title, workingDirectory: remoteWorkspace.cwd, layout: layout)
           item.remoteTabID = tab.tabID
         }
-        aligned.append(item)
         byRemoteID[tab.tabID] = item
+        guard isSelected else { continue }
+        shown.append(item)
         for pane in layout.allPanes {
           if let terminalID = pane.managedTerminal?.terminalID { visibleTerminals.insert(terminalID) }
         }
@@ -574,12 +614,23 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
     }
     workspace.tabsByRemoteID = byRemoteID
     guard let model else { return }
-    model.setTabs(aligned, forMachine: workspace.machineProfileID)
 
-    // 只有当前活动机器才是「可见」的；后台机器保持零画面订阅，仍接收结构与 Agent 事件。
+    // 只有当前活动机器的选中工作区才是「可见」的；后台机器与未选中工作区保持零画面订阅，
+    // 仍接收结构与 Agent 事件。
     let visible = workspace.machineProfileID == model.activeMachineID ? visibleTerminals : []
-    apply(intents: workspace.controller.setVisibleTerminals(visible), to: workspace)
+    let intents = workspace.controller.setVisibleTerminals(visible)
+    // 与切机器同序：先真实取消被隐藏终端的画面订阅，再换标签集合，最后附加新可见的终端。
+    // 会话按 `tabsByRemoteID` 查找，因此换掉标签栏之后仍能找到被隐藏的终端。
+    let (hidden, shownIntents) = intents.reduce(
+      into: ([SurfaceInterestIntent](), [SurfaceInterestIntent]())
+    ) { result, intent in
+      if case .unsubscribe = intent { result.0.append(intent) } else { result.1.append(intent) }
+    }
+    apply(intents: hidden, to: workspace)
+    model.setTabs(shown, forMachine: workspace.machineProfileID)
+    apply(intents: shownIntents, to: workspace)
     applyInputGates(for: workspace)
+    publishChanges(projection, for: workspace)
   }
 
   // MARK: - P4.6 画面兴趣与交互闸门
@@ -615,10 +666,9 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
     }
   }
 
-  /// 该机器全部 Pane 关闸。用于「刚切回、快照尚未到达」。
+  /// 该机器全部 Pane 关闸（含隐藏工作区）。用于「刚切回、快照尚未到达」。
   private func closeInputGates(forMachine machineProfileID: UUID) {
-    guard let model else { return }
-    for tab in model.tabs(forMachine: machineProfileID) {
+    for tab in allTabs(forMachine: machineProfileID) {
       for pane in tab.layout.allPanes where pane.managedTerminal != nil {
         tab.runtime(for: pane.id)?.terminalSession?.setManagedInputGate(open: false)
       }
@@ -634,11 +684,11 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
     closeInputGates(forMachine: machineProfileID)
   }
 
+  /// 按终端身份在该机器全部标签实例里找会话（含隐藏工作区，分离时要找到它们）。
   private func session(forTerminal terminalID: String, in workspace: RemoteMachineWorkspace)
     -> TerminalSession?
   {
-    guard let model else { return nil }
-    for tab in model.tabs(forMachine: workspace.machineProfileID) {
+    for tab in workspace.tabsByRemoteID.values {
       for pane in tab.layout.allPanes
       where pane.managedTerminal?.terminalID == terminalID {
         return tab.runtime(for: pane.id)?.terminalSession
@@ -654,7 +704,7 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
     // 服务端还没有任何工作区（全新会话、或工作区已被全部关闭）时，「新建标签」就是
     // 新建第一个工作区：`tab create` 必须挂在已有 workspace 上，否则只能静默失败，
     // 用户看到的就是"点了没反应"。
-    guard let workspaceID = workspace.workspaceID else {
+    guard let workspaceID = workspace.selectedRemoteWorkspace?.workspaceID else {
       let spec = initialTerminalSpec(workingDirectory: workingDirectory, in: workspace)
       submit(workspace) { controller in
         _ = try await controller.createWorkspace(title: spec.title, terminal: spec.terminal)
@@ -674,13 +724,13 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
   /// Agent 状态随后由远端 hook / 服务端检测上报，与本机启动的 Agent 走同一条通道。
   func createAgentTab(provider: AgentProvider, workingDirectory: String?) {
     guard let model, let workspace = workspaces[model.activeMachineID] else { return }
-    let cwd = workingDirectory ?? workspace.controller.projection?.workspaces.first?.cwd
+    let cwd = workingDirectory ?? workspace.selectedRemoteWorkspace?.cwd
     let spec = RemoteTerminalSpec(
       cwd: cwd ?? ManagedTerminalLaunchSpec.remoteRootDirectory,
       argv: ManagedTerminalLaunchSpec.remoteAgentArgv(
         command: provider.commandName, landsInHome: cwd == nil))
     let title = provider.displayName
-    guard let workspaceID = workspace.workspaceID else {
+    guard let workspaceID = workspace.selectedRemoteWorkspace?.workspaceID else {
       submit(workspace) { controller in
         _ = try await controller.createWorkspace(title: title, terminal: spec)
       }
@@ -708,12 +758,12 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
     workspace.initialWorkspaceRequested = false
   }
 
-  /// 首个工作区的终端规格。没有任何服务端 cwd 可用时把落脚点交给远端 Shell 自己
+  /// 首个工作区的终端规格（选中工作区的 cwd 优先）。没有任何服务端 cwd 可用时把落脚点交给远端 Shell 自己
   /// `cd "$HOME"`（cwd 先用 POSIX 保证存在的 `/`），标题按 `~` 显示而不是 `/`。
   private func initialTerminalSpec(workingDirectory: String?, in workspace: RemoteMachineWorkspace)
     -> (title: String, terminal: RemoteTerminalSpec)
   {
-    if let cwd = workingDirectory ?? workspace.controller.projection?.workspaces.first?.cwd {
+    if let cwd = workingDirectory ?? workspace.selectedRemoteWorkspace?.cwd {
       return (TerminalTabItem.displayName(forDirectory: cwd), terminalSpec(cwd: cwd))
     }
     return (
@@ -802,9 +852,9 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
     return nil
   }
 
-  /// 新建标签时的回退目录：取最近一次投影里工作区自身的 cwd，仍然是服务端数据。
+  /// 新建标签时的回退目录：取最近一次投影里选中工作区自身的 cwd，仍然是服务端数据。
   private func remoteFallbackDirectory(_ workspace: RemoteMachineWorkspace) -> String {
-    workspace.controller.projection?.workspaces.first?.cwd ?? "/"
+    workspace.selectedRemoteWorkspace?.cwd ?? "/"
   }
 
   // MARK: - 构造
@@ -816,7 +866,8 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
   ///
   /// 握手走 `connectAsync()`：远端握手是一次 SSH 往返，在 MainActor 上同步等待会让
   /// 整个界面随网络延迟卡住。
-  private func ensureWorkspace(machineProfileID: UUID) async -> RemoteMachineWorkspace? {
+  /// 对 `+Named` 扩展开放：新建 / 改名 / 关闭工作区可能发生在从未切到过的机器上。
+  func ensureWorkspace(machineProfileID: UUID) async -> RemoteMachineWorkspace? {
     if let existing = workspaces[machineProfileID] { return existing }
     guard !isStopped else { return nil }
     let coordinator = ManagedTerminalCoordinatorRegistry.coordinator(forMachine: machineProfileID)
@@ -826,8 +877,9 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
     else { return nil }
     let controller = RemoteWorkspaceController(
       clientID: clientID, server: identity.reference, transactions: transactions)
-    let workspace = RemoteMachineWorkspace(
-      machineProfileID: machineProfileID, controller: controller)
+    // 握手可能跨越 await：期间另一条路径已建好投影状态时沿用它，不重复订阅。
+    if let existing = workspaces[machineProfileID] { return existing }
+    let workspace = makeMachineWorkspace(machineProfileID: machineProfileID, controller: controller)
     workspaces[machineProfileID] = workspace
     // 机器在线即订阅：这条流独立于画面订阅，切走机器时不会被取消。
     startEventSubscription(
@@ -851,8 +903,17 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
 
   /// 测试注入入口：直接登记一台机器的投影控制器，不走真实握手。
   func register(controller: RemoteWorkspaceController, forMachine machineProfileID: UUID) {
-    workspaces[machineProfileID] = RemoteMachineWorkspace(
+    workspaces[machineProfileID] = makeMachineWorkspace(
       machineProfileID: machineProfileID, controller: controller)
+  }
+
+  /// 建一台机器的投影状态，并读回该机器上次选中的工作区（切回机器 / 重启 App 后恢复）。
+  private func makeMachineWorkspace(
+    machineProfileID: UUID, controller: RemoteWorkspaceController
+  ) -> RemoteMachineWorkspace {
+    RemoteMachineWorkspace(
+      machineProfileID: machineProfileID, controller: controller,
+      selectedWorkspaceID: selectionStore.selectedWorkspaceID(forMachine: machineProfileID))
   }
 
   /// 某台机器当前的投影控制器；验收用例据此断言 revision 与结构。

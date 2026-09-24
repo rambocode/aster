@@ -24,16 +24,27 @@ enum MachineSetupFlow {
   }
 
   /// 弹出添加面板并执行设置事务。取消或失败返回 nil；成功返回新机器 ID。
+  ///
+  /// 预填值只决定面板初始内容，用户仍可修改；选中已保存主机时机器绑定该主机
+  /// （配置写入 `hostID`，target 取主机连接串）。失败在这里统一提示，调用方只处理成功。
   @discardableResult
   static func presentAddMachine(
     prefill: Prefill = Prefill(),
     fleet: MachineFleetModel = .shared,
     in window: NSWindow?
   ) async -> UUID? {
-    guard let draft = MachineSetupSheet.promptForNewMachine(in: window) else { return nil }
+    guard let draft = MachineSetupSheet.promptForNewMachine(prefill: prefill, in: window) else {
+      return nil
+    }
     let result = await fleet.addMachine(
       label: draft.label, sshTarget: draft.sshTarget, sessionName: draft.sessionName,
+      hostID: draft.hostID,
       confirm: { MachineSetupSheet.confirm($0, in: window) })
+    return handle(result, in: window)
+  }
+
+  /// 把添加结果转成机器 ID；失败弹出说明，取消静默。
+  static func handle(_ result: MachineSetupResult, in window: NSWindow?) -> UUID? {
     switch result {
     case .added(let profile), .updated(let profile): return profile.id
     case .failed(let message):

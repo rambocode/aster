@@ -6,7 +6,8 @@ import Foundation
 /// 两个来源共用同一套调用面：
 /// - 场景 A（本地 Pane 手敲 `ssh host`）：`SSHControlPathInvocation` 借用前台连接已建立的
 ///   ControlMaster socket，因此不需要再次认证。
-/// - 场景 B（远程工作模式受管终端）：直接复用 `RemoteSessionTransport` 的私有配置。
+/// - 场景 B（远程工作模式受管终端）：直接复用 `RemoteSessionTransport`（OpenSSH 私有配置
+///   或 aster-ssh broker）。
 ///
 /// 安全边界：远端路径与文件名是不可信输入，只经 `RemoteSSHInvocation.quote` 或 `$1`
 /// 位置参数进入远端 Shell，从不参与本地命令行拼接，也从不当作本地路径使用。
@@ -246,19 +247,22 @@ public struct RemoteSideChannel: Sendable {
     )
   }
 
-  /// 场景 B：远程工作模式受管终端，直接复用已有私有配置与 ControlMaster。
+  /// 场景 B：远程工作模式受管终端，走受管终端同一个传输。
+  ///
+  /// OpenSSH 下复用已有私有配置与 ControlMaster；原生引擎下复用 broker 的共享连接。
+  /// 执行器缺省时按传输选择可执行文件，argv 与可执行文件因此始终配套。
   public static func managed(
     transport: RemoteSessionTransport,
     profileKey: String,
     label: String,
-    runner: any RemoteSSHRunning = RemoteSSHProcessRunner(),
-    streamRunner: any RemoteSSHStreaming = RemoteSSHStreamRunner()
+    runner: (any RemoteSSHRunning)? = nil,
+    streamRunner: (any RemoteSSHStreaming)? = nil
   ) -> RemoteSideChannel {
     RemoteSideChannel(
       identity: RemoteSideChannelIdentity(key: "managed:" + profileKey, label: label),
       sshArguments: { transport.sshArguments(remoteCommand: $0, multiplexed: true) },
-      runner: runner,
-      streamRunner: streamRunner
+      runner: runner ?? transport.makeProcessRunner(),
+      streamRunner: streamRunner ?? transport.makeStreamRunner()
     )
   }
 

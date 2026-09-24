@@ -67,14 +67,15 @@ public struct RemoteSSHSetupExecutor: RemoteSetupExecuting {
   public var runner: any RemoteSSHRunning
   public var endpointTemplate: ManagedSessionEndpoint
 
+  /// - Parameter runner: 缺省时按传输选择可执行文件（`/usr/bin/ssh` 或 `aster-ssh`）。
   public init(
     transport: RemoteSessionTransport,
     endpointTemplate: ManagedSessionEndpoint,
-    runner: any RemoteSSHRunning = RemoteSSHProcessRunner()
+    runner: (any RemoteSSHRunning)? = nil
   ) {
     self.transport = transport
     self.endpointTemplate = endpointTemplate
-    self.runner = runner
+    self.runner = runner ?? transport.makeProcessRunner()
   }
 
   public func verifyAuthentication() throws {
@@ -169,11 +170,13 @@ public struct RemoteMachineSetup: Sendable {
   ///   - label: 机器显示名。
   ///   - sessionName: 该配置绑定的命名会话。
   ///   - profileID: 复用已有配置 ID 时传入，新增时留空。
+  ///   - hostID: 机器绑定的已保存主机；写进产出的配置，旧调用方不传即不绑定。
   public func run(
     rawTarget: String,
     label: String,
     sessionName: String,
-    profileID: UUID = UUID()
+    profileID: UUID = UUID(),
+    hostID: UUID? = nil
   ) throws -> RemoteSetupOutcome {
     // 1. target 前置校验：非法输入在**建立连接之前**就被拒绝。
     let target: RemoteSSHTarget
@@ -288,7 +291,8 @@ public struct RemoteMachineSetup: Sendable {
       sessionName: sessionName,
       enabled: true,
       remoteBinaryPath: candidate.path,
-      stateParentPath: stateParentPath
+      stateParentPath: stateParentPath,
+      hostID: hostID
     )
     return .ready(profile: profile, identity: identity, report: report)
   }

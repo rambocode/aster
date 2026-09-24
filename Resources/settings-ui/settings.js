@@ -25,6 +25,8 @@
     editor: "<path d='M4 2.5h5l3 3v8H4z'/><path d='M9 2.5v3h3M6 8h4M6 10.5h4'/>",
     // 插头线条图标（lucide plug 风格，对齐 Otty 的「智能体」侧栏图标）。
     agents: "<path d='M6 1.8v3M10 1.8v3M4.6 4.8h6.8v3.4a3.4 3.4 0 0 1-3.4 3.4 3.4 3.4 0 0 1-3.4-3.4zM8 11.6v2.6'/>",
+    // 服务器机架线条图标：两层机箱加指示灯。
+    hosts: "<rect x='2.5' y='2.5' width='11' height='4.5' rx='1.2'/><rect x='2.5' y='9' width='11' height='4.5' rx='1.2'/><path d='M5 4.75h.01M5 11.25h.01M8 4.75h3M8 11.25h3'/>",
     appearance: "<path d='M8 2.2a5.8 5.8 0 1 0 0 11.6c1 0 1.6-.5 1.6-1.2 0-.5-.3-.8-.3-1.2 0-.7.6-1.2 1.3-1.2h1.1c1.3 0 2.1-1 2.1-2.2A5.8 5.8 0 0 0 8 2.2z'/><circle cx='5.2' cy='6' r='.5'/><circle cx='8' cy='4.7' r='.5'/><circle cx='10.8' cy='6.1' r='.5'/>",
     view: "<rect x='2.5' y='2.5' width='4.5' height='4.5' rx='1'/><rect x='9' y='2.5' width='4.5' height='4.5' rx='1'/><rect x='2.5' y='9' width='4.5' height='4.5' rx='1'/><rect x='9' y='9' width='4.5' height='4.5' rx='1'/>",
     recipes: "<path d='M8 4.2c-1.2-1-2.8-1.4-5-1.2v9.4c2.2-.2 3.8.2 5 1.2 1.2-1 2.8-1.4 5-1.2V3c-2.2-.2-3.8.2-5 1.2zM8 4.2v9.4'/>",
@@ -64,6 +66,7 @@
     windowsText: [["natural", t("自然")], ["naturalSymmetric", t("自然对称")], ["gdi", t("GDI 经典")], ["clearType", "ClearType"], ["aliased", t("无抗锯齿")]],
     recordingMode: [["off", t("关闭")], ["on", t("记录中")], ["incognito", t("隐身")]],
     updateChannel: [["stable", t("稳定版")], ["preview", t("预览版")]],
+    sshEngine: [["native", t("原生（aster-ssh）")], ["openssh", "OpenSSH"]],
     memoryExtractionProvider: [["claudeCode", "Claude Code"], ["codex", "Codex"], ["openCode", "OpenCode"], ["cursorCLI", "Cursor Agent"], ["kimiCode", "Kimi Code"], ["pi", "Pi"], ["omp", "OMP"]],
   };
 
@@ -307,6 +310,7 @@
         action("previewExtractionPayload", t("查看将发送的内容"), t("预览提炼时会离开本机的会话摘要"), t("查看…")),
       ]},
     ]},
+    { id: "hosts", title: t("主机"), description: t("保存 SSH 主机、跳板、端口转发与认证方式，供远程机器和原生 SSH 使用。"), special: "hosts", groups: [] },
     { id: "view", title: t("视图"), description: t("标签页标题与图标规则、角标、网页窗格和详情面板。"), special: "view", groups: [
       { title: t("标签页与标题定制"), rows: [
         row("view.tabRules.alias", t("项目别名"), t("项目的简称，也可以在标题模板中用 ${alias} 引用。"), "rules", { field: "alias" }),
@@ -407,6 +411,9 @@
         row("advanced.configPath", t("路径"), t("Aster 可编辑配置文件"), "readonly"),
         action("openConfig", t("打开配置文件"), t("在默认编辑器中打开"), t("打开")),
         action("reloadConfig", t("重新加载配置"), t("校验成功后原子替换当前设置"), t("重新加载")),
+      ]},
+      { title: "SSH", rows: [
+        row("shell.sshEngine", t("SSH 引擎"), t("远程机器与原生 SSH 使用的连接方式；出现问题时可切回 OpenSSH。手动输入的 ssh 命令不受影响"), "select", { options: options.sshEngine }),
       ]},
       { title: t("终端兼容性"), rows: [
         row("advanced.autoProgressCommands", t("自动进度命令"), t("逗号分隔；按命令 token 前缀识别长任务，留空即关闭"), "text"),
@@ -3012,6 +3019,7 @@
     if (section.special === "recipes") page.appendChild(makeRecipesGroup());
     if (section.special === "shortcuts") page.appendChild(makeShortcutsGroup());
     if (section.special === "view") page.appendChild(makeViewPage(section));
+    if (section.special === "hosts") page.appendChild(window.AsterHosts.render(hostsContext()));
     if (section.special !== "appearance" && section.special !== "view") {
       for (const group of section.groups) page.appendChild(makeGroup(group));
     }
@@ -3022,6 +3030,11 @@
     content.replaceChildren(page);
     // 切到别的分区 / 搜索结果后锚点不存在，取色弹层随之收起。
     if (themeTokenPopover.element && !content.querySelector("[data-token-anchor]")) closeThemeTokenPopover();
+  }
+
+  /// 「主机」页（hosts.js）用到的快照与工具；对话框与提交通道沿用本页实现。
+  function hostsContext() {
+    return { t, data: snapshot.hosts, send, mutate, showToast, makeDialog };
   }
 
   function render() {
@@ -3048,6 +3061,8 @@
         reply?.(message.succeeded === true);
       } else if (message.type === "selectSection") {
         setSection(message.section);
+      } else if (message.type === "hostsImportReport") {
+        window.AsterHosts.showImportReport(message.report, hostsContext());
       } else if (message.type === "toast") {
         showToast(message.message, message.level === "error");
       }

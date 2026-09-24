@@ -17,6 +17,8 @@ cd "$PROJECT_DIR"
 swift build --scratch-path "$BUILD_DIR" -c release
 # 本机后台会话服务是 zig 产物，SwiftPM 不会生成；不构建它，打包版的 Local 受管模式整个不可用。
 "$PROJECT_DIR/scripts/build-session-runtime.sh" "$BUILD_DIR/release" >/dev/null
+# 原生 SSH 运行时是 Rust 产物，同样不由 SwiftPM 生成；缺了它远程机器只能走 OpenSSH 回退。
+"$PROJECT_DIR/scripts/build-ssh-runtime.sh" "$BUILD_DIR/release" >/dev/null
 
 # 每次从空 bundle 开始，避免删掉源码后旧资源仍残留在交付包。目标路径由项目目录
 # 和固定相对路径组成。拒绝符号链接形式的 dist，避免固定文本路径实际跳转到项目外。
@@ -50,6 +52,9 @@ cp "$BUILD_DIR/release/aster-cli" "$CONTENTS_DIR/MacOS/aster-cli"
 # ManagedTerminalCoordinator 自动从 Contents/MacOS/ 解析路径。缺了就是打包错误，不能静默跳过。
 [[ -f "$BUILD_DIR/release/aster-session" ]] || { echo "aster-session missing: $BUILD_DIR/release/aster-session" >&2; exit 1; }
 cp "$BUILD_DIR/release/aster-session" "$CONTENTS_DIR/MacOS/aster-session"
+# 原生 SSH 引擎：SSHBrokerSupervisor 从 Contents/MacOS/ 解析。缺了就是打包错误，不能静默跳过。
+[[ -f "$BUILD_DIR/release/aster-ssh" ]] || { echo "aster-ssh missing: $BUILD_DIR/release/aster-ssh" >&2; exit 1; }
+cp "$BUILD_DIR/release/aster-ssh" "$CONTENTS_DIR/MacOS/aster-ssh"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 # 开发版（版本号带 -dev）再接上 git 短哈希，工作区有改动加 `+`：装上之后一眼知道这个
 # 包是哪个提交打的。只改产物里的 Info.plist，仓库那份始终只写 -dev；发版时仓库版本号
@@ -298,6 +303,7 @@ fi
 "${SIGN[@]}" "$CONTENTS_DIR/MacOS/aster-memory-mcp"
 "${SIGN[@]}" "$CONTENTS_DIR/MacOS/aster-cli"
 "${SIGN[@]}" "$CONTENTS_DIR/MacOS/aster-session"
+"${SIGN[@]}" "$CONTENTS_DIR/MacOS/aster-ssh"
 
 # 最后签外层 App：Frameworks/ 与 MacOS/ 下已签好的嵌套代码在这一步被密封进 CodeResources。
 "${SIGN[@]}" "$APP_DIR"
@@ -307,6 +313,7 @@ fi
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 # 签名后的 aster-session 必须还能执行（hardened runtime 下静态 zig 二进制无额外 entitlement 需求）。
 "$CONTENTS_DIR/MacOS/aster-session" --version
+"$CONTENTS_DIR/MacOS/aster-ssh" --version
 
 # rpath 写错或 framework 没拷进来只会在运行时崩，静态检查看不出来；这里显式断言，
 # 与下面的 --verify-packaged-resources 一起构成更新器的链接冒烟测试。
