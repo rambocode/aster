@@ -151,23 +151,28 @@ public struct PaneDescriptor: Identifiable, Codable, Equatable, Sendable {
   /// `paneID` 跨布局恢复稳定，但不能证明原进程仍活着，所以这里只保存引用，
   /// 真实状态在重开 App 时向服务端查询。
   public var managedTerminal: ManagedTerminalReference?
+  /// 原生 SSH Pane 的连接目标；nil 表示普通本地 Shell。启动命令是 `aster-ssh client`，
+  /// 重启恢复时按它重新连接（broker 端点在启动时现取）。
+  public var nativeSSH: NativeSSHPaneSpec?
 
   public init(
     id: UUID = UUID(),
     kind: PaneKind,
     workingDirectory: String,
     resourcePath: String? = nil,
-    managedTerminal: ManagedTerminalReference? = nil
+    managedTerminal: ManagedTerminalReference? = nil,
+    nativeSSH: NativeSSHPaneSpec? = nil
   ) {
     self.id = id
     self.kind = kind
     self.workingDirectory = workingDirectory
     self.resourcePath = resourcePath
     self.managedTerminal = managedTerminal
+    self.nativeSSH = nativeSSH
   }
 
   private enum CodingKeys: String, CodingKey {
-    case id, kind, workingDirectory, resourcePath, managedTerminal
+    case id, kind, workingDirectory, resourcePath, managedTerminal, nativeSSH
   }
 
   /// 旧工作区没有远端字段。显式使用 `decodeIfPresent` 保证缺失字段解码成本地模式，
@@ -181,9 +186,12 @@ public struct PaneDescriptor: Identifiable, Codable, Equatable, Sendable {
     managedTerminal =
       (try? values.decodeIfPresent(ManagedTerminalReference.self, forKey: .managedTerminal))
       ?? nil
+    // 与受管引用同一策略：损坏的规格退回普通本地 Pane，不让整份布局解码失败。
+    nativeSSH =
+      (try? values.decodeIfPresent(NativeSSHPaneSpec.self, forKey: .nativeSSH)) ?? nil
   }
 
-  /// 本地模式不写出 `managedTerminal` 键，保证旧版本客户端仍能读回同一份布局。
+  /// 本地模式不写出 `managedTerminal` / `nativeSSH` 键，保证旧版本客户端仍能读回同一份布局。
   public func encode(to encoder: any Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(id, forKey: .id)
@@ -191,6 +199,7 @@ public struct PaneDescriptor: Identifiable, Codable, Equatable, Sendable {
     try container.encode(workingDirectory, forKey: .workingDirectory)
     try container.encodeIfPresent(resourcePath, forKey: .resourcePath)
     try container.encodeIfPresent(managedTerminal, forKey: .managedTerminal)
+    try container.encodeIfPresent(nativeSSH, forKey: .nativeSSH)
   }
 }
 
