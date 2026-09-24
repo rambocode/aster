@@ -68,7 +68,8 @@ enum ManagedTerminalCoordinatorRegistry {
     environment[ManagedTerminalCoordinator.stateDirectoryEnvironmentKey] = runtime.stateParentPath
     environment[ManagedTerminalCoordinator.sessionNameEnvironmentKey] = profile.sessionName
     environment[ManagedTerminalCoordinator.remoteTargetEnvironmentKey] = target
+    // hostID 不走环境变量：它只在原生引擎下决定 `--host-id`，由协调器按当前路由取用。
     return ManagedTerminalCoordinator(
-      environment: environment, machineProfileID: machineProfileID)
+      environment: environment, machineProfileID: machineProfileID, hostID: profile.hostID)
   }
 }

@@ -13,14 +13,28 @@ enum MachineSetupSheet {
     var label: String
     var sshTarget: String
     var sessionName: String
+    /// 选中的已保存主机；手动输入 target 时为 nil。
+    var hostID: UUID? = nil
   }
 
   /// 展示添加机器面板。取消返回 nil，此时**不做任何网络动作、不保存配置**。
-  static func promptForNewMachine(in window: NSWindow?) -> Draft? {
+  ///
+  /// - Parameters:
+  ///   - prefill: 预填的标签、target、主机与会话名；主机不存在时退回手动输入。
+  ///   - savedHosts: 「已保存主机」下拉的来源（不含默认项）。
+  ///   - hostTarget: 主机 → 机器保存的 target 文本；解析失败的主机显示但不可选。
+  static func promptForNewMachine(
+    prefill: MachineSetupFlow.Prefill = MachineSetupFlow.Prefill(),
+    savedHosts: [SSHHostProfile] = SSHHostDirectory.shared.savedHosts,
+    hostTarget: (UUID) throws -> String = {
+      try MachineFleetModel.openSSHTarget(forHost: $0, in: SSHHostDirectory.shared.hosts)
+    },
+    in window: NSWindow?
+  ) -> Draft? {
     let alert = NSAlert()
     alert.messageText = L("添加机器")
     alert.informativeText =
-      L("输入 SSH target（支持 alias、user@host、ssh://user@host:port 和 root@ubuntu@orb）")
+      L("选择一台已保存主机，或输入 SSH target（支持 alias、user@host、ssh://user@host:port 和 root@ubuntu@orb）")
       + L("，并指定要绑定的命名会话。一个配置只绑定一个会话。")
     alert.addButton(withTitle: L("连接并保存"))
     alert.addButton(withTitle: L("取消"))
@@ -29,13 +43,21 @@ enum MachineSetupSheet {
     form.orientation = .vertical
     form.alignment = .leading
     form.spacing = 6
-    form.frame = NSRect(x: 0, y: 0, width: 360, height: 108)
+    form.frame = NSRect(x: 0, y: 0, width: 360, height: 140)
 
     let labelField = makeField(placeholder: L("标签，例如 orb-ubuntu"), identifier: "machine-label-field")
     let targetField = makeField(
       placeholder: L("SSH target，例如 root@ubuntu@orb"), identifier: "machine-target-field")
     let sessionField = makeField(placeholder: L("命名会话"), identifier: "machine-session-field")
-    sessionField.stringValue = "default"
+    labelField.stringValue = prefill.label ?? ""
+    targetField.stringValue = prefill.sshTarget ?? ""
+    sessionField.stringValue = prefill.sessionName ?? "default"
+    // 下拉要在字段填好预填值之后创建：它会记住手动 target，并在预选主机时接管 target 字段。
+    let picker = MachineHostPicker(
+      choices: MachineHostPicker.choices(for: savedHosts, hostTarget: hostTarget),
+      targetField: targetField, labelField: labelField, selectedHostID: prefill.hostID)
+    picker.popup.widthAnchor.constraint(equalToConstant: 360).isActive = true
+    form.addArrangedSubview(picker.popup)
     for field in [labelField, targetField, sessionField] {
       field.widthAnchor.constraint(equalToConstant: 360).isActive = true
       form.addArrangedSubview(field)
@@ -43,12 +65,14 @@ enum MachineSetupSheet {
     alert.accessoryView = form
     alert.window.initialFirstResponder = labelField
 
-    let response = run(alert, in: window)
+    // 下拉的 target 是弱引用；面板模态期间必须保证联动对象活着。
+    let response = withExtendedLifetime(picker) { run(alert, in: window) }
     guard response == .alertFirstButtonReturn else { return nil }
     return Draft(
       label: labelField.stringValue,
       sshTarget: targetField.stringValue,
-      sessionName: sessionField.stringValue.isEmpty ? "default" : sessionField.stringValue)
+      sessionName: sessionField.stringValue.isEmpty ? "default" : sessionField.stringValue,
+      hostID: picker.selectedHostID)
   }
 
   /// 展示重命名面板。重命名只改标签，不触发重连。
