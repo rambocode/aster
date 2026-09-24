@@ -136,6 +136,9 @@ public enum SSHConfigImport {
     profile.port = entry.port
     profile.user = entry.user?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     profile.identityFiles = entry.identityFiles
+    profile.identitiesOnly = entry.identitiesOnly
+    // `none` 表示不使用任何 known_hosts；原样保留交给 broker 按 OpenSSH 语义处理。
+    profile.knownHostsFiles = entry.userKnownHostsFiles.isEmpty ? nil : entry.userKnownHostsFiles
     let proxyCommand = entry.proxyCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     profile.proxyCommand = proxyCommand.isEmpty ? nil : proxyCommand
     profile.forwards = entry.forwards

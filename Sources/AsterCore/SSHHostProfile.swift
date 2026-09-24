@@ -75,6 +75,11 @@ public struct SSHHostProfile: Codable, Equatable, Identifiable, Sendable {
   public var auth: SSHAuthMode?
   /// 私钥路径，可含 `~`、`%h`、`%r`；为空表示继承默认项。
   public var identityFiles: [String]
+  /// 只用 `identityFiles` 里的密钥（OpenSSH `IdentitiesOnly`）；nil 表示继承默认项。
+  public var identitiesOnly: Bool?
+  /// 自定义 known_hosts 文件（OpenSSH `UserKnownHostsFile`），可含 `~`；nil 或空表示继承默认项，
+  /// 再缺省为 `~/.ssh/known_hosts`。OrbStack 等工具靠它把主机密钥放在自己的文件里。
+  public var knownHostsFiles: [String]?
   public var agentForward: Bool?
 
   /// 静态转发规则。与默认项的规则合并（默认项在前）。
@@ -98,6 +103,8 @@ public struct SSHHostProfile: Codable, Equatable, Identifiable, Sendable {
     httpProxy: SSHHostPort? = nil,
     auth: SSHAuthMode? = nil,
     identityFiles: [String] = [],
+    identitiesOnly: Bool? = nil,
+    knownHostsFiles: [String]? = nil,
     agentForward: Bool? = nil,
     forwards: [SSHForwardRule] = [],
     keepaliveInterval: Int? = nil,
@@ -117,6 +124,8 @@ public struct SSHHostProfile: Codable, Equatable, Identifiable, Sendable {
     self.httpProxy = httpProxy
     self.auth = auth
     self.identityFiles = identityFiles
+    self.identitiesOnly = identitiesOnly
+    self.knownHostsFiles = knownHostsFiles
     self.agentForward = agentForward
     self.forwards = forwards
     self.keepaliveInterval = keepaliveInterval
@@ -149,6 +158,10 @@ public struct SSHResolvedSpec: Codable, Equatable, Sendable {
   public var user: String
   public var auth: SSHAuthMode
   public var identityFiles: [String]
+  /// 只用 `identityFiles`，不遍历 agent 里的其它密钥、不试默认密钥。
+  public var identitiesOnly: Bool
+  /// 已展开的 known_hosts 文件；空数组表示用 `~/.ssh/known_hosts`。
+  public var knownHostsFiles: [String]
   public var agentForward: Bool
   public var proxyCommand: String?
   public var socksProxy: SSHHostPort?
@@ -241,6 +254,11 @@ public enum SSHHostResolver {
     let identityFiles = identityTemplates.map {
       expandIdentity($0, host: host, user: user, homeDirectory: homeDirectory)
     }
+    let knownHostsTemplates =
+      (profile.knownHostsFiles?.isEmpty == false ? profile.knownHostsFiles : defaults.knownHostsFiles) ?? []
+    let knownHostsFiles = knownHostsTemplates.map {
+      expandIdentity($0, host: host, user: user, homeDirectory: homeDirectory)
+    }
     let jumpID = profile.jumpHostID ?? defaults.jumpHostID
     // 跳板主机自己不能再用默认项里的跳板，否则所有主机都会经过同一跳板形成自环。
     let jump: SSHResolvedSpecBox? =
@@ -259,6 +277,8 @@ public enum SSHHostResolver {
       user: user,
       auth: profile.auth ?? defaults.auth ?? .auto,
       identityFiles: identityFiles,
+      identitiesOnly: profile.identitiesOnly ?? defaults.identitiesOnly ?? false,
+      knownHostsFiles: knownHostsFiles,
       agentForward: profile.agentForward ?? defaults.agentForward ?? false,
       proxyCommand: firstNonEmpty(profile.proxyCommand, defaults.proxyCommand),
       socksProxy: profile.socksProxy ?? defaults.socksProxy,

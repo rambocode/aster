@@ -107,3 +107,18 @@ func sshConfigImportParsesFirstHop() {
   #expect(SSHConfigImport.firstHopAlias("none") == nil)
   #expect(SSHConfigImport.firstHopAlias(" ") == nil)
 }
+
+/// 测：导入带上 `UserKnownHostsFile` 与 `IdentitiesOnly`；旧版输出缺这两个键时照常解码。
+@Test func sshConfigImportCarriesKnownHostsAndIdentitiesOnly() throws {
+  let json = #"{"hosts":[{"alias":"orb","hostName":"127.0.0.1","port":32222,"identityFiles":[],"#
+    + #""userKnownHostsFiles":["~/.orbstack/ssh/known_hosts"],"identitiesOnly":true,"forwards":[]},"#
+    + #"{"alias":"legacy","identityFiles":[],"forwards":[]}],"ignored":[]}"#
+  let listing = try JSONDecoder().decode(SSHConfigListing.self, from: Data(json.utf8))
+  #expect(listing.hosts[1].userKnownHostsFiles.isEmpty)
+  let result = SSHConfigImport.merge(listing, into: [.emptyDefaults()])
+  let orb = try #require(result.hosts.first { $0.name == "orb" })
+  #expect(orb.knownHostsFiles == ["~/.orbstack/ssh/known_hosts"])
+  #expect(orb.identitiesOnly == true)
+  let legacy = try #require(result.hosts.first { $0.name == "legacy" })
+  #expect(legacy.knownHostsFiles == nil)
+}

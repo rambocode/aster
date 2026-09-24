@@ -208,7 +208,7 @@ private func decodedObject(_ data: Data) throws -> [String: Any] {
   let id = UUID()
   let spec = SSHResolvedSpec(
     host: "10.0.0.5", port: 22, user: "deploy", auth: .auto, identityFiles: [],
-    agentForward: false, proxyCommand: nil, socksProxy: nil, httpProxy: nil, jump: nil,
+    identitiesOnly: false, knownHostsFiles: [], agentForward: false, proxyCommand: nil, socksProxy: nil, httpProxy: nil, jump: nil,
     forwards: [], keepaliveInterval: 15, keepaliveCountMax: 3, connectTimeout: 10,
     verifyHostKeys: true)
   let data = try SSHBrokerCommand.profilesSync([id: spec]).encodedLine()

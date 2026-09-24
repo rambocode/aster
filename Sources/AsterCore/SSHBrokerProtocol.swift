@@ -319,6 +319,10 @@ public struct SSHConfigHostEntry: Codable, Equatable, Sendable {
   public var user: String?
   public var port: Int?
   public var identityFiles: [String]
+  /// `UserKnownHostsFile` 原文路径（可能多个）。
+  public var userKnownHostsFiles: [String]
+  /// `IdentitiesOnly`。
+  public var identitiesOnly: Bool?
   public var proxyJump: String?
   public var proxyCommand: String?
   public var forwards: [SSHForwardRule]
@@ -327,7 +331,8 @@ public struct SSHConfigHostEntry: Codable, Equatable, Sendable {
 
   public init(
     alias: String, hostName: String? = nil, user: String? = nil, port: Int? = nil,
-    identityFiles: [String] = [], proxyJump: String? = nil, proxyCommand: String? = nil,
+    identityFiles: [String] = [], userKnownHostsFiles: [String] = [], identitiesOnly: Bool? = nil,
+    proxyJump: String? = nil, proxyCommand: String? = nil,
     forwards: [SSHForwardRule] = [], keepaliveInterval: Int? = nil, keepaliveCountMax: Int? = nil
   ) {
     self.alias = alias
@@ -335,11 +340,36 @@ public struct SSHConfigHostEntry: Codable, Equatable, Sendable {
     self.user = user
     self.port = port
     self.identityFiles = identityFiles
+    self.userKnownHostsFiles = userKnownHostsFiles
+    self.identitiesOnly = identitiesOnly
     self.proxyJump = proxyJump
     self.proxyCommand = proxyCommand
     self.forwards = forwards
     self.keepaliveInterval = keepaliveInterval
     self.keepaliveCountMax = keepaliveCountMax
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case alias, hostName, user, port, identityFiles, userKnownHostsFiles, identitiesOnly
+    case proxyJump, proxyCommand, forwards, keepaliveInterval, keepaliveCountMax
+  }
+
+  /// 数组字段缺失时按空处理：旧版 aster-ssh 的输出没有 `userKnownHostsFiles`，不能因此整份解码失败。
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    alias = try container.decode(String.self, forKey: .alias)
+    hostName = try container.decodeIfPresent(String.self, forKey: .hostName)
+    user = try container.decodeIfPresent(String.self, forKey: .user)
+    port = try container.decodeIfPresent(Int.self, forKey: .port)
+    identityFiles = try container.decodeIfPresent([String].self, forKey: .identityFiles) ?? []
+    userKnownHostsFiles =
+      try container.decodeIfPresent([String].self, forKey: .userKnownHostsFiles) ?? []
+    identitiesOnly = try container.decodeIfPresent(Bool.self, forKey: .identitiesOnly)
+    proxyJump = try container.decodeIfPresent(String.self, forKey: .proxyJump)
+    proxyCommand = try container.decodeIfPresent(String.self, forKey: .proxyCommand)
+    forwards = try container.decodeIfPresent([SSHForwardRule].self, forKey: .forwards) ?? []
+    keepaliveInterval = try container.decodeIfPresent(Int.self, forKey: .keepaliveInterval)
+    keepaliveCountMax = try container.decodeIfPresent(Int.self, forKey: .keepaliveCountMax)
   }
 }
 

@@ -25,7 +25,7 @@ private func bareHost(name: String = "Host", host: String = "10.0.0.1", id: UUID
   let defaults = SSHHostProfile(
     id: SSHHostProfile.defaultsProfileID, name: "Defaults", user: "defaultUser",
     proxyCommand: "defaultProxy", auth: .password, identityFiles: ["default.key"],
-    agentForward: true, forwards: [defaultForward], keepaliveInterval: 20,
+    identitiesOnly: false, knownHostsFiles: [], agentForward: true, forwards: [defaultForward], keepaliveInterval: 20,
     keepaliveCountMax: 5, connectTimeout: 12, verifyHostKeys: false)
   let hostForward = SSHForwardRule(
     kind: .remote, bind: SSHHostPort(host: "0.0.0.0", port: 9090),
@@ -245,12 +245,12 @@ private func makeJumpChain(count: Int) -> [SSHHostProfile] {
 @Test func sshHostProfileResolvedSpecJSONRoundTripEmbedsJumpInline() throws {
   let inner = SSHResolvedSpec(
     host: "jump.example.com", port: 22, user: "deploy", auth: .auto, identityFiles: [],
-    agentForward: false, proxyCommand: nil, socksProxy: nil, httpProxy: nil, jump: nil,
+    identitiesOnly: false, knownHostsFiles: [], agentForward: false, proxyCommand: nil, socksProxy: nil, httpProxy: nil, jump: nil,
     forwards: [], keepaliveInterval: 15, keepaliveCountMax: 3, connectTimeout: 10,
     verifyHostKeys: true)
   let outer = SSHResolvedSpec(
     host: "10.0.0.5", port: 2222, user: "root", auth: .publicKey, identityFiles: ["/k"],
-    agentForward: true, proxyCommand: "nc %h %p", socksProxy: SSHHostPort(host: "127.0.0.1", port: 1080),
+    identitiesOnly: false, knownHostsFiles: [], agentForward: true, proxyCommand: "nc %h %p", socksProxy: SSHHostPort(host: "127.0.0.1", port: 1080),
     httpProxy: nil, jump: SSHResolvedSpecBox(inner), forwards: [], keepaliveInterval: 20,
     keepaliveCountMax: 4, connectTimeout: 8, verifyHostKeys: false)
 
@@ -263,4 +263,25 @@ private func makeJumpChain(count: Int) -> [SSHHostProfile] {
 
   let decoded = try JSONDecoder().decode(SSHResolvedSpec.self, from: data)
   #expect(decoded == outer)
+}
+
+/// 测：`knownHostsFiles` 与 `identitiesOnly` 继承默认项，并展开 `~`（OrbStack 用自己的 known_hosts）。
+@Test func sshHostProfileResolvesKnownHostsFilesAndIdentitiesOnly() throws {
+  let defaults = SSHHostProfile(
+    id: SSHHostProfile.defaultsProfileID, name: "Defaults", identitiesOnly: true)
+  let orb = SSHHostProfile(
+    name: "orb", host: "127.0.0.1", port: 32222, user: "default",
+    knownHostsFiles: ["~/.orbstack/ssh/known_hosts"])
+  let plain = SSHHostProfile(name: "plain", host: "example.com")
+  let hosts = [defaults, orb, plain]
+
+  let orbSpec = try SSHHostResolver.resolve(orb.id, in: hosts, homeDirectory: "/Users/me", localUser: "me")
+  #expect(orbSpec.knownHostsFiles == ["/Users/me/.orbstack/ssh/known_hosts"])
+  #expect(orbSpec.identitiesOnly)
+
+  let plainSpec = try SSHHostResolver.resolve(plain.id, in: hosts, homeDirectory: "/Users/me", localUser: "me")
+  #expect(plainSpec.knownHostsFiles.isEmpty)
+  let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(orbSpec)) as? [String: Any]
+  #expect(json?["knownHostsFiles"] as? [String] == ["/Users/me/.orbstack/ssh/known_hosts"])
+  #expect(json?["identitiesOnly"] as? Bool == true)
 }
