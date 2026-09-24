@@ -191,6 +191,7 @@ private func waitForStream(
 @MainActor
 func remoteWorkP4EventStreamRefreshesFromAnotherClientWithoutStealingFocus() async throws {
   let environment = try #require(RemoteWorkP4StreamEnvironment.current())
+  try await RemoteWorkP4NativeEngine.startIfRequested()
   let fixture = try makeRemoteWorkP4StreamFixture(environment)
   defer { fixture.tearDown() }
 

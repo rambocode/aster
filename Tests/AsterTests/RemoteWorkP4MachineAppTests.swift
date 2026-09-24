@@ -186,6 +186,7 @@ private func waitUntil(
 @MainActor
 func remoteWorkP4ProjectsRealMachineSnapshotIntoAppKitWorkspace() async throws {
   let environment = try #require(RemoteWorkP4MachineEnvironment.current())
+  try await RemoteWorkP4NativeEngine.startIfRequested()
   let fixture = try makeRemoteWorkP4Fixture(environment)
   defer { fixture.tearDown() }
 
@@ -222,6 +223,7 @@ func remoteWorkP4ProjectsRealMachineSnapshotIntoAppKitWorkspace() async throws {
 @MainActor
 func remoteWorkP4UIStructureChangeCommitsRealTransaction() async throws {
   let environment = try #require(RemoteWorkP4MachineEnvironment.current())
+  try await RemoteWorkP4NativeEngine.startIfRequested()
   let fixture = try makeRemoteWorkP4Fixture(environment)
   defer { fixture.tearDown() }
 
@@ -278,6 +280,7 @@ func remoteWorkP4UIStructureChangeCommitsRealTransaction() async throws {
 @MainActor
 func remoteWorkP4SuspendsSurfacesAndGatesInputUntilSnapshot() async throws {
   let environment = try #require(RemoteWorkP4MachineEnvironment.current())
+  try await RemoteWorkP4NativeEngine.startIfRequested()
   let fixture = try makeRemoteWorkP4Fixture(environment)
   defer { fixture.tearDown() }
 

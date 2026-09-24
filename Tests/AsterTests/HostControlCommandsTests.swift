@@ -157,3 +157,19 @@ func hostWorkspaceCLIAcceptsCompleteInvocations() throws {
     #expect(result.status != cliUsageExitCode, "\(arguments) 不应是用法错误：\(result.stderr)")
   }
 }
+
+@Test("CLI：分组命令前后的全局 --socket 都被识别，不会落到旧解析器报「未知命令」")
+func hostWorkspaceCLIAcceptsLeadingSocketOption() throws {
+  let missing = NSTemporaryDirectory() + "aster-cli-missing-\(UUID().uuidString).sock"
+  let cases: [[String]] = [
+    ["--socket", missing, "machine", "list"],
+    ["--socket", missing, "host", "list"],
+    ["workspace", "list", "--socket=\(missing)"],
+  ]
+  for arguments in cases {
+    let result = try runHostWorkspaceCLI(arguments)
+    #expect(!result.stderr.contains("未知命令"), "\(arguments) 不应落到旧解析器：\(result.stderr)")
+    // 显式 socket 优先于环境变量：错误必须指向这里给的路径，而不是 ASTER_SOCKET_PATH。
+    #expect(result.stderr.contains(missing), "\(arguments) 应使用显式 socket：\(result.stderr)")
+  }
+}
