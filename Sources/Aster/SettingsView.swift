@@ -3609,6 +3609,8 @@ extension SettingsViewController: WKNavigationDelegate {
   private func makeWebShortcuts() -> [[String: Any]] {
     let shortcuts: [(String, String, String, String)] = [
       ("new-window", L("窗口"), L("新建窗口"), "⌘N"),
+      ("new-workspace", L("工作区"), L("新建工作区"), "⇧⌘N"),
+      ("switch-workspace", L("工作区"), L("切换工作区"), "⌥⌘O"),
       ("new-tab", L("窗口"), L("新建标签页"), "⌘T"),
       ("close", L("窗口"), L("关闭当前项"), "⌘W"),
       ("open-file", L("文件"), L("打开文件"), "⌘O"),
@@ -5380,6 +5382,8 @@ private enum SettingsWebBridgeError: LocalizedError {
 enum ShortcutOverrideApplier {
   private static var menuTitles: [String: String] { [
     "new-window": L("新建窗口"),
+    "new-workspace": L("新建工作区…"),
+    "switch-workspace": L("切换工作区…"),
     "new-tab": L("新建标签页"),
     "close": L("关闭"),
     "open-file": L("打开文件…"),
