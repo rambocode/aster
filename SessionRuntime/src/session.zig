@@ -23,6 +23,7 @@ pub const Session = struct {
     delta_safe: bool = false,
     /// Scroll requires a viewport-aware surface snapshot. Current ANSI snapshots
     /// cannot clear this flag because they do not restore the viewport offset.
+    /// 只在视口离开底部期间保持：回到底部后普通快照与增量就能表达画面（见 `refreshViewportPin`）。
     viewport_snapshot_required: bool = false,
     delta_bytes: std.ArrayList(u8) = .empty,
     /// 上一轮读到、但止于未完成序列/半个 UTF-8 字符的尾巴；下一轮放回 `delta_bytes` 开头再判。
@@ -424,6 +425,7 @@ pub const Session = struct {
         }
         // 尾巴过长没有切走时块不自洽（止于序列中间），只能走快照；过滤器保留解析状态继续判后续块。
         const self_contained = self.delta_bytes.items.len == split.complete;
+        try self.refreshViewportPin();
         self.delta_safe = split.allowed and self_contained and !self.viewport_snapshot_required;
     }
 
@@ -518,7 +520,20 @@ pub const Session = struct {
             self.delta_safe = false;
             self.delta_bytes.clearRetainingCapacity();
             self.viewport_snapshot_required = true;
+            try self.refreshViewportPin();
         }
+    }
+
+    /// 视口回到底部时撤销「必须发视口快照」。
+    ///
+    /// 这个标志以前一经 `scroll` 置位就永不清除：远端查看端往上翻过一次历史，之后该终端的
+    /// 每次输出都退回全量快照（以 RIS 开头，清屏并清掉客户端回滚），所有客户端画面持续闪烁。
+    /// 视口在底部时，普通快照和增量表达的就是当前画面；回到底部那一刻序号已推进、增量已清空，
+    /// 客户端会先取一次快照再接增量，不会漏状态。
+    fn refreshViewportPin(self: *Session) !void {
+        if (!self.viewport_snapshot_required) return;
+        const viewport = try self.terminal.viewport();
+        if (viewport.offset + viewport.length >= viewport.total) self.viewport_snapshot_required = false;
     }
 
     pub fn resize(self: *Session, rows: u16, cols: u16) !void {
@@ -537,20 +552,22 @@ pub const Session = struct {
     }
 
     /// Prune only retained history allocations. Active rows, PTY and graphics
-    /// remain intact; consumers must resnapshot when old rows were removed.
+    /// remain intact, so the delta stream stays valid (see `markHistoryTrimmed`).
     pub fn enforceHistoryLimit(self: *Session) !void {
         const result = try history.trim(&self.terminal, self.history_limit);
         self.history_usage = result.remaining;
         if (result.removed_rows != 0) try self.markHistoryTrimmed();
     }
 
-    /// Shared-budget eviction already changed the VT; invalidate old projections
-    /// before refreshing accounting so failures cannot expose a stale delta.
+    /// 共享预算或本终端配额淘汰了最旧的历史页，只刷新记账。
+    ///
+    /// 淘汰只删历史前缀，活动区、光标、模式都不变：客户端照原样应用同一批增量，得到的
+    /// 活动区与服务端一致，客户端自己的回滚历史由它自己的上限管理。以前这里推进序号、
+    /// 清空增量并把 `viewport_snapshot_required` 置为 true，而该标志从不清除——Claude Code
+    /// 这类带真彩色和超链接的输出攒到几千行历史就触发淘汰，之后每次 PTY 读都退回全量快照
+    /// （以 RIS 开头，清屏、清客户端回滚并跳回底部），画面持续闪烁。按锚点取历史的请求
+    /// 读的是当前 VT，已淘汰的页本来就解析不到，不需要靠重发快照来失效。
     pub fn markHistoryTrimmed(self: *Session) !void {
-        self.output_sequence +%= 1;
-        self.delta_safe = false;
-        self.delta_bytes.clearRetainingCapacity();
-        self.viewport_snapshot_required = true;
         self.history_usage = try history.usage(&self.terminal);
     }
 };
@@ -671,7 +688,9 @@ test "session history quota removes old rows without changing live cells or grap
     session.terminal.write("OLD\r\nLIVE1\r\nLIVE2\r\nLIVE3\x1b_Ga=t,f=32,s=1,v=1,i=31,q=2;/wAA/w==\x1b\\");
     try session.enforceHistoryLimit();
     try std.testing.expectEqual(@as(usize, 0), session.history_usage.charged_bytes);
-    try std.testing.expect(session.viewport_snapshot_required);
+    // 只删历史，不让增量流失效（否则之后每次输出都退回全量快照）。
+    try std.testing.expect(!session.viewport_snapshot_required);
+    try std.testing.expectEqual(@as(u64, 0), session.output_sequence);
     try std.testing.expectEqual(@as(usize, 1), try session.terminal.imageCount(.primary));
     const row = try session.terminal.formatRow(std.testing.allocator, .primary, 0, 4096);
     defer std.testing.allocator.free(row);
@@ -840,4 +859,61 @@ test "a frame split across reads is delivered as one safe delta instead of two s
     try std.testing.expectEqual(@as(usize, 0), unsafe_rounds);
     try std.testing.expectEqualStrings("ok\x1b[31mred\x1b[0m", delivered.items);
     try std.testing.expectEqual(@as(usize, 0), session.delta_carry.items.len);
+}
+
+
+test "output past the history quota keeps flowing as safe deltas instead of snapshots" {
+    // 配额为 0：每次读都会淘汰全部历史。增量必须一直可用，客户端重放增量后活动区与服务端一致。
+    const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", "i=0; while [ $i -lt 40 ]; do printf '\\033[38;2;1;2;3mrow %s\\033[0m\\r\\n' $i; i=$((i+1)); done; sleep 0.2; printf 'next\\r\\nlast'; sleep 0.2" };
+    const env = [_:null]?[*:0]const u8{"PATH=/usr/bin:/bin"};
+    const session = try Session.create(std.testing.allocator, "/", "/bin/sh", &argv, &env, 5, 40);
+    defer session.destroy();
+    session.history_limit = 0;
+    var receiver = try vt.Terminal.init(40, 5, 1000);
+    defer receiver.deinit();
+    var unsafe_rounds: usize = 0;
+    var safe_rounds: usize = 0;
+    var timer = try std.time.Timer.start();
+    while (!(session.eof and session.exit_status != null) and timer.read() < 3 * std.time.ns_per_s) {
+        const before = session.output_sequence;
+        _ = try session.tick(20, 65536);
+        if (session.delta_bytes.items.len == 0) continue;
+        // 与 surface_service 相同的交付条件：序号连续且块可镜像。
+        if (session.delta_safe and session.delta_base == before) {
+            receiver.write(session.delta_bytes.items);
+            safe_rounds += 1;
+        } else unsafe_rounds += 1;
+    }
+    try std.testing.expect(safe_rounds >= 2);
+    try std.testing.expectEqual(@as(usize, 0), unsafe_rounds);
+    try std.testing.expectEqual(@as(usize, 0), session.history_usage.rows);
+    try std.testing.expect(!session.viewport_snapshot_required);
+    // 只比活动区：接收端保留自己的回滚历史，服务端的历史已被淘汰。
+    const source_metrics = try session.terminal.screenMetrics();
+    const receiver_metrics = try receiver.screenMetrics();
+    try std.testing.expect(receiver_metrics.total_rows > source_metrics.total_rows);
+    for (0..source_metrics.rows) |index| {
+        const expected = try session.terminal.formatRow(std.testing.allocator, .primary, @intCast(source_metrics.total_rows - source_metrics.rows + index), 4096);
+        defer std.testing.allocator.free(expected);
+        const actual = try receiver.formatRow(std.testing.allocator, .primary, @intCast(receiver_metrics.total_rows - receiver_metrics.rows + index), 4096);
+        defer std.testing.allocator.free(actual);
+        try std.testing.expectEqualStrings(expected, actual);
+    }
+    try std.testing.expectEqual(try session.terminal.cursorRow(), try receiver.cursorRow());
+    try std.testing.expectEqual(try session.terminal.cursorColumn(), try receiver.cursorColumn());
+}
+
+test "scrolling back to the bottom lets output flow as deltas again" {
+    const session = try Session.prepare(std.testing.allocator, .{ .rows = 3, .columns = 20 });
+    defer session.destroy();
+    session.started = true;
+    session.terminal.write("one\r\ntwo\r\nthree\r\nfour\r\nfive");
+    try session.scroll(-1);
+    try std.testing.expect(session.viewport_snapshot_required);
+    // 回到底部：这次移动本身仍推进序号，让客户端先取一次快照。
+    const before = session.output_sequence;
+    try session.scroll(1);
+    try std.testing.expectEqual(before +% 1, session.output_sequence);
+    try std.testing.expect(!session.delta_safe);
+    try std.testing.expect(!session.viewport_snapshot_required);
 }

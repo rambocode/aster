@@ -149,7 +149,8 @@ test "session history manager interleaved observations evict globally oldest pag
     const result = try manager.enforce(&items, before.charged_bytes - old[0].charged_bytes);
     try std.testing.expectEqual(@as(usize, 1), result.removed_pages);
     try std.testing.expectEqual(first_rows, (try budget.usage(&first.terminal)).rows);
-    try std.testing.expect(second.output_sequence > 0 and second.viewport_snapshot_required and !second.delta_safe);
+    // 淘汰只删历史前缀，不打断增量流：序号不推进，也不要求全量快照。
+    try std.testing.expect(second.output_sequence == 0 and !second.viewport_snapshot_required);
     const active_after = try second.terminal.formatRow(a, .primary, @intCast((try second.terminal.screenMetrics()).total_rows - 1), 65536);
     defer a.free(active_after);
     try std.testing.expectEqualStrings(active_before, active_after);
