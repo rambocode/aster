@@ -71,11 +71,15 @@ enum WorkspaceTerminationTransaction {
 
 extension AppModel: WorkspaceTerminationParticipant {}
 
+/// AppDelegate 持有全部工作区窗口，因此由它为命名工作区目录开窗。
+extension AsterAppDelegate: NamedWorkspaceWindowHost {}
+
 /// 附加窗口的 suite 名只接受 Aster 自己生成的 UUID 形式并限制数量。UserDefaults 内容
 /// 可被外部工具改写，恢复层不能据此读取任意 domain 或无限创建窗口。
 enum AdditionalWorkspaceWindowRegistry {
   static let prefix = NamedWorkspaceRegistry.suitePrefix
-  static let maximumWindows = 16
+  /// 附加窗口上限 = 工作区打开上限减去主窗口，两处共用同一个真值。
+  static let maximumWindows = NamedWorkspaceRegistry.maximumOpen - 1
 
   static func normalized(_ names: [String]) -> [String] {
     var seen: Set<String> = []
@@ -259,7 +263,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   /// 附加窗口各自拥有独立 AppModel/PTY 树；Preferences 仍全局共享。以窗口对象身份
   /// 查找模型，菜单动作始终路由到 key window，不会误操作首个窗口。
   private var additionalWorkspaceWindows: [ObjectIdentifier: WorkspaceWindowRecord] = [:]
-  private let additionalWorkspaceSuitesKey = "aster.workspace.additional-window-suites.v1"
+  /// 本地命名工作区注册表，恢复与关窗语义的唯一权威；旧 suite 列表键由它镜像写回。
+  let workspaceDirectory: NamedWorkspaceDirectory
   private var isTerminating = false
   /// 用户在语言提示里选了「立即重启」：退出流程走完后由 `applicationWillTerminate` 重新拉起。
   private var relaunchAfterTerminate = false
@@ -285,20 +290,26 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     // Aster 自有主题目录在窗口构建前先就位，避免启动时先按内置表渲染再闪一次。
     preferences.reloadDiskThemes()
     softwareUpdateController = SoftwareUpdateService.shared
+    workspaceDirectory = .shared
     super.init()
+    workspaceDirectory.host = self
   }
 
   /// 菜单与窗口路由测试使用隔离 defaults 注入真实模型，避免为了验证聚焦 Pane 而写入
-  /// 用户的标准工作区快照。生产入口继续走无参数初始化器。
+  /// 用户的标准工作区快照。生产入口继续走无参数初始化器。工作区目录默认只存在内存里，
+  /// 测试开关窗口不会改写用户的工作区注册表。
   init(
     model: AppModel, preferences: AppPreferences,
-    softwareUpdateController: (any SoftwareUpdateControlling)? = nil
+    softwareUpdateController: (any SoftwareUpdateControlling)? = nil,
+    workspaceDirectory: NamedWorkspaceDirectory = NamedWorkspaceDirectory(defaults: nil)
   ) {
     Self.installManagedTerminalPolicy(preferences)
     self.model = model
     self.preferences = preferences
     self.softwareUpdateController = softwareUpdateController
+    self.workspaceDirectory = workspaceDirectory
     super.init()
+    workspaceDirectory.host = self
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -614,6 +625,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         // 主窗口关闭后 NSWindowController 仍被 AppDelegate 持有，Dock reopen 会复用它。
         // `windowWillClose` 已移除旧映射，因此重新显示前必须把同一 store 注册回来。
         panelLayoutStores[ObjectIdentifier(window)] = content.panelLayoutStore
+        workspaceDirectory.attachMainWindow(window)
       }
       mainWindowController.showWindow(nil)
       mainWindowController.window?.makeKeyAndOrderFront(nil)
@@ -624,6 +636,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       defaults: .standard
     )
     mainWindowController = controller
+    if let window = controller.window { workspaceDirectory.attachMainWindow(window) }
     controller.showWindow(nil)
   }
 
@@ -686,6 +699,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     guard let window = notification.object as? NSWindow,
       let store = panelLayoutStores[ObjectIdentifier(window)]
     else { return }
+    workspaceDirectory.windowDidBecomeKey(window)
     let identifier = ObjectIdentifier(window)
     activeWorkspaceWindowOrder.removeAll { $0 == identifier }
     activeWorkspaceWindowOrder.append(identifier)
@@ -711,6 +725,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       panelSettingsBinding.bind(replacement)
     }
     guard let record = additionalWorkspaceWindows.removeValue(forKey: identifier) else {
+      // 主窗口关闭不销毁模型，注册表里只标记为关闭；Dock 或切换器可以把它重新显示出来。
+      if !isTerminating, window === mainWindowController?.window {
+        workspaceDirectory.windowWillClose(window)
+      }
       return
     }
     // 附加窗口是真的没了：它自己那条事件订阅必须跟着结束，不能留孤儿 ssh，
@@ -721,11 +739,11 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     // 到这里才执行不可逆的快照和 PTY 终止。
     if !isTerminating { record.model.commitTermination() }
     dockActivityCoordinator.removeModel(record.model)
-    // 附加窗口不参与下次启动恢复；关闭后清掉它的独立 suite，避免每次新建窗口留下
-    // 无法再访问的 UserDefaults 域。主窗口快照仍由标准域正常保存。
-    if !isTerminating {
+    // 用户单独关窗：不保留的工作区不参与下次启动恢复，清掉它的独立 suite，避免每次
+    // 新建窗口留下无法再访问的 UserDefaults 域；固定保留的工作区保留 suite（即快照），
+    // 之后可从切换器重新打开。App 退出时不改任何打开状态，下次启动原样恢复。
+    if !isTerminating, workspaceDirectory.windowWillClose(window) {
       UserDefaults.standard.removePersistentDomain(forName: record.defaultsSuiteName)
-      persistAdditionalWorkspaceSuites()
     }
   }
 
@@ -882,19 +900,34 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     )
   }
 
+  /// 创建或恢复一个附加工作区窗口。先在工作区注册表登记（已有条目标记为打开，否则按
+  /// `workspaceName`/`isPinned` 新建），超出打开上限时弹出提示并放弃开窗。
   @discardableResult
   private func createWorkspaceWindow(
     suiteName: String,
     initialPane: PaneDescriptor?,
     initialTab: TerminalTabItem? = nil,
     restoring: Bool,
+    workspaceName: String? = nil,
+    isPinned: Bool = false,
     sender: Any?,
     onCreated: ((AppModel) -> Void)? = nil
   ) -> Bool {
     guard AdditionalWorkspaceWindowRegistry.normalized([suiteName]) == [suiteName] else {
       return false
     }
+    let workspaceID: UUID
+    do {
+      workspaceID = try workspaceDirectory.beginOpening(
+        suiteName: suiteName, name: workspaceName, isPinned: isPinned)
+    } catch let error as NamedWorkspaceDirectoryError {
+      NamedWorkspaceDirectory.presentError(error, in: NSApplication.shared.keyWindow)
+      return false
+    } catch {
+      return false
+    }
     guard let defaults = UserDefaults(suiteName: suiteName) else {
+      workspaceDirectory.abandonOpening(workspaceID)
       return false
     }
     if !restoring { defaults.removePersistentDomain(forName: suiteName) }
@@ -912,7 +945,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       defaults: defaults
     )
     guard let window = controller.window else {
-      defaults.removePersistentDomain(forName: suiteName)
+      if workspaceDirectory.abandonOpening(workspaceID) {
+        defaults.removePersistentDomain(forName: suiteName)
+      }
       return false
     }
     additionalWorkspaceWindows[ObjectIdentifier(window)] = WorkspaceWindowRecord(
@@ -921,7 +956,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       defaultsSuiteName: suiteName
     )
     dockActivityCoordinator.addModel(windowModel)
-    persistAdditionalWorkspaceSuites()
+    workspaceDirectory.attach(window, to: workspaceID)
     synchronizeWorkspaceConfiguration()
     controller.showWindow(sender)
     window.makeKeyAndOrderFront(sender)
@@ -929,9 +964,11 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     return true
   }
 
+  /// 按工作区注册表里打开着的条目恢复附加窗口（首次运行时注册表由旧 suite 列表迁移），
+  /// 恢复范围与改造前读取旧键时相同。
   private func restoreAdditionalWorkspaceWindows() {
     let suites = AdditionalWorkspaceWindowRegistry.normalized(
-      UserDefaults.standard.stringArray(forKey: additionalWorkspaceSuitesKey) ?? []
+      workspaceDirectory.prepareForLaunchRestore()
     )
     for suiteName in suites {
       _ = createWorkspaceWindow(
@@ -943,12 +980,49 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
   }
 
+  /// 保存工作区注册表（同时把打开着的 suite 镜像写回旧键）。退出时调用，不改打开状态。
   private func persistAdditionalWorkspaceSuites() {
-    let suites = additionalWorkspaceWindows.values.map(\.defaultsSuiteName).sorted()
-    UserDefaults.standard.set(
-      AdditionalWorkspaceWindowRegistry.normalized(suites),
-      forKey: additionalWorkspaceSuitesKey
-    )
+    workspaceDirectory.save()
+  }
+
+  // MARK: - 本地命名工作区
+
+  /// 切换器重新打开没有窗口的工作区：主工作区走「主窗口重建」路径（复用常驻模型），
+  /// 附加工作区按保留的 suite 恢复快照。
+  func openWindow(for workspace: NamedWorkspace) -> Bool {
+    switch workspace.storage {
+    case .standard:
+      showMainWindow()
+      return true
+    case .suite(let suiteName):
+      return createWorkspaceWindow(
+        suiteName: suiteName, initialPane: nil, restoring: true, sender: nil)
+    }
+  }
+
+  /// 「新建工作区…」确认后新建一个固定保留的本地工作区窗口。
+  func createNamedWorkspaceWindow(name: String) -> Bool {
+    createWorkspaceWindow(
+      suiteName: NamedWorkspaceRegistry.makeSuiteName(), initialPane: nil, restoring: false,
+      workspaceName: name, isPinned: true, sender: nil)
+  }
+
+  /// 「文件 ▸ 新建工作区…」（⌘⇧N）。
+  @objc private func newNamedWorkspace(_ sender: Any?) {
+    workspaceDirectory.presentNewLocalWorkspace(in: NSApplication.shared.keyWindow)
+  }
+
+  /// 「文件 ▸ 切换工作区…」（⌥⌘O）：Open Quickly 直接选中「工作区」过滤器。
+  /// 没有可见工作区窗口时先恢复主窗口，浮层才有宿主。
+  @objc private func switchNamedWorkspace(_ sender: Any?) {
+    if NSApplication.shared.keyWindow == nil { showMainWindow() }
+    activeWorkspaceModel.toggleOpenQuickly(filter: .workspace)
+  }
+
+  /// 「文件 ▸ 重命名工作区…」：只作用于当前 key window 对应的工作区。
+  @objc private func renameNamedWorkspace(_ sender: Any?) {
+    guard let window = NSApplication.shared.keyWindow else { return }
+    workspaceDirectory.presentRename(for: window)
   }
 
   /// 把 AppKit 窗口动作注入每个模型；附加窗口与主窗口因此拥有完全相同的命令面板
@@ -1475,6 +1549,12 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     let item = NSMenuItem()
     let submenu = NSMenu(title: L("文件"))
     submenu.addItem(menuItem(L("新建窗口"), #selector(newWindow(_:)), "n"))
+    submenu.addItem(
+      menuItem(L("新建工作区…"), #selector(newNamedWorkspace(_:)), "n", modifiers: [.command, .shift]))
+    submenu.addItem(
+      menuItem(L("切换工作区…"), #selector(switchNamedWorkspace(_:)), "o", modifiers: [.command, .option]))
+    submenu.addItem(
+      menuItem(L("重命名工作区…"), #selector(renameNamedWorkspace(_:)), "", modifiers: []))
     submenu.addItem(menuItem(L("新建标签页"), #selector(newTab(_:)), "t"))
     submenu.addItem(
       menuItem(L("重新打开最近关闭的标签页"), #selector(reopenLastClosedTab(_:)), "t", modifiers: [.command, .shift]))
@@ -2031,6 +2111,10 @@ extension AsterAppDelegate: NSMenuItemValidation {
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     guard let action = menuItem.action else { return true }
     if action == #selector(restartQuickTerminal(_:)) { return quickTerminalController.canRestart }
+    // 重命名只针对 key window 对应的工作区；设置、Quick Terminal 等窗口在前台时置灰。
+    if action == #selector(renameNamedWorkspace(_:)) {
+      return NSApplication.shared.keyWindow.flatMap(workspaceDirectory.workspaceID(for:)) != nil
+    }
     // 只有远端机器才有可更新的服务；Local 的服务随 App 一起更新。
     if action == #selector(updateRemoteMachineService(_:))
       || action == #selector(configureRemoteMachineAgents(_:))
