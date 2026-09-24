@@ -6,8 +6,9 @@
 //! 最后一行写 `aster-ssh-error {json}`。
 
 use std::io::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -21,6 +22,11 @@ use crate::terminal::{enter_raw_mode, is_tty, restore_terminal, window_size};
 
 /// 结构化错误行前缀，与 Swift `NativeSSHErrorLine.prefix` 相同。
 pub const ERROR_PREFIX: &str = "aster-ssh-error ";
+/// broker 还没 bind 完时，client 最多等这么久（App 先公布端点再拉起 broker）。
+const BROKER_CONNECT_GRACE: Duration = Duration::from_secs(2);
+/// 重试间隔。
+const BROKER_CONNECT_RETRY: Duration = Duration::from_millis(75);
+
 /// 每个 STDIN 帧最多携带的字节数。
 const STDIN_CHUNK: usize = 32 * 1024;
 
@@ -82,6 +88,27 @@ pub fn parse_args(args: &[String]) -> Result<ClientArgs, String> {
     match (&out.host_id, &out.target) {
         (Some(_), None) | (None, Some(_)) => Ok(out),
         _ => Err("exactly one of --host-id or --target is required".to_string()),
+    }
+}
+
+/// 连接 broker socket。socket 还不存在（ENOENT）或没人监听（ECONNREFUSED）时，
+/// 在 `grace` 内每隔 75ms 重试；其它错误和超时直接返回最后一次的错误。
+pub async fn connect_broker(path: &Path, grace: Duration) -> std::io::Result<UnixStream> {
+    let deadline = tokio::time::Instant::now() + grace;
+    loop {
+        match UnixStream::connect(path).await {
+            Ok(s) => return Ok(s),
+            Err(e) => {
+                let retryable = matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                );
+                if !retryable || tokio::time::Instant::now() + BROKER_CONNECT_RETRY > deadline {
+                    return Err(e);
+                }
+                tokio::time::sleep(BROKER_CONNECT_RETRY).await;
+            }
+        }
     }
 }
 
@@ -329,7 +356,7 @@ pub fn run_cli(args: &[String]) -> ExitCode {
                 format!("signal setup: {e}"),
             ));
         }
-        let stream = match UnixStream::connect(&args.broker).await {
+        let stream = match connect_broker(&args.broker, BROKER_CONNECT_GRACE).await {
             Ok(s) => s,
             Err(e) => {
                 return Outcome::Failed(SshFailure::new(
@@ -470,5 +497,29 @@ mod tests {
             line,
             r#"aster-ssh-error {"kind":"authenticationRequired","detail":"publickey,password rejected"}"#
         );
+    }
+
+    #[tokio::test]
+    async fn connect_waits_briefly_for_a_broker_that_is_still_starting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("late.sock");
+        let bind_at = path.clone();
+        let listener = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let l = tokio::net::UnixListener::bind(&bind_at).unwrap();
+            let _ = l.accept().await;
+        });
+        let started = std::time::Instant::now();
+        connect_broker(&path, Duration::from_secs(2)).await.unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(250));
+        listener.abort();
+
+        let started = std::time::Instant::now();
+        let err = connect_broker(&dir.path().join("never.sock"), Duration::from_millis(400))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert!(started.elapsed() >= Duration::from_millis(300));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }

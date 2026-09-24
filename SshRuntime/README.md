@@ -46,10 +46,21 @@ Aster 的原生 SSH 运行时（Rust，基于 crates.io 上的 [russh](https://c
 
 | 变量 | 作用 |
 | --- | --- |
-| `ASTER_SSH_HOME` | 代替 `HOME`，决定 `~/.ssh/known_hosts` 与默认密钥的位置（测试用它指向临时目录） |
+| `ASTER_SSH_HOME` | 代替 `HOME`，决定 `~/.ssh/config`、`~/.ssh/known_hosts` 与默认密钥的位置（测试用它指向临时目录） |
 | `ASTER_SSH_KNOWN_HOSTS` | 单独指定 known_hosts 文件 |
 | `SSH_AUTH_SOCK` | ssh-agent；未设置时不用 agent |
 | `ASTER_SSH_DEBUG` | 非空且不为 `0` 时输出 debug 日志 |
+
+## 行为要点
+
+- `--target` 合并 ssh_config 时：`ConnectTimeout` 只在没有 `--connect-timeout` 时生效；`ForwardAgent`
+  映射到 agentForward；`StrictHostKeyChecking accept-new` 与 `no` 都只自动记下**未知**主机，
+  密钥变更照样需要确认（比 OpenSSH 的 `no` 更严）。
+- client 连 broker 时，socket 不存在或拒绝连接会在 2 秒内每 75ms 重试一次（App 先公布端点再拉起 broker）。
+- ProxyCommand 子进程的 stdin/stdout 是 SSH 传输流，stderr 进 broker 日志，永远不继承 broker 的
+  stdout（控制通道）。
+- 键盘交互的回答只看 `responses`：数组是回答（条数必须与提示一致，否则按取消处理并回报
+  `accepted=false`），null 是取消。
 
 ## 安全边界
 

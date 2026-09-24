@@ -131,6 +131,10 @@ pub struct ResolvedSpec {
     pub connect_timeout: u32,
     #[serde(default = "default_true")]
     pub verify_host_keys: bool,
+    /// 未知主机密钥自动接受并记入 known_hosts（ssh_config 的 `StrictHostKeyChecking accept-new/no`）。
+    /// 只由 broker 解析 `--target` 时设置，不属于控制协议，所以不参与序列化。
+    #[serde(skip)]
+    pub accept_new_host_keys: bool,
 }
 
 /// keepalive 间隔缺省值（秒）。
@@ -181,6 +185,7 @@ impl ResolvedSpec {
             keepalive_count_max: default_keepalive_count_max(),
             connect_timeout: default_connect_timeout(),
             verify_host_keys: true,
+            accept_new_host_keys: false,
         }
     }
 

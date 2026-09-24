@@ -450,8 +450,17 @@ async fn run(socket: PathBuf) -> i32 {
             return 1;
         }
     };
-    let (broker, mut out_rx) =
-        Broker::new(Paths::from_process(), Arc::new(crate::ssh_config::resolve));
+    // ssh_config 与 known_hosts 用同一个主目录（尊重 ASTER_SSH_HOME），测试与生产看到的配置位置一致。
+    let paths = Paths::from_process();
+    let config_home = paths.home.clone();
+    let lookup: Lookup = Arc::new(move |alias: &str| {
+        crate::ssh_config::resolve_in(
+            &config_home.join(".ssh").join("config"),
+            &config_home,
+            alias,
+        )
+    });
+    let (broker, mut out_rx) = Broker::new(paths, lookup);
     let writer = tokio::spawn(async move {
         let mut stdout = tokio::io::stdout();
         while let Some(line) = out_rx.recv().await {

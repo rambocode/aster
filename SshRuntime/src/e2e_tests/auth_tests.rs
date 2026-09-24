@@ -405,3 +405,76 @@ async fn disconnect_command_closes_the_link() {
         .any(|e| e["state"] == "reconnecting");
     assert!(reconnecting);
 }
+
+#[tokio::test]
+async fn keyboard_interactive_null_cancels_and_mismatched_answers_are_rejected() {
+    let server = FakeSshd::start(FakeConfig {
+        kbd_answer: Some("1".into()),
+        ..Default::default()
+    })
+    .await;
+    let h = Harness::new().await;
+    let mut s = spec(server.port);
+    s.auth = AuthMode::KeyboardInteractive;
+    h.sync(&[("h", &s)]).await;
+    // responses 为 null：取消。
+    h.script.lock().unwrap().kbd.push_back(None);
+    let run = h.run(open_host("h", Some("exit 0"), true), vec![]).await;
+    assert_eq!(failure_kind(&run.outcome), "cancelled");
+    assert!(h.events_of("auth.result").is_empty());
+    // 空数组对一个提示：条数不符，按取消处理并回报 accepted=false。
+    h.script.lock().unwrap().kbd.push_back(Some(vec![]));
+    let run = h.run(open_host("h", Some("exit 0"), true), vec![]).await;
+    assert_eq!(failure_kind(&run.outcome), "cancelled");
+    let results = h.events_of("auth.result");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["accepted"], false);
+    assert_eq!(server.stats.kbd_attempts.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn accept_new_records_unknown_keys_without_asking_but_not_changed_ones() {
+    let server = FakeSshd::start(FakeConfig {
+        accept_none: true,
+        host_key_seed: 35,
+        ..Default::default()
+    })
+    .await;
+    let port = server.port;
+    let lookup: crate::broker::Lookup = Arc::new(move |name: &str| {
+        (name == "fresh").then(|| crate::ssh_config::HostEntry {
+            alias: "fresh".into(),
+            host_name: Some("127.0.0.1".into()),
+            port: Some(port),
+            strict_host_key_checking: Some("accept-new".into()),
+            ..Default::default()
+        })
+    });
+    let h = Harness::with_lookup(lookup).await;
+    let mut open = open_host("unused", Some("exit 0"), false);
+    open.host_id = None;
+    open.target = Some("fresh".into());
+    let run = h.run(open.clone(), vec![]).await;
+    assert_eq!(exit_status(&run.outcome), 0);
+    assert!(h.events_of("hostkey.confirm").is_empty());
+    assert_eq!(
+        known_hosts::check_file(&h.known_hosts(), "127.0.0.1", port, &server.host_key),
+        known_hosts::HostKeyStatus::Known
+    );
+
+    // 记录的密钥换掉之后，accept-new 不放行变更。
+    std::fs::remove_file(h.known_hosts()).unwrap();
+    known_hosts::append(
+        &h.known_hosts(),
+        "127.0.0.1",
+        port,
+        key_from_seed(98).public_key(),
+    )
+    .unwrap();
+    h.broker
+        .pool()
+        .disconnect(&format!("tester@127.0.0.1:{port}"))
+        .await;
+    let run = h.run(open, vec![]).await;
+    assert_eq!(failure_kind(&run.outcome), "hostKeyChanged");
+}

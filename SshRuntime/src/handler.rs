@@ -21,6 +21,8 @@ pub struct ClientHandler {
     pub spec_host: String,
     pub spec_port: u16,
     pub verify_host_keys: bool,
+    /// 未知主机密钥不询问，直接记入 known_hosts（StrictHostKeyChecking accept-new）。
+    pub accept_new_host_keys: bool,
     pub interactive: bool,
     pub env: Arc<Env>,
     /// 主机密钥被拒绝时的原因，握手失败后由调用方取出，映射成 hostKeyUnknown / hostKeyChanged。
@@ -81,6 +83,17 @@ impl russh::client::Handler for ClientHandler {
             ),
         };
         let fingerprint = known_hosts::fingerprint(key);
+        // accept-new 只放行「没见过」的主机；变更的密钥仍走下面的确认 / 失败流程。
+        if self.accept_new_host_keys && status == HostKeyStatus::Unknown {
+            match known_hosts::append(&self.env.known_hosts, &self.spec_host, self.spec_port, key) {
+                Ok(()) => log_info!(
+                    "accepted new host key for {} ({fingerprint})",
+                    self.endpoint()
+                ),
+                Err(e) => log_warn!("could not record host key for {}: {e}", self.endpoint()),
+            }
+            return Ok(true);
+        }
         if !self.interactive {
             self.reject(SshFailure::new(
                 kind,

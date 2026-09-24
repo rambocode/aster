@@ -111,8 +111,19 @@ impl Resolver<'_> {
 
         let mut spec = ResolvedSpec::basic(host, port, user);
         spec.auth = AuthMode::Auto;
-        spec.connect_timeout = self.connect_timeout.unwrap_or_else(default_connect_timeout);
+        // 超时优先级：client 的 --connect-timeout > ssh_config 的 ConnectTimeout > 缺省。
+        spec.connect_timeout = self
+            .connect_timeout
+            .or_else(|| entry.and_then(|e| e.connect_timeout))
+            .unwrap_or_else(default_connect_timeout);
         if let Some(e) = entry {
+            spec.agent_forward = e.forward_agent.unwrap_or(false);
+            // `no` 也只按 accept-new 处理：自动记下新主机，但密钥变更照样要确认，
+            // 不跟随 OpenSSH 在 `no` 时放行变更密钥的做法。
+            spec.accept_new_host_keys = matches!(
+                e.strict_host_key_checking.as_deref(),
+                Some("accept-new") | Some("no")
+            );
             spec.identity_files = e
                 .identity_files
                 .iter()
@@ -272,7 +283,15 @@ mod tests {
                     description: String::new(),
                 }],
                 keepalive_interval: Some(30),
-                keepalive_count_max: None,
+                forward_agent: Some(true),
+                strict_host_key_checking: Some("accept-new".into()),
+                ..Default::default()
+            }),
+            "slow" => Some(HostEntry {
+                alias: "slow".into(),
+                connect_timeout: Some(42),
+                strict_host_key_checking: Some("yes".into()),
+                ..Default::default()
             }),
             "bastion" => Some(HostEntry {
                 alias: "bastion".into(),
@@ -313,6 +332,8 @@ mod tests {
         assert_eq!(spec.keepalive_interval, 30);
         assert_eq!(spec.keepalive_count_max, 3);
         assert_eq!(spec.connect_timeout, 7);
+        assert!(spec.agent_forward);
+        assert!(spec.accept_new_host_keys);
         assert_eq!(spec.forwards.len(), 1);
         let j2 = spec.jump.as_deref().unwrap();
         assert_eq!((j2.host.as_str(), j2.user.as_str()), ("j2", "me"));
@@ -343,5 +364,20 @@ mod tests {
     fn self_referencing_jump_is_cut_off() {
         let err = resolver(&fake_lookup).resolve("loop").unwrap_err();
         assert!(err.detail.contains("too deep"));
+    }
+
+    #[test]
+    fn connect_timeout_prefers_the_command_line_then_ssh_config() {
+        let spec = resolver(&fake_lookup).resolve("slow").unwrap();
+        assert_eq!(spec.connect_timeout, 7, "--connect-timeout wins");
+        let no_flag = Resolver {
+            connect_timeout: None,
+            ..resolver(&fake_lookup)
+        };
+        let spec = no_flag.resolve("slow").unwrap();
+        assert_eq!(spec.connect_timeout, 42);
+        assert!(!spec.accept_new_host_keys, "yes keeps asking");
+        assert!(!spec.agent_forward);
+        assert_eq!(no_flag.resolve("unknown").unwrap().connect_timeout, 10);
     }
 }

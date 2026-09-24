@@ -219,6 +219,8 @@ fn spawn_proxy_command(
         .arg(format!("exec {command}"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
+        // stdin/stdout 是 SSH 传输流；stderr 接 broker 的 stderr（即日志）。绝不能继承 broker 的
+        // stdout：那是控制通道，子进程写一个字节就会污染 JSON 行，还会让 App 读不到 EOF。
         .stderr(std::process::Stdio::inherit())
         .kill_on_drop(true)
         .spawn()

@@ -449,6 +449,9 @@ async fn try_keyboard_interactive(
         loop {
             rounds += 1;
             if rounds > MAX_KI_ROUNDS {
+                for id in &ids {
+                    ctx.env.control.auth_result(id, false);
+                }
                 return Ok(Outcome::Rejected(None));
             }
             match resp {
@@ -502,12 +505,22 @@ async fn try_keyboard_interactive(
                             r.prompts = wire;
                         })
                         .await;
-                    let responses: Option<Vec<String>> = match (answer.responses, answer.secret) {
-                        (Some(v), _) if v.len() == prompts.len() => {
+                    // 键盘交互只看 responses：数组是回答，null 是取消；secret 恒为 null（PROTOCOL §4.2）。
+                    let responses: Option<Vec<String>> = match answer.responses {
+                        Some(v) if v.len() == prompts.len() => {
                             Some(v.iter().map(|s| String::clone(s)).collect())
                         }
-                        (_, Some(s)) if prompts.len() == 1 => Some(vec![String::clone(&s)]),
-                        _ => None,
+                        Some(v) => {
+                            // 回答条数和提示对不上是 App 侧的错误；按取消处理，并告诉 App 这次没被接受。
+                            log_info!(
+                                "keyboard-interactive answer has {} responses for {} prompts",
+                                v.len(),
+                                prompts.len()
+                            );
+                            ctx.env.control.auth_result(&id, false);
+                            None
+                        }
+                        None => None,
                     };
                     let Some(responses) = responses else {
                         return Ok(if ctx.interactive {

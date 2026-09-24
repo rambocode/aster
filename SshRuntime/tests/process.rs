@@ -24,12 +24,19 @@ struct BrokerProcess {
     child: Child,
     stdin: Option<ChildStdin>,
     socket: PathBuf,
+    /// ready 之后 broker 写到 stdout 的全部行。
+    lines: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     _dir: tempfile::TempDir,
 }
 
 impl BrokerProcess {
     /// 启动 broker，读到 ready 后同步一台指向 `port` 的主机。
     async fn start(port: u16) -> BrokerProcess {
+        Self::start_with(json!({"host":"127.0.0.1","port":port,"user":"tester","verifyHostKeys":false,"keepaliveInterval":0})).await
+    }
+
+    /// 启动 broker，读到 ready 后以 HOST_ID 同步给定规格。
+    async fn start_with(spec: Value) -> BrokerProcess {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("b.sock");
         let mut child = Command::new(BIN)
@@ -55,10 +62,15 @@ impl BrokerProcess {
         .unwrap();
         assert_eq!(ready["type"], "ready");
         assert_eq!(ready["socket"], socket.to_string_lossy().as_ref());
-        // 其余事件不关心，但必须持续读走，免得 broker 的 stdout 被写满。
-        tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+        // 持续读走其余行（免得 broker 的 stdout 被写满），留给测试检查。
+        let collected = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = collected.clone();
+        tokio::spawn(async move {
+            while let Ok(Some(line)) = lines.next_line().await {
+                sink.lock().unwrap().push(line);
+            }
+        });
         let mut stdin = child.stdin.take().unwrap();
-        let spec = json!({"host":"127.0.0.1","port":port,"user":"tester","verifyHostKeys":false,"keepaliveInterval":0});
         let sync = json!({"type":"profiles.sync","profiles":{HOST_ID: spec}});
         stdin
             .write_all(format!("{sync}\n").as_bytes())
@@ -69,6 +81,7 @@ impl BrokerProcess {
             child,
             stdin: Some(stdin),
             socket,
+            lines: collected,
             _dir: dir,
         }
     }
@@ -233,4 +246,49 @@ async fn broker_exits_and_removes_its_socket_on_stdin_eof() {
         .unwrap();
     assert_eq!(status.code(), Some(0));
     assert!(!Path::new(&broker.socket).exists());
+}
+
+/// ProxyCommand 子进程不能继承 broker 的 stdout（控制通道）：它往 stderr 写的东西只能进日志，
+/// broker 的 stdout 上只能出现 JSON 行。
+#[tokio::test]
+async fn proxy_command_output_never_reaches_the_control_channel() {
+    let server = FakeSshd::start(FakeConfig {
+        accept_none: true,
+        ..Default::default()
+    })
+    .await;
+    let broker = BrokerProcess::start_with(json!({
+        "host":"127.0.0.1","port":server.port,"user":"tester","verifyHostKeys":false,
+        "keepaliveInterval":0,
+        "proxyCommand":"sh -c 'echo proxy-noise; echo proxy-noise >&2; exec nc %h %p'"
+    }))
+    .await;
+    let out = tokio::time::timeout(
+        Duration::from_secs(10),
+        broker.client(HOST_ID, "exit 3").output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    // 第一条 echo 写进了传输流，SSH 握手会失败；关键是它不能出现在控制通道上。
+    let _ = out.status;
+    // 等拨号结果（connected 或 failed）的 link.state 出现，确认子进程已经跑过。
+    assert!(
+        eventually(Duration::from_secs(5), || broker
+            .lines
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|l| l.contains("\"connected\"") || l.contains("\"failed\"")))
+        .await,
+        "link.state result expected"
+    );
+    let lines = broker.lines.lock().unwrap().clone();
+    for line in &lines {
+        assert!(
+            !line.contains("proxy-noise"),
+            "control channel polluted: {line}"
+        );
+        serde_json::from_str::<Value>(line).unwrap_or_else(|_| panic!("not JSON: {line}"));
+    }
 }

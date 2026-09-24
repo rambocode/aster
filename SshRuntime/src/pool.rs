@@ -307,6 +307,7 @@ impl Pool {
             spec_host: spec.host.clone(),
             spec_port: spec.port,
             verify_host_keys: spec.verify_host_keys,
+            accept_new_host_keys: spec.accept_new_host_keys,
             interactive: req.interactive,
             env: self.env.clone(),
             verdict: verdict.clone(),
