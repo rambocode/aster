@@ -330,5 +330,12 @@
     window.AsterHostsForm.open(ctx, profile, { isDefaults, isNew, labels: labels(ctx.t), AUTH_MODES, FORWARD_KINDS, element, button });
   }
 
-  window.AsterHosts = { render, showImportReport };
+  /// 打开指定主机的编辑表单（原生「编辑主机…」深链）；找不到时只停在列表。
+  function edit(id, ctx) {
+    const wanted = String(id || "").toUpperCase();
+    const row = ctx.data.hosts.find(item => String(item.profile.id).toUpperCase() === wanted);
+    if (row) openEditor(ctx, row.profile, {});
+  }
+
+  window.AsterHosts = { render, showImportReport, edit };
 })();

@@ -134,6 +134,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   private var settingsMessageProxy: SettingsScriptMessageProxy?
   private var webRevision = 0
   private var webReady = false
+  /// 等网页就绪后要打开编辑表单的主机（「编辑主机…」深链）。
+  private var pendingHostEditID: UUID?
   /// Session Memory 目录的已用空间文本。目录遍历是磁盘 IO，绝不能落在快照构建里
   /// （每次设置改动都会重建快照）；这里只缓存后台算好的结果。
   private var memoryStoreSizeText = L("计算中…")
@@ -329,6 +331,20 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       "type": "selectSection",
       "section": section.webIdentifier,
     ])
+  }
+
+  /// 切到「主机」分类并打开指定主机的编辑表单；网页尚未就绪时等 `ready` 后再发。
+  func showHost(_ id: UUID) {
+    showSection(.hosts)
+    pendingHostEditID = id
+    flushPendingHostEdit()
+  }
+
+  /// 网页就绪后发出待处理的主机编辑请求。快照先于它送达，网页能找到这台主机。
+  private func flushPendingHostEdit() {
+    guard webReady, let id = pendingHostEditID else { return }
+    pendingHostEditID = nil
+    sendWebMessage(["type": "hostsEdit", "id": id.uuidString])
   }
 
   private func scheduleRefresh() {
@@ -3184,6 +3200,7 @@ extension SettingsViewController: WKNavigationDelegate {
     case "ready":
       webReady = true
       pushWebSnapshot()
+      flushPendingHostEdit()
     case "set":
       handleWebSet(message)
     case "action":

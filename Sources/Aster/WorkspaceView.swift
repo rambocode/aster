@@ -1991,6 +1991,10 @@ final class WorkspaceViewController: NSViewController {
       tab.openFileBrowser()
       model.persistWorkspace()
     })
+    // 原生 SSH 标签给「编辑主机…」，手敲 ssh 的本地标签给「保存为主机…」。
+    let hostItems = model.hostMenuItems(for: tab, window: view.window)
+    if !hostItems.isEmpty { menu.addItem(.separator()) }
+    for item in hostItems { menu.addItem(item) }
     menu.addItem(.separator())
     menu.addItem(ActionMenuItem(title: L("关闭标签页")) { [weak self, weak tab] in
       guard let self, let tab else { return }

@@ -271,11 +271,8 @@ final class MachineFleetModel: ObservableObject {
   /// 的非 URI 形式没有 `host:port` 语法，`user@host:2222` 会被当成主机名解析失败。
   nonisolated static func openSSHTarget(forHost id: UUID, in hosts: [SSHHostProfile]) throws -> String {
     let spec = try SSHHostResolver.resolve(id, in: hosts)
-    let isIPv6 = spec.host.contains(":")
-    let userPart = spec.user.isEmpty ? "" : "\(spec.user)@"
-    guard spec.port != 22 || isIPv6 else { return userPart + spec.host }
-    let hostPart = isIPv6 ? "[\(spec.host)]" : spec.host
-    return "ssh://\(userPart)\(hostPart)" + (spec.port == 22 ? "" : ":\(spec.port)")
+    // 规则与快连共用一处（QuickConnectTarget），机器 target 与快连目标永远一致。
+    return QuickConnectTarget.openSSHTarget(user: spec.user, host: spec.host, port: spec.port)
   }
 
   deinit { statusPollTask?.cancel() }
@@ -881,6 +878,9 @@ final class MachineFleetModel: ObservableObject {
     }
     guard let profile = profiles.first(where: { $0.id == id }) else { return L("机器不存在。") }
     guard profile.enabled else { return L("该机器已禁用。") }
+    // 侧栏、菜单、Open Quickly 与工作区切换都经过这里，在此记使用频率才不会漏掉入口；
+    // 重复选中当前机器（恢复、刷新）不算一次使用。
+    if activeMachineID != id { HostUsageTracking.record(.id(id)) }
     activeMachineID = id
     return nil
   }

@@ -3061,6 +3061,9 @@
         reply?.(message.succeeded === true);
       } else if (message.type === "selectSection") {
         setSection(message.section);
+      } else if (message.type === "hostsEdit") {
+        setSection("hosts");
+        if (snapshot) window.AsterHosts.edit(message.id, hostsContext());
       } else if (message.type === "hostsImportReport") {
         window.AsterHosts.showImportReport(message.report, hostsContext());
       } else if (message.type === "toast") {
