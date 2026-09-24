@@ -37,6 +37,10 @@ final class AsterControlDispatcher {
   /// 时间注入：测试缩短 settle / stall 等待。
   var promptStallMilliseconds = AsterControlDispatcher.promptStallMilliseconds
   var startSettleMilliseconds = AsterControlDispatcher.startSettleMilliseconds
+  /// `host.list` 的数据来源；nil 表示取 `SSHHostDirectory.shared`，测试注入替身。
+  var hostSnapshotProvider: (@MainActor () -> HostControlSnapshot)?
+  /// `workspace.*` 的依赖；nil 表示取生产注册表与窗口，测试注入替身。
+  var workspaceContextProvider: (@MainActor () -> WorkspaceControlContext)?
 
   init(
     bridge: AsterControlBridge, version: String,
@@ -63,6 +67,8 @@ final class AsterControlDispatcher {
       if let response = await handleMachineMethod(request, fleet: MachineFleetModel.shared) {
         return response
       }
+      if let response = handleHostMethod(request) { return response }
+      if let response = await handleWorkspaceMethod(request) { return response }
       let method = try request.resolvedMethod()
       let result = try await dispatch(method, request: request, client: client)
       return AsterControlResponse(id: request.id, result: result)
