@@ -173,8 +173,17 @@
     advanced.appendChild(field(t("连接超时（秒）"), input("connectTimeout", profile.connectTimeout, inherited("connectTimeout"), "number")));
     advanced.appendChild(field(t("校验主机密钥"), select("verifyHostKeys", [["", inheritLabel(onOff(inherited("verifyHostKeys")))], ["true", t("开")], ["false", t("关")]], triState.fromValue(profile.verifyHostKeys))));
     advanced.appendChild(field(t("Agent 转发"), select("agentForward", [["", inheritLabel(onOff(inherited("agentForward")))], ["true", t("开")], ["false", t("关")]], triState.fromValue(profile.agentForward))));
-    const advancedKeys = ["proxyCommand", "socksProxy", "httpProxy", "keepaliveInterval", "keepaliveCountMax", "connectTimeout", "verifyHostKeys", "agentForward"];
-    section(t("高级"), advancedKeys.some(key => profile[key] != null && profile[key] !== ""), advanced);
+    advanced.appendChild(field(t("只用指定私钥"), select("identitiesOnly", [["", inheritLabel(onOff(inherited("identitiesOnly")))], ["true", t("开")], ["false", t("关")]], triState.fromValue(profile.identitiesOnly)), t("开启后只尝试上面的私钥文件，不再用 agent 里的其它密钥（IdentitiesOnly）")));
+    // known_hosts 与私钥一样按「非空才覆盖」继承：留空就用默认项，再缺省为 ~/.ssh/known_hosts。
+    const knownHosts = element("textarea", "control hosts-identity");
+    knownHosts.rows = 2;
+    knownHosts.spellcheck = false;
+    knownHosts.value = (profile.knownHostsFiles ?? []).join("\n");
+    knownHosts.placeholder = (inherited("knownHostsFiles")?.length ? inherited("knownHostsFiles") : builtin.knownHostsFiles).join("\n");
+    fields.knownHostsFiles = knownHosts;
+    advanced.appendChild(field(t("known_hosts 文件"), knownHosts, t("每行一个；留空使用默认值 {path}", { path: builtin.knownHostsFiles.join("、") })));
+    const advancedKeys = ["proxyCommand", "socksProxy", "httpProxy", "keepaliveInterval", "keepaliveCountMax", "connectTimeout", "verifyHostKeys", "agentForward", "identitiesOnly"];
+    section(t("高级"), advancedKeys.some(key => profile[key] != null && profile[key] !== "") || Boolean(profile.knownHostsFiles?.length), advanced);
 
     dialog.appendChild(form);
     const status = element("p", "hosts-form-error");
@@ -202,7 +211,10 @@
         const parsed = parseHostPort(text(key));
         if (parsed) next[key] = parsed; else errors.push(t("{field} 要写成 主机:端口", { field: label }));
       }
-      for (const key of ["verifyHostKeys", "agentForward"]) {
+      // 空的 known_hosts 列表保存成 nil（继承），而不是空数组。
+      const knownHostsFiles = knownHosts.value.split("\n").map(line => line.trim()).filter(Boolean);
+      if (knownHostsFiles.length) next.knownHostsFiles = knownHostsFiles;
+      for (const key of ["verifyHostKeys", "agentForward", "identitiesOnly"]) {
         const value = triState.toValue(fields[key].value);
         if (value !== null) next[key] = value;
       }

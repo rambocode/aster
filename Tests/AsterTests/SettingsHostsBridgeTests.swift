@@ -201,3 +201,37 @@ func settingsSSHEngineRoundTrips() throws {
   #expect(preferences.configuration.shell.resolvedSSHEngine == .openssh)
   #expect(controller.settingsSnapshotForTesting()["hosts"] is [String: Any])
 }
+
+@Test("只用指定私钥与 known_hosts 文件随保存落盘并原样读回；空列表存成 nil")
+@MainActor
+func settingsHostsSaveKeepsIdentitiesOnlyAndKnownHosts() throws {
+  let fixture = try HostsBridgeFixture()
+  defer { fixture.cleanUp() }
+  let orb = SSHHostProfile(
+    name: "orb", host: "127.0.0.1", port: 32222, user: "root",
+    identityFiles: ["~/.orbstack/ssh/id_ed25519"], identitiesOnly: true,
+    knownHostsFiles: ["~/.orbstack/ssh/known_hosts", "~/.ssh/known_hosts"])
+  let object = SettingsHostsBridge.profileJSON(orb)
+  #expect(object["identitiesOnly"] as? Bool == true)
+  #expect(object["knownHostsFiles"] as? [String] == orb.knownHostsFiles)
+  #expect(fixture.perform("hosts.save", ["profile": object]) == true)
+
+  let reloaded = try SSHHostStore(fileURL: fixture.bridge.directory.store.fileURL).load()
+  #expect(reloaded.first { $0.id == orb.id } == orb)
+  let snapshotRow = try row("orb", in: fixture.bridge.snapshot())
+  #expect(try SettingsHostsBridge.decodeProfile(snapshotRow["profile"]) == orb)
+
+  // 表单把空文本框提交成空数组时也按「继承」处理。
+  var cleared = SettingsHostsBridge.profileJSON(orb)
+  cleared["knownHostsFiles"] = [String]()
+  cleared["identitiesOnly"] = false
+  #expect(fixture.perform("hosts.save", ["profile": cleared]) == true)
+  let after = try #require(fixture.bridge.directory.host(orb.id))
+  #expect(after.knownHostsFiles == nil)
+  #expect(after.identitiesOnly == false)
+
+  // 复制带上这两个字段。
+  #expect(fixture.perform("hosts.duplicate", ["id": orb.id.uuidString]) == true)
+  let copy = try #require(fixture.bridge.directory.savedHosts.first { $0.id != orb.id })
+  #expect(copy.identitiesOnly == false && copy.knownHostsFiles == nil)
+}
