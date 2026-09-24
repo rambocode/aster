@@ -106,6 +106,16 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   /// 浮层事件监视只在展示期间存活；关闭后立即移除，避免拦截终端的
   /// `⌘W` / `⌘R` 等既有快捷键。`deinit` 是 nonisolated，因此句柄标为 unsafe。
   private nonisolated(unsafe) var overlayEventMonitor: Any?
+  /// SSH 过滤器的机器、主机、alias 与快连行（数据源与动作在 OpenQuicklyHostTargets）。
+  private lazy var hostTargets = OpenQuicklyHostTargets(
+    model: model,
+    window: { [weak self] in self?.viewIfLoaded?.window },
+    fallbackAliases: { [weak self] in self?.readSSHHosts() ?? [] },
+    onChange: { [weak self] in
+      guard let self, self.isViewLoaded else { return }
+      self.rebuildTargets()
+      self.reload()
+    })
 
   init(model: AppModel) {
     self.model = model
@@ -474,11 +484,11 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   private func reload() {
     for row in rows { row.detachFromResultsStack() }
     for view in resultsStack.arrangedSubviews { view.removeFromSuperview() }
-    let items = searchIndex.search(
+    let items = withQuickConnectRows(searchIndex.search(
       query: search.stringValue,
       filter: selectedFilter,
       maximumResults: 50
-    )
+    ))
     visibleTargets = items.compactMap { targetsByID[$0.id] }
     rows.removeAll()
     if visibleTargets.isEmpty {
@@ -710,14 +720,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
         )
       ]
     }
-    for host in readSSHHosts() {
-      result.append(
-        Target(
-          item: .init(
-            id: "ssh:\(host.alias)", kind: .ssh, title: host.alias, detail: host.destination),
-          symbol: "network", badge: "SSH", accented: false, actionTitle: L("连接")
-        ) { [weak model] in model?.openSSHHost(host) })
-    }
+    result.append(contentsOf: hostTargets.entries().map(Self.target(from:)))
     for provider in model.enabledAgentProviders {
       result.append(
         Target(
@@ -949,6 +952,23 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     }
   }
 
+  /// 快连行随查询变化，不进内存索引：每次 reload 现算、登记到 `targetsByID`，再插到 SSH 小节最前。
+  private func withQuickConnectRows(_ items: [OpenQuicklyItem]) -> [OpenQuicklyItem] {
+    let entries = hostTargets.quickConnectEntries(query: search.stringValue, filter: selectedFilter)
+    for entry in entries { targetsByID[entry.item.id] = Self.target(from: entry) }
+    return OpenQuicklyHostCatalog.inserting(entries.map(\.item), into: items)
+  }
+
+  /// SSH 类条目（机器、主机、alias、快连）转成浮层行。
+  private static func target(from entry: OpenQuicklyHostEntry) -> Target {
+    var target = Target(
+      item: entry.item, symbol: entry.symbol, badge: entry.badge, accented: false,
+      actionTitle: entry.actionTitle, action: entry.action)
+    target.menuActions = entry.menuActions
+    return target
+  }
+
+  /// Swift 解析器读 `~/.ssh/config`：Rust 解析器（支持 Include）结果到达前的回退。
   private func readSSHHosts() -> [SSHHost] {
     let url = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".ssh/config")
