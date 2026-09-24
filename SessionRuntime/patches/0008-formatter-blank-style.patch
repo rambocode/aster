@@ -1,0 +1,19 @@
+diff --git a/src/terminal/formatter.zig b/src/terminal/formatter.zig
+index bc61e2106..c04d3780a 100644
+--- a/src/terminal/formatter.zig
++++ b/src/terminal/formatter.zig
+@@ -1194,6 +1194,14 @@ pub const PageFormatter = struct {
+                 // This cell is not blank. If we have accumulated blank cells
+                 // then we want to emit them now.
+                 if (blank_cells > 0) {
++                    // Aster: blank cells are unstyled by definition, but the
++                    // previous cell's style is still open. Close it first or
++                    // the padding spaces inherit it (a background color run
++                    // followed by a gap would paint the gap in that color).
++                    if (formatStyled(self.opts.emit) and !style.default()) {
++                        try self.formatStyleClose(writer);
++                        style = .{};
++                    }
+                     try writer.splatByteAll(' ', blank_cells);
+ 
+                     if (self.point_map) |*map| {

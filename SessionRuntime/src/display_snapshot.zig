@@ -496,3 +496,26 @@ test "alignment counting survives wrapped rows, wide characters and styled blank
         try expectSameScreens(&source, &destination);
     }
 }
+
+test "restore does not paint the gap after a background run" {
+    var source = try vt.Terminal.init(40, 6, 100);
+    defer source.deinit();
+    // Claude Code 的 Clawd 头部：黑底色块之后用 CHA 跳过 3 格再写标题，跳过的格子是空白。
+    // 快照若在黑底样式未关闭时补空格，接收端这 3 格会被涂成黑块。
+    source.write("\x1b[?1049h\x1b[2J\x1b[H\r\x1b[1B\x1b[38;2;215;119;87m \xe2\x96\x90\x1b[48;2;0;0;0m\xe2\x96\x9b\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x9b\xe2\x96\x88\x1b[12G\x1b[39m\x1b[49m\x1b[1mClaude Code");
+    const bytes = try capture(std.testing.allocator, &source, 65536);
+    defer std.testing.allocator.free(bytes);
+    const run = std.mem.indexOf(u8, bytes, "\xe2\x96\x9b\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88\xe2\x96\x9b\xe2\x96\x88") orelse return error.TestUnexpectedResult;
+    const gap = std.mem.indexOfPos(u8, bytes, run, "   ") orelse return error.TestUnexpectedResult;
+    // 黑底色块与空白之间必须先复位样式。
+    const reset = std.mem.indexOfPos(u8, bytes, run, "\x1b[0m") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(reset < gap);
+    var destination = try vt.Terminal.init(40, 6, 100);
+    defer destination.deinit();
+    destination.write(bytes);
+    const expected = try source.formatActiveScreen(std.testing.allocator, true, 65536);
+    defer std.testing.allocator.free(expected);
+    const actual = try destination.formatActiveScreen(std.testing.allocator, true, 65536);
+    defer std.testing.allocator.free(actual);
+    try std.testing.expectEqualStrings(expected, actual);
+}
