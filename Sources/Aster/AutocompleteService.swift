@@ -579,9 +579,20 @@ final class AutocompleteService {
   private let cliTokenURL: URL
   private var baseSpecDatabase: AutocompleteSpecDatabase
   private var localSpecDatabase: AutocompleteSpecDatabase
+  private let transitionsURL: URL
+  /// 历史整体变化（清空、固定、加载）时由调用方置空使用频次缓存；逐条执行的命令
+  /// 走增量更新，见 `record`。
   private var learningDatabase: AutocompleteLearningDatabase
 
-  private(set) var specDatabase: AutocompleteSpecDatabase
+  private(set) var specDatabase: AutocompleteSpecDatabase {
+    didSet { cachedUsageModel = nil }
+  }
+  /// 由学习历史推导的 token 使用频次。历史或规格变化时置空，下次查询惰性重建。
+  private var cachedUsageModel: AutocompleteUsageModel?
+  /// 命令间转移统计，单独存 `transitions.json`，不改变 `learning.json` 的格式。
+  private var transitions = AutocompleteTransitionTable()
+  /// 每个会话上一条成功执行的命令，只在内存中保留；失败或重启即断开上下文。
+  private var lastCommandBySession: [String: String] = [:]
   /// `PATH` 可执行文件查找结果的进程内缓存，见 `executableExistsOnPath`。
   private var executableLookupCache: [String: Bool] = [:]
   private(set) var cliToken: String
@@ -604,6 +615,7 @@ final class AutocompleteService {
     updatedSpecURL = self.baseDirectory.appendingPathComponent("fig-specs.json")
     localSpecURL = self.baseDirectory.appendingPathComponent("local-specs.json")
     cliTokenURL = self.baseDirectory.appendingPathComponent("cli-token")
+    transitionsURL = self.baseDirectory.appendingPathComponent("transitions.json")
 
     try Self.prepareStateDirectory(self.baseDirectory, fileManager: fileManager)
     cliToken = try Self.loadOrCreateCLIToken(at: cliTokenURL, fileManager: fileManager)
@@ -640,12 +652,21 @@ final class AutocompleteService {
       at: learningURL,
       maximumBytes: AutocompleteLearningStore.maximumEncodedBytes,
       fileManager: fileManager
-    ), let decoded = try? AutocompleteLearningStore.decode(data) {
+    ), var decoded = try? AutocompleteLearningStore.decode(data) {
+      decoded.removeImplausibleEntries()
       learningDatabase = decoded
     } else {
       learningDatabase = AutocompleteLearningDatabase()
     }
     specDatabase = Self.merged(base: baseSpecDatabase, local: localSpecDatabase)
+    // 转移表损坏或超量时丢弃重来：它只是排序信号，不值得阻止补全启动。
+    if let data = try? Self.readOptionalStateFile(
+      at: transitionsURL, maximumBytes: 512 * 1_024, fileManager: fileManager),
+      let decoded = try? JSONDecoder().decode(AutocompleteTransitionTable.self, from: data),
+      let valid = decoded.validated()
+    {
+      transitions = valid
+    }
   }
 
   /// 生产环境的惰性单例。测试可注入临时目录；`swift test`/`swift run` 使用进程级
@@ -757,12 +778,37 @@ final class AutocompleteService {
     if !learnedArguments.isEmpty, folderTargets.expectsFolder(after: leadingTokens) {
       learnedArguments.removeAll { folderTargets.isMissingFolder($0.displayText) }
     }
-    guard !files.isEmpty || !learnedArguments.isEmpty else { return base }
+    // 使用频次与上下文加分在所有来源归并之后统一叠加，再重排一次。没有新增候选、
+    // 分数也没变时直接沿用引擎已排好的结果，避免对上千个动态候选重复排序。
+    let usage = localLearningEnabled ? usageModel() : AutocompleteUsageModel()
+    let extras = files + learnedArguments
+      + usage.learnedValueCandidates(line: line, specDatabase: specDatabase)
+    let adjusted = AutocompleteUsageModel.applyingBonuses(
+      base.candidates + extras,
+      line: line,
+      directory: normalizedDirectory,
+      usage: usage,
+      transitions: transitions,
+      previousCommand: localLearningEnabled ? lastCommandBySession[sessionIdentifier] : nil,
+      specDatabase: specDatabase)
+    guard adjusted != nil || !extras.isEmpty else { return base }
     // 文件候选参与统一重排,而不是无条件追加在规格候选之后。旧实现让文件永远排在
     // 最后、且只有在没有其它候选时才可能成为 ghost,于是 `cat REA<Tab>` 补不出
     // README——只要有任何一条别的候选,文件就沉底了。
-    let combined = AutocompleteEngine.rank(base.candidates + files + learnedArguments, line: line)
+    let combined = AutocompleteEngine.rank(adjusted ?? base.candidates + extras, line: line)
     return .make(candidates: Array(combined.prefix(200)), line: line)
+  }
+
+  /// 惰性构建 token 使用频次模型；历史不变时每次按键复用同一份。时间衰减只在构建时
+  /// 计算，所以超过 6 小时重建一次。
+  private func usageModel() -> AutocompleteUsageModel {
+    if let cachedUsageModel, Date().timeIntervalSince(cachedUsageModel.builtAt) < 6 * 3_600 {
+      return cachedUsageModel
+    }
+    let model = AutocompleteUsageModel(
+      entries: learningDatabase.entries, specDatabase: specDatabase)
+    cachedUsageModel = model
+    return model
   }
 
   /// 为一次补全查询构造动态候选提供者。引擎只在解析到参数槽位时才回调,因此这里
@@ -794,14 +840,53 @@ final class AutocompleteService {
       knownOptions: knownOptions,
       sessionIdentifier: sessionIdentifier,
       at: date
-    ) else { return false }
+    ) else {
+      lastCommandBySession[sessionIdentifier] = nil
+      return false
+    }
     do {
       try persistLearning()
-      return true
     } catch {
       learningDatabase = previous
       return false
     }
+    // 派生统计只用脱敏后的文本，与学习库保存的内容一致。
+    if let sanitized = AutocompleteLearningDatabase.sanitizedCommand(command) {
+      cachedUsageModel?.add(
+        command: sanitized,
+        directory: URL(fileURLWithPath: directory).standardizedFileURL.path,
+        specDatabase: specDatabase)
+      recordTransition(
+        command: sanitized, succeeded: exitStatus == 0, sessionIdentifier: sessionIdentifier)
+    }
+    return true
+  }
+
+  /// 更新同一会话里「上一条 → 这一条」的转移。失败的命令断开上下文，不作为下一条的前文。
+  /// 转移表写盘失败只丢这一次统计，不影响历史学习结果。
+  private func recordTransition(command: String, succeeded: Bool, sessionIdentifier: String) {
+    guard succeeded else {
+      lastCommandBySession[sessionIdentifier] = nil
+      return
+    }
+    if let previousCommand = lastCommandBySession[sessionIdentifier] {
+      let before = transitions
+      transitions.record(previous: previousCommand, next: command, specDatabase: specDatabase)
+      if transitions != before {
+        do {
+          try persistTransitions()
+        } catch {
+          transitions = before
+        }
+      }
+    }
+    lastCommandBySession[sessionIdentifier] = command
+  }
+
+  private func persistTransitions() throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    try Self.writeStateFile(try encoder.encode(transitions), to: transitionsURL, fileManager: fileManager)
   }
 
   @discardableResult
@@ -884,6 +969,19 @@ final class AutocompleteService {
     } catch {
       learningDatabase = previous
       throw error
+    }
+    // 清空历史时一并清空由它派生的使用频次、命令转移与会话上下文。
+    cachedUsageModel = nil
+    if selection.contains(.history) {
+      let previousTransitions = transitions
+      transitions = AutocompleteTransitionTable()
+      lastCommandBySession = [:]
+      do {
+        try persistTransitions()
+      } catch {
+        transitions = previousTransitions
+        throw error
+      }
     }
   }
 

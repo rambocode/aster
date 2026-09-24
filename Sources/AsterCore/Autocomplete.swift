@@ -745,6 +745,7 @@ public struct AutocompleteLearningDatabase: Codable, Equatable, Sendable {
   ) -> Bool {
     guard let directory = Self.normalizedDirectory(directory),
       let sanitized = Self.sanitizedCommand(command),
+      Self.isPlausibleCommand(sanitized),
       !ignorePatterns.prefix(64).contains(where: { ShellGlob.matches(command, pattern: $0) })
     else { return false }
 
@@ -933,7 +934,9 @@ public struct AutocompleteLearningDatabase: Codable, Equatable, Sendable {
     "--password", "--passwd", "--secret", "--token",
   ]
 
-  private static func sanitizedCommand(_ command: String) -> String? {
+  /// 学习库实际保存的命令文本（去掉 secret 参数值）；无法学习时返回 nil。
+  /// 由历史派生的其它统计（使用频次、命令转移）必须用它，而不是原始命令。
+  public static func sanitizedCommand(_ command: String) -> String? {
     guard !command.isEmpty, command.utf8.count <= 4_096,
       !command.unicodeScalars.contains(where: {
         CharacterSet.controlCharacters.contains($0) && $0.value != 0x09
@@ -957,6 +960,26 @@ public struct AutocompleteLearningDatabase: Codable, Equatable, Sendable {
     }
     let result = kept.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
     return result.isEmpty ? nil : result
+  }
+
+  /// 排除明显不是用户在 Shell 里敲出的命令，避免它们污染补全：
+  /// - `11;rgb:ffff/…` 这类以「数字 + 分号」开头的是终端查询应答（OSC/CSI 回包）
+  ///   被误当成输入的残留；
+  /// - 以单独的 `!` 开头的是 Claude Code 等 TUI 的 Shell 模式前缀。交互式 Shell 里
+  ///   几乎不会手敲 `!` 取反管道，误删的代价远小于长期推荐一条带 `!` 的命令。
+  static func isPlausibleCommand(_ command: String) -> Bool {
+    let scalars = Array(command.unicodeScalars.prefix(16))
+    let digits = scalars.prefix { CharacterSet.decimalDigits.contains($0) }
+    if !digits.isEmpty, scalars.count > digits.count, scalars[digits.count] == ";" { return false }
+    return command != "!" && !command.hasPrefix("! ")
+  }
+
+  /// 丢弃旧版本已经学进来的不合理条目，返回是否有改动。加载时调用一次，下次写盘即清理。
+  @discardableResult
+  public mutating func removeImplausibleEntries() -> Bool {
+    let before = entries.count
+    entries.removeAll { !Self.isPlausibleCommand($0.command) }
+    return entries.count != before
   }
 
   private static func hasUnknownLongOption(_ command: String, knownOptions: Set<String>) -> Bool {
