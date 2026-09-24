@@ -69,6 +69,15 @@ pub struct HostEntry {
     /// StrictHostKeyChecking，归一化为 yes | no | ask | accept-new；没写为 null。
     #[serde(default)]
     pub strict_host_key_checking: Option<String>,
+    /// UserKnownHostsFile 原文路径（可多个，`~` 与 `%` token 由使用方展开）；`none` 写成 `["none"]`；没写为空数组。
+    #[serde(default)]
+    pub user_known_hosts_files: Vec<String>,
+    /// GlobalKnownHostsFile，格式同上；没写为空数组（使用方回落到系统默认文件）。
+    #[serde(default)]
+    pub global_known_hosts_files: Vec<String>,
+    /// IdentitiesOnly；没写为 null。
+    #[serde(default)]
+    pub identities_only: Option<bool>,
 }
 
 /// 没有被采用的一行配置，即导入时展示给用户的 ImportReport 条目（PROTOCOL.md §5）。
@@ -212,6 +221,20 @@ impl Accumulator {
                 entry
                     .strict_host_key_checking
                     .get_or_insert_with(|| v.clone());
+            }
+            // 列表整体按「第一个出现的指令生效」处理；列表不会为空，所以非空即已决定。
+            Setting::UserKnownHostsFile(files) => {
+                if entry.user_known_hosts_files.is_empty() {
+                    entry.user_known_hosts_files = files.clone();
+                }
+            }
+            Setting::GlobalKnownHostsFile(files) => {
+                if entry.global_known_hosts_files.is_empty() {
+                    entry.global_known_hosts_files = files.clone();
+                }
+            }
+            Setting::IdentitiesOnly(b) => {
+                entry.identities_only.get_or_insert(*b);
             }
         }
     }

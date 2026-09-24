@@ -47,6 +47,8 @@ pub struct Stats {
     pub window_changes: Mutex<Vec<(u32, u32)>>,
     pub close_times: Mutex<Vec<Instant>>,
     pub direct_tcpip: Mutex<Vec<(String, u32)>>,
+    /// 客户端提出过的全部公钥（含未签名的探测）。
+    pub offered_keys: Mutex<Vec<PublicKey>>,
 }
 
 /// 一台正在运行的假 SSH 服务器。
@@ -210,6 +212,7 @@ impl server::Handler for Sshd {
         _user: &str,
         key: &PublicKey,
     ) -> Result<Auth, Self::Error> {
+        self.stats.offered_keys.lock().unwrap().push(key.clone());
         Ok(if self.config.authorized_keys.contains(key) {
             Auth::Accept
         } else {

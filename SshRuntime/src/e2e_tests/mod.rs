@@ -3,6 +3,7 @@
 //! 夹具 `Harness` 模拟 App：消费控制通道的每一行，并按脚本自动回答凭证与主机密钥请求。
 
 mod auth_tests;
+mod known_hosts_tests;
 mod session_tests;
 
 use std::collections::VecDeque;
@@ -48,11 +49,26 @@ impl Harness {
 
     /// 自定义 ssh_config 查询的环境。
     pub async fn with_lookup(lookup: Lookup) -> Harness {
+        Self::build(lookup, None).await
+    }
+
+    /// 带一个装着 `keys` 的临时 ssh-agent 的环境（russh 自带的 agent 服务端）。
+    pub async fn with_agent(keys: &[russh::keys::PrivateKey]) -> Harness {
+        Self::build(Arc::new(|_: &str| None), Some(keys)).await
+    }
+
+    /// 组装环境；`agent_keys` 为 Some 时在临时目录里起一个 agent。
+    async fn build(lookup: Lookup, agent_keys: Option<&[russh::keys::PrivateKey]>) -> Harness {
         let dir = tempfile::tempdir().expect("tempdir");
+        let agent_sock = match agent_keys {
+            Some(keys) => Some(start_agent(dir.path(), keys).await),
+            None => None,
+        };
         let paths = Paths {
             home: dir.path().to_path_buf(),
             known_hosts: dir.path().join(".ssh").join("known_hosts"),
-            agent_sock: None,
+            global_known_hosts: Vec::new(),
+            agent_sock,
             local_user: "tester".into(),
         };
         let (broker, mut rx) = Broker::new(paths, lookup);
@@ -334,4 +350,22 @@ pub fn assert_logs_free_of(secrets: &[&str]) {
 /// 把路径转成字符串。
 pub fn path_str(p: &Path) -> String {
     p.to_string_lossy().into_owned()
+}
+
+/// 在 `dir/agent.sock` 起一个 ssh-agent 并装入 `keys`，返回 socket 路径。
+async fn start_agent(dir: &Path, keys: &[russh::keys::PrivateKey]) -> PathBuf {
+    let path = dir.join("agent.sock");
+    let listener = tokio::net::UnixListener::bind(&path).expect("bind agent socket");
+    let incoming = Box::pin(futures::stream::unfold(listener, |l| async move {
+        let next = l.accept().await.map(|(s, _)| s);
+        Some((next, l))
+    }));
+    tokio::spawn(russh::keys::agent::server::serve(incoming, ()));
+    let mut client = russh::keys::agent::client::AgentClient::connect_uds(&path)
+        .await
+        .expect("connect agent");
+    for key in keys {
+        client.add_identity(key, &[]).await.expect("add identity");
+    }
+    path
 }

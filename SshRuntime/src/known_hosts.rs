@@ -6,12 +6,15 @@
 //! 同算法不同密钥才算「变更」，只有别的算法的条目时按「未知」处理。
 
 use std::io::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use data_encoding::BASE64;
 use hmac::{Hmac, KeyInit, Mac};
 use russh::keys::{HashAlg, PublicKey};
 use sha1::Sha1;
+
+use crate::env::{expand_tilde, Env};
+use crate::protocol::ResolvedSpec;
 
 /// 校验结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,6 +316,75 @@ pub fn replace(path: &Path, host: &str, port: u16, key: &PublicKey) -> std::io::
     std::fs::rename(&tmp, path)
 }
 
+/// 一跳要查的 known_hosts 文件：用户级文件依次查、写入第一个；系统级文件只读。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnownHostsFiles {
+    pub user: Vec<PathBuf>,
+    pub global: Vec<PathBuf>,
+}
+
+/// 把 spec 里的路径列表转成文件；`["none"]` 表示没有文件，空列表用缺省值。
+fn resolve_list(list: &[String], home: &Path, fallback: &[PathBuf]) -> Vec<PathBuf> {
+    match list {
+        [] => fallback.to_vec(),
+        [only] if only.eq_ignore_ascii_case("none") => Vec::new(),
+        files => files.iter().map(|f| expand_tilde(f, home)).collect(),
+    }
+}
+
+impl KnownHostsFiles {
+    /// 按 spec 与运行环境决定这一跳的 known_hosts 文件。
+    pub fn for_spec(spec: &ResolvedSpec, env: &Env) -> Self {
+        let user = resolve_list(
+            &spec.known_hosts_files,
+            &env.home,
+            std::slice::from_ref(&env.known_hosts),
+        );
+        let global = match &spec.global_known_hosts_files {
+            Some(list) if !list.is_empty() => resolve_list(list, &env.home, &[]),
+            _ => env.global_known_hosts.clone(),
+        };
+        Self { user, global }
+    }
+
+    /// 全部文件，用户级在前。
+    fn all(&self) -> impl Iterator<Item = &PathBuf> {
+        self.user.iter().chain(self.global.iter())
+    }
+
+    /// 在全部文件里校验。优先级：吊销 > 任一文件匹配 > 任一文件同算法不同密钥 > 未知。
+    pub fn check(&self, host: &str, port: u16, key: &PublicKey) -> HostKeyStatus {
+        let statuses: Vec<HostKeyStatus> =
+            self.all().map(|p| check_file(p, host, port, key)).collect();
+        for wanted in [
+            HostKeyStatus::Revoked,
+            HostKeyStatus::Known,
+            HostKeyStatus::Changed,
+        ] {
+            if statuses.contains(&wanted) {
+                return wanted;
+            }
+        }
+        HostKeyStatus::Unknown
+    }
+
+    /// 全部文件里这台主机已有的算法（去重，按出现顺序）。
+    pub fn known_algorithms(&self, host: &str, port: u16) -> Vec<russh::keys::Algorithm> {
+        let mut out = Vec::new();
+        for alg in self.all().flat_map(|p| known_algorithms(p, host, port)) {
+            if !out.contains(&alg) {
+                out.push(alg);
+            }
+        }
+        out
+    }
+
+    /// 接受新密钥时写入的文件（第一个用户级文件）；UserKnownHostsFile none 时没有。
+    pub fn writable(&self) -> Option<&Path> {
+        self.user.first().map(PathBuf::as_path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,5 +548,48 @@ mod tests {
         .unwrap();
         assert_eq!(known_algorithms(&path, "h", 22).len(), 1);
         assert!(known_algorithms(&path, "x", 22).is_empty());
+    }
+
+    #[test]
+    fn a_file_set_checks_every_file_and_writes_the_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        append(&b, "h", 2222, &key(1)).unwrap();
+        let set = KnownHostsFiles {
+            user: vec![a.clone(), b.clone()],
+            global: vec![],
+        };
+        assert_eq!(set.check("h", 2222, &key(1)), HostKeyStatus::Known);
+        assert_eq!(set.check("h", 2222, &key(2)), HostKeyStatus::Changed);
+        assert_eq!(set.check("x", 22, &key(1)), HostKeyStatus::Unknown);
+        assert_eq!(set.writable(), Some(a.as_path()));
+        // 系统级文件参与校验，同一把钥匙在别处匹配就算通过。
+        let global = dir.path().join("global");
+        append(&global, "h", 2222, &key(2)).unwrap();
+        let set = KnownHostsFiles {
+            user: vec![a.clone(), b],
+            global: vec![global],
+        };
+        assert_eq!(set.check("h", 2222, &key(2)), HostKeyStatus::Known);
+        assert_eq!(set.known_algorithms("h", 2222).len(), 1);
+    }
+
+    #[test]
+    fn spec_lists_map_to_files() {
+        let home = Path::new("/home/me");
+        let fallback = [PathBuf::from("/home/me/.ssh/known_hosts")];
+        assert_eq!(resolve_list(&[], home, &fallback), fallback.to_vec());
+        assert!(resolve_list(&["none".into()], home, &fallback).is_empty());
+        assert_eq!(
+            resolve_list(
+                &["~/.orbstack/ssh/known_hosts".into(), "/x".into()],
+                home,
+                &fallback
+            ),
+            vec![
+                PathBuf::from("/home/me/.orbstack/ssh/known_hosts"),
+                PathBuf::from("/x")
+            ]
+        );
     }
 }

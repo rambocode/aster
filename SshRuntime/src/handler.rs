@@ -23,6 +23,8 @@ pub struct ClientHandler {
     pub verify_host_keys: bool,
     /// 未知主机密钥不询问，直接记入 known_hosts（StrictHostKeyChecking accept-new）。
     pub accept_new_host_keys: bool,
+    /// 这一跳要查 / 写的 known_hosts 文件。
+    pub known_hosts: known_hosts::KnownHostsFiles,
     pub interactive: bool,
     pub env: Arc<Env>,
     /// 主机密钥被拒绝时的原因，握手失败后由调用方取出，映射成 hostKeyUnknown / hostKeyChanged。
@@ -42,6 +44,38 @@ impl ClientHandler {
         *self.verdict.lock().unwrap_or_else(|p| p.into_inner()) = Some(failure);
     }
 
+    /// 把已接受的密钥写进第一个用户级 known_hosts：unknown 追加，changed 替换旧行。
+    ///
+    /// 写失败或没有可写文件（UserKnownHostsFile none）时只记日志，这次连接照常进行，
+    /// 下次再问——与 OpenSSH「Failed to add the host to the list of known hosts」后继续连接一致。
+    fn record(&self, status: HostKeyStatus, key: &PublicKey) {
+        let Some(path) = self.known_hosts.writable() else {
+            log_warn!(
+                "host key for {} accepted for this connection only: no writable known_hosts file",
+                self.endpoint()
+            );
+            return;
+        };
+        let written = match status {
+            HostKeyStatus::Changed => {
+                known_hosts::replace(path, &self.spec_host, self.spec_port, key)
+            }
+            _ => known_hosts::append(path, &self.spec_host, self.spec_port, key),
+        };
+        match written {
+            Ok(()) => log_info!(
+                "recorded host key for {} in {}",
+                self.endpoint(),
+                path.display()
+            ),
+            Err(e) => log_warn!(
+                "could not record host key for {} in {}: {e}",
+                self.endpoint(),
+                path.display()
+            ),
+        }
+    }
+
     /// `host:port`。
     fn endpoint(&self) -> String {
         format!(
@@ -57,8 +91,7 @@ impl russh::client::Handler for ClientHandler {
 
     /// 按 known_hosts 校验；未知或变更时交互请求向 App 确认，非交互请求直接失败。
     async fn check_server_key(&mut self, key: &PublicKey) -> Result<bool, Self::Error> {
-        let status =
-            known_hosts::check_file(&self.env.known_hosts, &self.spec_host, self.spec_port, key);
+        let status = self.known_hosts.check(&self.spec_host, self.spec_port, key);
         // 关闭校验只是「不在乎这台主机是谁」，被显式吊销的密钥仍然拒绝（与 tty7 一致）。
         if status == HostKeyStatus::Revoked {
             self.reject(SshFailure::new(
@@ -85,13 +118,11 @@ impl russh::client::Handler for ClientHandler {
         let fingerprint = known_hosts::fingerprint(key);
         // accept-new 只放行「没见过」的主机；变更的密钥仍走下面的确认 / 失败流程。
         if self.accept_new_host_keys && status == HostKeyStatus::Unknown {
-            match known_hosts::append(&self.env.known_hosts, &self.spec_host, self.spec_port, key) {
-                Ok(()) => log_info!(
-                    "accepted new host key for {} ({fingerprint})",
-                    self.endpoint()
-                ),
-                Err(e) => log_warn!("could not record host key for {}: {e}", self.endpoint()),
-            }
+            log_info!(
+                "accepting new host key for {} ({fingerprint})",
+                self.endpoint()
+            );
+            self.record(status, key);
             return Ok(true);
         }
         if !self.interactive {
@@ -125,17 +156,7 @@ impl russh::client::Handler for ClientHandler {
             ));
             return Ok(false);
         }
-        let written = match status {
-            HostKeyStatus::Changed => {
-                known_hosts::replace(&self.env.known_hosts, &self.spec_host, self.spec_port, key)
-            }
-            _ => known_hosts::append(&self.env.known_hosts, &self.spec_host, self.spec_port, key),
-        };
-        match written {
-            Ok(()) => log_info!("recorded host key for {} in known_hosts", self.endpoint()),
-            // 用户已经确认，这次连接照常进行；只是下次还会再问。
-            Err(e) => log_warn!("could not record host key for {}: {e}", self.endpoint()),
-        }
+        self.record(status, key);
         Ok(true)
     }
 

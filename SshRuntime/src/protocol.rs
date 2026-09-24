@@ -111,6 +111,13 @@ pub struct ResolvedSpec {
     pub auth: AuthMode,
     #[serde(default)]
     pub identity_files: Vec<String>,
+    /// 只用 identityFiles 里的密钥（OpenSSH IdentitiesOnly）：agent 里只用与之相同的公钥，不试默认密钥。
+    #[serde(default)]
+    pub identities_only: bool,
+    /// 已展开的 known_hosts 文件，依次查、写入第一个；空数组表示 `$HOME/.ssh/known_hosts`，
+    /// `["none"]` 表示没有用户级文件（UserKnownHostsFile none）。
+    #[serde(default)]
+    pub known_hosts_files: Vec<String>,
     #[serde(default)]
     pub agent_forward: bool,
     #[serde(default)]
@@ -135,6 +142,10 @@ pub struct ResolvedSpec {
     /// 只由 broker 解析 `--target` 时设置，不属于控制协议，所以不参与序列化。
     #[serde(skip)]
     pub accept_new_host_keys: bool,
+    /// ssh_config 的 GlobalKnownHostsFile（已展开，只读）；None 表示用系统默认文件。
+    /// 同样只由 `--target` 解析设置，不参与序列化。
+    #[serde(skip)]
+    pub global_known_hosts_files: Option<Vec<String>>,
 }
 
 /// keepalive 间隔缺省值（秒）。
@@ -175,6 +186,8 @@ impl ResolvedSpec {
             user: user.into(),
             auth: AuthMode::Auto,
             identity_files: Vec::new(),
+            identities_only: false,
+            known_hosts_files: Vec::new(),
             agent_forward: false,
             proxy_command: None,
             socks_proxy: None,
@@ -186,6 +199,7 @@ impl ResolvedSpec {
             connect_timeout: default_connect_timeout(),
             verify_host_keys: true,
             accept_new_host_keys: false,
+            global_known_hosts_files: None,
         }
     }
 
