@@ -74,7 +74,7 @@ extension AppModel: WorkspaceTerminationParticipant {}
 /// 附加窗口的 suite 名只接受 Aster 自己生成的 UUID 形式并限制数量。UserDefaults 内容
 /// 可被外部工具改写，恢复层不能据此读取任意 domain 或无限创建窗口。
 enum AdditionalWorkspaceWindowRegistry {
-  static let prefix = "io.local.aster-terminal.window."
+  static let prefix = NamedWorkspaceRegistry.suitePrefix
   static let maximumWindows = 16
 
   static func normalized(_ names: [String]) -> [String] {

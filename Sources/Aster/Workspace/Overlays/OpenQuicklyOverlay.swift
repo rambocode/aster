@@ -282,7 +282,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
       let character = event.charactersIgnoringModifiers?.lowercased()
     else { return event }
     let shortcuts: [String: OpenQuicklyFilter] = [
-      "0": .all, "w": .opened, "r": .recent, "z": .folder,
+      "0": .all, "k": .workspace, "w": .opened, "r": .recent, "z": .folder,
       "s": .ssh, "g": .agent, "j": .current, "e": .recipe, "f": .file,
     ]
     guard let filter = shortcuts[character] else { return event }
@@ -344,7 +344,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     strip.orientation = .horizontal
     strip.spacing = 4
     let titles: [OpenQuicklyFilter: String] = [
-      .all: L("全部"), .opened: L("已打开"), .recent: L("最近"), .folder: L("文件夹"),
+      .all: L("全部"), .workspace: L("工作区"), .opened: L("已打开"), .recent: L("最近"), .folder: L("文件夹"),
       .ssh: "SSH", .agent: L("智能体"), .current: L("当前"), .recipe: "Recipes",
       .file: L("文件"),
     ]
@@ -370,6 +370,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   private static func commandHint(for filter: OpenQuicklyFilter) -> String {
     switch filter {
     case .all: "⌘0"
+    case .workspace: "⌘K"
     case .opened: "⌘W"
     case .recent: "⌘R"
     case .folder: "⌘Z"
@@ -548,6 +549,9 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   private static func sectionTitle(for kind: OpenQuicklyKind) -> String {
     switch kind {
     case .window: L("窗口")
+    case .workspace: L("工作区")
+    case .machine: L("机器")
+    case .host: L("主机")
     case .opened: L("标签页")
     case .current: L("当前")
     case .prompt: L("提示词")
