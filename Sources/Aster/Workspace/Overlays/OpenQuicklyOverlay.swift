@@ -74,6 +74,8 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     let actionTitle: String
     let action: () -> Void
     var menuActions: [(title: String, handler: () -> Void)] = []
+    /// 行尾状态点颜色（远端工作区按机器连接状态上色）；nil 不画。
+    var statusColor: NSColor?
   }
 
   private let model: AppModel
@@ -524,7 +526,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
         }
         row.configure(
           item: item, symbol: target.symbol, badge: target.badge,
-          accented: target.accented
+          accented: target.accented, statusColor: target.statusColor
         ) { [weak self] in
           guard let self,
             let index = self.visibleTargets.firstIndex(where: {
@@ -533,6 +535,14 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
           else { return }
           self.selectedIndex = index
           self.activateSelection()
+        }
+        // 右键与 ⌘K 共用同一份操作菜单：先选中被点的行，菜单才对应它。
+        row.onContextMenu = { [weak self] in
+          guard let self, let index = self.visibleTargets.firstIndex(where: { $0.item.id == item.id })
+          else { return }
+          self.selectedIndex = index
+          self.updateSelectionAppearance()
+          self.showActionsMenu()
         }
         resultsStack.addArrangedSubview(row)
         row.attach(to: resultsStack)
@@ -627,7 +637,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
 
   /// 构建全部候选目标。每类目标的 symbol/badge/菜单在创建时确定,reload 只做过滤。
   private func makeTargets() -> [Target] {
-    var result: [Target] = makeWindowTargets()
+    var result: [Target] = makeWindowTargets() + makeWorkspaceTargets()
     for tab in model.tabs {
       result.append(
         Target(
@@ -813,6 +823,38 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     }
   }
 
+  /// 「工作区」小节：本地命名工作区与各机器的远端工作区。条目内容、排序与菜单全部来自
+  /// `WorkspaceSwitcherCatalog`，这里只把它们包成浮层的目标；执行前先关掉浮层，
+  /// 需要弹框的动作才不会叠在浮层上。
+  private func makeWorkspaceTargets() -> [Target] {
+    let controller = parent as? WorkspaceViewController
+    let directory = WorkspaceSwitcherActions.appDirectory
+    let fleet = MachineFleetModel.shared
+    let actions = WorkspaceSwitcherActions(controller: controller, directory: directory, fleet: fleet)
+    let snapshot = WorkspaceSwitcherSnapshot.live(
+      controller: controller, directory: directory, fleet: fleet)
+    return WorkspaceSwitcherCatalog.entries(from: snapshot).map { entry in
+      var target = Target(
+        item: entry.item, symbol: entry.symbol, badge: entry.badge, accented: entry.isOpen,
+        actionTitle: entry.primaryTitle
+      ) { [weak model] in
+        model?.isOpenQuicklyPresented = false
+        actions.schedule(entry.primary)
+      }
+      target.menuActions = entry.menu.map { menuItem in
+        (
+          title: menuItem.title,
+          handler: { [weak model] in
+            model?.isOpenQuicklyPresented = false
+            actions.schedule(menuItem.command)
+          }
+        )
+      }
+      target.statusColor = entry.connectionState.map(MachineSwitcherButton.stateColor)
+      return target
+    }
+  }
+
   /// 「文件」小节：只读当前标签工作目录的扫描缓存，绝不在这里同步遍历磁盘。
   /// 缓存缺失时返回空，由 `ensureFileScan` 在后台补上后重新入索引。
   private func makeFileTargets() -> [Target] {
@@ -859,11 +901,12 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     return root
   }
 
-  /// 窗口与文件两类目标随时会变（新开窗口、切换目录），在展示边界单独重建它们，
-  /// 而不是整份 `makeTargets()` 重来一遍——后者会重读 SSH config、Recipes 与 Agent 历史。
+  /// 窗口、工作区与文件三类目标随时会变（新开窗口、工作区开关、切换目录），在展示边界
+  /// 单独重建它们，而不是整份 `makeTargets()` 重来一遍——后者会重读 SSH config、Recipes
+  /// 与 Agent 历史。工作区条目只读内存（注册表与缓存投影），重建很便宜。
   private func refreshVolatileTargets() {
-    targets.removeAll { $0.item.kind == .window || $0.item.kind == .file }
-    targets.insert(contentsOf: makeWindowTargets(), at: 0)
+    targets.removeAll { [.window, .workspace, .file].contains($0.item.kind) }
+    targets.insert(contentsOf: makeWindowTargets() + makeWorkspaceTargets(), at: 0)
     targets.append(contentsOf: makeFileTargets())
     targetsByID = Dictionary(targets.map { ($0.item.id, $0) }, uniquingKeysWith: { first, _ in first })
     searchIndex = OpenQuicklyIndex(items: targets.map(\.item))
@@ -1097,7 +1140,11 @@ final class OpenQuicklyRowView: NSButton {
   private let shortcutLabel = makeLabel(
     "", size: 10, weight: .medium, color: AsterTheme.secondaryInk)
   private let shortcutBackground = NSView()
+  /// 远端工作区的连接状态点；其它行隐藏。
+  private let statusDot = NSView()
   private var handler: (() -> Void)?
+  /// 右键时弹出操作菜单；nil 时按系统默认处理。
+  var onContextMenu: (() -> Void)?
   private var resultsWidthConstraint: NSLayoutConstraint?
 
   /// 结构和约束只创建一次；`configure` 更新文本与动作，使过滤器切换只改现有行内容。
@@ -1135,6 +1182,13 @@ final class OpenQuicklyRowView: NSButton {
     trailing.orientation = .horizontal
     trailing.spacing = 8
     trailing.alignment = .centerY
+    statusDot.wantsLayer = true
+    statusDot.layer?.cornerRadius = 3.5
+    statusDot.translatesAutoresizingMaskIntoConstraints = false
+    statusDot.widthAnchor.constraint(equalToConstant: 7).isActive = true
+    statusDot.heightAnchor.constraint(equalToConstant: 7).isActive = true
+    statusDot.isHidden = true
+    trailing.addArrangedSubview(statusDot)
     trailing.addArrangedSubview(timestampLabel)
     badgeBackground.wantsLayer = true
     badgeBackground.layer?.cornerRadius = 4
@@ -1180,9 +1234,12 @@ final class OpenQuicklyRowView: NSButton {
   /// 复用行时完整覆盖所有可见状态，防止上一过滤器的时间、徽章或动作泄漏到新结果。
   func configure(
     item: OpenQuicklyItem, symbol: String, badge: String, accented: Bool,
-    handler: @escaping () -> Void
+    statusColor: NSColor? = nil, handler: @escaping () -> Void
   ) {
     self.handler = handler
+    onContextMenu = nil
+    statusDot.layer?.backgroundColor = statusColor?.cgColor
+    statusDot.isHidden = statusColor == nil
     identifier = NSUserInterfaceItemIdentifier("open-quickly-row-\(item.id)")
     icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: badge)
     icon.contentTintColor = accented ? AsterTheme.accent : AsterTheme.secondaryInk
@@ -1209,6 +1266,14 @@ final class OpenQuicklyRowView: NSButton {
   }
 
   @objc private func invoke() { handler?() }
+
+  override func rightMouseDown(with event: NSEvent) {
+    guard let onContextMenu else {
+      super.rightMouseDown(with: event)
+      return
+    }
+    onContextMenu()
+  }
 
   private func applySelection() {
     layer?.backgroundColor =

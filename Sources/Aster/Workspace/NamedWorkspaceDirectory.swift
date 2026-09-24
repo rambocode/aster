@@ -75,6 +75,9 @@ final class NamedWorkspaceDirectory {
   /// 启动恢复用：注册表里打开着的附加窗口 suite，按创建先后排列。
   var openSuiteNames: [String] { registry.openSuiteNames }
 
+  /// 远端工作区最近使用时间（键见 `NamedWorkspaceRegistry.remoteActivityKey`），切换器排序用。
+  var remoteActivity: [String: Date] { registry.remoteActivity }
+
   // MARK: - 启动与窗口生命周期
 
   /// 启动恢复前调用：清理注册表（去重、丢弃非法 suite、淘汰超额的已关闭条目），删除被
@@ -194,6 +197,12 @@ final class NamedWorkspaceDirectory {
     save()
   }
 
+  /// 记录一次远端工作区使用并保存；切换器选中、新建远端工作区时调用。
+  func markRemoteActive(machineID: UUID, workspaceID: String) {
+    registry.markRemoteActive(machineID: machineID, workspaceID: workspaceID, now: now())
+    save()
+  }
+
   /// 立即保存注册表并镜像旧键；App 退出时调用，打开状态保持原样。
   func save() {
     if let defaults {
@@ -210,22 +219,9 @@ final class NamedWorkspaceDirectory {
 
   // MARK: - 交互入口
 
-  /// 「新建工作区…」：输入框预填代号，确定后新建一个固定保留的本地工作区窗口。
-  ///
-  /// 入口刻意收成一个函数：之后带主机下拉的新建表单会整体替换这里的 NSAlert。
+  /// 「新建工作区…」（⌘⇧N）：弹出带主机下拉的新建表单，本机与远端工作区都从这里建。
   func presentNewLocalWorkspace(in window: NSWindow?) {
-    let field = Self.makeNameField(WorkspaceCodename.generate())
-    let alert = NSAlert()
-    alert.messageText = L("新建工作区")
-    alert.informativeText = L("工作区会保存在这台 Mac 上。关闭窗口后，可以用「切换工作区…」重新打开。")
-    alert.accessoryView = field
-    alert.addButton(withTitle: L("创建"))
-    alert.addButton(withTitle: L("取消"))
-    alert.window.initialFirstResponder = field
-    Self.run(alert, in: window) { [weak self] response in
-      guard response == .alertFirstButtonReturn else { return }
-      self?.createLocalWorkspace(named: field.stringValue, errorWindow: window)
-    }
+    NewWorkspaceSheet.present(in: window, directory: self)
   }
 
   /// 校验名称后请宿主新建固定保留的工作区窗口。名称非法时弹出提示并返回 false。
