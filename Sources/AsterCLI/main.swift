@@ -16,14 +16,20 @@ signal(SIGPIPE, SIG_IGN)
 let environment = ProcessInfo.processInfo.environment
 let rawArguments = Array(CommandLine.arguments.dropFirst())
 
-// 机器与命名会话命令在旧解析器之前拦截：它们的作用域是客户端配置与某台机器上的
-// 注册表，与 agent/pane/events 的「当前工作区」作用域不同，参数规则也不一样。
-if MachineCommands.matches(rawArguments) {
+// 机器、命名会话、主机与命名工作区命令在旧解析器之前拦截：它们的作用域是客户端配置、
+// 某台机器上的注册表或工作区注册表，与 agent/pane/events 的「当前工作区」作用域不同，
+// 参数规则也不一样。
+let routedParser: (([String]) throws -> MachineCommands.Invocation)? =
+  if MachineCommands.matches(rawArguments) { MachineCommands.parse }
+  else if HostCommands.matches(rawArguments) { HostCommands.parse }
+  else if WorkspaceCommands.matches(rawArguments) { WorkspaceCommands.parse }
+  else { nil }
+if let routedParser {
   do {
     // 先摘掉输出格式开关，再交给本模块的解析器；否则 `--format json` 的取值会被
     // 当成位置参数。摘取按「标志 + 取值」成对进行，不做全局字符串过滤。
     let (commandArguments, wantsJSON) = MachineCommands.extractOutputFormat(rawArguments)
-    let invocation = try MachineCommands.parse(commandArguments)
+    let invocation = try routedParser(commandArguments)
     let client = ControlClient(
       socketPath: try ControlClient.resolveSocketPath(explicit: nil, environment: environment),
       environment: environment)
