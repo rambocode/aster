@@ -57,8 +57,9 @@ public struct NamedWorkspaceRegistry: Codable, Equatable, Sendable {
   public static let defaultsKey = "aster.workspace.registry.v1"
   /// 附加窗口 suite 名前缀。`AdditionalWorkspaceWindowRegistry` 引用同一个常量。
   public static let suitePrefix = "io.local.aster-terminal.window."
-  /// 同时打开的工作区上限（与附加窗口上限一致，含主窗口）。
-  public static let maximumOpen = 16
+  /// 同时打开的工作区上限：主窗口 + 16 个附加窗口。改造前主窗口不计入附加窗口的 16 个
+  /// 恢复上限，这里含主窗口，所以是 17，保证旧数据迁移后原来会恢复的窗口一个不少。
+  public static let maximumOpen = 17
   /// 关闭后保留的工作区上限；超出时按最近使用淘汰最旧的。
   public static let maximumRetained = 48
   /// 名称的最大字符数。
@@ -236,8 +237,54 @@ public struct NamedWorkspaceRegistry: Codable, Equatable, Sendable {
     return registry
   }
 
-  /// 去空白后校验名称。
-  static func validatedName(_ name: String) throws -> String {
+  /// 注册表已存在时，与旧键 `additional-window-suites` 对账。
+  ///
+  /// 正常运行时每次保存都把 `openSuiteNames` 写回旧键，两者一致，本方法不产生变化；
+  /// 只有降级到旧版本又升级回来时才会出现分歧：旧版本关窗会删 suite 并从旧键移除，
+  /// 旧版本新开的窗口只写进旧键。因此以旧键为准修正「是否打开」：
+  /// - 注册表里打开、旧键里没有的 suite：不保留的条目删除，固定保留的条目标记为关闭；
+  /// - 旧键里有、注册表里没有的合法 suite：补成不保留、已打开的代号工作区。
+  /// 同时保证主窗口条目存在（数据被外部改坏时补回）。`legacyOpenSuites` 为 nil 表示旧键
+  /// 不存在，只做主窗口兜底。
+  public mutating func reconcile(
+    legacyOpenSuites: [String]?, mainName: String, now: Date,
+    codename: () -> String = { WorkspaceCodename.generate() }
+  ) {
+    if !workspaces.contains(where: { $0.storage == .standard }) {
+      workspaces.insert(
+        NamedWorkspace(
+          name: mainName, storage: .standard, isPinned: true, isOpen: true, createdAt: now,
+          lastActiveAt: now), at: 0)
+    }
+    guard let legacyOpenSuites else { return }
+    let legacy = Set(legacyOpenSuites.filter(Self.isValidSuiteName))
+    workspaces = workspaces.compactMap { workspace in
+      guard case .suite(let name) = workspace.storage, workspace.isOpen, !legacy.contains(name)
+      else { return workspace }
+      guard workspace.isPinned else { return nil }
+      var closed = workspace
+      closed.isOpen = false
+      return closed
+    }
+    var seen: Set<String> = []
+    for suite in legacyOpenSuites where legacy.contains(suite) && seen.insert(suite).inserted {
+      guard workspace(storage: .suite(suite)) == nil else {
+        // 旧键里仍打开的固定保留条目：旧版本恢复过它，这里同样视为打开。
+        if let index = workspaces.firstIndex(where: { $0.storage == .suite(suite) }) {
+          workspaces[index].isOpen = true
+        }
+        continue
+      }
+      guard workspaces.filter(\.isOpen).count < Self.maximumOpen else { break }
+      workspaces.append(
+        NamedWorkspace(
+          name: codename(), storage: .suite(suite), isPinned: false, isOpen: true,
+          createdAt: now, lastActiveAt: now))
+    }
+  }
+
+  /// 去空白后校验名称；App 侧的输入框用它在提交前给出提示。
+  public static func validatedName(_ name: String) throws -> String {
     let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { throw NamedWorkspaceRegistryError.emptyName }
     guard trimmed.count <= maximumNameLength else { throw NamedWorkspaceRegistryError.nameTooLong }
