@@ -718,12 +718,15 @@ final class AutocompleteService {
     let localLearningEnabled = controls.resolvedAutocompleteOnDeviceLearning
     let normalizedDirectory = directory.hasPrefix("/")
       ? URL(fileURLWithPath: directory).standardizedFileURL.path : ""
+    let folderTargets = AutocompleteFolderTargets(
+      specDatabase: specDatabase, fileManager: fileManager, directory: normalizedDirectory)
+    // 历史里 `cd` 过、但现在已被删除或改名的目录不再推荐。
     let ranked = localLearningEnabled
       ? learningDatabase.suggestions(
         prefix: line,
         directory: normalizedDirectory,
         sessionIdentifier: sessionIdentifier
-      ) : []
+      ).filter { !folderTargets.hasMissingTarget(command: $0.command) } : []
     let pinnedCommands = Set(
       learningDatabase.entries.lazy.filter {
         $0.directory == normalizedDirectory && $0.pinCount > 0
@@ -744,9 +747,16 @@ final class AutocompleteService {
       language: descriptionLanguage
     )
     let files = fileCandidates(for: line, directory: directory)
-    let learnedArguments = localLearningEnabled ? learningDatabase.argumentCandidates(
+    var learnedArguments = localLearningEnabled ? learningDatabase.argumentCandidates(
       line: line, directory: normalizedDirectory, sessionIdentifier: sessionIdentifier,
       specDatabase: specDatabase) : []
+    // 历史参数同理：当前槽位要目录时，只保留仍然存在的目录。
+    let parsedLine = ShellCommandTokenizer.tokenize(line)
+    let leadingTokens = parsedLine.currentToken.isEmpty
+      ? parsedLine.tokens : Array(parsedLine.tokens.dropLast())
+    if !learnedArguments.isEmpty, folderTargets.expectsFolder(after: leadingTokens) {
+      learnedArguments.removeAll { folderTargets.isMissingFolder($0.displayText) }
+    }
     guard !files.isEmpty || !learnedArguments.isEmpty else { return base }
     // 文件候选参与统一重排,而不是无条件追加在规格候选之后。旧实现让文件永远排在
     // 最后、且只有在没有其它候选时才可能成为 ghost,于是 `cat REA<Tab>` 补不出
@@ -1087,13 +1097,27 @@ final class AutocompleteService {
       lookupDirectory = URL(fileURLWithPath: directory)
         .appendingPathComponent(typedDirectory).standardizedFileURL.path
     }
+    // `..` 与 `~` 不会出现在目录列表里，但它们是 `cd` 最常见的起点：
+    // `cd ..` 补成 `../`、`cd ../..` 补成 `../../`、`cd ~` 补成 `~/`，与 zsh 一致。
+    var navigation: [String] = []
+    if namePrefix == ".." { navigation.append(typedDirectory + "../") }
+    if tokenPath == "~" { navigation.append("~/") }
+    let navigationCandidates = navigation.compactMap { value -> AutocompleteCandidate? in
+      guard let insert = AutocompleteShellInsertion.token(
+        value: value, typed: token, raw: rawToken, closeQuote: false)
+      else { return nil }
+      return AutocompleteCandidate(
+        insertText: insert, description: L("目录"), kind: .folder,
+        score: AutocompleteRelevance.score(kind: .folder, typed: token, candidate: insert),
+        replacement: .currentToken(start: tokenStart))
+    }
     guard let urls = try? fileManager.contentsOfDirectory(
       at: URL(fileURLWithPath: lookupDirectory),
       includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
       options: [.skipsSubdirectoryDescendants]
-    ) else { return [] }
+    ) else { return navigationCandidates }
 
-    return urls.lazy
+    return navigationCandidates + urls.lazy
       .filter { namePrefix.hasPrefix(".") || !$0.lastPathComponent.hasPrefix(".") }
       .filter { $0.lastPathComponent.hasPrefix(namePrefix) }
       .prefix(500)
@@ -1105,9 +1129,15 @@ final class AutocompleteService {
         guard let values = try? url.resourceValues(forKeys: [
           .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
         ]) else { return nil }
-        let isDirectory = values.isDirectory == true
-        let isRegularFile = values.isRegularFile == true
         let isSymbolicLink = values.isSymbolicLink == true
+        // 符号链接自身的 isDirectory 恒为 false；要跟随链接判断，否则 `cd` 补不出
+        // 指向目录的链接（如 /tmp、~/Library/Mobile Documents 下的快捷方式）。
+        var followsToDirectory: ObjCBool = false
+        let isDirectory = values.isDirectory == true
+          || isSymbolicLink
+            && self.fileManager.fileExists(atPath: url.path, isDirectory: &followsToDirectory)
+            && followsToDirectory.boolValue
+        let isRegularFile = values.isRegularFile == true
         guard isDirectory || isRegularFile || isSymbolicLink else { return nil }
         if mode == .folders, !isDirectory { return nil }
         let suffix = isDirectory ? "/" : ""
