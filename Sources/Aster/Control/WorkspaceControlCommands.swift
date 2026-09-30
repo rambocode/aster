@@ -1,4 +1,4 @@
-// `workspace.*` 控制协议方法：列出、打开、新建本地与远端命名工作区。
+// `workspace.*` 控制协议方法：列出、打开、新建窗口内工作区、本地窗口注册表条目与远端工作区。
 import AppKit
 import AsterCore
 import Foundation
@@ -18,8 +18,27 @@ enum WorkspaceControlMethod: String, CaseIterable, Sendable {
 
 // MARK: - 协议载荷
 
-/// 本地注册表里的一条工作区。
+/// 某个打开着的工作区窗口里的一个窗口内工作区（一组标签）。
+struct WorkspaceGroupControlRow: Codable, Equatable, Sendable {
+  /// 恒为 `group`，与 `local`（窗口注册表条目）、`remote` 行区分。
+  var kind = "group"
+  var id: String
+  var name: String
+  /// 所在窗口的 `NSWindow.windowNumber`；同一进程内有效，重启后会变。
+  var windowID: Int
+  /// 所在窗口在注册表里的名字；窗口没登记时省略。
+  var windowLabel: String?
+  var isKeyWindow: Bool
+  /// 是否为该窗口当前显示的工作区；窗口正显示远端机器时恒为 false。
+  var isSelected: Bool
+  /// 标签数；窗口正显示远端机器时本机标签暂时收起，省略。
+  var tabCount: Int?
+}
+
+/// 本地窗口注册表里的一条（旧版「本机工作区 = 一个窗口」的实体，现在只表示窗口）。
 struct LocalWorkspaceControlRow: Codable, Equatable, Sendable {
+  /// 恒为 `window`。
+  var kind = "window"
   var id: String
   var name: String
   var isOpen: Bool
@@ -30,6 +49,8 @@ struct LocalWorkspaceControlRow: Codable, Equatable, Sendable {
 
 /// 一台机器上的一个远端工作区，取自缓存投影。
 struct RemoteWorkspaceControlRow: Codable, Equatable, Sendable {
+  /// 恒为 `remote`。
+  var kind = "remote"
   var workspaceID: String
   var title: String
   var tabCount: Int
@@ -47,27 +68,32 @@ struct RemoteMachineWorkspacesRow: Codable, Equatable, Sendable {
 }
 
 struct WorkspaceListResult: Codable, Equatable, Sendable {
+  /// 窗口内工作区：key window 的在前，窗口内按侧栏顺序。
+  var groups: [WorkspaceGroupControlRow] = []
   var local: [LocalWorkspaceControlRow]
   var remote: [RemoteMachineWorkspacesRow]
 }
 
 /// `workspace.open` / `workspace.new` 的结果：回显实际落点，便于自动化确认。
 struct WorkspaceActionResult: Codable, Equatable, Sendable {
-  /// `local` 或 `remote`。
+  /// `group`（窗口内工作区）、`local`（窗口注册表条目）或 `remote`。
   var kind: String
-  /// 本地为注册表条目 UUID，远端为服务端工作区 ID。
+  /// 窗口内工作区与本地条目为 UUID，远端为服务端工作区 ID。
   var workspaceID: String
   var name: String
   var machineID: String?
   var machineLabel: String?
+  /// 窗口内工作区所在窗口的 `NSWindow.windowNumber`。
+  var windowID: Int?
 }
 
-/// `workspace.open` 参数：本地名称或 ID、`<机器>/<工作区>`，或远端工作区标题 / ID。
+/// `workspace.open` 参数：窗口内工作区或本地条目的名称 / ID、`<机器>/<工作区>`，
+/// 或远端工作区标题 / ID。
 struct WorkspaceOpenParams: Codable, Equatable, Sendable {
   var workspace: String
 }
 
-/// `workspace.new` 参数；`machine` 缺省表示本地。
+/// `workspace.new` 参数；`machine` 缺省表示在最前面的工作区窗口里建窗口内工作区。
 struct WorkspaceNewParams: Codable, Equatable, Sendable {
   var name: String
   var machine: String?
@@ -75,15 +101,68 @@ struct WorkspaceNewParams: Codable, Equatable, Sendable {
 
 // MARK: - 依赖接缝
 
-/// 控制命令需要的本地工作区目录能力；生产实现是 `NamedWorkspaceDirectory`。
+/// 控制命令需要的本地窗口注册表能力；生产实现是 `NamedWorkspaceDirectory`。
 @MainActor
 protocol LocalWorkspaceDirectoryControlling: AnyObject {
   var workspaces: [NamedWorkspace] { get }
   @discardableResult func open(_ id: UUID) -> Bool
-  @discardableResult func createLocalWorkspace(named rawName: String, errorWindow: NSWindow?) -> Bool
 }
 
 extension NamedWorkspaceDirectory: LocalWorkspaceDirectoryControlling {}
+
+/// 控制命令需要的一个工作区窗口的窗口内工作区能力；生产实现是 `WorkspaceGroupWindowHandle`。
+@MainActor
+protocol WorkspaceGroupWindowControlling: AnyObject {
+  /// `NSWindow.windowNumber`。
+  var windowID: Int { get }
+  /// 窗口在注册表里的名字；没登记时为 nil。
+  var windowLabel: String? { get }
+  var isKeyWindow: Bool { get }
+  var isLocalMachineActive: Bool { get }
+  var workspaceGroups: [WorkspaceGroup] { get }
+  var selectedWorkspaceGroupID: UUID? { get }
+  /// 某个工作区的标签数；窗口正显示远端机器时拿不到，返回 nil。
+  func localTabCount(inWorkspaceGroup groupID: UUID) -> Int?
+  /// 置前窗口、必要时切回本机，并选中工作区。
+  func selectWorkspaceGroup(_ groupID: UUID) async
+  /// 置前窗口、必要时切回本机，并新建工作区。名称非法时抛 `NamedWorkspaceRegistryError`。
+  func createWorkspaceGroup(named name: String) async throws -> WorkspaceGroup
+}
+
+/// 生产实现：包装一个工作区窗口控制器，动作全部交给 `WorkspaceGroupNavigator`。
+///
+/// 只在一次请求内持有，不跨请求缓存：窗口关掉后控制器应能正常释放。
+@MainActor
+final class WorkspaceGroupWindowHandle: WorkspaceGroupWindowControlling {
+  private let controller: WorkspaceViewController
+  let windowLabel: String?
+
+  init(controller: WorkspaceViewController, directory: NamedWorkspaceDirectory) {
+    self.controller = controller
+    windowLabel = controller.view.window
+      .flatMap(directory.workspaceID(for:))
+      .flatMap { directory.workspace($0)?.name }
+  }
+
+  var windowID: Int { controller.view.window?.windowNumber ?? 0 }
+  var isKeyWindow: Bool { controller.view.window?.isKeyWindow == true }
+  var isLocalMachineActive: Bool { controller.model.isLocalMachineActive }
+  var workspaceGroups: [WorkspaceGroup] { controller.model.workspaceGroups }
+  var selectedWorkspaceGroupID: UUID? { controller.model.selectedWorkspaceGroupID }
+
+  /// 远端活动时 `tabs` 是远端标签，数出来的不是这个工作区的标签。
+  func localTabCount(inWorkspaceGroup groupID: UUID) -> Int? {
+    isLocalMachineActive ? controller.model.tabCount(inWorkspaceGroup: groupID) : nil
+  }
+
+  func selectWorkspaceGroup(_ groupID: UUID) async {
+    await WorkspaceGroupNavigator.select(groupID, in: controller)
+  }
+
+  func createWorkspaceGroup(named name: String) async throws -> WorkspaceGroup {
+    try await WorkspaceGroupNavigator.create(named: name, in: controller)
+  }
+}
 
 /// 控制命令需要的远端工作区能力；生产实现是每个窗口各一个的 `RemoteWorkspaceCoordinator`。
 @MainActor
@@ -118,18 +197,33 @@ struct WorkspaceControlContext {
   var loadedCoordinators: [any RemoteWorkspaceControlling]
   /// 写操作的目标：key window，没有就用主窗口。可能现造协调器，因此只在写路径调用。
   var targetCoordinator: () -> (any RemoteWorkspaceControlling)?
+  /// 可见（含最小化）的工作区窗口，最前面的在前；列出、打开与新建窗口内工作区用。
+  var groupWindows: [any WorkspaceGroupWindowControlling] = []
+  /// 没有工作区窗口时新开一个；开不出来返回 nil。只在新建路径调用。
+  var openGroupWindow: () -> (any WorkspaceGroupWindowControlling)? = { nil }
 
   /// 生产依赖：共享注册表、机器侧栏模型与当前全部工作区窗口。
   static func live() -> WorkspaceControlContext {
     let directory = NamedWorkspaceDirectory.shared
     let controllers = workspaceViewControllers(directory: directory)
+    // 关掉的主窗口只是隐藏，控制器还在；不能把新工作区建进一个看不见的窗口。
+    let visible = controllers.filter {
+      guard let window = $0.view.window else { return false }
+      return window.isVisible || window.isMiniaturized
+    }
     return WorkspaceControlContext(
       directory: directory,
       machines: MachineFleetModel.shared.rows.filter { !$0.isLocal }.map {
         WorkspaceControlMachine(id: $0.id, label: $0.label)
       },
       loadedCoordinators: controllers.compactMap(\.loadedRemoteWorkspaces),
-      targetCoordinator: { controllers.first?.remoteWorkspaces })
+      targetCoordinator: { controllers.first?.remoteWorkspaces },
+      groupWindows: visible.map { WorkspaceGroupWindowHandle(controller: $0, directory: directory) },
+      openGroupWindow: {
+        WorkspaceWindowLauncher.openNewWindow(requester: nil).map {
+          WorkspaceGroupWindowHandle(controller: $0, directory: directory)
+        }
+      })
   }
 
   /// 全部工作区窗口的控制器：key window 第一，主工作区窗口第二，其余按前后顺序。
@@ -185,7 +279,7 @@ extension AsterControlDispatcher {
     }
   }
 
-  /// 本地注册表 + 每台远端机器的缓存工作区。
+  /// 窗口内工作区 + 本地注册表 + 每台远端机器的缓存工作区。
   ///
   /// 远端协调器每个窗口一个：按机器取第一个有缓存的协调器（key window 优先），
   /// 结果天然按 machineID 去重，选中项也就是用户眼前那个窗口的选中项。
@@ -209,7 +303,16 @@ extension AsterControlDispatcher {
             isSelected: $0.isSelected)
         })
     }
-    return WorkspaceListResult(local: local, remote: remote)
+    let groups = context.groupWindows.flatMap { window in
+      window.workspaceGroups.map { group in
+        WorkspaceGroupControlRow(
+          id: group.id.uuidString, name: group.name, windowID: window.windowID,
+          windowLabel: window.windowLabel, isKeyWindow: window.isKeyWindow,
+          isSelected: window.isLocalMachineActive && window.selectedWorkspaceGroupID == group.id,
+          tabCount: window.localTabCount(inWorkspaceGroup: group.id))
+      }
+    }
+    return WorkspaceListResult(groups: groups, local: local, remote: remote)
   }
 
   // MARK: - 打开
@@ -230,6 +333,10 @@ extension AsterControlDispatcher {
       throw Self.ambiguity("「\(trimmed)」对应 \(candidates.count) 个工作区", candidates.map(\.choice))
     }
     switch candidate {
+    case .group(let window, let group):
+      await window.selectWorkspaceGroup(group.id)
+      return WorkspaceActionResult(
+        kind: "group", workspaceID: group.id.uuidString, name: group.name, windowID: window.windowID)
     case .local(let workspace):
       try Self.ensureCanOpen(workspace, in: context.directory)
       guard context.directory.open(workspace.id) else {
@@ -251,11 +358,15 @@ extension AsterControlDispatcher {
 
   /// 可能的目标。`choice` 是能唯一定位它的写法，歧义时原样列给用户。
   private enum WorkspaceCandidate {
+    case group(any WorkspaceGroupWindowControlling, WorkspaceGroup)
     case local(NamedWorkspace)
     case remote(WorkspaceControlMachine, RemoteWorkspaceSummary)
 
-    var choice: String {
+    /// 窗口信息来自 AppKit 窗口，只能在主线程读。
+    @MainActor var choice: String {
       switch self {
+      case .group(let window, let group):
+        "\(group.id.uuidString)\t窗口 \(window.windowLabel ?? String(window.windowID)) · \(group.name)"
       case .local(let workspace): "\(workspace.id.uuidString)\t本地 · \(workspace.name)"
       case .remote(let machine, let summary):
         "\(machine.id.uuidString)/\(summary.workspaceID)\t\(machine.label) · \(summary.title)"
@@ -263,7 +374,7 @@ extension AsterControlDispatcher {
     }
   }
 
-  /// 收集全部匹配：本地按 ID 或名称；远端按 `<机器>/<工作区>`，以及裸的标题或 ID。
+  /// 收集全部匹配：窗口内工作区与本地条目按 ID 或名称；远端按 `<机器>/<工作区>`，以及裸的标题或 ID。
   ///
   /// 机器标签和工作区标题都可能含 `/`，所以在每个 `/` 处都试着切一次，而不是只切第一个。
   /// 同一个远端工作区可能被多种写法命中，按（机器，工作区 ID）去重。
@@ -271,7 +382,12 @@ extension AsterControlDispatcher {
     _ selector: String, context: WorkspaceControlContext
   ) -> [WorkspaceCandidate] {
     let uuid = UUID(uuidString: selector)
-    var candidates: [WorkspaceCandidate] = context.directory.workspaces
+    var candidates: [WorkspaceCandidate] = context.groupWindows.flatMap { window in
+      window.workspaceGroups
+        .filter { $0.id == uuid || $0.name == selector }
+        .map { WorkspaceCandidate.group(window, $0) }
+    }
+    candidates += context.directory.workspaces
       .filter { $0.id == uuid || $0.name == selector }
       .map { .local($0) }
     let cache = remoteCache(context)
@@ -316,16 +432,16 @@ extension AsterControlDispatcher {
 
   // MARK: - 新建
 
-  /// 不带机器时新建本地工作区窗口，带机器时在那台机器上新建远端工作区并选中。
+  /// 不带机器时在最前面的工作区窗口里建窗口内工作区，带机器时在那台机器上新建远端工作区并选中。
   private func newWorkspace(
     _ params: WorkspaceNewParams, context: WorkspaceControlContext
   ) async throws -> WorkspaceActionResult {
     let machineSelector = params.machine?.trimmingCharacters(in: .whitespacesAndNewlines)
     if let machineSelector, machineSelector.isEmpty {
-      throw AsterControlError.invalidParams("machine 不能为空；新建本地工作区请省略它。")
+      throw AsterControlError.invalidParams("machine 不能为空；新建本机工作区请省略它。")
     }
     guard let machineSelector, !Self.isLocalMachine(machineSelector) else {
-      return try newLocalWorkspace(named: params.name, directory: context.directory)
+      return try await newWorkspaceGroup(named: params.name, context: context)
     }
     let machine = try Self.resolveMachine(machineSelector, in: context.machines)
     let title = params.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -339,31 +455,29 @@ extension AsterControlDispatcher {
       machineID: machine.id.uuidString, machineLabel: machine.label)
   }
 
-  /// 本地新建：名称与打开上限先在这里校验。
+  /// 本机新建：在最前面的工作区窗口里建窗口内工作区并切过去；没有工作区窗口时先开一个。
   ///
-  /// `createLocalWorkspace` 遇到非法名称会弹提示框；CLI 请求要拿到的是错误响应，
-  /// 所以这里先校验，保证交给它的名称必然合法。
-  private func newLocalWorkspace(
-    named rawName: String, directory: any LocalWorkspaceDirectoryControlling
-  ) throws -> WorkspaceActionResult {
+  /// 名称先在这里校验：非法名称要变成错误响应，而且不该为此新开窗口或把窗口从远端切走。
+  private func newWorkspaceGroup(
+    named rawName: String, context: WorkspaceControlContext
+  ) async throws -> WorkspaceActionResult {
     let name: String
     do {
       name = try NamedWorkspaceRegistry.validatedName(rawName)
     } catch let error as NamedWorkspaceRegistryError {
       throw AsterControlError.invalidParams(NamedWorkspaceDirectory.message(for: .registry(error)))
-    } catch {
-      throw AsterControlError(code: .internalError, message: "\(error)")
     }
-    try Self.ensureOpenSlot(in: directory)
-    let existing = Set(directory.workspaces.map(\.id))
-    guard directory.createLocalWorkspace(named: name, errorWindow: nil) else {
-      throw AsterControlError(code: .internalError, message: "无法新建工作区「\(name)」。")
+    guard let window = context.groupWindows.first ?? context.openGroupWindow() else {
+      throw AsterControlError(code: .internalError, message: "无法新建窗口。")
     }
-    // 用前后差集找新条目：同名工作区可以有多个，按名称找可能找到旧的那个。
-    guard let created = directory.workspaces.first(where: { !existing.contains($0.id) }) else {
-      throw AsterControlError(code: .internalError, message: "工作区窗口已创建，但注册表里没有新条目。")
+    let group: WorkspaceGroup
+    do {
+      group = try await window.createWorkspaceGroup(named: name)
+    } catch let error as NamedWorkspaceRegistryError {
+      throw AsterControlError.invalidParams(NamedWorkspaceDirectory.message(for: .registry(error)))
     }
-    return WorkspaceActionResult(kind: "local", workspaceID: created.id.uuidString, name: created.name)
+    return WorkspaceActionResult(
+      kind: "group", workspaceID: group.id.uuidString, name: group.name, windowID: window.windowID)
   }
 
   /// `local` 或 Local 的固定 UUID 表示本机，与 `machine` 命令的写法一致。

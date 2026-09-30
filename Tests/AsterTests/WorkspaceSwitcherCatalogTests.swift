@@ -1,4 +1,5 @@
-// 工作区切换器条目：本地与远端混排的最近使用顺序、按标签与机器名搜索、「连接到…」行、已打开标记与菜单。
+// 工作区切换器条目：窗口内工作区在前、已关闭旧窗口与远端按最近使用混排、按标签与机器名搜索、
+// 「连接到…」行与各类条目的菜单。
 import AsterCore
 import Foundation
 import Testing
@@ -24,7 +25,8 @@ private func remoteSummary(_ id: String, _ title: String, tabs: [String]) -> Rem
     isSelected: false, tabTitles: tabs)
 }
 
-/// 两个本地、一台有缓存的在线机器（两个工作区）、一台没缓存的机器。
+/// 两个本地窗口条目（alpha 开着、beta 已关闭）、一台有缓存的在线机器（两个工作区）、
+/// 一台没缓存的机器；没有打开的窗口内工作区（窗口内工作区另有夹具）。
 @MainActor
 private struct SwitcherFixture {
   let alpha = localWorkspace("alpha", activeOffset: 10, isOpen: true)
@@ -35,7 +37,6 @@ private struct SwitcherFixture {
   var snapshot: WorkspaceSwitcherSnapshot {
     WorkspaceSwitcherSnapshot(
       localWorkspaces: [alpha, beta],
-      localTabTitles: [alpha.id: ["vim notes"]],
       remoteActivity: [
         NamedWorkspaceRegistry.remoteActivityKey(machineID: online.id, workspaceID: "ws-1"):
           switcherT0.addingTimeInterval(20)
@@ -58,10 +59,10 @@ private struct SwitcherFixture {
 }
 
 @MainActor
-@Test("切换器：本地与远端按最近使用混排，从未用过的远端工作区与「连接到…」行垫底")
+@Test("切换器：已关闭的旧窗口与远端按最近使用混排，打开着的旧窗口不单独列出，未用过的远端与「连接到…」垫底")
 func workspaceSwitcherOrdersLocalAndRemoteByRecentUse() {
   let fixture = SwitcherFixture()
-  let expected = ["beta", "api", "alpha", "release", L("连接到 cold-box…")]
+  let expected = ["beta", "api", "release", L("连接到 cold-box…")]
   #expect(fixture.entries.map(\.item.title) == expected)
   // 空查询时 Open Quickly 索引给出同样的顺序：最近使用时间写进了 score。
   #expect(fixture.search("") == expected)
@@ -72,9 +73,8 @@ func workspaceSwitcherOrdersLocalAndRemoteByRecentUse() {
 func workspaceSwitcherMatchesTabTitlesAndMachineNames() {
   let fixture = SwitcherFixture()
   #expect(fixture.search("logs") == ["release"])
-  #expect(fixture.search("vim notes") == ["alpha"])
   #expect(Set(fixture.search("orb-box")) == ["api", "release"])
-  #expect(fixture.search(L("本机")).contains("alpha"))
+  #expect(fixture.search(L("本机")).contains("beta"))
   let release = fixture.entries.first { $0.item.title == "release" }
   #expect(release?.item.detail == "orb-box · build, logs")
 }
@@ -100,8 +100,8 @@ func workspaceSwitcherListsConnectRowForUncachedMachines() {
 }
 
 @MainActor
-@Test("切换器：打开着的本地条目标记为已打开且不能删除；已关闭的可删除；主工作区永远不能删")
-func workspaceSwitcherMarksOpenLocalWorkspaces() {
+@Test("切换器：已关闭的旧窗口可以重新打开、改名与删除；打开着的不列出；关掉的主窗口不能删")
+func workspaceSwitcherListsClosedLegacyWindows() {
   let fixture = SwitcherFixture()
   let main = localWorkspace("主工作区", activeOffset: 0, isOpen: false, storage: .standard)
   var snapshot = fixture.snapshot
@@ -111,20 +111,19 @@ func workspaceSwitcherMarksOpenLocalWorkspaces() {
     entries.first { $0.item.id == WorkspaceSwitcherCatalog.localPrefix + workspace.id.uuidString }
   }
 
-  let alpha = entry(fixture.alpha)
-  #expect(alpha?.isOpen == true)
-  #expect(alpha?.badge == L("已打开"))
-  #expect(alpha?.connectionState == nil)
-  #expect(alpha?.primary == .openLocal(fixture.alpha.id))
-  #expect(alpha?.menu.map(\.command) == [
-    .renameLocal(fixture.alpha.id, currentName: "alpha"), .openLocal(fixture.alpha.id),
-  ])
+  #expect(entry(fixture.alpha) == nil)
 
   let beta = entry(fixture.beta)
   #expect(beta?.isOpen == false)
   #expect(beta?.badge == L("本机"))
-  #expect(beta?.menu.last?.command == .removeLocal(fixture.beta.id, name: "beta"))
+  #expect(beta?.connectionState == nil)
+  #expect(beta?.primary == .openLocal(fixture.beta.id))
+  #expect(beta?.menu.map(\.command) == [
+    .renameLocal(fixture.beta.id, currentName: "beta"), .openLocal(fixture.beta.id),
+    .removeLocal(fixture.beta.id, name: "beta"),
+  ])
 
+  #expect(entry(main)?.primary == .openLocal(main.id))
   #expect(entry(main)?.menu.contains { if case .removeLocal = $0.command { true } else { false } } == false)
 }
 

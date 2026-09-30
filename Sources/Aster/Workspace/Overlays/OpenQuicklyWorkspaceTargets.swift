@@ -1,4 +1,5 @@
-// Open Quickly「工作区」条目：本地注册表 + 各机器远端工作区的生成、排序，以及主动作与右键菜单动作的执行。
+// Open Quickly「工作区」条目：各窗口的窗口内工作区、已关闭的旧窗口、各机器远端工作区的生成与排序，
+// 以及主动作与右键菜单动作的执行。
 import AppKit
 import AsterCore
 
@@ -12,12 +13,36 @@ struct WorkspaceSwitcherMachine: Equatable {
   var state: SessionConnectionState
 }
 
+/// 切换器里的一个窗口内工作区。
+struct WorkspaceSwitcherGroup: Equatable {
+  var id: UUID
+  var name: String
+  /// 其中标签的标题；nil 表示窗口正显示远端机器，本机标签暂时收起，拿不到。
+  var tabTitles: [String]?
+}
+
+/// 切换器里一个打开着的工作区窗口，以及它的窗口内工作区。
+struct WorkspaceSwitcherWindow: Equatable {
+  /// `NSWindow.windowNumber`，执行命令时据此找回窗口。
+  var windowNumber: Int
+  /// 多窗口时用来区分窗口的名称；只有一个窗口时为 nil，副标题里不出现。
+  var label: String?
+  /// 是否为发起切换器的窗口。
+  var isCurrent: Bool
+  /// 窗口是否正显示本机。显示远端时工作区仍在，但不能删除（`AppModel` 会拒绝）。
+  var isLocalActive: Bool
+  var selectedGroupID: UUID?
+  /// 按窗口侧栏里的顺序。
+  var groups: [WorkspaceSwitcherGroup]
+}
+
 /// 生成切换器条目需要的全部输入。纯值：测试直接构造，生产由 `live(...)` 从现有对象采集。
 struct WorkspaceSwitcherSnapshot {
-  /// 本地注册表条目（顺序无关，排序由 `WorkspaceSwitcherCatalog.entries` 统一做）。
-  var localWorkspaces: [NamedWorkspace]
-  /// 打开着的本地工作区的标签标题，按工作区 ID；关闭的工作区没有条目。
-  var localTabTitles: [UUID: [String]] = [:]
+  /// 打开着的工作区窗口，按窗口前后顺序（当前窗口由 `isCurrent` 标出，排序时提到最前）。
+  var windows: [WorkspaceSwitcherWindow] = []
+  /// 本地窗口注册表条目。只有已关闭的条目会生成「重新打开窗口」行；打开着的窗口
+  /// 已经按其中的窗口内工作区分别列出，不再单独占一行。
+  var localWorkspaces: [NamedWorkspace] = []
   /// 远端工作区最近使用时间，键见 `NamedWorkspaceRegistry.remoteActivityKey`。
   var remoteActivity: [String: Date] = [:]
   /// 全部远端机器（不含 Local）。
@@ -28,7 +53,12 @@ struct WorkspaceSwitcherSnapshot {
 
 /// 切换器条目能触发的动作。执行由 `WorkspaceSwitcherActions` 负责，这里只描述「做什么」，便于测试。
 enum WorkspaceSwitcherCommand: Equatable {
-  /// 打开本地工作区：已打开时置前窗口，否则开窗恢复。
+  /// 置前窗口并切到其中的窗口内工作区（窗口正显示远端机器时先切回本机）。
+  case selectGroup(windowNumber: Int, groupID: UUID)
+  case renameGroup(windowNumber: Int, groupID: UUID)
+  /// 删除窗口内工作区（先确认，会关闭其中全部标签）。
+  case deleteGroup(windowNumber: Int, groupID: UUID)
+  /// 打开本地注册表条目：已打开时置前窗口，否则开窗恢复。
   case openLocal(UUID)
   case renameLocal(UUID, currentName: String)
   /// 删除已关闭的本地工作区（连同快照）。
@@ -57,7 +87,7 @@ struct WorkspaceSwitcherEntry: Equatable {
   var item: OpenQuicklyItem
   var symbol: String
   var badge: String
-  /// 本地条目是否有窗口开着；远端条目恒为 false。
+  /// 条目对应的终端是否就在某个打开的窗口里（窗口内工作区恒为 true）；其它条目为 false。
   var isOpen: Bool
   /// 状态点对应的连接状态；nil 表示不画状态点（本地条目）。
   var connectionState: SessionConnectionState?
@@ -69,20 +99,27 @@ struct WorkspaceSwitcherEntry: Equatable {
 /// 切换器条目生成器。只做纯计算，不读任何全局状态。
 @MainActor
 enum WorkspaceSwitcherCatalog {
-  /// 条目 ID 前缀；三类条目互不重叠，也不会和 Open Quickly 其它来源冲突。
+  /// 条目 ID 前缀；四类条目互不重叠，也不会和 Open Quickly 其它来源冲突。
+  static let groupPrefix = "workspace:group:"
   static let localPrefix = "workspace:local:"
   static let remotePrefix = "workspace:remote:"
   static let connectPrefix = "workspace:connect:"
 
-  /// 生成全部条目，最近使用优先。
+  /// 窗口内工作区的分数基数，远大于任何以秒计的时间戳。
+  static let groupScoreBase = Date.distantFuture.timeIntervalSince1970
+
+  /// 生成全部条目：窗口内工作区在前，其余最近使用优先。
   ///
-  /// 最近使用时间同时写进 `item.score`：`OpenQuicklyIndex` 在同一匹配质量内按 score 降序排，
-  /// 空查询时就是纯最近使用顺序，有查询时仍是匹配质量优先。没有使用记录的远端工作区记 0，
-  /// 「连接到…」行记 -1，永远排在已知工作区后面。
+  /// 排序都写进 `item.score`：`OpenQuicklyIndex` 在同一匹配质量内按 score 降序排，空查询时
+  /// 就是这里的顺序，有查询时仍是匹配质量优先。
+  /// - 窗口内工作区不记使用时间，用简单可预期的规则：当前窗口的当前工作区第一，然后是
+  ///   当前窗口的其余工作区、其它窗口的工作区，都按侧栏列表顺序。分数从 `groupScoreBase`
+  ///   逐个递减，保证排在所有带时间戳的条目前面。
+  /// - 已关闭的旧窗口与远端工作区按最近使用时间；没有使用记录的远端工作区记 0，
+  ///   「连接到…」行记 -1，永远排在已知工作区后面。
   static func entries(from snapshot: WorkspaceSwitcherSnapshot) -> [WorkspaceSwitcherEntry] {
-    var result = snapshot.localWorkspaces.map {
-      localEntry($0, tabTitles: snapshot.localTabTitles[$0.id] ?? [])
-    }
+    var result = groupEntries(snapshot.windows)
+    result += snapshot.localWorkspaces.filter { !$0.isOpen }.map { localEntry($0) }
     for machine in snapshot.machines {
       // 已禁用的机器不读缓存：它的投影不再更新，列出来的工作区可能早已不存在。
       let summaries = machine.enabled ? snapshot.remoteWorkspaces[machine.id] ?? [] : []
@@ -111,9 +148,72 @@ enum WorkspaceSwitcherCatalog {
     return tabs.isEmpty ? machine : "\(machine) · \(tabs.joined(separator: ", "))"
   }
 
-  /// 本地条目。「在新窗口打开」与主动作同为 `openLocal`：本地工作区本身就是一个窗口，
-  /// 开着就置前，关着就开新窗口恢复。只有已关闭的非主工作区才能删除。
-  private static func localEntry(_ workspace: NamedWorkspace, tabTitles: [String]) -> WorkspaceSwitcherEntry {
+  /// 各窗口的窗口内工作区条目，按 `entries` 里说明的顺序排好并写入递减的分数。
+  private static func groupEntries(_ windows: [WorkspaceSwitcherWindow]) -> [WorkspaceSwitcherEntry] {
+    let ordered = windows.filter(\.isCurrent) + windows.filter { !$0.isCurrent }
+    var result: [WorkspaceSwitcherEntry] = []
+    for window in ordered {
+      var groups = window.groups
+      // 只把当前窗口正在看的工作区提到最前；其它窗口的选中项对用户不是「当前」。
+      if window.isCurrent, window.isLocalActive,
+        let index = groups.firstIndex(where: { $0.id == window.selectedGroupID })
+      {
+        groups.insert(groups.remove(at: index), at: 0)
+      }
+      for group in groups {
+        result.append(
+          groupEntry(group, in: window, score: groupScoreBase - Double(result.count)))
+      }
+    }
+    return result
+  }
+
+  /// 窗口内工作区的副标题：本机 ·（多窗口时）窗口名 · 标签数 · 标签标题。
+  /// 按标签标题、窗口名输入都能搜到这个工作区。
+  static func groupDetail(windowLabel: String?, tabTitles: [String]?) -> String {
+    var parts = [L("本机")]
+    if let windowLabel { parts.append(windowLabel) }
+    if let tabTitles {
+      parts.append(L("\(String(tabTitles.count)) 个标签"))
+      let titles = tabTitles.filter { !$0.isEmpty }
+      if !titles.isEmpty { parts.append(titles.joined(separator: ", ")) }
+    }
+    return parts.joined(separator: " · ")
+  }
+
+  /// 窗口内工作区条目。只剩一个工作区、或窗口正显示远端时不提供删除。
+  private static func groupEntry(
+    _ group: WorkspaceSwitcherGroup, in window: WorkspaceSwitcherWindow, score: Double
+  ) -> WorkspaceSwitcherEntry {
+    let isCurrent = window.isCurrent && window.isLocalActive && window.selectedGroupID == group.id
+    var menu = [
+      WorkspaceSwitcherMenuItem(
+        title: L("重命名…"),
+        command: .renameGroup(windowNumber: window.windowNumber, groupID: group.id))
+    ]
+    if window.isLocalActive, window.groups.count > 1 {
+      menu.append(
+        WorkspaceSwitcherMenuItem(
+          title: L("删除…"),
+          command: .deleteGroup(windowNumber: window.windowNumber, groupID: group.id)))
+    }
+    return WorkspaceSwitcherEntry(
+      item: OpenQuicklyItem(
+        id: "\(groupPrefix)\(window.windowNumber):\(group.id.uuidString)", kind: .workspace,
+        title: group.name,
+        detail: groupDetail(windowLabel: window.label, tabTitles: group.tabTitles), score: score),
+      symbol: "square.stack",
+      badge: isCurrent ? L("当前") : L("本机"),
+      isOpen: true,
+      connectionState: nil,
+      primaryTitle: L("切换到工作区"),
+      primary: .selectGroup(windowNumber: window.windowNumber, groupID: group.id),
+      menu: menu)
+  }
+
+  /// 已关闭的旧窗口条目（旧版「本机工作区 = 一个窗口」留下的，或关掉的主窗口）。
+  /// 点它重新打开窗口，恢复布局和目录；非主窗口可以删除。保留它们是为了老用户的数据不丢。
+  private static func localEntry(_ workspace: NamedWorkspace) -> WorkspaceSwitcherEntry {
     var menu = [
       WorkspaceSwitcherMenuItem(
         title: L("重命名…"), command: .renameLocal(workspace.id, currentName: workspace.name)),
@@ -127,7 +227,7 @@ enum WorkspaceSwitcherCatalog {
     return WorkspaceSwitcherEntry(
       item: OpenQuicklyItem(
         id: localPrefix + workspace.id.uuidString, kind: .workspace, title: workspace.name,
-        detail: detail(machine: L("本机"), tabTitles: tabTitles),
+        detail: detail(machine: L("本机"), tabTitles: []),
         score: workspace.lastActiveAt.timeIntervalSince1970, timestamp: workspace.lastActiveAt),
       symbol: workspace.isOpen ? "macwindow" : "macwindow.badge.plus",
       badge: workspace.isOpen ? L("已打开") : L("本机"),
@@ -196,7 +296,7 @@ enum WorkspaceSwitcherCatalog {
 // MARK: - 采集现场状态
 
 extension WorkspaceSwitcherSnapshot {
-  /// 从本地目录、机器编排与各窗口的远端协调器采集快照。
+  /// 从各工作区窗口、本地目录、机器编排与各窗口的远端协调器采集快照。
   ///
   /// 远端列表只读缓存（`remoteWorkspaces(machineID:)` 不发网络请求）：先看当前窗口，
   /// 再看其它窗口已建出的协调器，任意一个窗口访问过这台机器，切换器就能列出它的工作区。
@@ -206,15 +306,12 @@ extension WorkspaceSwitcherSnapshot {
     controller: WorkspaceViewController?, directory: NamedWorkspaceDirectory?,
     fleet: MachineFleetModel
   ) -> WorkspaceSwitcherSnapshot {
-    let windows = (NSApplication.shared.delegate as? AsterAppDelegate)?.workspaceWindows ?? []
-    var tabTitles: [UUID: [String]] = [:]
-    if let directory {
-      // 窗口切到远端机器时 `tabs` 是远端标签，不属于本地工作区，不拿来当搜索词。
-      for entry in windows where entry.model.activeMachineID == MachineProfile.localProfileID {
-        if let id = directory.workspaceID(for: entry.window) {
-          tabTitles[id] = entry.model.tabs.map(\.title)
-        }
-      }
+    var windows = (NSApplication.shared.delegate as? AsterAppDelegate)?.workspaceWindows ?? []
+    // 测试与嵌入宿主没有 AppDelegate：至少列出发起切换器的这个窗口。
+    if let current = controller?.view.window, let model = controller?.model,
+      !windows.contains(where: { $0.window === current })
+    {
+      windows.insert((current, model), at: 0)
     }
     let machines = fleet.rows.filter { !$0.isLocal }.map {
       WorkspaceSwitcherMachine(id: $0.id, label: $0.label, enabled: $0.enabled, state: $0.state)
@@ -228,10 +325,41 @@ extension WorkspaceSwitcherSnapshot {
         coordinators.lazy.compactMap { $0?.remoteWorkspaces(machineID: machine.id) }
         .first { !$0.isEmpty } ?? []
     }
+    let currentWindow = controller?.view.window
     return WorkspaceSwitcherSnapshot(
-      localWorkspaces: directory?.workspaces ?? [], localTabTitles: tabTitles,
+      windows: windows.enumerated().map { index, entry in
+        switcherWindow(
+          entry.window, model: entry.model, index: index, showLabel: windows.count > 1,
+          isCurrent: entry.window === currentWindow, directory: directory)
+      },
+      localWorkspaces: directory?.workspaces ?? [],
       remoteActivity: directory?.remoteActivity ?? [:], machines: machines,
       remoteWorkspaces: remote)
+  }
+
+  /// 一个窗口的切换器快照。
+  ///
+  /// 窗口名优先用注册表里这个窗口的名字（旧版改过名的窗口名字有含义，而且不随窗口前后顺序变），
+  /// 没登记时退回「窗口 N」。窗口正显示远端机器时 `tabs` 是远端标签，不拿来当本机工作区的搜索词。
+  @MainActor
+  private static func switcherWindow(
+    _ window: NSWindow, model: AppModel, index: Int, showLabel: Bool, isCurrent: Bool,
+    directory: NamedWorkspaceDirectory?
+  ) -> WorkspaceSwitcherWindow {
+    let registered = directory?.workspaceID(for: window).flatMap { directory?.workspace($0)?.name }
+    let isLocal = model.isLocalMachineActive
+    return WorkspaceSwitcherWindow(
+      windowNumber: window.windowNumber,
+      label: showLabel ? registered ?? L("窗口 \(String(index + 1))") : nil,
+      isCurrent: isCurrent,
+      isLocalActive: isLocal,
+      selectedGroupID: model.selectedWorkspaceGroupID,
+      groups: model.workspaceGroups.map { group in
+        WorkspaceSwitcherGroup(
+          id: group.id, name: group.name,
+          tabTitles: isLocal
+            ? model.tabs.filter { $0.workspaceGroupID == group.id }.map(\.title) : nil)
+      })
   }
 }
 
@@ -267,6 +395,18 @@ final class WorkspaceSwitcherActions {
   /// 立即执行命令。所有失败都以可读文案弹出，不静默吞掉。
   func perform(_ command: WorkspaceSwitcherCommand) {
     switch command {
+    case .selectGroup(let windowNumber, let groupID):
+      guard let target = WorkspaceGroupNavigator.controller(windowNumber: windowNumber) else { return }
+      Task { @MainActor in await WorkspaceGroupNavigator.select(groupID, in: target) }
+    case .renameGroup(let windowNumber, let groupID):
+      // 目标可能是别的窗口：先置前，对话框才不会弹在一个看不见的窗口上。
+      guard let target = WorkspaceGroupNavigator.controller(windowNumber: windowNumber) else { return }
+      WorkspaceGroupNavigator.bringToFront(target)
+      WorkspaceGroupActions.promptRename(groupID, in: target.model, window: target.view.window)
+    case .deleteGroup(let windowNumber, let groupID):
+      guard let target = WorkspaceGroupNavigator.controller(windowNumber: windowNumber) else { return }
+      WorkspaceGroupNavigator.bringToFront(target)
+      WorkspaceGroupActions.confirmAndDelete(groupID, in: target.model, window: target.view.window)
     case .openLocal(let id):
       directory?.open(id)
     case .renameLocal(let id, let currentName):

@@ -1,16 +1,17 @@
 import AsterCore
 import Foundation
 
-/// `aster workspace list|open|new` 的 CLI 前端：本地与远端命名工作区。
+/// `aster workspace list|open|new` 的 CLI 前端：窗口内工作区、本地窗口条目与远端工作区。
 ///
 /// 与 `MachineCommands` 一样在 `AsterCLIArguments.parse` 之前拦截，复用它的
 /// `Invocation` 与输出格式开关。open / new 是写操作，是否放行由 App 的 IPC 写门禁决定。
 enum WorkspaceCommands {
   static let usage = """
-    命名工作区：
+    工作区：
       workspace list [--json]
       workspace open <名称|id|机器/工作区>
       workspace new --name <名称> [--machine <机器 id或标签>]
+    不带 --machine 时在最前面的窗口里新建本机工作区（一组标签）。
     """
 
   /// 判断这组 argv 是否属于本模块。返回 false 表示交回其它解析器。
@@ -83,13 +84,24 @@ enum WorkspaceCommands {
 
   // MARK: - 文本渲染
 
-  /// 工作区列表，一行一条，制表符分隔；首列区分本地与远端：
-  /// - `local  id  名称  open|closed  最近使用时间`
+  /// 工作区列表，一行一条，制表符分隔；首列区分种类：
+  /// - `group  id  名称  窗口id  窗口名|-  标签数|-  selected|-`（窗口内工作区）
+  /// - `local  id  名称  open|closed  最近使用时间`（本地窗口条目）
   /// - `remote  机器id  机器标签  工作区id  标题  标签数  selected|-`
   ///
   /// 还没有快照的机器单独一行，末列写 `uncached`，免得被误读成「远端没有工作区」。
   static func renderWorkspaceList(_ value: JSONValue) throws -> String {
     var lines: [String] = []
+    if case .array(let groups)? = value["groups"] {
+      for group in groups {
+        lines.append(
+          [
+            "group", text(group["id"]), text(group["name"]), number(group["windowID"]),
+            text(group["windowLabel"], fallback: "-"), number(group["tabCount"]),
+            bool(group["isSelected"]) ? "selected" : "-",
+          ].joined(separator: "\t"))
+      }
+    }
     if case .array(let local)? = value["local"] {
       for workspace in local {
         lines.append(
@@ -123,6 +135,11 @@ enum WorkspaceCommands {
 
   /// open / new 的结果，列与 `workspace list` 对应的那一种行一致。
   static func renderWorkspaceAction(_ value: JSONValue) throws -> String {
+    if text(value["kind"]) == "group" {
+      return [
+        "group", text(value["workspaceID"]), text(value["name"]), number(value["windowID"]),
+      ].joined(separator: "\t")
+    }
     if text(value["kind"]) == "remote" {
       return [
         "remote", text(value["machineID"]), text(value["machineLabel"]),

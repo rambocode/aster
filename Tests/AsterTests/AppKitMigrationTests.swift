@@ -791,7 +791,13 @@ func topTabBarPlacesTitleBandAboveTabsAndClearOfTrafficLights() throws {
   let tabRectInWindow = tabButton.convert(tabButton.bounds, to: nil)
   #expect(contentHeight - tabRectInWindow.maxY >= 27.5, "标签顶缘应让开 28pt 标题带")
   // 标签行必须绑定栈宽后从左缘起排；纵向栈按固有宽度排布时整行会浮到窗口中间。
-  #expect(tabRectInWindow.minX <= 20, "标签应从窗口左缘起排（左对齐）")
+  // 行首是工作区切换按钮，标签紧跟其后。
+  let groupButton = try #require(
+    controller.view.descendants.compactMap { $0 as? WorkspaceGroupPopUpButton }.first)
+  let groupRectInWindow = groupButton.convert(groupButton.bounds, to: nil)
+  #expect(groupRectInWindow.minX <= 20, "标签行应从窗口左缘起排（左对齐）")
+  #expect(tabRectInWindow.minX >= groupRectInWindow.maxX, "标签排在工作区按钮之后")
+  #expect(tabRectInWindow.minX - groupRectInWindow.maxX <= 10, "标签紧跟工作区按钮")
   let titleRectInWindow = titlebar.convert(titlebar.bounds, to: nil)
   #expect(titleRectInWindow.minY >= tabRectInWindow.maxY - 0.5, "标题带应在标签行上方")
 

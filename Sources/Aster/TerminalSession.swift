@@ -2521,6 +2521,14 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     nativeSSH = spec
   }
 
+  /// 是否为本机受管终端（「本机后台保活」）：有受管引用且协调器走本机传输。
+  ///
+  /// 与 `remoteManagedMachineLabel` 同源，按协调器传输实现判定而不是机器 ID。
+  var isLocalManagedTerminal: Bool {
+    guard let managedTerminal else { return false }
+    return !ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal).isRemote
+  }
+
   func bindManagedTerminal(_ reference: ManagedTerminalReference?) {
     managedTerminal = reference
     managedFailure = nil
@@ -3362,29 +3370,14 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         return String(trimmed.suffix(600))
       } ?? ""
       lastManagedBridgeExit = ManagedBridgeExit(code: code, outputTail: tail)
+      // 运行时长同样要在异步对账之前取：对账要等一次往返，结束后的清理还可能清掉起点。
+      let uptime = processStartedAt.map { Date().timeIntervalSince($0) } ?? 0
       Task { @MainActor [weak self] in
         guard let self else { return }
         let resolution = await ManagedTerminalCoordinatorRegistry.coordinator(for: reference)
           .reconcileAsync(references: [reference], persistedServerEpoch: nil)[reference]
-        // 桥的退出码只是显示桥的，不是远端进程的。结束卡要说的是远端发生了什么：
-        // 进程退出（带服务端记录的退出码）、终端已被回收、还是服务不可达。
-        switch resolution {
-        case .attached?:
-          self.applyManagedBridgeExit(reference)
-        case .exited(let status)?:
-          let exit = status.exitCode ?? code
-          self.managedExitSummary =
-            exit.map({ L("远端进程已退出（状态码 \(String($0))）。") }) ?? L("远端进程已退出。")
-          self.applyProcessExit(code: exit)
-        case .missing?, .serverRestarted?:
-          self.managedExitSummary = L("远端进程已结束，服务端已回收该终端。")
-          self.applyProcessExit(code: code)
-        case .unreachable(_, let reason)?:
-          self.managedExitSummary = L("远端服务暂时不可达：\(reason)")
-          self.applyProcessExit(code: code)
-        case nil:
-          self.applyProcessExit(code: code)
-        }
+        self.applyManagedExitResolution(
+          resolution, reference: reference, bridgeCode: code, uptime: uptime)
       }
       return
     }
@@ -3394,10 +3387,58 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     requestCloseAfterExitIfNeeded(uptime: uptime)
   }
 
-  /// 本机原生 Shell 被用户主动结束后，请求所属标签关闭这个 Pane。
+  /// 按服务端对账结果收尾受管终端的显示桥退出：分离、进程结束、已回收或不可达。
   ///
-  /// 受管终端不走这里：它的结束卡承载「重新附加 / 重新启动 / 关闭标签」等服务端事务入口，
-  /// 而且桥的退出码不代表远端进程的真实状态，自动关闭会把仍可恢复的终端直接丢掉。
+  /// 桥的退出码只是显示桥的，不是受管进程的。结束卡要说的是服务端发生了什么：
+  /// 进程退出（带服务端记录的退出码）、终端已被回收、还是服务不可达。
+  ///
+  /// 本机受管终端（「本机后台保活」）在服务端确认进程已退出时，和原生 PTY 一样按
+  /// `closesPaneAutomatically` 自动关闭 Pane：此时退出码来自服务端，不再是不可信的桥退出码，
+  /// 进程也已不可恢复，保留结束卡只会让 `exit` 看起来失灵。远端受管终端仍保留结束卡，
+  /// 它承载重新启动远端 Shell 等事务入口。判定按协调器的传输实现（`isRemote`），不按机器 ID，
+  /// 与 `ManagedTerminalLaunchSpec.resolve` 一致。
+  private func applyManagedExitResolution(
+    _ resolution: ManagedTerminalResolution?,
+    reference: ManagedTerminalReference,
+    bridgeCode code: Int32?,
+    uptime: TimeInterval
+  ) {
+    let isLocal = !ManagedTerminalCoordinatorRegistry.coordinator(for: reference).isRemote
+    switch resolution {
+    case .attached?:
+      applyManagedBridgeExit(reference)
+    case .exited(let status)?:
+      let exit = status.exitCode ?? code
+      if isLocal {
+        // 本机结束卡直接用原生 Shell 的文案（按退出码区分），不写「远端」说明。
+        managedExitSummary = nil
+        applyProcessExit(code: exit)
+        requestCloseAfterExitIfNeeded(uptime: uptime)
+      } else {
+        managedExitSummary =
+          exit.map({ L("远端进程已退出（状态码 \(String($0))）。") }) ?? L("远端进程已退出。")
+        applyProcessExit(code: exit)
+      }
+    case .missing?, .serverRestarted?:
+      managedExitSummary =
+        isLocal
+        ? L("Shell 已结束，后台保活服务已回收该终端。")
+        : L("远端进程已结束，服务端已回收该终端。")
+      applyProcessExit(code: code)
+    case .unreachable(_, let reason)?:
+      managedExitSummary =
+        isLocal ? L("后台保活服务暂时不可达：\(reason)") : L("远端服务暂时不可达：\(reason)")
+      applyProcessExit(code: code)
+    case nil:
+      applyProcessExit(code: code)
+    }
+  }
+
+  /// 本机 Shell（原生 PTY 或本机受管终端）被用户主动结束后，请求所属标签关闭这个 Pane。
+  ///
+  /// 远端受管终端不走这里：它的结束卡承载「重新附加 / 重新启动 / 关闭标签」等服务端事务入口，
+  /// 自动关闭会把仍可恢复的终端直接丢掉。受管终端只在服务端确认进程已退出后才会走到这里，
+  /// 桥自身的退出码不作为依据，见 `applyManagedExitResolution`。
   private func requestCloseAfterExitIfNeeded(uptime: TimeInterval) {
     guard case .ended(let termination) = lifecycleState,
       termination.closesPaneAutomatically(uptime: uptime)
@@ -3436,6 +3477,15 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   func simulateManagedExitForTesting(code: Int32?) {
     managedExitSummary = code.map({ L("远端进程已退出（状态码 \(String($0))）。") }) ?? L("远端进程已退出。")
     applyProcessExit(code: code)
+  }
+
+  /// 测试用：跳过真实对账，按给定结果走受管终端显示桥退出的收尾逻辑。生产代码不调用。
+  func simulateManagedExitResolutionForTesting(
+    _ resolution: ManagedTerminalResolution?, bridgeCode: Int32?, uptime: TimeInterval
+  ) {
+    guard let managedTerminal else { return }
+    applyManagedExitResolution(
+      resolution, reference: managedTerminal, bridgeCode: bridgeCode, uptime: uptime)
   }
 
   /// 测试用：不起真实进程，模拟本机原生 Shell 运行 `uptime` 秒后以 `code` 退出。生产代码不调用。

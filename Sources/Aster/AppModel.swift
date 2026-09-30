@@ -343,6 +343,9 @@ final class TerminalTabItem: ObservableObject, Identifiable {
   /// 服务端的 tabID 是字符串而本地标签身份是 UUID，两者不能互相冒充：这里显式保留
   /// 映射，结构事务才能把界面动作翻译成正确的服务端对象。
   var remoteTabID: String?
+  /// 所属的窗口内工作区（`WorkspaceGroup.id`）。本地标签插入窗口时由 `AppModel` 赋值；
+  /// 远端投影标签恒为 nil，它们的分组归服务端的远端工作区管理。
+  var workspaceGroupID: UUID?
   let createdAt: Date
   private(set) var updatedAt: Date
   /// 标签显示名。刻意不是 `@Published`：Agent CLI（Claude Code / codex）经 OSC 0/2
@@ -590,6 +593,7 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       titleColor: snapshot.titleColor,
       autoTitleColorIndex: snapshot.autoTitleColorIndex
     )
+    workspaceGroupID = snapshot.workspaceGroupID
   }
 
   var activeRuntime: WorkspacePaneRuntime? { runtimes[activePaneID] }
@@ -1162,7 +1166,8 @@ final class TerminalTabItem: ObservableObject, Identifiable {
       agentSessions: agentSessions.isEmpty ? nil : agentSessions,
       restoreCommands: restoreCommands.isEmpty ? nil : restoreCommands,
       titleColor: titleColor,
-      autoTitleColorIndex: autoTitleColorIndex
+      autoTitleColorIndex: autoTitleColorIndex,
+      workspaceGroupID: workspaceGroupID
     )
   }
 
@@ -1425,6 +1430,16 @@ final class AppModel: ObservableObject {
 
   @Published private(set) var tabs: [TerminalTabItem] = []
 
+  // MARK: - 窗口内工作区
+
+  /// 本窗口的工作区列表。`tabs` 仍是全部标签的唯一真值，工作区只决定界面显示哪一部分；
+  /// 切走的工作区里的终端、Agent 与持久化照常工作。实现见 `AppModel+WorkspaceGroups`。
+  @Published var workspaceGroups: [WorkspaceGroup] = []
+  /// 当前显示的工作区。nil 只出现在还没有任何本地标签的初始阶段。
+  @Published var selectedWorkspaceGroupID: UUID?
+  /// 每个工作区上次选中的标签，切回该工作区时恢复。只在内存里，重启后回到第一个标签。
+  var lastSelectedTabIDByWorkspaceGroup: [UUID: UUID] = [:]
+
   // MARK: - P4.2 按机器分组的标签集合
 
   /// 一台机器的整组标签状态。
@@ -1545,7 +1560,11 @@ final class AppModel: ObservableObject {
     alert.addButton(withTitle: L("取消"))
     return alert.runModal() == .alertFirstButtonReturn
   }
-  @Published var selectedTabID: UUID?
+  @Published var selectedTabID: UUID? {
+    // 任何入口选中其它工作区的标签（Open Quickly、通知、CLI）都让工作区跟着切过去，
+    // 保证「选中标签一定在当前工作区里」。
+    didSet { syncWorkspaceGroupWithSelectedTab() }
+  }
   /// 活动徽章的窗口级局部事件。视图只更新对应 Tab 的附件，Dock 只重新聚合状态；
   /// 该事件不承担布局、持久化或终端内容刷新。
   let tabActivityChanged = PassthroughSubject<UUID, Never>()
@@ -1855,6 +1874,7 @@ final class AppModel: ObservableObject {
       !snapshot.tabs.isEmpty
     {
       tabs = snapshot.tabs.map(TerminalTabItem.init(snapshot:))
+      restoreWorkspaceGroups(from: snapshot)
       // 恢复各 Pane 绑定的 Agent 会话：这里只登记身份，真正的 resume 命令由
       // TerminalSession 在 shell 首个 prompt 出现时发送，并在发送时检查
       // `agents.resumeSessions` 开关（避免启动早期配置尚未同步的时序问题）。
@@ -2072,14 +2092,12 @@ final class AppModel: ObservableObject {
   /// Shell，继续满足工作区永不为空的不变量。
   func detachTabForTransfer(id: UUID) -> TerminalTabItem? {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return nil }
+    let wasSelected = selectedTabID == id
+    let groupIndex = indexInWorkspaceGroup(of: tabs[index])
     let tab = tabs.remove(at: index)
     dividerAfterTabIDs.remove(tab.id)
-    if tabs.isEmpty {
-      newTab()
-    } else {
-      selectedTabID = tabs[min(index, tabs.count - 1)].id
-      persistWorkspace()
-    }
+    reselectAfterRemovingTab(
+      at: index, groupID: tab.workspaceGroupID, groupIndex: groupIndex, wasSelected: wasSelected)
     return tab
   }
 
@@ -2118,6 +2136,8 @@ final class AppModel: ObservableObject {
     // 颜色在插入前分配：此时 `tabs` 还不含新标签，占用集合正好是「其它标签」。
     // 跨窗口移动过来的标签已经带着颜色，保持不变。
     if tab.autoTitleColorIndex == nil { assignAutoTitleColor(to: tab) }
+    // 新标签（含跨窗口拖来的标签）一律落进当前工作区：别的窗口的分组 id 在这里没有意义。
+    if isLocalMachineActive { tab.workspaceGroupID = ensureSelectedWorkspaceGroup() }
     tabs.insert(tab, at: insertionIndex)
     // 物理插入位置只决定 tabs 数组（横向标签条、快照顺序）；侧栏的时间排序是用户
     // 显式选择的视图层排序，插入标签不得改写它——早期在这里自动切到 manual，
@@ -2210,17 +2230,43 @@ final class AppModel: ObservableObject {
       pane: nil
     ))
     persistRecentlyClosedTabs()
-    tabs[index].stop()
-    dividerAfterTabIDs.remove(tabs[index].id)
+    let removed = tabs[index]
+    let groupIndex = indexInWorkspaceGroup(of: removed)
+    removed.stop()
+    dividerAfterTabIDs.remove(removed.id)
     tabs.remove(at: index)
+    reselectAfterRemovingTab(
+      at: index, groupID: removed.workspaceGroupID, groupIndex: groupIndex, wasSelected: wasSelected)
+  }
+
+  /// 移除一个标签后维护选中项与「工作区不空」不变量。
+  ///
+  /// 本地标签只在同一工作区内找相邻标签，避免关掉一个标签后界面跳到别的工作区；
+  /// 当前工作区被关空时补一个新 Shell，和整窗口关空时补 Shell 的老规则一致。
+  /// 后台工作区被关空时先留空，下次切过去再补。远端或没有归属的标签沿用整窗口规则。
+  private func reselectAfterRemovingTab(
+    at index: Int, groupID: UUID?, groupIndex: Int?, wasSelected: Bool
+  ) {
     if tabs.isEmpty {
       newTab()
-    } else if wasSelected {
-      self.selectedTabID = tabs[min(index, tabs.count - 1)].id
-      persistWorkspace()
-    } else {
-      persistWorkspace()
+      return
     }
+    guard isLocalMachineActive, let groupID else {
+      if wasSelected { selectedTabID = tabs[min(index, tabs.count - 1)].id }
+      persistWorkspace()
+      return
+    }
+    let members = tabs.filter { $0.workspaceGroupID == groupID }
+    if members.isEmpty {
+      if groupID == selectedWorkspaceGroupID, workspaceGroups.contains(where: { $0.id == groupID }) {
+        newTab()
+        return
+      }
+      persistWorkspace()
+      return
+    }
+    if wasSelected { selectedTabID = members[min(groupIndex ?? 0, members.count - 1)].id }
+    persistWorkspace()
   }
 
   /// 恢复最近关闭的标签。历史只保存可重建快照，因此会创建新的运行态 Shell，
@@ -2243,6 +2289,7 @@ final class AppModel: ObservableObject {
         guard let snapshot = item.tab else { return false }
         recentlyClosedTabs.removeEntries(withIDs: [snapshot.id])
         let tab = TerminalTabItem(snapshot: snapshot)
+        assignWorkspaceGroupForReopenedTab(tab)
         tabs.append(tab)
         configurePersistence(for: tab)
         selectedTabID = tab.id
@@ -2252,6 +2299,7 @@ final class AppModel: ObservableObject {
       case .window:
         guard let snapshot = item.tab else { return false }
         let tab = TerminalTabItem(snapshot: snapshot)
+        assignWorkspaceGroupForReopenedTab(tab)
         tabs.append(tab)
         configurePersistence(for: tab)
         selectedTabID = tab.id
@@ -2261,6 +2309,7 @@ final class AppModel: ObservableObject {
     }
     guard let snapshot = recentlyClosedTabs.reopenLast() else { return false }
     let tab = TerminalTabItem(snapshot: snapshot)
+    assignWorkspaceGroupForReopenedTab(tab)
     tabs.append(tab)
     configurePersistence(for: tab)
     selectedTabID = tab.id
@@ -2273,6 +2322,7 @@ final class AppModel: ObservableObject {
   func reopenClosedTab(id: UUID) -> Bool {
     guard let snapshot = recentlyClosedTabs.reopen(id: id) else { return false }
     let tab = TerminalTabItem(snapshot: snapshot)
+    assignWorkspaceGroupForReopenedTab(tab)
     tabs.append(tab)
     configurePersistence(for: tab)
     selectedTabID = tab.id
@@ -3345,6 +3395,12 @@ final class AppModel: ObservableObject {
     persistWorkspace()
   }
 
+  /// 去掉某个标签之后的分隔线（标签移到别的工作区时用）。不存在时不落盘。
+  func removeTabDivider(after tabID: UUID) {
+    guard dividerAfterTabIDs.remove(tabID) != nil else { return }
+    persistWorkspace()
+  }
+
   func removeAllTabDividers() {
     guard !dividerAfterTabIDs.isEmpty else { return }
     dividerAfterTabIDs.removeAll()
@@ -4412,7 +4468,9 @@ final class AppModel: ObservableObject {
       selectedTabID: selectedTabID,
       tabs: tabs.map(\.snapshot),
       dividerAfterTabIDs: Array(dividerAfterTabIDs),
-      savedAt: Date()
+      savedAt: Date(),
+      workspaceGroups: workspaceGroups,
+      selectedWorkspaceGroupID: selectedWorkspaceGroupID
     )
     guard let data = try? JSONEncoder().encode(snapshot) else { return }
     defaults.set(data, forKey: snapshotKey)

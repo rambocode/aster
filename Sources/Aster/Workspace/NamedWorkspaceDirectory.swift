@@ -1,4 +1,7 @@
-// 本地命名工作区目录：负责注册表的加载、迁移与保存，并维护窗口与工作区的对应关系。
+// 本地窗口注册表目录：负责注册表的加载、迁移与保存，并维护窗口与注册表条目的对应关系。
+//
+// 「本机工作区」现在是窗口内的一组标签（见 `AppModel+WorkspaceGroups`）；这里的注册表只管窗口：
+// 恢复附加窗口、保留改过名的旧窗口，以及让切换器能重新打开已关闭的旧窗口。
 import AppKit
 import AsterCore
 
@@ -10,8 +13,6 @@ import AsterCore
 protocol NamedWorkspaceWindowHost: AnyObject {
   /// 为当前没有窗口的工作区打开窗口；成功返回 true。
   func openWindow(for workspace: NamedWorkspace) -> Bool
-  /// 新建一个名为 `name`、固定保留的本地工作区窗口；成功返回 true。
-  func createNamedWorkspaceWindow(name: String) -> Bool
 }
 
 /// 目录层的操作错误。注册表自身的错误原样包在 `.registry` 里。
@@ -219,47 +220,10 @@ final class NamedWorkspaceDirectory {
 
   // MARK: - 交互入口
 
-  /// 「新建工作区…」（⌘⇧N）：弹出带主机下拉的新建表单，本机与远端工作区都从这里建。
-  func presentNewLocalWorkspace(in window: NSWindow?) {
+  /// 「新建工作区…」（⌘⇧N）：弹出带主机下拉的新建表单。本机工作区建在当前窗口里，
+  /// 远端工作区建在所选机器上；两者都从这里建。
+  func presentNewWorkspace(in window: NSWindow?) {
     NewWorkspaceSheet.present(in: window, directory: self)
-  }
-
-  /// 校验名称后请宿主新建固定保留的工作区窗口。名称非法时弹出提示并返回 false。
-  @discardableResult
-  func createLocalWorkspace(named rawName: String, errorWindow: NSWindow? = nil) -> Bool {
-    let name: String
-    do {
-      name = try NamedWorkspaceRegistry.validatedName(rawName)
-    } catch let error as NamedWorkspaceRegistryError {
-      Self.presentError(.registry(error), in: errorWindow)
-      return false
-    } catch {
-      return false
-    }
-    return host?.createNamedWorkspaceWindow(name: name) ?? false
-  }
-
-  /// 「重命名工作区…」：改 `window` 对应的工作区；窗口不是工作区窗口时无操作。
-  func presentRename(for window: NSWindow) {
-    guard let id = workspaceID(for: window), let workspace = registry.workspace(id) else { return }
-    let field = Self.makeNameField(workspace.name)
-    let alert = NSAlert()
-    alert.messageText = L("重命名工作区")
-    alert.informativeText = L("重命名后，这个工作区会在关闭窗口后保留。")
-    alert.accessoryView = field
-    alert.addButton(withTitle: L("保存"))
-    alert.addButton(withTitle: L("取消"))
-    alert.window.initialFirstResponder = field
-    Self.run(alert, in: window) { [weak self, weak window] response in
-      guard let self, response == .alertFirstButtonReturn else { return }
-      do {
-        try self.rename(id, to: field.stringValue)
-      } catch let error as NamedWorkspaceDirectoryError {
-        Self.presentError(error, in: window)
-      } catch {
-        return
-      }
-    }
   }
 
   /// 把错误翻译成用户看得懂的一句话。
@@ -325,14 +289,6 @@ final class NamedWorkspaceDirectory {
   private static func removeSuiteDomain(_ name: String) {
     guard NamedWorkspaceRegistry.isValidSuiteName(name) else { return }
     UserDefaults.standard.removePersistentDomain(forName: name)
-  }
-
-  /// 名称输入框，宽度与现有重命名对话框一致。
-  private static func makeNameField(_ value: String) -> NSTextField {
-    let field = NSTextField(string: value)
-    field.placeholderString = L("工作区名称")
-    field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
-    return field
   }
 
   /// 有窗口时以 sheet 展示，否则应用级模态；两条路径共用同一个结果处理。

@@ -437,9 +437,10 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
   }
 
   /// 当前聚焦标签的模板上下文；自定义视图解析 `${cwd}` 等变量时调用。
+  /// 序号按当前工作区内的位置计算，与标签栏上的序号一致。
   private func customViewContext() -> (context: TabTitleContext, pid: Int32?)? {
     guard let tab = model.selectedTab else { return nil }
-    let index = (model.tabs.firstIndex { $0.id == tab.id } ?? 0) + 1
+    let index = (model.visibleTabs.firstIndex { $0.id == tab.id } ?? 0) + 1
     return (TabTitleRuleService.context(for: tab, index: index), tab.activeSession?.processIdentifier)
   }
 

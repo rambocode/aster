@@ -72,20 +72,6 @@ func abnormalShellExitKeepsPane() async throws {
   #expect(session.lifecycleState == .ended(.exited(code: 127)))
 }
 
-@Test("受管终端的远端进程退出后保留结束卡，不自动关闭 Pane")
-@MainActor
-func managedExitKeepsPane() async throws {
-  let (model, tab) = try makeExitWorkspace()
-  let firstPane = tab.activePaneID
-  model.splitSelectedTab(.right)
-  let session = try #require(tab.runtime(for: firstPane)?.terminalSession)
-
-  session.simulateManagedExitForTesting(code: 0)
-  for _ in 0..<20 { try? await Task.sleep(for: .milliseconds(10)) }
-
-  #expect(tab.layout.allPanes.count == 2)
-}
-
 @Test("真实 Ghostty Pane 里输入 exit 后该 Pane 关闭")
 @MainActor
 func typingExitInGhosttyPaneClosesIt() async throws {

@@ -102,3 +102,33 @@ func newWorkspaceFormRemoteChoices() {
   #expect(!NewWorkspaceHostChoice.local.isRemote)
   #expect(!NewWorkspaceHostChoice.addHost.isRemote)
 }
+
+@MainActor
+@Test("新建表单：本机预填窗口内工作区编号名，远端预填代号；切换主机只替换没改过的默认名")
+func newWorkspaceFormPrefillsNamePerHost() {
+  let machine = NewWorkspaceHostChoice.machine(UUID())
+  #expect(
+    NewWorkspaceForm.defaultName(for: .local, localSuggestion: "工作区 2", remoteCodename: "quiet-otter")
+      == "工作区 2")
+  #expect(
+    NewWorkspaceForm.defaultName(for: machine, localSuggestion: "工作区 2", remoteCodename: "quiet-otter")
+      == "quiet-otter")
+  #expect(
+    NewWorkspaceForm.name(
+      afterSwitchingFrom: .local, to: machine, current: "工作区 2",
+      localSuggestion: "工作区 2", remoteCodename: "quiet-otter") == "quiet-otter")
+  #expect(
+    NewWorkspaceForm.name(
+      afterSwitchingFrom: machine, to: .local, current: "quiet-otter",
+      localSuggestion: "工作区 2", remoteCodename: "quiet-otter") == "工作区 2")
+  // 用户自己改过的名字不动。
+  #expect(
+    NewWorkspaceForm.name(
+      afterSwitchingFrom: .local, to: machine, current: "notes",
+      localSuggestion: "工作区 2", remoteCodename: "quiet-otter") == "notes")
+  // 远端之间切换：代号是同一个，名称保持。
+  #expect(
+    NewWorkspaceForm.name(
+      afterSwitchingFrom: machine, to: .sshAlias("dev"), current: "quiet-otter",
+      localSuggestion: "工作区 2", remoteCodename: "quiet-otter") == "quiet-otter")
+}

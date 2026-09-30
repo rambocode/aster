@@ -45,7 +45,7 @@ struct NewWorkspaceMachine: Equatable {
 
 /// 表单提交后要做的事。
 enum NewWorkspaceSubmission: Equatable {
-  /// 新开一个固定保留的本地工作区窗口。
+  /// 在当前（或最前面的）工作区窗口里新建窗口内工作区；没有工作区窗口时先开一个。
   case createLocal(name: String)
   /// 在已添加的机器上建远端工作区；`inNewWindow` 为 false 时落在当前窗口。
   case createRemote(machineID: UUID, name: String, inNewWindow: Bool)
@@ -96,7 +96,7 @@ enum NewWorkspaceForm {
   }
 
   /// 把表单结果翻译成要执行的动作。名称非法时抛 `NamedWorkspaceRegistryError`；
-  /// 「添加主机…」不需要名称。本地工作区本来就是一个窗口，勾选框对它无意义。
+  /// 「添加主机…」不需要名称。本机工作区建在当前窗口里，勾选框对它无意义。
   static func submission(
     choice: NewWorkspaceHostChoice, name rawName: String, openInNewWindow: Bool
   ) throws -> NewWorkspaceSubmission {
@@ -117,6 +117,26 @@ enum NewWorkspaceForm {
       return .openHostSettings
     }
   }
+
+  /// 某个主机选项的默认名称：本机用窗口内工作区的编号名（如「工作区 2」），远端用代号。
+  static func defaultName(
+    for choice: NewWorkspaceHostChoice, localSuggestion: String, remoteCodename: String
+  ) -> String {
+    choice == .local ? localSuggestion : remoteCodename
+  }
+
+  /// 切换主机下拉后名称框该显示什么。
+  ///
+  /// 只替换没被用户改过的默认名：名称仍等于旧选项的默认名时换成新选项的默认名，
+  /// 用户自己输入的名字原样保留。
+  static func name(
+    afterSwitchingFrom old: NewWorkspaceHostChoice, to new: NewWorkspaceHostChoice,
+    current: String, localSuggestion: String, remoteCodename: String
+  ) -> String {
+    let oldDefault = defaultName(for: old, localSuggestion: localSuggestion, remoteCodename: remoteCodename)
+    guard current == oldDefault else { return current }
+    return defaultName(for: new, localSuggestion: localSuggestion, remoteCodename: remoteCodename)
+  }
 }
 
 // MARK: - 界面
@@ -135,10 +155,21 @@ enum NewWorkspaceSheet {
     let newWindowCheckbox = NSButton(checkboxWithTitle: L("在新窗口打开"), target: nil, action: nil)
     /// 与下拉菜单项的 tag 一一对应。
     private var choices: [NewWorkspaceHostChoice] = []
+    /// 本机与远端各自的默认名，切换主机时用来替换没改过的名称。
+    private let localSuggestion: String
+    private let remoteCodename: String
+    /// 上一次选中的主机，用来判断名称框里是不是旧选项的默认名。
+    private var previousChoice: NewWorkspaceHostChoice
     weak var alert: NSAlert?
 
-    init(name: String, entries: [NewWorkspaceMenuEntry], selected: NewWorkspaceHostChoice, openInNewWindow: Bool) {
+    init(
+      name: String, entries: [NewWorkspaceMenuEntry], selected: NewWorkspaceHostChoice,
+      openInNewWindow: Bool, localSuggestion: String, remoteCodename: String
+    ) {
       nameField = WorkspaceSheetPresenter.makeNameField(name)
+      self.localSuggestion = localSuggestion
+      self.remoteCodename = remoteCodename
+      previousChoice = selected
       super.init()
       hostPopUp.identifier = NSUserInterfaceItemIdentifier("new-workspace-host")
       newWindowCheckbox.identifier = NSUserInterfaceItemIdentifier("new-workspace-new-window")
@@ -160,6 +191,7 @@ enum NewWorkspaceSheet {
       }
       hostPopUp.menu = menu
       if let index = choices.firstIndex(of: selected) { hostPopUp.selectItem(withTag: index) }
+      previousChoice = selectedChoice
       hostPopUp.target = self
       hostPopUp.action = #selector(hostChanged)
       updateCheckbox()
@@ -185,15 +217,21 @@ enum NewWorkspaceSheet {
     }
 
     /// 「添加主机…」是一个跳转而不是目标：选中即结束表单，由调用方打开设置。
+    /// 其它选项切换时同步默认名称与勾选框。
     @objc private func hostChanged() {
-      if selectedChoice == .addHost, let alert {
+      let choice = selectedChoice
+      if choice == .addHost, let alert {
         WorkspaceSheetPresenter.finish(alert, code: NewWorkspaceSheet.addHostResponse)
         return
       }
+      nameField.stringValue = NewWorkspaceForm.name(
+        afterSwitchingFrom: previousChoice, to: choice, current: nameField.stringValue,
+        localSuggestion: localSuggestion, remoteCodename: remoteCodename)
+      previousChoice = choice
       updateCheckbox()
     }
 
-    /// 只有远端目标才能选择是否新开窗口；本地工作区总是新开一个窗口。
+    /// 只有远端目标才能选择是否新开窗口；本机工作区总是建在当前窗口里。
     private func updateCheckbox() {
       newWindowCheckbox.isEnabled = selectedChoice.isRemote
     }
@@ -206,15 +244,24 @@ enum NewWorkspaceSheet {
       let fleet = MachineFleetModel.shared
       let entries = NewWorkspaceForm.menuEntries(
         machines: machines(fleet), hosts: SSHHostDirectory.shared.savedHosts, aliases: aliases)
-      let controller = window?.contentViewController as? WorkspaceViewController
-      var name = WorkspaceCodename.generate()
+      // key window 不是工作区窗口（例如设置窗口在前）时退到最前面的工作区窗口：
+      // 本机工作区总要落在某个窗口里，用户眼前的那个最符合预期。
+      let controller =
+        window?.contentViewController as? WorkspaceViewController
+        ?? WorkspaceGroupNavigator.frontmostController()
+      let localSuggestion = suggestedLocalName(controller: controller)
+      let remoteCodename = WorkspaceCodename.generate()
       var choice = defaultChoice(controller: controller, entries: entries)
+      var name = NewWorkspaceForm.defaultName(
+        for: choice, localSuggestion: localSuggestion, remoteCodename: remoteCodename)
       var openInNewWindow = false
       while true {
-        let form = Form(name: name, entries: entries, selected: choice, openInNewWindow: openInNewWindow)
+        let form = Form(
+          name: name, entries: entries, selected: choice, openInNewWindow: openInNewWindow,
+          localSuggestion: localSuggestion, remoteCodename: remoteCodename)
         let alert = NSAlert()
         alert.messageText = L("新建工作区")
-        alert.informativeText = L("选择工作区所在的主机。本机工作区关闭窗口后仍会保留，可以用「切换工作区…」重新打开。")
+        alert.informativeText = L("本机工作区是当前窗口里的一组标签，切走后里面的终端照常运行。远端工作区建在所选机器上。")
         alert.accessoryView = form.makeAccessoryView()
         alert.addButton(withTitle: L("创建"))
         alert.addButton(withTitle: L("取消"))
@@ -252,7 +299,7 @@ enum NewWorkspaceSheet {
   ) async {
     switch submission {
     case .createLocal(let name):
-      directory.createLocalWorkspace(named: name, errorWindow: window)
+      await createLocal(name: name, window: window, controller: controller)
     case .createRemote(let machineID, let name, let inNewWindow):
       await createRemote(
         machineID: machineID, name: name, inNewWindow: inNewWindow, window: window,
@@ -266,6 +313,23 @@ enum NewWorkspaceSheet {
         controller: controller, directory: directory)
     case .openHostSettings:
       openHostSettings()
+    }
+  }
+
+  /// 在当前窗口里建窗口内工作区并切过去；没有工作区窗口时先新开一个。
+  ///
+  /// 窗口正显示远端机器时会先切回本机：用户在下拉里明确选了「本机」。
+  private static func createLocal(
+    name: String, window: NSWindow?, controller: WorkspaceViewController?
+  ) async {
+    guard let target = controller ?? WorkspaceWindowLauncher.openNewWindow(requester: nil) else {
+      MachineSetupSheet.presentFailure(L("无法新建窗口。"), in: window)
+      return
+    }
+    do {
+      try await WorkspaceGroupNavigator.create(named: name, in: target)
+    } catch {
+      WorkspaceGroupActions.presentFailure(error, in: target.view.window ?? window)
     }
   }
 
@@ -296,6 +360,13 @@ enum NewWorkspaceSheet {
   /// 打开设置并定位到「主机」分类。
   private static func openHostSettings() {
     (NSApplication.shared.delegate as? AsterAppDelegate)?.showSettings(section: .hosts)
+  }
+
+  /// 本机默认名：沿用目标窗口的编号规则；没有窗口时按新窗口只有默认工作区来编号。
+  private static func suggestedLocalName(controller: WorkspaceViewController?) -> String {
+    controller?.model.suggestedWorkspaceGroupName()
+      ?? WorkspaceGroupRules.uniqueName(
+        base: AppModel.workspaceGroupNameBase, existing: [AppModel.defaultWorkspaceGroupName])
   }
 
   /// 已添加的远端机器（带连接状态）。Local 不在其中，它是下拉第一项「本机」。

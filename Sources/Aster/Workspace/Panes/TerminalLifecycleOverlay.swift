@@ -94,15 +94,22 @@ final class TerminalLifecycleOverlayView: NSView {
     }
   }
 
+  /// 按会话的生命周期状态构造结束卡；运行中等无需展示的状态返回 nil。
   init?(session: TerminalSession) {
     guard var presentation = Presentation(
       state: session.lifecycleState,
       startupError: session.startupError
     ) else { return nil }
-    // 受管（远端）Pane：显示桥的退出码对用户没有意义，说远端发生了什么、能做什么。
+    // 远端受管 Pane：显示桥的退出码对用户没有意义，说远端发生了什么、能做什么。
     // 附加前就已退出的受管终端走 markManagedFailure（引用被清掉、只留 managedFailure），同样算受管。
     let isManaged = session.managedTerminal != nil || session.managedFailure != nil
-    if isManaged, case .ended = session.lifecycleState {
+    if session.isLocalManagedTerminal, case .ended = session.lifecycleState {
+      // 本机受管（「本机后台保活」）：标题与图标沿用原生 Shell 结束卡，不出现「远端」。
+      // 服务端回收或不可达时才有补充说明，替换掉按桥退出码生成的原生说明。
+      if let summary = session.managedExitSummary {
+        presentation.detail = summary + L(" 可以在此 Pane 重新启动 Shell，或关闭这个标签。")
+      }
+    } else if isManaged, case .ended = session.lifecycleState {
       presentation.title = L("远端进程已结束")
       presentation.detail =
         (session.managedExitSummary ?? session.managedFailure ?? L("远端进程已退出。"))
