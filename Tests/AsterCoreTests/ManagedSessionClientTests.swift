@@ -85,6 +85,20 @@ private func envelopeLine(_ object: [String: Any]) throws -> String {
       == ["terminal", "observe", "/tmp/state", "p2", "t1"])
 }
 
+/// 「重新附加」要接管别的客户端（另一个 Aster 实例）持有的写租约，否则只会得到 `lease_busy`；
+/// 只读观察不取租约，接管标记对它不生效。
+@Test func managedSessionBridgeArgumentsTakeOverOnlyForWriteAttach() {
+  let endpoint = ManagedSessionEndpoint(
+    binaryPath: "/tmp/aster-session", stateParentPath: "/tmp/state", sessionName: "p2")
+  let client = LocalManagedSessionClient()
+  #expect(
+    client.bridgeArguments(endpoint, terminalID: "t1", readOnly: false, takeover: true)
+      == ["terminal", "attach", "/tmp/state", "p2", "t1", "--takeover"])
+  #expect(
+    client.bridgeArguments(endpoint, terminalID: "t1", readOnly: true, takeover: true)
+      == ["terminal", "observe", "/tmp/state", "p2", "t1"])
+}
+
 @Test func managedSessionClientRejectsMissingRuntimeBinary() {
   let endpoint = ManagedSessionEndpoint(
     binaryPath: "/nonexistent/aster-session", stateParentPath: "/tmp", sessionName: "p2")

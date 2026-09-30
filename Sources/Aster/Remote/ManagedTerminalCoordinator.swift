@@ -390,11 +390,13 @@ final class ManagedTerminalCoordinator {
   /// 生成 Ghostty surface 的桥命令文本。
   ///
   /// surface 的子进程是桥而不是任务本身，关闭 surface 只结束桥，受管进程继续运行。
-  func bridgeCommandText(for reference: ManagedTerminalReference, readOnly: Bool = false) -> String?
-  {
+  /// `takeover` 让桥从别的客户端（例如另一个 Aster 实例）手里接管写租约。
+  func bridgeCommandText(
+    for reference: ManagedTerminalReference, readOnly: Bool = false, takeover: Bool = false
+  ) -> String? {
     guard let endpoint else { return nil }
     let arguments = client.bridgeArguments(
-      endpoint, terminalID: reference.terminalID, readOnly: readOnly)
+      endpoint, terminalID: reference.terminalID, readOnly: readOnly, takeover: takeover)
     // 桥的可执行文件由传输实现决定：本机是 aster-session 本身，SSH 是 /usr/bin/ssh 或 aster-ssh。
     return GhosttyConfiguration.launchCommand(
       shell: client.bridgeExecutablePath(endpoint), arguments: arguments)

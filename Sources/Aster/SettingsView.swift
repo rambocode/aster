@@ -737,8 +737,8 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
       refresh()
       return
     }
-    NSWorkspace.shared.setDefaultApplication(at: bundleURL, toOpenURLsWithScheme: "ssh") { error in
-      Task { @MainActor [weak self] in
+    NSWorkspace.shared.setDefaultApplication(at: bundleURL, toOpenURLsWithScheme: "ssh") { [weak self] error in
+      Task { @MainActor in
         guard let self else { return }
         self.message = error == nil
           ? L("已将 Aster 设为 ssh:// 链接的默认终端")

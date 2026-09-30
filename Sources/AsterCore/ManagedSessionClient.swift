@@ -63,10 +63,13 @@ public protocol ManagedSessionClient: Sendable {
     terminalID: String
   ) throws -> ManagedTerminalStatus
   /// 生成显示桥 argv：Ghostty surface 以此为子进程附加到受管终端。
+  /// `takeover` 只对写附加生效：从当前持有写租约的客户端手里显式接管（CAS），
+  /// 仅用于用户主动的「重新附加」，自动附加不能抢别的客户端。
   func bridgeArguments(
     _ endpoint: ManagedSessionEndpoint,
     terminalID: String,
-    readOnly: Bool
+    readOnly: Bool,
+    takeover: Bool
   ) -> [String]
   /// 显示桥的本地可执行文件。本机实现是 `aster-session` 自身，SSH 实现是 `ssh`。
   func bridgeExecutablePath(_ endpoint: ManagedSessionEndpoint) -> String
@@ -177,15 +180,18 @@ public enum ManagedSessionCommand {
     ["event", "subscribe", endpoint.stateParentPath, endpoint.sessionName]
   }
 
+  /// `terminal attach|observe <state-parent> <name> <terminal-id> [--takeover]`：显示桥命令。
+  /// 只读观察不取写租约，`takeover` 对它无意义，因此只在写附加时追加 `--takeover`。
   public static func bridge(
     _ endpoint: ManagedSessionEndpoint,
     terminalID: String,
-    readOnly: Bool
+    readOnly: Bool,
+    takeover: Bool = false
   ) -> [String] {
     [
       "terminal", readOnly ? "observe" : "attach", endpoint.stateParentPath,
       endpoint.sessionName, terminalID,
-    ]
+    ] + (takeover && !readOnly ? ["--takeover"] : [])
   }
 
   /// `agent list <state-parent> <name>`：列出该会话中所有 Agent 的状态。
@@ -422,12 +428,15 @@ public struct LocalManagedSessionClient: ManagedSessionClient {
       result, server: identity.reference, serverEpoch: identity.serverEpoch)
   }
 
+  /// 本机显示桥 argv：直接由 `aster-session` 执行。
   public func bridgeArguments(
     _ endpoint: ManagedSessionEndpoint,
     terminalID: String,
-    readOnly: Bool
+    readOnly: Bool,
+    takeover: Bool = false
   ) -> [String] {
-    ManagedSessionCommand.bridge(endpoint, terminalID: terminalID, readOnly: readOnly)
+    ManagedSessionCommand.bridge(
+      endpoint, terminalID: terminalID, readOnly: readOnly, takeover: takeover)
   }
 
   /// 会话作用域动作的传输入口；只是把端点里的二进制路径转交给共用原语。
