@@ -1017,13 +1017,6 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     workspaceDirectory.presentNewWorkspace(in: NSApplication.shared.keyWindow)
   }
 
-  /// 「文件 ▸ 切换工作区…」（⌥⌘O）：Open Quickly 直接选中「工作区」过滤器。
-  /// 没有可见工作区窗口时先恢复主窗口，浮层才有宿主。
-  @objc private func switchNamedWorkspace(_ sender: Any?) {
-    if NSApplication.shared.keyWindow == nil { showMainWindow() }
-    activeWorkspaceModel.toggleOpenQuickly(filter: .workspace)
-  }
-
   /// key window 的工作区控制器；设置、Quick Terminal 等窗口在前台时为 nil。
   /// 工作区菜单项只作用于用户眼前的窗口，不回退到主窗口，免得对话框弹在看不见的窗口上。
   private var keyWorkspaceViewController: WorkspaceViewController? {
@@ -1624,8 +1617,6 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     submenu.addItem(menuItem(L("新建窗口"), #selector(newWindow(_:)), "n"))
     submenu.addItem(
       menuItem(L("新建工作区…"), #selector(newNamedWorkspace(_:)), "n", modifiers: [.command, .shift]))
-    submenu.addItem(
-      menuItem(L("切换工作区…"), #selector(switchNamedWorkspace(_:)), "o", modifiers: [.command, .option]))
     submenu.addItem(
       menuItem(L("重命名工作区…"), #selector(renameNamedWorkspace(_:)), "", modifiers: []))
     submenu.addItem(

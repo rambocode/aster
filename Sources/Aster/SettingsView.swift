@@ -3627,7 +3627,6 @@ extension SettingsViewController: WKNavigationDelegate {
     let shortcuts: [(String, String, String, String)] = [
       ("new-window", L("窗口"), L("新建窗口"), "⌘N"),
       ("new-workspace", L("工作区"), L("新建工作区"), "⇧⌘N"),
-      ("switch-workspace", L("工作区"), L("切换工作区"), "⌥⌘O"),
       ("next-workspace", L("工作区"), L("下一个工作区"), "⌃⌘]"),
       ("previous-workspace", L("工作区"), L("上一个工作区"), "⌃⌘["),
       ("new-tab", L("窗口"), L("新建标签页"), "⌘T"),
@@ -5402,7 +5401,6 @@ enum ShortcutOverrideApplier {
   private static var menuTitles: [String: String] { [
     "new-window": L("新建窗口"),
     "new-workspace": L("新建工作区…"),
-    "switch-workspace": L("切换工作区…"),
     "next-workspace": L("下一个工作区"),
     "previous-workspace": L("上一个工作区"),
     "new-tab": L("新建标签页"),

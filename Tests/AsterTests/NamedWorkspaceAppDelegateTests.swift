@@ -62,7 +62,7 @@ func namedWorkspaceWindowsFollowCloseSemanticsInAppDelegate() throws {
     isolated.defaults.stringArray(forKey: NamedWorkspaceDirectory.legacySuitesKey) == [pinnedSuite])
 }
 
-@Test("文件菜单提供新建、切换、重命名、删除与上一个 / 下一个工作区；切换直接选中「工作区」过滤器")
+@Test("文件菜单提供新建、重命名、删除与上一个 / 下一个工作区，不再有「切换工作区…」")
 @MainActor
 func namedWorkspaceMenuEntries() throws {
   let isolated = try NamedWorkspaceTestDefaults()
@@ -84,25 +84,21 @@ func namedWorkspaceMenuEntries() throws {
   let file = try #require(delegate.makeMainMenu().items[1].submenu)
   let newWindowIndex = file.indexOfItem(withTitle: L("新建窗口"))
   let newWorkspace = try #require(file.item(at: newWindowIndex + 1))
-  let switcher = try #require(file.item(at: newWindowIndex + 2))
-  let rename = try #require(file.item(at: newWindowIndex + 3))
-  let delete = try #require(file.item(at: newWindowIndex + 4))
-  let next = try #require(file.item(at: newWindowIndex + 5))
-  let previous = try #require(file.item(at: newWindowIndex + 6))
+  let rename = try #require(file.item(at: newWindowIndex + 2))
+  let delete = try #require(file.item(at: newWindowIndex + 3))
+  let next = try #require(file.item(at: newWindowIndex + 4))
+  let previous = try #require(file.item(at: newWindowIndex + 5))
   #expect(newWorkspace.keyEquivalent == "n" && newWorkspace.keyEquivalentModifierMask == [.command, .shift])
-  #expect(switcher.keyEquivalent == "o" && switcher.keyEquivalentModifierMask == [.command, .option])
   #expect(rename.title == L("重命名工作区…") && rename.keyEquivalent.isEmpty)
   #expect(delete.title == L("删除工作区…") && delete.keyEquivalent.isEmpty)
   #expect(next.title == L("下一个工作区"))
   #expect(next.keyEquivalent == "]" && next.keyEquivalentModifierMask == [.command, .control])
   #expect(previous.title == L("上一个工作区"))
   #expect(previous.keyEquivalent == "[" && previous.keyEquivalentModifierMask == [.command, .control])
-  #expect([newWorkspace, switcher, rename, delete, next, previous].allSatisfy { $0.target === delegate })
-
-  #expect(NSApp.sendAction(try #require(switcher.action), to: switcher.target, from: switcher))
-  let active =
-    (NSApp.keyWindow?.contentViewController as? WorkspaceViewController)?.model ?? model
-  #expect(active.openQuicklyInitialFilter == .workspace)
+  #expect([newWorkspace, rename, delete, next, previous].allSatisfy { $0.target === delegate })
+  // 菜单栏不再提供「切换工作区…」，⌥⌘O 也随之空出。
+  #expect(file.indexOfItem(withTitle: L("切换工作区…")) == -1)
+  #expect(!file.items.contains { $0.keyEquivalent == "o" && $0.keyEquivalentModifierMask == [.command, .option] })
 }
 
 @Test("窗口内工作区：新建落在已有窗口里，不新开窗口也不登记注册表；菜单能循环切换，只剩一个时置灰")

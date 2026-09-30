@@ -24,7 +24,7 @@ public enum OpenQuicklyKind: String, CaseIterable, Codable, Sendable {
 
 public enum OpenQuicklyFilter: String, CaseIterable, Codable, Sendable {
   case all
-  /// 命名工作区切换器（⌥⌘O 直接带着它打开）。
+  /// 命名工作区切换器（Open Quickly 里的「工作区」过滤器）。
   case workspace
   case opened
   case recent
