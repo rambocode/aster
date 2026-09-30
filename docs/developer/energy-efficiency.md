@@ -165,3 +165,23 @@ surface 仍在持续提交 GPU 帧。活动监视器「能耗」页把终端里�
 
 `powermetrics` 需要管理员权限，本轮没有 GPU 瓦数的直接读数；验证依据是定向测试与
 同协议 `sample` 对比，设备级电量测量仍属发布前补充项。
+
+## 2026-09-30 画面静止读屏与收起实时画面
+
+- **读屏节流。** 屏幕检测的静止期不再限于 idle（规则 9）。停在权限确认表单上的 Agent 原来
+  每 300ms 读一次整屏；现在画面不变时只按 2 秒兜底读屏，单元测试
+  `screenDetectionParksWhileBlockedScreenIsStatic` 在旧逻辑下失败、新逻辑下通过。
+- **收起实时画面。** 设计见 [终端领域](terminal-domain.md#收起实时画面)。测量协议：swift-testing
+  临时用例在测试宿主里创建真实 Ghostty surface，窗口置于前台且 `occlusionState` 含 `.visible`，
+  终端里跑每 50ms 重画 30 行的循环（约 75 KB/s，接近 Agent TUI 流式输出）；按 10 秒窗口读取
+  `task_info(TASK_POWER_INFO_V2)`，可见与收起交替 3 轮，取窗口确已可见的 2 轮：
+
+| 指标（Aster 进程自身） | 实时显示 | 收起 | 变化 |
+| --- | ---: | ---: | ---: |
+| `task_energy`（CPU 能耗估计） | 25.2–25.6 mW | 18.8–19.2 mW | 约 -25% |
+| 中断 + 空闲唤醒 | 40–41 次/秒 | 7 次/秒 | 约 -82% |
+| CPU 时间 | 基准 | 约一半 | 约 -50% |
+
+  PTY 吞吐两种状态相同，说明终端解析照常进行。`gpu_energy.task_gpu_utilisation` 两种状态都
+  读到 0：内核不按进程归属这部分 GPU 时间，Metal 帧提交省下的 GPU 功耗不在表内，实际节省
+  应大于表中数字。Agent 子进程自身（TUI 重绘、编译测试）的开销不受影响，也不在表内。
