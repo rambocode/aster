@@ -284,8 +284,10 @@ final class UsagePanelController: NSObject, NSWindowDelegate {
     }
     // 状态栏图标那块算「还在控件上」：否则指针停在图标上时面板会自己消失，
     // 再点一下又展开，看起来像图标点不动。
+    // 停在图标上同时算「进入过」：点图标打开时指针就在图标上，若沿菜单栏横着移走、
+    // 不经过面板，只认面板的话「进入过」永远是 false，面板就一直赖着不走。
     if let anchor, anchor.insetBy(dx: -pointerSlack, dy: -pointerSlack).contains(pointer) {
-      return (hasEntered, nil, false)
+      return (true, nil, false)
     }
     if isInteracting { return (hasEntered, nil, false) }
     guard hasEntered else { return (false, nil, false) }

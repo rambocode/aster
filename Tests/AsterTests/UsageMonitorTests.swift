@@ -638,6 +638,29 @@ struct UsagePanelFrameTests {
     #expect(!decision.shouldHide)
   }
 
+  @Test("点图标打开后指针直接从图标移走（不经过面板），离开宽限时间后收起")
+  func 从图标直接移走会收起() {
+    let onAnchor = UsagePanelController.evaluateAutoHide(
+      pointer: NSPoint(x: Self.anchorFrame.midX, y: Self.anchorFrame.midY),
+      panelFrame: Self.panelFrame, anchor: Self.anchorFrame,
+      hasEntered: false, isInteracting: false, leftAt: nil, now: Self.now)
+    #expect(onAnchor.hasEntered)
+    #expect(!onAnchor.shouldHide)
+
+    // 沿菜单栏横着移开，完全不碰面板。
+    let away = NSPoint(x: 200, y: Self.anchorFrame.midY)
+    let left = UsagePanelController.evaluateAutoHide(
+      pointer: away, panelFrame: Self.panelFrame, anchor: Self.anchorFrame,
+      hasEntered: onAnchor.hasEntered, isInteracting: false, leftAt: onAnchor.leftAt,
+      now: Self.now.addingTimeInterval(0.1))
+    #expect(!left.shouldHide)
+    let late = UsagePanelController.evaluateAutoHide(
+      pointer: away, panelFrame: Self.panelFrame, anchor: Self.anchorFrame,
+      hasEntered: left.hasEntered, isInteracting: false, leftAt: left.leftAt,
+      now: Self.now.addingTimeInterval(0.1 + UsagePanelController.autoHideDelay + 0.05))
+    #expect(late.shouldHide)
+  }
+
   @Test("指针停在状态栏图标上、或正在拖尺寸时不收起")
   func 锚点与交互中不收起() {
     let onAnchor = UsagePanelController.evaluateAutoHide(
