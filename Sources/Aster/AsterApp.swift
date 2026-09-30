@@ -265,6 +265,11 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   private var additionalWorkspaceWindows: [ObjectIdentifier: WorkspaceWindowRecord] = [:]
   /// 本地命名工作区注册表，恢复与关窗语义的唯一权威；旧 suite 列表键由它镜像写回。
   let workspaceDirectory: NamedWorkspaceDirectory
+  /// 工作区菜单项的作用对象：key window 的工作区控制器。测试 seam——无界面测试宿主里
+  /// 拿不到 key window，测试替换它来验证菜单启用规则与动作落点。
+  var keyWorkspaceViewControllerProvider: @MainActor () -> WorkspaceViewController? = {
+    NSApplication.shared.keyWindow?.contentViewController as? WorkspaceViewController
+  }
   private var isTerminating = false
   /// 用户在语言提示里选了「立即重启」：退出流程走完后由 `applicationWillTerminate` 重新拉起。
   private var relaunchAfterTerminate = false
@@ -909,16 +914,14 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     )
   }
 
-  /// 创建或恢复一个附加工作区窗口。先在工作区注册表登记（已有条目标记为打开，否则按
-  /// `workspaceName`/`isPinned` 新建），超出打开上限时弹出提示并放弃开窗。
+  /// 创建或恢复一个附加工作区窗口。先在工作区注册表登记（已有条目标记为打开，否则新建
+  /// 不保留的条目），超出打开上限时弹出提示并放弃开窗。
   @discardableResult
   private func createWorkspaceWindow(
     suiteName: String,
     initialPane: PaneDescriptor?,
     initialTab: TerminalTabItem? = nil,
     restoring: Bool,
-    workspaceName: String? = nil,
-    isPinned: Bool = false,
     sender: Any?,
     onCreated: ((AppModel) -> Void)? = nil
   ) -> Bool {
@@ -928,7 +931,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     let workspaceID: UUID
     do {
       workspaceID = try workspaceDirectory.beginOpening(
-        suiteName: suiteName, name: workspaceName, isPinned: isPinned)
+        suiteName: suiteName, name: nil, isPinned: false)
     } catch let error as NamedWorkspaceDirectoryError {
       NamedWorkspaceDirectory.presentError(error, in: NSApplication.shared.keyWindow)
       return false
@@ -994,7 +997,7 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     workspaceDirectory.save()
   }
 
-  // MARK: - 本地命名工作区
+  // MARK: - 工作区
 
   /// 切换器重新打开没有窗口的工作区：主工作区走「主窗口重建」路径（复用常驻模型），
   /// 附加工作区按保留的 suite 恢复快照。
@@ -1009,16 +1012,9 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
   }
 
-  /// 「新建工作区…」确认后新建一个固定保留的本地工作区窗口。
-  func createNamedWorkspaceWindow(name: String) -> Bool {
-    createWorkspaceWindow(
-      suiteName: NamedWorkspaceRegistry.makeSuiteName(), initialPane: nil, restoring: false,
-      workspaceName: name, isPinned: true, sender: nil)
-  }
-
-  /// 「文件 ▸ 新建工作区…」（⌘⇧N）。
+  /// 「文件 ▸ 新建工作区…」（⌘⇧N）：本机建在当前窗口里，远端建在所选机器上。
   @objc private func newNamedWorkspace(_ sender: Any?) {
-    workspaceDirectory.presentNewLocalWorkspace(in: NSApplication.shared.keyWindow)
+    workspaceDirectory.presentNewWorkspace(in: NSApplication.shared.keyWindow)
   }
 
   /// 「文件 ▸ 切换工作区…」（⌥⌘O）：Open Quickly 直接选中「工作区」过滤器。
@@ -1028,11 +1024,79 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     activeWorkspaceModel.toggleOpenQuickly(filter: .workspace)
   }
 
-  /// 「文件 ▸ 重命名工作区…」：只作用于当前 key window 对应的工作区。
-  @objc private func renameNamedWorkspace(_ sender: Any?) {
-    guard let window = NSApplication.shared.keyWindow else { return }
-    workspaceDirectory.presentRename(for: window)
+  /// key window 的工作区控制器；设置、Quick Terminal 等窗口在前台时为 nil。
+  /// 工作区菜单项只作用于用户眼前的窗口，不回退到主窗口，免得对话框弹在看不见的窗口上。
+  private var keyWorkspaceViewController: WorkspaceViewController? {
+    keyWorkspaceViewControllerProvider()
   }
+
+  /// 远端活动时当前窗口选中的远端工作区；本机活动或还没有缓存投影时为 nil。
+  private func selectedRemoteWorkspace(
+    in controller: WorkspaceViewController
+  ) -> (machineID: UUID, summary: RemoteWorkspaceSummary)? {
+    let machineID = controller.model.activeMachineID
+    guard machineID != MachineProfile.localProfileID,
+      let summary = controller.loadedRemoteWorkspaces?.remoteWorkspaces(machineID: machineID)
+        .first(where: \.isSelected)
+    else { return nil }
+    return (machineID, summary)
+  }
+
+  /// 「文件 ▸ 重命名工作区…」：本机活动时改当前窗口内工作区，远端活动时改当前选中的远端工作区。
+  @objc private func renameNamedWorkspace(_ sender: Any?) {
+    guard let controller = keyWorkspaceViewController else { return }
+    if let group = controller.model.selectedWorkspaceGroup {
+      WorkspaceGroupActions.promptRename(group.id, in: controller.model, window: controller.view.window)
+    } else if let remote = selectedRemoteWorkspace(in: controller) {
+      WorkspaceSwitcherActions(
+        controller: controller, directory: workspaceDirectory, fleet: MachineFleetModel.shared
+      ).perform(
+        .renameRemote(
+          machineID: remote.machineID, workspaceID: remote.summary.workspaceID,
+          currentTitle: remote.summary.title))
+    }
+  }
+
+  /// 「文件 ▸ 删除工作区…」：确认后删除当前窗口内工作区（只剩一个时置灰）。
+  @objc private func deleteWorkspaceGroup(_ sender: Any?) {
+    guard let controller = keyWorkspaceViewController,
+      let group = controller.model.selectedWorkspaceGroup
+    else { return }
+    WorkspaceGroupActions.confirmAndDelete(group.id, in: controller.model, window: controller.view.window)
+  }
+
+  /// 「文件 ▸ 下一个工作区」（⌃⌘]）：按侧栏顺序循环切换窗口内工作区。
+  @objc private func selectNextWorkspaceGroup(_ sender: Any?) {
+    keyWorkspaceViewController?.model.selectAdjacentWorkspaceGroup(forward: true)
+  }
+
+  /// 「文件 ▸ 上一个工作区」（⌃⌘[）。
+  @objc private func selectPreviousWorkspaceGroup(_ sender: Any?) {
+    keyWorkspaceViewController?.model.selectAdjacentWorkspaceGroup(forward: false)
+  }
+
+  /// 工作区菜单项是否可用。只作用于 key window 的工作区窗口：
+  /// - 重命名：本机有当前工作区，或远端有选中的工作区；
+  /// - 删除：本机活动且不止一个工作区（至少要留一个）；
+  /// - 上一个 / 下一个：本机活动且不止一个工作区，远端工作区由侧栏与切换器切换。
+  private func validateWorkspaceGroupMenuItem(_ action: Selector) -> Bool {
+    guard let controller = keyWorkspaceViewController else { return false }
+    let model = controller.model
+    switch action {
+    case #selector(renameNamedWorkspace(_:)):
+      return model.selectedWorkspaceGroup != nil || selectedRemoteWorkspace(in: controller) != nil
+    case #selector(deleteWorkspaceGroup(_:)):
+      return model.selectedWorkspaceGroup.map { model.canDeleteWorkspaceGroup($0.id) } ?? false
+    default:
+      return model.isLocalMachineActive && model.workspaceGroups.count > 1
+    }
+  }
+
+  /// 工作区菜单项的 selector，统一交给 `validateWorkspaceGroupMenuItem`。
+  private static let workspaceGroupSelectors: Set<Selector> = [
+    #selector(renameNamedWorkspace(_:)), #selector(deleteWorkspaceGroup(_:)),
+    #selector(selectNextWorkspaceGroup(_:)), #selector(selectPreviousWorkspaceGroup(_:)),
+  ]
 
   /// 把 AppKit 窗口动作注入每个模型；附加窗口与主窗口因此拥有完全相同的命令面板
   /// 和 CLI 路由，而模型测试无需构造 NSWindow。
@@ -1564,6 +1628,14 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       menuItem(L("切换工作区…"), #selector(switchNamedWorkspace(_:)), "o", modifiers: [.command, .option]))
     submenu.addItem(
       menuItem(L("重命名工作区…"), #selector(renameNamedWorkspace(_:)), "", modifiers: []))
+    submenu.addItem(
+      menuItem(L("删除工作区…"), #selector(deleteWorkspaceGroup(_:)), "", modifiers: []))
+    // ⌃⌘[ / ] 与 ⌘[ / ]（聚焦上一个 / 下一个 Pane）同形，只多一个 ⌃；Aster 菜单、
+    // Ghostty 默认键位与系统都没有占用这两个组合。
+    submenu.addItem(
+      menuItem(L("下一个工作区"), #selector(selectNextWorkspaceGroup(_:)), "]", modifiers: [.command, .control]))
+    submenu.addItem(
+      menuItem(L("上一个工作区"), #selector(selectPreviousWorkspaceGroup(_:)), "[", modifiers: [.command, .control]))
     submenu.addItem(menuItem(L("新建标签页"), #selector(newTab(_:)), "t"))
     submenu.addItem(
       menuItem(L("重新打开最近关闭的标签页"), #selector(reopenLastClosedTab(_:)), "t", modifiers: [.command, .shift]))
@@ -2120,10 +2192,8 @@ extension AsterAppDelegate: NSMenuItemValidation {
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     guard let action = menuItem.action else { return true }
     if action == #selector(restartQuickTerminal(_:)) { return quickTerminalController.canRestart }
-    // 重命名只针对 key window 对应的工作区；设置、Quick Terminal 等窗口在前台时置灰。
-    if action == #selector(renameNamedWorkspace(_:)) {
-      return NSApplication.shared.keyWindow.flatMap(workspaceDirectory.workspaceID(for:)) != nil
-    }
+    // 工作区菜单项只针对 key window 的工作区窗口；设置、Quick Terminal 等窗口在前台时置灰。
+    if Self.workspaceGroupSelectors.contains(action) { return validateWorkspaceGroupMenuItem(action) }
     // 只有远端机器才有可更新的服务；Local 的服务随 App 一起更新。
     if action == #selector(updateRemoteMachineService(_:))
       || action == #selector(configureRemoteMachineAgents(_:))

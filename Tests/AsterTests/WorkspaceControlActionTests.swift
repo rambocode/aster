@@ -1,4 +1,4 @@
-// `workspace.open` / `workspace.new` 的定向测试：名称解析、歧义、打开上限与远端错误映射。
+// `workspace.open` / `workspace.new` 的定向测试：窗口内工作区、名称解析、歧义、打开上限与远端错误映射。
 import AsterCore
 import Foundation
 import Testing
@@ -83,27 +83,73 @@ func workspaceControlOpenMapsRemoteErrors() async throws {
   #expect(unavailable.error?.message == "已禁用")
 }
 
-@Test("workspace.new：本地名称先校验再建窗口，结果回显新条目 ID")
+@Test("workspace.new：不带机器时在最前面的窗口里建窗口内工作区，不新开窗口；名称先校验")
 @MainActor
 func workspaceControlNewLocal() async throws {
   let fixture = WorkspaceControlFixture()
   let created = try #require(await fixture.call("workspace.new", ["name": "  notes  "]).result)
     .decoded(as: WorkspaceActionResult.self)
-  #expect(fixture.directory.created == ["notes"])
-  #expect(created.kind == "local")
-  #expect(created.name == "notes")
-  #expect(created.workspaceID == fixture.directory.workspaces.first?.id.uuidString)
+  let notes = try #require(fixture.keyGroups.group("notes"))
+  #expect(created == WorkspaceActionResult(
+    kind: "group", workspaceID: notes.id.uuidString, name: "notes", windowID: 11))
+  #expect(fixture.keyGroups.selectedWorkspaceGroupID == notes.id)
+  #expect(fixture.otherGroups.created.isEmpty)
+  #expect(fixture.openedWindows.value == 0)
+  #expect(fixture.directory.workspaces.count == 2, "不再往窗口注册表里加条目")
 
   // `--machine local` 与省略等价。
   #expect(await fixture.call("workspace.new", ["name": "n2", "machine": "local"]).error == nil)
-  #expect(fixture.directory.created == ["notes", "n2"])
+  #expect(fixture.keyGroups.created == ["notes", "n2"])
 
   let empty = await fixture.call("workspace.new", ["name": "   "])
   #expect(empty.error?.code == .invalidParams)
   let tooLong = String(repeating: "x", count: NamedWorkspaceRegistry.maximumNameLength + 1)
   #expect(await fixture.call("workspace.new", .object(["name": .string(tooLong)])).error?.code
     == .invalidParams)
-  #expect(fixture.directory.created.count == 2)
+  #expect(fixture.keyGroups.created.count == 2)
+}
+
+@Test("workspace.new：没有工作区窗口时先新开一个再建；名称非法时不开窗")
+@MainActor
+func workspaceControlNewLocalOpensWindowWhenNoneOpen() async throws {
+  let fixture = WorkspaceControlFixture(groupWindows: false)
+  #expect(await fixture.call("workspace.new", ["name": ""]).error?.code == .invalidParams)
+  #expect(fixture.openedWindows.value == 0)
+
+  let created = try #require(await fixture.call("workspace.new", ["name": "notes"]).result)
+    .decoded(as: WorkspaceActionResult.self)
+  #expect(fixture.openedWindows.value == 1)
+  #expect(created.kind == "group")
+  #expect(created.windowID == 99)
+  #expect(fixture.newGroups.created == ["notes"])
+}
+
+@Test("workspace.open：按名称或 ID 切到窗口内工作区，与同名旧窗口条目冲突时列出唯一写法")
+@MainActor
+func workspaceControlOpenSelectsWorkspaceGroup() async throws {
+  let fixture = WorkspaceControlFixture()
+  let infra = try #require(fixture.otherGroups.group("infra"))
+  let byName = try #require(await fixture.call("workspace.open", ["workspace": "infra"]).result)
+    .decoded(as: WorkspaceActionResult.self)
+  #expect(byName == WorkspaceActionResult(
+    kind: "group", workspaceID: infra.id.uuidString, name: "infra", windowID: 12))
+  _ = await fixture.call("workspace.open", .object(["workspace": .string(infra.id.uuidString)]))
+  #expect(fixture.otherGroups.selected == [infra.id, infra.id])
+  #expect(fixture.keyGroups.selected.isEmpty)
+
+  // 旧窗口条目「主工作区」与窗口内工作区不重名时照旧打开窗口。
+  #expect(await fixture.call("workspace.open", ["workspace": "主工作区"]).error == nil)
+  #expect(fixture.directory.opened.count == 1)
+
+  // 同名：窗口内工作区与旧窗口条目都叫 dev。
+  fixture.keyGroups.workspaceGroups.append(WorkspaceGroup(name: "dev"))
+  let devGroup = try #require(fixture.keyGroups.group("dev"))
+  let ambiguous = await fixture.call("workspace.open", ["workspace": "dev"])
+  #expect(ambiguous.error?.code == .ambiguousTarget)
+  #expect(ambiguous.error?.message.contains(devGroup.id.uuidString) == true)
+  #expect(await fixture.call("workspace.open", .object(["workspace": .string(devGroup.id.uuidString)]))
+    .error == nil)
+  #expect(fixture.keyGroups.selected == [devGroup.id])
 }
 
 @Test("workspace.new --machine：在那台机器上新建并选中；机器不存在或标签重复都拒绝")
@@ -127,5 +173,5 @@ func workspaceControlNewRemote() async throws {
   #expect(await fixture.call("workspace.new", ["name": "", "machine": "orb"]).error?.code
     == .invalidParams)
   #expect(fixture.keyWindow.created.count == 1)
-  #expect(fixture.directory.created.isEmpty)
+  #expect(fixture.keyGroups.created.isEmpty)
 }

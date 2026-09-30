@@ -487,7 +487,7 @@ func togglingInspectorDoesNotRebuildWorkspaceViews() async throws {
     controller.view.allDescendants.compactMap { $0 as? GhosttySurfaceView }.first)
   let tabsLabel = try #require(
     controller.view.allDescendants.compactMap { $0 as? NSTextField }
-      .first { $0.stringValue == "TABS" })
+      .first { $0.identifier?.rawValue == "workspace-sidebar-foreground" })
   #expect(window.makeFirstResponder(terminal))
 
   model.toggleInspector()
@@ -1276,7 +1276,7 @@ func openQuicklyPresentsWithoutRebuildingWorkspace() throws {
   controller.loadViewIfNeeded()
   let originalTabsLabel = try #require(
     controller.view.allDescendants.compactMap { $0 as? NSTextField }
-      .first { $0.stringValue == "TABS" })
+      .first { $0.identifier?.rawValue == "workspace-sidebar-foreground" })
 
   model.toggleOpenQuickly()
 

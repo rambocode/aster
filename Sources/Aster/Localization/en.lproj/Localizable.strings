@@ -13,6 +13,7 @@
 "%@ · 已检测到 CLI，集成尚未安装" = "%@ · CLI detected, integration not yet installed";
 "%@ · 是否启用 Aster 的 Agent 行为" = "%@ · Whether to enable Aster's Agent behavior";
 "%@ · 未在 PATH 中检测到 CLI" = "%@ · CLI not detected in PATH";
+"%@ · 标签" = "%@ · Tabs";
 "%@ · 配置不可安全读取：%@" = "%@ · Config cannot be read safely: %@";
 "%@ 上找不到要执行的命令。" = "No executable command found on %@.";
 "%@ 上的 %@ 任务已完成。" = "The %2$@ task on %1$@ has completed.";
@@ -22,6 +23,7 @@
 "%@ 不是合法的 MCP 配置（应为 JSON 对象）。" = "%@ is not a valid MCP configuration (expected a JSON object).";
 "%@ 个会话" = "%@ Sessions";
 "%@ 个日志文件 · %@（最多保留 7 天或 20 MB）" = "%@ log files · %@ (retained up to 7 days or 20 MB)";
+"%@ 个标签" = "%@ tabs";
 "%@ 会话已结束 · %@ · 在此项目新开终端时补全首选" = "%@ session ended · %@ · Preferred completion for new terminals in this project";
 "%@ 分钟" = "%@ min";
 "%@ 前更新" = "Updated %@ ago";
@@ -232,6 +234,7 @@
 "一次最多上传 %@ 个文件" = "Up to %@ files can be uploaded at once";
 "三级文字" = "Tertiary Text";
 "上一个" = "Previous";
+"上一个工作区" = "Previous Workspace";
 "上一条命令" = "Previous Command";
 "上传" = "Upload";
 "上传到此目录…" = "Upload to This Folder…";
@@ -240,6 +243,7 @@
 "上排标准色，下排高亮色" = "Top row: standard colors, bottom row: bright colors";
 "上移分隔条" = "Move Divider Up";
 "下一个" = "Next";
+"下一个工作区" = "Next Workspace";
 "下一条命令" = "Next Command";
 "下一步" = "Next";
 "下划线" = "Underline";
@@ -329,6 +333,7 @@
 "任务完成时通知" = "Notify When Task Completes";
 "任务进行时旋转" = "Spin While Task Is Running";
 "会停止命名会话「%@」的服务及其中 %@ 个受管终端，重启后按冷恢复恢复布局。" = "This will stop the service for named Session \"%@\" and its %@ managed terminals; after restart, the layout will be restored via cold recovery.";
+"会关闭其中的 %@ 个标签，里面的终端会结束。关闭的标签可以从「最近关闭」重新打开。" = "This closes its %@ tabs and ends their terminals. You can reopen closed tabs from Recently Closed.";
 "会话" = "Session";
 "会话 · %@" = "Session · %@";
 "会话恢复" = "Session Restore";
@@ -475,6 +480,7 @@
 "删除到行尾" = "Delete to End of Line";
 "删除到行首" = "Delete to Beginning of Line";
 "删除右侧词" = "Delete Word Right";
+"删除工作区…" = "Delete Workspace…";
 "删除工作区「%@」？" = "Delete workspace “%@”?";
 "删除左侧词" = "Delete Word Left";
 "删除这条 Memory？" = "Delete This Memory?";
@@ -642,6 +648,7 @@
 "在终端缓冲区中查找" = "Find in terminal buffer";
 "在终端里用 ssh 连接" = "Connect with ssh in the Terminal";
 "在访达中显示" = "Reveal in Finder";
+"在这台机器上新建一个工作区，里面先开一个 Shell。" = "Create a workspace on this machine and open a shell in it.";
 "在远端以 Agent 身份开一个标签：登录 Shell 直接启动所选 CLI，退出即关闭标签。" = "Open a Tab on the remote as an Agent: the login Shell launches the selected CLI directly; exiting closes the Tab.";
 "在远端安装 Aster Agent 集成" = "Install Aster Agent Integration on Remote";
 "在预览中打开" = "Open in Preview";
@@ -744,11 +751,13 @@
 "展开输出" = "Expand Output";
 "崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令" = "After a crash or abnormal exit, upload the minidump and recent diagnostic events to Sentry to help fix the problem. The minidump contains thread stack memory at crash time, never terminal content or commands";
 "工作区" = "Workspace";
+"工作区 %@" = "Workspace %@";
 "工作区保存的标签与布局会一起删除，此操作不能撤销。" = "The workspace's saved tabs and layout will be deleted with it. This cannot be undone.";
 "工作区名称" = "Workspace Name";
 "工作区名称不能为空。" = "Workspace name cannot be empty.";
 "工作区名称不能超过 %@ 个字符。" = "Workspace name cannot exceed %@ characters.";
 "工作区干净" = "Working tree clean";
+"工作区是一组标签。切走的工作区里的终端会继续运行。" = "A workspace is a group of tabs. Terminals in workspaces you switch away from keep running.";
 "工作目录" = "Working directory";
 "工具调用" = "Tool Call";
 "左侧 Panel 宽度" = "Left Panel Width";
@@ -868,7 +877,9 @@
 "当前 Pane 画中画" = "Picture in Picture for Current Pane";
 "当前 SSH 引擎是 OpenSSH，已改用终端里的 ssh 命令连接。" = "The current SSH engine is OpenSSH; connecting with the ssh command in the terminal instead.";
 "当前主题" = "Current Theme";
+"当前工作区" = "Current Workspace";
 "当前工作区没有可接收聊天内容的 Claude Code 或 Codex。" = "No Claude Code or Codex in the current workspace can receive chat content.";
+"当前显示的是远端机器。请先切回本机，再新建本机工作区。" = "A remote machine is showing. Switch back to this Mac before creating a local workspace.";
 "当前构建不可用" = "Unavailable in this build";
 "当前标签" = "Current Tab";
 "当前标签没有可接收聊天上下文的终端。" = "No terminal in the current tab can receive chat context.";
@@ -1057,6 +1068,7 @@
 "新建标签页开始使用 Aster" = "Open a new tab to get started with Aster";
 "新建窗口" = "New Window";
 "新建远端 Agent…" = "New Remote Agent…";
+"新建远端工作区" = "New Remote Workspace";
 "新标签自动分配一个和其它标签不重样的标题颜色；关掉只影响自动色，手动设的颜色仍然保留" = "Give each new tab a title color that differs from the other tabs. Turning this off only hides the automatic colors — colors you set by hand are kept.";
 "新标签页位置" = "New Tab Position";
 "新窗口如何决定初始尺寸" = "How a New Window Determines Its Initial Size";
@@ -1236,6 +1248,7 @@
 "本机后台保活" = "Keep local shells alive in background";
 "本机学习" = "Local Learning";
 "本机学习数据" = "Local Learning Data";
+"本机工作区是当前窗口里的一组标签，切走后里面的终端照常运行。远端工作区建在所选机器上。" = "A local workspace is a group of tabs in the current window; its terminals keep running when you switch away. Remote workspaces are created on the selected machine.";
 "本机新建的终端交给后台会话服务托管，退出或崩溃后 Shell 继续运行；只影响之后新建的终端" = "Hand new local terminals to the background session service so shells survive quit or crash; affects only terminals created afterwards";
 "本机没有适用于 %@/%@ 的 aster-session 产物。" = "No aster-session artifact available locally for %@/%@.";
 "机器" = "Machine";
@@ -1428,6 +1441,7 @@
 "禁用后 MCP 检索完全看不到这条 Memory" = "When disabled, MCP search will not find this Memory at all";
 "私钥" = "private key";
 "移出固定席位，回到普通检索" = "Remove from pinned slots and return to normal search";
+"移到工作区" = "Move to Workspace";
 "移到行尾" = "Move to End of Line";
 "移到行首" = "Move to Beginning of Line";
 "移除" = "Remove";
@@ -1440,6 +1454,7 @@
 "空标签进入当前分组末尾；带内容标签可紧跟当前标签" = "Empty tabs go to the end of the current group; tabs with content can follow right after the current tab";
 "空闲" = "Idle";
 "窗口" = "Window";
+"窗口 %@" = "Window %@";
 "窗口主题" = "Window Theme";
 "窗口大小" = "Window Size";
 "窗口底色" = "Window Background";

@@ -44,7 +44,7 @@ extension WorkspaceViewController {
     "\(machine) · \(workspace)"
   }
 
-  /// 当前窗口正在看的工作区名：本机取本地注册表里这个窗口的工作区，远端取协调器缓存里的选中项。
+  /// 当前窗口正在看的工作区名：本机取窗口内当前选中的工作区，远端取协调器缓存里的选中项。
   ///
   /// 远端只读已建出的协调器：只用本机的窗口不能因为画侧栏就构造协调器。
   func capsuleWorkspaceTitle() -> String? {
@@ -52,10 +52,7 @@ extension WorkspaceViewController {
     guard machineID == MachineProfile.localProfileID else {
       return loadedRemoteWorkspaces?.selectedWorkspaceTitle(machineID: machineID)
     }
-    guard let window = view.window, let directory = WorkspaceSwitcherActions.appDirectory,
-      let id = directory.workspaceID(for: window)
-    else { return nil }
-    return directory.workspace(id)?.name
+    return model.selectedWorkspaceGroup?.name
   }
 
   /// 机器列表（弹出层内容）：组头 + Local 与全部保存的机器行 + 「添加机器」。

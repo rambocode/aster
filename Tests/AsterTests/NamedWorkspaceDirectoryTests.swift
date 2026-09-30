@@ -23,15 +23,9 @@ final class NamedWorkspaceTestDefaults {
 @MainActor
 private final class RecordingHost: NamedWorkspaceWindowHost {
   var opened: [UUID] = []
-  var created: [String] = []
 
   func openWindow(for workspace: NamedWorkspace) -> Bool {
     opened.append(workspace.id)
-    return true
-  }
-
-  func createNamedWorkspaceWindow(name: String) -> Bool {
-    created.append(name)
     return true
   }
 }
@@ -193,16 +187,6 @@ func namedWorkspaceDirectoryRenameAndRecency() throws {
   #expect(throws: NamedWorkspaceDirectoryError.registry(.emptyName)) {
     try directory.rename(firstID, to: "  ")
   }
-}
-
-@Test("新建工作区：名称合法时交给宿主创建固定保留的窗口")
-@MainActor
-func namedWorkspaceDirectoryCreatesPinnedWorkspaceThroughHost() {
-  let directory = NamedWorkspaceDirectory(defaults: nil)
-  let host = RecordingHost()
-  directory.host = host
-  #expect(directory.createLocalWorkspace(named: "  demo  "))
-  #expect(host.created == ["demo"])
 }
 
 /// 以 selector 方式计数的通知观察者，避免在 @Sendable 闭包里修改捕获变量。

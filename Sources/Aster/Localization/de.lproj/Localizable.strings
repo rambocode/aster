@@ -13,6 +13,7 @@
 "%@ · 已检测到 CLI，集成尚未安装" = "%@ · CLI erkannt, Integration noch nicht installiert";
 "%@ · 是否启用 Aster 的 Agent 行为" = "%@ · Aster-Agent-Verhalten aktivieren";
 "%@ · 未在 PATH 中检测到 CLI" = "%@ · CLI im PATH nicht gefunden";
+"%@ · 标签" = "%@ · Tabs";
 "%@ · 配置不可安全读取：%@" = "%@ · Konfiguration kann nicht sicher gelesen werden: %@";
 "%@ 上找不到要执行的命令。" = "Kein ausführbarer Befehl auf %@ gefunden.";
 "%@ 上的 %@ 任务已完成。" = "Die Aufgabe %2$@ auf %1$@ ist abgeschlossen.";
@@ -22,6 +23,7 @@
 "%@ 不是合法的 MCP 配置（应为 JSON 对象）。" = "%@ ist keine gültige MCP-Konfiguration (JSON-Objekt erwartet).";
 "%@ 个会话" = "%@ Sitzungen";
 "%@ 个日志文件 · %@（最多保留 7 天或 20 MB）" = "%@ Protokolldateien · %@ (maximal 7 Tage oder 20 MB aufbewahrt)";
+"%@ 个标签" = "%@ Tabs";
 "%@ 会话已结束 · %@ · 在此项目新开终端时补全首选" = "%@-Sitzung beendet · %@ · Bevorzugte Vervollständigung für neue Terminals in diesem Projekt";
 "%@ 分钟" = "%@ Min.";
 "%@ 前更新" = "Vor %@ aktualisiert";
@@ -232,6 +234,7 @@
 "一次最多上传 %@ 个文件" = "Es können höchstens %@ Dateien auf einmal hochgeladen werden";
 "三级文字" = "Tertiärer Text";
 "上一个" = "Vorheriger";
+"上一个工作区" = "Vorheriger Arbeitsbereich";
 "上一条命令" = "Vorheriger Befehl";
 "上传" = "Hochladen";
 "上传到此目录…" = "In diesen Ordner hochladen…";
@@ -240,6 +243,7 @@
 "上排标准色，下排高亮色" = "Obere Reihe Standardfarben, untere Reihe helle Farben";
 "上移分隔条" = "Trennlinie nach oben bewegen";
 "下一个" = "Nächster";
+"下一个工作区" = "Nächster Arbeitsbereich";
 "下一条命令" = "Nächster Befehl";
 "下一步" = "Weiter";
 "下划线" = "Unterstrich";
@@ -329,6 +333,7 @@
 "任务完成时通知" = "Bei Aufgabenabschluss benachrichtigen";
 "任务进行时旋转" = "Dreht sich während die Aufgabe läuft";
 "会停止命名会话「%@」的服务及其中 %@ 个受管终端，重启后按冷恢复恢复布局。" = "Dies stoppt den Dienst der benannten Sitzung „%@“ und ihre %@ verwalteten Terminals; nach dem Neustart wird das Layout per Kaltwiederherstellung wiederhergestellt.";
+"会关闭其中的 %@ 个标签，里面的终端会结束。关闭的标签可以从「最近关闭」重新打开。" = "Die %@ Tabs darin werden geschlossen und ihre Terminals beendet. Geschlossene Tabs lassen sich über „Zuletzt geschlossen“ wieder öffnen.";
 "会话" = "Sitzung";
 "会话 · %@" = "Sitzung · %@";
 "会话恢复" = "Sitzungswiederherstellung";
@@ -475,6 +480,7 @@
 "删除到行尾" = "Bis Zeilenende löschen";
 "删除到行首" = "Bis Zeilenanfang löschen";
 "删除右侧词" = "Wort rechts löschen";
+"删除工作区…" = "Arbeitsbereich löschen…";
 "删除工作区「%@」？" = "Arbeitsbereich „%@“ löschen?";
 "删除左侧词" = "Wort links löschen";
 "删除这条 Memory？" = "Diese Memory löschen?";
@@ -642,6 +648,7 @@
 "在终端缓冲区中查找" = "Im Terminalpuffer suchen";
 "在终端里用 ssh 连接" = "Im Terminal per ssh verbinden";
 "在访达中显示" = "Im Finder anzeigen";
+"在这台机器上新建一个工作区，里面先开一个 Shell。" = "Einen Arbeitsbereich auf diesem Rechner anlegen und darin eine Shell öffnen.";
 "在远端以 Agent 身份开一个标签：登录 Shell 直接启动所选 CLI，退出即关闭标签。" = "Einen Tab auf dem Remote als Agent öffnen: Die Login-Shell startet direkt das ausgewählte CLI; beim Beenden wird der Tab geschlossen.";
 "在远端安装 Aster Agent 集成" = "Aster Agent-Integration auf dem Remote installieren";
 "在预览中打开" = "In Vorschau öffnen";
@@ -744,11 +751,13 @@
 "展开输出" = "Ausgabe ausklappen";
 "崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令" = "Nach einem Absturz oder unerwarteten Beenden Minidump und aktuelle Diagnoseereignisse an Sentry senden, um das Problem zu beheben. Der Minidump enthält den Thread-Stack-Speicher zum Absturzzeitpunkt, nie Terminalinhalte oder Befehle";
 "工作区" = "Arbeitsbereich";
+"工作区 %@" = "Arbeitsbereich %@";
 "工作区保存的标签与布局会一起删除，此操作不能撤销。" = "Die gespeicherten Tabs und das Layout des Arbeitsbereichs werden ebenfalls gelöscht. Dies kann nicht rückgängig gemacht werden.";
 "工作区名称" = "Name des Arbeitsbereichs";
 "工作区名称不能为空。" = "Der Name des Arbeitsbereichs darf nicht leer sein.";
 "工作区名称不能超过 %@ 个字符。" = "Der Name des Arbeitsbereichs darf höchstens %@ Zeichen lang sein.";
 "工作区干净" = "Arbeitsverzeichnis sauber";
+"工作区是一组标签。切走的工作区里的终端会继续运行。" = "Ein Arbeitsbereich ist eine Gruppe von Tabs. Terminals in Arbeitsbereichen, die Sie verlassen, laufen weiter.";
 "工作目录" = "Arbeitsverzeichnis";
 "工具调用" = "Werkzeugaufruf";
 "左侧 Panel 宽度" = "Breite des linken Bereichs";
@@ -868,7 +877,9 @@
 "当前 Pane 画中画" = "Bild-in-Bild für aktuellen Bereich";
 "当前 SSH 引擎是 OpenSSH，已改用终端里的 ssh 命令连接。" = "Die aktuelle SSH-Engine ist OpenSSH; stattdessen wird mit dem ssh-Befehl im Terminal verbunden.";
 "当前主题" = "Aktuelles Design";
+"当前工作区" = "Aktueller Arbeitsbereich";
 "当前工作区没有可接收聊天内容的 Claude Code 或 Codex。" = "Kein Claude Code oder Codex im aktuellen Arbeitsbereich kann Chat-Inhalte empfangen.";
+"当前显示的是远端机器。请先切回本机，再新建本机工作区。" = "Es wird ein entfernter Rechner angezeigt. Wechseln Sie zurück zu diesem Mac, bevor Sie einen lokalen Arbeitsbereich anlegen.";
 "当前构建不可用" = "In diesem Build nicht verfügbar";
 "当前标签" = "Aktueller Tab";
 "当前标签没有可接收聊天上下文的终端。" = "Kein Terminal im aktuellen Tab kann Chat-Kontext empfangen.";
@@ -1057,6 +1068,7 @@
 "新建标签页开始使用 Aster" = "Neuen Tab öffnen, um mit Aster zu starten";
 "新建窗口" = "Neues Fenster";
 "新建远端 Agent…" = "Neuer Remote-Agent…";
+"新建远端工作区" = "Neuer entfernter Arbeitsbereich";
 "新标签自动分配一个和其它标签不重样的标题颜色；关掉只影响自动色，手动设的颜色仍然保留" = "Weist jedem neuen Tab eine Titelfarbe zu, die sich von den anderen unterscheidet. Beim Ausschalten entfallen nur die automatischen Farben – manuell gesetzte Farben bleiben erhalten.";
 "新标签页位置" = "Position neuer Tabs";
 "新窗口如何决定初始尺寸" = "Wie ein neues Fenster seine anfängliche Größe bestimmt";
@@ -1236,6 +1248,7 @@
 "本机后台保活" = "Lokale Shells im Hintergrund am Leben halten";
 "本机学习" = "Lokales Lernen";
 "本机学习数据" = "Lokale Lerndaten";
+"本机工作区是当前窗口里的一组标签，切走后里面的终端照常运行。远端工作区建在所选机器上。" = "Ein lokaler Arbeitsbereich ist eine Gruppe von Tabs im aktuellen Fenster; seine Terminals laufen weiter, wenn Sie wechseln. Entfernte Arbeitsbereiche werden auf dem gewählten Rechner angelegt.";
 "本机新建的终端交给后台会话服务托管，退出或崩溃后 Shell 继续运行；只影响之后新建的终端" = "Neue lokale Terminals an den Hintergrund-Sitzungsdienst übergeben, damit Shells Beenden oder Absturz überleben; betrifft nur danach erstellte Terminals";
 "本机没有适用于 %@/%@ 的 aster-session 产物。" = "Lokal ist kein aster-session-Artefakt für %@/%@ verfügbar.";
 "机器" = "Rechner";
@@ -1428,6 +1441,7 @@
 "禁用后 MCP 检索完全看不到这条 Memory" = "Nach Deaktivierung ist diese Memory in der MCP-Suche nicht mehr sichtbar";
 "私钥" = "privater Schlüssel";
 "移出固定席位，回到普通检索" = "Aus dem festen Platz entfernen und zur normalen Suche zurückkehren";
+"移到工作区" = "In Arbeitsbereich verschieben";
 "移到行尾" = "An Zeilenende bewegen";
 "移到行首" = "An Zeilenanfang bewegen";
 "移除" = "Entfernen";
@@ -1440,6 +1454,7 @@
 "空标签进入当前分组末尾；带内容标签可紧跟当前标签" = "Leere Tabs gehen ans Ende der aktuellen Gruppe; Tabs mit Inhalt können direkt auf den aktuellen Tab folgen";
 "空闲" = "Untätig";
 "窗口" = "Fenster";
+"窗口 %@" = "Fenster %@";
 "窗口主题" = "Fensterdesign";
 "窗口大小" = "Fenstergröße";
 "窗口底色" = "Fensterhintergrund";

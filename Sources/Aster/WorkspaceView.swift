@@ -272,10 +272,18 @@ final class WorkspaceViewController: NSViewController {
   }
 
   /// 「视图 → 标签页与标题定制」规则对某个标签的解析结果（别名 / 图标 / 标题模板）。
+  /// 序号按当前工作区内的位置计算，与侧栏 / 标签条上用户看到的顺序一致。
   private func tabRuleOutcome(for tab: TerminalTabItem) -> TabTitleRuleService.Outcome {
-    let index = (model.tabs.firstIndex { $0.id == tab.id } ?? 0) + 1
+    let index = (model.visibleTabs.firstIndex { $0.id == tab.id } ?? 0) + 1
     return TabTitleRuleService.resolve(
       tab: tab, index: index, configuration: preferences.configuration.resolvedView)
+  }
+
+  /// 「自动隐藏标签栏」判断用的标签数：按当前工作区计算。本机有多个工作区时，标签栏
+  /// 同时是切换工作区的入口，不能因为当前工作区只剩一个标签就把它藏起来，因此至少按 2 算。
+  private var tabBarVisibilityTabCount: Int {
+    let count = model.visibleTabs.count
+    return model.isLocalMachineActive && model.workspaceGroups.count > 1 ? max(count, 2) : count
   }
 
   /// 规则标题的优先级：用户手动固定名 > 规则模板 > Agent 会话标题 / 自动标题。
@@ -1271,7 +1279,7 @@ final class WorkspaceViewController: NSViewController {
   }
 
   private func makeWorkspaceLayout() -> NSView {
-    let showsTabs = preferences.configuration.appearance.showsTabBar(tabCount: model.tabs.count)
+    let showsTabs = preferences.configuration.appearance.showsTabBar(tabCount: tabBarVisibilityTabCount)
     var panels: [WorkspacePanel] = []
     let content: NSView
 
@@ -1385,36 +1393,31 @@ final class WorkspaceViewController: NSViewController {
     background.addSubview(column)
     column.pinEdges(to: background)
 
+    // Otty 把 section eyebrow 画成 tertiary chrome；Sidebar foreground 是正文层级，
+    // 用在这里会让 Floating Card 的 eyebrow 与活动标签一样黑。
+    let eyebrowColor = NSColor(
+      theme.resolvedColor(forSlot: "interface.tertiaryForeground")
+        ?? theme.palette.tertiaryForeground ?? theme.palette.secondaryForeground
+    )
+    // eyebrow 与标签行文案左对齐（行底卡左内缩 + 卡内边距 10）。右侧可由主题独立覆盖，
+    // 不能拿 trailing padding 反推左侧位置。
+    let eyebrowLeading = CGFloat(theme.style.resolvedSidebarPadding.leading) + 10
+
+    // 顶部 header：上半是红绿灯行，下半是「工作区」区块的标题行（eyebrow + 新建按钮）。
     let header = NSView()
     header.translatesAutoresizingMaskIntoConstraints = false
     header.heightAnchor.constraint(equalToConstant: 68).isActive = true
-    let title = makeLabel(
-      "TABS",
-      size: 10,
-      weight: .semibold,
-      // Otty 把 section eyebrow 画成 tertiary chrome；Sidebar foreground 是正文层级，
-      // 用在这里会让 Floating Card 的 TABS 与活动标签一样黑。
-      color: NSColor(
-        theme.resolvedColor(forSlot: "interface.tertiaryForeground")
-          ?? theme.palette.tertiaryForeground ?? theme.palette.secondaryForeground
-      )
-    )
-    title.identifier = NSUserInterfaceItemIdentifier("workspace-sidebar-foreground")
-    title.translatesAutoresizingMaskIntoConstraints = false
-    let menu = SidebarOptionsButton { [weak self] in
-      self?.makeSidebarOptionsMenu() ?? NSMenu()
-    }
-    header.addSubview(title)
-    header.addSubview(menu)
+    let groupTitle = makeLabel(L("工作区"), size: 10, weight: .semibold, color: eyebrowColor)
+    groupTitle.identifier = NSUserInterfaceItemIdentifier("workspace-group-section-title")
+    groupTitle.translatesAutoresizingMaskIntoConstraints = false
+    let addGroup = makeWorkspaceGroupAddButton()
+    header.addSubview(groupTitle)
+    header.addSubview(addGroup)
     NSLayoutConstraint.activate([
-      // 与标签行文案左对齐（行底卡左内缩 + 卡内边距 10）。右侧可由主题独立覆盖，
-      // 不能拿 trailing padding 反推左侧位置。
-      title.leadingAnchor.constraint(
-        equalTo: header.leadingAnchor,
-        constant: CGFloat(theme.style.resolvedSidebarPadding.leading) + 10),
-      title.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -12),
-      menu.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -6),
-      menu.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -5),
+      groupTitle.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: eyebrowLeading),
+      groupTitle.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -12),
+      addGroup.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -9),
+      addGroup.centerYAnchor.constraint(equalTo: groupTitle.centerYAnchor),
     ])
     column.addArrangedSubview(header)
 
@@ -1446,6 +1449,36 @@ final class WorkspaceViewController: NSViewController {
     // 鼠标进入侧栏任意位置就显示「+」；inVisibleRect 让跟踪区域跟随侧栏尺寸。
     sidebarHoverRegion = background
     background.addTrackingArea(makeHoverTrackingArea())
+
+    // 「工作区」区块：只有一个工作区时也显示，让用户知道可以建工作区。
+    let groupRows = makeWorkspaceGroupRows(theme: theme)
+    column.addArrangedSubview(groupRows)
+    groupRows.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+
+    // 标签区块标题行：eyebrow 写明「<工作区名> · 标签」，右侧是整理菜单。
+    let tabsHeader = NSView()
+    tabsHeader.identifier = NSUserInterfaceItemIdentifier("workspace-sidebar-tabs-header")
+    tabsHeader.translatesAutoresizingMaskIntoConstraints = false
+    tabsHeader.heightAnchor.constraint(equalToConstant: 38).isActive = true
+    let title = makeLabel(sidebarTabsSectionTitle(), size: 10, weight: .semibold, color: eyebrowColor)
+    title.identifier = NSUserInterfaceItemIdentifier("workspace-sidebar-foreground")
+    title.lineBreakMode = .byTruncatingMiddle
+    title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    title.translatesAutoresizingMaskIntoConstraints = false
+    let menu = SidebarOptionsButton { [weak self] in
+      self?.makeSidebarOptionsMenu() ?? NSMenu()
+    }
+    tabsHeader.addSubview(title)
+    tabsHeader.addSubview(menu)
+    NSLayoutConstraint.activate([
+      title.leadingAnchor.constraint(equalTo: tabsHeader.leadingAnchor, constant: eyebrowLeading),
+      title.bottomAnchor.constraint(equalTo: tabsHeader.bottomAnchor, constant: -12),
+      title.trailingAnchor.constraint(lessThanOrEqualTo: menu.leadingAnchor, constant: -4),
+      menu.trailingAnchor.constraint(equalTo: tabsHeader.trailingAnchor, constant: -6),
+      menu.bottomAnchor.constraint(equalTo: tabsHeader.bottomAnchor, constant: -5),
+    ])
+    column.addArrangedSubview(tabsHeader)
+    tabsHeader.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
 
     let rows = NSStackView()
     rows.orientation = .vertical
@@ -1551,8 +1584,9 @@ final class WorkspaceViewController: NSViewController {
 
   /// 排序先于分组执行，使每个分组内部与未分组列表使用同一时间顺序；相同时间使用
   /// UUID 作为稳定兜底，避免 AppKit 刷新时标签随机跳动。
+  /// 只列当前工作区的标签；切走的工作区里的标签不画，但终端照常运行。
   private func sidebarTabSections() -> [SidebarTabSection] {
-    let sorted = model.tabs.sorted { lhs, rhs in
+    let sorted = model.visibleTabs.sorted { lhs, rhs in
       let lhsDate = preferences.sidebarTabOrder == .createdTime ? lhs.createdAt : lhs.updatedAt
       let rhsDate = preferences.sidebarTabOrder == .createdTime ? rhs.createdAt : rhs.updatedAt
       if lhsDate != rhsDate { return lhsDate > rhsDate }
@@ -1797,7 +1831,10 @@ final class WorkspaceViewController: NSViewController {
     row.alignment = .centerY
     // 标签行独占自己的一行，左缘从窗口边起排。
     row.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 8)
-    for tab in model.tabs {
+    // 横向布局没有侧栏工作区区块，开头放一个工作区按钮，保证也能切换 / 新建工作区。
+    row.addArrangedSubview(makeWorkspaceGroupPopUpButton(theme: theme))
+    // 只排当前工作区的标签，与侧栏一致。
+    for tab in model.visibleTabs {
       let ruleOutcome = tabRuleOutcome(for: tab)
       let button = TabRowButton(
         tab: tab,
@@ -1974,6 +2011,7 @@ final class WorkspaceViewController: NSViewController {
       tab.setTabTitleOverride(.automatic)
       model.persistWorkspace()
     })
+    menu.addItem(makeMoveTabToWorkspaceGroupItem(tab))
     menu.addItem(.separator())
     menu.addItem(ActionMenuItem(title: L("向右分屏")) { [weak self, weak tab] in
       guard let self, let tab else { return }
@@ -2014,7 +2052,7 @@ final class WorkspaceViewController: NSViewController {
     // 顶部标签布局把中央标题并入标签条上方的标题带（与交通灯同一行），内容区不再
     // 重复渲染；标题带在 makeHorizontalTabBar 中构建。其余布局保持内容区顶部标题。
     let titleLivesInTabBar = preferences.tabBarLayout == .top
-      && preferences.configuration.appearance.showsTabBar(tabCount: model.tabs.count)
+      && preferences.configuration.appearance.showsTabBar(tabCount: tabBarVisibilityTabCount)
 
     let style = preferences.activeTheme.style.container
     let margin = preferences.tabBarLayout == .vertical

@@ -192,6 +192,9 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
   /// 自动分配的调色板索引（`TabTitleColorPalette`）。存索引而不是颜色值，
   /// 调色板调整后老标签跟随新色板，同时保持「窗口内不撞色」的分配结果可复算。
   public var autoTitleColorIndex: Int?
+  /// 所属的窗口内工作区（`WorkspaceGroup.id`）。可选字段兼容旧快照：缺失时恢复层
+  /// 把标签归到默认工作区。
+  public var workspaceGroupID: UUID?
 
   public init(
     id: UUID,
@@ -203,7 +206,8 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
     agentSessions: [WorkspacePaneAgentSession]? = nil,
     restoreCommands: [WorkspacePaneRestoreCommand]? = nil,
     titleColor: HexColor? = nil,
-    autoTitleColorIndex: Int? = nil
+    autoTitleColorIndex: Int? = nil,
+    workspaceGroupID: UUID? = nil
   ) {
     self.id = id
     self.title = title
@@ -215,6 +219,7 @@ public struct WorkspaceTabSnapshot: Identifiable, Codable, Equatable, Sendable {
     self.restoreCommands = restoreCommands
     self.titleColor = titleColor
     self.autoTitleColorIndex = autoTitleColorIndex
+    self.workspaceGroupID = workspaceGroupID
   }
 }
 
@@ -226,16 +231,24 @@ public struct WorkspaceSnapshot: Codable, Equatable, Sendable {
   /// 快照落盘时刻。退出流程会同步写一次，因此下次启动时它就是「上次退出时间」，
   /// 用于恢复横幅里的 Quitted at。可选字段兼容没有该字段的旧快照。
   public var savedAt: Date?
+  /// 窗口内工作区列表与当前选中的工作区。可选字段兼容旧快照：缺失时恢复层建一个
+  /// 默认工作区并把全部标签放进去。
+  public var workspaceGroups: [WorkspaceGroup]?
+  public var selectedWorkspaceGroupID: UUID?
 
   public init(
     selectedTabID: UUID,
     tabs: [WorkspaceTabSnapshot],
     dividerAfterTabIDs: [UUID] = [],
-    savedAt: Date? = nil
+    savedAt: Date? = nil,
+    workspaceGroups: [WorkspaceGroup]? = nil,
+    selectedWorkspaceGroupID: UUID? = nil
   ) {
     self.selectedTabID = selectedTabID
     self.tabs = tabs
     self.dividerAfterTabIDs = dividerAfterTabIDs
     self.savedAt = savedAt
+    self.workspaceGroups = workspaceGroups
+    self.selectedWorkspaceGroupID = selectedWorkspaceGroupID
   }
 }
