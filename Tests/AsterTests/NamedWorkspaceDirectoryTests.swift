@@ -81,7 +81,8 @@ func namedWorkspaceDirectoryTransientCloseDropsEntry() throws {
   let id = try directory.beginOpening(suiteName: suiteName, name: nil, isPinned: false)
   directory.attach(window, to: id)
   #expect(directory.workspaceID(for: window) == id)
-  #expect(!window.subtitle.isEmpty)
+  // 注册表名不写进窗口副标题（Dock 菜单会显示成「标题 (名字)」）。
+  #expect(window.subtitle.isEmpty)
   #expect(isolated.defaults.stringArray(forKey: NamedWorkspaceDirectory.legacySuitesKey) == [suiteName])
 
   #expect(directory.windowWillClose(window))
@@ -106,7 +107,7 @@ func namedWorkspaceDirectoryPinnedCloseKeepsSnapshot() throws {
 
   let id = try directory.beginOpening(suiteName: suiteName, name: "api", isPinned: true)
   directory.attach(window, to: id)
-  #expect(window.subtitle == "api")
+  #expect(window.subtitle.isEmpty)
   #expect(throws: NamedWorkspaceDirectoryError.workspaceIsOpen) { try directory.remove(id) }
 
   #expect(!directory.windowWillClose(window))
@@ -161,7 +162,7 @@ func namedWorkspaceDirectoryMainWindowCloseAndReopen() throws {
   }
 }
 
-@Test("重命名后固定保留并更新副标题；成为 key window 时排到最前")
+@Test("重命名后固定保留、不写窗口副标题；成为 key window 时排到最前")
 @MainActor
 func namedWorkspaceDirectoryRenameAndRecency() throws {
   var clock = Date(timeIntervalSince1970: 1_000)
@@ -182,7 +183,8 @@ func namedWorkspaceDirectoryRenameAndRecency() throws {
   #expect(directory.workspaces.first?.id == firstID)
 
   try directory.rename(firstID, to: " renamed ")
-  #expect(first.subtitle == "renamed")
+  #expect(directory.workspace(firstID)?.name == "renamed")
+  #expect(first.subtitle.isEmpty)
   #expect(directory.workspace(firstID)?.isPinned == true)
   #expect(throws: NamedWorkspaceDirectoryError.registry(.emptyName)) {
     try directory.rename(firstID, to: "  ")
