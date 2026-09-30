@@ -90,7 +90,7 @@ private final class FakeManagedSessionClient: ManagedSessionClient, @unchecked S
   func bridgeArguments(
     _ endpoint: ManagedSessionEndpoint,
     terminalID: String,
-    readOnly: Bool
+    readOnly: Bool, takeover: Bool
   ) -> [String] { [] }
 
   /// 迁移事务不使用结构化 CLI 原语；这里只满足协议要求，被调用即说明用法有误。

@@ -222,11 +222,13 @@ public struct RemoteManagedSessionClient: ManagedSessionClient {
   public func bridgeArguments(
     _ endpoint: ManagedSessionEndpoint,
     terminalID: String,
-    readOnly: Bool
+    readOnly: Bool,
+    takeover: Bool = false
   ) -> [String] {
     transport.interactiveArguments(
       remoteCommand: [endpoint.binaryPath]
-        + ManagedSessionCommand.bridge(endpoint, terminalID: terminalID, readOnly: readOnly))
+        + ManagedSessionCommand.bridge(
+          endpoint, terminalID: terminalID, readOnly: readOnly, takeover: takeover))
   }
 
   /// 桥的可执行文件与 argv 同源，取自传输。

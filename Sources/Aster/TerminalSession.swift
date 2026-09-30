@@ -2992,9 +2992,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     }
     // 受管终端的 surface 子进程是显示桥，不是任务本身：关闭 surface 只结束桥，
     // 后台服务持有的 PTY 与进程组继续运行。
+    // 接管标记只用一次：之后的自动重建（视图树刷新等）回到普通附加，不抢别的客户端。
+    let takeover = pendingManagedTakeover
+    pendingManagedTakeover = false
     if let managedTerminal,
       let bridge = ManagedTerminalCoordinatorRegistry.coordinator(for: managedTerminal)
-        .bridgeCommandText(for: managedTerminal)
+        .bridgeCommandText(for: managedTerminal, takeover: takeover)
     {
       view.command = bridge
     }
@@ -4644,11 +4647,22 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     return true
   }
 
+  /// 下一次创建显示桥时是否显式接管写租约；由 `reattachManagedTerminal()` 置位，建桥时清零。
+  private var pendingManagedTakeover = false
+
   /// 重新附加到仍在后台运行的受管终端；在原 Pane 容器内重建显示桥。
+  ///
+  /// 用户点「重新附加」就是要在这里操作，所以用 `--takeover` 接管写租约。普通附加
+  /// 遇到占用只会得到 `lease_busy retry=never`：另一个 Aster 实例（或尚未退出的旧桥）
+  /// 一直续租，点多少次都附加不上。被接管的一方收到 `lease.revoked`，桥退出后进入
+  /// 分离态，它也能用同一个按钮接管回来。
   @discardableResult
   func reattachManagedTerminal() -> Bool {
     guard managedTerminal != nil, lifecycleState == .detached else { return false }
-    return restart()
+    pendingManagedTakeover = true
+    let restarted = restart()
+    if !restarted { pendingManagedTakeover = false }
+    return restarted
   }
 
   /// 受管终端的“分离”：只拆本客户端的显示桥与订阅，不写结束事件、不动远端进程。

@@ -74,7 +74,7 @@ final class NamedWorkspaceScriptedClient: ManagedSessionClient, @unchecked Senda
     throw ManagedSessionError.runtimeUnavailable("unused")
   }
   func bridgeArguments(
-    _ endpoint: ManagedSessionEndpoint, terminalID: String, readOnly: Bool
+    _ endpoint: ManagedSessionEndpoint, terminalID: String, readOnly: Bool, takeover: Bool
   ) -> [String] { [] }
 }
 
