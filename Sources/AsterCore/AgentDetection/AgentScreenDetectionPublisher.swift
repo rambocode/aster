@@ -10,7 +10,8 @@ import Foundation
 /// - working → 普通 idle（无 visible_idle / visible_blocker 证据）不立即发布，需连续 3 次
 ///   确认且总时长 ≤ 700ms，避免 Agent 刷屏间隙被误判为空闲；`visibleIdle` 直通。
 /// - Agent 刚被识别后有 3s 启动宽限，期间不读屏，避免把启动画面当成状态。
-/// - 持续 blocked 时每 800ms 重发一次心跳，让上层的“需要你”提醒能刷新。
+/// - 持续 blocked 时每 800ms 重发一次心跳，让上层的“需要你”提醒能刷新。心跳只在读屏时判定；
+///   画面静止时轮询器进入静止期，心跳随兜底读屏节奏发出（见 `AgentScreenDetectionMonitor`）。
 public struct AgentScreenDetectionPublisher: Sendable {
   public typealias Instant = ContinuousClock.Instant
 

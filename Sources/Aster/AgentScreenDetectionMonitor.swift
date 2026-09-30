@@ -23,8 +23,8 @@ final class AgentScreenDetectionMonitor {
     var pollInterval: Duration = AgentScreenDetectionPublisher.pollInterval
     var pendingIdleRecheck: Duration = AgentScreenDetectionPublisher.pendingIdleRecheck
     var startupGrace: Duration = AgentScreenDetectionPublisher.startupGraceWindow
-    /// 静止期（已发布 idle、内容序号自上次读屏未变）的兜底轮询间隔；nil 表示沿用
-    /// `pollInterval`。静止期的正常唤醒来源是 `contentDidChange()`，这个间隔只防事件遗漏。
+    /// 静止期（内容序号自上次读屏未变）的兜底轮询间隔；nil 表示沿用 `pollInterval`。
+    /// 静止期的正常唤醒来源是 `contentDidChange()`，这个间隔只防事件遗漏。
     var quiescentPollInterval: Duration? = nil
 
     static let production = Timing(quiescentPollInterval: .seconds(2))
@@ -73,8 +73,9 @@ final class AgentScreenDetectionMonitor {
       while !Task.isCancelled {
         guard let self else { return }
         if let quiescentInterval = self.quiescentInterval() {
-          // 挂着不动的 Agent TUI 可能一开就是几小时：屏幕没变时 300ms 轮询每一轮都是
-          // 空转，却让进程每秒多醒三次。静止期改成慢兜底，由 PTY 输出事件提前叫醒。
+          // 挂着不动的 Agent TUI 可能一开就是几小时（空闲，或停在权限确认表单上）：屏幕
+          // 没变时 300ms 轮询每一轮都是空转，却让进程每秒多醒三次、读三次整屏。静止期
+          // 改成慢兜底，由 PTY 输出事件提前叫醒。
           await self.sleepUntilContentChanges(atMost: quiescentInterval)
           guard !Task.isCancelled else { return }
           if self.wokenByContentChange {
@@ -101,10 +102,15 @@ final class AgentScreenDetectionMonitor {
     sleeper.cancel()
   }
 
-  /// 当前是否处于静止期；是则返回兜底间隔。判定条件与发布层「跳过读屏」一致，
-  /// 因此静止期内被省掉的每一轮，本来也不会读屏。
+  /// 当前是否处于静止期；是则返回兜底间隔。
+  ///
+  /// 静止期只看「内容序号自上次读屏未变」，不限已发布状态：检测输入（屏幕、OSC 标题与
+  /// 进度）都随 PTY 字节到达，序号不变则结论不变。idle 时兜底这一轮发布层照旧跳过读屏；
+  /// working / blocked 时兜底这一轮仍会读屏——PTY 回调先于 Ghostty 解析到达，极端情况下
+  /// 读到的是解析前的旧画面，靠这次兜底读屏在一个兜底间隔内自愈。pending idle 与启动
+  /// 宽限有自己的时间节奏，不进静止期。
   private func quiescentInterval() -> Duration? {
-    guard published.state == .idle, !isInStartupGrace, !publisher.pendingIdle.isActive,
+    guard !isInStartupGrace, !publisher.pendingIdle.isActive,
       publisher.lastScreenScanContentSequence == source.contentSequence()
     else { return nil }
     return timing.quiescentPollInterval ?? timing.pollInterval

@@ -93,3 +93,64 @@ func productionTimingHasQuiescentFallback() {
     AgentScreenDetectionMonitor.Timing.production.pollInterval
       == AgentScreenDetectionPublisher.pollInterval)
 }
+
+/// devin 的权限确认表单：清单判为 blocked + visibleBlocker，用来驱动「等待输入」静止期。
+private let devinPermissionPrompt = """
+  ⏺ Running command
+    └ $ sleep 30
+
+  ❭ 1 Yes  (Approve once)
+  · 2 Yes, allow `sleep` commands
+  · 3 Yes, always allow `sleep` commands
+  · 4 No
+  ↑↓ select · ↵ confirm · esc cancel
+  """
+
+@Test("停在权限确认表单上屏幕不变时不再固定读屏，输出事件照常叫醒")
+@MainActor
+func screenDetectionParksWhileBlockedScreenIsStatic() async throws {
+  let manifest = try #require(AgentDetectionManifestStore.shared.manifest(for: "devin"))
+  let screen = CountingAgentScreen()
+  screen.text = devinPermissionPrompt
+  let monitor = AgentScreenDetectionMonitor(
+    manifest: manifest, source: screen.source,
+    timing: .init(
+      pollInterval: .milliseconds(20), pendingIdleRecheck: .milliseconds(10),
+      startupGrace: .milliseconds(20), quiescentPollInterval: .seconds(60)))
+  monitor.start()
+  defer { monitor.stop() }
+
+  #expect(await waitUntilTrue { monitor.published.state == .blocked })
+  try await Task.sleep(for: .milliseconds(120))
+  let readsWhileBlocked = screen.readCount
+
+  // 旧逻辑下 blocked 每 20ms 读一次屏，200ms 至少十次；静止期内一次都不该有。
+  try await Task.sleep(for: .milliseconds(200))
+  #expect(screen.readCount == readsWhileBlocked)
+
+  // 用户确认后 Agent 重绘成空闲：输出事件叫醒，离开 blocked。
+  screen.text = ""
+  screen.sequence &+= 1
+  monitor.contentDidChange()
+  #expect(await waitUntilTrue { monitor.published.state != .blocked })
+}
+
+@Test("非 idle 静止期的兜底轮次仍读屏，漏掉的最后一帧能自愈")
+@MainActor
+func screenDetectionFallbackRereadsNonIdleScreen() async throws {
+  let manifest = try #require(AgentDetectionManifestStore.shared.manifest(for: "devin"))
+  let screen = CountingAgentScreen()
+  screen.text = devinPermissionPrompt
+  let monitor = AgentScreenDetectionMonitor(
+    manifest: manifest, source: screen.source,
+    timing: .init(
+      pollInterval: .milliseconds(20), pendingIdleRecheck: .milliseconds(10),
+      startupGrace: .milliseconds(20), quiescentPollInterval: .milliseconds(150)))
+  monitor.start()
+  defer { monitor.stop() }
+  #expect(await waitUntilTrue { monitor.published.state == .blocked })
+
+  // 模拟 PTY 回调先于解析：序号已被上一次读屏消费，画面之后才变，且不再有事件。
+  screen.text = ""
+  #expect(await waitUntilTrue { monitor.published.state != .blocked })
+}

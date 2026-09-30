@@ -22,8 +22,8 @@ Aster 会长期承载多个终端、文件 Pane、Agent 状态和本机 CLI。�
 - **surface 可见性**：后台标签的终端视图会被拆出窗口，窗口也可能最小化、被完全遮住或在
   其他 Space。`GhosttySurfaceView` 把「有没有人看得到像素」同步给 libghostty，看不见的
   surface 不编码 Metal 帧、不呈现 IOSurface，renderer 线程降到 utility QoS。
-- **静止期**：Agent 屏幕检测已发布 idle，且 PTY 内容序号自上次读屏后未变。这段时间里
-  轮询的每一轮都是空转，改由输出事件叫醒。
+- **静止期**：Agent 屏幕检测的 PTY 内容序号自上次读屏后未变（不论已发布 idle、working
+  还是 blocked）。这段时间里固定轮询的每一轮都是空转，改由输出事件叫醒。
 
 ## 核心规则
 
@@ -53,7 +53,12 @@ Aster 会长期承载多个终端、文件 Pane、Agent 状态和本机 CLI。�
    整树刷新（同一轮里拆下再装回）触发一次降级加一次补画。
 9. Agent 屏幕检测在静止期不做固定 300ms 轮询：生产节奏用 2 秒兜底，`TerminalSession` 的
    `detectionContentSequence` 每次变化调用 `contentDidChange()` 提前叫醒，叫醒后仍按 300ms
-   合并一阵连续输出。静止期判定与发布层「跳过读屏」的条件一致，被省掉的轮次本来也不读屏。
+   合并一阵连续输出。检测输入（屏幕、OSC 标题与进度）都随 PTY 字节到达，序号不变结论就不变，
+   所以静止期不限已发布状态：停在权限确认表单上几小时的 Agent（blocked）也不再每秒读三次
+   整屏。idle 的兜底轮次按发布层规则跳过读屏；working / blocked 的兜底轮次仍读屏，因为
+   PTY 回调先于 Ghostty 解析到达，偶发读到解析前的旧画面时靠它在 2 秒内自愈。blocked 心跳
+   因此在画面静止时随兜底节奏发出，上层对同一状态的重复发布是幂等的。pending idle 确认与
+   启动宽限有自己的时间节奏，不进静止期。
 10. 热路径不得逐批读屏。Ghostty 的输出活动探针要整屏取文本并和 IO / renderer 线程争终端锁，
     只在空闲后的第一批立即执行，连续输出期间最多每 250ms 一次，且最后一批之后必有一次。
 11. 每 300ms 执行的清单 `contains` 门用 UTF-8 字节搜索；`String.contains` 按字素比较，在整屏
