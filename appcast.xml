@@ -3,6 +3,36 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.6.13</title>
+            <pubDate>Wed, 30 Sep 2026 19:02:32 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>32</sparkle:version>
+            <sparkle:shortVersionString>0.6.13</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 新功能
+
+- **窗口内工作区**：一个窗口里可以有多个工作区，每个工作区是一组标签，比如一个项目一个。左侧栏上方列出工作区，点「+」新建，点一个就只显示它的标签；标签区标题写着「<工作区名> · 标签」，一眼看出标签属于哪里。切走的工作区里，终端、Agent 和通知照常工作，点通知会切回对应的工作区。双击重命名，右键删除；右键标签可以「移到工作区」。也可以用「文件 ▸ 新建工作区…」（⌘⇧N）、「下一个工作区」（⌃⌘]）和「上一个工作区」（⌃⌘[）。标签栏放在顶部或底部时，标签条最左边有工作区按钮。升级后，原来的标签都放进一个叫「默认」的工作区。
+- **SSH 主机管理**：新增「设置 ▸ 主机」，保存常用的 SSH 主机：端口、用户、认证方式、私钥、跳板机、端口转发、代理、「只用指定私钥」和 known_hosts 文件都能填。可以从 `~/.ssh/config` 导入。口令只存在 macOS 钥匙串里，登录成功后才保存。
+- **原生 SSH 标签**：打开已保存的主机，得到一个直接是远端 Shell 的标签，重启 Aster 后会重新连接。在 Open Quickly 里按 ⌘S 切到 SSH，输入 `user@host` 就能快速连接、保存为主机或添加为机器。在本地标签里手敲 `ssh` 连上后，右键标签「保存为主机…」会预填地址。遇到兼容问题可以在「设置 ▸ 高级 ▸ SSH 引擎」切回 OpenSSH。你自己在终端里敲的 `ssh` 不受影响。
+- **远端多工作区**：一台远程机器可以有多个工作区。切走的工作区只断开画面，里面的任务继续跑。添加机器时可以直接选一台已保存的主机。
+- **补全按习惯排序**：补全会记住你常用的命令、子命令、选项和参数，换到新目录也能先补出来；还会参考上一条命令，比如 `git add` 之后优先补 `git commit`。`cd` 只推荐现在还存在的目录。
+- `aster-cli` 新增 `host list` 与 `workspace list / open / new`。
+
+## 修复
+
+- 修复开启「本机后台保活」后，在 Pane 里输入 `exit` 不关闭，还提示「远端进程已结束」的问题。现在会像普通 Pane 一样关闭。
+- 修复 Open Quickly 在两个目录里都有同名 Agent 会话记录时让 Aster 崩溃的问题。
+- 修复点状态栏图标打开 AI 用量窗口后，鼠标从图标直接移开时窗口不自动收起的问题。
+- 修复本机后台保活时 Agent 输出持续闪烁的问题。
+- 修复恢复的 Pane 光标变成方块、Claude Code 标志旁出现黑块的问题。
+- 修复 Codex 退出后光标上移一行的问题，以及恢复的后台保活 Pane 收不到 Agent 状态、Codex 会话标题不显示的问题。
+- 关闭后台保活的 Pane 时不再卡住界面。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.13/Aster-0.6.13.dmg" length="49990093" type="application/octet-stream" sparkle:edSignature="DViuJ18iuM5tfzLFOYnPRQJfJBBUaZe+2klF3RLEnIlCQrNs+kr8Dmpit2jDL9DWsXZ3b1q33us3AavhBCoFBA=="/>
+        </item>
+        <item>
             <title>0.6.12</title>
             <pubDate>Wed, 23 Sep 2026 18:06:41 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -102,30 +132,6 @@
 - 修复子进程退出后仍要等待孙进程的问题。此前读取子进程输出要等所有写端关闭，而 git 拉起的 fsmonitor、ssh 的 ControlMaster 这类后台进程会长期握住输出端，导致工作线程被长时间占住，累积起来会拖慢并发任务。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.9/Aster-0.6.9.dmg" length="44345009" type="application/octet-stream" sparkle:edSignature="fGKp/mWcQ+NiA7xCTqUhuAF+RZJUG3RK2decDMxSPSGnBIcW2y68xSVcGC7+jfzQEMzHNC45y28gn1qzTCGdAQ=="/>
-        </item>
-        <item>
-            <title>0.6.8</title>
-            <pubDate>Sat, 19 Sep 2026 08:47:20 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>27</sparkle:version>
-            <sparkle:shortVersionString>0.6.8</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## 新增
-
-- 左侧标签支持标题颜色。默认给每个新标签分配一个互不相同的颜色（12 色调色板，优先挑没被占用的），标签多起来也能一眼定位；颜色随会话快照保存，重启后不变。标签右键菜单新增「标题颜色」：12 个色块、换一个随机颜色、自定义颜色、恢复默认。设置「视图 → 标签页图标与角标 → 随机标题颜色」可以关掉自动着色，你亲手选过的颜色不受影响，继续显示。
-- Claude Code 在跑的时候，标签行首的动画改成 Claude Code 自己的星芒：从小圆点长到六芒星再缩回，固定品牌橙，一眼能认出这个 Pane 跑的是哪个 Agent。Codex 保持点阵，其它 Agent 和机器连接状态保持原来的半圆翻转。
-- Shell 主动退出后自动关闭所在 Pane。输入 `exit` 或按 Ctrl+D，Pane 直接收掉，不用再点一次关闭；标签里只剩一个 Pane 时关掉整个标签，误关了可以用「重新打开」找回。退出码非零时要求终端至少活过 3 秒才自动关——Shell 一启动就失败会留下画面供排查。信号终止、I/O 失败和受管终端始终保留结束卡，上面的重新附加 / 重新启动入口还在。
-- Quick Terminal 可以手动拖尺寸了，四边都有 resize 手柄，最小 320×160。拖出来的尺寸会记住，收起再呼出、重启都保持；改了位置、尺寸百分比或边距会回到百分比基准。新增「快捷终端 → 边距」设置（默认 12 点，0–200），只在不贴屏幕边的那几侧留白：顶部或底部显示时左右留白、贴边那侧仍然贴住，居中显示时四周都留。窗口位置仍然只由设置决定，不能拖走。
-
-## 修复
-
-- 修复 Codex Pane 底部不显示用量条。Codex 的时序是界面先起来、会话 ID 后到，而用量监听只在「界面起来」那一刻检查一次，那时 ID 还是空的，之后就再没有路径重新启动监听。现在 ID 到位会重新同步。
-- 修复手动改过窗口大小后，双击标题栏无法放大。AppKit 的窗口尺寸自动保存和放大功能在抢同一份记录，手动拖过尺寸后双击会被判定为「已经放大」而立刻缩回。窗口尺寸本来就以设置里的宽高为准，多出来的那份记录已移除。
-- 修复 Shell 退出后偶发崩溃。终端画面释放时如果正好还有一帧待绘制，系统会在已释放的渲染器上重绘并直接崩掉。之前手动关 Pane 慢一步碰不到，配上这版的「退出自动关 Pane」会必现，已在释放前摘掉渲染层。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.8/Aster-0.6.8.dmg" length="42260217" type="application/octet-stream" sparkle:edSignature="JQH08LC5OsJGJ8JgeLrr76lrHMgKRRUDCONQCTbvYUo55lIUEPy9PVi9KtIxqsdE2VtA5+iC6t92qrbjcUiEDw=="/>
         </item>
     </channel>
 </rss>
