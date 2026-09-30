@@ -12,6 +12,8 @@ Aster 设置页以 Otty 1.3.1 应用包内的 `settings-ui.html` 为功能与视
 - `Resources/settings-ui/index.html`：静态入口与 CSP，只允许同目录脚本、样式和图片，禁止网络连接、对象、表单和外部 base URL。
 - `Resources/settings-ui/settings.js`：十一类字段清单、搜索、Otty 外观页专用渲染器、主题/Agent/Recipe/快捷键列表和消息协议。
 - `Resources/settings-ui/settings.css`：Otty 风格的 200px 侧栏、单列卡片、外观预览、明暗外观、键盘焦点和响应式布局。
+- `Resources/settings-ui/nav-icons.js` / `nav-icons.css`：侧栏分区图标（24 网格，淡色填充 + 描边）与点击动画，对齐 Otty。`renderNav` 用 `AsterNavIcons.svg(id)` 填图标；点击时 `setSection` 会重建侧栏，所以动画要播在重建后的新按钮上（`AsterNavIcons.play`）。系统开启「减弱动态效果」时不播放。新增分区要同时补图标、动画名和测试 `SettingsNavIconsTests` 里的清单。
+- 滚动面包屑：`index.html` 的 `.content-column` 里 `#content-topbar` 悬浮在滚动区之上。内容滚过 24px 时 `#app` 加 `content-scrolled`，面包屑（Aster 标志 / 设置 / 当前分区）淡入，页内大标题淡出，过渡 200ms；切换分区或搜索时回到顶部并复位。
 - `SettingsViewController`：创建非持久化 `WKWebView`，只允许 `settings-ui` 目录内的 file URL 导航；接收消息、校验字段和执行 allowlist action。
 - `AppPreferences`：强类型 `AsterConfiguration` 是运行时真值；尚未进入运行时模型的跨平台字段由 `SettingsCompatibilityValue` 按 Bool、Number 或 String 原类型持久化。
 - `SoftwareUpdateService`：全仓库唯一 `import Sparkle` 的文件。设置页与菜单只见 `SoftwareUpdateControlling` 协议；更新检查由原生侧发起，网页仍然不能联网。

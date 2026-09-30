@@ -9,7 +9,10 @@
   --accent: #666;
   --accent-muted: rgb(255 255 255 / 8%);
   /* 侧栏选中行用中性灰而不是强调色：对齐 Otty，导航不该被染上蓝色。 */
-  --nav-selected: #2c2c2c;
+  --nav-selected: rgb(255 255 255 / 10%);
+  /* 滚动后顶部面包屑的根标题色与半透明遮罩（对齐 Otty 的 --window-title / --content-scrim）。 */
+  --window-title: #8a8a8a;
+  --content-scrim: rgb(18 18 18 / 72%);
   --text-primary: #eee;
   --text-secondary: #989898;
   --text-tertiary: #777;
@@ -37,7 +40,9 @@
     --bg-element: #fff;
     --accent: #007aff;
     --accent-muted: rgb(0 122 255 / 9%);
-    --nav-selected: #ebebeb;
+    --nav-selected: rgb(0 0 0 / 8%);
+    --window-title: #7f7e7d;
+    --content-scrim: rgb(255 255 255 / 72%);
     --text-primary: #1a1a1a;
     --text-secondary: #666;
     --text-tertiary: #aaa;
@@ -110,7 +115,7 @@ textarea { cursor: text; user-select: text; }
   align-items: center;
   gap: 6px;
   height: 27px;
-  margin: 0 12px 10px;
+  margin: 0 10px 12px;
   padding: 0 9px;
   color: var(--text-tertiary);
   background: var(--bg-hover);
@@ -137,32 +142,91 @@ textarea { cursor: text; user-select: text; }
 
 .search-wrap input::placeholder { color: var(--text-tertiary); }
 
-/* 左右内边距必须为 0，且不能预留滚动条槽：选中行的底色要整宽贴到侧栏两侧边缘
-   （Otty 风格）。缩进改由 .nav-item 自己的 padding 提供，图标位置保持不变。 */
+/* 选中行是带圆角的浅色胶囊，左右各留 10px（对齐 Otty 设置页）。 */
 #settings-nav {
+  display: flex;
   min-height: 0;
-  padding: 0 0 14px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 10px 14px;
   overflow-y: auto;
 }
 
 .nav-item {
   display: flex;
   width: 100%;
-  height: 31px;
+  height: 34px;
+  flex: 0 0 34px;
   align-items: center;
-  gap: 9px;
-  padding: 0 18px;
-  color: var(--text-secondary);
+  gap: 10px;
+  padding: 0 8px;
+  color: var(--text-primary);
   background: transparent;
   border: 0;
-  border-radius: 0;
+  border-radius: 9px;
+  font-size: 13px;
+  line-height: 1;
   text-align: left;
-  transition: color 120ms ease, background-color 120ms ease;
+  transition: background-color 120ms ease;
 }
 
-.nav-item:hover { color: var(--text-primary); background: var(--bg-hover); }
-.nav-item[aria-current="page"] { color: var(--text-primary); background: var(--nav-selected); font-weight: 600; }
-.nav-item svg { width: 15px; height: 15px; flex: 0 0 15px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.nav-item:hover { background: var(--bg-hover); }
+.nav-item[aria-current="page"] { background: var(--nav-selected); }
+.nav-item .mgc-icon { display: block; width: 20px; height: 20px; flex: 0 0 20px; }
+.nav-item .mgc-icon svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+/* 内容列承载可滚动内容与悬浮在其上方的面包屑，面包屑不随内容滚动。 */
+.content-column {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.content-column > .content { flex: 1 1 auto; min-height: 0; }
+
+.content-topbar {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 20;
+  height: 48px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+
+.top-scrim {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 56px;
+  background: linear-gradient(to bottom, var(--content-scrim) 75%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  mask-image: linear-gradient(to bottom, #000 75%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 75%, transparent);
+}
+
+.topbar-crumbs {
+  position: relative;
+  display: flex;
+  height: 28px;
+  align-items: center;
+  gap: 6px;
+  margin: 14px 28px 0;
+  overflow: hidden;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.topbar-mark { width: 15px; height: 15px; flex: 0 0 15px; }
+.topbar-root { flex: 0 0 auto; color: var(--window-title); font-weight: 500; }
+.topbar-separator { flex: 0 0 auto; color: var(--text-tertiary); }
+.topbar-page { min-width: 0; overflow: hidden; color: var(--text-secondary); font-weight: 500; text-overflow: ellipsis; }
+
+/* 滚过 24px 后面包屑淡入、页内大标题淡出，两者交叉过渡。 */
+.settings-shell.content-scrolled .content-topbar { opacity: 1; }
+.settings-shell.content-scrolled .page-title { opacity: 0; }
 
 .content {
   min-width: 0;
@@ -184,7 +248,7 @@ textarea { cursor: text; user-select: text; }
 }
 
 .page-header { margin: 0 0 20px; }
-.page-title { margin: 0 0 3px; font-size: 20px; line-height: 1.25; font-weight: 650; letter-spacing: -.02em; }
+.page-title { margin: 0 0 3px; font-size: 20px; line-height: 1.25; font-weight: 650; letter-spacing: -.02em; transition: opacity 200ms ease; }
 .page-description { margin: 0; color: var(--text-secondary); font-size: 12px; }
 
 .group { margin-top: 20px; }

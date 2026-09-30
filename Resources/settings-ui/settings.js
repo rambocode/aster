@@ -16,23 +16,9 @@
     if (navEl) navEl.setAttribute("aria-label", t("设置分类"));
     const loadingSpan = document.querySelector(".loading-state span:not(.spinner)");
     if (loadingSpan) loadingSpan.textContent = t("正在载入设置…");
+    const topbarRoot = document.querySelector(".topbar-root");
+    if (topbarRoot) topbarRoot.textContent = t("设置");
   }
-
-  const icons = {
-    general: "<circle cx='8' cy='8' r='5.5'/><path d='M8 7.5v4M8 4.5h.01'/>",
-    shell: "<rect x='2.2' y='3' width='11.6' height='10' rx='2'/><path d='m4.8 6 2 2-2 2M8.5 10h2.8'/>",
-    controls: "<path d='m4 2.5 8 6-4.1.8L6.5 13z'/>",
-    editor: "<path d='M4 2.5h5l3 3v8H4z'/><path d='M9 2.5v3h3M6 8h4M6 10.5h4'/>",
-    // 插头线条图标（lucide plug 风格，对齐 Otty 的「智能体」侧栏图标）。
-    agents: "<path d='M6 1.8v3M10 1.8v3M4.6 4.8h6.8v3.4a3.4 3.4 0 0 1-3.4 3.4 3.4 3.4 0 0 1-3.4-3.4zM8 11.6v2.6'/>",
-    // 服务器机架线条图标：两层机箱加指示灯。
-    hosts: "<rect x='2.5' y='2.5' width='11' height='4.5' rx='1.2'/><rect x='2.5' y='9' width='11' height='4.5' rx='1.2'/><path d='M5 4.75h.01M5 11.25h.01M8 4.75h3M8 11.25h3'/>",
-    appearance: "<path d='M8 2.2a5.8 5.8 0 1 0 0 11.6c1 0 1.6-.5 1.6-1.2 0-.5-.3-.8-.3-1.2 0-.7.6-1.2 1.3-1.2h1.1c1.3 0 2.1-1 2.1-2.2A5.8 5.8 0 0 0 8 2.2z'/><circle cx='5.2' cy='6' r='.5'/><circle cx='8' cy='4.7' r='.5'/><circle cx='10.8' cy='6.1' r='.5'/>",
-    view: "<rect x='2.5' y='2.5' width='4.5' height='4.5' rx='1'/><rect x='9' y='2.5' width='4.5' height='4.5' rx='1'/><rect x='2.5' y='9' width='4.5' height='4.5' rx='1'/><rect x='9' y='9' width='4.5' height='4.5' rx='1'/>",
-    recipes: "<path d='M8 4.2c-1.2-1-2.8-1.4-5-1.2v9.4c2.2-.2 3.8.2 5 1.2 1.2-1 2.8-1.4 5-1.2V3c-2.2-.2-3.8.2-5 1.2zM8 4.2v9.4'/>",
-    shortcuts: "<path d='m9.3 2.3-5 6h3.6l-1.2 5.4 5-6H8.1z'/>",
-    advanced: "<path d='M5.6 4.4a3.2 3.2 0 0 0 4 4l3.6 3.6-1.2 1.2-3.6-3.6a3.2 3.2 0 0 1-4-4L6.2 7 7 6.2z'/>",
-  };
 
   const options = {
     language: [["system", t("跟随系统")], ["zh-Hans", "简体中文"], ["zh-Hant", "繁體中文"], ["en", "English"], ["ja", "日本語"], ["fr", "Français"], ["de", "Deutsch"]],
@@ -495,6 +481,7 @@
   const nav = document.getElementById("settings-nav");
   const content = document.getElementById("settings-content");
   const search = document.getElementById("settings-search");
+  const topbarPage = document.getElementById("topbar-page");
   const toastRegion = document.getElementById("toast-region");
 
   function send(kind, payload = {}) {
@@ -555,6 +542,7 @@
     search.value = "";
     render();
     content.scrollTop = 0;
+    updateScrolledState();
     if (focusContent) content.focus({ preventScroll: true });
     if (highlightKey) {
       window.requestAnimationFrame(() => {
@@ -574,8 +562,19 @@
       button.className = "nav-item";
       button.dataset.section = section.id;
       if (!searchText && selectedSection === section.id) button.setAttribute("aria-current", "page");
-      button.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${icons[section.id]}</svg><span>${section.title}</span>`;
-      button.addEventListener("click", () => setSection(section.id, { focusContent: true }));
+      const icon = document.createElement("span");
+      icon.className = "mgc-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML = window.AsterNavIcons?.svg(section.id) ?? "";
+      const label = document.createElement("span");
+      label.textContent = section.title;
+      button.append(icon, label);
+      button.addEventListener("click", () => {
+        setSection(section.id, { focusContent: true });
+        // setSection 会重建侧栏，动画要播在新按钮的图标上。
+        const current = nav.querySelector(`[data-section="${CSS.escape(section.id)}"] .mgc-icon`);
+        window.AsterNavIcons?.play(current, section.id);
+      });
       return button;
     }));
   }
@@ -2991,10 +2990,12 @@
   function renderContent() {
     if (!snapshot) return;
     if (searchText.trim()) {
+      topbarPage.textContent = t("搜索设置");
       content.replaceChildren(makeSearchResults());
       return;
     }
     const section = sectionMap.get(selectedSection) ?? sections[0];
+    topbarPage.textContent = section.title;
     const page = document.createElement("div");
     page.className = "page";
     page.dataset.section = section.id;
@@ -3042,10 +3043,18 @@
     renderContent();
   }
 
+  // 内容滚过页内大标题（24px）后切到面包屑；阈值与过渡时长对齐 Otty。
+  const scrolledThreshold = 24;
+  function updateScrolledState() {
+    app.classList.toggle("content-scrolled", content.scrollTop >= scrolledThreshold);
+  }
+  content.addEventListener("scroll", updateScrolledState, { passive: true });
+
   search.addEventListener("input", () => {
     searchText = search.value;
     render();
     content.scrollTop = 0;
+    updateScrolledState();
   });
 
   window.AsterSettings = {
