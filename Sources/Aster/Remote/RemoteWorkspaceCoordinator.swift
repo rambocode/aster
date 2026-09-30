@@ -508,13 +508,13 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
       invocation: transactions.client.eventSubscribeInvocation(transactions.endpoint))
     // 回调发生在订阅进程的读队列上，全部跳回 MainActor 再碰模型。
     let callbacks = SessionEventStreamClient.Callbacks(
-      onSubscribed: { subscription in
-        Task { @MainActor [weak self] in
+      onSubscribed: { [weak self] subscription in
+        Task { @MainActor in
           await self?.eventStreamSubscribed(subscription, machineProfileID: machineProfileID)
         }
       },
-      onEvent: { event in
-        Task { @MainActor [weak self] in
+      onEvent: { [weak self] event in
+        Task { @MainActor in
           if event.kind == .agentChanged {
             self?.handleAgentEvent(event, machineProfileID: machineProfileID)
           } else {
@@ -522,19 +522,19 @@ final class RemoteWorkspaceCoordinator: RemoteStructureHandling {
           }
         }
       },
-      onResynchronize: { _ in
+      onResynchronize: { [weak self] _ in
         // 缺口 / 身份不符 / 未知事件：本地缓存不可信，只能重新取快照。
-        Task { @MainActor [weak self] in
+        Task { @MainActor in
           self?.invalidateProjection(forMachine: machineProfileID)
           await self?.refresh(machineProfileID: machineProfileID)
         }
       },
-      onConnectionLost: { termination in
+      onConnectionLost: { [weak self] termination in
         // 主动停止是本客户端自己发起的：界面收尾已经在停止点做完了。再排一个
         // `connectionLost` 只会在窗口拆掉之后重入界面去动已释放的画面。
         // 只有**意外**结束（进程退出 / 启动失败）才需要作废本地缓存并关闸。
         guard termination != .stopped else { return }
-        Task { @MainActor [weak self] in self?.connectionLost(machineProfileID: machineProfileID) }
+        Task { @MainActor in self?.connectionLost(machineProfileID: machineProfileID) }
       })
     let client = SessionEventStreamClient(
       source: source, expectedTarget: expected, callbacks: callbacks)

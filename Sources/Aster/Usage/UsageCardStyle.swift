@@ -20,6 +20,7 @@ enum UsageCardStyle {
   ///
   /// 动态色要在目标外观下解析成 `cgColor`；调用方需在 `viewDidChangeEffectiveAppearance`
   /// 里再调一次，否则亮暗切换后颜色停在旧值。
+  @MainActor
   static func apply(to view: NSView, hovered: Bool = false) {
     view.wantsLayer = true
     guard let layer = view.layer else { return }
