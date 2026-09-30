@@ -9,10 +9,12 @@
     >
     <title>Aster 设置</title>
     <link rel="stylesheet" href="settings.css">
+    <link rel="stylesheet" href="nav-icons.css">
     <script src="i18n.js" defer></script>
     <script src="link-protocols.js" defer></script>
     <script src="hosts-form.js" defer></script>
     <script src="hosts.js" defer></script>
+    <script src="nav-icons.js" defer></script>
     <script src="settings.js" defer></script>
   </head>
   <body>
@@ -25,12 +27,24 @@
         </label>
         <nav id="settings-nav" aria-label="设置分类"></nav>
       </aside>
-      <section id="settings-content" class="content" tabindex="-1">
-        <div class="loading-state">
-          <span class="spinner" aria-hidden="true"></span>
-          <span>正在载入设置…</span>
+      <div class="content-column">
+        <!-- 内容向下滚动后淡入的面包屑（Aster 标志 / 设置 / 当前分区），同时淡出页内大标题。 -->
+        <div id="content-topbar" class="content-topbar" aria-hidden="true">
+          <div class="top-scrim"></div>
+          <div class="topbar-crumbs">
+            <svg class="topbar-mark" viewBox="0 0 1024 1024"><rect width="1024" height="1024" rx="230" fill="#EA6D49"/><path d="M156 260 278 356 156 452M684 676C754 586 794 488 768 398 731 272 597 231 474 286 349 342 284 466 307 592 331 724 445 797 572 800 670 802 756 779 860 748L860 610" fill="none" stroke="#fff" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/><path d="M548 405C558 480 599 520 674 530 599 540 558 580 548 655 538 580 497 540 422 530 497 520 538 480 548 405Z" fill="#fff"/></svg>
+            <span class="topbar-root">设置</span>
+            <span class="topbar-separator">/</span>
+            <span id="topbar-page" class="topbar-page"></span>
+          </div>
         </div>
-      </section>
+        <section id="settings-content" class="content" tabindex="-1">
+          <div class="loading-state">
+            <span class="spinner" aria-hidden="true"></span>
+            <span>正在载入设置…</span>
+          </div>
+        </section>
+      </div>
     </main>
     <div id="modal-root"></div>
     <div id="toast-region" class="toast-region" role="status" aria-live="polite"></div>

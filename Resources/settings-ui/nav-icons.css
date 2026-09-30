@@ -1,0 +1,103 @@
+/* 设置侧栏分区图标与点击动画，对齐 Otty 设置页。
+   图标是 24 网格：淡色填充（--mgc-tint）+ 描边（--mgc-ink）；点击时 nav-icons.js
+   给图标容器加一次性的 .nav-icon-<name> 类，动画结束后移除。 */
+
+.mgc-icon { --mgc-ink: .8; --mgc-tint: .05; }
+.mgc-icon [stroke]:not(.mgc-page),
+.mgc-icon [fill=currentColor]:not([opacity]) { opacity: var(--mgc-ink); }
+
+/* MARK: - 通用：旋转 */
+@keyframes nav-icon-spin { 0% { rotate: 0deg; } to { rotate: 180deg; } }
+@keyframes nav-icon-spin-squash {
+  0% { scale: 1; animation-timing-function: cubic-bezier(.33, 0, .67, 1); }
+  50% { scale: .9; animation-timing-function: cubic-bezier(.33, 0, .67, 1); }
+  to { scale: 1; }
+}
+.nav-icon-spin { animation: nav-icon-spin 917ms cubic-bezier(.2, 0, .3, 1), nav-icon-spin-squash .5s; }
+
+/* MARK: - 智能体 / 高级：摇摆 */
+@keyframes nav-icon-rock {
+  0% { rotate: 0deg; animation-timing-function: cubic-bezier(.25, 0, .95, 1); }
+  25% { rotate: -17deg; animation-timing-function: cubic-bezier(1, 0, .95, 1); }
+  87.5% { rotate: 10deg; animation-timing-function: cubic-bezier(1, 0, .75, 1); }
+  to { rotate: 0deg; }
+}
+.nav-icon-rock { animation: nav-icon-rock 1333ms; }
+
+/* MARK: - 控制：指针轻推 */
+@keyframes nav-icon-nudge {
+  0% { translate: 0 0; animation-timing-function: cubic-bezier(.33, 0, .67, 1); }
+  35% { translate: 7% 7%; animation-timing-function: cubic-bezier(.33, 0, .67, 1); }
+  to { translate: 0 0; }
+}
+.nav-icon-nudge { animation: nav-icon-nudge .38s; }
+
+/* MARK: - 视图：四格收拢旋转 */
+.mgc-cluster { transform-box: view-box; transform-origin: 12px 12px; }
+.mgc-cell { transform-box: view-box; }
+.mgc-cell-tl { transform-origin: 7px 7px; --cell-in: 2.46px 2.46px; }
+.mgc-cell-tr { transform-origin: 17px 7px; --cell-in: -2.46px 2.46px; }
+.mgc-cell-bl { transform-origin: 7px 17px; --cell-in: 2.46px -2.46px; }
+.mgc-cell-br { transform-origin: 17px 17px; --cell-in: -2.46px -2.46px; }
+@keyframes nav-icon-cluster-turn {
+  0%, 20% { rotate: 0deg; animation-timing-function: cubic-bezier(.33, 0, .67, 1); }
+  90%, to { rotate: 90deg; }
+}
+@keyframes nav-icon-cluster-draw-in {
+  0%, 10% { translate: 0 0; animation-timing-function: cubic-bezier(.75, 0, .67, 1); }
+  50% { translate: var(--cell-in); animation-timing-function: cubic-bezier(.75, .75, .25, .25); }
+  60% { translate: var(--cell-in); animation-timing-function: cubic-bezier(.33, 0, .25, 1); }
+  to { translate: 0 0; }
+}
+@keyframes nav-icon-cluster-shrink {
+  0%, 10% { scale: 1; animation-timing-function: cubic-bezier(.25, 0, .75, 1); }
+  50% { scale: .7; animation-timing-function: cubic-bezier(.25, .25, .75, .75); }
+  60% { scale: .7; animation-timing-function: cubic-bezier(.25, 0, .75, 1); }
+  to { scale: 1; }
+}
+.nav-icon-cluster .mgc-cluster { animation: nav-icon-cluster-turn 833ms; }
+.nav-icon-cluster .mgc-cell { animation: nav-icon-cluster-draw-in 833ms, nav-icon-cluster-shrink 833ms; }
+
+/* MARK: - 外观：重新描一遍（--draw-len 由脚本按最长子路径写入） */
+@keyframes nav-icon-draw-stroke { 0% { stroke-dashoffset: var(--draw-len); } to { stroke-dashoffset: 0; } }
+@keyframes nav-icon-draw-tint { 0% { opacity: 0; } to { opacity: var(--mgc-tint); } }
+@keyframes nav-icon-draw-ink { 0% { opacity: 0; } to { opacity: var(--mgc-ink); } }
+.nav-icon-draw [stroke] { stroke-dasharray: var(--draw-len); animation: nav-icon-draw-stroke .56s cubic-bezier(.2, 0, .2, 1); }
+.nav-icon-draw [fill=currentColor][opacity] { animation: nav-icon-draw-tint .56s cubic-bezier(.2, 0, .2, 1); }
+.nav-icon-draw [fill=currentColor]:not([opacity]) { animation: nav-icon-draw-ink .56s cubic-bezier(.2, 0, .2, 1); }
+
+/* MARK: - Recipes：翻页（翻动的那页平时隐藏） */
+.mgc-page { opacity: 0; transform-box: view-box; transform-origin: 12px 12px; }
+@keyframes nav-icon-page-turn { 0% { scale: 1 1; opacity: var(--mgc-ink); } to { scale: -1 1; opacity: var(--mgc-ink); } }
+.nav-icon-page .mgc-page { animation: nav-icon-page-turn .56s cubic-bezier(.4, 0, .3, 1); }
+
+/* MARK: - Shell / 编辑器：逐行打字、上滚 */
+.mgc-inner { transform-box: view-box; }
+@keyframes nav-icon-type { 0% { stroke-dashoffset: 10; } to { stroke-dashoffset: 0; } }
+.nav-icon-type .mgc-inner { stroke-dasharray: 10; animation: nav-icon-type .2s cubic-bezier(.3, 0, .4, 1) both; }
+.nav-icon-type .mgc-inner-2 { animation-delay: .18s; }
+@keyframes nav-icon-scroll { 0% { translate: 0 4px; stroke-dashoffset: 10; } to { translate: 0 0; stroke-dashoffset: 0; } }
+.nav-icon-scroll .mgc-inner { stroke-dasharray: 10; animation: nav-icon-scroll .38s cubic-bezier(.25, 0, .3, 1) both; }
+
+/* MARK: - 主机：信号波纹逐层出现 */
+.mgc-wave { transform-box: view-box; transform-origin: 12px 12.97px; }
+@keyframes nav-icon-wave { 0% { scale: var(--wave-from); opacity: 0; } to { scale: 1; opacity: var(--mgc-ink); } }
+.nav-icon-wave .mgc-wave { animation: nav-icon-wave .2s cubic-bezier(.2, 0, .3, 1) both; }
+.nav-icon-wave .mgc-wave-1 { --wave-from: 0; }
+.nav-icon-wave .mgc-wave-2 { --wave-from: .571; animation-delay: .1s; }
+.nav-icon-wave .mgc-wave-3 { --wave-from: .7; animation-delay: .2s; }
+
+/* MARK: - 快捷键：键盘前倾 */
+@keyframes nav-icon-tilt {
+  0% { transform: perspective(56px) rotateX(0); animation-timing-function: cubic-bezier(.3, 0, .2, 1); }
+  42% { transform: perspective(56px) rotateX(60deg); }
+  58% { transform: perspective(56px) rotateX(60deg); animation-timing-function: cubic-bezier(.3, 0, .2, 1); }
+  to { transform: perspective(56px) rotateX(0); }
+}
+.nav-icon-tilt { transform-origin: 50% 79%; animation: nav-icon-tilt .62s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-icon-spin, .nav-icon-rock, .nav-icon-nudge, .nav-icon-draw *, .nav-icon-page *, .nav-icon-type *,
+  .nav-icon-scroll *, .nav-icon-wave *, .nav-icon-cluster *, .nav-icon-tilt { animation: none !important; }
+  .nav-icon-draw [stroke], .nav-icon-type .mgc-inner, .nav-icon-scroll .mgc-inner { stroke-dasharray: none !important; }
+}
