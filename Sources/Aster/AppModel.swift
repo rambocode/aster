@@ -2565,6 +2565,43 @@ final class AppModel: ObservableObject {
     selectedTab?.activeRuntime?.toggleReadOnly()
   }
 
+  /// 活动 Pane 的实时画面是否已收起；菜单据此在「收起 / 恢复」之间切换标题。
+  var activePaneLiveViewCollapsed: Bool {
+    selectedTab?.activeSession?.isLiveViewCollapsed == true
+  }
+
+  /// 活动 Pane 能否切换实时画面，供菜单置灰判断。
+  var canToggleActivePaneLiveView: Bool {
+    selectedTab.map { canToggleLiveView(paneID: $0.activePaneID) } ?? false
+  }
+
+  /// 收起或恢复活动 Pane 的实时画面。
+  func toggleActivePaneLiveView() {
+    guard let paneID = selectedTab?.activePaneID else { return }
+    toggleLiveView(paneID: paneID)
+  }
+
+  /// 指定终端 Pane 能否切换实时画面。已收起的总能恢复；画中画（系统镜像或可交互小窗）
+  /// 占用的 Pane 不能收起：镜像要求持续出帧，小窗里的终端本来就是为了看和输入。
+  func canToggleLiveView(paneID: UUID) -> Bool {
+    guard let session = terminalSession(forPaneID: paneID) else { return false }
+    if session.isLiveViewCollapsed { return true }
+    return floatingPaneID != paneID && session.canCollapseLiveView
+  }
+
+  /// 翻转指定 Pane 的实时画面状态；不满足收起条件时不做任何事。
+  func toggleLiveView(paneID: UUID) {
+    guard canToggleLiveView(paneID: paneID),
+      let session = terminalSession(forPaneID: paneID)
+    else { return }
+    session.setLiveViewCollapsed(!session.isLiveViewCollapsed)
+  }
+
+  /// 在全部标签里按 Pane ID 找终端会话；右键菜单可能作用于非选中标签之外的 Pane。
+  private func terminalSession(forPaneID paneID: UUID) -> TerminalSession? {
+    tabs.lazy.compactMap { $0.runtime(for: paneID)?.terminalSession }.first
+  }
+
   func togglePalette() {
     let presents = !isPalettePresented
     dismissWorkspaceOverlays()
@@ -4367,6 +4404,9 @@ final class AppModel: ObservableObject {
       .init(id: "mark-mode", title: L("进入 Mark Mode"), keywords: ["terminal", "select", "copy"]),
       .init(id: "hint-mode", title: L("打开链接（Hint Mode）"), keywords: ["terminal", "url", "path"]),
       .init(id: "read-only", title: L("切换只读模式"), keywords: ["terminal", "lock", "input"]),
+      .init(
+        id: "live-view", title: L("收起或恢复实时画面"),
+        keywords: ["terminal", "collapse", "render", "power", "energy", "agent"]),
       .init(id: "composer", title: L("切换 Composer"), keywords: ["agent", "prompt", "queue"]),
       .init(id: "prompt-queue", title: L("切换 Prompt 队列"), keywords: ["agent", "prompt", "queue"]),
       .init(id: "send-to-chat", title: L("发送到聊天"), keywords: ["agent", "selection", "transcript", "context"]),
@@ -4426,6 +4466,7 @@ final class AppModel: ObservableObject {
     case "mark-mode": selectedTab?.activeSession?.enterMarkMode()
     case "hint-mode": selectedTab?.activeSession?.openHintMode()
     case "read-only": toggleActivePaneReadOnly()
+    case "live-view": toggleActivePaneLiveView()
     case "composer": toggleComposer()
     case "prompt-queue": togglePromptQueue()
     case "send-to-chat": presentAgentChat()

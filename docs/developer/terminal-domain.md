@@ -172,6 +172,16 @@ SwiftTerm 的 Core Graphics/Metal 测试与本地 target 仅作为迁移期对�
 
 `TerminalTabItem` 持有两项纯 UI 运行态：`activePaneID`（当前聚焦面板）和 `zoomedPaneID`（缩放拆分），两者都不进快照——恢复会话应当回到完整分屏，而不是停在某次临时放大上。拆分新面板或把焦点移到其它面板都会自动退出放大态，否则新面板会藏在不可见的分屏里。
 
+### 收起实时画面
+
+「收起实时画面」是为 Agent 持续输出时省电准备的 Pane 级运行态：隐藏终端画面，改显示静态状态卡；PTY、进程与 VT 状态完全不动。
+
+- **状态归属。** 状态由 `TerminalSession` 持有（`collapsedLiveViewCard` 非 nil 即已收起），与终端宿主一样跨工作区刷新、标签切换长期存活，所以切标签或切应用不会自动恢复。它不进 `WorkspaceSnapshot`，重启后一律恢复实时画面。状态绑定在具体的 Ghostty surface 上：`ghosttyView` 被重启、分离或关闭替换时自动丢弃状态卡，避免卡片盖在新 surface 上。
+- **停止渲染的方式。** 收起只把 `GhosttySurfaceView` 设为 `isHidden`，尺寸不变，程序不会收到 SIGWINCH。`viewDidHide` / `viewDidUnhide` 调用 `synchronizeSurfaceVisibility()`，`isSurfaceVisibleToUser` 对隐藏视图返回 false，libghostty 经 `ghostty_surface_set_occlusion` 停止出帧；恢复时同步上报可见，renderer 立即补画最新一帧。这条路径与后台标签、窗口遮挡共用，不另建开关。
+- **状态卡。** `TerminalPaneCollapsedCardView`（`Workspace/Panes/`）叠在终端之上、结束卡之下，订阅会话的 `activeAgentProvider`、`agentTaskState`、`agentTaskCompletionUnread`、`terminalTitle`，先映射成 `TerminalPaneCollapsedCardPresentation` 再按值去重，只有展示真的变化才重绘。Agent 运行时不显示终端标题，因为 Claude Code 等会用 spinner 字符高频改标题。卡片只显示收起时刻，没有计时器或动画，收起期间不产生周期唤醒。
+- **键盘与焦点。** 隐藏的 surface 在 `acceptsFirstResponder` 与 `becomeFirstResponder` 两处拒绝焦点（`makeFirstResponder` 不查询前者）。收起时若终端持有焦点就交给状态卡，避免 AppKit 把焦点交给下一个 key view（可能是相邻 Pane 的终端）；`TerminalSession.focus()` 在收起时聚焦状态卡。状态卡吞掉所有按键，只有 `Return` / `Space` 恢复；菜单快捷键仍经 key equivalent 正常工作。
+- **入口与限制。** 终端右键菜单条目由工作区注入（`contextMenuExtraItemsProvider`），按 Pane ID 作用于被右键的 Pane；“显示”菜单的 `⇧⌘B` 与命令面板 `live-view` 作用于活动 Pane，标题在“收起 / 恢复”之间切换。系统画中画采集（`pictureInPictureFrames.isCapturing`）会强制出帧，可交互小窗借走的 Pane 本来就要看和输入，两者都禁止收起；画中画开始时先恢复已收起的 Pane。
+
 ### 文件与 Recipe
 
 文件浏览器只读取用户明确打开的目录，双击文件会在相邻编辑器 Pane 打开；Markdown/文本可在预览 Pane 查看。`DocumentBuffer` 使用 UTF-8 和原子保存，显式跟踪 dirty 状态。

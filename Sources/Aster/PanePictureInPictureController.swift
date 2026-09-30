@@ -150,6 +150,8 @@ final class PanePictureInPictureController: NSObject,
       return
     }
     guard sourceSurface !== surface else { return }
+    // 镜像期间 surface 必须持续出帧，收起已无意义；恢复实时画面，状态与菜单保持一致。
+    session.setLiveViewCollapsed(false)
     detachSource()
     sourceSurface = surface
     displayedPaneID = paneID

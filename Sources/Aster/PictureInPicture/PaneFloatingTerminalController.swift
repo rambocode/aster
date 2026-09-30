@@ -53,6 +53,8 @@ final class PaneFloatingTerminalController: NSObject, PictureInPicturePresenting
       return
     }
     self.session = session
+    // 小窗就是为了看、为了输入；收起的实时画面在借走 Host 前先恢复。
+    session.setLiveViewCollapsed(false)
     let sourceHost = session.makeTerminalHost(preferences: preferences)
     ownerWindow = sourceHost.window
 

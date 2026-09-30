@@ -2363,7 +2363,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
   private var terminalView: AsterTerminalView?
   /// 产品主引擎。与上面的 SwiftTerm 回归实例互斥；生产入口不会创建旧实例。
-  private var ghosttyView: GhosttySurfaceView?
+  private var ghosttyView: GhosttySurfaceView? {
+    // 收起状态绑定在具体的 surface 上：重启、分离或关闭换掉 surface 后，旧状态卡
+    // 不能盖在新 surface 上（新 surface 没有隐藏，卡片与实时画面会同时出现）。
+    didSet { if ghosttyView !== oldValue { discardCollapsedLiveView() } }
+  }
   /// PiP 只读取已有 surface 的渲染帧，不创建第二个 PTY，也不移动终端宿主。
   var pictureInPictureSurface: GhosttySurfaceView? { ghosttyView }
   /// Ghostty 的 page anchor 由扩展 ABI 保持稳定；领域 timeline 中的 row 是当前 Session
@@ -2429,6 +2433,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
       terminalView?.onSendSelectionToChat = onSendSelectionToChat
       ghosttyView?.onSendSelectionToChat = onSendSelectionToChat
     }
+  }
+  /// 终端右键菜单末尾的 Pane 级条目；由工作区注入，转发给当前 Ghostty surface。
+  var contextMenuExtraItemsProvider: (() -> [NSMenuItem])? {
+    didSet { ghosttyView?.contextMenuExtraItemsProvider = contextMenuExtraItemsProvider }
   }
   private var pendingViSearchDirection: TerminalViSearchDirection?
   private var lastFindTerm = ""
@@ -3130,6 +3138,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     view.pasteBracketedSafe = preferences.configuration.controls.resolvedPasteBracketedSafe
     view.onPasteIntoComposer = onPasteIntoComposer
     view.onSendSelectionToChat = onSendSelectionToChat
+    view.contextMenuExtraItemsProvider = contextMenuExtraItemsProvider
     view.onRemoteImagePaste = makeRemoteImagePasteHandler()
     view.onAuthorizeClipboard = { operation in
       switch operation {
@@ -3889,6 +3898,19 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   /// `focusFailureReason`（视图未创建 / 未上屏 / 系统拒绝交接）。
   @discardableResult
   func focus() -> Bool {
+    // 实时画面收起时焦点落在状态卡上：键盘输入不能到达隐藏的终端。
+    if let collapsedLiveViewCard {
+      guard let window = collapsedLiveViewCard.window else {
+        focusFailureReason = "view_detached"
+        return false
+      }
+      guard window.makeFirstResponder(collapsedLiveViewCard) else {
+        focusFailureReason = "responder_refused"
+        return false
+      }
+      focusFailureReason = nil
+      return true
+    }
     if let ghosttyView {
       guard let window = ghosttyView.window else {
         focusFailureReason = "view_detached"
@@ -3916,6 +3938,65 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     focusFailureReason = nil
     refreshAutomaticSecureInput()
     return true
+  }
+
+  // MARK: - 收起实时画面
+
+  /// 收起实时画面时盖在终端宿主上的状态卡；nil 表示实时画面正常显示。
+  /// 只属于运行态，不写入工作区快照，应用重启后一律恢复实时画面。
+  private var collapsedLiveViewCard: TerminalPaneCollapsedCardView?
+
+  /// 实时画面当前是否已收起。
+  var isLiveViewCollapsed: Bool { collapsedLiveViewCard != nil }
+
+  /// 能否收起：需要已挂在宿主里的 Ghostty surface，且系统画中画没有在采集它的帧——
+  /// 采集期间 surface 必须持续绘制，收起省不下任何能耗。
+  var canCollapseLiveView: Bool {
+    guard let ghosttyView, let terminalHostView, ghosttyView.superview === terminalHostView
+    else { return false }
+    return !ghosttyView.pictureInPictureFrames.isCapturing
+  }
+
+  /// 收起或恢复实时画面；返回状态是否真的改变。
+  ///
+  /// 收起只隐藏 surface（尺寸不变，不会给程序发 SIGWINCH），`viewDidHide` 随即把
+  /// 「不可见」上报给 libghostty，renderer 停止出帧；PTY、进程与终端状态照常运行。
+  /// 恢复时取消隐藏，`viewDidUnhide` 立即上报可见，renderer 马上补画最新一帧。
+  /// 键盘焦点跟着可见的那一方走：原先在终端上就移到状态卡，原先在状态卡上就还给终端。
+  @discardableResult
+  func setLiveViewCollapsed(_ collapsed: Bool) -> Bool {
+    guard collapsed != isLiveViewCollapsed else { return false }
+    if collapsed {
+      guard canCollapseLiveView, let ghosttyView, let host = terminalHostView else { return false }
+      let window = ghosttyView.window
+      let terminalHadFocus = window?.firstResponder === ghosttyView
+      let card = TerminalPaneCollapsedCardView(session: self, collapsedAt: Date()) {
+        [weak self] in self?.setLiveViewCollapsed(false)
+      }
+      // 状态卡叠在所有已有子视图（结束卡、启动警告）之下、终端之上。
+      host.addSubview(card, positioned: .above, relativeTo: ghosttyView)
+      card.pinEdges(to: host)
+      collapsedLiveViewCard = card
+      ghosttyView.isHidden = true
+      // 隐藏 first responder 时 AppKit 会把焦点交给下一个有效 key view，可能是别的
+      // Pane 的终端；这里立即改交给本 Pane 的状态卡。
+      if terminalHadFocus { window?.makeFirstResponder(card) }
+    } else {
+      guard let card = collapsedLiveViewCard else { return false }
+      let cardHadFocus = card.window?.firstResponder === card
+      collapsedLiveViewCard = nil
+      card.removeFromSuperview()
+      ghosttyView?.isHidden = false
+      if cardHadFocus, let ghosttyView { ghosttyView.window?.makeFirstResponder(ghosttyView) }
+    }
+    return true
+  }
+
+  /// surface 被替换或释放时丢弃状态卡；新 surface 从未隐藏，因此只需移除卡片。
+  private func discardCollapsedLiveView() {
+    guard let card = collapsedLiveViewCard else { return }
+    collapsedLiveViewCard = nil
+    card.removeFromSuperview()
   }
 
   /// 在完整滚动缓冲区内查找并选中下一处匹配文本。

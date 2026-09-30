@@ -2582,6 +2582,12 @@ final class WorkspaceViewController: NSViewController {
     session.onSendSelectionToChat = { [weak self] in
       self?.model.sendTerminalSelectionToChat()
     }
+    // 只捕获 Pane ID：提供者存在 Session 上，捕获 runtime 会形成 runtime → Session → 闭包的环。
+    let paneID = runtime.id
+    session.contextMenuExtraItemsProvider = { [weak self] in
+      guard let self else { return [] }
+      return [TerminalLiveViewMenu.makeContextMenuItem(model: self.model, paneID: paneID)]
+    }
 
     let host = session.makeTerminalHost(preferences: preferences)
     // Pane 焦点是工作区领域状态；在新 View 挂入可见树之前同步，保证非活动分屏第一帧
