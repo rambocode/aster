@@ -109,11 +109,13 @@ func paneChromeRevealFollowsPointerAcrossLayoutPasses() async throws {
   let host = try #require(hosts.first)
   let handle = try #require(deepViews(host).compactMap { $0 as? PaneDragHandleView }.first)
   let close = try #require(deepViews(host).compactMap { $0 as? PaneCloseButton }.first)
+  let zoom = try #require(deepViews(host).compactMap { $0 as? PaneZoomButton }.first)
 
   // 默认不显示：没有指针在顶边时把手与关闭按钮都是全透明的。
   #expect(!host.chromeRevealed)
   #expect(handle.alphaValue < 0.01)
   #expect(close.alphaValue < 0.01)
+  #expect(zoom.alphaValue < 0.01)
 
   // 指针进入顶部感应带 → 淡入。
   host.updateChromeReveal(
@@ -121,6 +123,13 @@ func paneChromeRevealFollowsPointerAcrossLayoutPasses() async throws {
   #expect(host.chromeRevealed)
   #expect(handle.isRevealed)
   #expect(close.isRevealed)
+  #expect(zoom.isRevealed)
+
+  // 新挂载的控件可能还没继承宿主显示态；鼠标仍在同一感应带时也应补齐同步。
+  zoom.isRevealed = false
+  host.updateChromeReveal(
+    pointerInView: NSPoint(x: host.bounds.midX, y: host.bounds.height - 4))
+  #expect(zoom.isRevealed)
 
   // 关键回归：布局刷新会重建感应带，AppKit 不补发 exit 事件。此时指针早已不在顶边，
   // 顶条必须自己回到隐藏，而不是永久卡在显示状态。
@@ -128,6 +137,7 @@ func paneChromeRevealFollowsPointerAcrossLayoutPasses() async throws {
   #expect(!host.chromeRevealed)
   #expect(!handle.isRevealed)
   #expect(!close.isRevealed)
+  #expect(!zoom.isRevealed)
 }
 // MARK: - 底部附件槽（Prompt Queue）
 

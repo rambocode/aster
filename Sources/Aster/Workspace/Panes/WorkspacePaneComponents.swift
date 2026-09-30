@@ -435,7 +435,7 @@ final class ActivePaneHostView: NSView {
   /// 所属面板的 ID：窗口级点击监视器沿 superview 链命中本视图后据此激活对应面板。
   /// 顶边感应带与把手的高度：太矮抓不到，太高会让顶部一整条都在触发淡入。
   private static let handleRevealHeight: CGFloat = 14
-  /// 安装顶条控件(把手/关闭按钮)后内容让出的高度:顶条自身 14pt + 与内容的间距,
+  /// 安装顶条控件(把手/缩放/关闭按钮)后内容让出的高度:顶条自身 14pt + 与内容的间距,
   /// 避免胶囊和按钮压在终端首行文本上。
   private static let chromeContentInset: CGFloat = 18
   let paneID: UUID
@@ -443,6 +443,7 @@ final class ActivePaneHostView: NSView {
   private let onExternalDrop: (NSPasteboard, ExternalPaneDropZone) -> Bool
   private var dragHandle: PaneDragHandleView?
   private var closeButton: PaneCloseButton?
+  private var zoomButton: PaneZoomButton?
   private var handleTrackingArea: NSTrackingArea?
   /// 顶条控件当前是否淡入；只由 `updateChromeReveal` 写入。
   private(set) var chromeRevealed = false
@@ -592,7 +593,7 @@ final class ActivePaneHostView: NSView {
   override func updateTrackingAreas() {
     super.updateTrackingAreas()
     if let handleTrackingArea { removeTrackingArea(handleTrackingArea) }
-    guard dragHandle != nil || closeButton != nil else { return }
+    guard dragHandle != nil || closeButton != nil || zoomButton != nil else { return }
     let strip = NSRect(
       x: 0, y: max(0, bounds.height - Self.handleRevealHeight),
       width: bounds.width, height: min(bounds.height, Self.handleRevealHeight))
@@ -614,7 +615,7 @@ final class ActivePaneHostView: NSView {
   override func mouseEntered(with event: NSEvent) { syncChromeReveal() }
   override func mouseExited(with event: NSEvent) { syncChromeReveal() }
 
-  /// 按指针的**当前位置**重新判定顶条控件（把手 / 关闭按钮）是否淡入。
+  /// 按指针的**当前位置**重新判定顶条控件（把手 / 缩放 / 关闭按钮）是否淡入。
   ///
   /// 不能只靠 `mouseEntered` / `mouseExited` 配对：`updateTrackingAreas` 在每次布局
   /// 都会把感应带整个拆掉重建，而 AppKit 不为重建补发进入/离开事件。分屏、终端
@@ -632,16 +633,17 @@ final class ActivePaneHostView: NSView {
   /// 顶条可见性的唯一写入点。传 nil 表示指针不在本窗口内。
   /// internal 而不是 private：回归测试要在没有真实鼠标的环境里驱动这条路径。
   func updateChromeReveal(pointerInView point: NSPoint?) {
-    guard dragHandle != nil || closeButton != nil else { return }
+    guard dragHandle != nil || closeButton != nil || zoomButton != nil else { return }
     let strip = handleTrackingArea?.rect
       ?? NSRect(
         x: 0, y: max(0, bounds.height - Self.handleRevealHeight),
         width: bounds.width, height: min(bounds.height, Self.handleRevealHeight))
     let revealed = point.map(strip.contains) ?? false
-    guard revealed != chromeRevealed else { return }
+    // 新安装的按钮也必须继承当前状态；控件自己比较旧值，重复同步不会重启动画。
     chromeRevealed = revealed
     dragHandle?.isRevealed = revealed
     closeButton?.isRevealed = revealed
+    zoomButton?.isRevealed = revealed
   }
 
   /// 顶条控件安装后把内容整体下移,让胶囊/按钮与内容之间留出固定间距,
@@ -685,6 +687,36 @@ final class ActivePaneHostView: NSView {
     closeButton = button
     applyChromeContentInset()
     syncChromeReveal()
+  }
+
+  /// 在关闭按钮左侧安装缩放入口。isZoomed 来自标签运行态，shortcut 来自现有设置；
+  /// 点击始终作用于本 Pane，由调用方激活它并切换放大态。
+  func installZoomButton(
+    isZoomed: Bool,
+    shortcut: String,
+    onZoom: @escaping (UUID) -> Void
+  ) {
+    guard zoomButton == nil else { return }
+    let paneID = paneID
+    let button = PaneZoomButton(isZoomed: isZoomed, shortcut: shortcut) { onZoom(paneID) }
+    button.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(button)
+    NSLayoutConstraint.activate([
+      button.trailingAnchor.constraint(
+        equalTo: closeButton?.leadingAnchor ?? trailingAnchor, constant: -6),
+      button.centerYAnchor.constraint(
+        equalTo: topAnchor, constant: Self.handleRevealHeight / 2),
+      button.widthAnchor.constraint(equalToConstant: Self.handleRevealHeight),
+      button.heightAnchor.constraint(equalToConstant: Self.handleRevealHeight),
+    ])
+    zoomButton = button
+    applyChromeContentInset()
+    syncChromeReveal()
+  }
+
+  /// 快捷键提示随设置实时刷新，不改动缩放真值或按钮身份。
+  func updateZoomShortcut(_ shortcut: String) {
+    zoomButton?.updateShortcut(shortcut)
   }
 
 }

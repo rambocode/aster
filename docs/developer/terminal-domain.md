@@ -172,6 +172,23 @@ SwiftTerm 的 Core Graphics/Metal 测试与本地 target 仅作为迁移期对�
 
 `TerminalTabItem` 持有两项纯 UI 运行态：`activePaneID`（当前聚焦面板）和 `zoomedPaneID`（缩放拆分），两者都不进快照——恢复会话应当回到完整分屏，而不是停在某次临时放大上。拆分新面板或把焦点移到其它面板都会自动退出放大态，否则新面板会藏在不可见的分屏里。
 
+#### Pane 顶条放大入口
+
+多 Pane 时，`ActivePaneHostView` 在关闭按钮左侧安装 `PaneZoomButton`，与拖动把手、关闭按钮共享顶边感应带；隐藏时不参与命中测试，避免拦截终端点击。按钮按 `zoomedPaneID` 选择放大或还原图标，使用系统灰和本地化的「缩放拆分」提示。单 Pane 没有缩放入口。
+
+点击先按宿主的 Pane ID 调用 `setActivePane`，再调用 `TerminalTabItem.toggleZoom()`，所以非活动 Pane 的按钮也只放大所属 Pane。`makePaneContent` 在放大态只挂载该 Pane，填满 `.content` 区域；左右 Panel 的宽度和显隐不变。布局树、拆分比例与运行态保留，恢复时重新挂载原树，后台终端继续运行。
+
+```mermaid
+flowchart LR
+  A[顶边悬停显示按钮] --> B[点击所属 Pane 的放大按钮]
+  B --> C[激活该 Pane 并设置 zoomedPaneID]
+  C --> D[仅显示该 Pane，填满内容区]
+  D --> E[再次点击还原按钮]
+  E --> F[清除 zoomedPaneID，恢复原分屏树和比例]
+```
+
+快捷键复用设置页 `zoom-pane` 条目与 `shortcuts.zoom-pane` 持久化键，默认 `⇧⌘↩`。`ShortcutOverrideApplier` 更新既有「缩放拆分」菜单的按键，菜单、命令面板和按钮都作用于同一份标签运行态；按钮提示显示当前已配置的组合键。`PaneZoomTests` 覆盖非活动 Pane 点击、嵌套分屏的实际 frame、还原比例和运行态、窄窗口、单 Pane 入口及快捷键保存/菜单映射。
+
 ### 收起实时画面
 
 「收起实时画面」是为 Agent 持续输出时省电准备的 Pane 级运行态：隐藏终端画面，改显示静态状态卡；PTY、进程与 VT 状态完全不动。

@@ -763,6 +763,9 @@ final class WorkspaceViewController: NSViewController {
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         self.terminalPreferenceApplyScheduled = false
+        let zoomShortcut = self.preferences.settingsCompatibility["shortcuts.zoom-pane"]?.jsonValue as? String
+          ?? "⇧⌘↩"
+        for host in self.paneHosts.values { host.updateZoomShortcut(zoomShortcut) }
         // `runtimes` 可能在 AppKit 整树替换的一次事务内暂时多于 layout 叶节点。只遍历
         // layout 会漏掉仍显示在旧 Pane host 中的终端，造成分屏两侧停留在不同主题。
         // 先更新所有存活 Session，再以实际视图树为准补发纯视觉令牌，主题预览才能
@@ -2462,6 +2465,16 @@ final class WorkspaceViewController: NSViewController {
         guard let self, let tab else { return }
         tab.setActivePane(paneID)
         self.model.closeActivePane()
+      }
+      let zoomShortcut = preferences.settingsCompatibility["shortcuts.zoom-pane"]?.jsonValue as? String
+        ?? "⇧⌘↩"
+      host.installZoomButton(
+        isZoomed: tab.zoomedPaneID == descriptor.id,
+        shortcut: zoomShortcut
+      ) { [weak tab] paneID in
+        guard let tab else { return }
+        tab.setActivePane(paneID)
+        tab.toggleZoom()
       }
     }
     return host
