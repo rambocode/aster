@@ -3902,14 +3902,11 @@ extension SettingsViewController: WKNavigationDelegate {
       let raw = try string()
       let mapped = raw == "sameAsLast" ? "sameAsLastLine" : raw
       preferences.configuration.controls.scrollPastFirstLine = try enumValue(mapped, as: TerminalScrollPastFirstLine.self)
+    // 网页选项值与配置 raw value 一致，读写两侧不做别名转换。
     case "controls.autocompleteShortcut":
-      let raw = try string()
-      let mapped = ["rightArrow": "tab+right-arrow", "disabled": "disable", "controlSpace": "ctrl+space"][raw] ?? raw
-      preferences.configuration.controls.autocompleteShortcut = try enumValue(mapped, as: AutocompleteShortcut.self)
+      preferences.configuration.controls.autocompleteShortcut = try enumValue(string(), as: AutocompleteShortcut.self)
     case "controls.autocompleteCandidatePanel":
-      let raw = try string()
-      let mapped = ["automatic": "auto", "disabled": "disable"][raw] ?? raw
-      preferences.configuration.controls.autocompleteCandidatePanel = try enumValue(mapped, as: AutocompleteCandidatePanel.self)
+      preferences.configuration.controls.autocompleteCandidatePanel = try enumValue(string(), as: AutocompleteCandidatePanel.self)
     case "controls.autocompleteInlineSuggestion": preferences.configuration.controls.autocompleteInlineSuggestion = try bool()
     case "controls.clipboardSuggestion": preferences.configuration.controls.clipboardSuggestion = try bool()
     case "controls.autocompleteOnDeviceLearning": preferences.configuration.controls.autocompleteOnDeviceLearning = try bool()
@@ -5340,12 +5337,10 @@ extension SettingsViewController: WKNavigationDelegate {
   private func webScrollPastFirst(_ value: TerminalScrollPastFirstLine) -> String {
     switch value { case .disabled: "disabled"; case .sameAsLastLine: "sameAsLast"; case .firstLineWithContent: "firstLineWithContent"; case .firstLineInMiddle: "firstLineInMiddle" }
   }
-  private func webAutocompleteShortcut(_ value: AutocompleteShortcut) -> String {
-    switch value { case .tab: "tab"; case .tabAndRightArrow: "rightArrow"; case .controlSpace: "controlSpace"; case .disabled: "disabled" }
-  }
-  private func webCandidatePanel(_ value: AutocompleteCandidatePanel) -> String {
-    switch value { case .disabled: "disabled"; case .automatic: "automatic"; case .escape: "escape"; case .optionEscape: "escape" }
-  }
+  /// 网页下拉框的选项值就是配置 raw value；回传别名会让选中项匹配不上、显示回第一项。
+  private func webAutocompleteShortcut(_ value: AutocompleteShortcut) -> String { value.rawValue }
+  /// 同上：`option-escape` 等值必须原样回传，不能折叠成 `escape`。
+  private func webCandidatePanel(_ value: AutocompleteCandidatePanel) -> String { value.rawValue }
   private func webLigature(_ value: TerminalLigatureLevel) -> String {
     switch value { case .none: "off"; case .standard: "standard"; case .discretionary: "extended" }
   }
