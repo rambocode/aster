@@ -329,8 +329,11 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     reload()
   }
 
+  /// 重建候选与索引。条目来自多个外部数据源（会话文件、主机、Recipe…），同 id 只保留
+  /// 第一条：`uniqueKeysWithValues` 遇到重复 id 会直接让整个 App 崩溃。
   private func rebuildTargets() {
-    targets = makeTargets()
+    var seen = Set<String>()
+    targets = makeTargets().filter { seen.insert($0.item.id).inserted }
     targetsByID = Dictionary(uniqueKeysWithValues: targets.map { ($0.item.id, $0) })
     searchIndex = OpenQuicklyIndex(items: targets.map(\.item))
     targetsNeedRefresh = false
@@ -339,6 +342,9 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
   func invalidateTargets() { targetsNeedRefresh = true }
 
 #if DEBUG
+  /// 测试用：当前全部候选的 id（按列表顺序）。
+  var targetIDsForTesting: [String] { targets.map(\.item.id) }
+
   /// Test seam for verifying that Prompt history remains actionable when no Agent CLI is active.
   var promptTargetIDsForTesting: [String] {
     targets.map(\.item.id).filter { $0.hasPrefix("prompt:") }
@@ -748,7 +754,9 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
       result.append(
         Target(
           item: .init(
-            id: "agent:\(metadata.configuration.provider.rawValue):\(metadata.id)",
+            // 会话 id 取自文件名，不同目录下的同名文件（如两个 journal.jsonl）会撞；
+            // 用 transcript 完整路径保证唯一。
+            id: "agent:\(metadata.configuration.provider.rawValue):\(metadata.transcriptFileURL.path)",
             kind: .agent,
             title: metadata.title,
             detail: "\(metadata.configuration.provider.commandName) · \(metadata.projectDirectory)",
@@ -975,7 +983,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
         .joined(separator: " ")
       var target = Target(
         item: .init(
-          id: "prompt:\(history.metadata.id):\(entry.sourceRecordIndex)", kind: .prompt,
+          id: "prompt:\(history.metadata.transcriptFileURL.path):\(entry.sourceRecordIndex)", kind: .prompt,
           title: collapsed, detail: history.metadata.title, timestamp: entry.timestamp),
         symbol: "quote.bubble", badge: "Prompt", accented: false, actionTitle: L("粘贴到终端")
       ) { [weak model] in
