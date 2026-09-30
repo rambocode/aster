@@ -140,8 +140,12 @@ Ghostty 的 child-exited action 回传 Shell 退出码，`TerminalProcessTermina
 始终保留结束卡。`TerminalSession` 只通过 `onRequestCloseAfterExit` 提出请求，
 `AppModel.closePaneAfterShellExit` 延后一轮主队列执行关闭：标签内还有其他 Pane 时只关该 Pane
 （不改变焦点，登记到「重新打开」历史），只剩一个 Pane 时关闭整个标签且不弹关闭确认。
-受管终端不参与自动关闭：桥的退出码不代表远端进程状态，结束卡上的重新附加 / 重新启动 /
-关闭标签是服务端事务入口。
+远端受管终端不参与自动关闭：桥的退出码不代表远端进程状态，结束卡上的重新附加 / 重新启动 /
+关闭标签是服务端事务入口。本机受管终端（「本机后台保活」）在显示桥退出后同样先对账，只有
+服务端确认进程已退出（`.exited`，退出码取服务端记录）时才按同一规则自动关闭，运行时长仍按
+桥进程起点计算；只是桥分离（`.attached`）、终端被回收或服务不可达时保留结束卡。本机/远端按
+协调器的传输实现 `isRemote` 判定，不按机器 ID。本机受管的结束卡沿用原生 Shell 的标题与图标，
+不出现「远端」字样，见 `TerminalSession.applyManagedExitResolution`。
 
 用户点击“重新启动 Shell”时，Session 保留 Pane 身份和稳定 host view，但丢弃旧
 `GhosttySurfaceView`，创建新的 libghostty surface 与 PTY。每个新 view 定义一个进程

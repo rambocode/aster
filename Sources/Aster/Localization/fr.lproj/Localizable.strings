@@ -1,6 +1,7 @@
 /* Aster 界面文案（fr）。key 为简体中文原文，插值处写 %@，字面 % 写作 %%。 */
 " · 命中 %@（优先级 %@，区域 %@）" = " · correspondance %@ (priorité %@, zone %@)";
 " · 未命中任何规则（%@）" = " · aucune règle correspondante (%@)";
+" 可以在此 Pane 重新启动 Shell，或关闭这个标签。" = " Vous pouvez redémarrer un shell dans ce panneau ou fermer cet onglet.";
 " 可以在此 Pane 重新启动一个远端 Shell，或关闭这个标签。" = " Vous pouvez redémarrer un Shell distant dans ce panneau, ou fermer cet onglet.";
 " 启动后发送一条消息即可关联当前会话。" = " Envoyez un message après le démarrage pour associer la session actuelle.";
 " 没有内置外部终端设置，请安装 Terminal 包后手动指向 Aster" = " n’a pas de réglage de terminal externe intégré ; installez le paquet Terminal et pointez-le vers Aster manuellement";
@@ -177,6 +178,7 @@
 "Shell 启动文件中的 Aster 受管区块不完整：%@" = "Le bloc géré par Aster dans le fichier de démarrage Shell est incomplet : %@";
 "Shell 启动文件更新失败且无法恢复，请检查：%@" = "La mise à jour du fichier de démarrage Shell a échoué et ne peut pas être récupérée ; veuillez vérifier : %@";
 "Shell 启动文件超过安全大小限制：%@" = "Le fichier de démarrage Shell dépasse la limite de taille sécurisée : %@";
+"Shell 已结束，后台保活服务已回收该终端。" = "Le shell s'est terminé et le service de maintien en arrière-plan a récupéré ce terminal.";
 "Shell 已退出" = "Le Shell a quitté";
 "Shell 异常退出" = "Le Shell a quitté anormalement";
 "Shell 被信号终止" = "Le Shell a été terminé par un signal";
@@ -549,6 +551,7 @@
 "后台任务继续运行，布局已保留。重新附加即可恢复画面。" = "La tâche en arrière-plan continue de s'exécuter ; la disposition a été conservée. Réattachez pour restaurer l'affichage.";
 "后台会话服务中找不到该终端（服务可能已重启）。点击「重新启动 Shell」恢复。" = "Ce terminal est introuvable dans le service de session en arrière-plan (le service a peut-être redémarré). Cliquez sur « Redémarrer Shell » pour récupérer.";
 "后台会话服务已重启，原终端实例不再有效。点击「重新启动 Shell」恢复。" = "Le service de session en arrière-plan a redémarré ; l'instance de terminal d'origine n'est plus valide. Cliquez sur « Redémarrer Shell » pour récupérer.";
+"后台保活服务暂时不可达：%@" = "Le service de maintien en arrière-plan est temporairement injoignable : %@";
 "后台服务不可达：%@" = "Service d’arrière-plan injoignable : %@";
 "后退" = "Précédent";
 "向上扩展" = "Étendre vers le haut";

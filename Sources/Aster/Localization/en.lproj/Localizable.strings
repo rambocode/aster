@@ -1,6 +1,7 @@
 /* Aster 界面文案（en）。key 为简体中文原文，插值处写 %@，字面 % 写作 %%。 */
 " · 命中 %@（优先级 %@，区域 %@）" = " · matched %@ (priority %@, region %@)";
 " · 未命中任何规则（%@）" = " · no rule matched (%@)";
+" 可以在此 Pane 重新启动 Shell，或关闭这个标签。" = " You can restart a shell in this pane or close this tab.";
 " 可以在此 Pane 重新启动一个远端 Shell，或关闭这个标签。" = " You can restart a remote shell in this pane, or close this tab.";
 " 启动后发送一条消息即可关联当前会话。" = " Send a message after startup to link the current session.";
 " 没有内置外部终端设置，请安装 Terminal 包后手动指向 Aster" = " has no built-in external terminal setting; install the Terminal package and point it to Aster manually";
@@ -177,6 +178,7 @@
 "Shell 启动文件中的 Aster 受管区块不完整：%@" = "Aster managed block in Shell startup file is incomplete: %@";
 "Shell 启动文件更新失败且无法恢复，请检查：%@" = "Shell startup file update failed and cannot be recovered; please check: %@";
 "Shell 启动文件超过安全大小限制：%@" = "Shell startup file exceeds safe size limit: %@";
+"Shell 已结束，后台保活服务已回收该终端。" = "The shell has ended and the background keep-alive service reclaimed this terminal.";
 "Shell 已退出" = "Shell Exited";
 "Shell 异常退出" = "Shell Exited Abnormally";
 "Shell 被信号终止" = "Shell Terminated by Signal";
@@ -549,6 +551,7 @@
 "后台任务继续运行，布局已保留。重新附加即可恢复画面。" = "Background task continues to run; layout has been preserved. Reattach to restore the display.";
 "后台会话服务中找不到该终端（服务可能已重启）。点击「重新启动 Shell」恢复。" = "This terminal was not found in the background session service (the service may have restarted). Click \"Restart Shell\" to recover.";
 "后台会话服务已重启，原终端实例不再有效。点击「重新启动 Shell」恢复。" = "The background session service has restarted; the original terminal instance is no longer valid. Click \"Restart Shell\" to recover.";
+"后台保活服务暂时不可达：%@" = "The background keep-alive service is temporarily unreachable: %@";
 "后台服务不可达：%@" = "Background service is unreachable: %@";
 "后退" = "Back";
 "向上扩展" = "Extend Up";
