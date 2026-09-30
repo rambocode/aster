@@ -715,6 +715,7 @@
 "完全磁盘访问权限" = "Full Disk Access";
 "完成" = "Done";
 "实时交接" = "Live Handover";
+"实时画面已收起" = "Live view collapsed";
 "容器背景" = "Container Background";
 "容器边框" = "Container Border";
 "宽松 (1.2)" = "Loose (1.2)";
@@ -909,6 +910,7 @@
 "恢复主题原始参数" = "Restore Theme's Original Parameters";
 "恢复于 %@" = "Restored at %@";
 "恢复失败" = "Restore Failed";
+"恢复实时画面" = "Restore Live View";
 "恢复工作区时继续之前的智能体 CLI 会话" = "Resume the Previous Agent CLI Session When Restoring the Workspace";
 "恢复工作区时继续之前的智能体会话" = "Resume the Previous Agent Session When Restoring the Workspace";
 "恢复工作区时重新启动之前运行的命令" = "Restart the Previously Running Command When Restoring the Workspace";
@@ -1035,6 +1037,9 @@
 "操作未完成" = "Operation Incomplete";
 "收到通知时跳动" = "Bounce on Notification";
 "收回到工作区" = "Return to Workspace";
+"收起于 %@。进程继续在后台运行，画面暂不绘制。" = "Collapsed at %@. The process keeps running in the background; the screen is not drawn for now.";
+"收起实时画面" = "Collapse Live View";
+"收起或恢复实时画面" = "Collapse or Restore Live View";
 "收起详情面板" = "Collapse Details Panel";
 "收起输入" = "Collapse Input";
 "收起输出" = "Collapse Output";
@@ -1472,6 +1477,7 @@
 "第一行内容位于底部" = "First Line of Content at the Bottom";
 "等分拆分" = "Split Equally";
 "等待 Agent Integration 关联此 Pane 的会话。" = "Waiting for Agent Integration to associate this pane’s session.";
+"等待你确认或输入" = "Waiting for your confirmation or input";
 "等待输入" = "Awaiting Input";
 "等待输入徽章" = "Waiting for Input Badge";
 "等待输入时通知" = "Notify When Waiting for Input";

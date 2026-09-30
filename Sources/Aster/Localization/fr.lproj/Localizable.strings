@@ -715,6 +715,7 @@
 "完全磁盘访问权限" = "Accès complet au disque";
 "完成" = "Terminé";
 "实时交接" = "Transfert en direct";
+"实时画面已收起" = "Affichage en direct réduit";
 "容器背景" = "Arrière-plan du conteneur";
 "容器边框" = "Bordure du conteneur";
 "宽松 (1.2)" = "Aéré (1.2)";
@@ -909,6 +910,7 @@
 "恢复主题原始参数" = "Restaurer les paramètres d'origine du thème";
 "恢复于 %@" = "Restauré à %@";
 "恢复失败" = "Échec de la restauration";
+"恢复实时画面" = "Rétablir l’affichage en direct";
 "恢复工作区时继续之前的智能体 CLI 会话" = "Reprendre la session CLI de l'agent précédente lors de la restauration de l'espace de travail";
 "恢复工作区时继续之前的智能体会话" = "Reprendre la session d'agent précédente lors de la restauration de l'espace de travail";
 "恢复工作区时重新启动之前运行的命令" = "Relancer la commande précédemment en cours lors de la restauration de l'espace de travail";
@@ -1035,6 +1037,9 @@
 "操作未完成" = "Opération incomplète";
 "收到通知时跳动" = "Rebondir à la réception d'une notification";
 "收回到工作区" = "Ramener dans l’espace de travail";
+"收起于 %@。进程继续在后台运行，画面暂不绘制。" = "Réduit à %@. Le processus continue de s’exécuter en arrière-plan ; l’écran n’est pas dessiné pour l’instant.";
+"收起实时画面" = "Réduire l’affichage en direct";
+"收起或恢复实时画面" = "Réduire ou rétablir l’affichage en direct";
 "收起详情面板" = "Réduire le panneau de détails";
 "收起输入" = "Réduire la saisie";
 "收起输出" = "Réduire la sortie";
@@ -1472,6 +1477,7 @@
 "第一行内容位于底部" = "Première ligne de contenu en bas";
 "等分拆分" = "Diviser également";
 "等待 Agent Integration 关联此 Pane 的会话。" = "En attente de l’association de la session de ce panneau par Agent Integration.";
+"等待你确认或输入" = "En attente de votre confirmation ou saisie";
 "等待输入" = "En attente de saisie";
 "等待输入徽章" = "Badge en attente de saisie";
 "等待输入时通知" = "Notifier en attente de saisie";

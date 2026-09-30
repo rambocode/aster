@@ -689,6 +689,7 @@ private enum PaletteShortcuts {
     "split-down": ("D", [.command, .shift]),
     "split-up": ("D", [.command, .option, .shift]),
     "zoom-pane": ("↩", [.command, .shift]),
+    "live-view": ("B", [.command, .shift]),
     "equalize-splits": ("=", [.command, .control]),
     "focus-next-pane": ("]", .command),
     "find": ("F", .command),

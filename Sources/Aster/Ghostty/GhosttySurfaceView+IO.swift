@@ -381,6 +381,12 @@ extension GhosttySurfaceView: NSMenuItemValidation {
     composerItem.target = self
     composerItem.isEnabled = surface != nil && onPasteIntoComposer != nil
     menu.addItem(composerItem)
+    // Pane 级条目由工作区决定能否使用（例如画中画中的 Pane 不能收起实时画面）。
+    let extraItems = contextMenuExtraItemsProvider?() ?? []
+    if !extraItems.isEmpty {
+      menu.addItem(.separator())
+      extraItems.forEach(menu.addItem)
+    }
     return menu
   }
 

@@ -715,6 +715,7 @@
 "完全磁盘访问权限" = "Voller Festplattenzugriff";
 "完成" = "Fertig";
 "实时交接" = "Live-Übergabe";
+"实时画面已收起" = "Live-Ansicht eingeklappt";
 "容器背景" = "Containerhintergrund";
 "容器边框" = "Containerrahmen";
 "宽松 (1.2)" = "Locker (1,2)";
@@ -909,6 +910,7 @@
 "恢复主题原始参数" = "Ursprüngliche Design-Parameter wiederherstellen";
 "恢复于 %@" = "Wiederhergestellt um %@";
 "恢复失败" = "Wiederherstellung fehlgeschlagen";
+"恢复实时画面" = "Live-Ansicht wiederherstellen";
 "恢复工作区时继续之前的智能体 CLI 会话" = "Vorherige Agent-CLI-Sitzung beim Wiederherstellen des Arbeitsbereichs fortsetzen";
 "恢复工作区时继续之前的智能体会话" = "Vorherige Agent-Sitzung beim Wiederherstellen des Arbeitsbereichs fortsetzen";
 "恢复工作区时重新启动之前运行的命令" = "Zuvor laufenden Befehl beim Wiederherstellen des Arbeitsbereichs neu starten";
@@ -1035,6 +1037,9 @@
 "操作未完成" = "Vorgang unvollständig";
 "收到通知时跳动" = "Bei Benachrichtigung hüpfen";
 "收回到工作区" = "In den Arbeitsbereich zurückholen";
+"收起于 %@。进程继续在后台运行，画面暂不绘制。" = "Um %@ eingeklappt. Der Prozess läuft im Hintergrund weiter; der Bildschirm wird vorerst nicht gezeichnet.";
+"收起实时画面" = "Live-Ansicht einklappen";
+"收起或恢复实时画面" = "Live-Ansicht einklappen oder wiederherstellen";
 "收起详情面板" = "Detailbereich einklappen";
 "收起输入" = "Eingabe einklappen";
 "收起输出" = "Ausgabe einklappen";
@@ -1472,6 +1477,7 @@
 "第一行内容位于底部" = "Erste Inhaltszeile unten";
 "等分拆分" = "Gleichmäßig teilen";
 "等待 Agent Integration 关联此 Pane 的会话。" = "Warte auf Agent Integration, um die Sitzung dieses Bereichs zuzuordnen.";
+"等待你确认或输入" = "Wartet auf deine Bestätigung oder Eingabe";
 "等待输入" = "Warten auf Eingabe";
 "等待输入徽章" = "Abzeichen „Wartet auf Eingabe\"";
 "等待输入时通知" = "Bei Warten auf Eingabe benachrichtigen";

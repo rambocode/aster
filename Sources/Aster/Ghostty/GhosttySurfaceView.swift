@@ -28,6 +28,8 @@ final class GhosttySurfaceView: NSView {
   var onRequestFocus: (() -> Void)?
   var onPasteIntoComposer: ((String) -> Void)?
   var onSendSelectionToChat: (() -> Void)?
+  /// 右键菜单末尾追加的 Pane 级条目（如「收起实时画面」）；由 Session 转发工作区注入的提供者。
+  var contextMenuExtraItemsProvider: (() -> [NSMenuItem])?
   var onAuthorizeClipboard: ((GhosttyClipboardOperation) -> Bool)?
   var onSurfaceCreated: ((Bool) -> Void)?
   /// 原始 PTY observer 只暴露当前回调的字节副本；业务层不得把它视作可修改 parser。
@@ -541,6 +543,7 @@ final class GhosttySurfaceView: NSView {
     onRequestFocus = nil
     onPasteIntoComposer = nil
     onSendSelectionToChat = nil
+    contextMenuExtraItemsProvider = nil
     onRemoteImagePaste = nil
     onAuthorizeClipboard = nil
     onSurfaceCreated = nil
@@ -651,9 +654,12 @@ final class GhosttySurfaceView: NSView {
 
   // MARK: - Focus and pointer tracking
 
-  override var acceptsFirstResponder: Bool { true }
+  /// 被「收起实时画面」隐藏的 surface 不接收键盘焦点：按键绝不能盲目写进看不见的终端。
+  override var acceptsFirstResponder: Bool { !isHidden }
 
   override func becomeFirstResponder() -> Bool {
+    // `makeFirstResponder` 不查询 `acceptsFirstResponder`，隐藏时必须在这里再拒绝一次。
+    guard !isHidden else { return false }
     let accepted = super.becomeFirstResponder()
     if accepted {
       isFocused = true

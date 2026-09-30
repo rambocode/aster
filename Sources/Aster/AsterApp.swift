@@ -1354,6 +1354,11 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
   @objc private func toggleSecureKeyboardEntry(_ sender: Any?) {
     SecureInputCoordinator.shared.toggleManualRequest()
   }
+  /// 「显示 ▸ 收起 / 恢复实时画面」：作用于 key 工作区窗口的活动 Pane。
+  @objc private func toggleActivePaneLiveView(_ sender: Any?) {
+    activeWorkspaceModel.toggleActivePaneLiveView()
+  }
+
   @objc private func toggleActivePaneReadOnly(_ sender: Any?) {
     activeWorkspaceModel.toggleActivePaneReadOnly()
   }
@@ -2033,6 +2038,10 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     pipMenu.addItem(menuItem(L("关闭 Picture in Picture"), #selector(closePictureInPicture(_:)), "", modifiers: []))
     pip.submenu = pipMenu
     submenu.addItem(pip)
+    submenu.addItem(
+      menuItem(
+        TerminalLiveViewMenu.title(collapsed: false), #selector(toggleActivePaneLiveView(_:)), "b",
+        modifiers: [.command, .shift]))
     submenu.addItem(.separator())
     submenu.addItem(terminalScrollMenuItem())
     submenu.addItem(.separator())
@@ -2197,7 +2206,7 @@ extension AsterAppDelegate: NSMenuItemValidation {
       Self.splitOnlySelectors.contains(action)
         || [#selector(toggleActivePaneReadOnly(_:)), #selector(clearActivePaneScreen(_:)),
           #selector(copyActivePanePath(_:)), #selector(revealActivePaneInFinder(_:)),
-          #selector(togglePromptQueue(_:))].contains(action)
+          #selector(togglePromptQueue(_:)), #selector(toggleActivePaneLiveView(_:))].contains(action)
     { return false }
     if action == #selector(checkForUpdates(_:)) {
       // Sparkle 在一次更新会话进行中时 canCheckForUpdates 为假；保持可点会让 Sparkle
@@ -2226,6 +2235,11 @@ extension AsterAppDelegate: NSMenuItemValidation {
     if action == #selector(toggleActivePaneReadOnly(_:)) {
       menuItem.state = activeWorkspaceModel.activePaneIsReadOnly ? .on : .off
       return activeWorkspaceModel.selectedTab?.activeRuntime != nil
+    }
+    if action == #selector(toggleActivePaneLiveView(_:)) {
+      let model = activeWorkspaceModel
+      menuItem.title = TerminalLiveViewMenu.title(collapsed: model.activePaneLiveViewCollapsed)
+      return model.canToggleActivePaneLiveView
     }
     if action == #selector(copyActivePanePath(_:))
       || action == #selector(revealActivePaneInFinder(_:))
