@@ -166,15 +166,12 @@ final class NamedWorkspaceDirectory {
     return host?.openWindow(for: workspace) ?? false
   }
 
-  /// 重命名。重命名后的工作区自动变为固定保留，窗口副标题同步更新。
+  /// 重命名。重命名后的工作区自动变为固定保留。
   func rename(_ id: UUID, to name: String) throws {
     do {
       try registry.rename(id, to: name)
     } catch let error as NamedWorkspaceRegistryError {
       throw NamedWorkspaceDirectoryError.registry(error)
-    }
-    if let window = window(for: id), let workspace = registry.workspace(id) {
-      window.subtitle = workspace.name
     }
     save()
   }
@@ -274,14 +271,13 @@ final class NamedWorkspaceDirectory {
       mainName: L("主工作区"), legacySuites: legacy ?? [], now: now())
   }
 
-  /// 记录窗口映射、把工作区名写到窗口副标题并保存。
+  /// 记录窗口映射并保存。
   ///
-  /// 工作区窗口隐藏了系统标题栏文字，`title` 由 OSC 标题驱动；副标题不参与现有标题逻辑，
-  /// 写入它不会和程序标题互相覆盖，辅助功能仍能读到工作区名。
+  /// 注册表条目名（如「主工作区」）不再写进窗口副标题：工作区已改为窗口内的标签分组，
+  /// 窗口级名字对用户没有意义，写进副标题会让 Dock 菜单显示成「标题 (主工作区)」。
   private func bind(_ window: NSWindow, to id: UUID) {
     windows = windows.filter { $0.value.window != nil && $0.value.window !== window }
     windows[id] = WindowReference(window)
-    if let workspace = registry.workspace(id) { window.subtitle = workspace.name }
     save()
   }
 

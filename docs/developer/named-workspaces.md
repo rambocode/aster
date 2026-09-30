@@ -25,6 +25,8 @@
 
 旧版把「本机工作区」实现成一个窗口。下面的注册表规则仍然管理窗口的恢复与关闭，但 ⌘⇧N 选「本机」不再新开窗口。
 
+注册表条目名（主窗口是「主工作区」）只在切换器的旧窗口条目里出现，不写进窗口副标题：macOS 的 Dock 菜单会把副标题拼成「标题 (主工作区)」，而工作区已经是窗口内的分组，窗口级名字对用户没有意义。
+
 
 - 模型是 `NamedWorkspaceRegistry`（AsterCore，纯值类型）。App 侧由 `NamedWorkspaceDirectory` 负责读写和维护「窗口 ↔ 工作区」的对应关系。
 - 注册表存在 UserDefaults.standard 的 `aster.workspace.registry.v1`。

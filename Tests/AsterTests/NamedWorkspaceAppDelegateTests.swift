@@ -48,7 +48,8 @@ func namedWorkspaceWindowsFollowCloseSemanticsInAppDelegate() throws {
   guard case .suite(let pinnedSuite) = pinned.storage else { return }
   createdSuites.append(pinnedSuite)
   let pinnedWindow = try #require(directory.window(for: pinned.id))
-  #expect(pinnedWindow.subtitle == "demo")
+  // 注册表名不再写进窗口副标题，Dock 菜单只显示标签标题，不会多出「(demo)」。
+  #expect(pinnedWindow.subtitle.isEmpty)
   pinnedWindow.close()
   #expect(directory.workspace(pinned.id)?.isOpen == false)
   #expect(
