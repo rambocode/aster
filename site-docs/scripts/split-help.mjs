@@ -31,6 +31,11 @@ const SLUGS = {
   "Working with Agents": "working-with-agents",
   "项目记忆（Session Memory）": "session-memory",
   "十类设置": "settings",
+  "十一类设置": "settings",
+  "Quick Terminal 快速终端": "quick-terminal",
+  "远端会话恢复": "remote-session-restore",
+  "SSH 主机与快速连接": "ssh-hosts",
+  "命名工作区": "workspaces",
   "软件更新": "software-update",
   "常见问题": "faq",
   "外观主题": "themes",
@@ -39,8 +44,8 @@ const SLUGS = {
 /** 侧栏分组；未列出的章节归入「其他」 */
 const GROUPS = [
   { text: "开始", slugs: ["index", "getting-started"] },
-  { text: "界面", slugs: ["tabs-and-layouts", "splits-and-panes", "files-and-preview", "search-and-command-palette"] },
-  { text: "工作流", slugs: ["recipes-and-restore", "cli-and-deep-links", "working-with-agents", "remote-machines", "session-memory", "frequent-directories"] },
+  { text: "界面", slugs: ["tabs-and-layouts", "splits-and-panes", "files-and-preview", "search-and-command-palette", "quick-terminal", "workspaces"] },
+  { text: "工作流", slugs: ["recipes-and-restore", "cli-and-deep-links", "working-with-agents", "remote-machines", "remote-session-restore", "ssh-hosts", "session-memory", "frequent-directories"] },
   { text: "配置", slugs: ["settings", "themes", "software-update", "diagnostics", "faq"] },
 ];
 
