@@ -445,7 +445,24 @@ html:not([lang="zh-CN"]):not([lang="ja"]) .hero h1 { font-size: clamp(42px, 4.5v
 .voice-avatar { width: 32px; height: 32px; border: 1px solid #CBD7BD; border-radius: 50%; background: #E9EFDE; display: flex; align-items: center; justify-content: center; color: #637E47; font-size: 11px; font-weight: 600; flex-shrink: 0; }
 .voice-two .voice-avatar { background: #3B5E3F; border-color: #6C8C56; color: #DDEBBA; }
 .voice-three .voice-avatar { background: #EECDBA; color: #8C5B3A; border-color: #DBB494; }
-.voices-cta { margin-top: 28px; font-size: 13px; color: var(--ink-3); }
+.voices-aside { max-width: 320px; display: flex; flex-direction: column; gap: 10px; }
+.voices-note { font-size: 12px; line-height: 1.7; color: var(--ink-4); }
+
+/* 评价墙：瀑布流排列的短评，长短不一也不留空洞 */
+.voice-wall { columns: 3; column-gap: 20px; margin-top: 56px; }
+.wall-card { break-inside: avoid; margin: 0 0 20px; background: rgba(255, 255, 255, 0.72); border: 1px solid #DCE4D3; border-radius: 14px; padding: 20px 22px 18px; transition: transform .3s var(--ease), box-shadow .3s, background .3s, opacity .7s var(--ease); }
+.wall-card:hover { transform: translateY(-3px); background: #FFFFFF; box-shadow: 0 12px 24px -16px rgba(36, 61, 41, 0.25); }
+.wall-card blockquote { margin: 0 0 16px; font-size: 14.5px; line-height: 1.8; color: var(--ink); }
+.wall-card figcaption { display: flex; align-items: center; gap: 10px; font-size: 12.5px; line-height: 1.4; }
+.wall-card figcaption small { display: block; font-size: 11px; margin-top: 2px; color: var(--ink-3); }
+.wall-card .voice-avatar { width: 30px; height: 30px; font-size: 11px; }
+.voice-avatar.a1 { background: #E9EFDE; color: #4F6B37; border-color: #CBD7BD; }
+.voice-avatar.a2 { background: #F4DFD0; color: #8C5B3A; border-color: #E5C3AA; }
+.voice-avatar.a3 { background: #E3EDF0; color: #3F5E68; border-color: #C8D8DD; }
+.voice-avatar.a4 { background: #EFE9D8; color: #6F5A26; border-color: #DDD2B4; }
+.voice-avatar.a5 { background: #EAE4F0; color: #5A4A70; border-color: #D3C9DF; }
+
+.voices-cta { margin-top: 16px; font-size: 13px; color: var(--ink-3); }
 .voices-cta a { color: var(--green); text-decoration: underline; text-underline-offset: 3px; }
 
 /* ============ FAQ ============ */
@@ -551,6 +568,7 @@ dialog > p { font-size: 11px; color: var(--ink-3); margin-top: 10px; }
   .feature-completion .feature-top, .feature-completion h3, .feature-completion p { max-width: 55%; }
   .voice-grid { gap: 17px; }
   .voice-card { padding: 18px 20px 22px; min-height: 300px; }
+  .voice-wall { columns: 2; }
   .voice-card blockquote { font-size: 16px; }
   .faq { gap: 44px; padding-block: 72px; }
   .closing { padding-inline: 32px; }
@@ -584,6 +602,9 @@ dialog > p { font-size: 11px; color: var(--ink-3); margin-top: 10px; }
   .compare-row .aster-col { flex-wrap: wrap; }
   .compare-row .aster-col .cell-tag { color: var(--moss-deep); }
   .voice-grid { grid-template-columns: 1fr; max-width: 520px; margin-inline: auto; }
+  .voice-wall { columns: 1; max-width: 520px; margin-inline: auto; margin-top: 36px; }
+  .voice-two { --tilt: rotate(1deg); }  /* 单列时去掉下移，避免压住下一张 */
+  .voices-aside { max-width: none; margin-top: 18px; }
   .voice-card { min-height: 0; }
   .faq { grid-template-columns: 1fr; gap: 28px; padding-block: 56px; }
   .closing-main { display: block; }
