@@ -116,15 +116,24 @@ p { margin: 0; }
 .menu-button { display: none; }
 .mobile-nav[hidden] { display: none; }
 
-/* 语言切换（i18n.js 注入） */
+/* 语言菜单：静态链接（scripts/build-site-i18n.mjs 生成），<details> 不依赖 JS 也能展开 */
 .lang-menu { position: relative; }
-.lang-btn { display: inline-flex; align-items: center; gap: 7px; background: none; border: 1px solid transparent; border-radius: 8px; padding: 7px 10px; font-size: 13px; color: var(--ink-2); }
-.lang-btn:hover { color: var(--ink); background: var(--paper-2); }
-.lang-list { position: absolute; right: 0; top: calc(100% + 8px); min-width: 132px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px -10px rgba(32, 45, 37, 0.22); padding: 6px; display: none; flex-direction: column; gap: 2px; z-index: 60; }
-.lang-menu.open .lang-list { display: flex; }
-.lang-list button { text-align: left; background: none; border: none; border-radius: 7px; padding: 8px 12px; font-size: 13px; color: var(--ink-2); }
-.lang-list button:hover { background: var(--paper-2); color: var(--ink); }
-.lang-list button.on { background: var(--lime-2); color: var(--green); font-weight: 600; }
+.lang-menu summary { display: inline-flex; align-items: center; gap: 7px; list-style: none; cursor: pointer; border: 1px solid transparent; border-radius: 8px; padding: 7px 10px; font-size: 13px; color: var(--ink-2); }
+.lang-menu summary::-webkit-details-marker { display: none; }
+.lang-menu summary:hover, .lang-menu[open] summary { color: var(--ink); background: var(--paper-2); }
+.lang-menu summary svg { width: 15px; height: 15px; }
+.lang-menu summary .chev { width: 11px; height: 11px; stroke-width: 2.4; transition: transform .2s var(--ease); }
+.lang-menu[open] summary .chev { transform: rotate(180deg); }
+.lang-list { position: absolute; right: 0; top: calc(100% + 8px); min-width: 140px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px -10px rgba(32, 45, 37, 0.22); padding: 6px; display: flex; flex-direction: column; gap: 2px; z-index: 60; }
+.lang-list a { border-radius: 7px; padding: 8px 12px; font-size: 13px; color: var(--ink-2); }
+.lang-list a:hover { background: var(--paper-2); color: var(--ink); }
+.lang-list a[aria-current="page"] { background: var(--lime-2); color: var(--green); font-weight: 600; }
+
+/* 语言切换建议：固定定位浮在导航下方，不推挤版面（避免布局偏移） */
+.lang-suggest { position: fixed; top: 88px; left: 50%; transform: translateX(-50%); z-index: 39; display: flex; align-items: center; gap: 14px; max-width: calc(100% - 32px); background: var(--ink); color: #F1F5E9; border-radius: 30px; padding: 8px 8px 8px 18px; font-size: 13px; box-shadow: 0 12px 28px -12px rgba(20, 32, 24, 0.45); animation: ac-in .3s var(--ease); }
+.lang-suggest a { color: #203D29; background: var(--lime); border-radius: 20px; padding: 5px 12px; font-weight: 600; white-space: nowrap; }
+.lang-suggest button { background: none; border: 0; color: #C9D6BD; font-size: 18px; line-height: 1; width: 28px; height: 28px; border-radius: 50%; }
+.lang-suggest button:hover { background: rgba(255, 255, 255, 0.1); color: #FFFFFF; }
 
 /* ============ 按钮 ============ */
 
@@ -203,7 +212,8 @@ html:not([lang="zh-CN"]):not([lang="ja"]) .hero h1 { font-size: clamp(42px, 4.5v
 .traffic i { width: 8px; height: 8px; background: #E58B72; border-radius: 50%; }
 .traffic i:nth-child(2) { background: #D7BC72; }
 .traffic i:nth-child(3) { background: #9FB980; }
-.demo-label { font-family: var(--font-mono); font-size: 9.5px; border: 1px solid #637759; color: #D2DECA; padding: 3px 6px; border-radius: 4px; }
+.window-chrome > .mono { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-inline: 10px; }
+.demo-label { white-space: nowrap; font-family: var(--font-mono); font-size: 9.5px; border: 1px solid #637759; color: #D2DECA; padding: 3px 6px; border-radius: 4px; }
 
 .window-body { display: grid; grid-template-columns: 140px 1fr; min-height: 350px; }
 .demo-sidebar { position: relative; background: #1C2821; border-right: 1px solid rgba(255, 255, 255, 0.03); padding: 18px 9px; color: #B3C3AE; font-size: 11px; }
@@ -551,7 +561,9 @@ dialog > p { font-size: 11px; color: var(--ink-3); margin-top: 10px; }
   .wrap { width: calc(100% - 44px); }
   .nav-inner { height: 66px; gap: 14px; }
   .nav-links { display: none; }
-  .lang-menu { display: none; }
+  .lang-menu summary .lang-label, .lang-menu summary .chev { display: none; }
+  .lang-suggest { top: auto; bottom: 56px; left: 12px; right: 12px; transform: none; max-width: none; border-radius: 16px; font-size: 12.5px; gap: 10px; }
+  .lang-suggest span { flex: 1 1 auto; }
   .pill { margin-left: auto; min-height: 36px; font-size: 12px; padding: 6px 12px; }
   .menu-button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border: 0; background: transparent; width: 32px; height: 36px; padding: 0; }
   .menu-button span { width: 20px; height: 1.5px; background: #354E38; }

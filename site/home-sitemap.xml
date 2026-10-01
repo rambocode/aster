@@ -1,10 +1,64 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- 落地页 sitemap。lastmod 随每次发版（index.html 版本号更新）同步，规则见 docs/developer/website.md。 -->
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<!-- 落地页 sitemap，由 scripts/build-site-i18n.mjs 生成。发版时只改这里的 lastmod，再重新运行脚本。 -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
     <loc>https://aster.foo/</loc>
     <lastmod>2026-10-01</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://aster.foo/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://aster.foo/en/"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://aster.foo/ja/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://aster.foo/de/"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://aster.foo/fr/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://aster.foo/en/"/>
+  </url>
+  <url>
+    <loc>https://aster.foo/en/</loc>
+    <lastmod>2026-10-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://aster.foo/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://aster.foo/en/"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://aster.foo/ja/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://aster.foo/de/"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://aster.foo/fr/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://aster.foo/en/"/>
+  </url>
+  <url>
+    <loc>https://aster.foo/ja/</loc>
+    <lastmod>2026-10-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://aster.foo/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://aster.foo/en/"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://aster.foo/ja/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://aster.foo/de/"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://aster.foo/fr/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://aster.foo/en/"/>
+  </url>
+  <url>
+    <loc>https://aster.foo/de/</loc>
+    <lastmod>2026-10-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://aster.foo/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://aster.foo/en/"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://aster.foo/ja/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://aster.foo/de/"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://aster.foo/fr/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://aster.foo/en/"/>
+  </url>
+  <url>
+    <loc>https://aster.foo/fr/</loc>
+    <lastmod>2026-10-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://aster.foo/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://aster.foo/en/"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://aster.foo/ja/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://aster.foo/de/"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://aster.foo/fr/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://aster.foo/en/"/>
   </url>
 </urlset>

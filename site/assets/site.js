@@ -40,18 +40,6 @@
     if (target.textContent !== text) target.textContent = text;
   }
 
-  /* 语言切换回调。i18n.js 切换时会改 html[lang]（也派发 aster:lang），
-     所以用 MutationObserver 监听它，让动态生成的文案跟着重渲染。 */
-  var langListeners = [];
-  function onLangChange(fn) {
-    langListeners.push(fn);
-  }
-  if ("MutationObserver" in window) {
-    new MutationObserver(function () {
-      langListeners.forEach(function (fn) { fn(); });
-    }).observe(root, { attributes: true, attributeFilter: ["lang"] });
-  }
-
   /* 元素进入视口时调用 start，离开时调用 stop；不支持 IntersectionObserver 时直接 start */
   function onVisible(el, start, stop, threshold) {
     if (!("IntersectionObserver" in window)) { start(); return; }
@@ -92,7 +80,6 @@
       if (paused) setPaused(false, true);
     });
     onMediaChange(reduced, function () { setPaused(reduced.matches, true); });
-    onLangChange(function () { setPaused(paused, false); });
   })();
 
   // MARK: - 滚动入场
@@ -156,7 +143,6 @@
     });
     var desktop = window.matchMedia("(min-width: 861px)");
     onMediaChange(desktop, function () { if (desktop.matches) setOpen(false); });
-    onLangChange(function () { setOpen(!nav.hidden); });
   })();
 
   // MARK: - 导航高亮
@@ -350,7 +336,7 @@
     function render() {
       var state = stateAt(elapsed);
       var paused = userPaused || globallyPaused;
-      var signature = [scenario, state.text, state.phase, state.options, state.selected, state.output, paused, root.lang].join("\u0001");
+      var signature = [scenario, state.text, state.phase, state.options, state.selected, state.output, paused].join("\u0001");
       if (signature === lastRender) return;
       lastRender = signature;
 
@@ -522,11 +508,6 @@
       }
       syncClock();
     });
-    onLangChange(function () {
-      makeOptions();
-      lastRender = "";
-      render();
-    });
     if ("IntersectionObserver" in window) {
       new IntersectionObserver(function (entries) {
         inView = entries[entries.length - 1].isIntersecting;
@@ -550,13 +531,13 @@
 
     var SHOTS = {
       workspace: {
-        src: "assets/shots/workspace.png",
+        src: "/assets/shots/workspace.png",
         caption: "终端与 Markdown 文档，在同一个原生窗口里。",
         alt: "Aster 实际窗口：左侧标签栏、中间终端、右侧 Markdown 预览",
         number: "01 / 02"
       },
       terminal: {
-        src: "assets/shots/terminal.png",
+        src: "/assets/shots/terminal.png",
         caption: "专注终端时，侧栏与文件面板都能收起。",
         alt: "Aster 实际终端窗口，显示公开演示目录和配置文件",
         number: "02 / 02"
@@ -624,7 +605,6 @@
     });
 
     renderText();
-    onLangChange(renderText);
 
     // 放大查看：原生 <dialog>，关闭后焦点回到触发按钮
     var dialog = byId("shot-dialog");
@@ -783,7 +763,5 @@
       })
       .catch(function () { /* 静默失败，保留原文 */ })
       .then(function () { window.clearTimeout(timeout); });
-
-    onLangChange(renderCount);
   })();
 })();

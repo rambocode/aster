@@ -27,6 +27,10 @@ Aster is an open-source, native macOS terminal workspace for macOS 14 and later.
 ## 官网与下载
 
 - [Aster 官网](https://aster.foo/): 产品介绍、功能对比与下载入口。
+- [Aster website (English)](https://aster.foo/en/): English product overview, comparison and download.
+- [Aster（日本語）](https://aster.foo/ja/): 日本語の製品紹介とダウンロード。
+- [Aster (Deutsch)](https://aster.foo/de/): Produktübersicht und Download auf Deutsch.
+- [Aster (Français)](https://aster.foo/fr/): présentation du produit et téléchargement en français.
 - [下载最新版](https://github.com/rambocode/aster/releases/latest): 最新的已签名、已公证 DMG 安装包。
 - [全部版本与更新日志](https://github.com/rambocode/aster/releases): 每个版本的发行说明与安装包。
 - [GitHub 仓库](https://github.com/rambocode/aster): 全部源码、构建说明与问题反馈。

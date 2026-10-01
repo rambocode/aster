@@ -10,20 +10,23 @@ GEO 指 Generative Engine Optimization：让 ChatGPT、Claude、Perplexity 等�
 
 ```
 site/                      # 部署根目录（wrangler.jsonc 的 assets.directory）
-├── index.html             # 手写落地页，不经构建
+├── index.html             # 中文落地页：唯一的手改入口（生成区除外）
+├── en/ ja/ de/ fr/        # 各语言落地页，由 scripts/build-site-i18n.mjs 生成，不要手改
 ├── robots.txt             # 爬虫规则，见「GEO 文件」
 ├── llms.txt               # 给大模型读的站点摘要
 ├── sitemap.xml            # sitemap 索引：汇总下面两个 sitemap
-├── home-sitemap.xml       # 落地页 sitemap
+├── home-sitemap.xml       # 落地页 sitemap（五种语言，带 hreflang），由生成脚本写出
 ├── assets/
 │   ├── style.css          # 落地页样式与设计 token
 │   ├── site.js            # 交互演示等动态内容
-│   ├── i18n.js            # 多语言词典与切换器
+│   ├── i18n.js            # 运行时辅助：动态文案译文、语言菜单、切换建议
 │   ├── fonts.css、fonts/  # 自托管网页字体（脚本生成）
-│   ├── jsonld.json        # 结构化数据源文件，内联进 index.html
+│   ├── jsonld.json        # 结构化数据源文件（中文），生成脚本逐语言翻译后内联
 │   ├── shots/             # 真实应用截图
 │   └── social-card.*      # Open Graph 分享图
 └── docs/                  # 文档站构建产物，不入库（.gitignore）
+
+site-i18n/                 # 落地页译文：en.json、ja.json、de.json、fr.json
 
 site-docs/                 # 文档站构建工程（VitePress）
 ├── .vitepress/config.mjs  # base=/docs/、outDir=../site/docs、cleanUrls
@@ -55,25 +58,44 @@ cd site-docs && npm ci && npm run docs:build && cd ..
 - 只保留 latin 与 latin-ext 子集。中文不加载网页字体，目标用户都是 macOS，系统自带的宋体与苹方由 `style.css` 的回退链接管。
 - 文档站通过 `config.mjs` 的 `head` 引用同一份 `/assets/fonts.css`，两边字体保持一致。
 
-## 多语言（i18n.js）
+## 多语言（静态生成）
 
-落地页支持中文、English、日本語、Deutsch、Français 五种语言。中文写在 HTML 里，其他四种语言在 `site/assets/i18n.js` 的词典里。
+落地页有五种语言，每种语言一个独立网址：`/`（中文）、`/en/`、`/ja/`、`/de/`、`/fr/`。
+各语言页是构建前就生成好的静态 HTML，爬虫不执行 JS 也能读到对应语言的正文、标题、描述与结构化数据。
+以前用 JS 在同一网址里替换文字，搜索引擎与 AI 爬虫只能看到中文，也没法声明 hreflang，所以改成了静态生成。
 
 工作方式：
 
-1. **中文文本节点就是键。** 页面加载后，脚本遍历 `<body>` 里的文本节点，把去掉首尾空白后能在词典里查到的节点缓存下来。切换语言时只替换这些节点的文字，切回中文即还原。
-2. **富文本按选择器整体替换。** 含 `<br>`、`<em>`、`<kbd>` 等内联标记的元素无法按文本节点翻译，登记在 `RICH` 数组里，按 CSS 选择器整体替换 `innerHTML`。
-3. **页面元信息单独处理。** `<title>` 与 `meta[name="description"]` 的各语言版本在 `META` 里。
-4. **动态内容走 `window.asterT`。** `site.js` 生成的文字（例如补全演示的提示条）调用 `asterT("中文原文")` 取当前语言文案。
-5. **初始语言**按「上次手动选择（localStorage）→ 浏览器语言 → 英文」决定。
+1. **中文源页是唯一的手改入口。** 改文案、改结构都只改 `site/index.html`。
+2. **译文在 `site-i18n/<lang>.json`。** `text` 以中文原文为键（文本节点去掉首尾空白后的整段，或 `aria-label` / `alt` / `title` 的值）；`rich` 是四个含内联标记的标题（按元素 id 整体替换）；`meta` 是 title、description 与分享图替代文字；`jsonld` 是只出现在结构化数据里的句子。
+3. **生成脚本 `scripts/build-site-i18n.mjs`** 读取源页与译文，写出 `site/<lang>/index.html` 和 `site/home-sitemap.xml`，并刷新所有页面里的生成区。生成区用 `<!-- i18n:NAME:start -->…<!-- i18n:NAME:end -->` 标记，内容由脚本维护，不要手改：
+   - `head`：canonical、五种语言加 `x-default` 的 hreflang、`og:url`、`og:locale`；
+   - `jsonld`：从 `site/assets/jsonld.json` 翻译出的结构化数据，外加本页的 `WebPage` 节点；
+   - `menu`：语言菜单（`<details>` 加普通链接，不依赖 JS）；
+   - `runtime`：非中文页注入的 `window.ASTER_STRINGS`，供 `site.js` 动态文案使用。
+4. **运行时脚本 `site/assets/i18n.js` 不再替换正文。** 它只提供 `window.asterT`、处理语言菜单开合，并在访客偏好的语言与当前页不同时显示一条可关闭的建议。偏好是用户在菜单或建议条里的明确选择，没有选择时才看浏览器语言。
+5. **不做自动跳转。** 同一网址对爬虫、分享链接和所有访客始终是同一种语言。`x-default` 指向英文页。
 
-新增或修改文案的规则：
+改文案的流程：
 
-- 每条新增中文文案必须同时补齐 en、ja、de、fr 四种翻译。缺翻译的节点会在其他语言下显示中文，混在页面里很难发现。
-- 修改中文原文等于换了键。词典里的旧键要一起改，否则这个节点不再被翻译。
-- 一个文本节点只放一句完整文案。被内联标签拆开的句子，要么整体登记进 `RICH`，要么调整结构让每段都是独立的键。
-- `RICH` 的选择器必须在页面里唯一匹配，否则只有第一个元素会被替换。
-- 数字和事实（版本号、规格数量、主题数量）在五种语言里必须一致，改一处就要检查全部语言。
+```bash
+# 1. 改 site/index.html（中文）
+# 2. 在 site-i18n/en.json、ja.json、de.json、fr.json 里补齐或改对应的键
+# 3. 重新生成
+node scripts/build-site-i18n.mjs
+# 4. 提交前校验：缺译文、拉丁语系页面残留中文、生成物过期都会失败
+node scripts/build-site-i18n.mjs --check
+```
+
+规则：
+
+- 修改中文原文等于换了键。四个译文文件里的旧键要一起改，否则脚本会报「缺少译文」。脚本也会警告不再使用的键，看到就删。
+- 一个文本节点只放一句完整文案。被内联标签拆开的半句，译文要能和相邻节点连读，需要的空格写在译文里。
+- 版本号等会变的值放在独立的 `<span>` 里，不要和文案写在同一个文本节点，否则每次发版都会换键。
+- 新增由 `site.js` 动态生成的中文文案时，同时加进脚本的 `RUNTIME_KEYS` 和四个译文文件。
+- 页面里的站内链接与资源一律用站点根路径（`/assets/…`、`/docs/`），生成到子目录后才不会失效。
+- 数字和事实（版本号、规格数量、主题数量）在五种语言里必须一致。
+- 文档站 `/docs/` 目前只有中文，各语言落地页的「文档」入口都指向它。
 
 ## 真实截图
 
@@ -96,11 +118,12 @@ cd site-docs && npm ci && npm run docs:build && cd ..
 | --- | --- |
 | `site/robots.txt` | 允许所有爬虫，并显式允许常见 AI 爬虫；指向 sitemap 索引 |
 | `site/sitemap.xml` | sitemap 索引，汇总落地页与文档站 |
-| `site/home-sitemap.xml` | 落地页 URL，带 `lastmod` 与 `changefreq` |
+| `site/home-sitemap.xml` | 五种语言的落地页网址，互相列出 hreflang 备选；由生成脚本写出，只手改 `lastmod` |
+| `site/<lang>/index.html` | 各语言静态落地页，带各自的 `lang`、title、description、canonical 与 hreflang |
 | `site/docs/sitemap.xml` | 文档站构建时由 VitePress 自动生成，不手改 |
 | `site/llms.txt` | 按 [llmstxt.org](https://llmstxt.org/) 格式写的站点摘要：中英文定义、核心事实清单、文档链接 |
 | `site/assets/jsonld.json` | schema.org 结构化数据（`@graph`）：`Organization`、`WebSite`、`SoftwareApplication`、`FAQPage` |
-| `site/index.html` | 内联 `jsonld.json` 的 `<script type="application/ld+json">`，以及 canonical、Open Graph、Twitter Card |
+| `site/index.html` | 中文落地页；JSON-LD、canonical 与 hreflang 在生成区里，由生成脚本维护 |
 
 `robots.txt` 显式列出的 AI 爬虫：GPTBot、ChatGPT-User、OAI-SearchBot、ClaudeBot、Claude-SearchBot、anthropic-ai、PerplexityBot、Google-Extended、Applebot-Extended、CCBot、Bytespider。
 显式列出是为了让各家不依赖对 `*` 分组的不同解释。新增爬虫时照同样格式追加一个分组。
@@ -112,18 +135,19 @@ cd site-docs && npm ci && npm run docs:build && cd ..
 - **事实处处一致。** 版本号、系统要求、规格数量、主题数量、语言数量在 `index.html`、`llms.txt`、`jsonld.json`、README 里必须一致。
 - **隐私表述要精确。** Aster 不收集使用数据，但崩溃报告是可选功能（默认关闭），把项目记忆交给 CLI Agent 提炼也会发送摘要（默认关闭）。对外不写「从不联网」「绝不上传任何数据」这类绝对说法。
 - **系统要求写全。** 当前安装包只包含 arm64 版本，系统要求要同时写 macOS 14+ 与 Apple 芯片。构建方式改变后同步更新。
-- `jsonld.json` 是唯一源文件。修改后把内容同步到 `index.html` 的内联脚本，两者必须完全一致。
+- `jsonld.json` 是唯一源文件（中文）。修改后运行生成脚本，它会翻译并内联到五个语言页；只出现在 JSON-LD 里的新句子要在四个译文文件的 `jsonld` 里补译文。
 
 ### 发版时同步
 
 每次发布正式版（与「发行说明与官网版本号」提交一起）：
 
 1. `site/index.html` 里所有可见的版本号（例如 `v0.6.15`）。
-2. `site/assets/jsonld.json` 的 `softwareVersion` 与 `releaseNotes`，再同步到 `index.html` 的内联 JSON-LD。
+2. `site/assets/jsonld.json` 的 `softwareVersion` 与 `releaseNotes`。
 3. `site/llms.txt` 的「当前发布版本」一行，包括发布日期。
-4. `site/home-sitemap.xml` 的 `lastmod`，改成发布日期。
-5. 如果这次发布改变了核心事实（新增大功能、规格数量、主题数量、系统要求），同步检查 FAQ 答案、`featureList` 与 `llms.txt` 的事实清单。
-6. `help.md` 新增了「## 章节」时，在 `split-help.mjs` 的 `SLUGS` 里登记固定 slug，再把新页面加进 `llms.txt`。
+4. `site/home-sitemap.xml` 第一条 `lastmod`，改成发布日期。
+5. 运行 `node scripts/build-site-i18n.mjs`，把以上改动带到各语言页、JSON-LD 与 sitemap。
+6. 如果这次发布改变了核心事实（新增大功能、规格数量、主题数量、系统要求），同步检查 FAQ 答案、`featureList` 与 `llms.txt` 的事实清单。
+7. `help.md` 新增了「## 章节」时，在 `split-help.mjs` 的 `SLUGS` 里登记固定 slug，再把新页面加进 `llms.txt`。
 
 预览版不改这些文件，官网只描述正式版。
 
@@ -135,16 +159,8 @@ cd site-docs && npm ci && npm run docs:build && cd ..
 # 结构化数据可以解析
 node -e 'JSON.parse(require("fs").readFileSync("site/assets/jsonld.json","utf8"))'
 
-# 内联到 index.html 的 JSON-LD 也可以解析，并且与源文件一致
-node -e '
-const fs = require("fs");
-const html = fs.readFileSync("site/index.html", "utf8");
-const m = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
-if (!m) throw new Error("index.html 里没有 JSON-LD");
-const inline = JSON.parse(m[1]);
-const src = JSON.parse(fs.readFileSync("site/assets/jsonld.json", "utf8"));
-if (JSON.stringify(inline) !== JSON.stringify(src)) throw new Error("内联 JSON-LD 与 jsonld.json 不一致");
-console.log("JSON-LD OK");'
+# 各语言页、生成区与 sitemap 是最新的，没有缺译文
+node scripts/build-site-i18n.mjs --check
 
 # sitemap 是合法 XML
 xmllint --noout site/sitemap.xml site/home-sitemap.xml
@@ -171,7 +187,8 @@ cd site-docs && npm ci && npm run docs:build && cd ..
 
 多语言检查：
 
-- 在五种语言之间来回切换，确认没有残留中文、没有布局溢出，切回中文后文字完全还原。
-- 检查 `<html lang>`、`<title>` 与 description 随语言变化。
+- 用语言菜单在五个网址之间切换，确认没有布局溢出、长译文没有挤压首屏。
+- 直接 `curl` 某个语言页，确认原始 HTML 里就是该语言（不靠 JS），`<html lang>`、`<title>`、description、canonical 与 hreflang 正确。
+- 把浏览器语言设成别的语言打开首页，确认出现切换建议；点关闭后刷新不再出现。
 
 纯文案改动不需要运行应用测试，但上面的结构化数据、XML 与链接检查必须执行。没有执行的检查要在提交说明里写明。
