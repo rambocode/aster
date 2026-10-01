@@ -172,7 +172,7 @@
     "多标签，垂直、顶部、底部三种标签布局": "Multiple tabs with three tab layouts: vertical, top and bottom",
     "任意方向递归分屏，在同一窗口混排终端、文件浏览器、编辑器与预览": "Recursive splits in any direction that mix terminals, file browsers, editors and previews in one window",
     "File Pane 预览源码、Markdown、图片、PDF、diff、hex 与 Agent transcript": "File Pane previews source code, Markdown, images, PDF, diff, hex and agent transcripts",
-    "Claude Code、Codex 等 Agent 会话自动获得标题、运行状态与完成通知": "Agent sessions such as Claude Code and Codex get titles, run states and completion notifications automatically",
+    "Claude Code、Codex 等 Agent 会话自动获得标题、运行状态与完成通知": "Agent sessions such as Claude Code and Codex automatically get titles, run states and a notification when a run finishes",
     "本机自动补全：内置 714 份 Fig 命令规格，补全与学习只在本机进行": "On-device autocomplete: 714 built-in Fig command specs, with completion and learning happening only on your Mac",
     "远程机器与原生 SSH 标签，口令只存 macOS 钥匙串": "Remote machines and native SSH tabs, with passwords stored only in the macOS Keychain",
     "24 套内置主题，带实时终端预览": "24 built-in themes with a live terminal preview",
