@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- 落地页 sitemap。lastmod 随每次发版（index.html 版本号更新）同步，规则见 docs/developer/website.md。 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://aster.foo/</loc></url>
+  <url>
+    <loc>https://aster.foo/</loc>
+    <lastmod>2026-10-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
 </urlset>

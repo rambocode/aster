@@ -1,0 +1,48 @@
+# aster.foo —— 欢迎所有搜索引擎与 AI 爬虫抓取官网与文档。
+# 显式列出常见 AI 爬虫，是为了让生成式搜索（ChatGPT、Claude、Perplexity 等）明确可以引用本站，
+# 不依赖各家对 "*" 分组的不同解释。维护规则见 docs/developer/website.md。
+
+User-agent: *
+Allow: /
+
+# OpenAI
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+# Anthropic
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+# Perplexity
+User-agent: PerplexityBot
+Allow: /
+
+# Google（Gemini 训练与 grounding 开关）
+User-agent: Google-Extended
+Allow: /
+
+# Apple（Apple Intelligence 训练开关）
+User-agent: Applebot-Extended
+Allow: /
+
+# Common Crawl
+User-agent: CCBot
+Allow: /
+
+# ByteDance
+User-agent: Bytespider
+Allow: /
+
+Sitemap: https://aster.foo/sitemap.xml

@@ -1,0 +1,58 @@
+# Aster
+
+> Aster（Aster Terminal）是面向 macOS 14+ 的开源原生终端工作区，以 AppKit 构建，终端由 Ghostty 内核驱动，可以在一个窗口里用递归分屏并排使用终端、文件、编辑器、预览与 Agent 会话。
+
+Aster 是一个原生 macOS 终端工作区：标签、任意方向分屏、文件预览、Agent 会话与本机补全都在同一个 AppKit 窗口里。它以 MIT 许可证开源，免费使用，不收集使用数据。
+
+Aster is an open-source, native macOS terminal workspace for macOS 14 and later. Built natively with AppKit on the Ghostty terminal core, it puts terminals beside file browsers, editors, previews, and agent sessions in recursive splits within one window. It is free, MIT-licensed, and collects no usage data.
+
+## 核心事实
+
+- 名称：Aster，也称 Aster Terminal。官网 https://aster.foo/ ，源码 https://github.com/rambocode/aster 。
+- 当前发布版本：0.6.15（2026-10-01）。
+- 平台：macOS 14 Sonoma 及更高版本；当前安装包只包含 Apple 芯片（arm64）版本。
+- 技术栈：用 Swift 和 AppKit 写成的原生 macOS 应用，不是 Electron，也不用 SwiftUI；终端引擎是 Ghostty 内核。设置页是应用内置的本地 WebKit 页面，不加载远程内容。
+- 许可证：MIT，免费，无需注册账号。安装包是已签名并经 Apple 公证的 DMG。
+- 隐私：不收集使用数据，补全和学习只在本机进行。崩溃报告是可选功能，默认关闭。
+- 界面语言：简体中文、繁体中文、英语、日语、法语、德语，共六种。
+- 终端：完整 VT100/xterm、ANSI 真彩色、鼠标、超链接，以及 vim、top、fzf 等全屏 TUI。
+- 工作区：多标签（垂直、顶部、底部三种布局），任意方向递归分屏，混排终端、文件浏览器、编辑器与预览。
+- 远程机器与 SSH：可以把 Linux 服务器等添加为远程机器，终端运行在远端后台会话服务里，断开后进程和布局保留；也可以直接打开原生 SSH 标签，口令只存 macOS 钥匙串。
+- Agent 会话：支持 Claude Code、Codex、OpenCode、Cursor CLI 等，会话自动获得标题、运行状态与完成通知，transcript 可在 File Pane 回看。
+- 本机补全：内置 714 份 Fig 命令规格，加上文件与别名候选和隐私感知学习，补全不经过任何服务器。
+- 主题：24 套内置主题，带实时终端预览，可导入 .astertheme。
+- 工作区文件：整个工作区可导出为 .asterrecipe，并在启动时恢复会话。
+- 更新：内置 Sparkle 2，每天后台检查一次；安装包必须同时通过 EdDSA 签名和 macOS 公证校验才会安装。
+
+## 官网与下载
+
+- [Aster 官网](https://aster.foo/): 产品介绍、功能对比与下载入口。
+- [下载最新版](https://github.com/rambocode/aster/releases/latest): 最新的已签名、已公证 DMG 安装包。
+- [全部版本与更新日志](https://github.com/rambocode/aster/releases): 每个版本的发行说明与安装包。
+- [GitHub 仓库](https://github.com/rambocode/aster): 全部源码、构建说明与问题反馈。
+- [MIT 许可证](https://github.com/rambocode/aster/blob/master/LICENSE): Aster 的开源许可证全文。
+
+## 用户文档
+
+- [文档首页：Aster 能做什么](https://aster.foo/docs/): 功能总览与终端能力说明。
+- [开始使用](https://aster.foo/docs/getting-started): 首次启动、新建标签、分屏、命令面板、多窗口与画中画。
+- [标签与三种布局](https://aster.foo/docs/tabs-and-layouts): 垂直、顶部、底部标签布局、分组与 Shell Integration。
+- [分屏与 Pane](https://aster.foo/docs/splits-and-panes): 拆分、缩放、拖动重排 Pane，以及标签与 Pane 互相拖放。
+- [文件浏览器、编辑与预览](https://aster.foo/docs/files-and-preview): File Pane、可编辑源码、预览格式、链接打开、复制粘贴与自动补全。
+- [查找与命令面板](https://aster.foo/docs/search-and-command-palette): 终端查找、命令面板与 SSH 远端文件和监控。
+- [Recipes 与会话恢复](https://aster.foo/docs/recipes-and-restore): .asterrecipe 工作区文件与启动恢复。
+- [CLI 与深链](https://aster.foo/docs/cli-and-deep-links): aster 命令行、深链与后台受管终端。
+- [Working with Agents](https://aster.foo/docs/working-with-agents): Claude Code、Codex 等 Agent 的集成、会话历史与状态栏 AI 用量。
+- [项目记忆](https://aster.foo/docs/session-memory): Session Memory 与只读 MCP 查询。
+- [远程机器](https://aster.foo/docs/remote-machines): 把远端服务器当作工作机器使用。
+- [外观主题](https://aster.foo/docs/themes): 选择、编辑、导入主题，以及字体与光标。
+- [软件更新](https://aster.foo/docs/software-update): 自动更新设置、更新通道与校验方式。
+- [常见问题](https://aster.foo/docs/faq): 常见使用问题的解答。
+- [诊断日志与反馈](https://aster.foo/docs/diagnostics): 诊断包包含哪些内容，以及如何反馈问题。
+
+## Optional
+
+- [用户帮助 Markdown 原文](https://github.com/rambocode/aster/blob/master/docs/user/help.md): 文档站全部页面的唯一内容源，单个文件。
+- [English README](https://github.com/rambocode/aster/blob/master/README.md): 英文功能列表、安装与构建说明。
+- [简体中文 README](https://github.com/rambocode/aster/blob/master/README.zh-CN.md): 中文功能列表、安装与构建说明。
+- [第三方许可](https://github.com/rambocode/aster/blob/master/THIRD-PARTY-NOTICES.md): Ghostty 等第三方组件的许可证。
