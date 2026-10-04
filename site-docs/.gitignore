@@ -1,5 +1,6 @@
 node_modules/
 guide/
+en/guide/
 .vitepress/sidebar.generated.json
 .vitepress/cache/
 .vitepress/dist/

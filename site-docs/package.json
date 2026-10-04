@@ -6,7 +6,8 @@
     "docs:gen": "node scripts/split-help.mjs",
     "docs:dev": "npm run docs:gen && vitepress dev",
     "docs:build": "npm run docs:gen && vitepress build",
-    "docs:preview": "vitepress preview"
+    "docs:preview": "vitepress preview",
+    "docs:check": "node scripts/check-docs.mjs"
   },
   "devDependencies": {
     "vitepress": "^1.6.4"

@@ -219,3 +219,12 @@ Agent 查到空结果时必须能区分三种情况：记录没开、项目过�
 - 发布前：`swift test --no-parallel` → `swift build -c release` → `./scripts/build-app.sh` →
   `codesign --verify --deep --strict dist/Aster.app` → 实机验收（开启记录后键入无感知延迟；
   真实 Claude Code / Codex 经 MCP 查到跨 session 历史）。
+
+## 有界子进程输出读取
+
+记录探测、记忆提炼与工作区检查的 readability callback 使用 POSIX 非阻塞读取。
+同一执行器的读操作、输出缓冲与退出后的 drain 共用锁；收尾在锁内标记读取完成，
+已进入但尚未取得锁的回调直接返回。将 `readabilityHandler` 设为 nil 不代表回调已经结束，
+不能把收尾设为 O_NONBLOCK 的读端再交给 `availableData`：空缓冲区的 EAGAIN 会触发
+Foundation Objective-C 异常。最终 drain 仍只读取已经到达的数据，不等继承写端的孙进程 EOF。
+超时、取消、输出上限及各执行器的返回语义保持不变。回归见 `PipeReaderLifecycleTests.swift`。

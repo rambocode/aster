@@ -44,7 +44,7 @@ const RUNTIME_KEYS = [
   "已补全为 ", "。这是演示，没有执行命令。",
   "打包并签名 Aster.app", "生成并校验 DMG", "构建原生 SSH 运行时",
   "终端与 Markdown 文档，在同一个原生窗口里。", "Aster 实际窗口：左侧标签栏、中间终端、右侧 Markdown 预览",
-  "专注终端时，侧栏与文件面板都能收起。", "Aster 实际终端窗口，显示公开演示目录和配置文件",
+  "专注终端输出，保留目录与标签导航。", "Aster 实际终端窗口，显示公开演示目录和配置文件",
   "截图暂时无法载入，请重新选择。",
 ];
 const HAN = /[\u4e00-\u9fff]/;
@@ -237,6 +237,8 @@ function applyMeta(html, lang, dict, missing) {
   setContent("name", "twitter:title", meta.title);
   setContent("name", "twitter:description", meta.description);
   html = html.replace(/class="brand" href="\/"/g, `class="brand" href="${lang.path}"`);
+  // 非中文落地页指向完整英文指南；回退语言由译文明确标注。
+  html = html.replace(/href="\/docs\//g, 'href="/docs/en/');
   return html;
 }
 

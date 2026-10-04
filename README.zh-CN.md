@@ -3,12 +3,17 @@
 [English](README.md) | 简体中文
 
 **在一个原生 macOS 工作区里并排使用终端、文件和预览。** Aster 以 AppKit 构建，
-用递归分屏把基于 Ghostty 的终端、文件浏览器、编辑器和预览放在一起，支持 macOS 14 及以上版本。
+用递归分屏把基于 Ghostty 的终端、文件浏览器、编辑器和预览放在一起，当前安装包需要 macOS 14 及以上版本和 Apple 芯片。
 
 [查看官网](https://aster.foo/) · [下载最新 DMG](https://github.com/rambocode/aster/releases/latest) · [阅读使用帮助](docs/user/help.md)
 
 新建标签后，用 `⌘D` 或 `⇧⌘D` 分屏，再用 `⌘O` 打开文件。工作区可保存为
-`.asterrecipe`，并在下次启动时恢复。
+`.asterrecipe`，并在下次启动时恢复。Claude Code、Codex 等 Agent 会话支持标题、运行状态
+与完成通知；远程工作可使用原生 SSH 标签或基于服务器会话服务的远程机器工作区。
+
+![Aster 终端与 Markdown 预览并排的真实窗口](site/assets/shots/workspace.png)
+
+*截图展示公开演示目录，界面为中文。*
 
 Aster 使用独立品牌、图标和从零编写的工作区实现，不包含 Otty 的品牌资源或私有代码。
 
@@ -33,11 +38,13 @@ Aster 使用独立品牌、图标和从零编写的工作区实现，不包含 O
 ## 安装
 
 从[发布页](https://github.com/rambocode/aster/releases)下载已签名并公证的 DMG，打开后把
-`Aster.app` 拖进 `/Applications`。
+`Aster.app` 拖进 `/Applications`。从“应用程序”打开 Aster，用 `⌘T` 新建标签、
+`⌘D` 向右分屏，再用 `⌘O` 打开 README。
 
 此后 Aster 会自己更新：每天在后台检查一次新版本，也可以让它自动下载并安装。相关开关在
 **设置 → 通用 → 更新**，**Aster → 检查更新…** 可随时手动触发。更新只从官方更新源获取，
-且必须同时通过 EdDSA 签名校验与 macOS 公证校验才会安装，全程不发送任何使用数据。
+且必须同时通过 EdDSA 签名校验与 macOS 公证校验才会安装，更新检查不发送使用数据。可选的崩溃报告与 CLI Agent 项目记忆提炼默认关闭；
+手动开启后可能发送崩溃信息或项目摘要。
 
 > 从 0.4.1 或更早版本升级：那些版本不含更新组件，无法自动更新，需要手动下载一次 DMG。
 > 此后即可自动更新。
@@ -77,8 +84,10 @@ ad-hoc 构建不启用自动更新，设置页的「更新」一组会整体置�
 | 向下分屏 | `⇧⌘D` |
 | 关闭 Pane | `⌥⌘W` |
 | 查找 | `⌘F` |
-| 命令面板 | `⌘K` |
+| 命令面板 | `⇧⌘P` |
 | 设置 | `⌘,` |
+
+以上是默认快捷键。终端聚焦时 `⌘K` 清屏；在 Open Quickly 中则打开所选结果的操作菜单。命令面板快捷键可在“设置 → 快捷键”修改。
 
 ## 文档
 

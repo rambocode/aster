@@ -21,6 +21,7 @@ enum MemoryProcessRunner {
     final class OutputBox: @unchecked Sendable {
       let lock = NSLock()
       var data = Data()
+      var finishedReading = false
     }
 
     guard FileManager.default.isExecutableFile(atPath: executable), maximumBytes > 0 else {
@@ -43,9 +44,18 @@ enum MemoryProcessRunner {
     let output = OutputBox()
     let finished = DispatchSemaphore(value: 0)
     pipe.fileHandleForReading.readabilityHandler = { handle in
-      let chunk = handle.availableData
-      guard !chunk.isEmpty else { return }
+      // nil handler 不会等待已经进入的回调；读取、缓冲与最终 drain 共用同一把锁。
+      // 始终使用 POSIX 非阻塞读，空管道的 EAGAIN 不会变成 Foundation 异常。
       output.lock.lock()
+      guard !output.finishedReading else {
+        output.lock.unlock()
+        return
+      }
+      let chunk = handle.readRemainingWithoutBlocking(maximumBytes: 64 * 1_024)
+      guard !chunk.isEmpty else {
+        output.lock.unlock()
+        return
+      }
       let remaining = maximumBytes - output.data.count
       if remaining > 0 { output.data.append(chunk.prefix(remaining)) }
       let full = output.data.count >= maximumBytes
@@ -57,6 +67,9 @@ enum MemoryProcessRunner {
       try process.run()
     } catch {
       pipe.fileHandleForReading.readabilityHandler = nil
+      output.lock.lock()
+      output.finishedReading = true
+      output.lock.unlock()
       return nil
     }
 
@@ -78,9 +91,10 @@ enum MemoryProcessRunner {
       }
     }
     pipe.fileHandleForReading.readabilityHandler = nil
-    // 不等 EOF：后台孙进程可能一直握着写端，见 `readRemainingWithoutBlocking`。
-    let tail = pipe.fileHandleForReading.readRemainingWithoutBlocking(maximumBytes: maximumBytes)
+    // 封住迟到的回调，再在同一临界区取尾部数据；仍然不等待孙进程关闭写端。
     output.lock.lock()
+    output.finishedReading = true
+    let tail = pipe.fileHandleForReading.readRemainingWithoutBlocking(maximumBytes: maximumBytes)
     let remaining = maximumBytes - output.data.count
     if remaining > 0 { output.data.append(tail.prefix(remaining)) }
     let data = output.data
