@@ -37,7 +37,7 @@ The organize icon beside `TABS` opens grouping and sorting: `No Grouping / By Pr
 
 Right-click a tab and choose **Rename Tab…** to set a fixed name or a dynamic prefix that keeps updating with the running program. **Restore Auto Title** returns to the program's OSC title. Names, prefixes, and the last title are restored with the workspace. When an integrated Agent CLI such as Claude Code or Codex runs in the current Pane, its session title appears: preferably the Agent's own title (Claude Code's automatic title or `/rename`, or Codex's thread name), otherwise the first meaningful question after a brief delay following the initial prompt. A manually fixed name takes priority; the original title returns after the Agent exits.
 
-New tabs receive an automatic title color. Within a window, colors are distinct until all 12 are used, then favor the least-used color. **Title Color** in the context menu lets you choose a color, request another random color, open a custom color picker, or reset to the default. Colors restore with the workspace. Disable **Random Title Colors** in **Settings → View → Tab Icons & Badges** to use the theme foreground again; manually chosen colors remain.
+New tabs receive an automatic title color. Within a window, colors are distinct until all 12 are used, then favor the least-used color. **Title Color** in the context menu lets you choose a color, request another random color, open a custom color picker, or reset to the default. Colors restore with the workspace. Disable **Random Title Colors** in **Settings → View → Tab Icon and Badge** to use the theme foreground again; manually chosen colors remain.
 
 The tab-bar settings under **Appearance** also control new-tab position. **Auto** puts empty tabs at the end of the current group and tabs with directories or files after the current tab; you can instead always use the list end or the position after the current tab. In every case `⌘T` inherits the current tab's live working directory, or home if no tab can provide one.
 
@@ -418,7 +418,7 @@ Aster supports Claude Code, Codex, OpenCode, Cursor CLI, Kimi Code, Pi, omp, and
 
 ### Menu-Bar AI Usage
 
-This feature is **off by default**. Enable it in **Settings → Agents → Menu Bar AI Usage**, or use **View → Show AI Usage** / the same command-palette action, which also enables the switch. A macOS menu-bar icon shows Claude/Codex's used percentage for the 5-hour window, or weekly if unavailable. At 80% it warns and at 95% turns red; awaiting-input Agents add a red dot.
+This feature is **off by default**. Enable it in **Settings → Agents → AI Usage in the Menu Bar**, or use **View → Show AI Usage** / the same command-palette action, which also enables the switch. A macOS menu-bar icon shows Claude/Codex's used percentage for the 5-hour window, or weekly if unavailable. At 80% it warns and at 95% turns red; awaiting-input Agents add a red dot.
 
 Click for an animated floating window beneath the icon. It can be moved/resized and remembers size, but opens under the icon each time on the current display/Space and remains in front after app switching. Moving away after an icon-open, even without entering the window, or leaving after entering waits about half a second then closes; quickly returning or resizing prevents dismissal. Menu/palette-opened windows do not auto-close before the pointer has visited. Click the icon or upper-left close control to dismiss.
 
@@ -438,7 +438,7 @@ The feature does not alter terminals. With the switch off it performs no work; w
 
 ## Project Memory (Session Memory)
 
-Aster can record terminal work so the next Agent can query a project's past process without another explanation. It is **off by default**; enable Session Memory recording under **Settings → Agents**.
+Aster can record terminal work so the next Agent can query a project's past process without another explanation. It is **off by default**; enable **Session Memory Recording** under **Settings → Agents**.
 
 - **Modes**: Off, Recording, and Incognito. Off/Incognito both write nothing; Incognito signals a temporary pause. Recording captures commands, exit codes, output excerpts, CWD, Agent state, and git branch/commit. Full command output is in separate files, with excerpts in the database. Empty sessions without commands or Agent participation are neither recorded nor listed in History.
 - **Excluded directories/commands** are blocked at event creation, not recorded then deleted. Excluded-command output is excluded too. Common secrets are masked before writes using the Send to Chat rules. An always-active, nonremovable baseline excludes `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.password-store`, and commands `op`, `vault`, `pass`, `gpg`, `security`; your exclusions add to it.
