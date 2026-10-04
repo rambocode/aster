@@ -8,12 +8,12 @@ splits. Track Claude Code and Codex session titles, running status, and completi
 notifications alongside your work. Aster is built with AppKit; the released DMG
 requires macOS 14 or later and an Apple silicon Mac.
 
-[Explore the website](https://aster.foo/en/) · [Download the latest DMG](https://github.com/rambocode/aster/releases/latest) · [Read the user guide](docs/user/help.md)
+[Explore the website](https://aster.foo/en/) · [Download the latest DMG](https://github.com/rambocode/aster/releases/latest) · [Read the user guide](https://aster.foo/docs/en/)
 
 Start with a tab, split it with `⌘D` or `⇧⌘D`, then open a file with `⌘O`.
 Save a reusable layout as an `.asterrecipe`, or restore your workspace on launch.
 For remote work, open a native SSH tab or use a remote machine workspace backed
-by the server-side session service. See the [user guide](docs/user/help.md) for setup.
+by the server-side session service. See the [user guide](https://aster.foo/docs/en/) for setup.
 
 ![Aster with a Ghostty terminal beside a Markdown preview](site/assets/shots/workspace.png)
 
@@ -99,24 +99,25 @@ See `docs/developer/software-update.md` for the signing, appcast, and release de
 | --- | --- |
 | New tab | `⌘T` |
 | Open file | `⌘O` |
-| Close tab | `⌘W` |
+| Close current pane or last-pane tab | `⌘W` |
 | Split right | `⌘D` |
 | Split down | `⇧⌘D` |
 | Close pane | `⌥⌘W` |
 | Find | `⌘F` |
-| Command palette | `⌘K` |
+| Command palette | `⇧⌘P` |
 | Settings | `⌘,` |
 
 ## Documentation
 
-Developer and user docs are currently written in Chinese.
+The user guide is available in [English](https://aster.foo/docs/en/) and [Chinese](https://aster.foo/docs/). Developer docs below are in Chinese.
 
 - [Workspace domain and implementation](docs/developer/terminal-domain.md)
 - [Ghostty terminal engine](docs/developer/ghostty-terminal-engine.md)
 - [AppKit interface architecture](docs/developer/appkit-interface.md)
 - [Files, links, and the File Pane domain](docs/developer/files-and-links-domain.md)
 - [Theme system domain and implementation](docs/developer/theme-system.md)
-- [User help](docs/user/help.md)
+- [English user guide source](docs/user/help.en.md)
+- [Chinese user help](docs/user/help.md)
 - [Third-party licenses](THIRD-PARTY-NOTICES.md)
 
 ## License

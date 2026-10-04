@@ -30,12 +30,13 @@ site-i18n/                 # 落地页译文：en.json、ja.json、de.json、fr.
 
 site-docs/                 # 文档站构建工程（VitePress）
 ├── .vitepress/config.mjs  # base=/docs/、outDir=../site/docs、cleanUrls
-└── scripts/split-help.mjs # 把 docs/user/help.md 按「## 章节」切成多页
+└── scripts/split-help.mjs # 把中英文用户帮助按「## 章节」切成多页
 ```
 
-- 文档站的唯一内容源是 `docs/user/help.md`。构建前 `split-help.mjs` 按二级标题切页，生成物不入库。
+- 文档站的中文内容源是 `docs/user/help.md`，英文内容源是 `docs/user/help.en.md`。构建前 `split-help.mjs` 按二级标题切页，中文生成到 `guide/`，英文到 `en/guide/`，生成物不入库。中文应用内帮助保留原源文件。
+- 两种语言共用固定 slug 与侧栏分组；英文需要覆盖完整章节集合。构建会拒绝英文缺章、重复 slug、未知英文标题和未闭合代码围栏。新增或改变用户行为时同步英文翻译，技术命令、快捷键与界面名按现有实现核对。
 - 文档页 slug 来自 `split-help.mjs` 的 `SLUGS` 表。表里没有的章节会落到 `section-NN`，编号随章节顺序变化，不能当作稳定链接。对外链接（`llms.txt`、落地页、README）只用 `SLUGS` 里登记过的 slug。
-- `help.md` 里的代码围栏必须成对。多出一个 ` ``` ` 会让切页脚本把后面所有章节当成代码块，这些页面在线上全部 404。
+- 两份帮助里的代码围栏必须成对。未闭合围栏会使切页脚本报错，避免后续章节被误当成代码并产生缺页。
 - 部署由 Cloudflare Workers Builds 完成：构建命令是 `cd site-docs && npm ci && npm run docs:build`，然后以 `site/` 为根上传静态资产（见 `wrangler.jsonc`）。
 - 线上开启 clean URL：`/docs/faq` 对应 `site/docs/faq.html`，`.html` 形式会被重定向到无后缀形式。
 
@@ -95,7 +96,9 @@ node scripts/build-site-i18n.mjs --check
 - 新增由 `site.js` 动态生成的中文文案时，同时加进脚本的 `RUNTIME_KEYS` 和四个译文文件。
 - 页面里的站内链接与资源一律用站点根路径（`/assets/…`、`/docs/`），生成到子目录后才不会失效。
 - 数字和事实（版本号、规格数量、主题数量）在五种语言里必须一致。
-- 文档站 `/docs/` 目前只有中文，各语言落地页的「文档」入口都指向它。
+- 文档站 `/docs/` 保留中文，`/docs/en/` 提供完整英文指南；对应页面共享 slug（例如 `/docs/faq` 与 `/docs/en/faq`）。VitePress 的 nav、sidebar、outline、搜索与界面文案按语言配置，本地搜索只返回当前语言。
+- 英文落地页与 README 指向英文指南；日、德、法落地页的文档、FAQ、主题入口也指向英文，并在可见文字里明确标注英文回退。开发者文档尚为中文，非中文入口明确标注。不得创建空的其他语言文档路由或冒充已翻译。
+- 文档语言切换保留对应章节页面；不同语言的小节锚点不同，切换时清除原语言 hash 并回到页首，同语言页内锚点保持不变。
 
 ## 真实截图
 
@@ -150,7 +153,7 @@ node scripts/build-site-i18n.mjs --check
 4. `site/home-sitemap.xml` 第一条 `lastmod`，改成发布日期。
 5. 运行 `node scripts/build-site-i18n.mjs`，把以上改动带到各语言页、JSON-LD 与 sitemap。
 6. 如果这次发布改变了核心事实（新增大功能、规格数量、主题数量、系统要求），同步检查 FAQ 答案、`featureList` 与 `llms.txt` 的事实清单。
-7. `help.md` 新增了「## 章节」时，在 `split-help.mjs` 的 `SLUGS` 里登记固定 slug，再把新页面加进 `llms.txt`。
+7. `help.md` 新增了「## 章节」时，同步 `help.en.md`，在 `split-help.mjs` 的 `SLUGS` 里登记中英文标题与固定 slug，再把新页面加进 `llms.txt`。
 
 预览版不改这些文件，官网只描述正式版。
 
@@ -169,7 +172,7 @@ node scripts/build-site-i18n.mjs --check
 xmllint --noout site/sitemap.xml site/home-sitemap.xml
 
 # 文档站能完整构建，页面数与 help.md 的章节数一致
-cd site-docs && npm ci && npm run docs:build && cd ..
+cd site-docs && npm ci && npm run docs:build && npm run docs:check && cd ..
 
 # 本地预览，逐个点击导航、文档入口与下载链接
 ./scripts/serve-site.sh

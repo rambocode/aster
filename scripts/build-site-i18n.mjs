@@ -237,6 +237,8 @@ function applyMeta(html, lang, dict, missing) {
   setContent("name", "twitter:title", meta.title);
   setContent("name", "twitter:description", meta.description);
   html = html.replace(/class="brand" href="\/"/g, `class="brand" href="${lang.path}"`);
+  // 非中文落地页指向完整英文指南；回退语言由译文明确标注。
+  html = html.replace(/href="\/docs\//g, 'href="/docs/en/');
   return html;
 }
 
