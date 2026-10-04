@@ -4,6 +4,8 @@ import Foundation
 
 extension FileHandle {
   /// 取走管道里已经到达的数据，绝不等待 EOF。
+  /// 调用方须串行化同一读端的读取与收尾；不要再与 `availableData` 混用，
+  /// O_NONBLOCK 下的 EAGAIN 会被 Foundation 转成不可捕获的 Objective-C 异常。
   ///
   /// 子进程退出后它自己的输出已经全部进了管道缓冲区，但 EOF 要等所有写端关闭才出现：
   /// git 拉起的 fsmonitor、ssh 的 ControlMaster 这类后台孙进程会继承并长期握住写端，

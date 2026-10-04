@@ -4,12 +4,27 @@ English | [简体中文](README.zh-CN.md)
 
 **One native macOS workspace for your terminal, files, and previews.** Arrange
 Ghostty-powered terminals beside a file browser, editor, or preview with recursive
-splits. Aster is built with AppKit and runs on macOS 14 or later.
+splits. Track Claude Code and Codex session titles, running status, and completion
+notifications alongside your work. Aster is built with AppKit; the released DMG
+requires macOS 14 or later and an Apple silicon Mac.
 
-[Explore the website](https://aster.foo/) · [Download the latest DMG](https://github.com/rambocode/aster/releases/latest) · [Read the user guide](docs/user/help.md)
+[Explore the website](https://aster.foo/en/) · [Download the latest DMG](https://github.com/rambocode/aster/releases/latest) · [Read the user guide](docs/user/help.md)
 
 Start with a tab, split it with `⌘D` or `⇧⌘D`, then open a file with `⌘O`.
-Your workspace can be saved as an `.asterrecipe` and restored on launch.
+Save a reusable layout as an `.asterrecipe`, or restore your workspace on launch.
+For remote work, open a native SSH tab or use a remote machine workspace backed
+by the server-side session service. See the [user guide](docs/user/help.md) for setup.
+
+![Aster with a Ghostty terminal beside a Markdown preview](site/assets/shots/workspace.png)
+
+*Actual Aster window showing the public demo fixture. The screenshot UI is in Chinese.*
+
+<details>
+<summary>See the terminal-focused layout</summary>
+
+![Aster terminal with its tab sidebar and public demo files](site/assets/shots/terminal.png)
+
+</details>
 
 Aster has its own brand, icon, and workspace implementation. It contains no Otty
 brand assets or proprietary code.
@@ -36,14 +51,16 @@ brand assets or proprietary code.
 
 Download the latest signed and notarized DMG from the
 [releases page](https://github.com/rambocode/aster/releases), open it, and drag
-`Aster.app` into `/Applications`.
+`Aster.app` into `/Applications`. Open Aster from Applications, create a tab with
+`⌘T`, split right with `⌘D`, then use `⌘O` to open a README beside the terminal.
 
 Aster updates itself from then on: it checks for a new version once a day in the
 background and can download and install it for you. Everything is configurable under
 **Settings → General → Update**, and **Aster → Check for Updates…** triggers a check on
 demand. Updates are fetched only from the official appcast and must pass both an EdDSA
-signature check and macOS notarization before they are installed; no usage data is ever
-sent.
+signature check and macOS notarization before they are installed. Update checks do
+not send usage data. Optional crash reporting and CLI Agent memory extraction are
+disabled by default; enabling them can send crash information or project summaries.
 
 > Upgrading from 0.4.1 or earlier: those builds shipped without the updater, so they
 > cannot update themselves. Download the DMG once by hand — after that updates are

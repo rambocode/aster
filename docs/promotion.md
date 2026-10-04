@@ -4,7 +4,7 @@
 
 ## 当前基线与核验
 
-2026-09-23，GitHub API 显示 `rambocode/aster` 为 2 stars、0 forks；最新公开版本是 `v0.6.11`，其 DMG 当时显示 2 次下载。数字会变化，发布前及每周复核：
+2026-10-04 01:54 UTC 的核验记录显示 `rambocode/aster` 为 7 stars；当前公开版本为 `v0.6.15`。历史基线（2026-09-23）为 2 stars、0 forks，`v0.6.11` 的 DMG 当时显示 2 次下载。未重新核验的 fork 和下载数字不作为当前指标。数字会变化，发布前及每周复核：
 
 ```bash
 gh api repos/rambocode/aster --jq '{stars: .stargazers_count, forks: .forks_count}'
@@ -15,7 +15,7 @@ gh api repos/rambocode/aster/releases/latest --jq '{version: .tag_name, download
 
 ## 发布前资料
 
-- 制作真实 Aster 窗口截图或短录屏，展示终端与文件预览并排使用；清除用户名、路径、令牌和终端历史。官网现有的动画窗口是演示图，不作为真实应用截图。
+- `site/assets/shots/workspace.png` 和 `terminal.png` 已从安装的 Aster 0.6.15（build 34）独立临时窗口重新采集，README 与五种语言官网共用这些图片。仅展示 `/tmp/aster-public-demo` 公开示例、默认工作区与真实终端/Markdown 预览；未修改截图像素或全局设置，未触碰原有会话。官网动画窗口仍为演示，不能替代真实截图。
 - 在干净的 macOS 14+ 环境试装最新版 DMG，确认首次打开、分屏、打开文件和更新入口，并记录可复现的结果。
 - 检查 README、官网、DMG 版本、系统要求和下载链接一致。任何对外内容只使用已发布能力。
 - 准备好持续回答安装、兼容性和隐私问题的维护者；发布后及时修正发现的障碍。
@@ -34,11 +34,11 @@ gh api repos/rambocode/aster/releases/latest --jq '{version: .tag_name, download
 
 英文短帖：
 
-> Aster is an open-source, native AppKit terminal workspace for macOS 14+. It puts Ghostty-powered terminals beside files, editors, and previews in recursive splits, with tabs and workspace restore. The signed DMG is ready to try: https://github.com/rambocode/aster/releases/latest — source: https://github.com/rambocode/aster. I'd value feedback on the split and file workflows.
+> Aster is an open-source, native AppKit terminal workspace for macOS 14+ on Apple silicon. It puts Ghostty-powered terminals beside files, editors, and previews in recursive splits, with tabs and workspace restore. The signed DMG is ready to try: https://github.com/rambocode/aster/releases/latest — source: https://github.com/rambocode/aster. I'd value feedback on the split and file workflows.
 
 中文短帖：
 
-> Aster 是面向 macOS 14+ 的开源原生终端工作区。它用递归分屏把基于 Ghostty 的终端、文件、编辑器和预览放在一个窗口里，并支持标签与工作区恢复。最新版 DMG 可直接试用：https://github.com/rambocode/aster/releases/latest；源码：https://github.com/rambocode/aster。欢迎反馈分屏与文件工作流中的实际问题。
+> Aster 是面向 macOS 14+、Apple 芯片的开源原生终端工作区。它用递归分屏把基于 Ghostty 的终端、文件、编辑器和预览放在一个窗口里，并支持标签与工作区恢复。最新版 DMG 可直接试用：https://github.com/rambocode/aster/releases/latest；源码：https://github.com/rambocode/aster。欢迎反馈分屏与文件工作流中的实际问题。
 
 Show HN 标题草稿：`Show HN: Aster – an AppKit terminal workspace with Ghostty-powered panes`
 
