@@ -107,6 +107,8 @@ See `docs/developer/software-update.md` for the signing, appcast, and release de
 | Command palette | `⇧⌘P` |
 | Settings | `⌘,` |
 
+These are default shortcuts. With the terminal focused, `⌘K` clears its screen; in Open Quickly it opens actions for the selected result. Customize the command-palette shortcut in Settings → Shortcuts.
+
 ## Documentation
 
 The user guide is available in [English](https://aster.foo/docs/en/) and [Chinese](https://aster.foo/docs/). Developer docs below are in Chinese.
