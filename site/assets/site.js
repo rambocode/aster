@@ -538,7 +538,7 @@
       },
       terminal: {
         src: "/assets/shots/terminal.png",
-        caption: "专注终端时，侧栏与文件面板都能收起。",
+        caption: "专注终端输出，保留目录与标签导航。",
         alt: "Aster 实际终端窗口，显示公开演示目录和配置文件",
         number: "02 / 02"
       }

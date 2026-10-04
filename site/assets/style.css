@@ -437,7 +437,7 @@ html:not([lang="zh-CN"]):not([lang="ja"]) .hero h1 { font-size: clamp(42px, 4.5v
 .quote-symbol { font-size: 80px; line-height: 1; height: 48px; color: #8B9C71; }
 .voice-two .quote-symbol { color: #D5E7A2; }
 .voice-three .quote-symbol { color: #A87855; }
-.voice-card blockquote { font-size: 19px; line-height: 1.8; letter-spacing: -0.01em; margin: 14px 0 28px; flex: 1; }
+.voice-card .workflow-example { font-size: 19px; line-height: 1.8; letter-spacing: -0.01em; margin: 14px 0 28px; flex: 1; }
 .voice-card figcaption { display: flex; align-items: center; gap: 10px; font-size: 12.5px; line-height: 1.4; }
 .voice-card figcaption small { display: block; font-size: 10px; margin-top: 3px; color: #62744D; }
 .voice-two figcaption small { color: #D6E2C4; }
@@ -452,7 +452,7 @@ html:not([lang="zh-CN"]):not([lang="ja"]) .hero h1 { font-size: clamp(42px, 4.5v
 .voice-wall { columns: 3; column-gap: 20px; margin-top: 56px; }
 .wall-card { break-inside: avoid; margin: 0 0 20px; background: rgba(255, 255, 255, 0.72); border: 1px solid #DCE4D3; border-radius: 14px; padding: 20px 22px 18px; transition: transform .3s var(--ease), box-shadow .3s, background .3s, opacity .7s var(--ease); }
 .wall-card:hover { transform: translateY(-3px); background: #FFFFFF; box-shadow: 0 12px 24px -16px rgba(36, 61, 41, 0.25); }
-.wall-card blockquote { margin: 0 0 16px; font-size: 14.5px; line-height: 1.8; color: var(--ink); }
+.wall-card .workflow-example { margin: 0 0 16px; font-size: 14.5px; line-height: 1.8; color: var(--ink); }
 .wall-card figcaption { display: flex; align-items: center; gap: 10px; font-size: 12.5px; line-height: 1.4; }
 .wall-card figcaption small { display: block; font-size: 11px; margin-top: 2px; color: var(--ink-3); }
 .wall-card .voice-avatar { width: 30px; height: 30px; font-size: 11px; }
@@ -548,7 +548,7 @@ dialog > p { font-size: 11px; color: var(--ink-3); margin-top: 10px; }
   .feature-card { padding-inline: 22px; }
   .feature-card h3 { font-size: 24px; }
   .voice-card { padding-inline: 22px; }
-  .voice-card blockquote { font-size: 17px; }
+  .voice-card .workflow-example { font-size: 17px; }
 }
 
 @media (max-width: 1000px) {
@@ -569,7 +569,7 @@ dialog > p { font-size: 11px; color: var(--ink-3); margin-top: 10px; }
   .voice-grid { gap: 17px; }
   .voice-card { padding: 18px 20px 22px; min-height: 300px; }
   .voice-wall { columns: 2; }
-  .voice-card blockquote { font-size: 16px; }
+  .voice-card .workflow-example { font-size: 16px; }
   .faq { gap: 44px; padding-block: 72px; }
   .closing { padding-inline: 32px; }
   .closing-line { font-size: 46px; }
