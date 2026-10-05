@@ -154,9 +154,22 @@ Read sources:
 
 If increasing `--lines` does not reveal more of a completed response, the pane is probably running the agent on the alternate screen. Ask the agent to write its complete response as Markdown to a temporary file and reply only with the path, then read the file. Use this only as a fallback.
 
+## Create and close panes and tabs
+
+```bash
+aster pane split --current --direction down --json
+aster tab new --cwd /path/to/project --json
+aster tab rename <tab-id> "build"
+aster tab focus <tab-id>
+aster pane close <pane-id>
+aster tab close <tab-id>
+```
+
+`pane split` and `tab new` return the new IDs as `pane_id` and `tab_id`; read them from the JSON result. `--direction` is `right` (default), `left`, `down`, or `up`. `tab new` selects the new tab. `pane close` closes the whole tab when the pane is the last one in it (`closed_tab: true`). A `<tab-id>` argument also accepts the ID of any pane inside that tab. `pane close` and `tab close` need an explicit target or `--current`, and they run without a confirmation dialog.
+
 ## Safety and coordination rules
 
-- Write commands (`prompt`, `send-text`, `send-keys`, `start`) require the user to enable "IPC: allow send keys" in Aster settings. On `write_not_allowed`, tell the user to enable it; do not retry.
+- Write commands (`prompt`, `send-text`, `send-keys`, `start`, `pane split`, `pane close`, `tab new`, `tab close`) require the user to enable "IPC: allow send keys" in Aster settings. On `write_not_allowed`, tell the user to enable it; do not retry.
 - Panes running `ssh` or `sudo` are refused with `sensitive_session_not_allowed` unless the user enabled that setting.
 - Use `--current`, an explicit pane ID, or a unique agent name. Do not rely on the user's focused pane.
 - Parse IDs from JSON responses. Do not derive them from sidebar order or examples.

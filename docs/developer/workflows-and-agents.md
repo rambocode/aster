@@ -119,9 +119,20 @@ socket（目录 `0700`、socket `0600`，`accept` 后用 `getpeereid` 校验对�
 | `agent.send_keys` / `agent.focus` / `agent.start` | 是 | 按键、聚焦并标记「已看见」、在空闲 shell pane 启动 agent |
 | `pane.read` / `pane.wait_for_output` | 否 | 读任意终端 pane（`visible`/`recent`，≤10 000 行）、轮询等待子串或正则命中 |
 | `pane.send_text` / `pane.send_keys` / `pane.focus` | 是 | 向 pane 写可打印文本 / 逻辑按键、聚焦 |
+| `pane.split` / `pane.close` | 是 | 在目标 pane 一侧拆出新终端 pane（`direction` 默认 `right`）、关闭 pane；关的是标签里最后一个 pane 时连标签一起关 |
+| `tab.new` / `tab.close` | 是 | 在目标窗口新建标签并选中（可带绝对路径 `cwd`）、关闭整个标签 |
+| `tab.focus` / `tab.rename` | 否 | 切到标签并前置窗口；固定标签名，`title` 为空时恢复自动标题 |
 | `events.subscribe` / `events.wait` | 否 | 长连接推送 / 阻塞等下一条事件（`after_sequence` 补漏） |
 | `notification.show` | 是 | 系统通知（标题 256 字节、正文 1 KiB，剥离控制字符） |
 | `workflow.execute` | 是 | 旧 `aster open/view/edit/watch/jump/learn/ignore/pane run|exec|capture` 语法桥接到 `WorkflowCLIParser`，返回 `{stdout, stderr, exit_code}` |
+
+**结构方法**（`pane.split` / `pane.close` / `tab.*`，实现在 `Control/LayoutControlCommands.swift`）：
+不弹关闭确认——调用方是脚本或 Agent，模态弹窗会挂住控制连接；放行只看 IPC 写门禁，被关闭的终端里有
+敏感会话时还要敏感会话开关。未保存文档的保存提示保留，用户取消时返回 `write_rejected`。结果统一为
+`{ok, window_id, tab_id?, pane_id?, closed_tab?}`：新建类带回新 ID，关闭类带回被关对象的 ID。远端机器的
+结构变更是服务端事务，请求返回时新 ID 还不存在，`pane.split` / `tab.new` 只带 `window_id`，调用方用
+`pane.created` 事件或 `session.snapshot` 取结果。`tab` 字段接受标签短 ID，也接受标签里任意 pane 的 selector。
+CLI 侧 `pane close` / `tab close` 必须显式给目标或 `--current`，不靠 `ASTER_PANE_ID` 兜底。
 
 **ID 与 selector**：窗口 `w1`、标签 `w1:t2`、pane `w1:p5` 是稳定短 ID，由
 `ControlIdentityRegistry` 分配、只增不复用，标签跨窗口转移后旧 ID 仍作为别名可用。`target`/`pane`

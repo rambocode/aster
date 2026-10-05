@@ -72,6 +72,7 @@ private func tokenize(_ line: String) -> [String] {
 private func substitutePlaceholder(_ token: String) -> String {
   switch token {
   case "$ASTER_PANE_ID", "<pane-id>", "$PWD": return "w1:p1"
+  case "<tab-id>": return "w1:t1"
   case "<agent-args...>": return "--model"
   default: return token
   }

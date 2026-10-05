@@ -42,6 +42,14 @@ public enum AsterCLICommand: Equatable, Sendable {
   case paneWaitForOutput(
     pane: String?, match: String?, regex: String?, source: PaneReadSource, lines: Int?,
     timeoutMs: Int?)
+  /// 关闭必须显式指定目标（或 `--current`），不靠环境变量猜。
+  case paneClose(PaneCloseParams)
+  case paneSplit(pane: String?, direction: SplitDirection)
+  /// window 为 nil 表示调用者所在窗口；cwd 可以是相对路径，由运行时按当前目录补全。
+  case tabNew(window: String?, cwd: String?)
+  case tabClose(TabTargetParams)
+  case tabFocus(TabTargetParams)
+  case tabRename(TabRenameParams)
   case eventsSubscribe(EventsSubscribeParams)
   case eventsWait(EventsWaitParams)
   case notificationShow(NotificationShowParams)
@@ -85,13 +93,15 @@ public struct AsterCLIArguments: Equatable, Sendable {
   public var requiresAsterEnv: Bool {
     // `session detach` / `session end` 会结束或拆掉后台受管终端，属于生命周期动作：
     // 与 agent.* 同级，只对 Aster 内进程开放；只读的 `session terminals` 保持任意终端可用。
+    // 关闭 / 拆分 Pane、新建 / 关闭标签同样会结束或启动进程，按同一级处理；`tab focus` /
+    // `tab rename` 只改界面，与 `pane focus` 一样不设限。
     switch command {
     case .agentList, .agentGet, .agentRead, .agentPrompt, .agentWait, .agentSendKeys, .agentFocus,
       .agentStart, .agentReport, .eventsSubscribe, .eventsWait, .notificationShow, .sessionDetach,
-      .sessionEnd:
+      .sessionEnd, .paneClose, .paneSplit, .tabNew, .tabClose:
       return true
     case .help, .version, .skill, .sessionSnapshot, .sessionTerminals, .paneRead, .paneSendText,
-      .paneSendKeys, .paneFocus, .paneWaitForOutput, .legacy:
+      .paneSendKeys, .paneFocus, .paneWaitForOutput, .tabFocus, .tabRename, .legacy:
       return false
     }
   }
@@ -103,6 +113,8 @@ public struct AsterCLIArguments: Equatable, Sendable {
   private static let legacyPaneSubcommands: Set<String> = ["run", "exec", "capture"]
   /// 新语法命令组；只写组名等同 `--help`。
   private static let newSyntaxGroups: Set<String> = ["agent", "pane", "events", "notification", "session"]
+  /// `tab` 组里走新语法的子命令；其余（`tab badge` 等）仍交给旧解析器。
+  private static let tabSubcommands: Set<String> = ["new", "close", "focus", "rename"]
 
   /// 入口：argv 不含程序名（若含 `aster`/`aster-cli` 会被剥掉）。
   public static func parse(_ rawArguments: [String]) throws -> AsterCLIArguments {
@@ -184,7 +196,8 @@ public struct AsterCLIArguments: Equatable, Sendable {
       command: .legacy(legacyGlobalPrefix + [group] + arguments))
     // 新语法允许 `--json` / `--format` 写在子命令之后（SKILL.md 的习惯写法 `aster agent list --json`）；
     // legacy 上面已经拿到原始 argv，这里的剥离只影响新语法分支。`--` 之后属于 agent 自己的参数，不动。
-    if newSyntaxGroups.contains(group) {
+    let isNewSyntaxTab = group == "tab" && arguments.first.map(tabSubcommands.contains) == true
+    if newSyntaxGroups.contains(group) || isNewSyntaxTab {
       format = try extractTrailingFormat(&arguments) ?? format
     }
     func make(_ command: AsterCLICommand) -> AsterCLIArguments {
@@ -197,7 +210,8 @@ public struct AsterCLIArguments: Equatable, Sendable {
       return make(try parseAgent(arguments))
     case "pane":
       guard let subcommand = arguments.first else {
-        throw AsterCLIArgumentError("pane 需要子命令：read | send-text | send-keys | focus | wait-output")
+        throw AsterCLIArgumentError(
+          "pane 需要子命令：read | send-text | send-keys | focus | wait-output | split | close")
       }
       if legacyPaneSubcommands.contains(subcommand) { return legacy }
       // send-text / send-keys 新旧语法重叠：旧写法带 `--from-file` / `--stdin` / `--` 时交回旧解析器。
@@ -213,6 +227,8 @@ public struct AsterCLIArguments: Equatable, Sendable {
       return make(try parseNotification(arguments))
     case "session":
       return make(try parseSession(arguments))
+    case "tab" where isNewSyntaxTab:
+      return make(try parseTab(arguments))
     default:
       if legacyTopLevelCommands.contains(group) { return legacy }
       throw AsterCLIArgumentError("未知命令: \(group)。运行 `aster --help` 查看用法")
@@ -414,6 +430,8 @@ public struct AsterCLIArguments: Equatable, Sendable {
       return .paneWaitForOutput(
         pane: pane, match: match, regex: regex, source: try parsed.source(),
         lines: try parsed.int("--lines"), timeoutMs: try parsed.int("--timeout"))
+    case "close", "split":
+      return try parseLayoutPane(arguments, subcommand: subcommand)
     default:
       throw AsterCLIArgumentError("未知子命令: pane \(subcommand)")
     }
@@ -516,7 +534,8 @@ public struct AsterCLIArguments: Equatable, Sendable {
   // MARK: 通用选项扫描
 
   /// 一次扫描得到的选项集合。
-  private struct ParsedOptions {
+  /// 跨文件扩展（AsterCLILayoutArguments.swift）共用，因此不是 private。
+  struct ParsedOptions {
     var flags: Set<String> = []
     var values: [String: String] = [:]
     var repeated: [String: [String]] = [:]
@@ -567,7 +586,7 @@ public struct AsterCLIArguments: Equatable, Sendable {
 
   /// 通用扫描：`flags` 是布尔选项，`valued` 是带值选项；`repeatable` 里的带值选项允许重复。
   /// `--opt=value` 与 `--opt value` 都接受；其它 `-` 开头的参数报未知选项。
-  private static func parseOptions(
+  static func parseOptions(
     _ arguments: [String], command: String, flags: Set<String>, valued: Set<String>,
     repeatable: Set<String> = []
   ) throws -> ParsedOptions {
@@ -620,7 +639,7 @@ public struct AsterCLIArguments: Equatable, Sendable {
   }
 
   /// agent 命令的 target：`--current` 或第一个位置参数。
-  private static func requiredTarget(_ parsed: ParsedOptions, command: String) throws -> String {
+  static func requiredTarget(_ parsed: ParsedOptions, command: String) throws -> String {
     if parsed.flags.contains("--current") {
       guard parsed.positionals.isEmpty || command == "agent prompt" || command == "agent send-keys"
       else {
@@ -638,7 +657,7 @@ public struct AsterCLIArguments: Equatable, Sendable {
   }
 
   /// pane 命令的 selector：`--current` / `--pane <id>` / 可选的首个位置参数；都没有则 nil。
-  private static func paneSelector(
+  static func paneSelector(
     _ parsed: ParsedOptions, allowPositional: Bool, command: String
   ) throws -> String? {
     var candidates: [String] = []
@@ -736,7 +755,7 @@ public struct AsterCLIArguments: Equatable, Sendable {
   }
 
   /// 把协议层 validate 的 invalid_params 转成 CLI 错误，保持 exit 2 语义。
-  private static func mapValidation(_ body: () throws -> Void) throws {
+  static func mapValidation(_ body: () throws -> Void) throws {
     do {
       try body()
     } catch let error as AsterControlError {
@@ -765,6 +784,14 @@ public struct AsterCLIArguments: Equatable, Sendable {
       pane send-keys [--pane <id>|--current] <key>...
       pane focus [<pane>|--pane <id>|--current]
       pane wait-output [<pane>|--pane <id>|--current] (--match <text>|--regex <re>) [--source ...] [--lines N] [--timeout ms]
+      pane split [<pane>|--pane <id>|--current] [--direction right|left|down|up]
+      pane close <pane>|--pane <id>|--current
+
+    标签（<tab> 是标签短 ID，或标签里任意 Pane 的 ID）:
+      tab new [--cwd <dir>] [--window <id>]
+      tab close <tab>|--current
+      tab focus <tab>|--current
+      tab rename <tab>|--current (<title>|--clear)
 
     事件与通知（需 ASTER_ENV=1）:
       events subscribe [--kind <kind>]...

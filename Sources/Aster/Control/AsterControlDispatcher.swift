@@ -183,6 +183,8 @@ final class AsterControlDispatcher {
     case .sessionEnd:
       let params = try decode(ManagedTerminalTargetParams.self, request)
       return try encode(try endManagedTerminal(params.pane))
+    case .paneClose, .paneSplit, .tabNew, .tabClose, .tabFocus, .tabRename:
+      return try performLayoutMethod(method, request: request)
     case .workflowExecute:
       let params = try decode(WorkflowExecuteParams.self, request)
       return try encode(try await executeWorkflow(params))

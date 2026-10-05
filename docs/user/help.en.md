@@ -372,12 +372,20 @@ aster agent prompt w1:p2 "Run the tests" --wait  # Submit and wait for idle
 aster pane read --current --source recent
 aster pane send-text --pane w1:p3 'npm test' --enter
 aster pane wait-output w1:p3 --match "passed" --timeout 60000
+aster pane split --current --direction down  # Split a new Pane below; prints its ID
+aster pane close w1:p3                       # Close a Pane; closes the tab if it is the last one
+aster tab new --cwd ~/project                # New tab, selected; prints tab and Pane IDs
+aster tab focus w1:t2                        # Switch to a tab
+aster tab rename w1:t2 "build"               # Pin the tab name; --clear restores the automatic title
+aster tab close w1:t2                        # Close the whole tab
 aster events subscribe --kind pane.agent_status_changed
 aster notification show "Build complete" --body "All passed"
 aster session terminals                      # Managed terminals and actual status
 aster session detach --current               # Detach; background tasks continue
 aster session end w1:p3                      # Terminate this managed terminal
 ```
+
+`pane split`, `pane close`, `tab new`, and `tab close` start or end processes, so they need "Allow Send Keys" just like sending input. They run without a confirmation dialog (unsaved documents still prompt to save). `pane close` and `tab close` require an explicit target or `--current`. In `tab` commands the target can be a tab ID or the ID of any Pane inside that tab.
 
 ### Remote TUI Client
 

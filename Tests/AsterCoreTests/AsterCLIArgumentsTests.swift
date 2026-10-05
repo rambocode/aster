@@ -166,7 +166,7 @@ struct AsterCLIArgumentsTests {
     #expect(throws: AsterCLIArgumentError.self) { try command(["pane", "wait-output", "--match", "a", "--regex", "b"]) }
     #expect(throws: AsterCLIArgumentError.self) { try command(["pane", "wait-output", "--regex", "["]) }
     #expect(try command(["pane"]) == .help)
-    #expect(throws: AsterCLIArgumentError.self) { try command(["pane", "split"]) }
+    #expect(throws: AsterCLIArgumentError.self) { try command(["pane", "explode"]) }
   }
 
   @Test("events 与 notification")

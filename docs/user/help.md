@@ -399,12 +399,20 @@ aster agent prompt w1:p2 "跑一下测试" --wait  # 提交 prompt 并等它空�
 aster pane read --current --source recent
 aster pane send-text --pane w1:p3 'npm test' --enter
 aster pane wait-output w1:p3 --match "passed" --timeout 60000
+aster pane split --current --direction down  # 在当前 pane 下方拆出新 pane，打印它的 ID
+aster pane close w1:p3                       # 关闭 pane；标签里只剩它时连标签一起关
+aster tab new --cwd ~/project                # 新建标签并切过去，打印标签和 pane 的 ID
+aster tab focus w1:t2                        # 切到某个标签
+aster tab rename w1:t2 "构建"                # 固定标签名；--clear 恢复自动标题
+aster tab close w1:t2                        # 关闭整个标签
 aster events subscribe --kind pane.agent_status_changed
 aster notification show "构建完成" --body "全部通过"
 aster session terminals                      # 后台受管终端及其真实状态
 aster session detach --current               # 分离：后台任务继续运行
 aster session end w1:p3                      # 结束：终止该受管终端的后台进程
 ```
+
+`pane split`、`pane close`、`tab new`、`tab close` 会启动或结束进程，和发送输入一样要先开启“允许发送输入”；它们不弹确认框，直接执行（有未保存文档时仍会提示保存）。`pane close` 和 `tab close` 必须写明目标或 `--current`。`tab` 命令里的目标可以写标签 ID，也可以写标签里任意一个 pane 的 ID。
 
 ### 远程 TUI 客户端
 

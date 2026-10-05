@@ -120,6 +120,38 @@ struct CommandRunner {
         .paneWaitForOutput, params: try encode(params), timeout: waitTimeout(timeoutMs))
       try emit(result, text: renderReadText)
 
+    case .paneClose(var params):
+      params.pane = resolveTarget(params.pane)
+      let result = try client.call(.paneClose, params: try encode(params))
+      try emit(result, text: renderLayoutAction("closed"))
+
+    case .paneSplit(let pane, let direction):
+      let params = PaneSplitParams(pane: try resolvePane(pane), direction: direction)
+      let result = try client.call(.paneSplit, params: try encode(params))
+      try emit(result, text: renderLayoutAction("created"))
+
+    case .tabNew(let window, let cwd):
+      // 不写 --window 时用调用者自己的 Pane 定位窗口；不在 Aster 里运行则交给服务端取焦点窗口。
+      let params = TabNewParams(
+        window: window.map(resolveTarget) ?? currentPaneID, cwd: cwd.map(absolutePath))
+      let result = try client.call(.tabNew, params: try encode(params))
+      try emit(result, text: renderLayoutAction("created"))
+
+    case .tabClose(var params):
+      params.tab = resolveTarget(params.tab)
+      let result = try client.call(.tabClose, params: try encode(params))
+      try emit(result, text: renderLayoutAction("closed"))
+
+    case .tabFocus(var params):
+      params.tab = resolveTarget(params.tab)
+      let result = try client.call(.tabFocus, params: try encode(params))
+      try emit(result, text: renderOK)
+
+    case .tabRename(var params):
+      params.tab = resolveTarget(params.tab)
+      let result = try client.call(.tabRename, params: try encode(params))
+      try emit(result, text: renderOK)
+
     case .eventsSubscribe(let params):
       // 订阅是长连接：确认行与每条事件都按 NDJSON 逐行输出，text/json 格式相同，便于 `while read` 消费。
       try client.stream(
@@ -250,6 +282,25 @@ struct CommandRunner {
   }
 
   private func renderOK(_ result: JSONValue) throws -> String { "ok" }
+
+  /// 结构命令的一行结果：动词后面跟服务端带回的标签 ID 与 Pane ID，例如 `closed w1:p3`、
+  /// `created w1:t4 w1:p7`；`pane close` 连标签一起关时末尾多一个 `tab-closed`。
+  /// 远端机器新建时还拿不到新 ID，打印 `created pending`。
+  private func renderLayoutAction(_ verb: String) -> (JSONValue) throws -> String {
+    { result in
+      let outcome = try result.decoded(as: LayoutActionResult.self)
+      var parts = [verb] + [outcome.tabID, outcome.paneID].compactMap { $0 }
+      if parts.count == 1 { parts.append("pending") }
+      if outcome.closedTab == true { parts.append("tab-closed") }
+      return parts.joined(separator: " ")
+    }
+  }
+
+  /// `--cwd` 允许写相对路径：按 CLI 自己的当前目录补成绝对路径再发给 App。
+  private func absolutePath(_ path: String) -> String {
+    URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+      .standardizedFileURL.path
+  }
 
   private func renderReadText(_ result: JSONValue) throws -> String {
     result["text"]?.stringValue ?? ""

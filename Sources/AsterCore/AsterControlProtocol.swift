@@ -215,6 +215,13 @@ public enum AsterControlMethod: String, CaseIterable, Codable, Sendable {
   case paneSendKeys = "pane.send_keys"
   case paneFocus = "pane.focus"
   case paneWaitForOutput = "pane.wait_for_output"
+  /// 结构方法：关闭 / 拆分 Pane，新建 / 关闭 / 切换 / 重命名标签。参数见 AsterControlLayoutProtocol.swift。
+  case paneClose = "pane.close"
+  case paneSplit = "pane.split"
+  case tabNew = "tab.new"
+  case tabClose = "tab.close"
+  case tabFocus = "tab.focus"
+  case tabRename = "tab.rename"
   case eventsSubscribe = "events.subscribe"
   case eventsWait = "events.wait"
   case notificationShow = "notification.show"
@@ -230,14 +237,16 @@ public enum AsterControlMethod: String, CaseIterable, Codable, Sendable {
   /// 不算写（只改 UI，不进 PTY）；`workflow.execute` 内部由旧 WorkflowCLI 自行做门禁。
   /// `session.detach` / `session.end` 改变受管终端的显示桥与进程生命周期，必须与
   /// `pane.send_text` 走同一道写门禁；`session.terminals` 只查询状态，保持只读。
+  /// 结构方法里，关闭会结束进程、拆分与新建会启动进程，都算写；`tab.focus` / `tab.rename`
+  /// 只改界面，与 `pane.focus` 一样不算写。
   public var isWrite: Bool {
     switch self {
     case .serverPing, .sessionSnapshot, .agentList, .agentGet, .agentRead, .paneRead,
       .paneWaitForOutput, .eventsSubscribe, .eventsWait, .agentWait, .agentFocus, .paneFocus,
-      .notificationShow, .workflowExecute, .sessionTerminals, .agentReport:
+      .notificationShow, .workflowExecute, .sessionTerminals, .agentReport, .tabFocus, .tabRename:
       return false
     case .agentPrompt, .agentSendKeys, .agentStart, .paneSendText, .paneSendKeys, .sessionDetach,
-      .sessionEnd:
+      .sessionEnd, .paneClose, .paneSplit, .tabNew, .tabClose:
       return true
     }
   }
