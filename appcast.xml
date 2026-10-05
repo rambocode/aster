@@ -3,6 +3,21 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.6.17</title>
+            <pubDate>Mon, 05 Oct 2026 13:13:05 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>36</sparkle:version>
+            <sparkle:shortVersionString>0.6.17</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 修复
+
+- 修复「设置 ▸ 外观」里看不到「界面文字」分组的问题。0.6.16 加的「界面字号」和「加深界面文字」现在能在设置里找到了。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.17/Aster-0.6.17.dmg" length="50343404" type="application/octet-stream" sparkle:edSignature="IQ8Yxcuh7KL13P7Ozql8HtSAa1KXxVsPfRpRu6HCkxJyo4/sWuvKvRdoQI8gA/9004hwSPv0uGYyY2h5MTVBBQ=="/>
+        </item>
+        <item>
             <title>0.6.16</title>
             <pubDate>Mon, 05 Oct 2026 12:55:32 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -102,33 +117,6 @@
 - 关闭后台保活的 Pane 时不再卡住界面。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.13/Aster-0.6.13.dmg" length="49990093" type="application/octet-stream" sparkle:edSignature="DViuJ18iuM5tfzLFOYnPRQJfJBBUaZe+2klF3RLEnIlCQrNs+kr8Dmpit2jDL9DWsXZ3b1q33us3AavhBCoFBA=="/>
-        </item>
-        <item>
-            <title>0.6.12</title>
-            <pubDate>Wed, 23 Sep 2026 18:06:41 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>31</sparkle:version>
-            <sparkle:shortVersionString>0.6.12</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## 新功能
-
-- 打开的文件支持 ⌘F 查找内容。源码、Markdown / HTML / SVG 预览、Agent 会话记录和 PDF 都能查。输入即查，↩ 下一个，⇧↩ 上一个，Esc 关闭；源码里显示「当前 / 总数」，并支持区分大小写和正则。
-- Ghostty 终端的触控板滚动改为按像素平滑滚动，不再一行一行地跳；手势结束后自动对齐到整行。滚动距离也按屏幕缩放换算，Retina 屏上内容跟手移动。
-- Ghostty 终端支持「滚过末尾 / 开头」。这两项设置以前只在旧终端引擎里生效。
-
-## 改进
-
-- Claude Code 全屏模式下快速滑动触控板，手指停下后画面马上停，不再继续追滚约 0.2 秒。
-
-## 修复
-
-- 修复 Codex 有时被识别成 Claude Code 的问题。Codex 的终端标题以转圈动画开头，以前被当成 Claude 的标志；现在不再这样判断，并会读取前台进程确认是哪个 Agent。识别错了也会被 Agent 自己的上报纠正。
-- 修复同一目录开两个 Agent 时，侧栏标签显示成另一个会话标题的问题。
-- 修复终端滚动条遮挡最右几列文字的问题。滚动条现在有自己的位置，平时隐藏，滚动或指针移到右侧时出现。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.12/Aster-0.6.12.dmg" length="44173789" type="application/octet-stream" sparkle:edSignature="52l5iRfW27lrQ9gAS0EUvgN0DJJW0mkHdGlOVT6UTMsyR+o+up2zrevNxtvem0QUAoPAjDSIw8Msmlqb3+rECQ=="/>
         </item>
     </channel>
 </rss>
