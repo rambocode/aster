@@ -9,7 +9,7 @@ Aster is an open-source, native macOS terminal workspace for macOS 14 and later.
 ## 核心事实
 
 - 名称：Aster，也称 Aster Terminal。官网 https://aster.foo/ ，源码 https://github.com/rambocode/aster 。
-- 当前发布版本：0.6.16（2026-10-05）。
+- 当前发布版本：0.6.17（2026-10-05）。
 - 平台：macOS 14 Sonoma 及更高版本；当前安装包只包含 Apple 芯片（arm64）版本。
 - 技术栈：用 Swift 和 AppKit 写成的原生 macOS 应用，不是 Electron，也不用 SwiftUI；终端引擎是 Ghostty 内核。设置页是应用内置的本地 WebKit 页面，不加载远程内容。
 - 许可证：MIT，免费，无需注册账号。安装包是已签名并经 Apple 公证的 DMG。
