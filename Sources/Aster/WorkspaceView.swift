@@ -73,6 +73,9 @@ final class WorkspaceViewController: NSViewController {
   private var renderedTheme: TerminalTheme?
   private var renderedAppearance: AppPreferences.Appearance?
   private var renderedTabBarLayout: TabBarLayout?
+  /// 标签栏最近一次渲染出来的显隐。折叠按钮与「显示」菜单直接改这项配置，是工作区上的
+  /// 直接操作：设置窗口开着（常被主窗口挡在后面）时也必须立刻重建，否则点了没反应。
+  private var renderedShowsTabBar: Bool?
   /// 「加深界面文字」的最近渲染值。侧栏文字色在构建时就解析成具体颜色，开关变化
   /// 必须像主题变化一样立即重建，否则要等设置窗口关闭才看得到效果。
   private var renderedStrengthensText: Bool?
@@ -294,6 +297,12 @@ final class WorkspaceViewController: NSViewController {
     if case .name = tab.tabTitleOverride { return nil }
     return tabRuleOutcome(for: tab).renderedTitle
   }
+  /// 标签栏此刻是否应当显示：配置开关叠加「只有一个标签时自动隐藏」。
+  /// 布局与「是否需要立刻重建」的判定共用这一个值。
+  private var resolvedShowsTabBar: Bool {
+    preferences.configuration.appearance.showsTabBar(tabCount: tabBarVisibilityTabCount)
+  }
+
 
   private func detailsControllerForSelectedTab() -> DetailsPanelViewController {
     let selectedTabID = model.selectedTabID
@@ -837,6 +846,7 @@ final class WorkspaceViewController: NSViewController {
         {
           self.refresh()
         }
+            || self.renderedShowsTabBar != self.resolvedShowsTabBar
       }
     }
     if !settingsPresentationActive { scheduleRefresh() }
@@ -915,6 +925,7 @@ final class WorkspaceViewController: NSViewController {
     if let background = view as? ThemeVisualEffectView {
       background.apply(
         material: theme.palette.material,
+    renderedShowsTabBar = resolvedShowsTabBar
         tint: theme.resolvedColor(forSlot: "interface.window")
           ?? theme.palette.interfaceWindowBackground ?? theme.palette.panelBackground
       )
@@ -1330,7 +1341,7 @@ final class WorkspaceViewController: NSViewController {
   }
 
   private func makeWorkspaceLayout() -> NSView {
-    let showsTabs = preferences.configuration.appearance.showsTabBar(tabCount: tabBarVisibilityTabCount)
+    let showsTabs = resolvedShowsTabBar
     var panels: [WorkspacePanel] = []
     let content: NSView
 
