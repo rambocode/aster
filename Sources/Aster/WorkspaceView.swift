@@ -127,6 +127,10 @@ final class WorkspaceViewController: NSViewController {
   /// Content 与 Inspector header 之间创建、移动或交换按钮。
   /// 强持有以跨 `refresh()` 复用同一实例；按钮回调弱捕获控制器，不形成引用环。
   private var inspectorToggleButton: IconHoverButton?
+  /// 放大态下标题栏里的还原胶囊；随整树刷新重建，非放大态为 nil。
+  private var zoomRestoreButton: PaneZoomRestoreButton?
+  /// 还原胶囊的右缘约束：Inspector 显隐不走整树刷新，只改这条约束的常量。
+  private var zoomRestoreTrailingConstraint: NSLayoutConstraint?
   /// 详情面板收起后的展开入口只响应工作区标题栏悬停。单独记录这块区域，避免复用
   /// 左栏红绿灯行的窄感应区，导致右端按钮只有移到窗口左上角才会出现。
   private weak var inspectorTitleBarHoverRegion: NSView?
@@ -274,6 +278,7 @@ final class WorkspaceViewController: NSViewController {
     } else {
       detachDetailsPanelIfNeeded()
     }
+    zoomRestoreTrailingConstraint?.constant = -zoomRestoreTrailingInset
     updateInspectorToggleVisibility(animated: false)
   }
 
@@ -292,17 +297,17 @@ final class WorkspaceViewController: NSViewController {
     return model.isLocalMachineActive && model.workspaceGroups.count > 1 ? max(count, 2) : count
   }
 
-  /// 规则标题的优先级：用户手动固定名 > 规则模板 > Agent 会话标题 / 自动标题。
-  private func ruleTitle(for tab: TerminalTabItem) -> String? {
-    if case .name = tab.tabTitleOverride { return nil }
-    return tabRuleOutcome(for: tab).renderedTitle
-  }
   /// 标签栏此刻是否应当显示：配置开关叠加「只有一个标签时自动隐藏」。
   /// 布局与「是否需要立刻重建」的判定共用这一个值。
   private var resolvedShowsTabBar: Bool {
     preferences.configuration.appearance.showsTabBar(tabCount: tabBarVisibilityTabCount)
   }
 
+  /// 规则标题的优先级：用户手动固定名 > 规则模板 > Agent 会话标题 / 自动标题。
+  private func ruleTitle(for tab: TerminalTabItem) -> String? {
+    if case .name = tab.tabTitleOverride { return nil }
+    return tabRuleOutcome(for: tab).renderedTitle
+  }
 
   private func detailsControllerForSelectedTab() -> DetailsPanelViewController {
     let selectedTabID = model.selectedTabID
@@ -823,6 +828,7 @@ final class WorkspaceViewController: NSViewController {
         let zoomShortcut = self.preferences.settingsCompatibility["shortcuts.zoom-pane"]?.jsonValue as? String
           ?? "⇧⌘↩"
         for host in self.paneHosts.values { host.updateZoomShortcut(zoomShortcut) }
+        self.zoomRestoreButton?.updateShortcut(zoomShortcut)
         // `runtimes` 可能在 AppKit 整树替换的一次事务内暂时多于 layout 叶节点。只遍历
         // layout 会漏掉仍显示在旧 Pane host 中的终端，造成分屏两侧停留在不同主题。
         // 先更新所有存活 Session，再以实际视图树为准补发纯视觉令牌，主题预览才能
@@ -840,13 +846,13 @@ final class WorkspaceViewController: NSViewController {
           self.renderedTheme != self.preferences.activeTheme
             || self.renderedAppearance != self.preferences.appearance
             || self.renderedTabBarLayout != self.preferences.tabBarLayout
+            || self.renderedShowsTabBar != self.resolvedShowsTabBar
             || self.renderedStrengthensText != self.preferences.strengthensInterfaceText
             || self.renderedViewConfiguration != self.preferences.configuration.resolvedView
             || self.renderedBadgeSettings != self.currentBadgeSettings()
         {
           self.refresh()
         }
-            || self.renderedShowsTabBar != self.resolvedShowsTabBar
       }
     }
     if !settingsPresentationActive { scheduleRefresh() }
@@ -919,13 +925,13 @@ final class WorkspaceViewController: NSViewController {
     renderedTheme = theme
     renderedAppearance = preferences.appearance
     renderedTabBarLayout = preferences.tabBarLayout
+    renderedShowsTabBar = resolvedShowsTabBar
     renderedViewConfiguration = preferences.configuration.resolvedView
     renderedStrengthensText = preferences.strengthensInterfaceText
     renderedBadgeSettings = currentBadgeSettings()
     if let background = view as? ThemeVisualEffectView {
       background.apply(
         material: theme.palette.material,
-    renderedShowsTabBar = resolvedShowsTabBar
         tint: theme.resolvedColor(forSlot: "interface.window")
           ?? theme.palette.interfaceWindowBackground ?? theme.palette.panelBackground
       )
@@ -2116,8 +2122,6 @@ final class WorkspaceViewController: NSViewController {
     stack.spacing = 0
     // 顶部标签布局把中央标题并入标签条上方的标题带（与交通灯同一行），内容区不再
     // 重复渲染；标题带在 makeHorizontalTabBar 中构建。其余布局保持内容区顶部标题。
-    let titleLivesInTabBar = preferences.tabBarLayout == .top
-      && preferences.configuration.appearance.showsTabBar(tabCount: tabBarVisibilityTabCount)
 
     let style = preferences.activeTheme.style.container
     let margin = preferences.tabBarLayout == .vertical
@@ -2278,9 +2282,42 @@ final class WorkspaceViewController: NSViewController {
         lessThanOrEqualTo: background.trailingAnchor, constant: -12),
       // 标题带固定 28pt（与红绿灯同行），胶囊随字号放大但不超过标题带。
       title.heightAnchor.constraint(equalToConstant: InterfaceScale.length(24, max: 28)),
-      secureInput.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -12),
       secureInput.centerYAnchor.constraint(equalTo: background.centerYAnchor),
     ])
+
+    // 放大态在标题栏右侧常显还原胶囊；安全输入指示器排到它左侧。
+    zoomRestoreButton = nil
+    zoomRestoreTrailingConstraint = nil
+    if isZoomActive(tab) {
+      let zoomShortcut = preferences.settingsCompatibility["shortcuts.zoom-pane"]?.jsonValue as? String
+        ?? "⇧⌘↩"
+      let restore = PaneZoomRestoreButton(shortcut: zoomShortcut) { [weak tab] in
+        tab?.toggleZoom()
+      }
+      restore.identifier = NSUserInterfaceItemIdentifier("workspace-zoom-restore")
+      restore.restingTint = NSColor(
+        theme.resolvedColor(forSlot: "titlebar.foreground")
+          ?? theme.style.titlebarForeground ?? theme.palette.secondaryForeground
+      )
+      background.addSubview(restore)
+      restore.translatesAutoresizingMaskIntoConstraints = false
+      let trailing = restore.trailingAnchor.constraint(
+        equalTo: background.trailingAnchor, constant: -zoomRestoreTrailingInset)
+      NSLayoutConstraint.activate([
+        trailing,
+        restore.centerYAnchor.constraint(equalTo: background.centerYAnchor),
+        restore.widthAnchor.constraint(equalToConstant: PaneZoomRestoreButton.size.width),
+        restore.heightAnchor.constraint(equalToConstant: PaneZoomRestoreButton.size.height),
+        secureInput.trailingAnchor.constraint(equalTo: restore.leadingAnchor, constant: -8),
+        title.trailingAnchor.constraint(lessThanOrEqualTo: restore.leadingAnchor, constant: -8),
+      ])
+      zoomRestoreButton = restore
+      zoomRestoreTrailingConstraint = trailing
+    } else {
+      secureInput.trailingAnchor.constraint(
+        equalTo: background.trailingAnchor, constant: -12
+      ).isActive = true
+    }
     return background
   }
 
@@ -2434,12 +2471,31 @@ final class WorkspaceViewController: NSViewController {
   /// 工作区内容区：处于「缩放拆分」状态时只渲染被放大的那一个面板，其余面板保持
   /// 运行（PTY 与滚动历史不受影响），退出放大后原样回到分屏树。
   private func makePaneContent(_ tab: TerminalTabItem) -> NSView {
-    if let zoomed = tab.zoomedPaneID, tab.layout.allPanes.count > 1,
-      let descriptor = tab.layout.allPanes.first(where: { $0.id == zoomed })
+    if isZoomActive(tab),
+      let descriptor = tab.layout.allPanes.first(where: { $0.id == tab.zoomedPaneID })
     {
       return makePaneLeaf(descriptor, tab: tab)
     }
     return makePaneTree(tab.layout, tab: tab, path: [])
+  }
+
+  /// 标签是否真的处于放大态：有多个 Pane，且被放大的 Pane 仍在分屏树里。
+  /// 内容区、Pane 顶条和标题栏还原按钮都用这一个判定，三处不会不一致。
+  private func isZoomActive(_ tab: TerminalTabItem) -> Bool {
+    guard let zoomed = tab.zoomedPaneID, tab.layout.allPanes.count > 1 else { return false }
+    return tab.layout.allPanes.contains { $0.id == zoomed }
+  }
+
+  /// 标题栏还原按钮距标题带右缘的距离。标题带右端贴着窗口右缘时（Inspector 收起，
+  /// 或顶部标签布局的整宽标题带），要给根视图上的 Inspector 切换按钮让位。
+  private var zoomRestoreTrailingInset: CGFloat {
+    titleLivesInTabBar || !model.isInspectorPresented
+      ? InspectorToggleMetrics.trailingReservedWidth : InspectorToggleMetrics.trailingInset
+  }
+
+  /// 顶部标签布局把中央标题并入标签条上方的整宽标题带，内容区不再渲染标题行。
+  private var titleLivesInTabBar: Bool {
+    preferences.tabBarLayout == .top && resolvedShowsTabBar
   }
 
   private func makePaneTree(
@@ -2520,7 +2576,8 @@ final class WorkspaceViewController: NSViewController {
     host.installContent(content)
     // 单 Pane 无处可拖；只有分屏时安装顶部拖动把手。Pane 背景始终由主题负责，
     // 非聚焦 Pane 的变灰由 host 内容 alpha 表达，不叠加改变颜色的遮罩。
-    if tab.layout.allPanes.count > 1 {
+    // 放大态屏幕上只剩一个 Pane：把手、关闭、放大都不装，还原入口在标题栏。
+    if tab.layout.allPanes.count > 1, !isZoomActive(tab) {
       host.installDragHandle { [weak self] paneID, event in
         self?.beginPaneDrag(paneID: paneID, event: event)
       }
@@ -2533,14 +2590,23 @@ final class WorkspaceViewController: NSViewController {
       }
       let zoomShortcut = preferences.settingsCompatibility["shortcuts.zoom-pane"]?.jsonValue as? String
         ?? "⇧⌘↩"
-      host.installZoomButton(
-        isZoomed: tab.zoomedPaneID == descriptor.id,
-        shortcut: zoomShortcut
-      ) { [weak tab] paneID in
+      host.installZoomButton(shortcut: zoomShortcut) { [weak tab] paneID in
         guard let tab else { return }
         tab.setActivePane(paneID)
         tab.toggleZoom()
       }
+    }
+    // Agent TUI 打开鼠标上报后右键菜单弹不出来，顶条按钮是不依赖右键的收起入口。
+    // 放在关闭、缩放按钮之后安装，才能排在它们左侧。
+    if descriptor.kind == .terminal {
+      host.installLiveViewButton(
+        stateProvider: { [weak self] paneID in
+          guard let model = self?.model else { return .init(collapsed: false, enabled: false) }
+          return .init(
+            collapsed: model.terminalSession(forPaneID: paneID)?.isLiveViewCollapsed == true,
+            enabled: model.canToggleLiveView(paneID: paneID))
+        },
+        onToggle: { [weak self] paneID in self?.model.toggleLiveView(paneID: paneID) })
     }
     return host
   }

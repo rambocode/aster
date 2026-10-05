@@ -174,7 +174,9 @@ SwiftTerm 的 Core Graphics/Metal 测试与本地 target 仅作为迁移期对�
 
 #### Pane 顶条放大入口
 
-多 Pane 时，`ActivePaneHostView` 在关闭按钮左侧安装 `PaneZoomButton`，与拖动把手、关闭按钮共享顶边感应带；隐藏时不参与命中测试，避免拦截终端点击。按钮按 `zoomedPaneID` 选择放大或还原图标，使用系统灰和本地化的「缩放拆分」提示。单 Pane 没有缩放入口。
+多 Pane 时，`ActivePaneHostView` 在关闭按钮左侧安装 `PaneZoomButton`，与拖动把手、关闭按钮共享顶边感应带；隐藏时不参与命中测试，避免拦截终端点击。放大、关闭与实时画面按钮用同一套无底细线图标和系统灰（静止 `tertiaryLabelColor`，悬停 `secondaryLabelColor`），提示为本地化的「缩放拆分」。单 Pane 没有缩放入口。
+
+放大态屏幕上只剩一个 Pane：`WorkspaceViewController.isZoomActive` 为真时不装拖动把手、关闭和放大按钮，还原入口改为标题带里常显的 `PaneZoomRestoreButton`（`workspace-zoom-restore`，向内箭头的胶囊）。它由 `makeWorkspaceHeader` 随整树刷新创建，排在右上角 Inspector 切换按钮左侧；标题带右端贴着窗口右缘时（Inspector 收起，或顶部标签布局的整宽标题带）让出 `InspectorToggleMetrics.trailingReservedWidth`。Inspector 显隐不走整树刷新，`setInspectorPresented` 只改这颗按钮右缘约束的常量。
 
 点击先按宿主的 Pane ID 调用 `setActivePane`，再调用 `TerminalTabItem.toggleZoom()`，所以非活动 Pane 的按钮也只放大所属 Pane。`makePaneContent` 在放大态只挂载该 Pane，填满 `.content` 区域；左右 Panel 的宽度和显隐不变。布局树、拆分比例与运行态保留，恢复时重新挂载原树，后台终端继续运行。
 
@@ -183,11 +185,11 @@ flowchart LR
   A[顶边悬停显示按钮] --> B[点击所属 Pane 的放大按钮]
   B --> C[激活该 Pane 并设置 zoomedPaneID]
   C --> D[仅显示该 Pane，填满内容区]
-  D --> E[再次点击还原按钮]
+  D --> E[点击标题栏的还原按钮]
   E --> F[清除 zoomedPaneID，恢复原分屏树和比例]
 ```
 
-快捷键复用设置页 `zoom-pane` 条目与 `shortcuts.zoom-pane` 持久化键，默认 `⇧⌘↩`。`ShortcutOverrideApplier` 更新既有「缩放拆分」菜单的按键，菜单、命令面板和按钮都作用于同一份标签运行态；按钮提示显示当前已配置的组合键。`PaneZoomTests` 覆盖非活动 Pane 点击、嵌套分屏的实际 frame、还原比例和运行态、窄窗口、单 Pane 入口及快捷键保存/菜单映射。
+快捷键复用设置页 `zoom-pane` 条目与 `shortcuts.zoom-pane` 持久化键，默认 `⇧⌘↩`。`ShortcutOverrideApplier` 更新既有「缩放拆分」菜单的按键，菜单、命令面板和按钮都作用于同一份标签运行态；按钮提示显示当前已配置的组合键。`PaneZoomTests` 覆盖非活动 Pane 点击、嵌套分屏的实际 frame、放大态顶条无分屏控件、标题栏还原按钮的位置、还原比例和运行态、窄窗口、单 Pane 入口及快捷键保存/菜单映射。
 
 ### 收起实时画面
 
@@ -197,6 +199,7 @@ flowchart LR
 - **停止渲染的方式。** 收起只把 `GhosttySurfaceView` 设为 `isHidden`，尺寸不变，程序不会收到 SIGWINCH。`viewDidHide` / `viewDidUnhide` 调用 `synchronizeSurfaceVisibility()`，`isSurfaceVisibleToUser` 对隐藏视图返回 false，libghostty 经 `ghostty_surface_set_occlusion` 停止出帧；恢复时同步上报可见，renderer 立即补画最新一帧。这条路径与后台标签、窗口遮挡共用，不另建开关。
 - **状态卡。** `TerminalPaneCollapsedCardView`（`Workspace/Panes/`）叠在终端之上、结束卡之下，订阅会话的 `activeAgentProvider`、`agentTaskState`、`agentTaskCompletionUnread`、`terminalTitle`，先映射成 `TerminalPaneCollapsedCardPresentation` 再按值去重，只有展示真的变化才重绘。Agent 运行时不显示终端标题，因为 Claude Code 等会用 spinner 字符高频改标题。卡片只显示收起时刻，没有计时器或动画，收起期间不产生周期唤醒。
 - **键盘与焦点。** 隐藏的 surface 在 `acceptsFirstResponder` 与 `becomeFirstResponder` 两处拒绝焦点（`makeFirstResponder` 不查询前者）。收起时若终端持有焦点就交给状态卡，避免 AppKit 把焦点交给下一个 key view（可能是相邻 Pane 的终端）；`TerminalSession.focus()` 在收起时聚焦状态卡。状态卡吞掉所有按键，只有 `Return` / `Space` 恢复；菜单快捷键仍经 key equivalent 正常工作。
+- **顶条按钮。** Agent TUI 打开鼠标上报后，Ghostty 会消费右键，Aster 的右键菜单不弹出（`Control + 右键` 除外）。`PaneLiveViewButton`（`Workspace/Panes/`）是不经过终端鼠标事件的入口，由 `ActivePaneHostView.installLiveViewButton` 装在缩放、关闭按钮左侧（放大态和单 Pane 没有这两颗按钮时贴右缘），只给终端 Pane，与其它顶条控件共用顶边感应带淡入。按钮不订阅状态：每次淡入前和点击后经 `stateProvider` 向 `AppModel` 取一次真值（是否已收起、`canToggleLiveView`），不可切换时置灰。单 Pane 没有其它顶条控件，这时不下移内容（避免所有终端少一行并触发 resize），按钮淡入后浮在终端右上角，隐藏时不参与命中。
 - **入口与限制。** 终端右键菜单条目由工作区注入（`contextMenuExtraItemsProvider`），按 Pane ID 作用于被右键的 Pane；“显示”菜单的 `⇧⌘B` 与命令面板 `live-view` 作用于活动 Pane，标题在“收起 / 恢复”之间切换。系统画中画采集（`pictureInPictureFrames.isCapturing`）会强制出帧，可交互小窗借走的 Pane 本来就要看和输入，两者都禁止收起；画中画开始时先恢复已收起的 Pane。
 
 ### 文件与 Recipe

@@ -1,7 +1,8 @@
-// Pane 顶条的放大／还原控件；布局状态和快捷键仍由工作区与设置管理。
+// Pane 顶条的放大控件；布局状态和快捷键仍由工作区与设置管理。还原入口在标题栏，见 PaneZoomRestoreButton。
 import AppKit
 import AsterCore
 
+/// Pane 顶条的放大按钮：与关闭按钮同款无底细线图标、同一套灰度，放在它左侧。
 @MainActor
 final class PaneZoomButton: NSButton {
   private let zoomAction: () -> Void
@@ -14,21 +15,21 @@ final class PaneZoomButton: NSButton {
     didSet { if oldValue != isRevealed { updateAppearance() } }
   }
 
-  init(isZoomed: Bool, shortcut: String, onZoom: @escaping () -> Void) {
+  /// - Parameters:
+  ///   - shortcut: 当前配置的缩放拆分组合键，只用于提示。
+  ///   - onZoom: 点击时放大所属 Pane。
+  init(shortcut: String, onZoom: @escaping () -> Void) {
     zoomAction = onZoom
     super.init(frame: .zero)
     isBordered = false
     imagePosition = .imageOnly
     let label = L("缩放拆分")
     image = NSImage(
-      systemSymbolName: isZoomed
-        ? "arrow.down.right.and.arrow.up.left.circle.fill"
-        : "arrow.up.left.and.arrow.down.right.circle.fill",
-      accessibilityDescription: label
-    )?.withSymbolConfiguration(.init(pointSize: 14, weight: .regular))
+      systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: label
+    )?.withSymbolConfiguration(.init(pointSize: 9, weight: .bold))
     setAccessibilityLabel(label)
     updateShortcut(shortcut)
-    contentTintColor = .secondaryLabelColor
+    contentTintColor = .tertiaryLabelColor
     target = self
     action = #selector(performZoomAction)
     alphaValue = 0
@@ -65,8 +66,9 @@ final class PaneZoomButton: NSButton {
     if isRevealed { NSCursor.pointingHand.set() } else { super.cursorUpdate(with: event) }
   }
 
+  /// 淡入淡出 + 悬停加深，灰度与关闭按钮一致。
   private func updateAppearance() {
-    contentTintColor = isHovered ? .labelColor : .secondaryLabelColor
+    contentTintColor = isHovered ? .secondaryLabelColor : .tertiaryLabelColor
     NSAnimationContext.runAnimationGroup { context in
       context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.14
       context.allowsImplicitAnimation = true

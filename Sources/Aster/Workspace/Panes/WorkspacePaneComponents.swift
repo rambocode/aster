@@ -444,6 +444,11 @@ final class ActivePaneHostView: NSView {
   private var dragHandle: PaneDragHandleView?
   private var closeButton: PaneCloseButton?
   private var zoomButton: PaneZoomButton?
+  private var liveViewButton: PaneLiveViewButton?
+  /// 是否装了任何顶条控件；没有控件时不建感应带，也不做显隐同步。
+  private var hasChrome: Bool {
+    dragHandle != nil || closeButton != nil || zoomButton != nil || liveViewButton != nil
+  }
   private var handleTrackingArea: NSTrackingArea?
   /// 顶条控件当前是否淡入；只由 `updateChromeReveal` 写入。
   private(set) var chromeRevealed = false
@@ -593,7 +598,7 @@ final class ActivePaneHostView: NSView {
   override func updateTrackingAreas() {
     super.updateTrackingAreas()
     if let handleTrackingArea { removeTrackingArea(handleTrackingArea) }
-    guard dragHandle != nil || closeButton != nil || zoomButton != nil else { return }
+    guard hasChrome else { return }
     let strip = NSRect(
       x: 0, y: max(0, bounds.height - Self.handleRevealHeight),
       width: bounds.width, height: min(bounds.height, Self.handleRevealHeight))
@@ -633,7 +638,7 @@ final class ActivePaneHostView: NSView {
   /// 顶条可见性的唯一写入点。传 nil 表示指针不在本窗口内。
   /// internal 而不是 private：回归测试要在没有真实鼠标的环境里驱动这条路径。
   func updateChromeReveal(pointerInView point: NSPoint?) {
-    guard dragHandle != nil || closeButton != nil || zoomButton != nil else { return }
+    guard hasChrome else { return }
     let strip = handleTrackingArea?.rect
       ?? NSRect(
         x: 0, y: max(0, bounds.height - Self.handleRevealHeight),
@@ -644,6 +649,7 @@ final class ActivePaneHostView: NSView {
     dragHandle?.isRevealed = revealed
     closeButton?.isRevealed = revealed
     zoomButton?.isRevealed = revealed
+    liveViewButton?.isRevealed = revealed
   }
 
   /// 顶条控件安装后把内容整体下移,让胶囊/按钮与内容之间留出固定间距,
@@ -689,16 +695,15 @@ final class ActivePaneHostView: NSView {
     syncChromeReveal()
   }
 
-  /// 在关闭按钮左侧安装缩放入口。isZoomed 来自标签运行态，shortcut 来自现有设置；
+  /// 在关闭按钮左侧安装放大入口。shortcut 来自现有设置；
   /// 点击始终作用于本 Pane，由调用方激活它并切换放大态。
   func installZoomButton(
-    isZoomed: Bool,
     shortcut: String,
     onZoom: @escaping (UUID) -> Void
   ) {
     guard zoomButton == nil else { return }
     let paneID = paneID
-    let button = PaneZoomButton(isZoomed: isZoomed, shortcut: shortcut) { onZoom(paneID) }
+    let button = PaneZoomButton(shortcut: shortcut) { onZoom(paneID) }
     button.translatesAutoresizingMaskIntoConstraints = false
     addSubview(button)
     NSLayoutConstraint.activate([
@@ -711,6 +716,38 @@ final class ActivePaneHostView: NSView {
     ])
     zoomButton = button
     applyChromeContentInset()
+    syncChromeReveal()
+  }
+
+  /// 在缩放、关闭按钮左侧安装「收起 / 恢复实时画面」入口，只给终端 Pane 用。
+  /// 必须在关闭、缩放按钮之后调用：它贴着已安装的最左一个按钮排布。
+  ///
+  /// 单 Pane 没有其它顶条控件时不下移内容：为一个悬停才出现的按钮让出 18pt 会让
+  /// 所有终端少一行并触发 resize。此时按钮淡入后浮在终端右上角，隐藏时不参与命中。
+  func installLiveViewButton(
+    stateProvider: @escaping (UUID) -> PaneLiveViewButton.State,
+    onToggle: @escaping (UUID) -> Void
+  ) {
+    guard liveViewButton == nil else { return }
+    let paneID = paneID
+    let sharesChromeStrip = hasChrome
+    let button = PaneLiveViewButton(
+      stateProvider: { stateProvider(paneID) }, onToggle: { onToggle(paneID) })
+    button.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(button)
+    NSLayoutConstraint.activate([
+      button.trailingAnchor.constraint(
+        equalTo: zoomButton?.leadingAnchor ?? closeButton?.leadingAnchor ?? trailingAnchor,
+        constant: -6),
+      button.centerYAnchor.constraint(
+        equalTo: topAnchor, constant: Self.handleRevealHeight / 2),
+      button.widthAnchor.constraint(equalToConstant: Self.handleRevealHeight),
+      button.heightAnchor.constraint(equalToConstant: Self.handleRevealHeight),
+    ])
+    liveViewButton = button
+    if sharesChromeStrip { applyChromeContentInset() }
+    // 不在这里手动重建感应带：安装时宿主还没有尺寸，建出来的是零面积感应带，
+    // 会让显隐判定一直为假。AppKit 在随后的布局里会按真实 bounds 调 `updateTrackingAreas`。
     syncChromeReveal()
   }
 

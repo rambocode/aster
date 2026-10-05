@@ -36,7 +36,7 @@ private func captureZoomWindow(_ window: NSWindow, name: String) async throws {
   #expect(capture.terminationStatus == 0)
 }
 
-@Test("顶条放大点击所属 Pane，填满右侧内容区；再次点击恢复拆分比例和运行态",
+@Test("顶条放大点击所属 Pane，填满右侧内容区；标题栏还原按钮恢复拆分比例和运行态",
   arguments: [NSAppearance.Name.aqua, .darkAqua])
 @MainActor
 func paneZoomButtonExpandsItsPaneAndRestoresLayout(appearance: NSAppearance.Name) async throws {
@@ -64,6 +64,9 @@ func paneZoomButtonExpandsItsPaneAndRestoresLayout(appearance: NSAppearance.Name
     backing: .buffered, defer: false)
   window.contentViewController = controller
   window.appearance = NSAppearance(named: appearance)
+  // 与产品窗口一致：系统标题栏透明，取证截图才能看到 28pt 标题带里的控件。
+  window.titlebarAppearsTransparent = true
+  window.titleVisibility = .hidden
   defer {
     for runtime in tab.runtimes.values { runtime.terminalSession?.stop(immediately: true) }
     window.orderOut(nil)
@@ -121,14 +124,31 @@ func paneZoomButtonExpandsItsPaneAndRestoresLayout(appearance: NSAppearance.Name
   #expect(abs(zoomedFrame.minY - contentFrame.minY) < 1)
   #expect(abs(zoomedFrame.width - contentFrame.width) < 1)
   #expect(abs(zoomedFrame.height - contentFrame.height) < 1)
-  let restore = try #require(zoomViews(PaneZoomButton.self, in: zoomedHost).first)
+  // 放大态只剩一个 Pane：顶条不再有关闭、放大和拖动把手，还原入口常显在标题栏。
+  #expect(zoomViews(PaneZoomButton.self, in: zoomedHost).isEmpty)
+  #expect(zoomViews(PaneCloseButton.self, in: zoomedHost).isEmpty)
+  #expect(zoomViews(PaneDragHandleView.self, in: zoomedHost).isEmpty)
+  let restore = try #require(zoomViews(PaneZoomRestoreButton.self, in: controller.view).first)
   #expect(restore.image != nil)
+  #expect(!restore.isHidden && restore.alphaValue == 1)
+  #expect(restore.toolTip == "\(L("缩放拆分"))  ⌃⌥Z")
+  // 贴着右上角的 Inspector 切换按钮左侧，两者不重叠且同一中心线。
+  let titleBar = try #require(restore.superview)
+  #expect(titleBar.identifier?.rawValue == "workspace-titlebar")
+  let restoreFrame = controller.view.convert(restore.bounds, from: restore)
+  let inspectorToggle = try #require(
+    zoomViews(IconHoverButton.self, in: controller.view).first {
+      $0.identifier?.rawValue == "workspace-inspector-toggle"
+    })
+  #expect(restoreFrame.maxX <= inspectorToggle.frame.minX)
+  #expect(abs(restoreFrame.midY - inspectorToggle.frame.midY) < 1)
   zoomedHost.updateChromeReveal(pointerInView: NSPoint(x: zoomedHost.bounds.maxX - 28, y: zoomedHost.bounds.maxY - 7))
   try await captureZoomWindow(window, name: "zoomed")
   restore.performClick(nil)
   try await Task.sleep(for: .milliseconds(180))
   window.contentView?.layoutSubtreeIfNeeded()
   #expect(tab.zoomedPaneID == nil)
+  #expect(zoomViews(PaneZoomRestoreButton.self, in: controller.view).isEmpty)
   #expect(tab.layout == originalLayout)
   #expect(tab.runtimes.keys == originalRuntimes.keys)
   for (id, runtime) in originalRuntimes { #expect(tab.runtimes[id] === runtime) }

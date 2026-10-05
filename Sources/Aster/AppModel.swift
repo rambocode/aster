@@ -2597,8 +2597,8 @@ final class AppModel: ObservableObject {
     session.setLiveViewCollapsed(!session.isLiveViewCollapsed)
   }
 
-  /// 在全部标签里按 Pane ID 找终端会话；右键菜单可能作用于非选中标签之外的 Pane。
-  private func terminalSession(forPaneID paneID: UUID) -> TerminalSession? {
+  /// 在全部标签里按 Pane ID 找终端会话；右键菜单与 Pane 顶条按钮可能作用于非选中标签之外的 Pane。
+  func terminalSession(forPaneID paneID: UUID) -> TerminalSession? {
     tabs.lazy.compactMap { $0.runtime(for: paneID)?.terminalSession }.first
   }
 
