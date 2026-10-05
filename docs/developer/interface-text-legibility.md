@@ -20,6 +20,7 @@
 
 1. **界面字号只从 `InterfaceScale` 取。** 新代码不直接写 `NSFont.systemFont(ofSize:)`，改用 `NSFont.interface(ofSize:weight:)`、`interfaceMonospaced`、`interfaceMonospacedDigit`；`makeLabel(_:size:)` 内部已经缩放，调用方传默认档字号，不要再乘倍数。
 2. **装文字的固定尺寸跟着缩放。** 行高、文字控件的固定宽高、以文字为主的浮层尺寸用 `InterfaceScale.length(_:)`；被外部几何卡住的尺寸（标题栏、屏幕大小）用 `length(_:max:)` 设上限。
+   窗口内的居中浮层（命令面板、全局查找、Agent 历史）经 `WorkspaceViewController.constrainCenteredOverlay` 装约束：首选尺寸的优先级是 480，必须低于窗口保持自身尺寸的优先级（500）；另有 required 的尺寸上限和四周 28pt 边距。优先级写高了，窗口比浮层小时内容区会被撑到窗口外，浮层底部被裁掉。
 3. **不缩放的东西。** 间距、圆角、描边、分隔线、动画参数、窗口最小尺寸、Panel 宽度，以及一切终端内容（终端字体、文件预览正文、Dock 图标绘制）。它们放大后只会挤掉内容。
 4. **默认档必须和改动前逐像素一致。** 倍数为 1 时所有 API 原样返回，现有布局测试与截图不受影响。
 5. **原生界面的档位在启动时固定。** `AsterAppDelegate.init` 在创建任何窗口前调用 `InterfaceScale.install`；字体与行高在视图创建时确定，运行中改档位只写配置并询问是否重启（与界面语言同一做法）。因此 `static let` 里使用缩放 API 是安全的。
@@ -50,4 +51,5 @@
 
 - `Tests/AsterCoreTests/InterfaceTextLegibilityTests.swift`：倍数、旧配置兼容、未知档位、对比度达标、半透明背景。
 - `Tests/AsterTests/InterfaceScaleTests.swift`：默认档与系统字体一致、取整规则、`ThemeRuntime` 只改次要色、设置页往返与 `pageZoom`。
+- `Tests/AsterTests/WorkspaceOverlayWindowFitTests.swift`：最大档下矮窗口、窄窗口里的浮层收缩到窗口内；大窗口保持首选尺寸。
 - 人工验收：五档逐档重启，检查侧栏行、详情面板、浮层、用量面板没有截字或重叠；浅色与深色各检查一次加深开关。

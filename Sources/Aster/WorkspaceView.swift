@@ -393,6 +393,48 @@ final class WorkspaceViewController: NSViewController {
     overlay.didPresent()
   }
 
+  /// 浮层四周与窗口边缘保持的最小距离。
+  private static let overlayWindowMargin: CGFloat = 28
+
+  /// 浮层首选尺寸的优先级。必须低于窗口保持自身尺寸的优先级（`windowSizeStayPut` 500、
+  /// 拖动缩小窗口 490）：再高的话，窗口比浮层小时赢的是浮层，内容区会被撑到窗口外面，
+  /// 浮层底部和两侧就被窗口裁掉。
+  private static let overlayPreferredSizePriority = NSLayoutConstraint.Priority(480)
+
+  /// 给居中浮层装尺寸约束：正常窗口里用首选尺寸，窗口比浮层小时收缩到窗口内。
+  ///
+  /// 首选宽高只是低优先级的「尽量这么大」，另有 required 的上限防止内容把浮层撑得更大；
+  /// 两侧与底部的 required 边距在小窗口里生效。浮层尺寸随界面字号放大后（最大档 Agent
+  /// 历史 1100×800）很容易超过窗口，而浮层内部都是滚动列表，收缩后内容仍然可达。
+  ///
+  /// - Parameters:
+  ///   - top: 浮层顶边到工作区顶边的距离。
+  ///   - fixedHeight: 为 true 时高度尽量等于 `height`（内容不自撑高的浮层），否则 `height` 只是上限。
+  private func constrainCenteredOverlay(
+    _ overlay: NSView, top: CGFloat, width: CGFloat, height: CGFloat, fixedHeight: Bool
+  ) {
+    overlay.translatesAutoresizingMaskIntoConstraints = false
+    let margin = Self.overlayWindowMargin
+    let preferredWidth = overlay.widthAnchor.constraint(equalToConstant: width)
+    preferredWidth.priority = Self.overlayPreferredSizePriority
+    var constraints = [
+      overlay.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      overlay.topAnchor.constraint(equalTo: view.topAnchor, constant: top),
+      preferredWidth,
+      overlay.widthAnchor.constraint(lessThanOrEqualToConstant: width),
+      overlay.heightAnchor.constraint(lessThanOrEqualToConstant: height),
+      overlay.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: margin),
+      overlay.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -margin),
+      overlay.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -margin),
+    ]
+    if fixedHeight {
+      let preferredHeight = overlay.heightAnchor.constraint(equalToConstant: height)
+      preferredHeight.priority = Self.overlayPreferredSizePriority
+      constraints.append(preferredHeight)
+    }
+    NSLayoutConstraint.activate(constraints)
+  }
+
   /// 跟踪本窗口的键盘焦点状态。通知按窗口过滤，多窗口时互不影响。
   private func observeWindowActivation() {
     let center = NotificationCenter.default
@@ -899,11 +941,17 @@ final class WorkspaceViewController: NSViewController {
       let composer = makeAgentComposer(tab)
       view.addSubview(composer)
       composer.translatesAutoresizingMaskIntoConstraints = false
+      // 浮层尺寸随界面字号放大，内部行与筛选条也随之变宽；上限防止 1.5 倍下撑出常见屏幕。
+      // 首选宽度用低优先级：窗口比它窄时，左侧 required 边距把它压回窗口内。
+      let composerPreferredWidth = InterfaceScale.length(560, max: 840)
+      let composerWidth = composer.widthAnchor.constraint(equalToConstant: composerPreferredWidth)
+      composerWidth.priority = Self.overlayPreferredSizePriority
       NSLayoutConstraint.activate([
         composer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
         composer.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -42),
-        // 浮层尺寸随界面字号放大，内部行与筛选条也随之变宽；上限防止 1.5 倍下撑出常见屏幕。
-        composer.widthAnchor.constraint(equalToConstant: InterfaceScale.length(560, max: 840)),
+        composerWidth,
+        composer.widthAnchor.constraint(lessThanOrEqualToConstant: composerPreferredWidth),
+        composer.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
       ])
     }
 
@@ -912,14 +960,10 @@ final class WorkspaceViewController: NSViewController {
       addChild(palette)
       retainedObjects.append(palette)
       view.addSubview(palette.view)
-      palette.view.translatesAutoresizingMaskIntoConstraints = false
-      NSLayoutConstraint.activate([
-        palette.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-        palette.view.topAnchor.constraint(equalTo: view.topAnchor, constant: 82),
-        palette.view.widthAnchor.constraint(equalToConstant: InterfaceScale.length(560, max: 840)),
-        palette.view.heightAnchor.constraint(
-          lessThanOrEqualToConstant: InterfaceScale.length(480, max: 720)),
-      ])
+      constrainCenteredOverlay(
+        palette.view, top: 82,
+        width: InterfaceScale.length(560, max: 840),
+        height: InterfaceScale.length(480, max: 720), fixedHeight: false)
     } else if model.isOpenQuicklyPresented {
       attachOpenQuicklyOverlay(refreshesTargets: true)
     } else if model.isGlobalFindPresented {
@@ -927,27 +971,19 @@ final class WorkspaceViewController: NSViewController {
       addChild(globalFind)
       retainedObjects.append(globalFind)
       view.addSubview(globalFind.view)
-      globalFind.view.translatesAutoresizingMaskIntoConstraints = false
-      NSLayoutConstraint.activate([
-        globalFind.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-        globalFind.view.topAnchor.constraint(equalTo: view.topAnchor, constant: 82),
-        globalFind.view.widthAnchor.constraint(
-          equalToConstant: InterfaceScale.length(680, max: 1000)),
-        globalFind.view.heightAnchor.constraint(
-          lessThanOrEqualToConstant: InterfaceScale.length(520, max: 780)),
-      ])
+      constrainCenteredOverlay(
+        globalFind.view, top: 82,
+        width: InterfaceScale.length(680, max: 1000),
+        height: InterfaceScale.length(520, max: 780), fixedHeight: false)
     } else if model.isAgentHistoryPresented {
       let history = AgentHistoryOverlayViewController(model: model)
       addChild(history)
       retainedObjects.append(history)
       view.addSubview(history.view)
-      history.view.translatesAutoresizingMaskIntoConstraints = false
-      NSLayoutConstraint.activate([
-        history.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-        history.view.topAnchor.constraint(equalTo: view.topAnchor, constant: 64),
-        history.view.widthAnchor.constraint(equalToConstant: InterfaceScale.length(760, max: 1100)),
-        history.view.heightAnchor.constraint(equalToConstant: InterfaceScale.length(560, max: 800)),
-      ])
+      constrainCenteredOverlay(
+        history.view, top: 64,
+        width: InterfaceScale.length(760, max: 1100),
+        height: InterfaceScale.length(560, max: 800), fixedHeight: true)
     }
 
     if let notice = model.notice {
