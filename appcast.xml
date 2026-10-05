@@ -3,6 +3,36 @@
     <channel>
         <title>Aster</title>
         <item>
+            <title>0.6.16</title>
+            <pubDate>Mon, 05 Oct 2026 12:55:32 +0800</pubDate>
+            <link>https://github.com/rambocode/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>35</sparkle:version>
+            <sparkle:shortVersionString>0.6.16</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[## 新功能
+
+- **界面文字大小**：「设置 ▸ 外观 ▸ 界面文字」可以调界面字号，共五档，和终端字号互不影响。还有一个「加深界面文字」开关，让侧栏和设置页里偏淡的文字更清楚；系统打开「增强对比度」时自动生效。改字号后需要重启 Aster。
+- **Pane 顶边的实时画面按钮**：把鼠标移到终端 Pane 顶边，右上角多了一个眼睛图标，点它收起或恢复实时画面。Claude Code 这类 Agent 接管鼠标后右键菜单弹不出来，这时用它就行。
+- **AI 用量统计 Antigravity CLI**：Token 页现在会统计 `agy` 命令行的 token 用量（不含 Antigravity 应用里的会话）。
+- **Codex 订阅档位**：配额卡上 Codex 的 Pro 会标出是 Pro 100、Pro 200 还是 Pro 500。
+- **原生 SSH 支持 IdentityAgent**：会读取 `~/.ssh/config` 里的 `IdentityAgent`，1Password、Secretive 这类第三方 agent 可以用来认证了。也可以在主机设置的「高级 ▸ Agent 套接字」里单独填。
+
+## 改进
+
+- 放大某个 Pane 后，还原按钮移到窗口标题栏右侧，一直显示。放大期间 Pane 顶边不再出现 `×`、放大按钮和拖动把手。
+- 没有键盘焦点的 Pane 不再显示光标，分屏时不会每个 Pane 都留一个空心方框。
+- 竖线光标加粗了一点，更容易找到。
+
+## 修复
+
+- 修复设置窗口开着时，点侧栏折叠按钮没有反应的问题。
+- 修复界面字号调大后，窗口较小时 Agent 历史、命令面板、全局查找等浮层超出窗口、底部按钮被裁掉的问题。
+]]></description>
+            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.16/Aster-0.6.16.dmg" length="50343282" type="application/octet-stream" sparkle:edSignature="jvWGoYGSzXm85isU9Rhg6KTRHEKOEMZ6HrRcgJBeh4OiMWFHlqR7bHFdnnmL9DDLfXya3qgWnysuqI5PtM7iDA=="/>
+        </item>
+        <item>
             <title>0.6.15</title>
             <pubDate>Thu, 01 Oct 2026 08:31:15 +0800</pubDate>
             <link>https://github.com/rambocode/aster</link>
@@ -99,25 +129,6 @@
 - 修复终端滚动条遮挡最右几列文字的问题。滚动条现在有自己的位置，平时隐藏，滚动或指针移到右侧时出现。
 ]]></description>
             <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.12/Aster-0.6.12.dmg" length="44173789" type="application/octet-stream" sparkle:edSignature="52l5iRfW27lrQ9gAS0EUvgN0DJJW0mkHdGlOVT6UTMsyR+o+up2zrevNxtvem0QUAoPAjDSIw8Msmlqb3+rECQ=="/>
-        </item>
-        <item>
-            <title>0.6.11</title>
-            <pubDate>Mon, 21 Sep 2026 20:55:59 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>30</sparkle:version>
-            <sparkle:shortVersionString>0.6.11</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[## 新功能
-
-- 终端 Pane 右侧加了滚动条。内容超出 Pane 高度时才出现；内容不足一屏或全屏 TUI 时不显示。拖动滑块可以直接跳到任意位置，点击滑块上下的空白处按一屏翻页。滚动条浮在终端上，不占列宽，出现或消失时文字不会重新排版。
-
-## 修复
-
-- 修复在终端里按 Ctrl+Enter 会弹出右键菜单的问题。macOS 15 起系统把 Ctrl+Return 当成「弹出上下文菜单」的快捷键，按键到不了终端，Claude Code 提示的「ctrl+enter 立即发送」因此无法使用。现在终端获得焦点时，Ctrl+Enter 会直接交给终端里的程序。
-]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.11/Aster-0.6.11.dmg" length="44675042" type="application/octet-stream" sparkle:edSignature="6Sr7QdFYoan0D3b71al98KAPEnQ4oYVOYJ/EX9QjblpKhXwJ4XOwXTXqaUtjyb0/7ycmaeajQqAMK6MHeqVUDg=="/>
         </item>
     </channel>
 </rss>
