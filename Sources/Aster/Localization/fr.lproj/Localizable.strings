@@ -1420,6 +1420,7 @@
 "用逗号分隔；每项按空白分词前缀匹配，留空即关闭" = "Séparés par des virgules ; chaque élément correspond par préfixe tokenisé sur les espaces, laissez vide pour désactiver";
 "由 全局 → 主题 → 回退 解析得到" = "Résolu selon Global → Thème → Repli";
 "画中画跟随活动 Pane" = "L’incrustation suit le panneau actif";
+"界面字号将在重新启动 Aster 后生效" = "La taille du texte de l’interface s’applique après le redémarrage d’Aster";
 "界面描边" = "Bordure d'interface";
 "界面文字" = "Texte d'interface";
 "界面显示语言，更改后重新启动 Aster 生效" = "Langue d'affichage de l'interface ; prend effet après le redémarrage d'Aster";
@@ -1607,6 +1608,7 @@
 "设置标签页前缀…" = "Définir le préfixe de l’onglet…";
 "设置消息格式无效" = "Format de message de réglage invalide";
 "设置范围" = "Portée des réglages";
+"设置页已经按新字号显示。现在重新启动 Aster，让侧栏和面板也用新字号？打开的终端与标签会按你的关闭确认设置处理，稍后也可以手动退出再打开。" = "Les réglages utilisent déjà la nouvelle taille. Redémarrer Aster maintenant pour l’appliquer aussi à la barre latérale et aux panneaux ? Les terminaux et onglets ouverts suivent vos réglages de confirmation de fermeture. Vous pouvez aussi quitter et rouvrir Aster plus tard.";
 "识别本地路径、URL 和 OSC 8 显式链接；关闭后不再显示下划线、预览，也不响应 Cmd 点击。" = "Reconnaître les chemins locaux, les URL et les liens explicites OSC 8 ; une fois désactivé, le soulignement, l'aperçu et le Cmd-clic ne répondent plus.";
 "识别终端目标" = "Reconnaître les cibles du terminal";
 "诊断" = "Diagnostics";

@@ -12,10 +12,10 @@ import Foundation
 final class UsageQuotaSectionController: UsageSectionController {
   /// 倒计时文字的刷新间隔。分钟级精度不需要更密的 tick。
   static let tickInterval = Duration.seconds(60)
-  /// 卡片排两列所需的最小内容宽度。
-  static let twoColumnMinimumWidth: CGFloat = 620
+  /// 卡片排两列所需的最小内容宽度。按卡片文字的可读宽度定，所以随界面字号放大。
+  static let twoColumnMinimumWidth: CGFloat = InterfaceScale.length(620)
   /// 掉回一列的宽度。比进两列的阈值低一档形成滞回，宽度正好卡在阈值上时不会来回跳。
-  static let singleColumnMaximumWidth: CGFloat = 600
+  static let singleColumnMaximumWidth: CGFloat = InterfaceScale.length(600)
   private static let contentInset: CGFloat = 12
   private static let cardSpacing: CGFloat = 10
 

@@ -33,6 +33,7 @@ Aster 的工作区、窗口生命周期和系统动作使用 AppKit；独立设�
 13. 跨窗口标签移动必须转移同一个 `TerminalTabItem`，不得从 snapshot 重建并丢失 PTY、滚动历史或 Agent 状态。
 14. 外部拖放先按普通文件、符号链接、URL 和数量上限校验，再进入预览、文件浏览器或粘贴安全链路。
 15. Panel Divider 只调整宽度，不承担显隐；Sidebar 与 Inspector 必须通过各自明确入口显示或收起。
+16. 界面字号不在视图里写死：字体用 `NSFont.interface(ofSize:)` 系列或 `makeLabel`，装文字的固定尺寸用 `InterfaceScale.length(_:)`。规则与例外见 [界面文字可读性](interface-text-legibility.md)。
 
 ## 业务流程
 

@@ -15,11 +15,12 @@ final class ComposerTextView: NSTextView {
     needsDisplay = true
   }
 
+  /// 空草稿时在文本起点画占位提示；字体跟随正文，缺省时用缩放后的系统字号。
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
     guard string.isEmpty, !placeholder.isEmpty else { return }
     let attributes: [NSAttributedString.Key: Any] = [
-      .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+      .font: font ?? NSFont.interface(ofSize: NSFont.systemFontSize),
       .foregroundColor: AsterTheme.tertiaryInk,
     ]
     let origin = NSPoint(

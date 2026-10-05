@@ -15,11 +15,15 @@ final class AgentChatSendSheetController: NSObject {
   private let comment = NSTextView()
   private let errorLabel = NSTextField(labelWithString: "")
 
+  /// 创建确认面板并搭好界面；面板以 sheet 方式挂到父窗口。
   init(model: AppModel, presentation: AgentChatPresentation) {
     self.model = model
     self.presentation = presentation
+    // 面板内容以文字为主，随界面字号放大；设上限让 1.5 倍时仍放得进 13 寸屏（约 1440×900）。
     panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
+      contentRect: NSRect(
+        x: 0, y: 0, width: InterfaceScale.length(900, max: 1200),
+        height: InterfaceScale.length(620, max: 800)),
       styleMask: [.titled, .closable],
       backing: .buffered,
       defer: false
@@ -39,24 +43,26 @@ final class AgentChatSendSheetController: NSObject {
     }
   }
 
+  /// 搭建面板：标题、来源预览、发送目标、备注输入与操作按钮。
   private func buildInterface() {
     let root = NSView()
     panel.contentView = root
 
     let title = NSTextField(labelWithString: "Agent transcript")
-    title.font = NSFont.systemFont(ofSize: 22, weight: .bold)
+    title.font = NSFont.interface(ofSize: 22, weight: .bold)
     let status = NSTextField(labelWithString: statusText)
-    status.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+    status.font = NSFont.interface(ofSize: 13, weight: .medium)
     status.textColor = AsterTheme.secondaryInk
 
     preview.isEditable = false
     preview.isSelectable = true
-    preview.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    preview.font = NSFont.interfaceMonospaced(ofSize: 12)
     preview.textColor = AsterTheme.secondaryInk
     preview.backgroundColor = AsterTheme.panel.withAlphaComponent(0.72)
     preview.textContainerInset = NSSize(width: 12, height: 12)
     let previewScroll = scrollView(for: preview)
-    previewScroll.heightAnchor.constraint(equalToConstant: 205).isActive = true
+    previewScroll.heightAnchor.constraint(equalToConstant: InterfaceScale.length(205)).isActive =
+      true
 
     selectionCheck.target = self
     selectionCheck.action = #selector(sourceChanged(_:))
@@ -73,9 +79,10 @@ final class AgentChatSendSheetController: NSObject {
     sources.spacing = 16
 
     let sendLabel = NSTextField(labelWithString: "Send to:")
-    sendLabel.font = NSFont.systemFont(ofSize: 15, weight: .medium)
+    sendLabel.font = NSFont.interface(ofSize: 15, weight: .medium)
     targetPopup.addItems(withTitles: presentation.destinations.map(\.title))
     targetPopup.controlSize = .large
+    // 带外框的 popup 高度由 controlSize 固定，字号放大会被裁切，因此保持原字号。
     targetPopup.font = NSFont.systemFont(ofSize: 15, weight: .medium)
     let destination = NSStackView(views: [sendLabel, targetPopup])
     destination.orientation = .horizontal
@@ -83,16 +90,17 @@ final class AgentChatSendSheetController: NSObject {
     destination.spacing = 12
 
     let commentLabel = NSTextField(labelWithString: "Comment:")
-    commentLabel.font = NSFont.systemFont(ofSize: 15, weight: .medium)
-    comment.font = NSFont.systemFont(ofSize: 14)
+    commentLabel.font = NSFont.interface(ofSize: 15, weight: .medium)
+    comment.font = NSFont.interface(ofSize: 14)
     comment.isAutomaticQuoteSubstitutionEnabled = false
     comment.isAutomaticDashSubstitutionEnabled = false
     comment.textContainerInset = NSSize(width: 8, height: 8)
     let commentScroll = scrollView(for: comment)
-    commentScroll.heightAnchor.constraint(equalToConstant: 110).isActive = true
+    commentScroll.heightAnchor.constraint(equalToConstant: InterfaceScale.length(110)).isActive =
+      true
 
     errorLabel.textColor = AsterTheme.warning
-    errorLabel.font = NSFont.systemFont(ofSize: 11)
+    errorLabel.font = NSFont.interface(ofSize: 11)
     let copy = ActionButton(title: "Copy Message", bezelStyle: .rounded) { [weak self] in
       self?.copyMessage()
     }

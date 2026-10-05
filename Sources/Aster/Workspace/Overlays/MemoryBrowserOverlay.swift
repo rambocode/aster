@@ -43,6 +43,7 @@ final class MemoryBrowserRowButton: NSButton {
     didSet { applyBackground() }
   }
 
+  /// 创建列表行：两行富文本标题，点击经闭包回调。
   init(item: MemoryListItem, handler: @escaping () -> Void) {
     self.handler = handler
     super.init(frame: .zero)
@@ -56,7 +57,7 @@ final class MemoryBrowserRowButton: NSButton {
     target = self
     action = #selector(invoke)
     translatesAutoresizingMaskIntoConstraints = false
-    heightAnchor.constraint(equalToConstant: 46).isActive = true
+    heightAnchor.constraint(equalToConstant: InterfaceScale.length(46)).isActive = true
     // 行宽由列表列决定，不能由标题的固有宽度反推：长标题会把整列撑宽，
     // 短标题又会让行缩成一小条并浮在列中间（截断交给 lineBreakMode）。
     setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -80,7 +81,7 @@ final class MemoryBrowserRowButton: NSButton {
     let result = NSMutableAttributedString(
       string: item.title + "\n",
       attributes: [
-        .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+        .font: NSFont.interface(ofSize: 12, weight: .medium),
         .foregroundColor: titleColor,
         .paragraphStyle: paragraph,
       ])
@@ -88,7 +89,7 @@ final class MemoryBrowserRowButton: NSButton {
       NSAttributedString(
         string: item.subtitle,
         attributes: [
-          .font: NSFont.systemFont(ofSize: 10.5, weight: .regular),
+          .font: NSFont.interface(ofSize: 10.5),
           .foregroundColor: NSColor.secondaryLabelColor,
           .paragraphStyle: paragraph,
         ]))
@@ -189,6 +190,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
 
   required init?(coder: NSCoder) { nil }
 
+  /// 搭建浏览器：分段 + 搜索头、左列条目列表、右侧正文与底部操作。
   override func loadView() {
     // 宿主刻意不画任何底色、圆角与边框：这是一个独立面板窗口，自绘 surface 会在
     // 窗体背景上叠出一块「浮层」，看起来像内容和窗口分了家。留空即让 AppKit 的
@@ -207,6 +209,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     segmented.action = #selector(segmentChanged(_:))
 
     search.placeholderString = L("搜索标题、正文与摘要…")
+    search.font = NSFont.interface(ofSize: NSFont.systemFontSize)
     search.delegate = self
     search.onMove = { [weak self] delta in self?.moveSelection(delta) }
     search.onCancel = { [weak self] in self?.onClose?() }
@@ -241,7 +244,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     listScroll.drawsBackground = false
     listScroll.documentView = listDocument
     listScroll.translatesAutoresizingMaskIntoConstraints = false
-    let listWidth = listScroll.widthAnchor.constraint(equalToConstant: 268)
+    let listWidth = listScroll.widthAnchor.constraint(equalToConstant: InterfaceScale.length(268))
     NSLayoutConstraint.activate([
       listDocument.leadingAnchor.constraint(equalTo: listScroll.contentView.leadingAnchor),
       listDocument.topAnchor.constraint(equalTo: listScroll.contentView.topAnchor),
@@ -267,7 +270,7 @@ final class MemoryBrowserViewController: NSViewController, NSSearchFieldDelegate
     // 正文不画自己的底色：一块与窗体不同的色块会把正文区切成独立浮层。
     detailText.drawsBackground = false
     detailText.textColor = .labelColor
-    detailText.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+    detailText.font = .interfaceMonospaced(ofSize: 11)
     detailText.textContainerInset = NSSize(width: 12, height: 12)
     detailText.isVerticallyResizable = true
     detailText.isHorizontallyResizable = false
@@ -731,6 +734,7 @@ final class MemoryBrowserWindowController: NSWindowController, NSWindowDelegate 
   /// 窗口关闭时通知 `AppModel` 释放引用，避免第二次打开命中已关闭的窗口。
   var onClose: (() -> Void)?
 
+  /// 创建承载记忆浏览器的独立面板窗口。
   init(
     model: AppModel,
     projectPath: String?,
@@ -743,8 +747,11 @@ final class MemoryBrowserWindowController: NSWindowController, NSWindowDelegate 
       initialTab: initialTab,
       selectedTaskID: selectedTaskID
     )
+    // 以文字为主的面板随界面字号放大；上限保证 1.5 倍时仍放得进 13 寸屏。
+    let contentSize = NSSize(
+      width: InterfaceScale.length(880, max: 1200), height: InterfaceScale.length(560, max: 800))
     let panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 880, height: 560),
+      contentRect: NSRect(origin: .zero, size: contentSize),
       styleMask: [.titled, .closable, .resizable, .utilityWindow],
       backing: .buffered,
       defer: false
@@ -752,7 +759,7 @@ final class MemoryBrowserWindowController: NSWindowController, NSWindowDelegate 
     panel.title = "Session Memory"
     panel.isReleasedWhenClosed = false
     panel.contentViewController = browser
-    panel.setContentSize(NSSize(width: 880, height: 560))
+    panel.setContentSize(contentSize)
     panel.minSize = NSSize(width: 720, height: 420)
     super.init(window: panel)
     panel.delegate = self

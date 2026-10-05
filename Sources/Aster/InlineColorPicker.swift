@@ -53,8 +53,12 @@ final class InlineColorPickerViewController: NSViewController {
     NSColor(hue: hue, saturation: saturation, brightness: brightness, alpha: alpha)
   }
 
+  /// 搭建取色器：标题行、饱和度/亮度色域、色相与透明度滑条、hex 输入框。
   override func loadView() {
-    let root = NSView(frame: NSRect(x: 0, y: 0, width: 232, height: 262))
+    // 宽度跟随字号放大，标题和 hex 输入才不会在大字号下被截断；高度最终由内容约束决定。
+    let root = NSView(
+      frame: NSRect(
+        x: 0, y: 0, width: InterfaceScale.length(232), height: InterfaceScale.length(262)))
 
     let swatch = NSView()
     swatch.wantsLayer = true
@@ -63,8 +67,8 @@ final class InlineColorPickerViewController: NSViewController {
     swatch.layer?.borderColor = SettingsTheme.hairline.cgColor
     swatch.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      swatch.widthAnchor.constraint(equalToConstant: 16),
-      swatch.heightAnchor.constraint(equalToConstant: 16),
+      swatch.widthAnchor.constraint(equalToConstant: InterfaceScale.length(16)),
+      swatch.heightAnchor.constraint(equalToConstant: InterfaceScale.length(16)),
     ])
     preview = swatch
 
@@ -183,10 +187,11 @@ private final class HexInputField: NSTextField, NSTextFieldDelegate {
   /// 移走，此时输入框里还是拖动前的旧色号，提交它会立刻把刚拖出来的颜色改回去。
   private var hasUserEdits = false
 
+  /// 创建居中显示的等宽 hex 输入框，提交时回调原始文本。
   init(onCommit: @escaping (String) -> Void) {
     self.onCommit = onCommit
     super.init(frame: .zero)
-    font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+    font = NSFont.interfaceMonospaced(ofSize: 11.5)
     alignment = .center
     isBezeled = true
     bezelStyle = .roundedBezel

@@ -1106,6 +1106,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
 
   // MARK: - Outline
 
+  /// Outline 页：上半部是当前 Pane 的现场命令大纲，下半部内嵌会话时间线。
   private func makeOutlineContent() -> NSView {
     let root = NSView()
     let path = makeLabel("—", size: 10.5, color: AsterTheme.secondaryInk, monospaced: true)
@@ -1123,7 +1124,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     outlineTable.identifier = NSUserInterfaceItemIdentifier("details-outline-table")
     outlineTable.headerView = nil
     outlineTable.backgroundColor = .clear
-    outlineTable.rowHeight = 26
+    outlineTable.rowHeight = InterfaceScale.length(26)
     outlineTable.intercellSpacing = .zero
     outlineTable.selectionHighlightStyle = .none
     outlineTable.dataSource = self
@@ -1321,6 +1322,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
 
   // MARK: - Git
 
+  /// Git 页：分支与增删统计、Commit / 编辑器动作行，以及变更文件表格。
   private func makeGitContent() -> NSView {
     let root = NSView()
     let branch = makeLabel("—", size: 13, weight: .bold)
@@ -1375,7 +1377,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     gitTable.identifier = NSUserInterfaceItemIdentifier("details-git-table")
     gitTable.headerView = nil
     gitTable.backgroundColor = .clear
-    gitTable.rowHeight = 26
+    gitTable.rowHeight = InterfaceScale.length(26)
     gitTable.intercellSpacing = .zero
     gitTable.selectionHighlightStyle = .none
     gitTable.dataSource = self
@@ -1676,6 +1678,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     static let horizontalInset: CGFloat = 8
   }
 
+  /// Files 页：搜索与排序工具条，下方是可展开的文件树表格。
   private func makeFilesContent() -> NSView {
     let root = NSView()
     let search = NSSearchField()
@@ -1721,7 +1724,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
     filesTable.backgroundColor = .clear
     // 默认 inset 样式会给每行额外左右留白，箭头无法贴齐 Find 左缘。
     filesTable.style = .plain
-    filesTable.rowHeight = 24
+    filesTable.rowHeight = InterfaceScale.length(24)
     filesTable.intercellSpacing = .zero
     filesTable.selectionHighlightStyle = .none
     filesTable.dataSource = self
@@ -2707,7 +2710,7 @@ final class DetailsPanelViewController: NSViewController, NSTableViewDataSource,
       string: title,
       attributes: [
         .foregroundColor: AsterTheme.accent,
-        .font: NSFont.systemFont(ofSize: 12),
+        .font: NSFont.interface(ofSize: 12),
       ])
     return button
   }
@@ -2726,6 +2729,7 @@ private final class DetailsPaneRefreshOverlay: NSView {
   private var statusRevealTask: Task<Void, Never>?
   private var isRefreshing = false
 
+  /// 创建默认隐藏的屏障与右上角状态胶囊（spinner + 文字）。
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
     identifier = NSUserInterfaceItemIdentifier("details-pane-refresh-overlay")
@@ -2741,7 +2745,7 @@ private final class DetailsPaneRefreshOverlay: NSView {
     spinner.controlSize = .small
     spinner.isDisplayedWhenStopped = false
 
-    statusLabel.font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
+    statusLabel.font = NSFont.interface(ofSize: 10.5, weight: .medium)
     statusLabel.lineBreakMode = .byClipping
 
     let status = NSStackView(views: [spinner, statusLabel])
@@ -2853,6 +2857,7 @@ private final class PanelTabChip: NSButton {
   private var hoverTrackingArea: NSTrackingArea?
   private var isHovering = false
 
+  /// 创建收起态 chip；宽度约束固定为收起宽度，高度按界面字号放大但不超过页签行高。
   init(title: String, symbol: String, handler: @escaping () -> Void) {
     fullTitle = title
     super.init(frame: .zero)
@@ -2871,7 +2876,10 @@ private final class PanelTabChip: NSButton {
     let width = widthAnchor.constraint(equalToConstant: Self.collapsedWidth)
     width.isActive = true
     widthConstraint = width
-    heightAnchor.constraint(equalToConstant: 24).isActive = true
+    // 页签行固定 28pt 高，要和标题栏上的 Inspector 按钮共用中心线，chip 最多长到行高。
+    heightAnchor.constraint(
+      equalToConstant: InterfaceScale.length(24, max: InspectorToggleMetrics.centerYFromTop * 2)
+    ).isActive = true
     applyTitle()
     applyAppearance(animated: false)
   }
@@ -2974,8 +2982,9 @@ private final class PanelTabChip: NSButton {
 
   private var selectedTitle: String { " \(fullTitle)" }
 
+  /// 展开宽度：收起宽度加上按当前界面字号实测的标题宽度。
   private var expandedWidth: CGFloat {
-    let font = NSFont.systemFont(ofSize: Self.titleFontSize, weight: .semibold)
+    let font = NSFont.interface(ofSize: Self.titleFontSize, weight: .semibold)
     let width = (selectedTitle as NSString).size(withAttributes: [.font: font]).width
     // +2 吸收字距测量与实际绘制的舍入差，避免最后一个字符被宽度约束切掉。
     return Self.collapsedWidth + ceil(width) + 2
@@ -2985,8 +2994,9 @@ private final class PanelTabChip: NSButton {
     title = isChipSelected ? selectedTitle : ""
   }
 
+  /// 按选中 / 悬停状态刷新字重、图标墨色与灰底，可选淡入淡出。
   private func applyAppearance(animated: Bool) {
-    font = NSFont.systemFont(ofSize: Self.titleFontSize, weight: isChipSelected ? .semibold : .regular)
+    font = NSFont.interface(ofSize: Self.titleFontSize, weight: isChipSelected ? .semibold : .regular)
     contentTintColor = isChipSelected ? AsterTheme.ink : AsterTheme.secondaryInk
     let alpha: CGFloat = isChipSelected ? 0.08 : (isHovering ? 0.05 : 0)
     let background =
@@ -3105,6 +3115,7 @@ final class SplitActionSegmentButton: NSButton {
   private var isPressing = false
   private var hoverTrackingArea: NSTrackingArea?
 
+  /// 创建无边框分段按钮；标题字号与高度随界面字号档位缩放。
   init(title: String = "", symbol: String? = nil, handler: @escaping () -> Void) {
     self.handler = handler
     super.init(frame: .zero)
@@ -3115,10 +3126,12 @@ final class SplitActionSegmentButton: NSButton {
       image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
       imagePosition = title.isEmpty ? .imageOnly : .imageLeading
     }
+    // 显式写出按钮默认字号（13pt），让 Commit / 编辑器名称跟随界面字号档位。
+    font = .interface(ofSize: NSFont.systemFontSize)
     target = self
     action = #selector(invoke)
     translatesAutoresizingMaskIntoConstraints = false
-    heightAnchor.constraint(equalToConstant: 28).isActive = true
+    heightAnchor.constraint(equalToConstant: InterfaceScale.length(28)).isActive = true
   }
 
   required init?(coder: NSCoder) { nil }
@@ -3259,7 +3272,9 @@ private final class DiffPreviewHeaderView: NSView {
 /// 只读展示，不提供任何写操作入口。
 @MainActor
 final class GitDiffPreviewOverlay: NSView {
-  private static let maximumPanelSize = NSSize(width: 620, height: 520)
+  /// 上限随字号放大，放大后的 diff 行仍能看到相近的列数；`layout()` 会再夹到窗口可用区域内。
+  private static let maximumPanelSize = NSSize(
+    width: InterfaceScale.length(620), height: InterfaceScale.length(520))
   private static let minimumPanelSize = NSSize(width: 260, height: 200)
   private static let screenInset: CGFloat = 16
 
@@ -3271,6 +3286,7 @@ final class GitDiffPreviewOverlay: NSView {
   private var panelEdgeX: CGFloat?
   private var rowCenterY: CGFloat = 0
 
+  /// 创建预览浮层：scrim、带箭头的气泡、路径标题条与只读 diff 文本视图。
   init(path: String, dismiss: @escaping () -> Void) {
     dismissHandler = dismiss
     super.init(frame: .zero)
@@ -3325,7 +3341,7 @@ final class GitDiffPreviewOverlay: NSView {
       header.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
       header.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: bodyTrailing),
       header.topAnchor.constraint(equalTo: panel.topAnchor),
-      header.heightAnchor.constraint(equalToConstant: 34),
+      header.heightAnchor.constraint(equalToConstant: InterfaceScale.length(34)),
       close.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -10),
       close.centerYAnchor.constraint(equalTo: header.centerYAnchor),
       close.widthAnchor.constraint(equalToConstant: 20),
@@ -3373,9 +3389,11 @@ final class GitDiffPreviewOverlay: NSView {
     panel.arrowCenterY = rowCenterY - originY
   }
 
+  /// 把 diff 行按类型着色后写入文本视图，并滚回顶部。
   func apply(lines: [GitDiffLine]) {
     let text = NSMutableAttributedString()
-    let font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+    // diff 正文用界面等宽字体而非用户终端字体，属于界面文字，随档位缩放。
+    let font = NSFont.interfaceMonospaced(ofSize: 11.5)
     let display = lines.isEmpty
       ? [GitDiffLine(kind: .notice, text: L("该文件没有可显示的差异。"))] : lines
     for line in display {
@@ -3566,11 +3584,12 @@ private final class DetailsGitRowView: HoverHighlightRowView {
   private var fileTrailingFull: NSLayoutConstraint!
   private var fileTrailingCompact: NSLayoutConstraint!
 
+  /// 创建 Git 行：分组标题与变更文件两套控件共用固定约束，按配置切换显隐。
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
     self.identifier = identifier
 
-    groupLabel.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+    groupLabel.font = NSFont.interface(ofSize: 10, weight: .semibold)
     groupLabel.textColor = AsterTheme.tertiaryInk
     groupLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(groupLabel)
@@ -3579,12 +3598,14 @@ private final class DetailsGitRowView: HoverHighlightRowView {
     stageButton.translatesAutoresizingMaskIntoConstraints = false
     addSubview(stageButton)
 
-    badgeLabel.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
+    badgeLabel.font = NSFont.interfaceMonospaced(ofSize: 10, weight: .semibold)
     badgeLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(badgeLabel)
 
     fileButton.isBordered = false
     fileButton.alignment = .left
+    // 显式写出按钮默认字号（13pt），让变更路径跟随界面字号档位。
+    fileButton.font = .interface(ofSize: NSFont.systemFontSize)
     fileButton.lineBreakMode = .byTruncatingMiddle
     fileButton.activatesOnDoubleClickOnly = true
     fileButton.target = self
@@ -3621,7 +3642,7 @@ private final class DetailsGitRowView: HoverHighlightRowView {
       stageButton.heightAnchor.constraint(equalToConstant: 20),
       badgeLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
       badgeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-      badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 20),
+      badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: InterfaceScale.length(20)),
       rowActions.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
       rowActions.centerYAnchor.constraint(equalTo: centerYAnchor),
       fileButton.leadingAnchor.constraint(equalTo: badgeLabel.trailingAnchor, constant: 6),
@@ -3704,18 +3725,21 @@ private final class DetailsOutlineRowView: HoverHighlightRowView {
   private var copyText = ""
   private var copyFeedback: ((Bool) -> Void)?
 
+  /// 创建大纲行：可缩进的跳转标题按钮与右对齐的元信息。
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
     self.identifier = identifier
     titleButton.isBordered = false
     titleButton.alignment = .left
+    // 显式写出按钮默认字号（13pt），让大纲标题跟随界面字号档位。
+    titleButton.font = .interface(ofSize: NSFont.systemFontSize)
     titleButton.lineBreakMode = .byTruncatingTail
     titleButton.target = self
     titleButton.action = #selector(activate)
     titleButton.translatesAutoresizingMaskIntoConstraints = false
     addSubview(titleButton)
 
-    metadataLabel.font = NSFont.systemFont(ofSize: 10)
+    metadataLabel.font = NSFont.interface(ofSize: 10)
     metadataLabel.textColor = AsterTheme.tertiaryInk
     metadataLabel.alignment = .right
     metadataLabel.setContentHuggingPriority(.required, for: .horizontal)
@@ -3795,6 +3819,7 @@ private final class DetailsFileRowView: HoverHighlightRowView {
   private static let chevronWidth: CGFloat = 14
   private static let iconGap: CGFloat = 6
 
+  /// 创建文件行：展开箭头、文件图标与双击打开的文件名按钮。
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
     self.identifier = identifier
@@ -3806,7 +3831,8 @@ private final class DetailsFileRowView: HoverHighlightRowView {
     addSubview(disclosure)
 
     iconView.imageScaling = .scaleProportionallyDown
-    iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+    iconView.symbolConfiguration = NSImage.SymbolConfiguration(
+      pointSize: InterfaceScale.font(12), weight: .regular)
     iconView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(iconView)
 
@@ -3834,8 +3860,9 @@ private final class DetailsFileRowView: HoverHighlightRowView {
       disclosure.heightAnchor.constraint(equalToConstant: Self.chevronWidth),
       iconLeadingConstraint,
       iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-      iconView.widthAnchor.constraint(equalToConstant: 13),
-      iconView.heightAnchor.constraint(equalToConstant: 13),
+      // 行内文件图标框随行高一起缩放，保持与文件名垂直居中。
+      iconView.widthAnchor.constraint(equalToConstant: InterfaceScale.length(13)),
+      iconView.heightAnchor.constraint(equalToConstant: InterfaceScale.length(13)),
       fileButton.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 3),
       fileButton.trailingAnchor.constraint(equalTo: trailingAnchor),
       fileButton.topAnchor.constraint(equalTo: topAnchor),
@@ -3845,6 +3872,7 @@ private final class DetailsFileRowView: HoverHighlightRowView {
 
   required init?(coder: NSCoder) { nil }
 
+  /// 按树节点与深度刷新缩进、展开箭头、图标与文件名。
   func configure(
     node: WorkspaceFileNode,
     depth: Int,
@@ -3874,7 +3902,7 @@ private final class DetailsFileRowView: HoverHighlightRowView {
       string: node.name,
       attributes: [
         .foregroundColor: AsterTheme.ink,
-        .font: NSFont.systemFont(ofSize: 12),
+        .font: NSFont.interface(ofSize: 12),
       ])
     fileButton.toolTip = node.path
     self.onToggle = onToggle

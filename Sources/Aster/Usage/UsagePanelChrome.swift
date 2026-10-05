@@ -32,7 +32,7 @@ final class UsageSegmentedControl: NSView {
   private static let trackCornerRadius: CGFloat = 7
   private static let trackInset: CGFloat = 2
   private static let segmentSpacing: CGFloat = 2
-  private static let segmentHeight: CGFloat = 20
+  private static let segmentHeight: CGFloat = InterfaceScale.length(20)
 
   private let stack = NSStackView()
   private let identifierPrefix: String
@@ -118,8 +118,9 @@ final class UsageSegmentedControl: NSView {
     applySelection()
   }
 
+  /// 按最宽的粗体标题算出每格的公共宽度。
   private static func segmentWidth(for items: [Item]) -> CGFloat {
-    let font = NSFont.systemFont(ofSize: UsageSegmentButton.fontSize, weight: .semibold)
+    let font = NSFont.interface(ofSize: UsageSegmentButton.fontSize, weight: .semibold)
     let widest =
       items
       .map { ($0.title as NSString).size(withAttributes: [.font: font]).width }
@@ -153,6 +154,7 @@ final class UsageSegmentedControl: NSView {
 /// 分段控件里的一格。悬停要有文字反馈，所以不用通用的 `ActionButton`。
 @MainActor
 final class UsageSegmentButton: NSButton {
+  /// 默认档字号；取用处经 `NSFont.interface` 缩放，这里保持原值，免得乘两次。
   static let fontSize: CGFloat = 12
   static let horizontalInset: CGFloat = 10
   private static let cornerRadius: CGFloat = 5
@@ -226,11 +228,12 @@ final class UsageSegmentButton: NSButton {
     applyStyle()
   }
 
+  /// 按选中与悬停态刷新文字和胶囊外观。
   private func applyStyle() {
     attributedTitle = NSAttributedString(
       string: label,
       attributes: [
-        .font: NSFont.systemFont(
+        .font: NSFont.interface(
           ofSize: Self.fontSize, weight: isSelected ? .semibold : .regular),
         // 未选中项悬停时提到主文字色：没有底色变化的话，光标停在哪一格是看不出来的。
         .foregroundColor: (isSelected || isHovering) ? AsterTheme.ink : AsterTheme.secondaryInk,
@@ -314,10 +317,11 @@ final class UsagePanelHairline: NSView {
 /// 放进标题栏那一带，页签和刷新按钮一律压到 28pt 以下。
 @MainActor
 final class UsagePanelHeaderView: NSView {
-  /// 标题栏带高度：红绿灯所在的区域，内容不得放可点控件。
+  /// 标题栏带高度：红绿灯所在的区域，内容不得放可点控件。由系统标题栏几何决定，不随字号缩放；
+  /// 13pt 标题在 1.5 倍下约 24pt 高，仍放得进这一带。
   static let titlebarInset: CGFloat = 28
-  /// 控件行高度。
-  private static let controlRowHeight: CGFloat = 34
+  /// 控件行高度。分段控件随字号变高，这一行跟着放大才不会把页签顶出表头。
+  private static let controlRowHeight: CGFloat = InterfaceScale.length(34)
   /// 标题左内缩：三颗窗口按钮最右一颗大约到 x=60，再留一段呼吸位。
   private static let titleLeadingInset: CGFloat = 76
   private static let horizontalInset: CGFloat = 14
@@ -424,7 +428,8 @@ final class UsagePanelHeaderView: NSView {
 /// Aster 的浮动窗没有对应能力，摆一排点不动的图标只是噪声。
 @MainActor
 final class UsagePanelFooterView: NSView {
-  private static let height: CGFloat = 32
+  /// 底栏高度。装着随字号变高的分段控件，一起放大。
+  private static let height: CGFloat = InterfaceScale.length(32)
   private static let horizontalInset: CGFloat = 14
 
   private let chips: UsageSegmentedControl

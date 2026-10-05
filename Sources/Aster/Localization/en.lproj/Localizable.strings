@@ -1420,6 +1420,7 @@
 "用逗号分隔；每项按空白分词前缀匹配，留空即关闭" = "Comma-separated; each item matches by whitespace-tokenized prefix, leave empty to disable";
 "由 全局 → 主题 → 回退 解析得到" = "Resolved from Global → Theme → Fallback";
 "画中画跟随活动 Pane" = "Picture in Picture Follows Active Pane";
+"界面字号将在重新启动 Aster 后生效" = "The interface text size takes effect after Aster restarts";
 "界面描边" = "Interface Border";
 "界面文字" = "Interface Text";
 "界面显示语言，更改后重新启动 Aster 生效" = "Interface display language; takes effect after restarting Aster";
@@ -1607,6 +1608,7 @@
 "设置标签页前缀…" = "Set Tab Prefix…";
 "设置消息格式无效" = "Invalid Settings Message Format";
 "设置范围" = "Settings Scope";
+"设置页已经按新字号显示。现在重新启动 Aster，让侧栏和面板也用新字号？打开的终端与标签会按你的关闭确认设置处理，稍后也可以手动退出再打开。" = "Settings already shows the new size. Restart Aster now so the sidebar and panels use it too? Open terminals and tabs follow your close-confirmation settings. You can also quit and reopen Aster later.";
 "识别本地路径、URL 和 OSC 8 显式链接；关闭后不再显示下划线、预览，也不响应 Cmd 点击。" = "Recognize local paths, URLs, and explicit OSC 8 links; when off, underlines, previews, and Cmd-click no longer respond.";
 "识别终端目标" = "Recognize Terminal Targets";
 "诊断" = "Diagnostics";

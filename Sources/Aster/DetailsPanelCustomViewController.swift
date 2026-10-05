@@ -30,10 +30,11 @@ final class DetailsPanelCustomViewController: NSViewController, WKNavigationDele
 
   required init?(coder: NSCoder) { nil }
 
+  /// 创建根视图与居中的状态标签，随后按当前上下文渲染自定义内容。
   override func loadView() {
     let root = NSView()
     root.identifier = NSUserInterfaceItemIdentifier("details-custom-view-\(definition.id.uuidString)")
-    statusLabel.font = .systemFont(ofSize: 11)
+    statusLabel.font = .interface(ofSize: 11)
     statusLabel.textColor = .secondaryLabelColor
     statusLabel.alignment = .center
     statusLabel.translatesAutoresizingMaskIntoConstraints = false

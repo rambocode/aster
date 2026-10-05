@@ -64,6 +64,7 @@ final class RemoteMonitorTabBar: NSStackView {
     applyStyle()
   }
 
+  /// 按选中状态与窄/宽模式刷新 chip 的字重、颜色与底色。
   private func applyStyle() {
     let size: CGFloat = mode == .compact ? 10.5 : 11.5
     for (tab, button) in buttons {
@@ -71,7 +72,7 @@ final class RemoteMonitorTabBar: NSStackView {
       button.attributedTitle = NSAttributedString(
         string: remoteMonitorTabTitle(tab),
         attributes: [
-          .font: NSFont.systemFont(ofSize: size, weight: selected ? .semibold : .regular),
+          .font: NSFont.interface(ofSize: size, weight: selected ? .semibold : .regular),
           .foregroundColor: selected ? AsterTheme.ink : AsterTheme.secondaryInk,
         ])
       button.wantsLayer = true
@@ -96,14 +97,14 @@ func remoteMetricRow(
   truncatesLeadingInMiddle: Bool = false
 ) -> NSView {
   let name = NSTextField(labelWithString: leading)
-  name.font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+  name.font = NSFont.interfaceMonospaced(ofSize: size)
   name.textColor = leadingColor
   name.lineBreakMode = truncatesLeadingInMiddle ? .byTruncatingMiddle : .byTruncatingTail
   name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
   name.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
   let value = NSTextField(labelWithString: trailing)
-  value.font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+  value.font = NSFont.interfaceMonospaced(ofSize: size)
   value.textColor = trailingColor
   value.alignment = .right
   value.lineBreakMode = .byClipping
@@ -125,6 +126,7 @@ final class RemoteProcessHeaderRow: NSStackView {
   private var cpuButton: ActionButton!
   private var memoryButton: ActionButton!
 
+  /// 创建表头；`onSelect` 在点击 CPU / 内存列时回调对应排序列。
   init(onSelect: @escaping (RemoteProcessSortColumn) -> Void) {
     super.init(frame: .zero)
     orientation = .horizontal
@@ -150,7 +152,8 @@ final class RemoteProcessHeaderRow: NSStackView {
       button.alignment = .right
       button.setContentCompressionResistancePriority(.required, for: .horizontal)
       button.setContentHuggingPriority(.required, for: .horizontal)
-      button.widthAnchor.constraint(greaterThanOrEqualToConstant: 54).isActive = true
+      // 与 RemoteProcessRow 的数值列同宽，放大字号后也要随之加宽，否则表头与行对不齐。
+      button.widthAnchor.constraint(greaterThanOrEqualToConstant: InterfaceScale.length(54)).isActive = true
     }
     addArrangedSubview(nameButton)
     addArrangedSubview(cpuButton)
@@ -173,7 +176,7 @@ final class RemoteProcessHeaderRow: NSStackView {
     button.attributedTitle = NSAttributedString(
       string: text + arrow,
       attributes: [
-        .font: NSFont.systemFont(ofSize: 10, weight: active ? .semibold : .regular),
+        .font: NSFont.interface(ofSize: 10, weight: active ? .semibold : .regular),
         .foregroundColor: active ? AsterTheme.ink : AsterTheme.tertiaryInk,
       ])
   }
@@ -187,6 +190,7 @@ final class RemoteProcessRow: HoverHighlightRowView {
   private let memoryLabel = NSTextField(labelWithString: "")
   private var onOpen: (() -> Void)?
 
+  /// 用一条进程采样创建行；点击名称或整行时调用 `onOpen`。
   init(sample: RemoteProcessSample, onOpen: @escaping () -> Void) {
     super.init(frame: .zero)
     self.onOpen = onOpen
@@ -201,7 +205,7 @@ final class RemoteProcessRow: HoverHighlightRowView {
     nameButton.attributedTitle = NSAttributedString(
       string: sample.command,
       attributes: [
-        .font: NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular),
+        .font: NSFont.interfaceMonospaced(ofSize: 10.5),
         .foregroundColor: AsterTheme.ink,
       ])
     nameButton.toolTip = sample.arguments.isEmpty ? sample.command : sample.arguments
@@ -212,7 +216,7 @@ final class RemoteProcessRow: HoverHighlightRowView {
       (memoryLabel, RemoteInspectionFormat.kibibytes(sample.residentKiB)),
     ] {
       label.stringValue = text
-      label.font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
+      label.font = NSFont.interfaceMonospaced(ofSize: 10.5)
       label.textColor = AsterTheme.secondaryInk
       label.alignment = .right
       label.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -230,8 +234,8 @@ final class RemoteProcessRow: HoverHighlightRowView {
       row.leadingAnchor.constraint(equalTo: leadingAnchor),
       row.trailingAnchor.constraint(equalTo: trailingAnchor),
       row.centerYAnchor.constraint(equalTo: centerYAnchor),
-      cpuLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 54),
-      memoryLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 54),
+      cpuLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: InterfaceScale.length(54)),
+      memoryLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: InterfaceScale.length(54)),
     ])
   }
 

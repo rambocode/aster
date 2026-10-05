@@ -1420,6 +1420,7 @@
 "用逗号分隔；每项按空白分词前缀匹配，留空即关闭" = "Durch Kommas getrennt; jeder Eintrag wird per leerzeichengetrenntem Präfix abgeglichen, leer lassen zum Deaktivieren";
 "由 全局 → 主题 → 回退 解析得到" = "Ermittelt aus Global → Design → Fallback";
 "画中画跟随活动 Pane" = "Bild-in-Bild folgt dem aktiven Bereich";
+"界面字号将在重新启动 Aster 后生效" = "Die Textgröße der Oberfläche gilt nach einem Neustart von Aster";
 "界面描边" = "Oberflächenrahmen";
 "界面文字" = "Oberflächentext";
 "界面显示语言，更改后重新启动 Aster 生效" = "Anzeigesprache der Oberfläche; wird nach einem Neustart von Aster wirksam";
@@ -1607,6 +1608,7 @@
 "设置标签页前缀…" = "Tab-Präfix festlegen…";
 "设置消息格式无效" = "Ungültiges Einstellungsnachrichtenformat";
 "设置范围" = "Einstellungsbereich";
+"设置页已经按新字号显示。现在重新启动 Aster，让侧栏和面板也用新字号？打开的终端与标签会按你的关闭确认设置处理，稍后也可以手动退出再打开。" = "Die Einstellungen zeigen bereits die neue Größe. Aster jetzt neu starten, damit auch Seitenleiste und Bereiche sie verwenden? Offene Terminals und Tabs werden gemäß deinen Einstellungen für die Schließen-Bestätigung behandelt. Du kannst Aster auch später beenden und neu öffnen.";
 "识别本地路径、URL 和 OSC 8 显式链接；关闭后不再显示下划线、预览，也不响应 Cmd 点击。" = "Erkennt lokale Pfade, URLs und explizite OSC-8-Links; bei Deaktivierung reagieren Unterstreichung, Vorschau und Cmd-Klick nicht mehr.";
 "识别终端目标" = "Terminalziele erkennen";
 "诊断" = "Diagnose";

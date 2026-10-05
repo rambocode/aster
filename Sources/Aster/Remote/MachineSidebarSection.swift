@@ -14,6 +14,7 @@ final class MachineRowButton: NSButton {
   private let isSelected: Bool
   private let tint: NSColor
 
+  /// 构建一行机器：图标、名称与副标题、Agent 清单与连接状态附件。
   init(
     row: MachineFleetRow,
     selected: Bool,
@@ -25,8 +26,8 @@ final class MachineRowButton: NSButton {
     handler = action
     isSelected = selected
     tint = NSColor(
-      theme.resolvedColor(forSlot: "tab.foreground")
-        ?? theme.style.tab.foreground ?? theme.palette.secondaryForeground)
+      ThemeRuntime.shared.legibleText(
+        theme.resolvedColor(forSlot: "tab.foreground") ?? theme.style.tab.foreground ?? theme.palette.secondaryForeground, in: theme))
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
     isBordered = false
@@ -38,7 +39,8 @@ final class MachineRowButton: NSButton {
     setAccessibilityRole(.button)
     setAccessibilityLabel(L("机器 \(row.label)"))
     toolTip = Self.toolTip(row)
-    heightAnchor.constraint(equalToConstant: 34).isActive = true
+    // 两行文字（机器名 + 副标题）的行高，随界面字号放大。
+    heightAnchor.constraint(equalToConstant: InterfaceScale.length(34)).isActive = true
     menu = menuProvider()
 
     let background = NSView()
@@ -64,7 +66,7 @@ final class MachineRowButton: NSButton {
     icon.image = NSImage(
       systemSymbolName: row.isLocal ? "laptopcomputer" : "server.rack",
       accessibilityDescription: nil)?
-      .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+      .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(11), weight: .regular))
     icon.contentTintColor = tint
     icon.setContentHuggingPriority(.required, for: .horizontal)
     row_.addArrangedSubview(icon)
@@ -134,7 +136,7 @@ final class MachineRowButton: NSButton {
       let icon = NSImageView()
       icon.image = NSImage(
         systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: L("需要处理"))?
-        .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+        .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(11), weight: .semibold))
       icon.contentTintColor = .systemOrange
       icon.identifier = NSUserInterfaceItemIdentifier("machine-attention")
       icon.setContentHuggingPriority(.required, for: .horizontal)
@@ -143,7 +145,7 @@ final class MachineRowButton: NSButton {
     case .disabled:
       let icon = NSImageView()
       icon.image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: L("已禁用"))?
-        .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+        .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(11), weight: .regular))
       icon.contentTintColor = tint.withAlphaComponent(0.6)
       icon.identifier = NSUserInterfaceItemIdentifier("machine-disabled")
       icon.setContentHuggingPriority(.required, for: .horizontal)
@@ -151,7 +153,7 @@ final class MachineRowButton: NSButton {
     case .disconnected:
       let icon = NSImageView()
       icon.image = NSImage(systemSymbolName: "bolt.horizontal.circle", accessibilityDescription: L("未连接"))?
-        .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+        .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(11), weight: .regular))
       icon.contentTintColor = tint.withAlphaComponent(0.6)
       icon.identifier = NSUserInterfaceItemIdentifier("machine-offline")
       icon.setContentHuggingPriority(.required, for: .horizontal)
@@ -230,6 +232,7 @@ final class MachineSwitcherButton: NSButton {
   /// 弹出层当前的内容视图；测试据此在弹出层里找机器行与添加按钮。
   private(set) var popoverContentView: NSView?
 
+  /// 构建切换器胶囊：机器图标、名称、状态点与上下箭头。
   init(row: MachineFleetRow?, theme: TerminalTheme, contentProvider: @escaping () -> NSView) {
     self.contentProvider = contentProvider
     super.init(frame: .zero)
@@ -245,13 +248,13 @@ final class MachineSwitcherButton: NSButton {
     setAccessibilityRole(.button)
     setAccessibilityLabel(L("切换机器：当前 \(row?.label ?? "Local")"))
     if let row { toolTip = MachineRowButton.toolTip(row) }
-    heightAnchor.constraint(equalToConstant: 32).isActive = true
+    heightAnchor.constraint(equalToConstant: InterfaceScale.length(32)).isActive = true
     wantsLayer = true
     layer?.cornerRadius = 8
     layer?.cornerCurve = .continuous
     let tint = NSColor(
-      theme.resolvedColor(forSlot: "tab.foreground")
-        ?? theme.style.tab.foreground ?? theme.palette.secondaryForeground)
+      ThemeRuntime.shared.legibleText(
+        theme.resolvedColor(forSlot: "tab.foreground") ?? theme.style.tab.foreground ?? theme.palette.secondaryForeground, in: theme))
     layer?.backgroundColor = tint.withAlphaComponent(0.08).cgColor
 
     let stack = NSStackView()
@@ -263,7 +266,7 @@ final class MachineSwitcherButton: NSButton {
     icon.image = NSImage(
       systemSymbolName: row?.isLocal == false ? "server.rack" : "laptopcomputer",
       accessibilityDescription: nil)?
-      .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+      .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(11), weight: .regular))
     icon.contentTintColor = tint
     icon.setContentHuggingPriority(.required, for: .horizontal)
     stack.addArrangedSubview(icon)
@@ -271,19 +274,22 @@ final class MachineSwitcherButton: NSButton {
     label.lineBreakMode = .byTruncatingTail
     label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     stack.addArrangedSubview(label)
+    // 状态点与机器名并排，边长随字号放大（默认档 7pt），圆角取边长一半保持正圆。
+    let dotSide = InterfaceScale.length(7)
     let dot = NSView()
     dot.wantsLayer = true
-    dot.layer?.cornerRadius = 3.5
+    dot.layer?.cornerRadius = dotSide / 2
     dot.layer?.backgroundColor = Self.stateColor(row?.state ?? .disconnected).cgColor
     dot.translatesAutoresizingMaskIntoConstraints = false
     dot.identifier = NSUserInterfaceItemIdentifier("machine-switcher-state")
     NSLayoutConstraint.activate([
-      dot.widthAnchor.constraint(equalToConstant: 7), dot.heightAnchor.constraint(equalToConstant: 7),
+      dot.widthAnchor.constraint(equalToConstant: dotSide),
+      dot.heightAnchor.constraint(equalToConstant: dotSide),
     ])
     stack.addArrangedSubview(dot)
     let chevron = NSImageView()
     chevron.image = NSImage(systemSymbolName: "chevron.up.chevron.down", accessibilityDescription: nil)?
-      .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+      .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(9), weight: .semibold))
     chevron.contentTintColor = tint.withAlphaComponent(0.6)
     chevron.setContentHuggingPriority(.required, for: .horizontal)
     stack.addArrangedSubview(chevron)

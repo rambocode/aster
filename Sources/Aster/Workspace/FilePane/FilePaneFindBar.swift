@@ -45,6 +45,7 @@ final class FilePaneFindBar: NSView, NSSearchFieldDelegate {
   private var pdfCacheKey: String?
   private weak var pdfCacheView: PDFView?
 
+  /// 创建查找栏：查找框、大小写/正则开关、结果计数与上下跳转按钮。
   init(resolveTarget: @escaping () -> FilePaneFindTarget?, onClose: @escaping () -> Void) {
     self.resolveTarget = resolveTarget
     self.onClose = onClose
@@ -53,10 +54,11 @@ final class FilePaneFindBar: NSView, NSSearchFieldDelegate {
     wantsLayer = true
     layer?.backgroundColor = AsterTheme.panel.cgColor
     translatesAutoresizingMaskIntoConstraints = false
-    heightAnchor.constraint(equalToConstant: 34).isActive = true
+    heightAnchor.constraint(equalToConstant: InterfaceScale.length(34)).isActive = true
     addBottomBorder(color: AsterTheme.hairline)
 
     field.placeholderString = L("在文件中查找")
+    field.font = NSFont.interface(ofSize: NSFont.systemFontSize)
     field.identifier = NSUserInterfaceItemIdentifier("file-pane-find-field")
     field.delegate = self
     // 只在回车时发送 action；实时查找走 controlTextDidChange，避免一次输入查两遍。
@@ -74,7 +76,8 @@ final class FilePaneFindBar: NSView, NSSearchFieldDelegate {
     summaryLabel.identifier = NSUserInterfaceItemIdentifier("file-pane-find-summary")
     summaryLabel.alignment = .right
     summaryLabel.translatesAutoresizingMaskIntoConstraints = false
-    summaryLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 52).isActive = true
+    summaryLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: InterfaceScale.length(52))
+      .isActive = true
     let previous = ActionButton(symbol: "chevron.up") { [weak self] in self?.find(.backward) }
     previous.toolTip = L("上一个")
     let next = ActionButton(symbol: "chevron.down") { [weak self] in self?.find(.forward) }

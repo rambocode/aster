@@ -65,7 +65,8 @@ extension WorkspaceViewController {
     column.alignment = .width
     column.spacing = 0
     column.translatesAutoresizingMaskIntoConstraints = false
-    column.widthAnchor.constraint(equalToConstant: 300).isActive = true
+    // 弹出层宽度装的是机器名、副标题与 Agent 清单，随界面字号放大。
+    column.widthAnchor.constraint(equalToConstant: InterfaceScale.length(300)).isActive = true
     column.edgeInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
 
     let header = makeMachineSectionHeader(collapsed: false, theme: theme)
@@ -126,15 +127,15 @@ extension WorkspaceViewController {
   /// 添加动作是一个交互式设置流程。
   private func makeMachineSectionHeader(collapsed: Bool, theme: TerminalTheme) -> NSView {
     let foreground = NSColor(
-      theme.resolvedColor(forSlot: "tab.foreground")
-        ?? theme.style.tab.foreground ?? theme.palette.secondaryForeground)
+      ThemeRuntime.shared.legibleText(
+        theme.resolvedColor(forSlot: "tab.foreground") ?? theme.style.tab.foreground ?? theme.palette.secondaryForeground, in: theme))
     // 组头只是弹出层里的标题：不再折叠（列表本身就在弹出层里，关掉弹出层即"折叠"）。
     _ = collapsed
     let host = SidebarGroupHeaderView {}
     host.identifier = NSUserInterfaceItemIdentifier("machine-section-header")
     host.setAccessibilityLabel(L("机器分区"))
     host.translatesAutoresizingMaskIntoConstraints = false
-    host.heightAnchor.constraint(equalToConstant: 30).isActive = true
+    host.heightAnchor.constraint(equalToConstant: InterfaceScale.length(30)).isActive = true
 
     let row = NSStackView()
     row.orientation = .horizontal
@@ -143,7 +144,7 @@ extension WorkspaceViewController {
     for symbol in ["server.rack"] {
       let icon = NSImageView()
       icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-        .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+        .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(9), weight: .semibold))
       icon.contentTintColor = foreground
       icon.setContentHuggingPriority(.required, for: .horizontal)
       row.addArrangedSubview(icon)
@@ -156,7 +157,7 @@ extension WorkspaceViewController {
     add.isBordered = false
     add.title = ""
     add.image = NSImage(systemSymbolName: "plus", accessibilityDescription: L("添加机器"))?
-      .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+      .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(10), weight: .semibold))
     add.contentTintColor = foreground
     add.identifier = NSUserInterfaceItemIdentifier("machine-add-button")
     add.setAccessibilityLabel(L("添加机器"))

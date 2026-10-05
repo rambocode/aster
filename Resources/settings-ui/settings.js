@@ -22,6 +22,7 @@
 
   const options = {
     language: [["system", t("跟随系统")], ["zh-Hans", "简体中文"], ["zh-Hant", "繁體中文"], ["en", "English"], ["ja", "日本語"], ["fr", "Français"], ["de", "Deutsch"]],
+    interfaceTextScale: [["small", t("小")], ["standard", t("默认")], ["large", t("大")], ["larger", t("更大")], ["largest", t("最大")]],
     launch: [["newWindow", t("新窗口")], ["restoreLastSession", t("恢复上次会话")]],
     confirm: [["always", t("总是提示")], ["runningProcess", t("有进程运行时")], ["multipleTabs", t("有多个标签页时")], ["never", t("从不提示")]],
     workingDirectory: [["home", t("主目录")], ["currentSession", t("与当前标签页相同")], ["custom", t("自定义…")]],
@@ -326,6 +327,10 @@
         row("appearance.useSeparateDarkTheme", t("深色模式使用独立主题"), t("跟随系统配色方案：浅色模式使用上方主题，深色模式使用下方深色主题。")),
         action("importTheme", t("导入主题"), t("选择 .astertheme 文件加入主题库"), t("导入主题…")),
         action("openThemesFolder", t("主题文件夹"), t("打开 ~/.config/aster/themes，直接编辑主题文件"), t("打开")),
+      ]},
+      { title: t("界面文字"), rows: [
+        row("appearance.interfaceTextScale", t("界面字号"), t("侧栏、面板和设置页的文字大小，不影响终端字号。设置页立即生效，侧栏和面板在重新启动 Aster 后生效"), "select", { options: options.interfaceTextScale }),
+        row("appearance.interfaceHighContrastText", t("加深界面文字"), t("让说明文字和次要文字更深、更清楚。系统开启「增强对比度」时自动生效")),
       ]},
       { title: t("字体"), rows: [
         row("appearance.autoMatchFontStyles", t("自动匹配粗细与样式"), t("开启时由普通字体自动派生粗体、斜体和粗斜体")),
@@ -3062,6 +3067,8 @@
       if (!message || typeof message !== "object") return;
       if (message.type === "snapshot") {
         snapshot = message.snapshot;
+        // 「加深界面文字」由原生侧判定（含系统「增强对比度」），网页只负责切换配色。
+        document.documentElement.classList.toggle("strong-text", snapshot?.values?.["appearance.interfaceStrongTextActive"] === true);
         app.setAttribute("aria-busy", "false");
         render();
       } else if (message.type === "mutationResult") {

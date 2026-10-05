@@ -3834,11 +3834,13 @@ final class AppModel: ObservableObject {
     let textView = NSTextView(frame: .zero)
     textView.isEditable = false
     textView.isSelectable = true
-    textView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    textView.font = NSFont.interfaceMonospaced(ofSize: 11)
     textView.string = WorkflowRecipeCommandReview.text(commands: commands)
     textView.textContainerInset = NSSize(width: 8, height: 8)
 
-    let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 520, height: 220))
+    let scrollView = NSScrollView(
+      frame: NSRect(
+        x: 0, y: 0, width: InterfaceScale.length(520), height: InterfaceScale.length(220)))
     scrollView.hasVerticalScroller = true
     scrollView.hasHorizontalScroller = true
     scrollView.autohidesScrollers = true

@@ -51,6 +51,7 @@ final class WorkspaceTitleButton: NSButton {
   private var isHovered = false
   private var isPopoverPresented = false
 
+  /// 构建标题栏路径胶囊；`handler` 在点击时弹出工作区动作弹层。
   init(
     programTitle: String,
     workingDirectory: String,
@@ -67,7 +68,7 @@ final class WorkspaceTitleButton: NSButton {
     isBordered = false
     bezelStyle = .accessoryBarAction
     alignment = .center
-    font = NSFont.systemFont(ofSize: 11.5, weight: .regular)
+    font = NSFont.interface(ofSize: 11.5, weight: .regular)
     lineBreakMode = .byTruncatingMiddle
     contentTintColor = foregroundColor
     wantsLayer = true
@@ -146,6 +147,7 @@ final class WorkspaceTitleButton: NSButton {
 /// 灰色轨道 + 白色选中胶囊。系统 `.capsule` 的选中段仍是深灰，视觉层级正好相反。
 @MainActor
 private final class WorkspaceTitleModeControl: NSSegmentedControl {
+  /// 自绘灰色轨道、白色选中胶囊与各段文字。
   override func draw(_ dirtyRect: NSRect) {
     let track = bounds.insetBy(dx: 0, dy: 1)
     let radius = track.height / 2
@@ -179,7 +181,7 @@ private final class WorkspaceTitleModeControl: NSSegmentedControl {
       let paragraph = NSMutableParagraphStyle()
       paragraph.alignment = .center
       let attributes: [NSAttributedString.Key: Any] = [
-        .font: NSFont.systemFont(
+        .font: NSFont.interface(
           ofSize: 11.5, weight: index == selectedSegment ? .semibold : .regular),
         .foregroundColor: index == selectedSegment ? AsterTheme.ink : AsterTheme.secondaryInk,
         .paragraphStyle: paragraph,
@@ -205,6 +207,7 @@ private final class WorkspaceTitleRowButton: NSButton {
   private var hoverTrackingArea: NSTrackingArea?
   private var isHovered = false
 
+  /// 构建整行动作按钮：左侧标题，右侧可选快捷键、子菜单箭头或状态图标。
   init(
     title: String,
     symbol: String? = nil,
@@ -218,7 +221,7 @@ private final class WorkspaceTitleRowButton: NSButton {
     self.title = title
     isBordered = false
     alignment = .left
-    font = NSFont.systemFont(ofSize: 13.5)
+    font = NSFont.interface(ofSize: 13.5)
     contentTintColor = AsterTheme.ink
     wantsLayer = true
     layer?.cornerRadius = 6
@@ -227,7 +230,8 @@ private final class WorkspaceTitleRowButton: NSButton {
     action = #selector(invoke)
 
     if let symbol {
-      image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+      image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?
+        .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(13), weight: .regular))
       imagePosition = .imageLeading
     }
 
@@ -249,8 +253,8 @@ private final class WorkspaceTitleRowButton: NSButton {
         image.contentTintColor = AsterTheme.tertiaryInk
         image.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-          image.widthAnchor.constraint(equalToConstant: 14),
-          image.heightAnchor.constraint(equalToConstant: 14),
+          image.widthAnchor.constraint(equalToConstant: InterfaceScale.length(14)),
+          image.heightAnchor.constraint(equalToConstant: InterfaceScale.length(14)),
         ])
         return image
       }
@@ -310,18 +314,27 @@ final class WorkspaceTitlePopoverViewController: NSViewController {
   private weak var modeControl: NSSegmentedControl?
   private weak var titleField: NSTextField?
 
+  /// 弹层尺寸（默认档 280×462）。行高与行宽都随界面字号放大，弹层整体同比放大；
+  /// 1.5 倍约 420×693，常见屏幕放得下，所以不设上限，否则底部的行会被裁掉。
+  static let preferredSize = NSSize(
+    width: InterfaceScale.length(280), height: InterfaceScale.length(462))
+  /// 内容列宽：弹层宽度减去左右各 14pt 内边距（内边距不缩放）。
+  private static let rowWidth = preferredSize.width - 28
+
+  /// 绑定当前标签；弹层尺寸由 `preferredSize` 决定。
   init(model: AppModel, preferences: AppPreferences, tab: TerminalTabItem) {
     self.model = model
     self.preferences = preferences
     self.tab = tab
     super.init(nibName: nil, bundle: nil)
-    preferredContentSize = NSSize(width: 280, height: 462)
+    preferredContentSize = Self.preferredSize
   }
 
   required init?(coder: NSCoder) { nil }
 
+  /// 自上而下排列命名区、工作目录与各组动作行。
   override func loadView() {
-    let root = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 462))
+    let root = NSView(frame: NSRect(origin: .zero, size: Self.preferredSize))
     root.identifier = NSUserInterfaceItemIdentifier("workspace-title-popover")
     root.wantsLayer = true
     view = root
@@ -379,10 +392,11 @@ final class WorkspaceTitlePopoverViewController: NSViewController {
     ) { [weak self] _ in self?.model.togglePalette() })
   }
 
+  /// 命名区：名称/前缀切换、恢复自动标题按钮与输入框。
   private func makeNamingHeader() -> NSView {
     let host = NSView()
     host.translatesAutoresizingMaskIntoConstraints = false
-    host.heightAnchor.constraint(equalToConstant: 76).isActive = true
+    host.heightAnchor.constraint(equalToConstant: InterfaceScale.length(76)).isActive = true
 
     let segmented = WorkspaceTitleModeControl(
       labels: ["Name", "Prefix"], trackingMode: .selectOne,
@@ -401,7 +415,7 @@ final class WorkspaceTitlePopoverViewController: NSViewController {
     let field = NSTextField(string: currentOverrideText)
     field.identifier = NSUserInterfaceItemIdentifier("workspace-title-name-field")
     field.placeholderString = selectedMode == 0 ? "Tab name" : "Tab prefix"
-    field.font = NSFont.systemFont(ofSize: 13)
+    field.font = NSFont.interface(ofSize: 13)
     field.isBezeled = false
     field.drawsBackground = true
     field.backgroundColor = AsterTheme.ink.withAlphaComponent(0.08)
@@ -419,30 +433,34 @@ final class WorkspaceTitlePopoverViewController: NSViewController {
     NSLayoutConstraint.activate([
       segmented.leadingAnchor.constraint(equalTo: host.leadingAnchor),
       segmented.topAnchor.constraint(equalTo: host.topAnchor),
-      segmented.widthAnchor.constraint(equalToConstant: 142),
+      segmented.widthAnchor.constraint(equalToConstant: InterfaceScale.length(142)),
+      // 分段控件的固有高度固定 24pt、不随字体变；显式给出缩放后的高度，自绘文字才不被裁。
+      segmented.heightAnchor.constraint(equalToConstant: InterfaceScale.length(24)),
       reset.trailingAnchor.constraint(equalTo: host.trailingAnchor),
       reset.centerYAnchor.constraint(equalTo: segmented.centerYAnchor),
-      reset.widthAnchor.constraint(equalToConstant: 28),
-      reset.heightAnchor.constraint(equalToConstant: 28),
+      reset.widthAnchor.constraint(equalToConstant: InterfaceScale.length(28)),
+      reset.heightAnchor.constraint(equalToConstant: InterfaceScale.length(28)),
       field.leadingAnchor.constraint(equalTo: host.leadingAnchor),
       field.trailingAnchor.constraint(equalTo: host.trailingAnchor),
       field.topAnchor.constraint(equalTo: segmented.bottomAnchor, constant: 9),
-      field.heightAnchor.constraint(equalToConstant: 32),
-      host.widthAnchor.constraint(equalToConstant: 252),
+      field.heightAnchor.constraint(equalToConstant: InterfaceScale.length(32)),
+      host.widthAnchor.constraint(equalToConstant: Self.rowWidth),
     ])
     return host
   }
 
+  /// 工作目录区：小标题 + 文件夹图标与缩写路径。
   private func makeWorkingDirectoryBlock() -> NSView {
     let host = NSView()
     host.translatesAutoresizingMaskIntoConstraints = false
-    host.heightAnchor.constraint(equalToConstant: 54).isActive = true
+    host.heightAnchor.constraint(equalToConstant: InterfaceScale.length(54)).isActive = true
     let heading = makeLabel("WORKING DIRECTORY", size: 10.5, weight: .semibold,
       color: AsterTheme.tertiaryInk)
     let path = makeLabel(abbreviatedDirectory + "/", size: 12.5, color: AsterTheme.secondaryInk)
     path.toolTip = tab?.workingDirectory
     let icon = NSImageView(image: NSImage(systemSymbolName: "folder.fill",
       accessibilityDescription: L("工作目录")) ?? NSImage())
+    icon.symbolConfiguration = .init(pointSize: InterfaceScale.font(13), weight: .regular)
     icon.contentTintColor = AsterTheme.tertiaryInk
     for item in [heading, icon, path] {
       host.addSubview(item)
@@ -453,16 +471,17 @@ final class WorkspaceTitlePopoverViewController: NSViewController {
       heading.topAnchor.constraint(equalTo: host.topAnchor, constant: 5),
       icon.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 2),
       icon.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 9),
-      icon.widthAnchor.constraint(equalToConstant: 15),
-      icon.heightAnchor.constraint(equalToConstant: 15),
+      icon.widthAnchor.constraint(equalToConstant: InterfaceScale.length(15)),
+      icon.heightAnchor.constraint(equalToConstant: InterfaceScale.length(15)),
       path.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
       path.centerYAnchor.constraint(equalTo: icon.centerYAnchor),
       path.trailingAnchor.constraint(lessThanOrEqualTo: host.trailingAnchor),
-      host.widthAnchor.constraint(equalToConstant: 252),
+      host.widthAnchor.constraint(equalToConstant: Self.rowWidth),
     ])
     return host
   }
 
+  /// 生成一条固定宽高的动作行。
   private func makeRow(
     _ title: String,
     symbol: String? = nil,
@@ -479,19 +498,20 @@ final class WorkspaceTitlePopoverViewController: NSViewController {
     button.identifier = NSUserInterfaceItemIdentifier(identifier)
     button.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      button.widthAnchor.constraint(equalToConstant: 252),
-      button.heightAnchor.constraint(equalToConstant: 30),
+      button.widthAnchor.constraint(equalToConstant: Self.rowWidth),
+      button.heightAnchor.constraint(equalToConstant: InterfaceScale.length(30)),
     ])
     return button
   }
 
+  /// 动作分组之间的 1pt 分隔线。
   private func makeDivider() -> NSView {
     let divider = NSView()
     divider.wantsLayer = true
     divider.layer?.backgroundColor = AsterTheme.hairline.cgColor
     divider.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      divider.widthAnchor.constraint(equalToConstant: 252),
+      divider.widthAnchor.constraint(equalToConstant: Self.rowWidth),
       divider.heightAnchor.constraint(equalToConstant: 1),
     ])
     return divider

@@ -17,6 +17,7 @@ final class TerminalResizeOverlay: NSView {
   private var hideTask: DispatchWorkItem?
   private var removeTask: DispatchWorkItem?
 
+  /// 创建居中胶囊提示；默认隐藏，由 `show` 显示。
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
     autoresizingMask = [.width, .height]
@@ -27,7 +28,8 @@ final class TerminalResizeOverlay: NSView {
     bubble.layer?.cornerRadius = 6
     addSubview(bubble)
 
-    label.font = .monospacedSystemFont(ofSize: 13, weight: .medium)
+    // 「列 x 行」是界面提示而不是终端内容，跟随界面字号；胶囊尺寸按文字固有尺寸推算，自动放大。
+    label.font = .interfaceMonospaced(ofSize: 13, weight: .medium)
     label.textColor = .white
     label.alignment = .center
     bubble.addSubview(label)

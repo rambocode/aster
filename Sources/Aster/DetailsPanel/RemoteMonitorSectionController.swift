@@ -371,6 +371,7 @@ final class RemoteMonitorSectionController: NSViewController {
     }
   }
 
+  /// 进程页：可排序表头加进程行；选中某个进程时改画它的详情。
   private func addProcessSection(_ snapshot: RemoteHostMonitorSnapshot) {
     let rows = RemoteProcessTable.merged(
       byCPU: snapshot.topByCPU, byMemory: snapshot.topByMemory, sort: processSort)
@@ -402,7 +403,7 @@ final class RemoteMonitorSectionController: NSViewController {
         }
         stack.addArrangedSubview(row)
         row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        row.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        row.heightAnchor.constraint(equalToConstant: InterfaceScale.length(18)).isActive = true
       }
     }
   }

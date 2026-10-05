@@ -292,6 +292,8 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     Self.installManagedTerminalPolicy(preferences)
     // 界面语言必须在任何菜单、窗口创建之前装好，否则先建的视图会停留在源语言。
     AppLocalization.apply(setting: preferences.configuration.general.language)
+    // 界面字号档位同理：字体与行高在视图创建时确定，必须先于任何窗口装好。
+    InterfaceScale.install(preferences.configuration.appearance.resolvedInterfaceTextScale)
     // Aster 自有主题目录在窗口构建前先就位，避免启动时先按内置表渲染再闪一次。
     preferences.reloadDiskThemes()
     softwareUpdateController = SoftwareUpdateService.shared
@@ -1445,13 +1447,17 @@ final class AsterAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
       L("\(provider.displayName)：\(explain.state.rawValue)")
       + (explain.matchedRule.map { L(" · 命中 \($0.id)（优先级 \(String($0.priority))，区域 \($0.region)）") }
         ?? L(" · 未命中任何规则（\(explain.fallbackReason ?? "-")）"))
-    let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
+    // 文本区随界面字号放大；宽度设上限，避免 1.5 倍下面板超出小尺寸屏幕。
+    let scrollView = NSScrollView(
+      frame: NSRect(
+        x: 0, y: 0, width: InterfaceScale.length(640, max: 900),
+        height: InterfaceScale.length(360)))
     scrollView.hasVerticalScroller = true
     scrollView.borderType = .bezelBorder
     let textView = NSTextView(frame: scrollView.bounds)
     textView.isEditable = false
     textView.isSelectable = true
-    textView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    textView.font = NSFont.interfaceMonospaced(ofSize: 11)
     textView.string = json
     textView.autoresizingMask = [.width]
     textView.isVerticallyResizable = true

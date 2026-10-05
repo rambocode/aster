@@ -127,6 +127,11 @@ final class TabRowButton: NSButton {
     }
   }
 
+  /// 状态/图标槽与横向关闭按钮的边长（默认档 16pt）。槽里装的是与标题并排的徽标文字
+  /// 和图标，随界面字号一起放大，行内才能保持垂直居中、不被裁掉。
+  static let badgeSlotSide = InterfaceScale.length(16)
+
+  /// 构建一行标签：纵向是侧栏行卡，横向是标签条胶囊；`rowHeight` 仅横向使用。
   init(
     tab: TerminalTabItem,
     selected: Bool,
@@ -163,8 +168,8 @@ final class TabRowButton: NSButton {
     style = resolvedStyle
     sidebarRowInsets = theme.style.resolvedSidebarPadding
     resolvedForeground = NSColor(
-      resolvedStyle.foreground
-        ?? theme.resolvedColor(forSlot: "tab.foreground") ?? theme.palette.secondaryForeground
+      ThemeRuntime.shared.legibleText(
+        resolvedStyle.foreground ?? theme.resolvedColor(forSlot: "tab.foreground") ?? theme.palette.secondaryForeground, in: theme)
     )
     resolvedActiveForeground = NSColor(
       resolvedStyle.activeForeground
@@ -197,8 +202,11 @@ final class TabRowButton: NSButton {
     identifier = NSUserInterfaceItemIdentifier("workspace-tab-row-\(tab.id.uuidString)")
     translatesAutoresizingMaskIntoConstraints = false
     // 纵向行总高 = 胶囊高（Otty `[tab].height`，原生默认 36pt）+ 上下各 1pt 行距。
+    // 胶囊高随界面字号缩放，1pt 行距不缩放；横向行高由标签条传入，已在调用方缩放。
     heightAnchor.constraint(
-      equalToConstant: horizontal ? (rowHeight ?? 36) : ((style.height ?? 36) + 2)
+      equalToConstant: horizontal
+        ? (rowHeight ?? InterfaceScale.length(36))
+        : (InterfaceScale.length(style.height ?? 36) + 2)
     ).isActive = true
 
     // 纵横两个方向共用「整行命中 + 内缩圆角底」结构：纵向是左右内缩的行卡，
@@ -217,7 +225,8 @@ final class TabRowButton: NSButton {
         rowBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
         rowBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
         rowBackground.centerYAnchor.constraint(equalTo: centerYAnchor),
-        rowBackground.heightAnchor.constraint(equalToConstant: style.height ?? 28),
+        rowBackground.heightAnchor.constraint(
+          equalToConstant: InterfaceScale.length(style.height ?? 28)),
       ])
     } else {
       NSLayoutConstraint.activate([
@@ -273,13 +282,16 @@ final class TabRowButton: NSButton {
         onClose?()
       }
       hoverClose.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: L("关闭标签页"))?
-        .withSymbolConfiguration(.init(pointSize: 8, weight: .bold))
+        .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(8), weight: .bold))
       hoverClose.restingTint = selected ? resolvedActiveForeground : resolvedForeground
       close = hoverClose
     } else {
       close = ActionButton(symbol: "xmark", bezelStyle: .inline) {
         onClose?()
       }
+      // 系统符号默认按 13pt 常规字重绘制；显式给出缩放后的同一配置，默认档尺寸不变。
+      close.image = close.image?.withSymbolConfiguration(
+        .init(pointSize: InterfaceScale.font(13), weight: .regular))
       close.isBordered = false
       close.contentTintColor = selected ? resolvedActiveForeground : resolvedForeground
     }
@@ -291,23 +303,23 @@ final class TabRowButton: NSButton {
     closeButton = close
     if horizontal {
       // 槽位宽度是状态量（0 或 16），由 updateAccessoryVisibility 统一维护。
-      let slotWidth = accessorySlot.widthAnchor.constraint(equalToConstant: 16)
+      let slotWidth = accessorySlot.widthAnchor.constraint(equalToConstant: Self.badgeSlotSide)
       slotWidthConstraint = slotWidth
       NSLayoutConstraint.activate([
         // 标题按「等式」参与宽度求解：胶囊宽度 = 10 + 标题 + 4 + 槽 + 6，
         // 上限 190pt 之后按尾部截断，长标题不会把标签栏挤爆。
         primary.centerYAnchor.constraint(equalTo: centerYAnchor),
         primary.trailingAnchor.constraint(equalTo: accessorySlot.leadingAnchor, constant: -4),
-        primary.widthAnchor.constraint(lessThanOrEqualToConstant: 190),
+        primary.widthAnchor.constraint(lessThanOrEqualToConstant: InterfaceScale.length(190)),
         accessorySlot.trailingAnchor.constraint(
           equalTo: rowBackground.trailingAnchor, constant: -6),
         accessorySlot.centerYAnchor.constraint(equalTo: centerYAnchor),
         slotWidth,
-        accessorySlot.heightAnchor.constraint(equalToConstant: 16),
+        accessorySlot.heightAnchor.constraint(equalToConstant: Self.badgeSlotSide),
         close.centerXAnchor.constraint(equalTo: accessorySlot.centerXAnchor),
         close.centerYAnchor.constraint(equalTo: accessorySlot.centerYAnchor),
-        close.widthAnchor.constraint(equalToConstant: 16),
-        close.heightAnchor.constraint(equalToConstant: 16),
+        close.widthAnchor.constraint(equalToConstant: Self.badgeSlotSide),
+        close.heightAnchor.constraint(equalToConstant: Self.badgeSlotSide),
       ])
       activateLeadingConstraints(primary: primary, icon: leadingIcon, background: rowBackground, inset: 10)
     } else {
@@ -318,7 +330,7 @@ final class TabRowButton: NSButton {
       statusSlot.translatesAutoresizingMaskIntoConstraints = false
       addSubview(statusSlot)
       self.statusSlot = statusSlot
-      let statusWidth = statusSlot.widthAnchor.constraint(equalToConstant: 16)
+      let statusWidth = statusSlot.widthAnchor.constraint(equalToConstant: Self.badgeSlotSide)
       statusSlotWidthConstraint = statusWidth
       let titleGap = primary.leadingAnchor.constraint(equalTo: statusSlot.trailingAnchor, constant: 6)
       titleLeadingGapConstraint = titleGap
@@ -332,7 +344,7 @@ final class TabRowButton: NSButton {
       NSLayoutConstraint.activate([
         statusSlot.leadingAnchor.constraint(equalTo: rowBackground.leadingAnchor, constant: 10),
         statusSlot.centerYAnchor.constraint(equalTo: centerYAnchor),
-        statusSlot.heightAnchor.constraint(equalToConstant: 16),
+        statusSlot.heightAnchor.constraint(equalToConstant: Self.badgeSlotSide),
         statusWidth,
         // 槽宽为 0 时标题贴 10pt 内边距；有图标时图标与标题之间留 6pt。
         titleGap,
@@ -343,15 +355,16 @@ final class TabRowButton: NSButton {
           equalTo: rowBackground.trailingAnchor, constant: -4),
         accessorySlot.centerYAnchor.constraint(equalTo: centerYAnchor),
         // 槽位至少 28pt（放得下关闭按钮），shell 名更宽时按内容撑开。
-        accessorySlot.widthAnchor.constraint(greaterThanOrEqualToConstant: 28),
-        accessorySlot.heightAnchor.constraint(equalToConstant: 28),
+        accessorySlot.widthAnchor.constraint(
+          greaterThanOrEqualToConstant: InterfaceScale.length(28)),
+        accessorySlot.heightAnchor.constraint(equalToConstant: InterfaceScale.length(28)),
         trailing.leadingAnchor.constraint(greaterThanOrEqualTo: accessorySlot.leadingAnchor, constant: 2),
         trailing.trailingAnchor.constraint(equalTo: accessorySlot.trailingAnchor, constant: -6),
         trailing.centerYAnchor.constraint(equalTo: accessorySlot.centerYAnchor),
         close.centerXAnchor.constraint(equalTo: accessorySlot.centerXAnchor),
         close.centerYAnchor.constraint(equalTo: accessorySlot.centerYAnchor),
-        close.widthAnchor.constraint(equalToConstant: 24),
-        close.heightAnchor.constraint(equalToConstant: 24),
+        close.widthAnchor.constraint(equalToConstant: InterfaceScale.length(24)),
+        close.heightAnchor.constraint(equalToConstant: InterfaceScale.length(24)),
       ])
       refreshTrailingLabel()
     }
@@ -467,7 +480,7 @@ final class TabRowButton: NSButton {
       accessoryView = accessory
     }
     // 纵向行没有任何图标可显示时状态槽收紧为 0，标题直接贴卡片内边距。
-    statusSlotWidthConstraint?.constant = accessoryView == nil ? 0 : 16
+    statusSlotWidthConstraint?.constant = accessoryView == nil ? 0 : Self.badgeSlotSide
     titleLeadingGapConstraint?.constant = accessoryView == nil ? 0 : 6
     updateAccessoryVisibility()
   }
@@ -648,7 +661,7 @@ final class TabRowButton: NSButton {
         let icon = NSImageView()
         icon.image = NSImage(
           systemSymbolName: "desktopcomputer", accessibilityDescription: L("SSH 远端"))?
-          .withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
+          .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(10), weight: .medium))
         icon.contentTintColor = AsterTheme.tertiaryInk
         accessory = icon
         stateName = "ssh-remote"
@@ -684,7 +697,8 @@ final class TabRowButton: NSButton {
       accessoryView?.isHidden = selected
       // 关闭按钮或徽章至少有一个可见时槽位才占 16pt；纯文字标签收紧为 0，
       // 悬停不改变宽度，标签排布不会抖动。
-      slotWidthConstraint?.constant = (selected || activityBadgeKey() != "idle") ? 16 : 0
+      slotWidthConstraint?.constant =
+        (selected || activityBadgeKey() != "idle") ? Self.badgeSlotSide : 0
     } else {
       // 纵向行：左侧状态图标常驻；右侧 shell 名在悬停时让位给关闭按钮。
       trailingLabel?.isHidden = hovered
@@ -753,24 +767,44 @@ final class TabActivitySpinnerView: NSView {
   private var glyphs: [CALayer] = []
   /// `.spin` 样式里真正翻转的半圆层；圆环留在 glyphs[0] 上不动。
   private weak var flipTarget: CALayer?
+  /// 视图边长：与标签行里的徽标文字并排，随界面字号放大（默认档 14pt）。
+  private static let side = InterfaceScale.length(14)
+  /// 图形路径都按 14pt 画布写成；放大档整体乘这个倍数，默认档为 1、不加任何变换。
+  private static let glyphScale = side / 14
 
+  /// 按样式建好图形层；动画在进入窗口时才启动。
   init(tint: NSColor, style: Style = .spin) {
     self.style = style
     self.tint = tint
-    super.init(frame: NSRect(x: 0, y: 0, width: 14, height: 14))
+    super.init(frame: NSRect(x: 0, y: 0, width: Self.side, height: Self.side))
     // 显式 layer-hosting：先给 layer 再置 wantsLayer，保证下面 addSublayer 时
     // layer 一定存在（layer-backed 模式下 layer 可能延迟到入窗才创建，sublayer 会丢）。
     layer = CALayer()
     wantsLayer = true
     translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      widthAnchor.constraint(equalToConstant: 14),
-      heightAnchor.constraint(equalToConstant: 14),
+      widthAnchor.constraint(equalToConstant: Self.side),
+      heightAnchor.constraint(equalToConstant: Self.side),
     ])
     switch style {
     case .spin: buildSpinGlyph()
     case .dots: buildDotGlyphs()
     case .sparkle: buildSparkleGlyph()
+    }
+    applyGlyphScale()
+  }
+
+  /// 放大档把 14pt 画布上的图形整体放大到视图边长。只改各图形层自身的 transform：
+  /// `.spin` 的翻转动画挂在内层半圆上、`.sparkle` 动的是 path、`.dots` 动的是不透明度，
+  /// 互不覆盖。点阵直接挂在视图 layer 上，圆心坐标也要同比例换算。
+  private func applyGlyphScale() {
+    let scale = Self.glyphScale
+    guard scale != 1 else { return }
+    for glyph in glyphs {
+      if style == .dots {
+        glyph.position = CGPoint(x: glyph.position.x * scale, y: glyph.position.y * scale)
+      }
+      glyph.transform = CATransform3DMakeScale(scale, scale, 1)
     }
   }
 

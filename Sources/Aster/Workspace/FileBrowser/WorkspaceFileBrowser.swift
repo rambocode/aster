@@ -26,6 +26,7 @@ final class FileBrowserViewController: NSViewController, NSTableViewDataSource, 
 
   required init?(coder: NSCoder) { nil }
 
+  /// 搭建文件浏览器：顶部返回/刷新工具条，下面是当前目录的文件表格。
   override func loadView() {
     let column = NSStackView()
     column.orientation = .vertical
@@ -46,6 +47,8 @@ final class FileBrowserViewController: NSViewController, NSTableViewDataSource, 
     column.addArrangedSubview(toolbar)
 
     table.headerView = nil
+    // 沿用表格默认行高，只按界面字号放大，免得放大后的文件名被行高截掉。
+    table.rowHeight = InterfaceScale.length(table.rowHeight)
     table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name")))
     table.dataSource = self
     table.delegate = self

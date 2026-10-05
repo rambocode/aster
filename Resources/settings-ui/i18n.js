@@ -1,6 +1,15 @@
 // Aster 设置页多语言翻译表（自动生成）。
 window.AsterI18n = {
   "en": {
+    "界面文字": "Interface Text",
+    "界面字号": "Interface Text Size",
+    "侧栏、面板和设置页的文字大小，不影响终端字号。设置页立即生效，侧栏和面板在重新启动 Aster 后生效": "Text size for the sidebar, panels, and Settings. It does not change the terminal font size. Settings updates right away; the sidebar and panels update after you restart Aster",
+    "加深界面文字": "Darker Interface Text",
+    "让说明文字和次要文字更深、更清楚。系统开启「增强对比度」时自动生效": "Make descriptions and secondary text stronger and easier to read. Turns on automatically when macOS “Increase contrast” is enabled",
+    "小": "Small",
+    "大": "Large",
+    "更大": "Larger",
+    "最大": "Largest",
     "诊断": "Diagnostics",
     "发送崩溃报告": "Send crash reports",
     "崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令": "After a crash or abnormal exit, upload the minidump and recent diagnostic events to Sentry to help fix the problem. The minidump contains thread stack memory at crash time, never terminal content or commands",
@@ -946,6 +955,15 @@ window.AsterI18n = {
     "第 {index} 条转发规则的地址要写成 主机:端口": "The address in forwarding rule {index} must be written as host:port"
   },
   "ja": {
+    "界面文字": "インターフェースの文字",
+    "界面字号": "インターフェースの文字サイズ",
+    "侧栏、面板和设置页的文字大小，不影响终端字号。设置页立即生效，侧栏和面板在重新启动 Aster 后生效": "サイドバー、パネル、設定画面の文字サイズです。ターミナルのフォントサイズは変わりません。設定画面にはすぐ反映され、サイドバーとパネルには Aster の再起動後に反映されます",
+    "加深界面文字": "インターフェースの文字を濃くする",
+    "让说明文字和次要文字更深、更清楚。系统开启「增强对比度」时自动生效": "説明文や補助的な文字を濃くして読みやすくします。macOS の「コントラストを上げる」がオンのときは自動で有効になります",
+    "小": "小",
+    "大": "大",
+    "更大": "より大きく",
+    "最大": "最大",
     "诊断": "診断",
     "发送崩溃报告": "クラッシュレポートを送信",
     "崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令": "クラッシュや異常終了の後、minidump と直近の診断イベントを Sentry にアップロードして問題の修正に役立てます。minidump にはクラッシュ時のスレッドスタックのメモリが含まれますが、ターミナルの内容やコマンドは含まれません",
@@ -1891,6 +1909,15 @@ window.AsterI18n = {
     "第 {index} 条转发规则的地址要写成 主机:端口": "転送ルール {index} のアドレスは ホスト:ポート の形式で入力してください"
   },
   "fr": {
+    "界面文字": "Texte de l’interface",
+    "界面字号": "Taille du texte de l’interface",
+    "侧栏、面板和设置页的文字大小，不影响终端字号。设置页立即生效，侧栏和面板在重新启动 Aster 后生效": "Taille du texte de la barre latérale, des panneaux et des réglages. La taille de police du terminal ne change pas. Les réglages s’adaptent tout de suite ; la barre latérale et les panneaux s’adaptent après le redémarrage d’Aster",
+    "加深界面文字": "Texte de l’interface plus contrasté",
+    "让说明文字和次要文字更深、更清楚。系统开启「增强对比度」时自动生效": "Rend les descriptions et le texte secondaire plus contrastés et plus lisibles. S’active automatiquement quand « Augmenter le contraste » est activé dans macOS",
+    "小": "Petit",
+    "大": "Grand",
+    "更大": "Plus grand",
+    "最大": "Très grand",
     "诊断": "Diagnostics",
     "发送崩溃报告": "Envoyer les rapports de plantage",
     "崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令": "Après un plantage ou une sortie anormale, envoyer le minidump et les derniers événements de diagnostic à Sentry pour aider à corriger le problème. Le minidump contient la mémoire des piles de threads au moment du plantage, jamais le contenu du terminal ni les commandes",
@@ -2836,6 +2863,15 @@ window.AsterI18n = {
     "第 {index} 条转发规则的地址要写成 主机:端口": "L'adresse de la règle de redirection {index} doit être au format hôte:port"
   },
   "de": {
+    "界面文字": "Text der Oberfläche",
+    "界面字号": "Textgröße der Oberfläche",
+    "侧栏、面板和设置页的文字大小，不影响终端字号。设置页立即生效，侧栏和面板在重新启动 Aster 后生效": "Textgröße für Seitenleiste, Bereiche und Einstellungen. Die Schriftgröße des Terminals bleibt gleich. Die Einstellungen passen sich sofort an; Seitenleiste und Bereiche nach einem Neustart von Aster",
+    "加深界面文字": "Kräftigerer Text in der Oberfläche",
+    "让说明文字和次要文字更深、更清楚。系统开启「增强对比度」时自动生效": "Macht Beschreibungen und sekundären Text kräftiger und besser lesbar. Wird automatisch aktiv, wenn in macOS „Kontrast erhöhen“ eingeschaltet ist",
+    "小": "Klein",
+    "大": "Groß",
+    "更大": "Größer",
+    "最大": "Am größten",
     "诊断": "Diagnose",
     "发送崩溃报告": "Absturzberichte senden",
     "崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令": "Nach einem Absturz oder unerwarteten Beenden Minidump und aktuelle Diagnoseereignisse an Sentry senden, um das Problem zu beheben. Der Minidump enthält den Thread-Stack-Speicher zum Absturzzeitpunkt, nie Terminalinhalte oder Befehle",
@@ -3781,6 +3817,15 @@ window.AsterI18n = {
     "第 {index} 条转发规则的地址要写成 主机:端口": "Die Adresse in Weiterleitungsregel {index} muss als Host:Port angegeben werden"
   },
   "zh-Hant": {
+    "界面文字": "介面文字",
+    "界面字号": "介面字級",
+    "侧栏、面板和设置页的文字大小，不影响终端字号。设置页立即生效，侧栏和面板在重新启动 Aster 后生效": "側邊欄、面板和設定頁的文字大小，不影響終端機字級。設定頁立即生效，側邊欄和面板在重新啟動 Aster 後生效",
+    "加深界面文字": "加深介面文字",
+    "让说明文字和次要文字更深、更清楚。系统开启「增强对比度」时自动生效": "讓說明文字和次要文字更深、更清楚。系統開啟「增加對比」時自動生效",
+    "小": "小",
+    "大": "大",
+    "更大": "更大",
+    "最大": "最大",
     "诊断": "診斷",
     "发送崩溃报告": "傳送當機報告",
     "崩溃或异常退出后，把 minidump 与最近的诊断事件上传到 Sentry 帮助修复问题；minidump 含崩溃时的线程栈内存，不含终端正文与命令": "當機或異常結束後，把 minidump 與最近的診斷事件上傳到 Sentry 協助修復問題；minidump 含當機時的執行緒堆疊記憶體，不含終端內容與指令",

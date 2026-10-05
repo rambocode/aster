@@ -56,42 +56,47 @@ enum SessionHistoryRow {
 }
 
 /// History 页各类行的固定高度。可变高度只出现在 memory 与展开正文块上。
+/// 行高随界面字号档位缩放；水平内边距是间距，不缩放。
 enum SessionHistoryMetrics {
-  static let sectionHeaderHeight: CGFloat = 26
-  static let sessionRowHeight: CGFloat = 48
-  static let timelineRowHeight: CGFloat = 40
+  static let sectionHeaderHeight: CGFloat = InterfaceScale.length(26)
+  static let sessionRowHeight: CGFloat = InterfaceScale.length(48)
+  static let timelineRowHeight: CGFloat = InterfaceScale.length(40)
   static let horizontalInset: CGFloat = 12
   /// 展开正文块的最大高度。超出部分靠「复制全文」而不是在表格行里再套一层滚动视图
   ///（嵌套滚动会抢走表格的滚轮事件）。
-  static let expandedTextMaximumHeight: CGFloat = 260
+  static let expandedTextMaximumHeight: CGFloat = InterfaceScale.length(260)
   /// 展开正文块单次渲染的字符上限。artifact 可能有 1MiB，直接塞进 NSTextField
   /// 会让整张表的布局卡住。
   static let expandedTextDisplayLimit = 4_000
 
   /// 展开正文块的实际高度：按可用宽度实测文本，再夹到上限。
   static func expandedTextHeight(for text: String, width: CGFloat) -> CGFloat {
-    let font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
+    let font = NSFont.interfaceMonospaced(ofSize: 10.5)
     let available = max(60, width - horizontalInset * 2 - 20)
     let bounding = (text as NSString).boundingRect(
       with: NSSize(width: available, height: .greatestFiniteMagnitude),
       options: [.usesLineFragmentOrigin, .usesFontLeading],
       attributes: [.font: font]
     )
-    // +34 给顶部间距与底部动作行留位置。
-    return min(expandedTextMaximumHeight, max(48, ceil(bounding.height) + 34))
+    // +34 给顶部间距与底部动作行留位置；动作行是文字按钮，随字号一起放大。
+    return min(
+      expandedTextMaximumHeight,
+      max(InterfaceScale.length(48), ceil(bounding.height) + InterfaceScale.length(34)))
   }
 
   /// Memory 行高度：标题一行（截断，固定高）+ 正文按实测换行 + 可选的来源一行。
   static func memoryHeight(body: String, sources: String, width: CGFloat) -> CGFloat {
-    let font = NSFont.systemFont(ofSize: 11)
+    let font = NSFont.interface(ofSize: 11)
     let available = max(60, width - horizontalInset * 2)
     let bounding = (body as NSString).boundingRect(
       with: NSSize(width: available, height: .greatestFiniteMagnitude),
       options: [.usesLineFragmentOrigin, .usesFontLeading],
       attributes: [.font: font]
     )
-    let sourcesHeight: CGFloat = sources.isEmpty ? 0 : 16
-    return max(56, ceil(bounding.height) + 40 + sourcesHeight)
+    // 40 里大半是标题行，16 是来源行，都装着文字，随字号一起放大。
+    let sourcesHeight: CGFloat = sources.isEmpty ? 0 : InterfaceScale.length(16)
+    return max(
+      InterfaceScale.length(56), ceil(bounding.height) + InterfaceScale.length(40) + sourcesHeight)
   }
 }
 
@@ -347,11 +352,12 @@ extension DetailsPanelViewController {
 final class SessionHistorySectionHeaderView: HoverHighlightRowView {
   private let label = NSTextField(labelWithString: "")
 
+  /// 创建分组标题行，标题贴底左对齐。
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
     self.identifier = identifier
     isHoverHighlightEnabled = false
-    label.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+    label.font = NSFont.interface(ofSize: 10, weight: .semibold)
     label.textColor = AsterTheme.tertiaryInk
     label.translatesAutoresizingMaskIntoConstraints = false
     addSubview(label)
@@ -380,23 +386,25 @@ final class SessionHistorySessionRowView: HoverHighlightRowView {
   private let chevron = NSImageView()
   private var openAction: (() -> Void)?
 
+  /// 创建 session 行：标题、元信息、相对时间与右侧箭头，整行由透明按钮承接点击。
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
     self.identifier = identifier
 
-    titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+    titleLabel.font = NSFont.interface(ofSize: 12, weight: .medium)
     titleLabel.textColor = AsterTheme.ink
     titleLabel.lineBreakMode = .byTruncatingTail
-    metaLabel.font = NSFont.systemFont(ofSize: 10)
+    metaLabel.font = NSFont.interface(ofSize: 10)
     metaLabel.textColor = AsterTheme.secondaryInk
     metaLabel.lineBreakMode = .byTruncatingTail
-    timeLabel.font = NSFont.systemFont(ofSize: 10)
+    timeLabel.font = NSFont.interface(ofSize: 10)
     timeLabel.textColor = AsterTheme.tertiaryInk
     timeLabel.alignment = .right
     timeLabel.setContentHuggingPriority(.required, for: .horizontal)
     chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
     chevron.contentTintColor = AsterTheme.tertiaryInk
-    chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+    chevron.symbolConfiguration = NSImage.SymbolConfiguration(
+      pointSize: InterfaceScale.font(9), weight: .semibold)
 
     // 透明按钮铺满整行承担点击与指针反馈；文字由独立 label 绘制，避免按钮标题
     // 在两行布局里无法分别控制字重与颜色。
@@ -462,19 +470,20 @@ final class SessionHistoryMemoryRowView: HoverHighlightRowView {
   private let bodyLabel = NSTextField(labelWithString: "")
   private let sourcesLabel = NSTextField(labelWithString: "")
 
+  /// 创建 Memory 卡片行：标题、可换行正文与来源说明纵向排列。
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
     self.identifier = identifier
     isHoverHighlightEnabled = false
 
-    titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+    titleLabel.font = NSFont.interface(ofSize: 12, weight: .semibold)
     titleLabel.textColor = AsterTheme.ink
     titleLabel.lineBreakMode = .byTruncatingTail
-    bodyLabel.font = NSFont.systemFont(ofSize: 11)
+    bodyLabel.font = NSFont.interface(ofSize: 11)
     bodyLabel.textColor = AsterTheme.secondaryInk
     bodyLabel.lineBreakMode = .byWordWrapping
     bodyLabel.maximumNumberOfLines = 0
-    sourcesLabel.font = NSFont.systemFont(ofSize: 10)
+    sourcesLabel.font = NSFont.interface(ofSize: 10)
     sourcesLabel.textColor = AsterTheme.tertiaryInk
     sourcesLabel.lineBreakMode = .byTruncatingTail
 
@@ -520,26 +529,29 @@ final class SessionHistoryTimelineRowView: HoverHighlightRowView {
   private let toggleButton = PointingHandButton()
   private var toggleAction: (() -> Void)?
 
+  /// 创建时间线事件行：图标、标题、副标题、状态与来源标注，可展开时整行可点。
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
     self.identifier = identifier
 
-    iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+    iconView.symbolConfiguration = NSImage.SymbolConfiguration(
+      pointSize: InterfaceScale.font(11), weight: .regular)
     iconView.contentTintColor = AsterTheme.tertiaryInk
-    titleLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    titleLabel.font = NSFont.interfaceMonospaced(ofSize: 11)
     titleLabel.textColor = AsterTheme.ink
     titleLabel.lineBreakMode = .byTruncatingTail
-    subtitleLabel.font = NSFont.systemFont(ofSize: 9.5)
+    subtitleLabel.font = NSFont.interface(ofSize: 9.5)
     subtitleLabel.textColor = AsterTheme.tertiaryInk
     subtitleLabel.lineBreakMode = .byTruncatingMiddle
-    statusLabel.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
+    statusLabel.font = NSFont.interfaceMonospaced(ofSize: 10, weight: .semibold)
     statusLabel.alignment = .right
     statusLabel.setContentHuggingPriority(.required, for: .horizontal)
     // transcript 来源必须肉眼可辨：这些事件来自 Agent 自己的记录，不是终端实测。
-    sourceBadge.font = NSFont.systemFont(ofSize: 9, weight: .medium)
+    sourceBadge.font = NSFont.interface(ofSize: 9, weight: .medium)
     sourceBadge.textColor = AsterTheme.accent
     sourceBadge.setContentHuggingPriority(.required, for: .horizontal)
-    disclosure.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold)
+    disclosure.symbolConfiguration = NSImage.SymbolConfiguration(
+      pointSize: InterfaceScale.font(8), weight: .semibold)
     disclosure.contentTintColor = AsterTheme.tertiaryInk
 
     toggleButton.isBordered = false
@@ -561,7 +573,8 @@ final class SessionHistoryTimelineRowView: HoverHighlightRowView {
       toggleButton.bottomAnchor.constraint(equalTo: bottomAnchor),
       iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
       iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-      iconView.widthAnchor.constraint(equalToConstant: 14),
+      // 图标框与箭头框跟着符号字号放大，否则放大后的符号被裁掉。
+      iconView.widthAnchor.constraint(equalToConstant: InterfaceScale.length(14)),
       titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
       titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 5),
       titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: sourceBadge.leadingAnchor, constant: -4),
@@ -571,7 +584,7 @@ final class SessionHistoryTimelineRowView: HoverHighlightRowView {
       statusLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
       disclosure.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
       disclosure.centerYAnchor.constraint(equalTo: centerYAnchor),
-      disclosure.widthAnchor.constraint(equalToConstant: 10),
+      disclosure.widthAnchor.constraint(equalToConstant: InterfaceScale.length(10)),
       subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
       subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 1),
       subtitleLabel.trailingAnchor.constraint(equalTo: disclosure.leadingAnchor, constant: -6),
@@ -620,6 +633,7 @@ final class SessionHistoryOutputRowView: HoverHighlightRowView {
   private var loadFullTextAction: (() -> Void)?
   private var copyAction: (() -> Void)?
 
+  /// 创建展开正文块：圆角底色里的等宽正文，下方是「查看全文 / 复制」链接。
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
     self.identifier = identifier
@@ -630,7 +644,8 @@ final class SessionHistoryOutputRowView: HoverHighlightRowView {
     background.translatesAutoresizingMaskIntoConstraints = false
     addSubview(background)
 
-    textLabel.font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
+    // 历史正文用界面等宽字体而非用户终端字体，属于界面文字，随档位缩放。
+    textLabel.font = NSFont.interfaceMonospaced(ofSize: 10.5)
     textLabel.textColor = AsterTheme.secondaryInk
     textLabel.lineBreakMode = .byWordWrapping
     textLabel.maximumNumberOfLines = 0
@@ -648,7 +663,7 @@ final class SessionHistoryOutputRowView: HoverHighlightRowView {
       button.alignment = .left
       button.attributedTitle = NSAttributedString(
         string: title,
-        attributes: [.foregroundColor: AsterTheme.accent, .font: NSFont.systemFont(ofSize: 10.5)]
+        attributes: [.foregroundColor: AsterTheme.accent, .font: NSFont.interface(ofSize: 10.5)]
       )
       button.translatesAutoresizingMaskIntoConstraints = false
       addSubview(button)

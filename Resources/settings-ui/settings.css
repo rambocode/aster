@@ -56,6 +56,22 @@
   }
 }
 
+/* 「加深界面文字」：只提次要与三级文字色，对比度都在 4.5:1 以上（深色对 #121212，
+   浅色对 #fff）。放在明暗两套变量之后，靠类选择器的优先级覆盖它们。 */
+:root.strong-text {
+  --window-title: #c4c4c4;
+  --text-secondary: #d0d0d0;
+  --text-tertiary: #a8a8a8;
+}
+
+@media (prefers-color-scheme: light) {
+  :root.strong-text {
+    --window-title: #4a4a4a;
+    --text-secondary: #3a3a3a;
+    --text-tertiary: #5c5c5c;
+  }
+}
+
 * { box-sizing: border-box; }
 
 html,

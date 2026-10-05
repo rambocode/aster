@@ -759,7 +759,8 @@ final class GhosttyLinkPreviewBadge: NSView {
     label.usesSingleLineMode = true
     label.maximumNumberOfLines = 1
     label.lineBreakMode = .byTruncatingMiddle
-    label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    // 徽章是浮在终端上的界面提示，字号跟随界面字号；1.5 倍时 18pt 字仍放得进 28pt 高的徽章。
+    label.font = NSFont.interfaceMonospaced(ofSize: 12)
     addSubview(label)
     updateAppearanceColors()
   }

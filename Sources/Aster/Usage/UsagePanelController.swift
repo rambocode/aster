@@ -13,7 +13,11 @@ import Foundation
 final class UsagePanelController: NSObject, NSWindowDelegate {
   /// 默认尺寸。配额页的窗口行是两行（标签 + 进度条 + 百分比 / 重置时间），380pt 宽下仍然读得
   /// 清楚，再宽只是多留白；高度取到能一眼看全三四张卡片即可。
-  static let defaultSize = NSSize(width: 440, height: 600)
+  ///
+  /// 随界面字号放大，但设上限：面板贴在菜单栏下方，1.5 倍下不加上限会在 13 寸屏上
+  /// 顶到屏幕底；超出的内容本来就在滚动区里。最小尺寸是窗口约束，不缩放。
+  static let defaultSize = NSSize(
+    width: InterfaceScale.length(440, max: 600), height: InterfaceScale.length(600, max: 780))
   static let minimumSize = NSSize(width: 380, height: 340)
   /// 尺寸的持久化键。位置不再记忆——面板每次都回到状态栏图标下方。
   static let sizeDefaultsKey = "aster.usage.panel-size.v1"

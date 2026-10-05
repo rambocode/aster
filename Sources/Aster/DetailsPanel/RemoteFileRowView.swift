@@ -75,13 +75,15 @@ final class RemoteFileRowView: HoverHighlightRowView {
   private static let iconTint = NSColor(
     srgbRed: 0x5F / 255, green: 0xAB / 255, blue: 0xF3 / 255, alpha: 1)
 
+  /// 创建一行：图标、可双击进入的名称、右对齐的元数据。字号与图标随界面字号档位缩放。
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
     self.identifier = identifier
     hoverHorizontalInset = 0
 
     iconView.imageScaling = .scaleProportionallyDown
-    iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+    iconView.symbolConfiguration = NSImage.SymbolConfiguration(
+      pointSize: InterfaceScale.font(12), weight: .regular)
     iconView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(iconView)
 
@@ -95,7 +97,7 @@ final class RemoteFileRowView: HoverHighlightRowView {
     nameButton.translatesAutoresizingMaskIntoConstraints = false
     addSubview(nameButton)
 
-    metadataLabel.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+    metadataLabel.font = NSFont.interfaceMonospaced(ofSize: 10)
     metadataLabel.textColor = AsterTheme.tertiaryInk
     metadataLabel.lineBreakMode = .byTruncatingTail
     metadataLabel.alignment = .right
@@ -106,8 +108,9 @@ final class RemoteFileRowView: HoverHighlightRowView {
     NSLayoutConstraint.activate([
       iconView.leadingAnchor.constraint(equalTo: leadingAnchor),
       iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-      iconView.widthAnchor.constraint(equalToConstant: 13),
-      iconView.heightAnchor.constraint(equalToConstant: 13),
+      // 行内图标框随行高一起缩放，保持与文件名垂直居中。
+      iconView.widthAnchor.constraint(equalToConstant: InterfaceScale.length(13)),
+      iconView.heightAnchor.constraint(equalToConstant: InterfaceScale.length(13)),
       nameButton.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 5),
       nameButton.topAnchor.constraint(equalTo: topAnchor),
       nameButton.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -136,7 +139,7 @@ final class RemoteFileRowView: HoverHighlightRowView {
       string: entry.name,
       attributes: [
         .foregroundColor: nameColor,
-        .font: NSFont.systemFont(ofSize: 12),
+        .font: NSFont.interface(ofSize: 12),
       ])
     nameButton.isEnabled = entry.isNavigable
     nameButton.toolTip = entry.nameDecodedLossy

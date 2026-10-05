@@ -20,9 +20,10 @@ final class PromptQueueBarView: NSView, NSTextViewDelegate {
   private var isExpanded = false
 
   /// 尺寸取自设计稿：两类卡片同高、8pt 间距、10pt 圆角，视觉重量低于终端网格。
+  /// 卡片高度装的是文字，随界面字号放大；间距不缩放。
   private enum Metrics {
-    static let inputHeight: CGFloat = 44
-    static let expandedInputHeight: CGFloat = 142
+    static let inputHeight: CGFloat = InterfaceScale.length(44)
+    static let expandedInputHeight: CGFloat = InterfaceScale.length(142)
     static let cardSpacing: CGFloat = 8
     static let visibleItemLimit = 3
     static let controlSpacing: CGFloat = 10
@@ -131,6 +132,7 @@ final class PromptQueueBarView: NSView, NSTextViewDelegate {
     return scroll
   }
 
+  /// 构建底部输入卡：多行文本、关闭、展开与入队按钮。
   private func makeInputCard(draft: String) -> NSView {
     let card = PromptQueueCardView()
     // 卡片自身的高度必须可变：只改外层容器高度的话，卡片仍锁在单行尺寸上，
@@ -141,7 +143,7 @@ final class PromptQueueBarView: NSView, NSTextViewDelegate {
 
     textView.string = draft
     textView.delegate = self
-    textView.font = NSFont.systemFont(ofSize: 14, weight: .regular)
+    textView.font = NSFont.interface(ofSize: 14, weight: .regular)
     textView.textColor = AsterTheme.ink
     textView.backgroundColor = .clear
     textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -224,8 +226,9 @@ final class PromptQueueBarView: NSView, NSTextViewDelegate {
 /// 静止状态与设计稿一致地保持无底色。
 @MainActor
 private final class PromptQueueItemView: PromptQueueCardView {
-  static let height: CGFloat = 44
+  static let height: CGFloat = InterfaceScale.length(44)
 
+  /// 构建一张队列命令卡：发送按钮、单行命令文本与移除按钮。
   init(item: AgentQueuedPrompt, onSend: @escaping () -> Void, onRemove: @escaping () -> Void) {
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
@@ -237,7 +240,7 @@ private final class PromptQueueItemView: PromptQueueCardView {
     applySymbolScale(to: send)
     constrainIconButton(send)
     let text = NSTextField(labelWithString: item.text)
-    text.font = NSFont.systemFont(ofSize: 14, weight: .regular)
+    text.font = NSFont.interface(ofSize: 14, weight: .regular)
     text.textColor = AsterTheme.ink
     text.lineBreakMode = .byTruncatingTail
     text.maximumNumberOfLines = 1
@@ -283,18 +286,21 @@ private class PromptQueueCardView: NSView {
 }
 
 /// 设计稿的图标比 SF Symbol 默认字号更舒展；按钮尺寸只决定命中面积，符号尺寸要
-/// 单独指定，否则图标会缩在 24pt 命中框中间显得偏小。
+/// 单独指定，否则图标会缩在 24pt 命中框中间显得偏小。`pointSize` 是默认档字号，
+/// 与同行文字一起按界面字号放大。
 @MainActor
 private func applySymbolScale(to button: NSButton, pointSize: CGFloat = 15) {
   button.image = button.image?.withSymbolConfiguration(
-    .init(pointSize: pointSize, weight: .regular))
+    .init(pointSize: InterfaceScale.font(pointSize), weight: .regular))
 }
 
-/// 统一设计稿里 24pt 的图标命中面积，避免各按钮尺寸漂移导致基线不齐。
+/// 统一设计稿里 24pt 的图标命中面积，避免各按钮尺寸漂移导致基线不齐。`side` 是默认档
+/// 边长，随界面字号放大，和卡片高度保持比例。
 @MainActor
 private func constrainIconButton(_ button: NSButton, side: CGFloat = 24) {
-  button.widthAnchor.constraint(equalToConstant: side).isActive = true
-  button.heightAnchor.constraint(equalToConstant: side).isActive = true
+  let scaled = InterfaceScale.length(side)
+  button.widthAnchor.constraint(equalToConstant: scaled).isActive = true
+  button.heightAnchor.constraint(equalToConstant: scaled).isActive = true
 }
 
 /// 设计稿右下角的主操作：实心圆底 + 反色箭头。`arrow.up.circle.fill` 的镂空箭头会
@@ -305,11 +311,12 @@ private final class FilledCircleButton: NSButton {
   private var hoverTrackingArea: NSTrackingArea?
   private var isHovering = false
 
+  /// 构建只画箭头符号的圆形按钮，圆底在 `applyAppearance` 里由 layer 绘制。
   init(symbol: String, accessibilityDescription: String?, handler: @escaping () -> Void) {
     self.handler = handler
     super.init(frame: .zero)
     image = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibilityDescription)?
-      .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+      .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(11), weight: .semibold))
     imagePosition = .imageOnly
     bezelStyle = .accessoryBarAction
     isBordered = false
@@ -378,11 +385,12 @@ private final class TextHoverButton: NSButton {
   private var hoverTrackingArea: NSTrackingArea?
   private var isHovering = false
 
+  /// 构建无边框的纯文字按钮。
   init(title: String, handler: @escaping () -> Void) {
     self.handler = handler
     super.init(frame: .zero)
     self.title = title
-    font = NSFont.systemFont(ofSize: 14, weight: .regular)
+    font = NSFont.interface(ofSize: 14, weight: .regular)
     bezelStyle = .accessoryBarAction
     isBordered = false
     wantsLayer = true
@@ -435,12 +443,13 @@ private final class TextHoverButton: NSButton {
     addCursorRect(bounds, cursor: .pointingHand)
   }
 
+  /// 按悬停状态刷新文字颜色与浅底。
   private func applyAppearance() {
     let color = isHovering ? AsterTheme.ink : AsterTheme.secondaryInk
     attributedTitle = NSAttributedString(
       string: title,
       attributes: [
-        .font: font ?? NSFont.systemFont(ofSize: 14),
+        .font: font ?? NSFont.interface(ofSize: 14),
         .foregroundColor: color,
       ]
     )
@@ -457,11 +466,12 @@ private final class TextHoverButton: NSButton {
 private final class PlaceholderTextView: NSTextView {
   var placeholder = "" { didSet { needsDisplay = true } }
 
+  /// 空草稿时在文本起点画占位提示，字体跟随输入正文。
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
     guard string.isEmpty, !placeholder.isEmpty else { return }
     let attributes: [NSAttributedString.Key: Any] = [
-      .font: font ?? NSFont.systemFont(ofSize: 14),
+      .font: font ?? NSFont.interface(ofSize: 14),
       .foregroundColor: AsterTheme.tertiaryInk,
     ]
     placeholder.draw(

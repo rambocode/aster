@@ -13,7 +13,8 @@ import Foundation
 final class UsageQuotaCardView: NSView {
   /// 数据比这更旧才值得标出来，与用量条 tooltip 的口径一致。
   private static let staleThreshold: TimeInterval = 120
-  private static let iconSize: CGFloat = 16
+  /// 卡头图标与账号名并排，随字号放大才能和标题保持比例。
+  private static let iconSize: CGFloat = InterfaceScale.length(16)
   /// 卡片内边距走三页共用的真值（`UsageCardStyle`），配额卡不自己定一套。
   private static var contentInsets: NSEdgeInsets {
     let inset = UsageCardStyle.contentInset
@@ -253,7 +254,7 @@ final class UsageQuotaWindowRow: NSView {
     nameLabel.setContentHuggingPriority(.required, for: .horizontal)
     nameLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
     // 数字跳动时不希望整行重新排版，所以百分比用等宽数字。
-    percentLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
+    percentLabel.font = NSFont.interfaceMonospacedDigit(ofSize: 15, weight: .semibold)
     percentLabel.alignment = .right
     percentLabel.setContentHuggingPriority(.required, for: .horizontal)
     percentLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -291,7 +292,8 @@ final class UsageQuotaWindowRow: NSView {
     stack.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
       track.heightAnchor.constraint(equalToConstant: Self.trackHeight),
-      percentLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+      percentLabel.widthAnchor.constraint(
+        greaterThanOrEqualToConstant: InterfaceScale.length(44)),
       topRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
       bottomRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
       stack.leadingAnchor.constraint(equalTo: leadingAnchor),

@@ -10,20 +10,22 @@ final class SecureInputIndicatorView: NSView {
   private let icon = NSImageView()
   private let label = NSTextField(labelWithString: "SECURE INPUT")
 
+  /// 构建蓝色胶囊：锁形图标 + 「SECURE INPUT」文字，尺寸随界面字号放大。
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
     wantsLayer = true
     layer?.cornerRadius = 6
     layer?.cornerCurve = .continuous
 
-    let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+    let symbolConfiguration = NSImage.SymbolConfiguration(
+      pointSize: InterfaceScale.font(9), weight: .semibold)
     icon.image = NSImage(
       systemSymbolName: "lock.shield.fill",
       accessibilityDescription: L("安全键盘输入已开启")
     )?.withSymbolConfiguration(symbolConfiguration)
     icon.imageScaling = .scaleProportionallyDown
 
-    label.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+    label.font = NSFont.interface(ofSize: 10, weight: .semibold)
     label.lineBreakMode = .byClipping
     label.maximumNumberOfLines = 1
 
@@ -32,11 +34,12 @@ final class SecureInputIndicatorView: NSView {
     icon.translatesAutoresizingMaskIntoConstraints = false
     label.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      heightAnchor.constraint(equalToConstant: 22),
+      // 胶囊落在固定 28pt 的标题带里，放大但不超过标题带。
+      heightAnchor.constraint(equalToConstant: InterfaceScale.length(22, max: 28)),
       icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
       icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-      icon.widthAnchor.constraint(equalToConstant: 11),
-      icon.heightAnchor.constraint(equalToConstant: 11),
+      icon.widthAnchor.constraint(equalToConstant: InterfaceScale.length(11)),
+      icon.heightAnchor.constraint(equalToConstant: InterfaceScale.length(11)),
       label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5),
       label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
       label.centerYAnchor.constraint(equalTo: centerYAnchor),

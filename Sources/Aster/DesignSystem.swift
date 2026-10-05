@@ -12,6 +12,8 @@ final class ThemeRuntime: @unchecked Sendable {
   }
 
   private let lock = NSLock()
+  /// 「加深界面文字」是否生效（用户开关或系统「增强对比度」）。
+  private var strengthensText = false
   private var light = TerminalThemeCatalog.resolve(
     named: "Ayu Light", customThemes: [], mode: .light
   )
@@ -24,6 +26,28 @@ final class ThemeRuntime: @unchecked Sendable {
     self.light = light
     self.dark = dark
     lock.unlock()
+  }
+
+  /// 切换「加深界面文字」。动态色在下一次解析时生效，调用方负责触发界面刷新。
+  func setStrengthensText(_ enabled: Bool) {
+    lock.lock()
+    strengthensText = enabled
+    lock.unlock()
+  }
+
+  /// 加深主题里直接取出来的文字色（例如侧栏的 `tab.foreground`）。未开启时原样返回。
+  ///
+  /// 对比度按面板底色算；磨砂主题的面板是半透明的，算不出真实对比度，此时只做固定幅度的加深。
+  func legibleText(_ color: HexColor, in theme: TerminalTheme) -> HexColor {
+    lock.lock()
+    let enabled = strengthensText
+    lock.unlock()
+    guard enabled else { return color }
+    return InterfaceTextContrast.strengthened(
+      color,
+      toward: theme.resolvedColor(forSlot: "interface.foreground") ?? theme.palette.foreground,
+      against: theme.resolvedColor(forSlot: "panel.background") ?? theme.palette.panelBackground
+    )
   }
 
   func color(for role: Role, appearance: NSAppearance) -> NSColor {
@@ -51,6 +75,10 @@ final class ThemeRuntime: @unchecked Sendable {
     case .accent: value = theme.resolvedColor(forSlot: "interface.accent") ?? palette.accent
     case .selection: value = theme.resolvedColor(forSlot: "selection.background") ?? palette.selection
     case .warning: value = palette.ansiColors[1]
+    }
+    // 次要与三级文字是「太淡」的来源；主文字、强调色、底色都不动。
+    if role == .secondary || role == .tertiary {
+      return NSColor(legibleText(value, in: theme))
     }
     return NSColor(value)
   }
@@ -520,6 +548,7 @@ final class ActionMenuItem: NSMenuItem {
   @objc private func invoke() { handler?() }
 }
 
+/// 创建界面标签。`size` 是默认档下的字号，内部已按界面字号档位缩放，调用方不要再乘倍数。
 @MainActor
 func makeLabel(
   _ value: String,
@@ -530,8 +559,8 @@ func makeLabel(
 ) -> NSTextField {
   let label = NSTextField(labelWithString: value)
   label.font = monospaced
-    ? NSFont.monospacedSystemFont(ofSize: size, weight: weight)
-    : NSFont.systemFont(ofSize: size, weight: weight)
+    ? NSFont.interfaceMonospaced(ofSize: size, weight: weight)
+    : NSFont.interface(ofSize: size, weight: weight)
   label.textColor = color
   label.lineBreakMode = .byTruncatingTail
   return label

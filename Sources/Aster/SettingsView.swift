@@ -245,6 +245,13 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
 
   required init?(coder: NSCoder) { nil }
 
+  /// 设置页按配置里的档位整页缩放。网页不像原生视图那样把字号烤死，所以这里读的是
+  /// 最新配置而不是启动时的 `InterfaceScale.current`，用户改档位能立刻看到效果。
+  private func applyInterfaceTextScale() {
+    settingsWebView?.pageZoom = CGFloat(
+      preferences.configuration.appearance.resolvedInterfaceTextScale.factor)
+  }
+
   override func loadView() {
     let configuration = WKWebViewConfiguration()
     configuration.websiteDataStore = .nonPersistent()
@@ -268,6 +275,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
     webView.setValue(false, forKey: "drawsBackground")
     settingsMessageProxy = proxy
     settingsWebView = webView
+    applyInterfaceTextScale()
 
     // 窗口开了 fullSizeContentView（侧栏底色要一直铺到窗口顶部），网页因此延伸到透明
     // 标题栏下面。WebKit 会吃掉自己区域内的 mouseDown，标题栏那一条就再也拖不动窗口，
@@ -3247,6 +3255,8 @@ extension SettingsViewController: WKNavigationDelegate {
   }
 
   fileprivate func pushWebSnapshot() {
+    // 档位可能从网页以外的入口改掉（导入配置、CLI），每次推快照前都对齐一次缩放。
+    applyInterfaceTextScale()
     guard webReady else { return }
     webRevision += 1
     sendWebMessage([
@@ -3426,6 +3436,10 @@ extension SettingsViewController: WKNavigationDelegate {
       "appearance.windowWidth": configuration.appearance.windowWidth,
       "appearance.windowHeight": configuration.appearance.windowHeight,
       "appearance.unfocusedSplitOpacity": configuration.appearance.resolvedUnfocusedSplitOpacity,
+      "appearance.interfaceTextScale": configuration.appearance.resolvedInterfaceTextScale.rawValue,
+      "appearance.interfaceHighContrastText": configuration.appearance.resolvedInterfaceHighContrastText,
+      // 网页据此切换加深配色：包含系统「增强对比度」，所以不能直接用上面的开关值。
+      "appearance.interfaceStrongTextActive": preferences.strengthensInterfaceText,
       "appearance.animateDockIconOnProgress": configuration.appearance.resolvedAnimateDockIconOnProgress,
       "appearance.redDockIconOnError": configuration.appearance.resolvedRedDockIconOnError,
       "advanced.autoProgressCommands": configuration.shell.resolvedAutoProgressCommands.joined(separator: ", "),
@@ -3670,6 +3684,7 @@ extension SettingsViewController: WKNavigationDelegate {
 
     do {
       let languageBefore = preferences.configuration.general.language
+      let textScaleBefore = preferences.configuration.appearance.resolvedInterfaceTextScale
       // 网页写入已在事务结束时主动推送快照；不要再从自身 objectWillChange 排队
       // 推送第二份快照，否则回执后的下一笔连续编辑会立刻持有过期 revision。
       let wasApplying = isApplyingLocalControlAction
@@ -3689,6 +3704,11 @@ extension SettingsViewController: WKNavigationDelegate {
       let languageAfter = preferences.configuration.general.language
       if languageAfter != languageBefore {
         AppLocalization.promptRelaunchIfNeeded(forSetting: languageAfter, in: view.window)
+      }
+      // 字号档位：设置页立刻缩放给用户预览，原生界面要重启，所以同样当场询问。
+      let textScaleAfter = preferences.configuration.appearance.resolvedInterfaceTextScale
+      if textScaleAfter != textScaleBefore {
+        InterfaceScale.promptRelaunchIfNeeded(for: textScaleAfter, in: view.window)
       }
     } catch {
       sendWebToast(L("设置值无效，未应用：\(error.localizedDescription)"), level: "error")
@@ -4004,6 +4024,12 @@ extension SettingsViewController: WKNavigationDelegate {
     case "appearance.unfocusedSplitOpacity": preferences.configuration.appearance.unfocusedSplitOpacity = min(max(try number(), 0.15), 1)
     case "appearance.animateDockIconOnProgress": preferences.configuration.appearance.animateDockIconOnProgress = try bool()
     case "appearance.redDockIconOnError": preferences.configuration.appearance.redDockIconOnError = try bool()
+    case "appearance.interfaceTextScale":
+      preferences.configuration.appearance.interfaceTextScale = try enumValue(
+        string(), as: InterfaceTextScale.self)
+      applyInterfaceTextScale()
+    case "appearance.interfaceHighContrastText":
+      preferences.configuration.appearance.interfaceHighContrastText = try bool()
     case "advanced.autoProgressCommands":
       preferences.configuration.shell.autoProgressCommands = Array(try string()
         .split(separator: ",", omittingEmptySubsequences: true)
@@ -4822,8 +4848,13 @@ extension SettingsViewController: WKNavigationDelegate {
   /// informativeText 让窗口无限变高。
   private func presentMemoryTextSheet(title: String, body: String) {
     guard let window = view.window else { return }
+    // 面板以文字为主，随界面字号放大以保住每行字数；设上限免得大字号下 sheet 比设置窗口还大，
+    // 超出的部分由滚动区承载。文本宽度始终是 sheet 宽度减去左右 16pt 边距。
+    let sheetWidth = InterfaceScale.length(520, max: 760)
+    let textWidth = sheetWidth - 32
     let sheet = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 520, height: 380),
+      contentRect: NSRect(
+        x: 0, y: 0, width: sheetWidth, height: InterfaceScale.length(380, max: 560)),
       styleMask: [.titled, .closable],
       backing: .buffered,
       defer: false
@@ -4834,7 +4865,7 @@ extension SettingsViewController: WKNavigationDelegate {
     scroll.drawsBackground = false
     // NSTextView 放进 NSScrollView 必须自己接好可变高度与宽度跟随，
     // 否则 documentView 停在零尺寸，面板看起来是空的。
-    let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 488, height: 300))
+    let text = NSTextView(frame: NSRect(x: 0, y: 0, width: textWidth, height: 300))
     text.isEditable = false
     text.isSelectable = true
     text.drawsBackground = false
@@ -4843,9 +4874,9 @@ extension SettingsViewController: WKNavigationDelegate {
     text.isHorizontallyResizable = false
     text.textContainer?.widthTracksTextView = true
     text.textContainer?.containerSize = NSSize(
-      width: 488, height: CGFloat.greatestFiniteMagnitude)
+      width: textWidth, height: CGFloat.greatestFiniteMagnitude)
     text.textContainerInset = NSSize(width: 14, height: 14)
-    text.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+    text.font = .interfaceMonospaced(ofSize: 12)
     text.string = body
     scroll.documentView = text
     let close = NSButton(title: L("完成"), target: nil, action: nil)

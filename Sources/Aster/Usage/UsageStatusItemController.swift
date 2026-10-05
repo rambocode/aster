@@ -73,6 +73,7 @@ final class UsageStatusItemController: UsageStatusItemPresenting {
   private static func title(for summary: UsageStatusSummary) -> NSAttributedString {
     let result = NSMutableAttributedString()
     guard !summary.segments.isEmpty else { return result }
+    // 菜单栏文字跟随系统菜单栏的尺寸，不走界面字号：放大会让状态栏条目比邻居高一截。
     let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
     for (index, segment) in summary.segments.enumerated() {
       let separator = index == 0 ? " " : " · "

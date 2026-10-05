@@ -136,6 +136,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     if let overlayEventMonitor { NSEvent.removeMonitor(overlayEventMonitor) }
   }
 
+  /// 搭建浮层：搜索行、过滤条、结果滚动区、分隔线与底部快捷键栏。
   override func loadView() {
     let host = OpenQuicklyPanelView()
     host.wantsLayer = true
@@ -162,7 +163,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     // 不覆写 cell 的局部坐标；改为移除内部 icon、将输入控件整体放在显式图标右侧，确保
     // placeholder、正在编辑文本和 IME 候选都共享同一个真实可输入区域。
     (search.cell as? NSSearchFieldCell)?.searchButtonCell = nil
-    search.font = NSFont.systemFont(ofSize: 15)
+    search.font = NSFont.interface(ofSize: 15)
     search.translatesAutoresizingMaskIntoConstraints = false
     search.setContentHuggingPriority(.required, for: .vertical)
     search.setContentCompressionResistancePriority(.required, for: .vertical)
@@ -182,21 +183,25 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     searchIcon.imageAlignment = .alignCenter
     searchIcon.imageScaling = .scaleProportionallyDown
     searchIcon.contentTintColor = AsterTheme.secondaryInk
-    searchIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+    searchIcon.symbolConfiguration = NSImage.SymbolConfiguration(
+      pointSize: InterfaceScale.font(16), weight: .regular)
     searchIcon.identifier = NSUserInterfaceItemIdentifier("open-quickly-search-icon")
     searchIcon.translatesAutoresizingMaskIntoConstraints = false
     searchRow.addSubview(searchIcon)
     searchRow.addSubview(search)
+    let searchIconSize = InterfaceScale.length(16)
     NSLayoutConstraint.activate([
       // 行高由 searchRow 固定；search 保持文字自身的固有高度，与 icon 一起对齐 row
       // 中心，文字才和图标落在同一水平线上。把 search 撑满 36pt 会让无边框
       // NSSearchFieldCell 把单行文字贴顶绘制，图标就显得比文字低。
-      searchRow.heightAnchor.constraint(equalToConstant: 36),
+      searchRow.heightAnchor.constraint(equalToConstant: InterfaceScale.length(36)),
       searchIcon.leadingAnchor.constraint(equalTo: searchRow.leadingAnchor, constant: 8),
       searchIcon.centerYAnchor.constraint(equalTo: searchRow.centerYAnchor),
-      searchIcon.widthAnchor.constraint(equalToConstant: 16),
-      searchIcon.heightAnchor.constraint(equalToConstant: 16),
-      search.leadingAnchor.constraint(equalTo: searchRow.leadingAnchor, constant: 32),
+      searchIcon.widthAnchor.constraint(equalToConstant: searchIconSize),
+      searchIcon.heightAnchor.constraint(equalToConstant: searchIconSize),
+      // 输入框起点 = 图标左边距 8 + 图标槽 + 右间距 8；图标槽随字号放大，起点跟着右移。
+      search.leadingAnchor.constraint(
+        equalTo: searchRow.leadingAnchor, constant: searchIconSize + 16),
       search.trailingAnchor.constraint(equalTo: searchRow.trailingAnchor),
       search.centerYAnchor.constraint(equalTo: searchRow.centerYAnchor),
     ])
@@ -434,6 +439,8 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
 
   /// 按当前 arrangedSubviews 的真实 fitting height 更新滚动区，最多展示 400pt；超出
   /// 部分继续由 NSScrollView 滚动。最小 1pt 避免空内容造成不确定的零高约束。
+  /// 400pt 不随界面字号放大：浮层外框的高度上限在 WorkspaceView 里，放大这里会和它冲突，
+  /// 大字号下多出的行交给滚动。
   private func updateResultsHeight() {
     resultsStack.needsLayout = true
     resultsStack.layoutSubtreeIfNeeded()
@@ -458,7 +465,7 @@ final class OpenQuicklyOverlayViewController: NSViewController, NSSearchFieldDel
     let actions = ActionButton(title: L("操作 ⌘K"), bezelStyle: .inline) { [weak self] in
       self?.showActionsMenu()
     }
-    actions.font = NSFont.systemFont(ofSize: 10)
+    actions.font = NSFont.interface(ofSize: 10)
     let row = NSStackView(views: [quickSelect, NSView(), jump, actions])
     row.orientation = .horizontal
     row.spacing = 8
@@ -1083,10 +1090,10 @@ final class OpenQuicklyChip: NSButton {
     fullTitle = title
     self.commandHint = commandHint
     let titleWidth = (title as NSString).size(withAttributes: [
-      .font: NSFont.systemFont(ofSize: 12, weight: .semibold)
+      .font: NSFont.interface(ofSize: 12, weight: .semibold)
     ]).width
     let hintWidth = (commandHint as NSString).size(withAttributes: [
-      .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .medium)
+      .font: NSFont.interfaceMonospaced(ofSize: 9.5, weight: .medium)
     ]).width
     stableWidth = ceil(max(titleWidth, hintWidth)) + 20
     super.init(frame: .zero)
@@ -1110,7 +1117,7 @@ final class OpenQuicklyChip: NSButton {
   /// 宽度按标题和快捷键的较大者预留，按下/松开 ⌘ 只改变高度，不让标签条
   /// 水平跳动。快捷键可见时增高为双行 pill。
   override var intrinsicContentSize: NSSize {
-    NSSize(width: stableWidth, height: showsCommandHint ? 42 : 26)
+    NSSize(width: stableWidth, height: InterfaceScale.length(showsCommandHint ? 42 : 26))
   }
 
   override func viewDidChangeEffectiveAppearance() {
@@ -1118,6 +1125,7 @@ final class OpenQuicklyChip: NSButton {
     applyAppearance()
   }
 
+  /// 按选中态和 ⌘ 提示可见性重绘 chip 的标题、边框与背景。
   private func applyAppearance() {
     let color = isChipSelected ? AsterTheme.accent : AsterTheme.secondaryInk
     let paragraph = NSMutableParagraphStyle()
@@ -1125,7 +1133,7 @@ final class OpenQuicklyChip: NSButton {
     let text = NSMutableAttributedString(
       string: fullTitle,
       attributes: [
-        .font: NSFont.systemFont(ofSize: 12, weight: isChipSelected ? .semibold : .regular),
+        .font: NSFont.interface(ofSize: 12, weight: isChipSelected ? .semibold : .regular),
         .foregroundColor: color,
         .paragraphStyle: paragraph,
       ])
@@ -1134,7 +1142,7 @@ final class OpenQuicklyChip: NSButton {
         NSAttributedString(
           string: "\n\(commandHint)",
           attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .medium),
+            .font: NSFont.interfaceMonospaced(ofSize: 9.5, weight: .medium),
             .foregroundColor: isChipSelected
               ? AsterTheme.accent.withAlphaComponent(0.88) : AsterTheme.tertiaryInk,
             .paragraphStyle: paragraph,
@@ -1186,8 +1194,8 @@ final class OpenQuicklyRowView: NSButton {
     action = #selector(invoke)
 
     icon.translatesAutoresizingMaskIntoConstraints = false
-    icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
-    icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
+    icon.widthAnchor.constraint(equalToConstant: InterfaceScale.length(16)).isActive = true
+    icon.heightAnchor.constraint(equalToConstant: InterfaceScale.length(16)).isActive = true
 
     shortcutBackground.wantsLayer = true
     shortcutBackground.layer?.cornerRadius = 4
@@ -1240,7 +1248,7 @@ final class OpenQuicklyRowView: NSButton {
     textColumn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
     textColumn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     translatesAutoresizingMaskIntoConstraints = false
-    heightAnchor.constraint(equalToConstant: 44).isActive = true
+    heightAnchor.constraint(equalToConstant: InterfaceScale.length(44)).isActive = true
   }
 
   required init?(coder: NSCoder) { nil }

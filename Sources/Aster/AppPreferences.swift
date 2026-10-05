@@ -64,6 +64,9 @@ final class AppPreferences: ObservableObject {
     }
   }
 
+  /// 系统「增强对比度」通知的观察令牌；偏好对象与进程同寿命，不需要显式移除。
+  private var systemContrastObserver: NSObjectProtocol?
+
   @Published var appearance: Appearance {
     didSet {
       defaults.set(appearance.rawValue, forKey: Keys.appearance)
@@ -422,6 +425,7 @@ final class AppPreferences: ObservableObject {
     migrateLegacySidebarWidth()
     migrateMissingThemeSelections()
     synchronizeThemeRuntime()
+    observeSystemContrast()
   }
 
   /// 主题文件后缀。目录里只认这一种，读写共用 `TerminalThemeStore`。
@@ -1070,6 +1074,27 @@ final class AppPreferences: ObservableObject {
     let effectiveDarkTheme =
       previewedTheme?.mode == .dark ? previewedTheme ?? persistedDarkTheme : persistedDarkTheme
     ThemeRuntime.shared.update(light: effectiveLightTheme, dark: effectiveDarkTheme)
+    ThemeRuntime.shared.setStrengthensText(strengthensInterfaceText)
+  }
+
+  /// 「加深界面文字」是否生效：用户开关，或系统辅助功能里开了「增强对比度」。
+  var strengthensInterfaceText: Bool {
+    configuration.appearance.resolvedInterfaceHighContrastText
+      || NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+  }
+
+  /// 系统「增强对比度」变化时重算文字色，并通知订阅者按主题变化的同一条路径刷新界面。
+  private func observeSystemContrast() {
+    systemContrastObserver = NSWorkspace.shared.notificationCenter.addObserver(
+      forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+      object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        self.objectWillChange.send()
+        self.synchronizeThemeRuntime()
+      }
+    }
   }
 
   private enum Keys {

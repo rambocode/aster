@@ -105,6 +105,7 @@ final class RemoteFilesSectionController: NSViewController, NSTableViewDataSourc
     transferTask?.cancel()
   }
 
+  /// 搭建远端文件页：路径行、搜索工具条与文件表格。
   override func loadView() {
     let root = RemoteFilesDropView()
     root.identifier = NSUserInterfaceItemIdentifier("details-remote-files")
@@ -160,7 +161,7 @@ final class RemoteFilesSectionController: NSViewController, NSTableViewDataSourc
     table.headerView = nil
     table.backgroundColor = .clear
     table.style = .plain
-    table.rowHeight = 24
+    table.rowHeight = InterfaceScale.length(24)
     table.intercellSpacing = .zero
     table.selectionHighlightStyle = .none
     table.dataSource = self

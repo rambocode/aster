@@ -15,10 +15,13 @@ final class FeedbackSheetController: NSObject {
   private var sharingPicker: NSSharingServicePicker?
   private var isWorking = false { didSet { updateActionState() } }
 
+  /// 创建反馈面板并搭好界面；面板以 sheet 方式挂到父窗口。
   init(diagnostics: DiagnosticsCenter = .shared) {
     self.diagnostics = diagnostics
+    // 面板内容以文字为主，随界面字号放大；1.5 倍时 960×645，仍在 13 寸屏内。
     panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 640, height: 430),
+      contentRect: NSRect(
+        x: 0, y: 0, width: InterfaceScale.length(640), height: InterfaceScale.length(430)),
       styleMask: [.titled, .closable], backing: .buffered, defer: false)
     saveButton = ActionButton(title: L("保存诊断包…"), bezelStyle: .rounded) {}
     shareButton = ActionButton(title: L("分享…"), bezelStyle: .rounded) {}
@@ -38,30 +41,31 @@ final class FeedbackSheetController: NSObject {
     }
   }
 
+  /// 搭建面板：说明、日志摘要、问题描述输入与操作按钮。
   private func buildInterface() {
     let root = NSView()
     panel.contentView = root
 
     let title = NSTextField(labelWithString: L("发送诊断反馈"))
-    title.font = NSFont.systemFont(ofSize: 22, weight: .bold)
+    title.font = NSFont.interface(ofSize: 22, weight: .bold)
     let detail = NSTextField(wrappingLabelWithString:
       L("Aster 只会在你保存或分享时生成诊断包。包内不包含终端输入输出、命令、路径、环境变量、配置或系统崩溃报告。"))
-    detail.font = NSFont.systemFont(ofSize: 13)
+    detail.font = NSFont.interface(ofSize: 13)
     detail.textColor = AsterTheme.secondaryInk
     detail.maximumNumberOfLines = 0
 
-    summaryLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    summaryLabel.font = NSFont.interfaceMonospaced(ofSize: 11)
     summaryLabel.textColor = AsterTheme.secondaryInk
-    let logs = NSStackView(views: [
-      NSTextField(labelWithString: L("将包含")), summaryLabel,
-    ])
+    let includesLabel = NSTextField(labelWithString: L("将包含"))
+    includesLabel.font = NSFont.interface(ofSize: NSFont.systemFontSize)
+    let logs = NSStackView(views: [includesLabel, summaryLabel])
     logs.orientation = .horizontal
     logs.alignment = .centerY
     logs.spacing = 10
 
     let noteLabel = NSTextField(labelWithString: L("问题描述（可选）"))
-    noteLabel.font = NSFont.systemFont(ofSize: 14, weight: .medium)
-    note.font = NSFont.systemFont(ofSize: 13)
+    noteLabel.font = NSFont.interface(ofSize: 14, weight: .medium)
+    note.font = NSFont.interface(ofSize: 13)
     note.isAutomaticQuoteSubstitutionEnabled = false
     note.isAutomaticDashSubstitutionEnabled = false
     note.textContainerInset = NSSize(width: 8, height: 8)
@@ -69,9 +73,9 @@ final class FeedbackSheetController: NSObject {
     noteScroll.hasVerticalScroller = true
     noteScroll.borderType = .bezelBorder
     noteScroll.documentView = note
-    noteScroll.heightAnchor.constraint(equalToConstant: 120).isActive = true
+    noteScroll.heightAnchor.constraint(equalToConstant: InterfaceScale.length(120)).isActive = true
 
-    status.font = NSFont.systemFont(ofSize: 11)
+    status.font = NSFont.interface(ofSize: 11)
     status.textColor = AsterTheme.warning
     let folder = ActionButton(title: L("打开日志文件夹"), bezelStyle: .rounded) { [weak self] in
       self?.openLogsDirectory()

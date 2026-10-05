@@ -109,13 +109,14 @@ final class TerminalPaneCollapsedCardView: NSView {
     card.layer?.borderWidth = 1
     card.layer?.cornerRadius = 10
 
-    icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(
+      pointSize: InterfaceScale.font(15), weight: .medium)
     icon.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      icon.widthAnchor.constraint(equalToConstant: 20),
-      icon.heightAnchor.constraint(equalToConstant: 20),
+      icon.widthAnchor.constraint(equalToConstant: InterfaceScale.length(20)),
+      icon.heightAnchor.constraint(equalToConstant: InterfaceScale.length(20)),
     ])
-    titleLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
+    titleLabel.font = .interface(ofSize: 12.5, weight: .semibold)
     titleLabel.textColor = AsterTheme.ink
     titleLabel.lineBreakMode = .byTruncatingTail
     titleLabel.maximumNumberOfLines = 1
@@ -125,14 +126,14 @@ final class TerminalPaneCollapsedCardView: NSView {
     heading.alignment = .centerY
     heading.spacing = 6
 
-    statusLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+    statusLabel.font = .interface(ofSize: 11.5, weight: .medium)
     statusLabel.alignment = .center
 
     // 收起时刻只格式化一次；卡片上没有任何随时间走动的计数，避免周期性唤醒。
     let time = DateFormatter.localizedString(from: collapsedAt, dateStyle: .none, timeStyle: .short)
     let detail = NSTextField(
       wrappingLabelWithString: L("收起于 \(time)。进程继续在后台运行，画面暂不绘制。"))
-    detail.font = .systemFont(ofSize: 10.5)
+    detail.font = .interface(ofSize: 10.5)
     detail.textColor = AsterTheme.tertiaryInk
     detail.alignment = .center
     detail.maximumNumberOfLines = 2
@@ -156,8 +157,8 @@ final class TerminalPaneCollapsedCardView: NSView {
       card.centerYAnchor.constraint(equalTo: centerYAnchor),
       card.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
       card.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
-      card.widthAnchor.constraint(lessThanOrEqualToConstant: 360),
-      detail.widthAnchor.constraint(lessThanOrEqualToConstant: 300),
+      card.widthAnchor.constraint(lessThanOrEqualToConstant: InterfaceScale.length(360)),
+      detail.widthAnchor.constraint(lessThanOrEqualToConstant: InterfaceScale.length(300)),
     ])
   }
 

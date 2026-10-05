@@ -622,6 +622,11 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   /// 非焦点分屏窗格的淡化不透明度；1 表示所有窗格保持完全清晰。可选字段兼容
   /// 0.4.x JSON，缺失按 Otty 默认 0.6 解析。
   public var unfocusedSplitOpacity: Double? = 0.6
+  /// 界面文字（侧栏、面板、设置页）的缩放档位，与终端字号无关。可选字段兼容旧配置，
+  /// 缺失按默认档解析。原生界面在启动时读取一次，改动后重启生效。
+  public var interfaceTextScale: InterfaceTextScale? = .standard
+  /// 加深次要与三级界面文字。系统开启「增强对比度」时应用层会视同开启。
+  public var interfaceHighContrastText: Bool? = false
 
   public func showsTabBar(tabCount: Int) -> Bool {
     showTabBar && !(autoHideTabs && tabCount <= 1)
@@ -658,6 +663,8 @@ public struct AppearanceConfiguration: Codable, Equatable, Sendable {
   public var resolvedUnfocusedSplitOpacity: Double {
     min(max(unfocusedSplitOpacity ?? 0.6, 0.15), 1)
   }
+  public var resolvedInterfaceTextScale: InterfaceTextScale { interfaceTextScale ?? .standard }
+  public var resolvedInterfaceHighContrastText: Bool { interfaceHighContrastText ?? false }
   public var resolvedCursorBlinkMode: TerminalCursorBlinkMode {
     cursorBlinkMode ?? (cursorBlink ? .defaultOn : .defaultOff)
   }
@@ -769,6 +776,9 @@ public struct AsterConfiguration: Codable, Equatable, Sendable {
     result.appearance.cursorOpacity = result.appearance.resolvedCursorOpacity
     result.appearance.unfocusedSplitOpacity = result.appearance.resolvedUnfocusedSplitOpacity
     result.appearance.cursorBlinkMode = result.appearance.resolvedCursorBlinkMode
+    result.appearance.interfaceTextScale = result.appearance.resolvedInterfaceTextScale
+    result.appearance.interfaceHighContrastText =
+      result.appearance.resolvedInterfaceHighContrastText
     result.appearance.cursorAnimation = result.appearance.resolvedCursorAnimation
     result.appearance.fontFamilyFallback = Self.normalizedFontFamilies(
       result.appearance.resolvedFontFamilyFallback)

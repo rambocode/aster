@@ -296,8 +296,9 @@ final class UsageSessionCardView: NSButton {
       accentBar.topAnchor.constraint(equalTo: topAnchor, constant: 8),
       accentBar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
       accentBar.widthAnchor.constraint(equalToConstant: 3),
-      iconView.widthAnchor.constraint(equalToConstant: 16),
-      iconView.heightAnchor.constraint(equalToConstant: 16),
+      // 图标与标题同一行，随字号放大保持比例。
+      iconView.widthAnchor.constraint(equalToConstant: InterfaceScale.length(16)),
+      iconView.heightAnchor.constraint(equalToConstant: InterfaceScale.length(16)),
       // 三行都要按卡片宽度收口，否则 `.leading` 对齐的 stack 会让长目录把卡片撑宽。
       header.widthAnchor.constraint(equalTo: rows.widthAnchor),
       directoryLabel.widthAnchor.constraint(equalTo: rows.widthAnchor),

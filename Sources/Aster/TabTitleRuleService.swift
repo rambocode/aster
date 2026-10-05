@@ -134,15 +134,15 @@ enum TabIconArtwork {
     return image
   }
 
-  /// 图标视图边长；与侧栏行 16pt 状态槽等宽。
-  static let iconPointSize: CGFloat = 16
+  /// 图标视图边长；与侧栏行状态槽等宽（默认档 16pt），随界面字号一起放大。
+  static let iconPointSize: CGFloat = InterfaceScale.length(16)
 
   /// 生成 `iconPointSize` 见方的图标视图；emoji 优先于图标集名称（用户在选择器里二选一时后写者胜）。
   static func makeView(for icon: TabRuleIcon, fallbackTint: NSColor) -> NSView? {
     let tint = icon.color.map { NSColor($0) } ?? fallbackTint
     if let emoji = icon.emoji, !emoji.isEmpty {
       let label = NSTextField(labelWithString: emoji)
-      label.font = .systemFont(ofSize: 14)
+      label.font = .interface(ofSize: 14)
       label.alignment = .center
       label.setAccessibilityLabel(L("标签图标 \(emoji)"))
       return label

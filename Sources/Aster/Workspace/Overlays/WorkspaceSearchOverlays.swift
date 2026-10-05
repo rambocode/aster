@@ -24,6 +24,7 @@ final class GlobalFindOverlayViewController: NSViewController, NSSearchFieldDele
 
   required init?(coder: NSCoder) { nil }
 
+  /// 搭建全局查找浮层：搜索框 + 大小写/正则开关 + 结果列表。
   override func loadView() {
     let host = NSView()
     host.wantsLayer = true
@@ -38,6 +39,8 @@ final class GlobalFindOverlayViewController: NSViewController, NSSearchFieldDele
     stack.spacing = 6
     stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
     search.placeholderString = L("在全部终端和已打开文件中查找…")
+    // 默认字体就是系统字号；显式写出来才能跟随界面字号放大。
+    search.font = NSFont.interface(ofSize: NSFont.systemFontSize)
     search.delegate = self
     search.onMove = { [weak self] delta in self?.moveSelection(delta) }
     search.onActivate = { [weak self] _ in self?.activateSelection() }
@@ -71,6 +74,7 @@ final class GlobalFindOverlayViewController: NSViewController, NSSearchFieldDele
     reload()
   }
 
+  /// 按当前查询重建结果按钮列表。
   private func reload() {
     while stack.arrangedSubviews.count > 1 {
       stack.arrangedSubviews.last?.removeFromSuperview()
@@ -106,8 +110,9 @@ final class GlobalFindOverlayViewController: NSViewController, NSSearchFieldDele
       }
       button.alignment = .left
       button.isBordered = false
+      button.font = NSFont.interface(ofSize: NSFont.systemFontSize)
       button.translatesAutoresizingMaskIntoConstraints = false
-      button.heightAnchor.constraint(equalToConstant: 34).isActive = true
+      button.heightAnchor.constraint(equalToConstant: InterfaceScale.length(34)).isActive = true
       stack.addArrangedSubview(button)
       buttons.append(button)
     }
@@ -164,6 +169,7 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
 
   required init?(coder: NSCoder) { nil }
 
+  /// 搭建 Agent 历史浮层：搜索头、会话列表 + transcript 正文、底部操作按钮。
   override func loadView() {
     // 面板 chrome 与命令面板/Open Quickly 同一套：圆角 16、hairline 描边、
     // layer 投影（NSShadow 在 layer-backed 视图上不稳定，统一走 layer）。
@@ -186,6 +192,7 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
     // Resume/Fork 继续走 footer 按钮显式触发。
     search.onActivate = { [weak self] _ in self?.openSelection() }
     search.onCancel = { [weak model] in model?.isAgentHistoryPresented = false }
+    search.font = NSFont.interface(ofSize: NSFont.systemFontSize)
     let refresh = ActionButton(symbol: "arrow.clockwise") { [weak model] in
       model?.reloadAgentHistory()
     }
@@ -224,12 +231,13 @@ final class AgentHistoryOverlayViewController: NSViewController, NSSearchFieldDe
       resultsStack.trailingAnchor.constraint(equalTo: resultsDocument.trailingAnchor),
       resultsStack.topAnchor.constraint(equalTo: resultsDocument.topAnchor),
       resultsDocument.bottomAnchor.constraint(greaterThanOrEqualTo: resultsStack.bottomAnchor),
-      resultsScroll.widthAnchor.constraint(equalToConstant: 270),
+      // 列表列宽只为容纳标题与元信息，随字号放大，正文区让出相应宽度。
+      resultsScroll.widthAnchor.constraint(equalToConstant: InterfaceScale.length(270)),
     ])
 
     transcript.isEditable = false
     transcript.isSelectable = true
-    transcript.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+    transcript.font = .interfaceMonospaced(ofSize: 11)
     transcript.textColor = AsterTheme.ink
     transcript.backgroundColor = AsterTheme.paper
     transcript.textContainerInset = NSSize(width: 12, height: 12)
@@ -392,6 +400,7 @@ final class AgentHistoryRowView: NSButton {
     didSet { if oldValue != isSelected { applyBackground() } }
   }
 
+  /// 创建标题 + 元信息双行的历史行，点击经闭包回调。
   init(title: String, subtitle: String, handler: @escaping () -> Void) {
     super.init(frame: .zero)
     self.title = ""
@@ -416,7 +425,7 @@ final class AgentHistoryRowView: NSButton {
     addSubview(column)
     column.pinEdges(to: self, insets: NSEdgeInsets(top: 7, left: 10, bottom: 7, right: 10))
     translatesAutoresizingMaskIntoConstraints = false
-    heightAnchor.constraint(equalToConstant: 52).isActive = true
+    heightAnchor.constraint(equalToConstant: InterfaceScale.length(52)).isActive = true
   }
 
   required init?(coder: NSCoder) { nil }
@@ -471,6 +480,7 @@ final class PaletteOverlayViewController: NSViewController, NSSearchFieldDelegat
 
   required init?(coder: NSCoder) { nil }
 
+  /// 搭建命令面板：搜索行 + 自适应高度的命令列表。
   override func loadView() {
     // 复用 Open Quickly 的面板：同一套圆角/描边/投影，以及只在搜索框范围保留
     // I-beam 光标的 cursor rect 处理——borderless 搜索框在 AppKit 里偶尔会留下
@@ -497,7 +507,7 @@ final class PaletteOverlayViewController: NSViewController, NSSearchFieldDelegat
     search.focusRingType = .none
     search.cell?.focusRingType = .none
     (search.cell as? NSSearchFieldCell)?.searchButtonCell = nil
-    search.font = NSFont.systemFont(ofSize: 15)
+    search.font = NSFont.interface(ofSize: 15)
     search.translatesAutoresizingMaskIntoConstraints = false
     search.setContentHuggingPriority(.required, for: .vertical)
     search.setContentCompressionResistancePriority(.required, for: .vertical)
@@ -513,20 +523,24 @@ final class PaletteOverlayViewController: NSViewController, NSSearchFieldDelegat
     searchIcon.imageAlignment = .alignCenter
     searchIcon.imageScaling = .scaleProportionallyDown
     searchIcon.contentTintColor = AsterTheme.secondaryInk
-    searchIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+    searchIcon.symbolConfiguration = NSImage.SymbolConfiguration(
+      pointSize: InterfaceScale.font(16), weight: .regular)
     searchIcon.translatesAutoresizingMaskIntoConstraints = false
     searchRow.addSubview(searchIcon)
     searchRow.addSubview(search)
+    let searchIconSize = InterfaceScale.length(16)
     NSLayoutConstraint.activate([
       // 行高由 searchRow 固定；search 保持文字自身的固有高度，与 icon 一起对齐 row
       // 中心，文字才和图标落在同一水平线上。把 search 撑满 36pt 会让无边框
       // NSSearchFieldCell 把单行文字贴顶绘制，图标就显得比文字低。
-      searchRow.heightAnchor.constraint(equalToConstant: 36),
+      searchRow.heightAnchor.constraint(equalToConstant: InterfaceScale.length(36)),
       searchIcon.leadingAnchor.constraint(equalTo: searchRow.leadingAnchor, constant: 8),
       searchIcon.centerYAnchor.constraint(equalTo: searchRow.centerYAnchor),
-      searchIcon.widthAnchor.constraint(equalToConstant: 16),
-      searchIcon.heightAnchor.constraint(equalToConstant: 16),
-      search.leadingAnchor.constraint(equalTo: searchRow.leadingAnchor, constant: 32),
+      searchIcon.widthAnchor.constraint(equalToConstant: searchIconSize),
+      searchIcon.heightAnchor.constraint(equalToConstant: searchIconSize),
+      // 输入框起点 = 图标左边距 8 + 图标槽 + 右间距 8，随图标槽一起右移。
+      search.leadingAnchor.constraint(
+        equalTo: searchRow.leadingAnchor, constant: searchIconSize + 16),
       search.trailingAnchor.constraint(equalTo: searchRow.trailingAnchor),
       search.centerYAnchor.constraint(equalTo: searchRow.centerYAnchor),
     ])
@@ -719,6 +733,7 @@ final class PaletteCommandRowView: NSButton {
     didSet { if oldValue != isSelected { applySelection() } }
   }
 
+  /// 创建命令行：标题 + 可选快捷键胶囊，点击经闭包回调。
   init(title: String, shortcut: String?, handler: @escaping () -> Void) {
     super.init(frame: .zero)
     self.title = ""
@@ -750,7 +765,7 @@ final class PaletteCommandRowView: NSButton {
     addSubview(row)
     row.pinEdges(to: self, insets: NSEdgeInsets(top: 6, left: 10, bottom: 6, right: 10))
     translatesAutoresizingMaskIntoConstraints = false
-    heightAnchor.constraint(equalToConstant: 44).isActive = true
+    heightAnchor.constraint(equalToConstant: InterfaceScale.length(44)).isActive = true
   }
 
   required init?(coder: NSCoder) { nil }

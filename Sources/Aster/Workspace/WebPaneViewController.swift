@@ -77,6 +77,7 @@ final class WebPaneViewController: NSViewController, WKNavigationDelegate, WKUID
   @available(*, unavailable)
   required init?(coder: NSCoder) { nil }
 
+  /// 搭建网页 Pane：顶部导航条（前进/后退/刷新 + 地址）与下方 WKWebView。
   override func loadView() {
     let root = NSView()
     root.wantsLayer = true
@@ -100,7 +101,7 @@ final class WebPaneViewController: NSViewController, WKNavigationDelegate, WKUID
     reloadButton.toolTip = L("重新加载")
 
     locationLabel.lineBreakMode = .byTruncatingMiddle
-    locationLabel.font = .systemFont(ofSize: 11)
+    locationLabel.font = .interface(ofSize: 11)
     locationLabel.textColor = .secondaryLabelColor
     locationLabel.stringValue = initialURL?.absoluteString ?? L("无法打开该网页")
     let controls = NSStackView(views: [backButton, forwardButton, reloadButton, locationLabel])
@@ -119,7 +120,7 @@ final class WebPaneViewController: NSViewController, WKNavigationDelegate, WKUID
       toolbar.topAnchor.constraint(equalTo: root.topAnchor),
       toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
       toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-      toolbar.heightAnchor.constraint(equalToConstant: 30),
+      toolbar.heightAnchor.constraint(equalToConstant: InterfaceScale.length(30)),
       controls.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 8),
       controls.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -8),
       controls.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),

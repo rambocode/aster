@@ -45,6 +45,8 @@ flowchart LR
 而 Tab、Pane、焦点和其它工作区模型变化继续经过普通 `scheduleRefresh()` 立即显示。设置页的
 `WKWebView` 延伸到 `.fullSizeContentView` 的透明标题栏区域，上层原生 `SettingsTitlebarDragStrip` 将该区域的鼠标事件交回窗口，保留拖动能力。
 
+设置页按 `appearance.interfaceTextScale` 设置 `WKWebView.pageZoom` 整页缩放，写入后立即生效，不等重启；网页样式里的 px 字号因此保持不变。快照字段 `appearance.interfaceStrongTextActive` 为真时，网页给根元素加 `strong-text` 类切换加深配色。详见 [界面文字可读性](interface-text-legibility.md)。
+
 软件更新的四个字段不写入 `settings.json`，导入导出也不携带它们。
 
 可编辑配置文件位于 `~/Library/Application Support/Aster/settings.json`，schema 版本为 3，同时包含强类型配置和兼容字段。导入仍接受旧版单块 `AsterConfiguration` JSON；新格式只接收 allowlist 中的兼容字段，本机链接与剪贴板授权继续按原有安全规则剥离。

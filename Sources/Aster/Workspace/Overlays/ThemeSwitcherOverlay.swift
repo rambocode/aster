@@ -10,11 +10,13 @@ final class ThemeSwitcherPanelController: NSWindowController, NSWindowDelegate {
   private let onDismiss: () -> Void
   private var isDismissing = false
 
+  /// 创建承载主题选择器的无边框 Panel；尺寸与内容视图的固定宽高一致。
   init(preferences: AppPreferences, onDismiss: @escaping () -> Void) {
     self.onDismiss = onDismiss
     content = ThemeSwitcherViewController(preferences: preferences)
     let panel = ThemeSwitcherPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 560, height: 366),
+      contentRect: NSRect(
+        x: 0, y: 0, width: InterfaceScale.length(560), height: InterfaceScale.length(366)),
       // 不使用 `.nonactivatingPanel`：选择器必须真正成为 key window，搜索、方向键和
       // `Esc` 才会稳定到达输入控件；后方工作区由显式 presentation 状态保持激活样式。
       styleMask: [.borderless],
@@ -118,6 +120,7 @@ final class ThemeSwitcherViewController: NSViewController, NSSearchFieldDelegate
     if let keyEventMonitor { NSEvent.removeMonitor(keyEventMonitor) }
   }
 
+  /// 搭建选择器：顶部搜索行、分隔线、可滚动的主题列表。
   override func loadView() {
     let host = NSView()
     host.wantsLayer = true
@@ -130,7 +133,8 @@ final class ThemeSwitcherViewController: NSViewController, NSSearchFieldDelegate
       image: NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
         ?? NSImage())
     icon.contentTintColor = SettingsTheme.tertiaryInk
-    icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(
+      pointSize: InterfaceScale.font(12), weight: .regular)
 
     search.placeholderString = L("搜索主题…")
     // 左侧已有自绘放大镜；藏掉 NSSearchField 内建的那颗，避免双图标（与其它 overlay 一致）。
@@ -138,7 +142,7 @@ final class ThemeSwitcherViewController: NSViewController, NSSearchFieldDelegate
     search.isBordered = false
     search.drawsBackground = false
     search.focusRingType = .none
-    search.font = .systemFont(ofSize: 14)
+    search.font = .interface(ofSize: 14)
     search.textColor = SettingsTheme.ink
     search.delegate = self
     search.identifier = NSUserInterfaceItemIdentifier("theme-switcher-search")
@@ -177,16 +181,17 @@ final class ThemeSwitcherViewController: NSViewController, NSSearchFieldDelegate
     }
 
     NSLayoutConstraint.activate([
-      host.widthAnchor.constraint(equalToConstant: 560),
-      host.heightAnchor.constraint(equalToConstant: 366),
+      // 1.5 倍时为 840×549，仍在 13 寸屏可用区内，不需要另设上限。
+      host.widthAnchor.constraint(equalToConstant: InterfaceScale.length(560)),
+      host.heightAnchor.constraint(equalToConstant: InterfaceScale.length(366)),
       searchRow.leadingAnchor.constraint(equalTo: host.leadingAnchor),
       searchRow.trailingAnchor.constraint(equalTo: host.trailingAnchor),
       searchRow.topAnchor.constraint(equalTo: host.topAnchor),
-      searchRow.heightAnchor.constraint(equalToConstant: 56),
+      searchRow.heightAnchor.constraint(equalToConstant: InterfaceScale.length(56)),
       icon.leadingAnchor.constraint(equalTo: searchRow.leadingAnchor, constant: 19),
       icon.centerYAnchor.constraint(equalTo: searchRow.centerYAnchor),
-      icon.widthAnchor.constraint(equalToConstant: 16),
-      icon.heightAnchor.constraint(equalToConstant: 16),
+      icon.widthAnchor.constraint(equalToConstant: InterfaceScale.length(16)),
+      icon.heightAnchor.constraint(equalToConstant: InterfaceScale.length(16)),
       search.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 9),
       search.trailingAnchor.constraint(equalTo: searchRow.trailingAnchor, constant: -16),
       search.centerYAnchor.constraint(equalTo: searchRow.centerYAnchor),
@@ -275,6 +280,7 @@ final class ThemeSwitcherViewController: NSViewController, NSSearchFieldDelegate
     self.keyEventMonitor = nil
   }
 
+  /// 按搜索词重建主题行，可选地立即预览选中项。
   private func reload(previewSelection: Bool) {
     let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     visibleThemes = query.isEmpty
@@ -291,7 +297,7 @@ final class ThemeSwitcherViewController: NSViewController, NSSearchFieldDelegate
       empty.alignment = .center
       rowsStack.addArrangedSubview(empty)
       empty.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true
-      empty.heightAnchor.constraint(equalToConstant: 52).isActive = true
+      empty.heightAnchor.constraint(equalToConstant: InterfaceScale.length(52)).isActive = true
       return
     }
     for (index, theme) in visibleThemes.enumerated() {
@@ -304,7 +310,7 @@ final class ThemeSwitcherViewController: NSViewController, NSSearchFieldDelegate
       }
       rowsStack.addArrangedSubview(row)
       row.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true
-      row.heightAnchor.constraint(equalToConstant: 36).isActive = true
+      row.heightAnchor.constraint(equalToConstant: InterfaceScale.length(36)).isActive = true
     }
     updateRows()
     if previewSelection { previewSelectedTheme() }

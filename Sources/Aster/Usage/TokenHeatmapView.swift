@@ -26,11 +26,11 @@ final class TokenHeatmapView: NSView {
   /// 宽度充裕时的方格边长与间距。
   static let idealCellSize: CGFloat = 9
   static let idealSpacing: CGFloat = 2
-  /// 顶部月份刻度占的高度。
-  static let monthScaleHeight: CGFloat = 13
+  /// 顶部月份刻度占的高度。装的是刻度文字，随界面字号放大。
+  static let monthScaleHeight: CGFloat = InterfaceScale.length(13)
   /// 左侧行标签占的宽度，含标签与网格之间的间隔。固定宽度：格子会随窗宽缩放，
-  /// 标签字号不跟着缩，跟着缩就没法读了。
-  static let weekdayScaleWidth: CGFloat = 24
+  /// 标签字号不跟着缩，跟着缩就没法读了；但它随界面字号放大，否则大字号下「周三」会压到网格上。
+  static let weekdayScaleWidth: CGFloat = InterfaceScale.length(24)
   /// 画标签的行（`weekdayIndex` 里周一 = 0）。只标三行，七行会把左边糊成一片。
   private static let labeledRows = [0, 2, 4]
   /// 两个月份名之间留的空隙：宽松档读着舒服，紧凑档只保证不叠字。
@@ -88,7 +88,7 @@ final class TokenHeatmapView: NSView {
   /// 用 `secondaryInk` 而不是更淡的 `tertiaryInk`：面板底是磨砂玻璃，透出来的桌面会把
   /// 9pt 的小字冲得几乎看不见。
   private static var scaleAttributes: [NSAttributedString.Key: Any] {
-    [.font: NSFont.systemFont(ofSize: 9), .foregroundColor: AsterTheme.secondaryInk]
+    [.font: NSFont.interface(ofSize: 9), .foregroundColor: AsterTheme.secondaryInk]
   }
 
   /// 行标签文案。`L()` 只接受字面量，行号到文案的映射只能写在这里。

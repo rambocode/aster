@@ -122,6 +122,7 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
     )
   }
 
+  /// 搭建文件 Pane 顶部工具条：呈现模式、文件名、状态与保存/关闭操作。
   private func makeToolbar() -> NSView {
     let theme = preferences.activeTheme
     let bar = NSView()
@@ -140,7 +141,7 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
           ?? theme.palette.panelBackground
     ))
     bar.translatesAutoresizingMaskIntoConstraints = false
-    bar.heightAnchor.constraint(equalToConstant: 42).isActive = true
+    bar.heightAnchor.constraint(equalToConstant: InterfaceScale.length(42)).isActive = true
 
     modeControl.segmentStyle = .texturedRounded
     modeControl.identifier = NSUserInterfaceItemIdentifier("file-pane-presentation")
@@ -165,7 +166,7 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
     left.alignment = .centerY
     left.spacing = 7
 
-    titleLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+    titleLabel.font = NSFont.interface(ofSize: 11.5, weight: .medium)
     titleLabel.textColor = AsterTheme.ink
     titleLabel.lineBreakMode = .byTruncatingMiddle
     let overflow = IconHoverButton(symbol: "ellipsis", accessibilityDescription: "File options") {
@@ -177,7 +178,7 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
     center.alignment = .centerY
     center.spacing = 5
 
-    statusLabel.font = NSFont.systemFont(ofSize: 10.5)
+    statusLabel.font = NSFont.interface(ofSize: 10.5)
     statusLabel.identifier = NSUserInterfaceItemIdentifier("file-pane-status")
     statusLabel.textColor = AsterTheme.secondaryInk
     let spinner = NSProgressIndicator()
@@ -900,11 +901,13 @@ final class FilePaneViewController: NSViewController, WKNavigationDelegate {
     }
   }
 
+  /// 空状态 / 出错提示：居中的图标加说明文字。
   private func messageView(_ message: String, symbol: String) -> NSView {
     let host = NSView()
     let image = NSImageView(
       image: NSImage(systemSymbolName: symbol, accessibilityDescription: message) ?? NSImage())
     let label = NSTextField(wrappingLabelWithString: message)
+    label.font = NSFont.interface(ofSize: NSFont.systemFontSize)
     label.textColor = AsterTheme.secondaryInk
     let stack = NSStackView(views: [image, label])
     stack.orientation = .vertical

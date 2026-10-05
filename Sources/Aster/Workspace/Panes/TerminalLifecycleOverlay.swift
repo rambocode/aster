@@ -132,23 +132,24 @@ final class TerminalLifecycleOverlayView: NSView {
         accessibilityDescription: presentation.title
       ) ?? NSImage()
     )
-    icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 17, weight: .medium)
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(
+      pointSize: InterfaceScale.font(17), weight: .medium)
     icon.contentTintColor = AsterTheme.warning
     icon.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      icon.widthAnchor.constraint(equalToConstant: 22),
-      icon.heightAnchor.constraint(equalToConstant: 22),
+      icon.widthAnchor.constraint(equalToConstant: InterfaceScale.length(22)),
+      icon.heightAnchor.constraint(equalToConstant: InterfaceScale.length(22)),
     ])
 
     let title = NSTextField(labelWithString: presentation.title)
-    title.font = .systemFont(ofSize: 12, weight: .semibold)
+    title.font = .interface(ofSize: 12, weight: .semibold)
     title.textColor = AsterTheme.ink
     let detail = NSTextField(wrappingLabelWithString: presentation.detail)
-    detail.font = .systemFont(ofSize: 10.5)
+    detail.font = .interface(ofSize: 10.5)
     detail.textColor = AsterTheme.secondaryInk
     detail.maximumNumberOfLines = 2
     let privacy = NSTextField(labelWithString: L("已记录本地诊断信息，不包含命令、终端内容或路径。"))
-    privacy.font = .systemFont(ofSize: 9.5)
+    privacy.font = .interface(ofSize: 9.5)
     privacy.textColor = AsterTheme.tertiaryInk
 
     // 分离态的按钮是“重新附加”，不能沿用“重新启动 Shell”——后者会让用户以为
@@ -194,7 +195,7 @@ final class TerminalLifecycleOverlayView: NSView {
       card.centerXAnchor.constraint(equalTo: centerXAnchor),
       card.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
       card.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
-      card.widthAnchor.constraint(lessThanOrEqualToConstant: 680),
+      card.widthAnchor.constraint(lessThanOrEqualToConstant: InterfaceScale.length(680)),
     ])
   }
 
@@ -217,19 +218,20 @@ final class TerminalLifecycleOverlayView: NSView {
         accessibilityDescription: rp.title
       ) ?? NSImage()
     )
-    icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 17, weight: .medium)
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(
+      pointSize: InterfaceScale.font(17), weight: .medium)
     icon.contentTintColor = AsterTheme.warning
     icon.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      icon.widthAnchor.constraint(equalToConstant: 22),
-      icon.heightAnchor.constraint(equalToConstant: 22),
+      icon.widthAnchor.constraint(equalToConstant: InterfaceScale.length(22)),
+      icon.heightAnchor.constraint(equalToConstant: InterfaceScale.length(22)),
     ])
 
     let title = NSTextField(labelWithString: rp.title)
-    title.font = .systemFont(ofSize: 12, weight: .semibold)
+    title.font = .interface(ofSize: 12, weight: .semibold)
     title.textColor = AsterTheme.ink
     let detail = NSTextField(wrappingLabelWithString: rp.detail)
-    detail.font = .systemFont(ofSize: 10.5)
+    detail.font = .interface(ofSize: 10.5)
     detail.textColor = AsterTheme.secondaryInk
     detail.maximumNumberOfLines = 2
 
@@ -252,7 +254,7 @@ final class TerminalLifecycleOverlayView: NSView {
       card.centerXAnchor.constraint(equalTo: centerXAnchor),
       card.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
       card.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
-      card.widthAnchor.constraint(lessThanOrEqualToConstant: 680),
+      card.widthAnchor.constraint(lessThanOrEqualToConstant: InterfaceScale.length(680)),
     ])
   }
 

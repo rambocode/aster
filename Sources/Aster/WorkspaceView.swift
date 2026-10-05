@@ -73,6 +73,9 @@ final class WorkspaceViewController: NSViewController {
   private var renderedTheme: TerminalTheme?
   private var renderedAppearance: AppPreferences.Appearance?
   private var renderedTabBarLayout: TabBarLayout?
+  /// 「加深界面文字」的最近渲染值。侧栏文字色在构建时就解析成具体颜色，开关变化
+  /// 必须像主题变化一样立即重建，否则要等设置窗口关闭才看得到效果。
+  private var renderedStrengthensText: Bool?
   /// 「视图」配置（标签规则 / 角标摆放）与徽章开关的最近渲染值：设置窗口打开期间只有
   /// 它们变化才重建标签行，避免每次快照都整树刷新。
   private var renderedViewConfiguration: ViewConfiguration?
@@ -370,7 +373,9 @@ final class WorkspaceViewController: NSViewController {
     }
     view.addSubview(overlay.view)
     overlay.view.translatesAutoresizingMaskIntoConstraints = false
-    let preferredWidth = overlay.view.widthAnchor.constraint(equalToConstant: 700)
+    // 宽度随界面字号放大；两侧 required 边距约束仍会在窄窗口里把它压回来。
+    let preferredWidth = overlay.view.widthAnchor.constraint(
+      equalToConstant: InterfaceScale.length(700, max: 1000))
     // 750 会被 All/文件夹页的长路径固有宽度挤破，导致不同过滤器下浮层忽宽忽窄。
     // 999 固定正常窗口宽度；required 的两侧边距约束在窄窗口中仍可优先让它收缩。
     preferredWidth.priority = NSLayoutConstraint.Priority(999)
@@ -380,7 +385,8 @@ final class WorkspaceViewController: NSViewController {
       preferredWidth,
       overlay.view.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 28),
       overlay.view.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -28),
-      overlay.view.heightAnchor.constraint(lessThanOrEqualToConstant: 520),
+      overlay.view.heightAnchor.constraint(
+        lessThanOrEqualToConstant: InterfaceScale.length(520, max: 780)),
     ])
     // 必须在视图已连到 window 之后再进入展示边界，确保自动聚焦能建立 field editor，
     // 且内部点击命中测试使用当前窗口的最终视图层级。
@@ -783,6 +789,7 @@ final class WorkspaceViewController: NSViewController {
           self.renderedTheme != self.preferences.activeTheme
             || self.renderedAppearance != self.preferences.appearance
             || self.renderedTabBarLayout != self.preferences.tabBarLayout
+            || self.renderedStrengthensText != self.preferences.strengthensInterfaceText
             || self.renderedViewConfiguration != self.preferences.configuration.resolvedView
             || self.renderedBadgeSettings != self.currentBadgeSettings()
         {
@@ -861,6 +868,7 @@ final class WorkspaceViewController: NSViewController {
     renderedAppearance = preferences.appearance
     renderedTabBarLayout = preferences.tabBarLayout
     renderedViewConfiguration = preferences.configuration.resolvedView
+    renderedStrengthensText = preferences.strengthensInterfaceText
     renderedBadgeSettings = currentBadgeSettings()
     if let background = view as? ThemeVisualEffectView {
       background.apply(
@@ -894,7 +902,8 @@ final class WorkspaceViewController: NSViewController {
       NSLayoutConstraint.activate([
         composer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
         composer.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -42),
-        composer.widthAnchor.constraint(equalToConstant: 560),
+        // 浮层尺寸随界面字号放大，内部行与筛选条也随之变宽；上限防止 1.5 倍下撑出常见屏幕。
+        composer.widthAnchor.constraint(equalToConstant: InterfaceScale.length(560, max: 840)),
       ])
     }
 
@@ -907,8 +916,9 @@ final class WorkspaceViewController: NSViewController {
       NSLayoutConstraint.activate([
         palette.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
         palette.view.topAnchor.constraint(equalTo: view.topAnchor, constant: 82),
-        palette.view.widthAnchor.constraint(equalToConstant: 560),
-        palette.view.heightAnchor.constraint(lessThanOrEqualToConstant: 480),
+        palette.view.widthAnchor.constraint(equalToConstant: InterfaceScale.length(560, max: 840)),
+        palette.view.heightAnchor.constraint(
+          lessThanOrEqualToConstant: InterfaceScale.length(480, max: 720)),
       ])
     } else if model.isOpenQuicklyPresented {
       attachOpenQuicklyOverlay(refreshesTargets: true)
@@ -921,8 +931,10 @@ final class WorkspaceViewController: NSViewController {
       NSLayoutConstraint.activate([
         globalFind.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
         globalFind.view.topAnchor.constraint(equalTo: view.topAnchor, constant: 82),
-        globalFind.view.widthAnchor.constraint(equalToConstant: 680),
-        globalFind.view.heightAnchor.constraint(lessThanOrEqualToConstant: 520),
+        globalFind.view.widthAnchor.constraint(
+          equalToConstant: InterfaceScale.length(680, max: 1000)),
+        globalFind.view.heightAnchor.constraint(
+          lessThanOrEqualToConstant: InterfaceScale.length(520, max: 780)),
       ])
     } else if model.isAgentHistoryPresented {
       let history = AgentHistoryOverlayViewController(model: model)
@@ -933,8 +945,8 @@ final class WorkspaceViewController: NSViewController {
       NSLayoutConstraint.activate([
         history.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
         history.view.topAnchor.constraint(equalTo: view.topAnchor, constant: 64),
-        history.view.widthAnchor.constraint(equalToConstant: 760),
-        history.view.heightAnchor.constraint(equalToConstant: 560),
+        history.view.widthAnchor.constraint(equalToConstant: InterfaceScale.length(760, max: 1100)),
+        history.view.heightAnchor.constraint(equalToConstant: InterfaceScale.length(560, max: 800)),
       ])
     }
 
@@ -1377,6 +1389,7 @@ final class WorkspaceViewController: NSViewController {
 
   // MARK: - Tab bars
 
+  /// 纵向侧栏：红绿灯行 + 工作区区块 + 标签区块（含分组头与标签行）。
   private func makeVerticalTabBar() -> NSView {
     let theme = preferences.activeTheme
     let background = ThemeVisualEffectView()
@@ -1409,7 +1422,8 @@ final class WorkspaceViewController: NSViewController {
     // 顶部 header：上半是红绿灯行，下半是「工作区」区块的标题行（eyebrow + 新建按钮）。
     let header = NSView()
     header.translatesAutoresizingMaskIntoConstraints = false
-    header.heightAnchor.constraint(equalToConstant: 68).isActive = true
+    // 上 30pt 是红绿灯行，几何由窗口决定、不缩放；下面 38pt 的标题带装文字，随字号放大。
+    header.heightAnchor.constraint(equalToConstant: 30 + InterfaceScale.length(38)).isActive = true
     let groupTitle = makeLabel(L("工作区"), size: 10, weight: .semibold, color: eyebrowColor)
     groupTitle.identifier = NSUserInterfaceItemIdentifier("workspace-group-section-title")
     groupTitle.translatesAutoresizingMaskIntoConstraints = false
@@ -1462,7 +1476,7 @@ final class WorkspaceViewController: NSViewController {
     let tabsHeader = NSView()
     tabsHeader.identifier = NSUserInterfaceItemIdentifier("workspace-sidebar-tabs-header")
     tabsHeader.translatesAutoresizingMaskIntoConstraints = false
-    tabsHeader.heightAnchor.constraint(equalToConstant: 38).isActive = true
+    tabsHeader.heightAnchor.constraint(equalToConstant: InterfaceScale.length(38)).isActive = true
     let title = makeLabel(sidebarTabsSectionTitle(), size: 10, weight: .semibold, color: eyebrowColor)
     title.identifier = NSUserInterfaceItemIdentifier("workspace-sidebar-foreground")
     title.lineBreakMode = .byTruncatingMiddle
@@ -1685,8 +1699,8 @@ final class WorkspaceViewController: NSViewController {
     // 分组属于标签列表正文，Otty 使用普通 tab foreground，而不是更淡的 tertiary。
     // 这在 Floating Card 中分别对应 #52525B 与 #A1A1AA，层级差异很明显。
     let groupForeground = NSColor(
-      theme.resolvedColor(forSlot: "tab.foreground")
-        ?? theme.style.tab.foreground ?? theme.palette.secondaryForeground
+      ThemeRuntime.shared.legibleText(
+        theme.resolvedColor(forSlot: "tab.foreground") ?? theme.style.tab.foreground ?? theme.palette.secondaryForeground, in: theme)
     )
     let host = SidebarGroupHeaderView { [weak self] in
       guard let self else { return }
@@ -1699,7 +1713,7 @@ final class WorkspaceViewController: NSViewController {
     host.setAccessibilityRole(.button)
     host.setAccessibilityLabel(collapsed ? L("展开分组 \(title)") : L("折叠分组 \(title)"))
     host.translatesAutoresizingMaskIntoConstraints = false
-    host.heightAnchor.constraint(equalToConstant: 30).isActive = true
+    host.heightAnchor.constraint(equalToConstant: InterfaceScale.length(30)).isActive = true
 
     let row = NSStackView()
     row.orientation = .horizontal
@@ -1709,7 +1723,7 @@ final class WorkspaceViewController: NSViewController {
     for symbol in [collapsed ? "chevron.right" : "chevron.down", groupSymbol] {
       let icon = NSImageView()
       icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-        .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+        .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(9), weight: .semibold))
       icon.contentTintColor = groupForeground
       icon.setContentHuggingPriority(.required, for: .horizontal)
       icon.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -1781,7 +1795,7 @@ final class WorkspaceViewController: NSViewController {
     item.attributedTitle = NSAttributedString(
       string: title,
       attributes: [
-        .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+        .font: NSFont.interface(ofSize: 10, weight: .semibold),
         .foregroundColor: AsterTheme.tertiaryInk,
       ]
     )
@@ -1818,8 +1832,9 @@ final class WorkspaceViewController: NSViewController {
         ?? theme.style.horizontalTabBarBackground ?? theme.style.sidebarBackground
           ?? theme.palette.panelBackground
     )
-    // Otty `[tab-bar].height` 原生默认 36。
-    let rowHeight = theme.style.horizontalTabBarHeight ?? 36
+    // Otty `[tab-bar].height` 原生默认 36。标签行在标题带下方，不受红绿灯几何约束，
+    // 随界面字号放大以容纳放大后的胶囊；上方 28pt 标题带与红绿灯同行，保持不变。
+    let rowHeight = InterfaceScale.length(theme.style.horizontalTabBarHeight ?? 36)
     // 顶部布局在标签行上方叠一条 28pt 标题带（与交通灯同一行，承载中央目录胶囊）；
     // 标签行整体落在系统标题栏命中区之下，标签左上角不会被窗口拖拽区吃掉点击。
     let titleBandHeight: CGFloat = 28
@@ -1888,8 +1903,8 @@ final class WorkspaceViewController: NSViewController {
     newTab.toolTip = L("新建标签页")
     newTab.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      newTab.widthAnchor.constraint(equalToConstant: 26),
-      newTab.heightAnchor.constraint(equalToConstant: 26),
+      newTab.widthAnchor.constraint(equalToConstant: InterfaceScale.length(26)),
+      newTab.heightAnchor.constraint(equalToConstant: InterfaceScale.length(26)),
     ])
     row.addArrangedSubview(newTab)
     if isBottom {
@@ -2162,6 +2177,7 @@ final class WorkspaceViewController: NSViewController {
     return stack
   }
 
+  /// 内容区顶部 28pt 标题带：居中的路径胶囊与右侧安全输入指示器。
   private func makeWorkspaceHeader(_ tab: TerminalTabItem) -> NSView {
     let theme = preferences.activeTheme
     let background = WorkspaceTitleBarBackgroundView()
@@ -2213,7 +2229,8 @@ final class WorkspaceViewController: NSViewController {
       title.leadingAnchor.constraint(greaterThanOrEqualTo: background.leadingAnchor, constant: 12),
       title.trailingAnchor.constraint(
         lessThanOrEqualTo: background.trailingAnchor, constant: -12),
-      title.heightAnchor.constraint(equalToConstant: 24),
+      // 标题带固定 28pt（与红绿灯同行），胶囊随字号放大但不超过标题带。
+      title.heightAnchor.constraint(equalToConstant: InterfaceScale.length(24, max: 28)),
       secureInput.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -12),
       secureInput.centerYAnchor.constraint(equalTo: background.centerYAnchor),
     ])
@@ -2299,19 +2316,20 @@ final class WorkspaceViewController: NSViewController {
     popover.animates = true
     popover.delegate = self
     popover.contentViewController = content
-    popover.contentSize = NSSize(width: 280, height: 462)
+    popover.contentSize = WorkspaceTitlePopoverViewController.preferredSize
     workspaceTitlePopover = popover
     anchor.setPopoverPresented(true)
     popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
   }
 
+  /// 终端缓冲区查找条：搜索框、大小写与正则开关、匹配计数。
   private func makeFindBar(_ tab: TerminalTabItem) -> NSView {
     let bar = NSView()
     bar.identifier = NSUserInterfaceItemIdentifier("workspace-findbar")
     bar.wantsLayer = true
     bar.layer?.backgroundColor = AsterTheme.panel.cgColor
     bar.translatesAutoresizingMaskIntoConstraints = false
-    bar.heightAnchor.constraint(equalToConstant: 36).isActive = true
+    bar.heightAnchor.constraint(equalToConstant: InterfaceScale.length(36)).isActive = true
     bar.addBottomBorder(color: AsterTheme.hairline)
 
     let field = NSSearchField()
@@ -2328,7 +2346,7 @@ final class WorkspaceViewController: NSViewController {
     let summary = makeLabel("0 / 0", size: 10, color: AsterTheme.secondaryInk, monospaced: true)
     summary.alignment = .right
     summary.translatesAutoresizingMaskIntoConstraints = false
-    summary.widthAnchor.constraint(greaterThanOrEqualToConstant: 46).isActive = true
+    summary.widthAnchor.constraint(greaterThanOrEqualToConstant: InterfaceScale.length(46)).isActive = true
     let controller = TerminalFindBarController(
       session: tab.activeSession,
       field: field,
@@ -2665,6 +2683,7 @@ final class WorkspaceViewController: NSViewController {
     model.onRequestClosePictureInPicture?()
   }
 
+  /// 文本编辑 Pane：顶部工具条 + 可编辑文本区（只读文档禁用编辑）。
   private func makeEditorPane(_ runtime: WorkspacePaneRuntime, tab: TerminalTabItem) -> NSView {
     let column = NSStackView()
     column.orientation = .vertical
@@ -2679,6 +2698,7 @@ final class WorkspaceViewController: NSViewController {
       let textView = NSTextView()
       textView.string = runtime.documentText
       textView.isEditable = !runtime.isReadOnly
+      // 内置编辑器没有独立的字体设置，正文跟随界面字号。
       textView.font = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
       textView.textColor = AsterTheme.ink
       textView.backgroundColor = AsterTheme.paper
@@ -2696,6 +2716,7 @@ final class WorkspaceViewController: NSViewController {
     return column
   }
 
+  /// 只读预览 Pane：顶部工具条 + 文件原文。
   private func makePreviewPane(_ runtime: WorkspacePaneRuntime) -> NSView {
     let column = NSStackView()
     column.orientation = .vertical
@@ -2736,14 +2757,14 @@ final class WorkspaceViewController: NSViewController {
     host.shadow?.shadowBlurRadius = 20
     host.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.2)
     host.translatesAutoresizingMaskIntoConstraints = false
-    host.heightAnchor.constraint(equalToConstant: 174).isActive = true
+    host.heightAnchor.constraint(equalToConstant: InterfaceScale.length(174)).isActive = true
 
     let textView = ComposerTextView()
     textView.identifier = NSUserInterfaceItemIdentifier("agent-composer-input")
     textView.string = state.draft
     // 空草稿必须提示可在当前 Pane 直接输入，避免被误认为只读终端日志。
     textView.placeholder = "Type here..."
-    textView.font = NSFont.systemFont(ofSize: 12)
+    textView.font = NSFont.interface(ofSize: 12)
     textView.textColor = AsterTheme.ink
     textView.backgroundColor = AsterTheme.paper
     textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -2829,14 +2850,17 @@ final class WorkspaceViewController: NSViewController {
     return host
   }
 
+  /// 非终端 Pane 的顶部工具条：图标、标题与可选的保存按钮。
   private func makePaneToolbar(title: String, symbol: String, save: (() -> Void)?) -> NSView {
     let bar = NSView()
     bar.wantsLayer = true
     bar.layer?.backgroundColor = AsterTheme.panel.cgColor
     bar.translatesAutoresizingMaskIntoConstraints = false
-    bar.heightAnchor.constraint(equalToConstant: 36).isActive = true
+    bar.heightAnchor.constraint(equalToConstant: InterfaceScale.length(36)).isActive = true
     bar.addBottomBorder(color: AsterTheme.hairline)
     let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: title) ?? NSImage())
+    // 系统符号默认 13pt 常规字重；与标题并排，随界面字号同比放大。
+    icon.symbolConfiguration = .init(pointSize: InterfaceScale.font(13), weight: .regular)
     let label = makeLabel(title, size: 11, weight: .medium)
     let row = NSStackView(views: [icon, label])
     row.orientation = .horizontal
@@ -2879,6 +2903,7 @@ final class WorkspaceViewController: NSViewController {
     return divider
   }
 
+  /// 工作区顶部居中的短提示条。
   private func makeToast(_ message: String) -> NSView {
     let label = makeLabel(message, size: 11, weight: .medium)
     label.wantsLayer = true
@@ -2888,8 +2913,8 @@ final class WorkspaceViewController: NSViewController {
     label.layer?.borderColor = AsterTheme.hairline.cgColor
     label.alignment = .center
     label.translatesAutoresizingMaskIntoConstraints = false
-    label.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
-    label.heightAnchor.constraint(equalToConstant: 34).isActive = true
+    label.widthAnchor.constraint(greaterThanOrEqualToConstant: InterfaceScale.length(180)).isActive = true
+    label.heightAnchor.constraint(equalToConstant: InterfaceScale.length(34)).isActive = true
     return label
   }
 

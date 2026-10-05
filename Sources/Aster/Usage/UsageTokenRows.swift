@@ -86,6 +86,7 @@ func makeUsageTokenSectionTitle(_ text: String) -> NSTextField {
 }
 
 /// 行右端靠右对齐的数字列。占比列与数值列共用一套排版，两张卡的右边缘才对得齐。
+/// `minimumWidth` 传默认档的值，这里随字号缩放。
 @MainActor
 private func makeTrailingNumber(
   _ text: String, size: CGFloat, weight: NSFont.Weight, color: NSColor, minimumWidth: CGFloat
@@ -94,7 +95,9 @@ private func makeTrailingNumber(
   label.alignment = .right
   label.setContentHuggingPriority(.required, for: .horizontal)
   label.setContentCompressionResistancePriority(.required, for: .horizontal)
-  label.widthAnchor.constraint(greaterThanOrEqualToConstant: minimumWidth).isActive = true
+  label.widthAnchor.constraint(
+    greaterThanOrEqualToConstant: InterfaceScale.length(minimumWidth)
+  ).isActive = true
   return label
 }
 
@@ -137,9 +140,10 @@ final class UsageTokenAgentRow: NSView {
     addSubview(stack)
     stack.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      icon.widthAnchor.constraint(equalToConstant: 15),
-      icon.heightAnchor.constraint(equalToConstant: 15),
-      heightAnchor.constraint(greaterThanOrEqualToConstant: 20),
+      // 行内图标与行高都跟着字号走，图标才能和名称保持垂直居中的比例。
+      icon.widthAnchor.constraint(equalToConstant: InterfaceScale.length(15)),
+      icon.heightAnchor.constraint(equalToConstant: InterfaceScale.length(15)),
+      heightAnchor.constraint(greaterThanOrEqualToConstant: InterfaceScale.length(20)),
       stack.leadingAnchor.constraint(equalTo: leadingAnchor),
       stack.trailingAnchor.constraint(equalTo: trailingAnchor),
       stack.topAnchor.constraint(equalTo: topAnchor),
@@ -219,10 +223,10 @@ final class UsageTokenProjectRow: NSView {
       track.heightAnchor.constraint(equalToConstant: Self.trackHeight),
       trackWidth,
       track.widthAnchor.constraint(greaterThanOrEqualToConstant: 24),
-      nameLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 40),
-      chevron.widthAnchor.constraint(equalToConstant: 10),
-      chevron.heightAnchor.constraint(equalToConstant: 10),
-      heightAnchor.constraint(greaterThanOrEqualToConstant: 20),
+      nameLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: InterfaceScale.length(40)),
+      chevron.widthAnchor.constraint(equalToConstant: InterfaceScale.length(10)),
+      chevron.heightAnchor.constraint(equalToConstant: InterfaceScale.length(10)),
+      heightAnchor.constraint(greaterThanOrEqualToConstant: InterfaceScale.length(20)),
       stack.leadingAnchor.constraint(equalTo: leadingAnchor),
       stack.trailingAnchor.constraint(equalTo: trailingAnchor),
       stack.topAnchor.constraint(equalTo: topAnchor),
@@ -259,7 +263,7 @@ final class UsageTokenProjectRow: NSView {
 
   /// 展开态的行把名称加重并把箭头转向下，让「这一行现在被打开着」在视觉上立得住。
   private func applyExpansionStyle() {
-    nameLabel.font = NSFont.systemFont(ofSize: 11, weight: isExpanded ? .semibold : .regular)
+    nameLabel.font = NSFont.interface(ofSize: 11, weight: isExpanded ? .semibold : .regular)
     nameLabel.textColor = isExpanded ? AsterTheme.ink : AsterTheme.secondaryInk
     let symbol = isExpanded ? "chevron.down" : "chevron.right"
     chevron.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)

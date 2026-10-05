@@ -39,8 +39,8 @@ struct WorkspaceGroupRowStyle {
   init(theme: TerminalTheme) {
     let tab = theme.style.tab
     foreground = NSColor(
-      tab.foreground ?? theme.resolvedColor(forSlot: "tab.foreground")
-        ?? theme.palette.secondaryForeground)
+      ThemeRuntime.shared.legibleText(
+        tab.foreground ?? theme.resolvedColor(forSlot: "tab.foreground") ?? theme.palette.secondaryForeground, in: theme))
     activeForeground = NSColor(
       tab.activeForeground ?? theme.resolvedColor(forSlot: "tab.activeForeground")
         ?? theme.palette.foreground)
@@ -88,7 +88,7 @@ final class WorkspaceGroupRowView: NSView {
     super.init(frame: .zero)
     identifier = NSUserInterfaceItemIdentifier("workspace-group-row-\(item.identifierSuffix)")
     translatesAutoresizingMaskIntoConstraints = false
-    heightAnchor.constraint(equalToConstant: 30).isActive = true
+    heightAnchor.constraint(equalToConstant: InterfaceScale.length(30)).isActive = true
     setAccessibilityElement(true)
     setAccessibilityRole(.button)
     setAccessibilityLabel(L("工作区 \(item.name)"))
@@ -102,7 +102,7 @@ final class WorkspaceGroupRowView: NSView {
     let tint = item.isSelected ? style.activeForeground : style.foreground
     let icon = NSImageView()
     icon.image = NSImage(systemSymbolName: "square.stack", accessibilityDescription: nil)?
-      .withSymbolConfiguration(.init(pointSize: 11, weight: .medium))
+      .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(11), weight: .medium))
     icon.contentTintColor = tint
     icon.translatesAutoresizingMaskIntoConstraints = false
     icon.setContentHuggingPriority(.required, for: .horizontal)
@@ -190,9 +190,9 @@ final class WorkspaceGroupPopUpButton: NSButton {
     self.menuProvider = menuProvider
     super.init(frame: .zero)
     self.title = title
-    font = NSFont.systemFont(ofSize: 12, weight: .medium)
+    font = NSFont.interface(ofSize: 12, weight: .medium)
     image = NSImage(systemSymbolName: "square.stack", accessibilityDescription: nil)?
-      .withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
+      .withSymbolConfiguration(.init(pointSize: InterfaceScale.font(10), weight: .medium))
     imagePosition = .imageLeading
     imageHugsTitle = true
     contentTintColor = tint
@@ -206,8 +206,9 @@ final class WorkspaceGroupPopUpButton: NSButton {
     setAccessibilityLabel(L("工作区 \(title)"))
     translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      heightAnchor.constraint(equalToConstant: 24),
-      widthAnchor.constraint(lessThanOrEqualToConstant: 160),
+      // 按钮落在横向标签行里，行高同样按界面字号放大，这里不必设上限。
+      heightAnchor.constraint(equalToConstant: InterfaceScale.length(24)),
+      widthAnchor.constraint(lessThanOrEqualToConstant: InterfaceScale.length(160)),
     ])
   }
 
@@ -290,14 +291,15 @@ extension WorkspaceViewController {
       [weak self] in
       DispatchQueue.main.async { self?.createWorkspaceGroupFromSidebar() }
     }
-    button.image = button.image?.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+    button.image = button.image?.withSymbolConfiguration(
+      .init(pointSize: InterfaceScale.font(10), weight: .semibold))
     button.restingTint = AsterTheme.tertiaryInk
     button.toolTip = L("新建工作区")
     button.identifier = NSUserInterfaceItemIdentifier("workspace-group-add-button")
     button.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      button.widthAnchor.constraint(equalToConstant: 22),
-      button.heightAnchor.constraint(equalToConstant: 22),
+      button.widthAnchor.constraint(equalToConstant: InterfaceScale.length(22)),
+      button.heightAnchor.constraint(equalToConstant: InterfaceScale.length(22)),
     ])
     return button
   }

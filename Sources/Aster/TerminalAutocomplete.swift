@@ -1047,13 +1047,14 @@ final class TerminalAutocompleteController {
 final class TerminalAutocompleteOverlayView: NSView {
   /// 面板宽度的兜底区间。下限保证短候选不至于窄成一条，上限避免长路径把浮层
   /// 拉到整屏宽——超出的部分由行内文本截断处理。
-  static let minimumPanelWidth: CGFloat = 220
-  static let maximumPanelWidth: CGFloat = 560
+  /// 两者都按界面字号缩放：候选文字变大后，同样的宽度区间才能装下同样多的字。
+  static let minimumPanelWidth: CGFloat = InterfaceScale.length(220)
+  static let maximumPanelWidth: CGFloat = InterfaceScale.length(560)
   /// 同时可见的候选行数上限。超出部分由滚动视窗承载。
   static let maximumVisibleRows = 8
   /// 描述侧栏的固定宽度。刻意用定值而不是按列表列比例:比例式宽度会让侧栏随最长
   /// 命令忽宽忽窄,用户每敲一个字符整个浮层就换一次尺寸。
-  static let descriptionSidebarWidth: CGFloat = 220
+  static let descriptionSidebarWidth: CGFloat = InterfaceScale.length(220)
 
   var onCandidateSelected: ((Int) -> Void)?
   private let ghostLabel = NSTextField(labelWithString: "")
@@ -1290,6 +1291,7 @@ final class TerminalAutocompleteOverlayView: NSView {
       hintLabel.isHidden = true
       return
     }
+    // 提示紧贴 ghost 文字，字号从终端字体推导而不是界面字号，不走 InterfaceScale。
     hintLabel.font = .systemFont(ofSize: max(9, font.pointSize - 2))
     hintLabel.textColor = accent.withAlphaComponent(0.75)
     hintLabel.stringValue = hint
@@ -1313,12 +1315,13 @@ final class AutocompleteDescriptionSidebarView: NSView {
   private let bodyLabel = NSTextField(labelWithString: "")
   private let separator = NSView()
 
+  /// 创建侧栏：命令标题 + 可换行的描述正文。
   init() {
     super.init(frame: .zero)
     wantsLayer = true
-    titleLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .medium)
+    titleLabel.font = .interfaceMonospaced(ofSize: 11.5, weight: .medium)
     titleLabel.lineBreakMode = .byTruncatingMiddle
-    bodyLabel.font = .systemFont(ofSize: 11)
+    bodyLabel.font = .interface(ofSize: 11)
     bodyLabel.lineBreakMode = .byWordWrapping
     bodyLabel.usesSingleLineMode = false
     bodyLabel.cell?.wraps = true
@@ -1344,13 +1347,16 @@ final class AutocompleteDescriptionSidebarView: NSView {
     layoutSubtreeIfNeeded()
   }
 
+  /// 手算布局：标题单行贴顶，描述正文占满其下方剩余高度。
   override func layout() {
     super.layout()
     let inset: CGFloat = 10
     separator.frame = NSRect(x: 0, y: 0, width: 1, height: bounds.height)
     let width = max(0, bounds.width - inset * 2)
+    // 标题行高随标题字号放大，否则大字号下单行标题被裁掉下半截。
+    let titleHeight = InterfaceScale.length(15)
     titleLabel.frame = NSRect(
-      x: inset, y: bounds.height - 8 - 15, width: width, height: 15)
+      x: inset, y: bounds.height - 8 - titleHeight, width: width, height: titleHeight)
     bodyLabel.preferredMaxLayoutWidth = width
     let bodyHeight = max(0, titleLabel.frame.minY - 4 - 8)
     bodyLabel.frame = NSRect(x: inset, y: 8, width: width, height: bodyHeight)
@@ -1360,12 +1366,13 @@ final class AutocompleteDescriptionSidebarView: NSView {
 
 @MainActor
 final class AutocompleteCandidateRow: NSButton {
-  static let height: CGFloat = 26
-  private static let iconWidth: CGFloat = 16
+  /// 行高与图标槽随界面字号缩放；面板高度、可见行数都按这个值手算。
+  static let height: CGFloat = InterfaceScale.length(26)
+  private static let iconWidth: CGFloat = InterfaceScale.length(16)
   private static let horizontalInset: CGFloat = 10
   private static let spacing: CGFloat = 8
-  private static let nameFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-  private static let descriptionFont = NSFont.systemFont(ofSize: 11)
+  private static let nameFont = NSFont.interfaceMonospaced(ofSize: 12, weight: .medium)
+  private static let descriptionFont = NSFont.interface(ofSize: 11)
 
   private let actionClosure: () -> Void
   /// 选中行的前导标记条。测试据此确认「有确定性的定位提示，但不是整行反白」。
@@ -1508,6 +1515,6 @@ final class AutocompleteCandidateRow: NSButton {
     }
     let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
     return image?.withSymbolConfiguration(
-      NSImage.SymbolConfiguration(pointSize: 11, weight: .regular))
+      NSImage.SymbolConfiguration(pointSize: InterfaceScale.font(11), weight: .regular))
   }
 }
