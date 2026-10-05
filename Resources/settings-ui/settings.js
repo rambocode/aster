@@ -2568,6 +2568,10 @@
     windowKeys.push("appearance.unfocusedSplitOpacity");
     fragment.appendChild(makeAppearanceGroup(t("窗口"), cardForRows(rows, windowKeys)));
     fragment.appendChild(makeThemeGroup(rows));
+    // 外观页是手工排版的：行只声明在 section.groups 里不会显示，必须在这里按 key 放进卡片。
+    fragment.appendChild(makeAppearanceGroup(t("界面文字"), cardForRows(rows, [
+      "appearance.interfaceTextScale", "appearance.interfaceHighContrastText",
+    ])));
     const textCard = cardForRows(rows, [
       "appearance.boldRendering", "appearance.italicRendering", "appearance.underlineRendering",
       "appearance.ligatureLevel", "appearance.fontBlending",
