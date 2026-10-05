@@ -70,6 +70,12 @@ enum GhosttyConfiguration {
       "cursor-opacity = \(format(appearance.resolvedCursorOpacity))",
       "cursor-style = \(cursorStyle)",
       "cursor-style-blink = \(boolean(blinkMode.initiallyBlinks))",
+      // 失焦的 Pane 不画光标：上游固定画空心方框，分屏里每个非活动 Pane 都留一个框，
+      // 容易被看成输入位置。聚焦后恢复配置的光标形状。
+      "aster-hide-unfocused-cursor = true",
+      // 上游竖线光标固定 1 个物理像素，Retina 上只有 0.5pt，太细不好找。固定 2 像素
+      // （Retina 上 1pt）；同一度量也决定空心方块的描边粗细。
+      "adjust-cursor-thickness = 2",
       "selection-background = \(rgb(theme.selection))",
       "selection-foreground = \(rgb(theme.selectionForeground ?? theme.windowBackground))",
       "selection-clear-on-typing = \(boolean(controls.resolvedClearSelectionOnTyping))",

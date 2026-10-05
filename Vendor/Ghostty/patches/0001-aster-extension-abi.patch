@@ -725,14 +725,19 @@ index 730913e..e3dac0f 100644
 +    }
 +
 diff --git a/src/config/Config.zig b/src/config/Config.zig
-index 5b1d73d..302d9e7 100644
+index 5b1d73d..6cdef33 100644
 --- a/src/config/Config.zig
 +++ b/src/config/Config.zig
-@@ -1358,0 +1359,21 @@ input: RepeatableReadableIO = .{},
+@@ -1358,0 +1359,26 @@ input: RepeatableReadableIO = .{},
 +/// Aster supplies the child environment and explicit login-shell arguments.
 +/// Bypass macOS login(1), which discards the child's exit status. Other hosts
 +/// retain upstream login/session behavior unless they explicitly opt in.
 +@"aster-direct-child": bool = false,
++
++/// Aster: draw no cursor at all while the surface is unfocused, instead of
++/// the upstream hollow box. Password and preedit cursors are unaffected.
++/// Other hosts keep upstream behavior.
++@"aster-hide-unfocused-cursor": bool = false,
 +
 +/// Aster: trackpad and other precision scroll devices move the primary
 +/// screen's scrollback by pixels instead of whole rows. The renderer shifts
@@ -750,7 +755,7 @@ index 5b1d73d..302d9e7 100644
 +/// content line can sink to the bottom or middle of the viewport.
 +@"aster-scroll-past-first-line": AsterScrollPastFirstLine = .disabled,
 +
-@@ -10218,0 +10240,15 @@ pub const ScrollToBottom = packed struct {
+@@ -10218,0 +10245,15 @@ pub const ScrollToBottom = packed struct {
 +/// See aster-scroll-past-last-line. Tags mirror terminal.Screen.AsterScrollPastLast.
 +pub const AsterScrollPastLastLine = enum {
 +    disabled,
@@ -870,8 +875,38 @@ index 5087213..a6e63ba 100644
 +        t.renderer.requestVsync();
 +    }
 +
+diff --git a/src/renderer/cursor.zig b/src/renderer/cursor.zig
+index 33992bc..64d6ba5 100644
+--- a/src/renderer/cursor.zig
++++ b/src/renderer/cursor.zig
+@@ -31,0 +32,2 @@ pub const StyleOptions = struct {
++    /// Aster: render nothing instead of the hollow box when unfocused.
++    hide_unfocused: bool = false,
+@@ -60 +62,2 @@ pub fn style(
+-    if (!opts.focused) return .block_hollow;
++    // Aster hosts may opt out of the hollow box entirely.
++    if (!opts.focused) return if (opts.hide_unfocused) null else .block_hollow;
+@@ -88,0 +92,18 @@ test "cursor: default uses configured style" {
++test "cursor: aster hides unfocused cursor" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    var term: terminal.Terminal = try .init(alloc, .{ .cols = 10, .rows = 10 });
++    defer term.deinit(alloc);
++
++    term.screens.active.cursor.cursor_style = .bar;
++
++    var state: terminal.RenderState = .empty;
++    defer state.deinit(alloc);
++    try state.update(alloc, &term);
++
++    try testing.expect(style(&state, .{ .focused = false, .blink_visible = true, .hide_unfocused = true }) == null);
++    try testing.expect(style(&state, .{ .focused = true, .blink_visible = true, .hide_unfocused = true }) == .bar);
++    // Preedit keeps its block cursor even when unfocused.
++    try testing.expect(style(&state, .{ .preedit = true, .focused = false, .hide_unfocused = true }) == .block);
++}
++
 diff --git a/src/renderer/generic.zig b/src/renderer/generic.zig
-index 0f4a294..ec3f887 100644
+index 0f4a294..3538748 100644
 --- a/src/renderer/generic.zig
 +++ b/src/renderer/generic.zig
 @@ -117,0 +118,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
@@ -884,7 +919,11 @@ index 0f4a294..ec3f887 100644
 +        /// without waking at the full display rate while the terminal is idle.
 +        vsync_requested: bool = true,
 +
-@@ -694 +703,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -545,0 +555 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
++            aster_hide_unfocused_cursor: bool,
+@@ -618,0 +629 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
++                    .aster_hide_unfocused_cursor = config.@"aster-hide-unfocused-cursor",
+@@ -694 +705,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 -                    try macos.video.DisplayLink.createWithActiveCGDisplays()
 +                    macos.video.DisplayLink.createWithActiveCGDisplays() catch |err| fallback: {
 +                        // Embedded hosts can run before macOS exposes an active display (for
@@ -893,9 +932,9 @@ index 0f4a294..ec3f887 100644
 +                        log.warn("unable to create display link, disabling vsync err={}", .{err});
 +                        break :fallback null;
 +                    }
-@@ -723,0 +739 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -723,0 +741 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +                    .content_offset = .{ 0, 0 },
-@@ -1025,0 +1042,33 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -1025,0 +1044,33 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +        /// Arm the macOS display link for the next synchronized frame. Repeated
 +        /// updates before the next refresh coalesce into the same presentation.
 +        pub fn requestVsync(self: *Self) void {
@@ -929,12 +968,12 @@ index 0f4a294..ec3f887 100644
 +            display_link.stop() catch {};
 +        }
 +
-@@ -1032,0 +1082 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -1032,0 +1084 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +            self.vsync_requested = focus;
-@@ -1053,0 +1104,2 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -1053,0 +1106,2 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +            self.visible = visible;
 +            self.vsync_requested = visible and self.focused;
-@@ -1204,0 +1257,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -1204,0 +1259,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +                // Aster: publish the painted fraction for lock-free hit testing.
 +                state.aster_painted_scroll_row_frac.store(
 +                    @bitCast(self.terminal_state.scroll_row_frac),
@@ -945,7 +984,9 @@ index 0f4a294..ec3f887 100644
 +                    .monotonic,
 +                );
 +
-@@ -1418,0 +1481,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -1369,0 +1434 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
++                        .hide_unfocused = self.config.aster_hide_unfocused_cursor,
+@@ -1418,0 +1484,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +
 +                // Aster: sub-row scroll and overscroll shift the whole grid
 +                // (up for positive). Set every frame and force a draw when only
@@ -959,28 +1000,28 @@ index 0f4a294..ec3f887 100644
 +                    self.uniforms.content_offset = .{ 0, content_offset_y };
 +                    self.cells_rebuilt = true;
 +                }
-@@ -1941,0 +2017,2 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -1941,0 +2020,2 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +            // Aster: the cell buffer may hold one extra row for a fractional
 +            // scroll; the blank padding is always measured on the real grid.
-@@ -1946 +2023 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -1946 +2026 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 -                    .rows = self.cells.size.rows,
 +                    .rows = self.terminal_state.rows,
-@@ -2322,0 +2400,3 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -2322,0 +2403,3 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +            // Aster: a fractional scroll paints one extra row below the
 +            // viewport, so the cell buffer follows the painted row count.
 +            const paint_rows: terminal.size.CellCountInt = @intCast(state.row_data.len);
-@@ -2324 +2404 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -2324 +2407 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 -                self.cells.size.rows != state.rows or
 +                self.cells.size.rows != paint_rows or
-@@ -2329 +2409 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -2329 +2412 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 -                new_size.rows = state.rows;
 +                new_size.rows = paint_rows;
-@@ -2377 +2457 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -2377 +2460 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 -                state.rows,
 +                state.row_data.len,
-@@ -2388,0 +2469 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -2388,0 +2472 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +                if (cursor_vp.y >= row_dirty.len) break :preedit null;
-@@ -2457,0 +2539 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -2457,0 +2542 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 +                if (cursor_vp.y >= state.row_data.len) break :cursor;
 diff --git a/src/renderer/metal/Frame.zig b/src/renderer/metal/Frame.zig
 index 388b4f9..7486b27 100644

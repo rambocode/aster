@@ -82,6 +82,15 @@ Zig 0.15.2 自带的 clang `float.h` 早于 macOS 27 SDK：27 SDK 的 `math.h` �
 闪烁，与新建 surface 的初始状态一致。本机后台保活恢复 Pane 时，每份画面快照都以 RIS 开头，
 缺这一步时首个 Pane 的光标会变成方块，新开的 Pane 才正常。
 
+## 失焦时不画光标
+
+上游 `renderer/cursor.zig` 在 surface 失焦时固定返回 `block_hollow`。分屏里每个非活动 Pane
+都会留一个空心方框，容易被看成输入位置。Pinned patch 提供默认关闭的
+`aster-hide-unfocused-cursor` 配置，不改变 C ABI 布局：开启后失焦的 surface 不画光标，
+输入法 preedit 与密码输入的光标保持上游行为。Aster 在 `GhosttyConfiguration` 中固定开启。
+「失焦」沿用宿主经 `ghostty_surface_set_focus` 上报的值，因此非活动 Pane 与失焦窗口里的
+Pane 表现一致。Zig 测试 `cursor: aster hides unfocused cursor` 覆盖三种情况。
+
 ## Aster 子进程启动
 
 Pinned patch 提供默认关闭的 `aster-direct-child` 配置，不改变 C ABI 布局。

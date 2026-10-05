@@ -315,6 +315,10 @@ func terminalHostUsesGhosttySurface() throws {
   #expect(GhosttyApp.shared.isReady)
   #expect(GhosttyApp.shared.startupError == nil)
   #expect(GhosttyApp.shared.configurationDiagnostics.isEmpty)
+  // 失焦不画光标、竖线光标 2 像素宽是固定产品行为，且必须被固定 revision 的引擎接受。
+  let lines = GhosttyConfiguration.make(preferences: preferences).split(separator: "\n")
+  #expect(lines.contains("aster-hide-unfocused-cursor = true"))
+  #expect(lines.contains("adjust-cursor-thickness = 2"))
   #expect(!views.contains { $0 is AsterTerminalView })
 }
 
