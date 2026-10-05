@@ -74,10 +74,10 @@ enum CodexAppServerQuotaClient {
     }
   }
 
-  /// 订阅档位展示名，例如 `pro` → `Pro`、`business_starter` → `Business Starter`。拿不到返回 nil。
+  /// 订阅档位展示名，例如 `pro` → `Pro 200`、`business_starter` → `Business Starter`。拿不到返回 nil。
   nonisolated static func planType(fromRateLimitsResponse data: Data) -> String? {
     guard let limits = rateLimits(from: data) else { return nil }
-    return UsagePlanName.normalized(limits["planType"] as? String)
+    return UsagePlanName.codex(limits["planType"] as? String)
   }
 
   /// 取响应里的 `result.rateLimits`。带 JSON-RPC `error` 的响应一律当失败。

@@ -61,7 +61,7 @@ enum CodexAccountQuotaReader {
       payload["type"] as? String == "token_count",
       let limits = payload["rate_limits"] as? [String: Any]
     else { return nil }
-    return UsagePlanName.normalized(limits["plan_type"] as? String)
+    return UsagePlanName.codex(limits["plan_type"] as? String)
   }
 
   /// 过滤出账号级窗口，并把已经过了重置时刻的窗口按「已清零」处理。

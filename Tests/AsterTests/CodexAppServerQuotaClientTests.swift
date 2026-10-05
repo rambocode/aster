@@ -25,7 +25,7 @@ func codexAppServerMapsSolePrimaryWeeklyWindow() throws {
   #expect(windows.map(\.kind) == [.weekly])
   #expect(windows[0].usedPercent == 100)
   #expect(windows[0].resetsAt == Date(timeIntervalSince1970: 1_789_806_350))
-  #expect(CodexAppServerQuotaClient.planType(fromRateLimitsResponse: data) == "Pro")
+  #expect(CodexAppServerQuotaClient.planType(fromRateLimitsResponse: data) == "Pro 200")
 }
 
 @Test("CodexAppServer: primary 300 分钟 + secondary 10080 分钟分别归为 5 小时与每周")
@@ -127,6 +127,13 @@ func codexAppServerPlanTypeSegments() throws {
     CodexAppServerQuotaClient.planType(
       fromRateLimitsResponse: rateLimitsResponse(primary: window, planType: "\"business_starter\""))
       == "Business Starter")
+  // Pro 三档的标识分不出档，带上月费档位。
+  #expect(
+    CodexAppServerQuotaClient.planType(
+      fromRateLimitsResponse: rateLimitsResponse(primary: window, planType: "\"prolite\"")) == "Pro 100")
+  #expect(
+    CodexAppServerQuotaClient.planType(
+      fromRateLimitsResponse: rateLimitsResponse(primary: window, planType: "\"promax\"")) == "Pro 500")
 }
 
 @Test("CodexAppServer: planType 缺失或为空时不显示档位")

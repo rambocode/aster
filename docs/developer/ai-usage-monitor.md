@@ -56,7 +56,11 @@ rollout 只在 `codex` 可执行文件找不到、版本太旧不认识 `app-ser
 
 **订阅档位**（`UsageAccountSnapshot.plan`）跟着配额一起取，各家叫法不同，原样展示：
 Claude 读钥匙串凭据里的 `rateLimitTier`（`default_claude_max_20x` → `Max 20x`），退到
-`subscriptionType`；Codex 读 `rateLimits.planType`（`pro` → `Pro`）。拿不到就不显示徽标。
+`subscriptionType`；Codex 读 `rateLimits.planType`。拿不到就不显示徽标。
+Codex 的 Pro 有三档，标识分别是 `prolite` / `pro` / `promax`，光看名字分不出，所以
+`UsagePlanName.codex` 把它们显示成 `Pro 100` / `Pro 200` / `Pro 500`（数字是月费美元）；
+其余档位（`plus`、`team` 等）照通用规则分段大写。枚举来自 codex 0.160.0 二进制里的
+`KnownPlan`；`promax` 对应 500 档是按命名推断的，本机账号是 `pro`，没法实测。
 
 **Cursor 与 Antigravity 走的是私有接口，随时会变**，所以失败一律静默降级成「没有卡片」，
 不弹窗、不抛错、不重试：
@@ -112,9 +116,29 @@ Claude 读钥匙串凭据里的 `rateLimitTier`（`default_claude_max_20x` → `
 | droid | `~/.factory/sessions/<id>.settings.json` | `tokenUsage.*` | 否 | 会话累计、无 `cwd`：按文件 mtime 归日，项目记「其他」 |
 | OpenCode | `~/.local/share/opencode/opencode.db` | `message.data` 的 `$.tokens.*`，只算 assistant | 否 | 只读打开；不读 `part` 表（与 message 重复）；db 与 `-wal` 合成一个缓存身份 |
 | Hermes | `~/.hermes/state.db` | `sessions` 表 | 按列名 | 表空、无表、无 db 都静默返回空 |
+| Antigravity CLI | `~/.gemini/antigravity-cli/conversations/<会话 id>.db` | `steps.metadata`（protobuf）的用量子消息 | 否 | 每个会话一个库；`output` 已含思考；见下 |
 
-Cursor、Antigravity 的 transcript 没有 token 字段或是 protobuf；Copilot、Qwen、Kiro、Qoder、
-omp 等本地没有用量数据。不做。各家只统计 token，不换算金额（只有部分 Agent 有 cost 字段，
+Cursor 的 transcript 没有 token 字段；Antigravity.app（IDE）的会话是
+`~/.gemini/antigravity/conversations/*.pb`，另一种格式，没有解；Copilot、Qwen、Kiro、Qoder、
+omp 等本地没有用量数据。不做。
+
+**Antigravity CLI（`agy`）** 的会话库每一列都是 protobuf blob，`.proto` 没有公开，所以
+`AntigravityTokenSource` 用 `ProtobufScan`（无 schema 的浅层扫描器）按字段号取数。字段号是
+2026-10-05 在本机 agy 1.2.16 的 13 个会话库上实测的，**版本一变就可能失效**，失效时静默读不出：
+- `steps.metadata`：`1.1` 是这一步的创建时刻（Unix 秒），`9` 是这一步模型调用的用量。
+- 用量消息：`2` 输入、`3` 输出、`4` 缓存写入、`5` 缓存读取；`9` 思考、`10` 正文，全部 168 条
+  都满足 `3 == 9 + 10`，所以 `output` 已含思考，不再另加。
+- `trajectory_metadata_blob` 的 `main` 行：`7` 是工作目录的 `file://` URI；旧版本的库没有，
+  归到「其他」。
+- 读 `steps` 不读 `gen_metadata`：后者每行带整次请求的正文（约 100 KB）。两边对过账，带用量的
+  planner 步骤（`step_type = 15`）与 `gen_metadata` 逐库零差额；`steps` 还多出几条不进
+  `gen_metadata` 的模型调用（`step_type = 23`，本机 4 条），是真实消耗，一并计入。
+- 库是 WAL 模式，会话结束后不留 `-wal`。普通只读连接要先在它的目录里建 `-shm` 才能读，所以用
+  `ReadOnlySQLiteDatabase(quiescentWALDatabaseAtPath:)`：没有 `-wal` 时走 `immutable=1`
+  （内容已全在主库，且不留任何文件），有 `-wal` 时才走普通只读。这与 Cursor / opencode 那条
+  「不要加 `immutable`」不矛盾——那两个库常年开着、`-wal` 一直在。
+- 真机对账：`ASTER_AGY_TOKEN_SMOKE=1 ./scripts/test.sh --filter AntigravityTokenSourceTests`
+  会打印本机四列总数。各家只统计 token，不换算金额（只有部分 Agent 有 cost 字段，
 口径不齐）。
 
 **性能**。`JSONScan` 是手写浅层字节扫描器：一行 transcript 带着整个回合的正文，要的只有几个

@@ -21,6 +21,7 @@ actor TokenStatsService {
     DroidTokenSource(),
     OpenCodeTokenSource(),
     HermesTokenSource(),
+    AntigravityTokenSource(),
   ]
 
   /// 默认缓存路径：`~/Library/Caches/<bundle id>/token-stats.v1.json`。

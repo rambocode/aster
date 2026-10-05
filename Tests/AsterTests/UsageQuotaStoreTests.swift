@@ -443,7 +443,7 @@ func usageQuotaReaderReadsRolloutPlanType() throws {
     home: home, day: "2026/09/17", name: "rollout-2026-09-17T09-00-00-a.jsonl", line: withPlan)
   let result = try #require(CodexAccountQuotaReader.latestWindows(homeDirectory: home, now: now))
   #expect(result.windows.map(\.usedPercent) == [84])
-  #expect(result.plan == "Pro")
+  #expect(result.plan == "Pro 200")
 
   // plan_type 为 null：窗口照常，档位为 nil。
   let nullPlan = withPlan.replacingOccurrences(of: #""plan_type":"pro""#, with: #""plan_type":null"#)

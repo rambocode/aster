@@ -39,6 +39,19 @@ struct UsagePlanNameTests {
     #expect(UsagePlanName.normalized("enterprise") == "Enterprise")
   }
 
+  // `prolite` / `pro` / `promax` 照通用规则分不出档，所以带上月费档位。
+  @Test("Codex 的 Pro 三档显示成 Pro 100 / 200 / 500，其余档位走通用规则")
+  func codexProTiers() {
+    #expect(UsagePlanName.codex("prolite") == "Pro 100")
+    #expect(UsagePlanName.codex("pro") == "Pro 200")
+    #expect(UsagePlanName.codex("promax") == "Pro 500")
+    #expect(UsagePlanName.codex(" PRO ") == "Pro 200")
+    #expect(UsagePlanName.codex("plus") == "Plus")
+    #expect(UsagePlanName.codex("self_serve_business_prolite") == "Self Serve Business Prolite")
+    #expect(UsagePlanName.codex(nil) == nil)
+    #expect(UsagePlanName.codex("") == nil)
+  }
+
   @Test("空值、超长、剥完为空一律返回 nil")
   func rejectsUnusableInput() {
     #expect(UsagePlanName.normalized(nil) == nil)

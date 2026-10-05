@@ -5,8 +5,9 @@ import Foundation
 /// `pro` → `Pro`。
 ///
 /// 各家叫法不统一（Claude 是 `rateLimitTier` / `subscriptionType`，Codex 是 `planType`），
-/// 但形状一样：小写下划线分段。所以只做「去前缀 + 分段 + 首字母大写」，不做任何别名映射——
-/// 出现没见过的档位时原样显示，好过显示成错的或干脆不显示。
+/// 但形状一样：小写下划线分段。所以通用规则只做「去前缀 + 分段 + 首字母大写」——
+/// 出现没见过的档位时原样显示，好过显示成错的或干脆不显示。唯一的别名表是 Codex 的
+/// Pro 三档（见 `codex(_:)`），因为它的标识本身分不出档。
 public enum UsagePlanName {
   /// 允许的原始长度上限；超过说明拿到的不是档位标识。
   static let maximumRawBytes = 64
@@ -32,5 +33,23 @@ public enum UsagePlanName {
     guard !segments.isEmpty, segments.count <= maximumSegments else { return nil }
     // 首字母大写而不是整体 capitalized：`20x` 要保持原样，`capitalized` 会把它变成 `20X`。
     return segments.map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+  }
+
+  /// Codex Pro 三档的标识 → 展示名。数字是该档的月费（美元）。
+  ///
+  /// 服务端的 `planType` 只有 `prolite` / `pro` / `promax`，照通用规则会显示成
+  /// `Prolite` / `Pro` / `Promax`，看不出是哪一档，所以这三个值单独映射。
+  static let codexProTiers: [String: String] = [
+    "prolite": "Pro 100",
+    "pro": "Pro 200",
+    "promax": "Pro 500",
+  ]
+
+  /// Codex 的 `planType` → 展示名：Pro 三档带上月费档位，其余走通用规则。拿不到返回 nil。
+  public static func codex(_ raw: String?) -> String? {
+    guard let key = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+      return nil
+    }
+    return codexProTiers[key] ?? normalized(raw)
   }
 }

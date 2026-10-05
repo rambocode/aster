@@ -16,14 +16,51 @@ struct ReadOnlySQLiteDatabase {
   /// `busyTimeoutMilliseconds` 刻意设得很短：用量统计是非核心功能，
   /// 宁可这一轮扫不出数据，也不能为等锁把扫描线程挂住。
   init?(path: String, busyTimeoutMilliseconds: Int32 = 250) {
+    guard
+      let opened = Self.open(
+        path, flags: SQLITE_OPEN_READONLY, busyTimeoutMilliseconds: busyTimeoutMilliseconds)
+    else { return nil }
+    handle = opened
+  }
+
+  /// 打开一个「对方没在用时就静止」的 WAL 库：没有 `-wal` 时按不可变文件读，有就走普通只读。
+  ///
+  /// 为什么要分两路：WAL 模式的库在没有 `-wal` / `-shm` 时，普通只读连接必须先在对方目录里
+  /// **创建** `-shm` 才能读——目录不可写就直接打不开（实测 agy 的会话库报 `SQLITE_CANTOPEN`），
+  /// 可写则会往别家的数据目录里留文件。没有 `-wal` 说明所有内容都已合进主库，此时
+  /// `immutable=1` 读到的就是完整数据，且不建任何伴生文件。有 `-wal` 时反过来：`immutable`
+  /// 会跳过它读到旧快照，所以退回普通只读（此时 `-shm` 已由写入方建好）。
+  init?(quiescentWALDatabaseAtPath path: String, busyTimeoutMilliseconds: Int32 = 250) {
+    var filename = path
+    var flags = SQLITE_OPEN_READONLY
+    if !FileManager.default.fileExists(atPath: path + "-wal") {
+      // URI 文件名里 `?` `#` `%` 有特殊含义，路径必须先百分号编码。
+      var allowed = CharacterSet.urlPathAllowed
+      allowed.remove(charactersIn: "?#%")
+      guard let encoded = path.addingPercentEncoding(withAllowedCharacters: allowed) else {
+        return nil
+      }
+      filename = "file:\(encoded)?immutable=1"
+      flags |= SQLITE_OPEN_URI
+    }
+    guard
+      let opened = Self.open(
+        filename, flags: flags, busyTimeoutMilliseconds: busyTimeoutMilliseconds)
+    else { return nil }
+    handle = opened
+  }
+
+  /// 两个构造器共用的打开步骤：失败时收掉半开的句柄并返回 nil。
+  private static func open(
+    _ filename: String, flags: Int32, busyTimeoutMilliseconds: Int32
+  ) -> OpaquePointer? {
     var handle: OpaquePointer?
-    let status = sqlite3_open_v2(path, &handle, SQLITE_OPEN_READONLY, nil)
-    guard status == SQLITE_OK, let opened = handle else {
+    guard sqlite3_open_v2(filename, &handle, flags, nil) == SQLITE_OK, let opened = handle else {
       if let opened = handle { sqlite3_close_v2(opened) }
       return nil
     }
     sqlite3_busy_timeout(opened, busyTimeoutMilliseconds)
-    self.handle = opened
+    return opened
   }
 
   func close() {
@@ -58,6 +95,15 @@ struct ReadOnlySQLiteDatabase {
   static func text(_ statement: OpaquePointer, _ column: Int32) -> String? {
     guard let bytes = sqlite3_column_text(statement, column) else { return nil }
     return String(cString: bytes)
+  }
+
+  /// 读取 BLOB 列的全部字节；NULL 与空值返回空数组。
+  static func bytes(_ statement: OpaquePointer, _ column: Int32) -> [UInt8] {
+    // SQLite 要求先取指针再取长度：反过来调用时类型转换可能让先拿到的长度失效。
+    guard let pointer = sqlite3_column_blob(statement, column) else { return [] }
+    let count = Int(sqlite3_column_bytes(statement, column))
+    guard count > 0 else { return [] }
+    return Array(UnsafeRawBufferPointer(start: pointer, count: count))
   }
 
   /// 把主库与它的 `-wal` 合成一个缓存身份：大小相加、修改时间取较晚的一个。
