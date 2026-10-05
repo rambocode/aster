@@ -349,11 +349,13 @@ private func passwordRequest(
   let coordinator = makeCoordinator(presenter: presenter)
 
   let first = Task { await coordinator.answer(passwordRequest(id: "a1")) }
+  // 等第一个弹窗真正打开后再发第二个请求。两个 Task 的启动顺序没有保证：若 a2 先拿到
+  // 弹窗，下面放行的就是 a2，`first.value` 会永远等不到，整个测试进程挂死。
+  await waitUntil { presenter.heldCount == 1 }
   let second = Task {
     await coordinator.answer(
       SSHAuthRequest(id: "a2", endpoint: "ops@10.0.0.6:22", kind: .password))
   }
-  await waitUntil { presenter.heldCount == 1 }
   // 多等一会儿，让第二个请求走完钥匙串查询、进入排队。
   await pause(milliseconds: 100)
   #expect(presenter.secretPrompts.count == 1)
