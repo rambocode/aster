@@ -181,9 +181,9 @@ func inactivePaneContentIsDimmed() throws {
 
   let hosts = paneHostViews(in: controller.view)
   #expect(hosts.count == 2)
-  // 仍不引入遮罩子视图：内容视图 + 拖动把手 + 缩放按钮 + 关闭按钮。
+  // 仍不引入遮罩子视图：内容视图 + 拖动把手 + 缩放按钮 + 关闭按钮 + 实时画面按钮。
   for host in hosts {
-    #expect(host.subviews.count == 4)
+    #expect(host.subviews.count == 5)
     #expect(
       host.subviews.contains {
         String(describing: type(of: $0)).contains("ClickThroughStripView")
@@ -195,6 +195,7 @@ func inactivePaneContentIsDimmed() throws {
     host.subviews.first {
       let name = String(describing: type(of: $0))
       return !name.contains("DragHandle") && !name.contains("CloseButton") && !name.contains("ZoomButton")
+        && !name.contains("LiveViewButton")
     }?.alphaValue
   }
 
