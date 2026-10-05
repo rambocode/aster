@@ -137,6 +137,9 @@ public enum SSHConfigImport {
     profile.user = entry.user?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     profile.identityFiles = entry.identityFiles
     profile.identitiesOnly = entry.identitiesOnly
+    // 原文照搬（含 `none`、`$VAR`）；ssh_config 里没写就清掉，回到继承默认项。
+    let identityAgent = entry.identityAgent?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    profile.identityAgent = identityAgent.isEmpty ? nil : identityAgent
     // `none` 表示不使用任何 known_hosts；原样保留交给 broker 按 OpenSSH 语义处理。
     profile.knownHostsFiles = entry.userKnownHostsFiles.isEmpty ? nil : entry.userKnownHostsFiles
     let proxyCommand = entry.proxyCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

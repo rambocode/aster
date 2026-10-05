@@ -213,3 +213,28 @@ async fn oversized_frame_is_rejected() {
         .unwrap();
     assert!(read_frame(&mut b).await.is_err());
 }
+
+#[test]
+fn resolved_spec_identity_agent_is_optional_and_per_hop() {
+    // 旧版 App 不发 identityAgent：解码成 None，编码时也不多出这个键。
+    let plain: ResolvedSpec =
+        serde_json::from_value(json!({"host":"h","port":22,"user":"u"})).unwrap();
+    assert_eq!(plain.identity_agent, None);
+    assert!(serde_json::to_value(&plain)
+        .unwrap()
+        .get("identityAgent")
+        .is_none());
+    let spec: ResolvedSpec = serde_json::from_value(json!({
+        "host":"h","port":22,"user":"u","identityAgent":"~/agent.sock",
+        "jump":{"host":"j","port":22,"user":"u","identityAgent":"none"}
+    }))
+    .unwrap();
+    assert_eq!(spec.identity_agent.as_deref(), Some("~/agent.sock"));
+    assert_eq!(
+        spec.jump.as_ref().unwrap().identity_agent.as_deref(),
+        Some("none")
+    );
+    let back = serde_json::to_value(&spec).unwrap();
+    assert_eq!(back["identityAgent"], "~/agent.sock");
+    assert_eq!(back["jump"]["identityAgent"], "none");
+}

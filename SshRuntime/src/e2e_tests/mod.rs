@@ -2,6 +2,7 @@
 //!
 //! 夹具 `Harness` 模拟 App：消费控制通道的每一行，并按脚本自动回答凭证与主机密钥请求。
 
+mod agent_tests;
 mod auth_tests;
 mod known_hosts_tests;
 mod session_tests;

@@ -107,6 +107,9 @@ func settingsHostsPageRendersAndSaves() async throws {
     const byLabel = text => [...dialog.querySelectorAll('.hosts-field')].find(f => f.textContent.startsWith(text));
     user.value = 'admin';
     byLabel('只用指定私钥').querySelector('select').value = 'true';
+    const agent = byLabel('Agent 套接字').querySelector('input');
+    if (agent.placeholder !== 'SSH_AUTH_SOCK') throw new Error('agent placeholder');
+    agent.value = '  ~/agents/work.sock ';
     const knownHosts = byLabel('known_hosts 文件').querySelector('textarea');
     if (!knownHosts.placeholder.includes('~/.ssh/known_hosts')) throw new Error('placeholder');
     knownHosts.value = '~/.orbstack/ssh/known_hosts\\n\\n  ~/.ssh/known_hosts ';
@@ -118,6 +121,7 @@ func settingsHostsPageRendersAndSaves() async throws {
   #expect(updated.user == "admin")
   #expect(updated.port == 2222 && updated.jumpHostID == bastion.id && updated.group == "prod")
   #expect(updated.identitiesOnly == true)
+  #expect(updated.identityAgent == "~/agents/work.sock")
   #expect(updated.knownHostsFiles == ["~/.orbstack/ssh/known_hosts", "~/.ssh/known_hosts"])
 }
 

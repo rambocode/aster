@@ -323,6 +323,8 @@ public struct SSHConfigHostEntry: Codable, Equatable, Sendable {
   public var userKnownHostsFiles: [String]
   /// `IdentitiesOnly`。
   public var identitiesOnly: Bool?
+  /// `IdentityAgent` 原文（路径、`$VAR`、`SSH_AUTH_SOCK` 或 `none`）；没写为 nil。
+  public var identityAgent: String?
   public var proxyJump: String?
   public var proxyCommand: String?
   public var forwards: [SSHForwardRule]
@@ -332,7 +334,7 @@ public struct SSHConfigHostEntry: Codable, Equatable, Sendable {
   public init(
     alias: String, hostName: String? = nil, user: String? = nil, port: Int? = nil,
     identityFiles: [String] = [], userKnownHostsFiles: [String] = [], identitiesOnly: Bool? = nil,
-    proxyJump: String? = nil, proxyCommand: String? = nil,
+    identityAgent: String? = nil, proxyJump: String? = nil, proxyCommand: String? = nil,
     forwards: [SSHForwardRule] = [], keepaliveInterval: Int? = nil, keepaliveCountMax: Int? = nil
   ) {
     self.alias = alias
@@ -342,6 +344,7 @@ public struct SSHConfigHostEntry: Codable, Equatable, Sendable {
     self.identityFiles = identityFiles
     self.userKnownHostsFiles = userKnownHostsFiles
     self.identitiesOnly = identitiesOnly
+    self.identityAgent = identityAgent
     self.proxyJump = proxyJump
     self.proxyCommand = proxyCommand
     self.forwards = forwards
@@ -350,7 +353,7 @@ public struct SSHConfigHostEntry: Codable, Equatable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case alias, hostName, user, port, identityFiles, userKnownHostsFiles, identitiesOnly
+    case alias, hostName, user, port, identityFiles, userKnownHostsFiles, identitiesOnly, identityAgent
     case proxyJump, proxyCommand, forwards, keepaliveInterval, keepaliveCountMax
   }
 
@@ -365,6 +368,7 @@ public struct SSHConfigHostEntry: Codable, Equatable, Sendable {
     userKnownHostsFiles =
       try container.decodeIfPresent([String].self, forKey: .userKnownHostsFiles) ?? []
     identitiesOnly = try container.decodeIfPresent(Bool.self, forKey: .identitiesOnly)
+    identityAgent = try container.decodeIfPresent(String.self, forKey: .identityAgent)
     proxyJump = try container.decodeIfPresent(String.self, forKey: .proxyJump)
     proxyCommand = try container.decodeIfPresent(String.self, forKey: .proxyCommand)
     forwards = try container.decodeIfPresent([SSHForwardRule].self, forKey: .forwards) ?? []

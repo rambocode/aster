@@ -27,6 +27,8 @@ pub(super) enum Setting {
     /// 同上，系统级 known_hosts；broker 只读不写。
     GlobalKnownHostsFile(Vec<String>),
     IdentitiesOnly(bool),
+    /// 原文：`none`、`SSH_AUTH_SOCK`、`$VAR` 或 socket 路径（可含 `~`、`%` 记号、`${VAR}`），由 broker 展开。
+    IdentityAgent(String),
 }
 
 /// 指令没有被采用的原因。
@@ -83,6 +85,9 @@ pub(super) fn parse_setting(key: &str, rest: &str) -> Result<Setting, Rejected> 
         "identitiesonly" => single(rest)
             .and_then(|v| yes_no(&v))
             .map(Setting::IdentitiesOnly),
+        "identityagent" => single(rest)
+            .and_then(identity_agent)
+            .map(Setting::IdentityAgent),
         _ => Err(Rejected::Unsupported),
     }
 }
@@ -98,6 +103,21 @@ fn known_hosts_files(rest: &str) -> Result<Vec<String>, Rejected> {
         (true, 1) => Ok(vec!["none".to_string()]),
         (true, _) => Err(Rejected::Invalid),
         (false, _) => Ok(list),
+    }
+}
+
+/// IdentityAgent 的语法校验（与 OpenSSH readconf.c 一致）：`$VAR` 的名字只能是字母数字下划线，
+/// `${` 必须闭合。值本身不在这里展开——环境变量要在 broker 进程里读。
+fn identity_agent(value: String) -> Result<String, Rejected> {
+    let legacy_env = value.strip_prefix('$').filter(|n| !n.starts_with('{'));
+    let valid = match legacy_env {
+        Some(name) => crate::env::valid_env_name(name),
+        // 取值函数恒有值，所以 None 只可能是 `${` 没闭合或名字为空
+        None => crate::env::expand_env_braces(&value, &|_| Some(String::new())).is_some(),
+    };
+    match valid && !value.is_empty() {
+        true => Ok(value),
+        false => Err(Rejected::Invalid),
     }
 }
 

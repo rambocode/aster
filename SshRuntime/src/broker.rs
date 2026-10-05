@@ -307,7 +307,7 @@ impl Broker {
         let fail = |what: &str, e: russh::Error| {
             SshFailure::new(FailureKind::TransportFailure, format!("{what}: {e}"))
         };
-        if spec.agent_forward && conn.env().agent_sock.is_some() {
+        if spec.agent_forward && conn.env().agent_socket(spec).is_some() {
             channel
                 .agent_forward(false)
                 .await

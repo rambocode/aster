@@ -316,7 +316,11 @@ impl Pool {
             verdict: verdict.clone(),
             prompting: prompting.clone(),
             remote_forwards: remote_forwards.clone(),
-            agent_forward: spec.agent_forward,
+            // 与 OpenSSH 一致：转发出去的就是这一跳认证用的那个 agent（identityAgent 优先）。
+            forward_agent_sock: spec
+                .agent_forward
+                .then(|| self.env.agent_socket(spec))
+                .flatten(),
             closed: Some(closed_tx),
         };
         let config = connect::client_config(spec, &known_hosts);

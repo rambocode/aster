@@ -950,6 +950,8 @@ window.AsterI18n = {
     "开启后只尝试上面的私钥文件，不再用 agent 里的其它密钥（IdentitiesOnly）": "When on, only the private key files above are tried, not other keys in the agent (IdentitiesOnly)",
     "known_hosts 文件": "known_hosts Files",
     "每行一个；留空使用默认值 {path}": "One per line; leave empty to use the default {path}",
+    "Agent 套接字": "Agent Socket",
+    "认证用的 ssh-agent 套接字路径（IdentityAgent），可用 ~；填 none 不用 agent，留空使用 SSH_AUTH_SOCK": "Path of the ssh-agent socket used for authentication (IdentityAgent); ~ is allowed. Enter none to use no agent; leave empty to use SSH_AUTH_SOCK",
     "{field} 必须是整数": "{field} must be an integer",
     "{field} 要写成 主机:端口": "{field} must be written as host:port",
     "第 {index} 条转发规则的地址要写成 主机:端口": "The address in forwarding rule {index} must be written as host:port"
@@ -1904,6 +1906,8 @@ window.AsterI18n = {
     "开启后只尝试上面的私钥文件，不再用 agent 里的其它密钥（IdentitiesOnly）": "オンにすると上の秘密鍵ファイルだけを試し、agent 内の他の鍵は使いません（IdentitiesOnly）",
     "known_hosts 文件": "known_hosts ファイル",
     "每行一个；留空使用默认值 {path}": "1 行に 1 つ。空欄なら既定値 {path} を使います",
+    "Agent 套接字": "Agent ソケット",
+    "认证用的 ssh-agent 套接字路径（IdentityAgent），可用 ~；填 none 不用 agent，留空使用 SSH_AUTH_SOCK": "認証に使う ssh-agent ソケットのパス（IdentityAgent）。~ が使えます。none で agent を使いません。空欄なら SSH_AUTH_SOCK を使います",
     "{field} 必须是整数": "{field} は整数で入力してください",
     "{field} 要写成 主机:端口": "{field} は ホスト:ポート の形式で入力してください",
     "第 {index} 条转发规则的地址要写成 主机:端口": "転送ルール {index} のアドレスは ホスト:ポート の形式で入力してください"
@@ -2858,6 +2862,8 @@ window.AsterI18n = {
     "开启后只尝试上面的私钥文件，不再用 agent 里的其它密钥（IdentitiesOnly）": "Si activé, seuls les fichiers de clé privée ci-dessus sont essayés, pas les autres clés de l'agent (IdentitiesOnly)",
     "known_hosts 文件": "Fichiers known_hosts",
     "每行一个；留空使用默认值 {path}": "Un par ligne ; laissez vide pour utiliser la valeur par défaut {path}",
+    "Agent 套接字": "Socket de l'agent",
+    "认证用的 ssh-agent 套接字路径（IdentityAgent），可用 ~；填 none 不用 agent，留空使用 SSH_AUTH_SOCK": "Chemin du socket ssh-agent utilisé pour l'authentification (IdentityAgent) ; ~ est accepté. Saisissez none pour ne pas utiliser d'agent ; laissez vide pour utiliser SSH_AUTH_SOCK",
     "{field} 必须是整数": "{field} doit être un entier",
     "{field} 要写成 主机:端口": "{field} doit être au format hôte:port",
     "第 {index} 条转发规则的地址要写成 主机:端口": "L'adresse de la règle de redirection {index} doit être au format hôte:port"
@@ -3812,6 +3818,8 @@ window.AsterI18n = {
     "开启后只尝试上面的私钥文件，不再用 agent 里的其它密钥（IdentitiesOnly）": "Wenn aktiviert, werden nur die obigen privaten Schlüsseldateien versucht, keine anderen Schlüssel aus dem Agent (IdentitiesOnly)",
     "known_hosts 文件": "known_hosts-Dateien",
     "每行一个；留空使用默认值 {path}": "Eine pro Zeile; leer lassen, um den Standard {path} zu verwenden",
+    "Agent 套接字": "Agent-Socket",
+    "认证用的 ssh-agent 套接字路径（IdentityAgent），可用 ~；填 none 不用 agent，留空使用 SSH_AUTH_SOCK": "Pfad des ssh-agent-Sockets für die Authentifizierung (IdentityAgent); ~ ist erlaubt. none verwendet keinen Agent; leer lassen, um SSH_AUTH_SOCK zu verwenden",
     "{field} 必须是整数": "{field} muss eine ganze Zahl sein",
     "{field} 要写成 主机:端口": "{field} muss als Host:Port angegeben werden",
     "第 {index} 条转发规则的地址要写成 主机:端口": "Die Adresse in Weiterleitungsregel {index} muss als Host:Port angegeben werden"
@@ -4766,6 +4774,8 @@ window.AsterI18n = {
     "开启后只尝试上面的私钥文件，不再用 agent 里的其它密钥（IdentitiesOnly）": "開啟後只嘗試上面的私鑰檔案，不再用 agent 裡的其他金鑰（IdentitiesOnly）",
     "known_hosts 文件": "known_hosts 檔案",
     "每行一个；留空使用默认值 {path}": "每行一個；留空使用預設值 {path}",
+    "Agent 套接字": "Agent 通訊端",
+    "认证用的 ssh-agent 套接字路径（IdentityAgent），可用 ~；填 none 不用 agent，留空使用 SSH_AUTH_SOCK": "認證用的 ssh-agent 通訊端路徑（IdentityAgent），可用 ~；填 none 不用 agent，留空使用 SSH_AUTH_SOCK",
     "{field} 必须是整数": "{field} 必須是整數",
     "{field} 要写成 主机:端口": "{field} 要寫成 主機:連接埠",
     "第 {index} 条转发规则的地址要写成 主机:端口": "第 {index} 條轉發規則的位址要寫成 主機:連接埠"

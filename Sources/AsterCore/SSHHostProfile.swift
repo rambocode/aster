@@ -80,6 +80,9 @@ public struct SSHHostProfile: Codable, Equatable, Identifiable, Sendable {
   /// 自定义 known_hosts 文件（OpenSSH `UserKnownHostsFile`），可含 `~`；nil 或空表示继承默认项，
   /// 再缺省为 `~/.ssh/known_hosts`。OrbStack 等工具靠它把主机密钥放在自己的文件里。
   public var knownHostsFiles: [String]?
+  /// 认证用的 ssh-agent（OpenSSH `IdentityAgent`）原文：socket 路径（可含 `~`、`%h` 等记号、`${VAR}`）、
+  /// `$VAR`、`SSH_AUTH_SOCK` 或 `none`；nil 或空白表示继承默认项，再缺省为 App 继承到的 `SSH_AUTH_SOCK`。
+  public var identityAgent: String?
   public var agentForward: Bool?
 
   /// 静态转发规则。与默认项的规则合并（默认项在前）。
@@ -105,6 +108,7 @@ public struct SSHHostProfile: Codable, Equatable, Identifiable, Sendable {
     identityFiles: [String] = [],
     identitiesOnly: Bool? = nil,
     knownHostsFiles: [String]? = nil,
+    identityAgent: String? = nil,
     agentForward: Bool? = nil,
     forwards: [SSHForwardRule] = [],
     keepaliveInterval: Int? = nil,
@@ -126,6 +130,7 @@ public struct SSHHostProfile: Codable, Equatable, Identifiable, Sendable {
     self.identityFiles = identityFiles
     self.identitiesOnly = identitiesOnly
     self.knownHostsFiles = knownHostsFiles
+    self.identityAgent = identityAgent
     self.agentForward = agentForward
     self.forwards = forwards
     self.keepaliveInterval = keepaliveInterval
@@ -162,6 +167,9 @@ public struct SSHResolvedSpec: Codable, Equatable, Sendable {
   public var identitiesOnly: Bool
   /// 已展开的 known_hosts 文件；空数组表示用 `~/.ssh/known_hosts`。
   public var knownHostsFiles: [String]
+  /// `IdentityAgent` 原文，broker 在连接时展开环境变量与路径记号（环境变量属于 broker 进程，
+  /// 所以不在这里展开）；nil 表示用 broker 继承到的 `SSH_AUTH_SOCK`，编码时省略。
+  public var identityAgent: String?
   public var agentForward: Bool
   public var proxyCommand: String?
   public var socksProxy: SSHHostPort?
@@ -279,6 +287,8 @@ public enum SSHHostResolver {
       identityFiles: identityFiles,
       identitiesOnly: profile.identitiesOnly ?? defaults.identitiesOnly ?? false,
       knownHostsFiles: knownHostsFiles,
+      identityAgent: firstNonEmpty(profile.identityAgent, defaults.identityAgent)?
+        .trimmingCharacters(in: .whitespaces),
       agentForward: profile.agentForward ?? defaults.agentForward ?? false,
       proxyCommand: firstNonEmpty(profile.proxyCommand, defaults.proxyCommand),
       socksProxy: profile.socksProxy ?? defaults.socksProxy,

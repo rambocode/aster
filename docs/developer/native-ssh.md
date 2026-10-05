@@ -70,11 +70,26 @@
    - 后台连接遇到这两种情况，一律失败并进入 attention，不自动接受。
 5. `link.state` 的 `authenticationRequired`、`hostKeyUnknown`、`hostKeyChanged` 立即让机器进入 attention。链路回到 connected 时，处在重连、attention 或断开状态的机器立即重连。
 
+### ssh-agent 的选择（IdentityAgent）
+
+每一跳（目标与每个跳板）各自决定用哪个 agent，规则只有一份，在 broker 的 `Env::agent_socket`（`SshRuntime/src/env.rs`）：
+
+1. 优先级：主机的 `identityAgent` > 「默认」项的 `identityAgent` > broker 继承到的 `SSH_AUTH_SOCK`。`--target` 走 ssh_config 时按「第一个匹配生效」取 `IdentityAgent`。
+2. 取值与 OpenSSH 一致（`none` 与 `SSH_AUTH_SOCK` 区分大小写）：
+   - `none`：这一跳不用 agent。
+   - `SSH_AUTH_SOCK`：用继承到的环境变量，同没写。
+   - `$VAR`：路径取自环境变量；变量没设或为空就不用 agent，不回落到 `SSH_AUTH_SOCK`。
+   - 其它：当作路径，展开 `%h`、`%p`、`%r`、`%u`、`%d`、`%%`、`${VAR}` 和开头的 `~`。
+3. Swift 侧只做继承与去空白，把原文放进 `ResolvedSpec.identityAgent`。环境变量属于 broker 进程，所以展开留给 broker。
+4. agent 转发用同一个 socket：`agentForward` 打开且这一跳解析得到 socket 时才请求转发。
+5. 与 OpenSSH 的差异：`${VAR}` 没设时 OpenSSH 直接报错退出，这里记一条 debug 日志并跳过 agent；`%C`、`%i`、`%k`、`%L`、`%l`、`%n`、`%j` 不展开，原样保留。
+6. 从 Dock 启动的 App 拿到的是 launchd 的 `SSH_AUTH_SOCK`（系统 agent），不是用户 Shell 里导出的值。用第三方 agent 的用户应当写 `IdentityAgent`。
+
 ## ~/.ssh/config 解析
 
 Rust 实现，参考 tty7 的 `ssh_config.rs`：
 
-- 支持：Include（相对路径按 `~/.ssh/` 解析，最多 16 层，检测循环）、Host 模式（`*`、`?`、`!`）、第一个匹配生效，以及 HostName、User、Port、IdentityFile、ProxyJump、ProxyCommand、三类 Forward、ServerAlive*、ConnectTimeout、ForwardAgent、StrictHostKeyChecking。
+- 支持：Include（相对路径按 `~/.ssh/` 解析，最多 16 层，检测循环）、Host 模式（`*`、`?`、`!`）、第一个匹配生效，以及 HostName、User、Port、IdentityFile、ProxyJump、ProxyCommand、三类 Forward、ServerAlive*、ConnectTimeout、ForwardAgent、StrictHostKeyChecking、UserKnownHostsFile、GlobalKnownHostsFile、IdentitiesOnly、IdentityAgent。
 - 不支持：Match 块（整块跳过）、UseKeychain、GSSAPI*、Canonicalize* 等。这些指令按行列进 `ignored`，导入时展示给用户。
 - 安全上限：单个文件 1MB，最多 64 个文件。
 - 与 OpenSSH 的差异：Host 匹配不区分大小写。

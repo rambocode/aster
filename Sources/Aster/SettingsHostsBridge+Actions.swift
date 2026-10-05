@@ -80,6 +80,9 @@ extension SettingsHostsBridge {
     }
     // 空 known_hosts 列表与 nil 同义（都继承默认项），统一存成 nil，文件里不留空数组。
     if profile.knownHostsFiles?.isEmpty == true { profile.knownHostsFiles = nil }
+    // 空白的 identityAgent 同理存成 nil（继承），前后空白不属于路径。
+    let identityAgent = profile.identityAgent?.trimmingCharacters(in: .whitespaces) ?? ""
+    profile.identityAgent = identityAgent.isEmpty ? nil : identityAgent
     guard profile.forwards.count <= maximumForwards,
       profile.identityFiles.count <= maximumIdentityFiles,
       (profile.knownHostsFiles?.count ?? 0) <= maximumIdentityFiles
@@ -87,7 +90,10 @@ extension SettingsHostsBridge {
     // `SSHHostStore.validate` 只查 host/user/group 的换行；这里补齐其余会进入 argv 或
     // 配置文件的文本字段，任何控制字符都拒绝。
     let texts =
-      [profile.name, profile.host, profile.user, profile.group ?? "", profile.proxyCommand ?? ""]
+      [
+        profile.name, profile.host, profile.user, profile.group ?? "", profile.proxyCommand ?? "",
+        profile.identityAgent ?? "",
+      ]
       + profile.identityFiles + (profile.knownHostsFiles ?? [])
       + [profile.socksProxy?.host ?? "", profile.httpProxy?.host ?? ""]
       + profile.forwards.flatMap { [$0.bind.host, $0.target.host, $0.description] }
@@ -152,6 +158,7 @@ extension SettingsHostsBridge {
         proxyCommand: source.proxyCommand, socksProxy: source.socksProxy, httpProxy: source.httpProxy,
         auth: source.auth, identityFiles: source.identityFiles,
         identitiesOnly: source.identitiesOnly, knownHostsFiles: source.knownHostsFiles,
+        identityAgent: source.identityAgent,
         agentForward: source.agentForward, forwards: source.forwards,
         keepaliveInterval: source.keepaliveInterval, keepaliveCountMax: source.keepaliveCountMax,
         connectTimeout: source.connectTimeout, verifyHostKeys: source.verifyHostKeys)

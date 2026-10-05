@@ -421,3 +421,62 @@ fn unsupported_directives_are_listed_with_file_and_line() {
         ]
     );
 }
+
+#[test]
+fn identity_agent_is_resolved_instead_of_ignored() {
+    let home = home_with(concat!(
+        "Host agent-feedback\n",
+        "  HostName 127.0.0.1\n",
+        "  User fixture\n",
+        "  IdentityAgent /tmp/fixture-agent.sock\n",
+        "  IdentityAgent /tmp/ignored-second.sock\n",
+        "Host onepassword\n",
+        "  IdentityAgent \"~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock\"\n",
+        "Host off\n",
+        "  IdentityAgent none\n",
+        "Host env legacy braces\n",
+        "Host env\n",
+        "  IdentityAgent SSH_AUTH_SOCK\n",
+        "Host legacy\n",
+        "  IdentityAgent $MY_AGENT_SOCK\n",
+        "Host braces\n",
+        "  IdentityAgent ${XDG_RUNTIME_DIR}/agent-%r.sock\n",
+        "Host bad\n",
+        "  IdentityAgent $NOT-A-NAME\n",
+        "  IdentityAgent ${UNCLOSED\n",
+        "  IdentityAgent a b\n",
+    ));
+    let agent = |alias: &str| resolve(&home, alias).unwrap().identity_agent;
+    assert_eq!(
+        agent("agent-feedback").as_deref(),
+        Some("/tmp/fixture-agent.sock"),
+        "第一个指令生效"
+    );
+    assert_eq!(
+        agent("onepassword").as_deref(),
+        Some("~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"),
+        "原文保留，引号里的空格不分词"
+    );
+    assert_eq!(agent("off").as_deref(), Some("none"));
+    assert_eq!(agent("env").as_deref(), Some("SSH_AUTH_SOCK"));
+    assert_eq!(agent("legacy").as_deref(), Some("$MY_AGENT_SOCK"));
+    assert_eq!(
+        agent("braces").as_deref(),
+        Some("${XDG_RUNTIME_DIR}/agent-%r.sock")
+    );
+    assert_eq!(agent("bad"), None);
+    assert_eq!(
+        ignored(&list(&home)),
+        vec![
+            ("~/.ssh/config", 18, "IdentityAgent", "invalidValue"),
+            ("~/.ssh/config", 19, "IdentityAgent", "invalidValue"),
+            ("~/.ssh/config", 20, "IdentityAgent", "invalidValue"),
+        ],
+        "合法写法不再记为 unsupported"
+    );
+    let json = serde_json::to_value(resolve(&home, "agent-feedback").unwrap()).unwrap();
+    assert_eq!(json["identityAgent"], "/tmp/fixture-agent.sock");
+    let old: HostEntry =
+        serde_json::from_str(r#"{"alias":"x","identityFiles":[],"forwards":[]}"#).unwrap();
+    assert!(old.identity_agent.is_none());
+}

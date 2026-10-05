@@ -78,6 +78,10 @@ pub struct HostEntry {
     /// IdentitiesOnly；没写为 null。
     #[serde(default)]
     pub identities_only: Option<bool>,
+    /// IdentityAgent 原文：`none`、`SSH_AUTH_SOCK`、`$VAR` 或 socket 路径（`~`、`%` token、`${VAR}`
+    /// 由 broker 展开）；没写为 null（用 broker 继承到的 `SSH_AUTH_SOCK`）。
+    #[serde(default)]
+    pub identity_agent: Option<String>,
 }
 
 /// 没有被采用的一行配置，即导入时展示给用户的 ImportReport 条目（PROTOCOL.md §5）。
@@ -235,6 +239,9 @@ impl Accumulator {
             }
             Setting::IdentitiesOnly(b) => {
                 entry.identities_only.get_or_insert(*b);
+            }
+            Setting::IdentityAgent(v) => {
+                entry.identity_agent.get_or_insert_with(|| v.clone());
             }
         }
     }

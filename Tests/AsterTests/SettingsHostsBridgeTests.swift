@@ -235,3 +235,32 @@ func settingsHostsSaveKeepsIdentitiesOnlyAndKnownHosts() throws {
   let copy = try #require(fixture.bridge.directory.savedHosts.first { $0.id != orb.id })
   #expect(copy.identitiesOnly == false && copy.knownHostsFiles == nil)
 }
+
+@Test("Agent 套接字随保存落盘并原样读回；空白存成 nil；控制字符被拒；复制带上它")
+@MainActor
+func settingsHostsSaveKeepsIdentityAgent() throws {
+  let fixture = try HostsBridgeFixture()
+  defer { fixture.cleanUp() }
+  let host = SSHHostProfile(
+    name: "vault", host: "10.0.0.9", user: "ops",
+    identityAgent: "~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock")
+  let object = SettingsHostsBridge.profileJSON(host)
+  #expect(object["identityAgent"] as? String == host.identityAgent)
+  #expect(fixture.perform("hosts.save", ["profile": object]) == true)
+  let reloaded = try SSHHostStore(fileURL: fixture.bridge.directory.store.fileURL).load()
+  #expect(reloaded.first { $0.id == host.id } == host)
+
+  #expect(fixture.perform("hosts.duplicate", ["id": host.id.uuidString]) == true)
+  let copy = try #require(fixture.bridge.directory.savedHosts.first { $0.id != host.id })
+  #expect(copy.identityAgent == host.identityAgent)
+
+  var broken = object
+  broken["identityAgent"] = "/tmp/agent.sock\nProxyCommand evil"
+  #expect(fixture.perform("hosts.save", ["profile": broken]) == false)
+  #expect(fixture.bridge.directory.host(host.id)?.identityAgent == host.identityAgent)
+
+  var cleared = object
+  cleared["identityAgent"] = "   "
+  #expect(fixture.perform("hosts.save", ["profile": cleared]) == true)
+  #expect(fixture.bridge.directory.host(host.id)?.identityAgent == nil)
+}

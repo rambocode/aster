@@ -125,6 +125,7 @@ broker 的 stderr 只写脱敏日志。未知 `type` 必须忽略（向前兼容
   "identityFiles":["/Users/me/.ssh/id_ed25519"],   // 已展开 ~ 与 %h/%r
   "identitiesOnly":false,              // 可省略，缺省 false。true：只用 identityFiles，见下
   "knownHostsFiles":[],                // 可省略，已展开的路径；见下
+  "identityAgent":"~/agent.sock",      // 可省略，IdentityAgent 原文，由 broker 展开；见下
   "agentForward":false,
   "proxyCommand":null,                 // 字符串，经 /bin/sh -c 执行，%h/%p/%r 由 broker 展开
   "socksProxy":null,"httpProxy":null,  // {"host","port"}
@@ -149,6 +150,13 @@ broker 的 stderr 只写脱敏日志。未知 `type` 必须忽略（向前兼容
 （公钥取自旁边的 `.pub`，没有时从未加密私钥推出），不逐个尝试 agent 里的其它密钥。
 与 OpenSSH 一样，identityFiles 为空时仍回落到默认密钥（`~/.ssh/id_ed25519` 等）。
 
+`identityAgent`（对应 OpenSSH `IdentityAgent`）：这一跳认证与 agent 转发用的 ssh-agent。App 原文照传，
+broker 在连接时解析；`jump` 里的每一跳各带各的，不互相继承。
+- 缺省或 null：用 broker 继承到的 `SSH_AUTH_SOCK`。
+- `"none"`：不用 agent。`"SSH_AUTH_SOCK"`：同缺省。两者区分大小写。
+- `"$VAR"`：socket 路径取自 broker 进程的环境变量 VAR；没设或为空就不用 agent。
+- 其它：socket 路径，broker 展开 `%h/%p/%r/%u/%d/%%`、`${VAR}`（没设就不用 agent）与开头的 `~`。
+
 endpoint 身份（凭证共享、连接复用的键）：`user@host:port`；有跳板时连接复用键再拼上跳板链，
 但凭证键仍是目标自身的 `user@host:port`。
 
@@ -161,7 +169,7 @@ endpoint 身份（凭证共享、连接复用的键）：`user@host:port`；有�
            "forwards":[…],"keepaliveInterval":null,"keepaliveCountMax":null,
            "forwardAgent":null,"connectTimeout":null,"strictHostKeyChecking":null,
            "userKnownHostsFiles":["~/.orbstack/ssh/known_hosts"],"globalKnownHostsFiles":[],
-           "identitiesOnly":true}],
+           "identitiesOnly":true,"identityAgent":"~/.1password/agent.sock"}],
  "ignored":[{"file":"~/.ssh/config","line":12,"option":"Match","reason":"unsupported"}]}
 
 // aster-ssh config resolve <alias> --json   → 单个上面的 host 对象；无匹配退出码 1
@@ -173,6 +181,8 @@ endpoint 身份（凭证共享、连接复用的键）：`user@host:port`；有�
 - `forwardAgent`、`identitiesOnly`：布尔，没写为 null。
 - `connectTimeout`：秒，没写或 `none` 为 null。
 - `strictHostKeyChecking`：归一化为 `yes | no | ask | accept-new`，没写为 null。
+- `identityAgent`：`IdentityAgent` 原文（路径、`$VAR`、`SSH_AUTH_SOCK` 或 `none`），没写为 null。
+  `$VAR` 名字不合法或 `${` 没闭合时记进 `ignored`（`invalidValue`）。
 - `userKnownHostsFiles`、`globalKnownHostsFiles`：路径数组，可多个；`none` 写成 `["none"]`；没写为空数组。
 
 新增字段一律可省略，旧版 JSON 仍能解码。

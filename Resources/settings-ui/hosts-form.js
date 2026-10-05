@@ -174,6 +174,7 @@
     advanced.appendChild(field(t("校验主机密钥"), select("verifyHostKeys", [["", inheritLabel(onOff(inherited("verifyHostKeys")))], ["true", t("开")], ["false", t("关")]], triState.fromValue(profile.verifyHostKeys))));
     advanced.appendChild(field(t("Agent 转发"), select("agentForward", [["", inheritLabel(onOff(inherited("agentForward")))], ["true", t("开")], ["false", t("关")]], triState.fromValue(profile.agentForward))));
     advanced.appendChild(field(t("只用指定私钥"), select("identitiesOnly", [["", inheritLabel(onOff(inherited("identitiesOnly")))], ["true", t("开")], ["false", t("关")]], triState.fromValue(profile.identitiesOnly)), t("开启后只尝试上面的私钥文件，不再用 agent 里的其它密钥（IdentitiesOnly）")));
+    advanced.appendChild(field(t("Agent 套接字"), input("identityAgent", profile.identityAgent, isDefaults ? "SSH_AUTH_SOCK" : defaults.identityAgent ?? "SSH_AUTH_SOCK"), t("认证用的 ssh-agent 套接字路径（IdentityAgent），可用 ~；填 none 不用 agent，留空使用 SSH_AUTH_SOCK")));
     // known_hosts 与私钥一样按「非空才覆盖」继承：留空就用默认项，再缺省为 ~/.ssh/known_hosts。
     const knownHosts = element("textarea", "control hosts-identity");
     knownHosts.rows = 2;
@@ -182,7 +183,7 @@
     knownHosts.placeholder = (inherited("knownHostsFiles")?.length ? inherited("knownHostsFiles") : builtin.knownHostsFiles).join("\n");
     fields.knownHostsFiles = knownHosts;
     advanced.appendChild(field(t("known_hosts 文件"), knownHosts, t("每行一个；留空使用默认值 {path}", { path: builtin.knownHostsFiles.join("、") })));
-    const advancedKeys = ["proxyCommand", "socksProxy", "httpProxy", "keepaliveInterval", "keepaliveCountMax", "connectTimeout", "verifyHostKeys", "agentForward", "identitiesOnly"];
+    const advancedKeys = ["proxyCommand", "socksProxy", "httpProxy", "keepaliveInterval", "keepaliveCountMax", "connectTimeout", "verifyHostKeys", "agentForward", "identitiesOnly", "identityAgent"];
     section(t("高级"), advancedKeys.some(key => profile[key] != null && profile[key] !== "") || Boolean(profile.knownHostsFiles?.length), advanced);
 
     dialog.appendChild(form);
@@ -206,6 +207,7 @@
       next.identityFiles = identity.value.split("\n").map(line => line.trim()).filter(Boolean);
       if (fields.jumpHostID.value) next.jumpHostID = fields.jumpHostID.value;
       if (text("proxyCommand")) next.proxyCommand = text("proxyCommand");
+      if (text("identityAgent")) next.identityAgent = text("identityAgent");
       for (const [key, label] of [["socksProxy", t("SOCKS 代理")], ["httpProxy", t("HTTP 代理")]]) {
         if (!text(key)) continue;
         const parsed = parseHostPort(text(key));

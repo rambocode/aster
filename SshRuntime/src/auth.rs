@@ -236,10 +236,11 @@ async fn try_agent(
     handle: &mut Handle<ClientHandler>,
     ctx: &AuthContext<'_>,
 ) -> Result<Outcome, SshFailure> {
-    let Some(sock) = ctx.env.agent_sock.as_ref() else {
+    // spec 的 identityAgent 优先于继承到的 SSH_AUTH_SOCK；`none` 或解析不出 socket 就跳过 agent。
+    let Some(sock) = ctx.env.agent_socket(ctx.spec) else {
         return Ok(Outcome::Skipped);
     };
-    let mut agent = match AgentClient::connect_uds(sock).await {
+    let mut agent = match AgentClient::connect_uds(&sock).await {
         Ok(a) => a,
         Err(e) => {
             log_debug!("ssh-agent unavailable: {e}");

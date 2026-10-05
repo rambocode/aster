@@ -142,6 +142,8 @@ impl Resolver<'_> {
                 })
                 .collect();
             spec.identities_only = e.identities_only.unwrap_or(false);
+            // 原文照传：环境变量与 `%` 记号在用到时由 `Env::agent_socket` 展开，跳板各用各的。
+            spec.identity_agent = e.identity_agent.clone();
             spec.known_hosts_files = self.expand_paths(&e.user_known_hosts_files, &spec);
             if !e.global_known_hosts_files.is_empty() {
                 spec.global_known_hosts_files =
@@ -319,6 +321,7 @@ mod tests {
                 ],
                 global_known_hosts_files: vec!["none".into()],
                 identities_only: Some(true),
+                identity_agent: Some("~/agents/%h.sock".into()),
                 ..Default::default()
             }),
             "slow" => Some(HostEntry {
@@ -331,6 +334,7 @@ mod tests {
                 alias: "bastion".into(),
                 host_name: Some("b.example".into()),
                 user: Some("ops".into()),
+                identity_agent: Some("none".into()),
                 ..Default::default()
             }),
             "loop" => Some(HostEntry {
@@ -369,6 +373,7 @@ mod tests {
         assert!(spec.agent_forward);
         assert!(spec.accept_new_host_keys);
         assert!(spec.identities_only);
+        assert_eq!(spec.identity_agent.as_deref(), Some("~/agents/%h.sock"));
         assert_eq!(
             spec.known_hosts_files,
             vec![
@@ -389,6 +394,9 @@ mod tests {
             ("b.example", "ops", 22)
         );
         assert!(b.jump.is_none());
+        // 跳板各用各的 IdentityAgent：没写的不继承目标的，写了 none 的保持 none。
+        assert_eq!(j2.identity_agent, None);
+        assert_eq!(b.identity_agent.as_deref(), Some("none"));
     }
 
     #[test]

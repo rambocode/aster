@@ -122,3 +122,24 @@ func sshConfigImportParsesFirstHop() {
   let legacy = try #require(result.hosts.first { $0.name == "legacy" })
   #expect(legacy.knownHostsFiles == nil)
 }
+
+/// 测：导入带上 `IdentityAgent`；ssh_config 里删掉这一行后重新导入会清掉旧值；旧版输出缺这个键照常解码。
+@Test func sshConfigImportCarriesIdentityAgent() throws {
+  let json = #"{"hosts":[{"alias":"agent-feedback","hostName":"127.0.0.1","user":"fixture","#
+    + #""identityFiles":[],"identityAgent":"/tmp/fixture-agent.sock","forwards":[]},"#
+    + #"{"alias":"off","identityFiles":[],"identityAgent":"none","forwards":[]},"#
+    + #"{"alias":"legacy","identityFiles":[],"forwards":[]}],"ignored":[]}"#
+  let listing = try JSONDecoder().decode(SSHConfigListing.self, from: Data(json.utf8))
+  #expect(listing.hosts[2].identityAgent == nil)
+  let result = SSHConfigImport.merge(listing, into: [.emptyDefaults()])
+  let feedback = try #require(result.hosts.first { $0.name == "agent-feedback" })
+  #expect(feedback.identityAgent == "/tmp/fixture-agent.sock")
+  #expect(result.hosts.first { $0.name == "off" }?.identityAgent == "none")
+  #expect(result.hosts.first { $0.name == "legacy" }?.identityAgent == nil)
+
+  var removed = listing
+  removed.hosts[0].identityAgent = nil
+  let again = SSHConfigImport.merge(removed, into: result.hosts)
+  #expect(again.hosts.first { $0.id == feedback.id }?.identityAgent == nil)
+  #expect(again.updated == 1 && again.unchanged == 2)
+}

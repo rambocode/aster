@@ -118,6 +118,10 @@ pub struct ResolvedSpec {
     /// `["none"]` 表示没有用户级文件（UserKnownHostsFile none）。
     #[serde(default)]
     pub known_hosts_files: Vec<String>,
+    /// 这一跳用的 ssh-agent（OpenSSH IdentityAgent）原文：`none`、`SSH_AUTH_SOCK`、`$VAR` 或 socket
+    /// 路径；由 broker 在使用时展开（见 `Env::agent_socket`）。None 表示用 broker 继承到的 `SSH_AUTH_SOCK`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_agent: Option<String>,
     #[serde(default)]
     pub agent_forward: bool,
     #[serde(default)]
@@ -188,6 +192,7 @@ impl ResolvedSpec {
             identity_files: Vec::new(),
             identities_only: false,
             known_hosts_files: Vec::new(),
+            identity_agent: None,
             agent_forward: false,
             proxy_command: None,
             socks_proxy: None,

@@ -2,6 +2,7 @@
 //! 入站 channel、会话结束通知。
 //! 参考 tty7 `daemon/ssh/handler.rs`@458c923（Apache-2.0），确认流程改为经控制通道问 App。
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -32,8 +33,9 @@ pub struct ClientHandler {
     /// 正在等用户确认主机密钥（暂停握手计时）。
     pub prompting: Arc<AtomicBool>,
     pub remote_forwards: RemoteForwards,
-    /// 是否接受服务器发来的 agent 转发 channel。
-    pub agent_forward: bool,
+    /// 服务器发来 agent 转发 channel 时要接到的本机 agent socket（已按 identityAgent 解析）；
+    /// None 表示没开 agentForward 或这一跳没有 agent，不接受。
+    pub forward_agent_sock: Option<PathBuf>,
     /// 会话结束时发出原因（None 表示正常断开）。
     pub closed: Option<oneshot::Sender<Option<String>>>,
 }
@@ -191,14 +193,14 @@ impl russh::client::Handler for ClientHandler {
         Ok(())
     }
 
-    /// agent 转发：只在 spec 打开了 agentForward 且本机有 agent 时接受。
+    /// agent 转发：只在 spec 打开了 agentForward 且这一跳有 agent 时接受。
     async fn server_channel_open_agent_forward(
         &mut self,
         channel: Channel<Msg>,
         reply: ChannelOpenHandle,
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
-        let Some(sock) = self.env.agent_sock.clone().filter(|_| self.agent_forward) else {
+        let Some(sock) = self.forward_agent_sock.clone() else {
             return Ok(());
         };
         reply.accept().await;

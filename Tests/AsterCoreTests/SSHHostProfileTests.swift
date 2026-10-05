@@ -285,3 +285,33 @@ private func makeJumpChain(count: Int) -> [SSHHostProfile] {
   #expect(json?["knownHostsFiles"] as? [String] == ["/Users/me/.orbstack/ssh/known_hosts"])
   #expect(json?["identitiesOnly"] as? Bool == true)
 }
+
+/// 测：`identityAgent` 主机优先、其次默认项，原文交给 broker 展开；跳板用自己的值；没写时不编码这个键。
+@Test func sshHostProfileResolvesIdentityAgentPerHop() throws {
+  let defaults = SSHHostProfile(
+    id: SSHHostProfile.defaultsProfileID, name: "Defaults", identityAgent: "$DEFAULT_AGENT")
+  let bastion = SSHHostProfile(name: "bastion", host: "b.example.com", identityAgent: "none")
+  let own = SSHHostProfile(
+    name: "own", host: "a.example.com", jumpHostID: bastion.id,
+    identityAgent: " ~/Library/Group Containers/x/agent.sock ")
+  let inherits = SSHHostProfile(name: "inherits", host: "c.example.com", identityAgent: "  ")
+  let hosts = [defaults, bastion, own, inherits]
+
+  let ownSpec = try SSHHostResolver.resolve(own.id, in: hosts, homeDirectory: "/Users/me", localUser: "me")
+  #expect(ownSpec.identityAgent == "~/Library/Group Containers/x/agent.sock")
+  #expect(ownSpec.jump?.spec.identityAgent == "none")
+  let inheritsSpec = try SSHHostResolver.resolve(
+    inherits.id, in: hosts, homeDirectory: "/Users/me", localUser: "me")
+  #expect(inheritsSpec.identityAgent == "$DEFAULT_AGENT")
+
+  let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ownSpec)) as? [String: Any]
+  #expect(json?["identityAgent"] as? String == "~/Library/Group Containers/x/agent.sock")
+  #expect((json?["jump"] as? [String: Any])?["identityAgent"] as? String == "none")
+
+  let plain = try SSHHostResolver.resolve(
+    inherits.id, in: [inherits], homeDirectory: "/Users/me", localUser: "me")
+  #expect(plain.identityAgent == nil)
+  let plainJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any]
+  #expect(plainJSON?["identityAgent"] == nil)
+  #expect(try JSONDecoder().decode(SSHResolvedSpec.self, from: JSONEncoder().encode(plain)) == plain)
+}

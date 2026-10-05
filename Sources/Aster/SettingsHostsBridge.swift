@@ -257,6 +257,7 @@ final class SettingsHostsBridge {
     object["verifyHostKeys"] = profile.verifyHostKeys
     object["identitiesOnly"] = profile.identitiesOnly
     object["knownHostsFiles"] = profile.knownHostsFiles
+    object["identityAgent"] = profile.identityAgent
     return object
   }
 
