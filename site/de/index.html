@@ -41,7 +41,7 @@
   <link rel="stylesheet" href="/assets/fonts.css">
   <link rel="stylesheet" href="/assets/style.css">
   <!-- i18n:jsonld:start -->
-  <script type="application/ld+json" id="jsonld">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://aster.foo/#organization","name":"Aster Terminal","url":"https://aster.foo/","logo":"https://aster.foo/assets/aster-icon.svg","sameAs":["https://github.com/rambocode/aster"]},{"@type":"WebSite","@id":"https://aster.foo/#website","name":"Aster Terminal","alternateName":"Aster","url":"https://aster.foo/","description":"Website und Benutzerdokumentation von Aster: ein quelloffener, nativer Terminal-Arbeitsbereich für macOS 14+.","inLanguage":["zh-CN","en","ja","de","fr"],"publisher":{"@id":"https://aster.foo/#organization"}},{"@type":"SoftwareApplication","@id":"https://aster.foo/#software","name":"Aster","alternateName":"Aster Terminal","description":"Aster ist ein quelloffener, nativer Terminal-Arbeitsbereich für macOS 14+. Er ist mit AppKit gebaut, das Terminal läuft auf dem Ghostty-Kern, und dank rekursiver Splits lassen sich Terminals, Dateibrowser, Editoren, Vorschauen und Agent-Sitzungen nebeneinander in einem Fenster nutzen.","url":"https://aster.foo/","image":"https://aster.foo/assets/social-card.png","applicationCategory":"DeveloperApplication","operatingSystem":"macOS 14+","processorRequirements":"Apple silicon (arm64)","softwareVersion":"0.6.17","releaseNotes":"https://github.com/rambocode/aster/releases/tag/v0.6.17","downloadUrl":"https://github.com/rambocode/aster/releases/latest","installUrl":"https://github.com/rambocode/aster/releases/latest","softwareHelp":{"@type":"CreativeWork","url":"https://aster.foo/docs/"},"codeRepository":"https://github.com/rambocode/aster","license":"https://github.com/rambocode/aster/blob/master/LICENSE","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"CNY","url":"https://github.com/rambocode/aster/releases/latest"},"inLanguage":["zh-CN","zh-TW","en","ja","fr","de"],"featureList":["Vollständiges VT100/xterm-Terminal auf Basis des Ghostty-Kerns, mit ANSI-True-Color, Mausunterstützung, Hyperlinks und Vollbild-TUIs wie vim, top und fzf","Mehrere Tabs mit drei Tab-Layouts: vertikal, oben und unten","Rekursive Splits in jede Richtung, die Terminals, Dateibrowser, Editoren und Vorschauen in einem Fenster kombinieren","File Pane mit Vorschau für Quellcode, Markdown, Bilder, PDF, Diff, Hex und Agent-Transcripts","Agent-Sitzungen wie Claude Code und Codex erhalten automatisch Titel, Laufstatus und eine Benachrichtigung, wenn sie fertig sind","Lokale Autovervollständigung: 714 integrierte Fig-Befehls-Specs; Vervollständigung und Lernen finden nur auf dem eigenen Mac statt","Entfernte Rechner und native SSH-Tabs; Passwörter liegen nur im macOS-Schlüsselbund","24 integrierte Themes mit Live-Vorschau im Terminal","Import und Export von Arbeitsbereichen als .asterrecipe sowie Wiederherstellung der Sitzungen beim Start","Automatische Updates über Sparkle 2, die vor der Installation sowohl die EdDSA-Signatur als auch die macOS-Notarisierung prüfen","Oberfläche in vereinfachtem Chinesisch, traditionellem Chinesisch, Englisch, Japanisch, Französisch und Deutsch"],"author":{"@id":"https://aster.foo/#organization"},"publisher":{"@id":"https://aster.foo/#organization"},"sameAs":["https://github.com/rambocode/aster"]},{"@type":"FAQPage","@id":"https://aster.foo/de/#faq","inLanguage":"de","mainEntity":[{"@type":"Question","name":"Läuft Aster auf meinem Mac?","acceptedAnswer":{"@type":"Answer","text":"Aster benötigt macOS 14 Sonoma oder neuer. Die aktuellen Installationspakete enthalten nur die Version für Apple Silicon (arm64); Macs mit Intel-Prozessor können Aster nicht ausführen."}},{"@type":"Question","name":"Ist Aster kostenlos?","acceptedAnswer":{"@type":"Answer","text":"Ja. Aster ist quelloffen unter der MIT-Lizenz; das signierte und notarisierte DMG sowie der gesamte Quellcode sind kostenlos auf GitHub erhältlich, ganz ohne Konto."}},{"@type":"Question","name":"Was unterscheidet Aster von Terminals wie iTerm2 oder Warp?","acceptedAnswer":{"@type":"Answer","text":"Aster ist ein nativer, mit AppKit gebauter Arbeitsbereich: Das Terminal mit Ghostty-Kern teilt sich per rekursiver Splits ein Fenster mit Dateibrowsern, Editoren und Vorschau. Dazu kommen Titel und Status für Agent-Sitzungen wie Claude Code und Codex, lokale Vervollständigung mit 714 Befehls-Specs und Arbeitsbereiche, die sich als .asterrecipe exportieren und beim Start wiederherstellen lassen."}},{"@type":"Question","name":"Unterstützt Aster Remote-Server und SSH?","acceptedAnswer":{"@type":"Answer","text":"Ja. Unter „Einstellungen ▸ Host“ speicherst du SSH-Hosts und öffnest direkt native SSH-Tabs; Passwörter liegen nur im macOS-Schlüsselbund. Außerdem kannst du Linux-Server und Ähnliches als entfernte Rechner hinzufügen: Die Terminals laufen dort in einem Hintergrund-Sitzungsdienst, sodass Prozesse und Layouts erhalten bleiben, auch wenn du Aster schließt oder die Verbindung abreißt."}},{"@type":"Question","name":"Lädt Aster meine Daten hoch?","acceptedAnswer":{"@type":"Answer","text":"Aster erhebt keine Nutzungsdaten: Vervollständigung, Lernen und das Ranking häufig genutzter Verzeichnisse laufen nur lokal, und auch die Update-Prüfung sendet weder Nutzungsdaten noch Systeminformationen. Funktionen, die Inhalte übers Netz senden, etwa Absturzberichte oder das Verdichten des Projektgedächtnisses mit einem CLI-Agent, sind standardmäßig aus und arbeiten erst, wenn du sie in den Einstellungen einschaltest."}},{"@type":"Question","name":"Wie aktualisiert sich Aster?","acceptedAnswer":{"@type":"Answer","text":"Aster bringt Sparkle 2 mit und prüft standardmäßig einmal täglich im Hintergrund die offizielle Update-Quelle; manuell geht es über „Aster ▸ Nach Updates suchen…“. Installiert wird ein Paket nur, wenn es sowohl die EdDSA-Signaturprüfung als auch die macOS-Notarisierung besteht. Versionen bis einschließlich 0.4.1 haben keine Update-Komponente; dort einmal das neue DMG manuell laden."}}]},{"@type":"WebPage","@id":"https://aster.foo/de/#webpage","url":"https://aster.foo/de/","name":"Aster — Nativer Terminal-Arbeitsbereich für macOS","inLanguage":"de","isPartOf":{"@id":"https://aster.foo/#website"},"about":{"@id":"https://aster.foo/#software"},"mainEntity":{"@id":"https://aster.foo/de/#faq"}}]}</script>
+  <script type="application/ld+json" id="jsonld">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://aster.foo/#organization","name":"Aster Terminal","url":"https://aster.foo/","logo":"https://aster.foo/assets/aster-icon.svg","sameAs":["https://github.com/OpenFabrica/aster"]},{"@type":"WebSite","@id":"https://aster.foo/#website","name":"Aster Terminal","alternateName":"Aster","url":"https://aster.foo/","description":"Website und Benutzerdokumentation von Aster: ein quelloffener, nativer Terminal-Arbeitsbereich für macOS 14+.","inLanguage":["zh-CN","en","ja","de","fr"],"publisher":{"@id":"https://aster.foo/#organization"}},{"@type":"SoftwareApplication","@id":"https://aster.foo/#software","name":"Aster","alternateName":"Aster Terminal","description":"Aster ist ein quelloffener, nativer Terminal-Arbeitsbereich für macOS 14+. Er ist mit AppKit gebaut, das Terminal läuft auf dem Ghostty-Kern, und dank rekursiver Splits lassen sich Terminals, Dateibrowser, Editoren, Vorschauen und Agent-Sitzungen nebeneinander in einem Fenster nutzen.","url":"https://aster.foo/","image":"https://aster.foo/assets/social-card.png","applicationCategory":"DeveloperApplication","operatingSystem":"macOS 14+","processorRequirements":"Apple silicon (arm64)","softwareVersion":"0.6.17","releaseNotes":"https://github.com/OpenFabrica/aster/releases/tag/v0.6.17","downloadUrl":"https://github.com/OpenFabrica/aster/releases/latest","installUrl":"https://github.com/OpenFabrica/aster/releases/latest","softwareHelp":{"@type":"CreativeWork","url":"https://aster.foo/docs/"},"codeRepository":"https://github.com/OpenFabrica/aster","license":"https://github.com/OpenFabrica/aster/blob/master/LICENSE","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"CNY","url":"https://github.com/OpenFabrica/aster/releases/latest"},"inLanguage":["zh-CN","zh-TW","en","ja","fr","de"],"featureList":["Vollständiges VT100/xterm-Terminal auf Basis des Ghostty-Kerns, mit ANSI-True-Color, Mausunterstützung, Hyperlinks und Vollbild-TUIs wie vim, top und fzf","Mehrere Tabs mit drei Tab-Layouts: vertikal, oben und unten","Rekursive Splits in jede Richtung, die Terminals, Dateibrowser, Editoren und Vorschauen in einem Fenster kombinieren","File Pane mit Vorschau für Quellcode, Markdown, Bilder, PDF, Diff, Hex und Agent-Transcripts","Agent-Sitzungen wie Claude Code und Codex erhalten automatisch Titel, Laufstatus und eine Benachrichtigung, wenn sie fertig sind","Lokale Autovervollständigung: 714 integrierte Fig-Befehls-Specs; Vervollständigung und Lernen finden nur auf dem eigenen Mac statt","Entfernte Rechner und native SSH-Tabs; Passwörter liegen nur im macOS-Schlüsselbund","24 integrierte Themes mit Live-Vorschau im Terminal","Import und Export von Arbeitsbereichen als .asterrecipe sowie Wiederherstellung der Sitzungen beim Start","Automatische Updates über Sparkle 2, die vor der Installation sowohl die EdDSA-Signatur als auch die macOS-Notarisierung prüfen","Oberfläche in vereinfachtem Chinesisch, traditionellem Chinesisch, Englisch, Japanisch, Französisch und Deutsch"],"author":{"@id":"https://aster.foo/#organization"},"publisher":{"@id":"https://aster.foo/#organization"},"sameAs":["https://github.com/OpenFabrica/aster"]},{"@type":"FAQPage","@id":"https://aster.foo/de/#faq","inLanguage":"de","mainEntity":[{"@type":"Question","name":"Läuft Aster auf meinem Mac?","acceptedAnswer":{"@type":"Answer","text":"Aster benötigt macOS 14 Sonoma oder neuer. Die aktuellen Installationspakete enthalten nur die Version für Apple Silicon (arm64); Macs mit Intel-Prozessor können Aster nicht ausführen."}},{"@type":"Question","name":"Ist Aster kostenlos?","acceptedAnswer":{"@type":"Answer","text":"Ja. Aster ist quelloffen unter der MIT-Lizenz; das signierte und notarisierte DMG sowie der gesamte Quellcode sind kostenlos auf GitHub erhältlich, ganz ohne Konto."}},{"@type":"Question","name":"Was unterscheidet Aster von Terminals wie iTerm2 oder Warp?","acceptedAnswer":{"@type":"Answer","text":"Aster ist ein nativer, mit AppKit gebauter Arbeitsbereich: Das Terminal mit Ghostty-Kern teilt sich per rekursiver Splits ein Fenster mit Dateibrowsern, Editoren und Vorschau. Dazu kommen Titel und Status für Agent-Sitzungen wie Claude Code und Codex, lokale Vervollständigung mit 714 Befehls-Specs und Arbeitsbereiche, die sich als .asterrecipe exportieren und beim Start wiederherstellen lassen."}},{"@type":"Question","name":"Unterstützt Aster Remote-Server und SSH?","acceptedAnswer":{"@type":"Answer","text":"Ja. Unter „Einstellungen ▸ Host“ speicherst du SSH-Hosts und öffnest direkt native SSH-Tabs; Passwörter liegen nur im macOS-Schlüsselbund. Außerdem kannst du Linux-Server und Ähnliches als entfernte Rechner hinzufügen: Die Terminals laufen dort in einem Hintergrund-Sitzungsdienst, sodass Prozesse und Layouts erhalten bleiben, auch wenn du Aster schließt oder die Verbindung abreißt."}},{"@type":"Question","name":"Lädt Aster meine Daten hoch?","acceptedAnswer":{"@type":"Answer","text":"Aster erhebt keine Nutzungsdaten: Vervollständigung, Lernen und das Ranking häufig genutzter Verzeichnisse laufen nur lokal, und auch die Update-Prüfung sendet weder Nutzungsdaten noch Systeminformationen. Funktionen, die Inhalte übers Netz senden, etwa Absturzberichte oder das Verdichten des Projektgedächtnisses mit einem CLI-Agent, sind standardmäßig aus und arbeiten erst, wenn du sie in den Einstellungen einschaltest."}},{"@type":"Question","name":"Wie aktualisiert sich Aster?","acceptedAnswer":{"@type":"Answer","text":"Aster bringt Sparkle 2 mit und prüft standardmäßig einmal täglich im Hintergrund die offizielle Update-Quelle; manuell geht es über „Aster ▸ Nach Updates suchen…“. Installiert wird ein Paket nur, wenn es sowohl die EdDSA-Signaturprüfung als auch die macOS-Notarisierung besteht. Versionen bis einschließlich 0.4.1 haben keine Update-Komponente; dort einmal das neue DMG manuell laden."}}]},{"@type":"WebPage","@id":"https://aster.foo/de/#webpage","url":"https://aster.foo/de/","name":"Aster — Nativer Terminal-Arbeitsbereich für macOS","inLanguage":"de","isPartOf":{"@id":"https://aster.foo/#website"},"about":{"@id":"https://aster.foo/#software"},"mainEntity":{"@id":"https://aster.foo/de/#faq"}}]}</script>
   <!-- i18n:jsonld:end -->
 </head>
 <body>
@@ -78,7 +78,7 @@
         <a href="#features">Funktionen</a>
         <a href="#voices">Arbeitsabläufe</a>
         <a href="/docs/en/">Doku (Englisch)</a>
-        <a href="https://github.com/rambocode/aster">GitHub</a>
+        <a href="https://github.com/OpenFabrica/aster">GitHub</a>
       </nav>
       <div class="nav-tools">
         <!-- i18n:menu:start -->
@@ -93,7 +93,7 @@
           </div>
         </details>
         <!-- i18n:menu:end -->
-        <a class="pill" href="https://github.com/rambocode/aster/releases/latest">
+        <a class="pill" href="https://github.com/OpenFabrica/aster/releases/latest">
           <span>Aster laden</span>
           <svg><use href="#i-download"/></svg>
         </a>
@@ -106,7 +106,7 @@
       <a href="#features">Funktionen</a>
       <a href="#voices">Arbeitsabläufe</a>
       <a href="/docs/en/">Doku (Englisch)</a>
-      <a href="https://github.com/rambocode/aster">GitHub</a>
+      <a href="https://github.com/OpenFabrica/aster">GitHub</a>
     </nav>
   </header>
 
@@ -118,11 +118,11 @@
         <h1 id="hero-title">Aus Ideen wird<br>der <span class="hero-word">nächste Schritt<svg class="hero-underline" viewBox="0 0 300 18" aria-hidden="true"><path d="M3 11Q125-4 293 6"/><path d="M32 17Q174 5 263 13"/></svg></span><span class="type-caret" aria-hidden="true">_</span></h1>
         <p class="hero-lede">Aster ist ein quelloffener, nativer Terminal-Arbeitsbereich für macOS. Terminal, Dateivorschau, KI-Agent-Sitzungen und lokale Vervollständigung teilen sich ein Fenster, damit deine Gedanken in Bewegung bleiben.</p>
         <div class="hero-actions">
-          <a class="button button-dark" href="https://github.com/rambocode/aster/releases/latest">
+          <a class="button button-dark" href="https://github.com/OpenFabrica/aster/releases/latest">
             <span>Für Mac laden</span>
             <svg><use href="#i-download"/></svg>
           </a>
-          <a class="quiet-link" href="https://github.com/rambocode/aster">
+          <a class="quiet-link" href="https://github.com/OpenFabrica/aster">
             <svg><use href="#i-github"/></svg>
             <span>GitHub</span>
             <span class="gh-stars mono" id="gh-stars" aria-label="GitHub stars">★</span>
@@ -432,7 +432,7 @@
             <figcaption><span class="voice-avatar" aria-hidden="true">12</span><span>Tabs und Quick Terminal<small>Arbeitsabläufe</small></span></figcaption>
           </figure>
         </div>
-        <p class="voices-cta">Schon mit Aster gearbeitet? <a href="https://github.com/rambocode/aster/issues">Erzähl uns auf GitHub davon</a> — Reproduzierbare Probleme und konkretes Feedback zu Arbeitsabläufen sind willkommen.</p>
+        <p class="voices-cta">Schon mit Aster gearbeitet? <a href="https://github.com/OpenFabrica/aster/issues">Erzähl uns auf GitHub davon</a> — Reproduzierbare Probleme und konkretes Feedback zu Arbeitsabläufen sind willkommen.</p>
       </div>
     </section>
 
@@ -477,7 +477,7 @@
       <div class="closing-main">
         <h2 id="closing-title">Dein nächstes Vorhaben<br><span>beginnt hier.</span><b aria-hidden="true">_</b></h2>
         <div>
-          <a class="button button-light" href="https://github.com/rambocode/aster/releases/latest"><span>Aster laden</span><svg><use href="#i-download"/></svg></a>
+          <a class="button button-light" href="https://github.com/OpenFabrica/aster/releases/latest"><span>Aster laden</span><svg><use href="#i-download"/></svg></a>
           <p class="mono"><span>v0.6.17</span> · <span>macOS 14+ · Apple Silicon · kostenlos &amp; quelloffen</span></p>
         </div>
       </div>
@@ -494,22 +494,22 @@
       <div class="footer-cols">
         <div class="footer-col">
           <span class="col-head">Produkt</span>
-          <a href="https://github.com/rambocode/aster/releases/latest">Download</a>
-          <a href="https://github.com/rambocode/aster/releases">Changelog</a>
+          <a href="https://github.com/OpenFabrica/aster/releases/latest">Download</a>
+          <a href="https://github.com/OpenFabrica/aster/releases">Changelog</a>
           <a href="/docs/en/themes">Themenbibliothek (Englisch)</a>
         </div>
         <div class="footer-col">
           <span class="col-head">Doku (Englisch)</span>
           <a href="/docs/en/">Benutzerhandbuch (Englisch)</a>
-          <a href="https://github.com/rambocode/aster/tree/master/docs/developer">Entwickler-Doku (Chinesisch)</a>
+          <a href="https://github.com/OpenFabrica/aster/tree/master/docs/developer">Entwickler-Doku (Chinesisch)</a>
           <a href="/docs/en/faq">Häufige Fragen (Englisch)</a>
           <a href="/llms.txt">llms.txt</a>
         </div>
         <div class="footer-col">
           <span class="col-head">Projekt</span>
-          <a href="https://github.com/rambocode/aster">GitHub</a>
-          <a href="https://github.com/rambocode/aster/blob/master/LICENSE">MIT-Lizenz</a>
-          <a href="https://github.com/rambocode/aster/blob/master/THIRD-PARTY-NOTICES.md">Hinweise zu Drittanbietern</a>
+          <a href="https://github.com/OpenFabrica/aster">GitHub</a>
+          <a href="https://github.com/OpenFabrica/aster/blob/master/LICENSE">MIT-Lizenz</a>
+          <a href="https://github.com/OpenFabrica/aster/blob/master/THIRD-PARTY-NOTICES.md">Hinweise zu Drittanbietern</a>
         </div>
       </div>
     </div>

@@ -36,8 +36,8 @@ export default defineConfig({
           // /../ 绕过 VitePress base，回到对应落地页。
           { text: "首页", link: "/../", target: "_self" },
           { text: "用户指南", link: "/", activeMatch: "^/(?!en/)" },
-          { text: "开发者", link: "https://github.com/rambocode/aster/tree/master/docs/developer" },
-          { text: "更新日志", link: "https://github.com/rambocode/aster/releases" },
+          { text: "开发者", link: "https://github.com/OpenFabrica/aster/tree/master/docs/developer" },
+          { text: "更新日志", link: "https://github.com/OpenFabrica/aster/releases" },
         ],
         sidebar: { "/": sidebars.root },
         outline: { level: [2, 3], label: "本页目录" },
@@ -62,8 +62,8 @@ export default defineConfig({
         nav: [
           { text: "Home", link: "/../en/", target: "_self" },
           { text: "User Guide", link: "/en/", activeMatch: "^/en/" },
-          { text: "Developer Docs (Chinese)", link: "https://github.com/rambocode/aster/tree/master/docs/developer" },
-          { text: "Releases", link: "https://github.com/rambocode/aster/releases" },
+          { text: "Developer Docs (Chinese)", link: "https://github.com/OpenFabrica/aster/tree/master/docs/developer" },
+          { text: "Releases", link: "https://github.com/OpenFabrica/aster/releases" },
         ],
         sidebar: { "/en/": sidebars.en },
         outline: { level: [2, 3], label: "On this page" },
@@ -82,7 +82,7 @@ export default defineConfig({
 
   themeConfig: {
     logo: "/aster-icon.svg",
-    socialLinks: [{ icon: "github", link: "https://github.com/rambocode/aster" }],
+    socialLinks: [{ icon: "github", link: "https://github.com/OpenFabrica/aster" }],
     search: {
       provider: "local",
       options: {

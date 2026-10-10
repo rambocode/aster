@@ -41,7 +41,7 @@
   <link rel="stylesheet" href="/assets/fonts.css">
   <link rel="stylesheet" href="/assets/style.css">
   <!-- i18n:jsonld:start -->
-  <script type="application/ld+json" id="jsonld">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://aster.foo/#organization","name":"Aster Terminal","url":"https://aster.foo/","logo":"https://aster.foo/assets/aster-icon.svg","sameAs":["https://github.com/rambocode/aster"]},{"@type":"WebSite","@id":"https://aster.foo/#website","name":"Aster Terminal","alternateName":"Aster","url":"https://aster.foo/","description":"Aster の公式サイトとユーザードキュメント：macOS 14+ 向けのオープンソースのネイティブターミナルワークスペース。","inLanguage":["zh-CN","en","ja","de","fr"],"publisher":{"@id":"https://aster.foo/#organization"}},{"@type":"SoftwareApplication","@id":"https://aster.foo/#software","name":"Aster","alternateName":"Aster Terminal","description":"Aster は macOS 14+ 向けのオープンソースのネイティブターミナルワークスペースです。AppKit で作られ、ターミナルは Ghostty コアで動作します。再帰分割により、ターミナル、ファイルブラウザ、エディタ、プレビュー、エージェントセッションを一つのウィンドウに並べて使えます。","url":"https://aster.foo/","image":"https://aster.foo/assets/social-card.png","applicationCategory":"DeveloperApplication","operatingSystem":"macOS 14+","processorRequirements":"Apple silicon (arm64)","softwareVersion":"0.6.17","releaseNotes":"https://github.com/rambocode/aster/releases/tag/v0.6.17","downloadUrl":"https://github.com/rambocode/aster/releases/latest","installUrl":"https://github.com/rambocode/aster/releases/latest","softwareHelp":{"@type":"CreativeWork","url":"https://aster.foo/docs/"},"codeRepository":"https://github.com/rambocode/aster","license":"https://github.com/rambocode/aster/blob/master/LICENSE","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"CNY","url":"https://github.com/rambocode/aster/releases/latest"},"inLanguage":["zh-CN","zh-TW","en","ja","fr","de"],"featureList":["Ghostty コアをベースにした完全な VT100/xterm ターミナル。ANSI トゥルーカラー、マウス、ハイパーリンク、vim・top・fzf などのフルスクリーン TUI に対応","複数タブと、縦・上・下の 3 種類のタブレイアウト","どの方向にも再帰的に分割でき、ターミナル、ファイルブラウザ、エディタ、プレビューを同じウィンドウに混在して配置","File Pane でソースコード、Markdown、画像、PDF、diff、hex、エージェントの transcript をプレビュー","Claude Code や Codex などのエージェントセッションに、タイトル、実行状態、完了通知が自動で付く","ローカル補完：714 の Fig コマンド仕様を内蔵し、補完も学習も Mac の中だけで完結","リモートマシンとネイティブ SSH タブ。パスワードは macOS のキーチェーンにだけ保存","24 種類の内蔵テーマと、ターミナルのライブプレビュー",".asterrecipe によるワークスペースの読み込み・書き出しと、起動時のセッション復元","Sparkle 2 による自動アップデート。インストール前に EdDSA 署名と macOS の公証を両方とも検証","インターフェースは簡体字中国語、繁体字中国語、英語、日本語、フランス語、ドイツ語に対応"],"author":{"@id":"https://aster.foo/#organization"},"publisher":{"@id":"https://aster.foo/#organization"},"sameAs":["https://github.com/rambocode/aster"]},{"@type":"FAQPage","@id":"https://aster.foo/ja/#faq","inLanguage":"ja","mainEntity":[{"@type":"Question","name":"手元の Mac で Aster を使えますか？","acceptedAnswer":{"@type":"Answer","text":"Aster には macOS 14 Sonoma 以降が必要です。現在配布しているインストーラは Apple シリコン（arm64）版のみで、Intel プロセッサ搭載の Mac では動作しません。"}},{"@type":"Question","name":"Aster は無料ですか？","acceptedAnswer":{"@type":"Answer","text":"無料です。Aster は MIT ライセンスのオープンソースで、署名・公証済みの DMG インストーラとすべてのソースコードを GitHub から無料で入手できます。アカウント登録は不要です。"}},{"@type":"Question","name":"Aster は iTerm2 や Warp などのターミナルと何が違いますか？","acceptedAnswer":{"@type":"Answer","text":"Aster は AppKit で作られたネイティブのワークスペースです。Ghostty コアのターミナルを、ファイルブラウザ、エディタ、プレビューと再帰分割で同じウィンドウに並べられます。さらに Claude Code や Codex などのエージェントセッションのタイトルと状態表示、714 のコマンド仕様によるローカル補完、.asterrecipe として書き出せて起動時に復元できるワークスペースを備えています。"}},{"@type":"Question","name":"Aster はリモートサーバーや SSH に対応していますか？","acceptedAnswer":{"@type":"Answer","text":"対応しています。「設定 ▸ ホスト」に SSH ホストを保存すれば、ネイティブの SSH タブを直接開けます。パスワードは macOS のキーチェーンにだけ保存されます。Linux サーバーなどをリモートマシンとして追加することもでき、ターミナルはリモートのバックグラウンドセッションサービスで動くため、Aster を閉じてもネットワークが切れても、プロセスとレイアウトはそのまま残ります。"}},{"@type":"Question","name":"Aster はデータを送信しますか？","acceptedAnswer":{"@type":"Answer","text":"Aster は利用データを収集しません。補完、学習、よく使うディレクトリのランキングはすべてローカルで行われ、アップデートの確認でも利用データやシステム情報は送信しません。クラッシュレポートや、CLI エージェントでプロジェクトメモリを要約する機能など、ネットワーク経由で内容を送る機能はデフォルトでオフで、設定で手動でオンにしたときだけ動作します。"}},{"@type":"Question","name":"Aster はどうやってアップデートしますか？","acceptedAnswer":{"@type":"Answer","text":"Aster には Sparkle 2 が組み込まれており、デフォルトで 1 日 1 回バックグラウンドで公式の配信元を確認します。メニューの「Aster ▸ アップデートを確認…」から手動でも確認できます。インストーラは EdDSA 署名と macOS の公証の両方の検証を通過したときだけインストールされます。0.4.1 以前のバージョンにはアップデート機能がないため、新しい DMG を一度だけ手動でダウンロードしてください。"}}]},{"@type":"WebPage","@id":"https://aster.foo/ja/#webpage","url":"https://aster.foo/ja/","name":"Aster — ネイティブ macOS ターミナルワークスペース","inLanguage":"ja","isPartOf":{"@id":"https://aster.foo/#website"},"about":{"@id":"https://aster.foo/#software"},"mainEntity":{"@id":"https://aster.foo/ja/#faq"}}]}</script>
+  <script type="application/ld+json" id="jsonld">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://aster.foo/#organization","name":"Aster Terminal","url":"https://aster.foo/","logo":"https://aster.foo/assets/aster-icon.svg","sameAs":["https://github.com/OpenFabrica/aster"]},{"@type":"WebSite","@id":"https://aster.foo/#website","name":"Aster Terminal","alternateName":"Aster","url":"https://aster.foo/","description":"Aster の公式サイトとユーザードキュメント：macOS 14+ 向けのオープンソースのネイティブターミナルワークスペース。","inLanguage":["zh-CN","en","ja","de","fr"],"publisher":{"@id":"https://aster.foo/#organization"}},{"@type":"SoftwareApplication","@id":"https://aster.foo/#software","name":"Aster","alternateName":"Aster Terminal","description":"Aster は macOS 14+ 向けのオープンソースのネイティブターミナルワークスペースです。AppKit で作られ、ターミナルは Ghostty コアで動作します。再帰分割により、ターミナル、ファイルブラウザ、エディタ、プレビュー、エージェントセッションを一つのウィンドウに並べて使えます。","url":"https://aster.foo/","image":"https://aster.foo/assets/social-card.png","applicationCategory":"DeveloperApplication","operatingSystem":"macOS 14+","processorRequirements":"Apple silicon (arm64)","softwareVersion":"0.6.17","releaseNotes":"https://github.com/OpenFabrica/aster/releases/tag/v0.6.17","downloadUrl":"https://github.com/OpenFabrica/aster/releases/latest","installUrl":"https://github.com/OpenFabrica/aster/releases/latest","softwareHelp":{"@type":"CreativeWork","url":"https://aster.foo/docs/"},"codeRepository":"https://github.com/OpenFabrica/aster","license":"https://github.com/OpenFabrica/aster/blob/master/LICENSE","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"CNY","url":"https://github.com/OpenFabrica/aster/releases/latest"},"inLanguage":["zh-CN","zh-TW","en","ja","fr","de"],"featureList":["Ghostty コアをベースにした完全な VT100/xterm ターミナル。ANSI トゥルーカラー、マウス、ハイパーリンク、vim・top・fzf などのフルスクリーン TUI に対応","複数タブと、縦・上・下の 3 種類のタブレイアウト","どの方向にも再帰的に分割でき、ターミナル、ファイルブラウザ、エディタ、プレビューを同じウィンドウに混在して配置","File Pane でソースコード、Markdown、画像、PDF、diff、hex、エージェントの transcript をプレビュー","Claude Code や Codex などのエージェントセッションに、タイトル、実行状態、完了通知が自動で付く","ローカル補完：714 の Fig コマンド仕様を内蔵し、補完も学習も Mac の中だけで完結","リモートマシンとネイティブ SSH タブ。パスワードは macOS のキーチェーンにだけ保存","24 種類の内蔵テーマと、ターミナルのライブプレビュー",".asterrecipe によるワークスペースの読み込み・書き出しと、起動時のセッション復元","Sparkle 2 による自動アップデート。インストール前に EdDSA 署名と macOS の公証を両方とも検証","インターフェースは簡体字中国語、繁体字中国語、英語、日本語、フランス語、ドイツ語に対応"],"author":{"@id":"https://aster.foo/#organization"},"publisher":{"@id":"https://aster.foo/#organization"},"sameAs":["https://github.com/OpenFabrica/aster"]},{"@type":"FAQPage","@id":"https://aster.foo/ja/#faq","inLanguage":"ja","mainEntity":[{"@type":"Question","name":"手元の Mac で Aster を使えますか？","acceptedAnswer":{"@type":"Answer","text":"Aster には macOS 14 Sonoma 以降が必要です。現在配布しているインストーラは Apple シリコン（arm64）版のみで、Intel プロセッサ搭載の Mac では動作しません。"}},{"@type":"Question","name":"Aster は無料ですか？","acceptedAnswer":{"@type":"Answer","text":"無料です。Aster は MIT ライセンスのオープンソースで、署名・公証済みの DMG インストーラとすべてのソースコードを GitHub から無料で入手できます。アカウント登録は不要です。"}},{"@type":"Question","name":"Aster は iTerm2 や Warp などのターミナルと何が違いますか？","acceptedAnswer":{"@type":"Answer","text":"Aster は AppKit で作られたネイティブのワークスペースです。Ghostty コアのターミナルを、ファイルブラウザ、エディタ、プレビューと再帰分割で同じウィンドウに並べられます。さらに Claude Code や Codex などのエージェントセッションのタイトルと状態表示、714 のコマンド仕様によるローカル補完、.asterrecipe として書き出せて起動時に復元できるワークスペースを備えています。"}},{"@type":"Question","name":"Aster はリモートサーバーや SSH に対応していますか？","acceptedAnswer":{"@type":"Answer","text":"対応しています。「設定 ▸ ホスト」に SSH ホストを保存すれば、ネイティブの SSH タブを直接開けます。パスワードは macOS のキーチェーンにだけ保存されます。Linux サーバーなどをリモートマシンとして追加することもでき、ターミナルはリモートのバックグラウンドセッションサービスで動くため、Aster を閉じてもネットワークが切れても、プロセスとレイアウトはそのまま残ります。"}},{"@type":"Question","name":"Aster はデータを送信しますか？","acceptedAnswer":{"@type":"Answer","text":"Aster は利用データを収集しません。補完、学習、よく使うディレクトリのランキングはすべてローカルで行われ、アップデートの確認でも利用データやシステム情報は送信しません。クラッシュレポートや、CLI エージェントでプロジェクトメモリを要約する機能など、ネットワーク経由で内容を送る機能はデフォルトでオフで、設定で手動でオンにしたときだけ動作します。"}},{"@type":"Question","name":"Aster はどうやってアップデートしますか？","acceptedAnswer":{"@type":"Answer","text":"Aster には Sparkle 2 が組み込まれており、デフォルトで 1 日 1 回バックグラウンドで公式の配信元を確認します。メニューの「Aster ▸ アップデートを確認…」から手動でも確認できます。インストーラは EdDSA 署名と macOS の公証の両方の検証を通過したときだけインストールされます。0.4.1 以前のバージョンにはアップデート機能がないため、新しい DMG を一度だけ手動でダウンロードしてください。"}}]},{"@type":"WebPage","@id":"https://aster.foo/ja/#webpage","url":"https://aster.foo/ja/","name":"Aster — ネイティブ macOS ターミナルワークスペース","inLanguage":"ja","isPartOf":{"@id":"https://aster.foo/#website"},"about":{"@id":"https://aster.foo/#software"},"mainEntity":{"@id":"https://aster.foo/ja/#faq"}}]}</script>
   <!-- i18n:jsonld:end -->
 </head>
 <body>
@@ -78,7 +78,7 @@
         <a href="#features">機能</a>
         <a href="#voices">ワークフロー例</a>
         <a href="/docs/en/">ドキュメント（英語）</a>
-        <a href="https://github.com/rambocode/aster">GitHub</a>
+        <a href="https://github.com/OpenFabrica/aster">GitHub</a>
       </nav>
       <div class="nav-tools">
         <!-- i18n:menu:start -->
@@ -93,7 +93,7 @@
           </div>
         </details>
         <!-- i18n:menu:end -->
-        <a class="pill" href="https://github.com/rambocode/aster/releases/latest">
+        <a class="pill" href="https://github.com/OpenFabrica/aster/releases/latest">
           <span>Aster をダウンロード</span>
           <svg><use href="#i-download"/></svg>
         </a>
@@ -106,7 +106,7 @@
       <a href="#features">機能</a>
       <a href="#voices">ワークフロー例</a>
       <a href="/docs/en/">ドキュメント（英語）</a>
-      <a href="https://github.com/rambocode/aster">GitHub</a>
+      <a href="https://github.com/OpenFabrica/aster">GitHub</a>
     </nav>
   </header>
 
@@ -118,11 +118,11 @@
         <h1 id="hero-title">アイデアを、<br><span class="hero-word">次の一手<svg class="hero-underline" viewBox="0 0 300 18" aria-hidden="true"><path d="M3 11Q125-4 293 6"/><path d="M32 17Q174 5 263 13"/></svg></span>へ<span class="type-caret" aria-hidden="true">_</span></h1>
         <p class="hero-lede">Aster はオープンソースのネイティブ macOS ターミナルワークスペースです。ターミナル、ファイルプレビュー、AI エージェントのセッション、ローカル補完を一つのウィンドウにまとめ、考えを止めずに前へ進めます。</p>
         <div class="hero-actions">
-          <a class="button button-dark" href="https://github.com/rambocode/aster/releases/latest">
+          <a class="button button-dark" href="https://github.com/OpenFabrica/aster/releases/latest">
             <span>Mac 版をダウンロード</span>
             <svg><use href="#i-download"/></svg>
           </a>
-          <a class="quiet-link" href="https://github.com/rambocode/aster">
+          <a class="quiet-link" href="https://github.com/OpenFabrica/aster">
             <svg><use href="#i-github"/></svg>
             <span>GitHub</span>
             <span class="gh-stars mono" id="gh-stars" aria-label="GitHub stars">★</span>
@@ -432,7 +432,7 @@
             <figcaption><span class="voice-avatar" aria-hidden="true">12</span><span>タブと Quick Terminal<small>ワークフロー例</small></span></figcaption>
           </figure>
         </div>
-        <p class="voices-cta">Aster を使ってみましたか？<a href="https://github.com/rambocode/aster/issues">GitHub で感想を聞かせてください</a> — 再現できる問題や具体的なワークフローのフィードバックをお寄せください。</p>
+        <p class="voices-cta">Aster を使ってみましたか？<a href="https://github.com/OpenFabrica/aster/issues">GitHub で感想を聞かせてください</a> — 再現できる問題や具体的なワークフローのフィードバックをお寄せください。</p>
       </div>
     </section>
 
@@ -477,7 +477,7 @@
       <div class="closing-main">
         <h2 id="closing-title">次にやりたいことは、<br><span>ここから始まる。</span><b aria-hidden="true">_</b></h2>
         <div>
-          <a class="button button-light" href="https://github.com/rambocode/aster/releases/latest"><span>Aster をダウンロード</span><svg><use href="#i-download"/></svg></a>
+          <a class="button button-light" href="https://github.com/OpenFabrica/aster/releases/latest"><span>Aster をダウンロード</span><svg><use href="#i-download"/></svg></a>
           <p class="mono"><span>v0.6.17</span> · <span>macOS 14+ · Apple シリコン · 無料・オープンソース</span></p>
         </div>
       </div>
@@ -494,22 +494,22 @@
       <div class="footer-cols">
         <div class="footer-col">
           <span class="col-head">プロダクト</span>
-          <a href="https://github.com/rambocode/aster/releases/latest">ダウンロード</a>
-          <a href="https://github.com/rambocode/aster/releases">更新履歴</a>
+          <a href="https://github.com/OpenFabrica/aster/releases/latest">ダウンロード</a>
+          <a href="https://github.com/OpenFabrica/aster/releases">更新履歴</a>
           <a href="/docs/en/themes">テーマ集（英語）</a>
         </div>
         <div class="footer-col">
           <span class="col-head">ドキュメント（英語）</span>
           <a href="/docs/en/">ユーザーガイド（英語）</a>
-          <a href="https://github.com/rambocode/aster/tree/master/docs/developer">開発者ドキュメント（中国語）</a>
+          <a href="https://github.com/OpenFabrica/aster/tree/master/docs/developer">開発者ドキュメント（中国語）</a>
           <a href="/docs/en/faq">よくある質問（英語）</a>
           <a href="/llms.txt">llms.txt</a>
         </div>
         <div class="footer-col">
           <span class="col-head">プロジェクト</span>
-          <a href="https://github.com/rambocode/aster">GitHub</a>
-          <a href="https://github.com/rambocode/aster/blob/master/LICENSE">MIT ライセンス</a>
-          <a href="https://github.com/rambocode/aster/blob/master/THIRD-PARTY-NOTICES.md">サードパーティ表記</a>
+          <a href="https://github.com/OpenFabrica/aster">GitHub</a>
+          <a href="https://github.com/OpenFabrica/aster/blob/master/LICENSE">MIT ライセンス</a>
+          <a href="https://github.com/OpenFabrica/aster/blob/master/THIRD-PARTY-NOTICES.md">サードパーティ表記</a>
         </div>
       </div>
     </div>

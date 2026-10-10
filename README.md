@@ -8,7 +8,7 @@ splits. Track Claude Code and Codex session titles, running status, and completi
 notifications alongside your work. Aster is built with AppKit; the released DMG
 requires macOS 14 or later and an Apple silicon Mac.
 
-[Explore the website](https://aster.foo/en/) · [Download the latest DMG](https://github.com/rambocode/aster/releases/latest) · [Read the user guide](https://aster.foo/docs/en/)
+[Explore the website](https://aster.foo/en/) · [Download the latest DMG](https://github.com/OpenFabrica/aster/releases/latest) · [Read the user guide](https://aster.foo/docs/en/)
 
 Start with a tab, split it with `⌘D` or `⇧⌘D`, then open a file with `⌘O`.
 Save a reusable layout as an `.asterrecipe`, or restore your workspace on launch.
@@ -50,7 +50,7 @@ brand assets or proprietary code.
 ## Install
 
 Download the latest signed and notarized DMG from the
-[releases page](https://github.com/rambocode/aster/releases), open it, and drag
+[releases page](https://github.com/OpenFabrica/aster/releases), open it, and drag
 `Aster.app` into `/Applications`. Open Aster from Applications, create a tab with
 `⌘T`, split right with `⌘D`, then use `⌘O` to open a README beside the terminal.
 

@@ -8,7 +8,7 @@ Aster is an open-source, native macOS terminal workspace for macOS 14 and later.
 
 ## 核心事实
 
-- 名称：Aster，也称 Aster Terminal。官网 https://aster.foo/ ，源码 https://github.com/rambocode/aster 。
+- 名称：Aster，也称 Aster Terminal。官网 https://aster.foo/ ，源码 https://github.com/OpenFabrica/aster 。
 - 当前发布版本：0.6.17（2026-10-05）。
 - 平台：macOS 14 Sonoma 及更高版本；当前安装包只包含 Apple 芯片（arm64）版本。
 - 技术栈：用 Swift 和 AppKit 写成的原生 macOS 应用，不是 Electron，也不用 SwiftUI；终端引擎是 Ghostty 内核。设置页是应用内置的本地 WebKit 页面，不加载远程内容。
@@ -31,10 +31,10 @@ Aster is an open-source, native macOS terminal workspace for macOS 14 and later.
 - [Aster（日本語）](https://aster.foo/ja/): 日本語の製品紹介とダウンロード。
 - [Aster (Deutsch)](https://aster.foo/de/): Produktübersicht und Download auf Deutsch.
 - [Aster (Français)](https://aster.foo/fr/): présentation du produit et téléchargement en français.
-- [下载最新版](https://github.com/rambocode/aster/releases/latest): 最新的已签名、已公证 DMG 安装包。
-- [全部版本与更新日志](https://github.com/rambocode/aster/releases): 每个版本的发行说明与安装包。
-- [GitHub 仓库](https://github.com/rambocode/aster): 全部源码、构建说明与问题反馈。
-- [MIT 许可证](https://github.com/rambocode/aster/blob/master/LICENSE): Aster 的开源许可证全文。
+- [下载最新版](https://github.com/OpenFabrica/aster/releases/latest): 最新的已签名、已公证 DMG 安装包。
+- [全部版本与更新日志](https://github.com/OpenFabrica/aster/releases): 每个版本的发行说明与安装包。
+- [GitHub 仓库](https://github.com/OpenFabrica/aster): 全部源码、构建说明与问题反馈。
+- [MIT 许可证](https://github.com/OpenFabrica/aster/blob/master/LICENSE): Aster 的开源许可证全文。
 
 ## 用户文档
 
@@ -56,7 +56,7 @@ Aster is an open-source, native macOS terminal workspace for macOS 14 and later.
 
 ## Optional
 
-- [用户帮助 Markdown 原文](https://github.com/rambocode/aster/blob/master/docs/user/help.md): 文档站全部页面的唯一内容源，单个文件。
-- [English README](https://github.com/rambocode/aster/blob/master/README.md): 英文功能列表、安装与构建说明。
-- [简体中文 README](https://github.com/rambocode/aster/blob/master/README.zh-CN.md): 中文功能列表、安装与构建说明。
-- [第三方许可](https://github.com/rambocode/aster/blob/master/THIRD-PARTY-NOTICES.md): Ghostty 等第三方组件的许可证。
+- [用户帮助 Markdown 原文](https://github.com/OpenFabrica/aster/blob/master/docs/user/help.md): 文档站全部页面的唯一内容源，单个文件。
+- [English README](https://github.com/OpenFabrica/aster/blob/master/README.md): 英文功能列表、安装与构建说明。
+- [简体中文 README](https://github.com/OpenFabrica/aster/blob/master/README.zh-CN.md): 中文功能列表、安装与构建说明。
+- [第三方许可](https://github.com/OpenFabrica/aster/blob/master/THIRD-PARTY-NOTICES.md): Ghostty 等第三方组件的许可证。

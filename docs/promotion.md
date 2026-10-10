@@ -4,11 +4,11 @@
 
 ## 当前基线与核验
 
-2026-09-23，GitHub API 显示 `rambocode/aster` 为 2 stars、0 forks；最新公开版本是 `v0.6.11`，其 DMG 当时显示 2 次下载。数字会变化，发布前及每周复核：
+2026-09-23，GitHub API 显示 `rambocode/aster`（现 `OpenFabrica/aster`） 为 2 stars、0 forks；最新公开版本是 `v0.6.11`，其 DMG 当时显示 2 次下载。数字会变化，发布前及每周复核：
 
 ```bash
-gh api repos/rambocode/aster --jq '{stars: .stargazers_count, forks: .forks_count}'
-gh api repos/rambocode/aster/releases/latest --jq '{version: .tag_name, downloads: [.assets[] | {name, download_count}]}'
+gh api repos/OpenFabrica/aster --jq '{stars: .stargazers_count, forks: .forks_count}'
+gh api repos/OpenFabrica/aster/releases/latest --jq '{version: .tag_name, downloads: [.assets[] | {name, download_count}]}'
 ```
 
 用 GitHub Insights → Traffic 查看访问与来源，用 Issue/Discussion 和实际反馈判断试用障碍。按周记录 star 净增、DMG 下载和有效反馈；下载次数不等于安装人数，star 也不等于活跃用户。
@@ -34,11 +34,11 @@ gh api repos/rambocode/aster/releases/latest --jq '{version: .tag_name, download
 
 英文短帖：
 
-> Aster is an open-source, native AppKit terminal workspace for macOS 14+. It puts Ghostty-powered terminals beside files, editors, and previews in recursive splits, with tabs and workspace restore. The signed DMG is ready to try: https://github.com/rambocode/aster/releases/latest — source: https://github.com/rambocode/aster. I'd value feedback on the split and file workflows.
+> Aster is an open-source, native AppKit terminal workspace for macOS 14+. It puts Ghostty-powered terminals beside files, editors, and previews in recursive splits, with tabs and workspace restore. The signed DMG is ready to try: https://github.com/OpenFabrica/aster/releases/latest — source: https://github.com/OpenFabrica/aster. I'd value feedback on the split and file workflows.
 
 中文短帖：
 
-> Aster 是面向 macOS 14+ 的开源原生终端工作区。它用递归分屏把基于 Ghostty 的终端、文件、编辑器和预览放在一个窗口里，并支持标签与工作区恢复。最新版 DMG 可直接试用：https://github.com/rambocode/aster/releases/latest；源码：https://github.com/rambocode/aster。欢迎反馈分屏与文件工作流中的实际问题。
+> Aster 是面向 macOS 14+ 的开源原生终端工作区。它用递归分屏把基于 Ghostty 的终端、文件、编辑器和预览放在一个窗口里，并支持标签与工作区恢复。最新版 DMG 可直接试用：https://github.com/OpenFabrica/aster/releases/latest；源码：https://github.com/OpenFabrica/aster。欢迎反馈分屏与文件工作流中的实际问题。
 
 Show HN 标题草稿：`Show HN: Aster – an AppKit terminal workspace with Ghostty-powered panes`
 

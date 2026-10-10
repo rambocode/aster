@@ -7,7 +7,7 @@
       "name": "Aster Terminal",
       "url": "https://aster.foo/",
       "logo": "https://aster.foo/assets/aster-icon.svg",
-      "sameAs": ["https://github.com/rambocode/aster"]
+      "sameAs": ["https://github.com/OpenFabrica/aster"]
     },
     {
       "@type": "WebSite",
@@ -31,18 +31,18 @@
       "operatingSystem": "macOS 14+",
       "processorRequirements": "Apple silicon (arm64)",
       "softwareVersion": "0.6.17",
-      "releaseNotes": "https://github.com/rambocode/aster/releases/tag/v0.6.17",
-      "downloadUrl": "https://github.com/rambocode/aster/releases/latest",
-      "installUrl": "https://github.com/rambocode/aster/releases/latest",
+      "releaseNotes": "https://github.com/OpenFabrica/aster/releases/tag/v0.6.17",
+      "downloadUrl": "https://github.com/OpenFabrica/aster/releases/latest",
+      "installUrl": "https://github.com/OpenFabrica/aster/releases/latest",
       "softwareHelp": { "@type": "CreativeWork", "url": "https://aster.foo/docs/" },
-      "codeRepository": "https://github.com/rambocode/aster",
-      "license": "https://github.com/rambocode/aster/blob/master/LICENSE",
+      "codeRepository": "https://github.com/OpenFabrica/aster",
+      "license": "https://github.com/OpenFabrica/aster/blob/master/LICENSE",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
         "price": "0",
         "priceCurrency": "CNY",
-        "url": "https://github.com/rambocode/aster/releases/latest"
+        "url": "https://github.com/OpenFabrica/aster/releases/latest"
       },
       "inLanguage": ["zh-CN", "zh-TW", "en", "ja", "fr", "de"],
       "featureList": [
@@ -60,7 +60,7 @@
       ],
       "author": { "@id": "https://aster.foo/#organization" },
       "publisher": { "@id": "https://aster.foo/#organization" },
-      "sameAs": ["https://github.com/rambocode/aster"]
+      "sameAs": ["https://github.com/OpenFabrica/aster"]
     },
     {
       "@type": "FAQPage",

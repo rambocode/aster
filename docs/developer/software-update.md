@@ -14,6 +14,7 @@
 - `Sources/Aster/SoftwareUpdateService.swift`：**全仓库唯一 `import Sparkle` 的文件**。持有 updater controller、充当它的两个 delegate，把 Sparkle 的一串回调折叠成单个 `SoftwareUpdateStatus` 并经 `.softwareUpdateStatusDidChange` 广播。
 - `SoftwareUpdateControlling` 协议：设置页与菜单看到的全部能力面。`SettingsViewController` 与 `AsterAppDelegate` 都不 `import Sparkle`，测试用 stub 即可在不联网、不打包成 `.app` 的前提下驱动全部接线。
 - `SoftwareUpdateService.shared` 只在 `Bundle.main` 是 `.app`、`SUFeedURL` 是 https、`SUPublicEDKey` 非空时构造。开发构建返回 nil，设置页走 `capability=false` 的禁用态，不假装可用。
+- 仓库于 2026-10-10 从 `rambocode/aster` 迁到 `OpenFabrica/aster`。0.6.17 及更早的已装版本仍从 `https://raw.githubusercontent.com/rambocode/aster/master/appcast.xml` 取 feed，靠 GitHub 的迁移跳转才能拿到新版。**不要在 `rambocode` 账号下再建名为 `aster` 的仓库**，否则跳转失效，这些用户再也收不到更新。
 
 ## 真值归属
 

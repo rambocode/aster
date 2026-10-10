@@ -100,7 +100,7 @@
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/rambocode/aster/master/appcast.xml</string>
+	<string>https://raw.githubusercontent.com/OpenFabrica/aster/master/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>QTtemSPOAqw+DCeU1TRsO6AUDuTgvJu0FxFANJQxLaU=</string>
 	<key>SUScheduledCheckInterval</key>

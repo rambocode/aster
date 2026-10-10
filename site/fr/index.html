@@ -41,7 +41,7 @@
   <link rel="stylesheet" href="/assets/fonts.css">
   <link rel="stylesheet" href="/assets/style.css">
   <!-- i18n:jsonld:start -->
-  <script type="application/ld+json" id="jsonld">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://aster.foo/#organization","name":"Aster Terminal","url":"https://aster.foo/","logo":"https://aster.foo/assets/aster-icon.svg","sameAs":["https://github.com/rambocode/aster"]},{"@type":"WebSite","@id":"https://aster.foo/#website","name":"Aster Terminal","alternateName":"Aster","url":"https://aster.foo/","description":"Site officiel et documentation utilisateur d'Aster : un espace de travail terminal natif et open source pour macOS 14+.","inLanguage":["zh-CN","en","ja","de","fr"],"publisher":{"@id":"https://aster.foo/#organization"}},{"@type":"SoftwareApplication","@id":"https://aster.foo/#software","name":"Aster","alternateName":"Aster Terminal","description":"Aster est un espace de travail terminal natif et open source pour macOS 14+. Construit avec AppKit et propulsé par le moteur de terminal Ghostty, il permet d'utiliser côte à côte, dans une seule fenêtre et grâce aux splits récursifs, des terminaux, des navigateurs de fichiers, des éditeurs, des aperçus et des sessions d'agents.","url":"https://aster.foo/","image":"https://aster.foo/assets/social-card.png","applicationCategory":"DeveloperApplication","operatingSystem":"macOS 14+","processorRequirements":"Apple silicon (arm64)","softwareVersion":"0.6.17","releaseNotes":"https://github.com/rambocode/aster/releases/tag/v0.6.17","downloadUrl":"https://github.com/rambocode/aster/releases/latest","installUrl":"https://github.com/rambocode/aster/releases/latest","softwareHelp":{"@type":"CreativeWork","url":"https://aster.foo/docs/"},"codeRepository":"https://github.com/rambocode/aster","license":"https://github.com/rambocode/aster/blob/master/LICENSE","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"CNY","url":"https://github.com/rambocode/aster/releases/latest"},"inLanguage":["zh-CN","zh-TW","en","ja","fr","de"],"featureList":["Terminal VT100/xterm complet basé sur le moteur Ghostty, avec couleurs ANSI en true color, souris, hyperliens et TUI plein écran comme vim, top ou fzf","Onglets multiples, avec trois dispositions d'onglets : verticale, en haut et en bas","Splits récursifs dans toutes les directions pour mêler terminaux, navigateurs de fichiers, éditeurs et aperçus dans une même fenêtre","Le File Pane affiche l'aperçu du code source, du Markdown, des images, des PDF, des diffs, de l'hex et des transcripts d'agents","Les sessions d'agents comme Claude Code et Codex reçoivent automatiquement un titre, un état d'exécution et une notification de fin","Autocomplétion locale : 714 spécifications de commandes Fig intégrées ; la complétion et l'apprentissage restent sur votre Mac","Machines distantes et onglets SSH natifs ; les mots de passe ne sont stockés que dans le trousseau macOS","24 thèmes intégrés, avec aperçu en direct dans le terminal","Import et export d'espaces de travail .asterrecipe, et restauration des sessions au lancement","Mises à jour automatiques via Sparkle 2, avec vérification de la signature EdDSA et de la notarisation macOS avant l'installation","Interface disponible en chinois simplifié, chinois traditionnel, anglais, japonais, français et allemand"],"author":{"@id":"https://aster.foo/#organization"},"publisher":{"@id":"https://aster.foo/#organization"},"sameAs":["https://github.com/rambocode/aster"]},{"@type":"FAQPage","@id":"https://aster.foo/fr/#faq","inLanguage":"fr","mainEntity":[{"@type":"Question","name":"Aster fonctionne-t-il sur mon Mac ?","acceptedAnswer":{"@type":"Answer","text":"Aster nécessite macOS 14 Sonoma ou plus récent. Les paquets actuellement publiés ne contiennent que la version pour puce Apple (arm64) : les Mac à processeur Intel ne peuvent pas l'exécuter."}},{"@type":"Question","name":"Aster est-il gratuit ?","acceptedAnswer":{"@type":"Answer","text":"Oui. Aster est open source sous licence MIT ; le DMG signé et notarié ainsi que tout le code source sont disponibles gratuitement sur GitHub, sans création de compte."}},{"@type":"Question","name":"En quoi Aster diffère-t-il de terminaux comme iTerm2 ou Warp ?","acceptedAnswer":{"@type":"Answer","text":"Aster est un espace de travail natif construit avec AppKit : le terminal, propulsé par le moteur Ghostty, partage la même fenêtre que navigateurs de fichiers, éditeurs et aperçus, organisés en splits récursifs. Il affiche aussi le titre et l'état des sessions d'agents comme Claude Code et Codex, propose une complétion locale avec 714 spécifications de commandes, et des espaces de travail exportables en .asterrecipe et restaurés au lancement."}},{"@type":"Question","name":"Aster prend-il en charge les serveurs distants et SSH ?","acceptedAnswer":{"@type":"Answer","text":"Oui. Vous pouvez enregistrer des hôtes SSH dans « Réglages ▸ Hôte » et ouvrir directement des onglets SSH natifs ; les mots de passe ne sont stockés que dans le trousseau macOS. Vous pouvez aussi ajouter des serveurs Linux comme machines distantes : les terminaux tournent dans un service de sessions en arrière-plan sur la machine distante, si bien que processus et dispositions survivent à la fermeture d'Aster ou à une coupure réseau."}},{"@type":"Question","name":"Aster envoie-t-il mes données ?","acceptedAnswer":{"@type":"Answer","text":"Aster ne collecte aucune donnée d'usage : la complétion, l'apprentissage et le classement des dossiers fréquents se font uniquement en local, et la vérification des mises à jour n'envoie ni données d'usage ni informations système. Les fonctions qui envoient du contenu sur le réseau, comme les rapports de plantage ou la synthèse de la mémoire de projet par un agent CLI, sont désactivées par défaut et ne fonctionnent qu'une fois activées manuellement dans les réglages."}},{"@type":"Question","name":"Comment Aster se met-il à jour ?","acceptedAnswer":{"@type":"Answer","text":"Aster intègre Sparkle 2 : par défaut, il vérifie la source de mises à jour officielle une fois par jour en arrière-plan, et vous pouvez aussi lancer la vérification via « Aster ▸ Rechercher des mises à jour… ». Un paquet n'est installé qu'après avoir passé à la fois la vérification de signature EdDSA et la notarisation macOS. Les versions 0.4.1 et antérieures n'ont pas de module de mise à jour : téléchargez une fois le nouveau DMG manuellement."}}]},{"@type":"WebPage","@id":"https://aster.foo/fr/#webpage","url":"https://aster.foo/fr/","name":"Aster — Espace de travail terminal natif pour macOS","inLanguage":"fr","isPartOf":{"@id":"https://aster.foo/#website"},"about":{"@id":"https://aster.foo/#software"},"mainEntity":{"@id":"https://aster.foo/fr/#faq"}}]}</script>
+  <script type="application/ld+json" id="jsonld">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://aster.foo/#organization","name":"Aster Terminal","url":"https://aster.foo/","logo":"https://aster.foo/assets/aster-icon.svg","sameAs":["https://github.com/OpenFabrica/aster"]},{"@type":"WebSite","@id":"https://aster.foo/#website","name":"Aster Terminal","alternateName":"Aster","url":"https://aster.foo/","description":"Site officiel et documentation utilisateur d'Aster : un espace de travail terminal natif et open source pour macOS 14+.","inLanguage":["zh-CN","en","ja","de","fr"],"publisher":{"@id":"https://aster.foo/#organization"}},{"@type":"SoftwareApplication","@id":"https://aster.foo/#software","name":"Aster","alternateName":"Aster Terminal","description":"Aster est un espace de travail terminal natif et open source pour macOS 14+. Construit avec AppKit et propulsé par le moteur de terminal Ghostty, il permet d'utiliser côte à côte, dans une seule fenêtre et grâce aux splits récursifs, des terminaux, des navigateurs de fichiers, des éditeurs, des aperçus et des sessions d'agents.","url":"https://aster.foo/","image":"https://aster.foo/assets/social-card.png","applicationCategory":"DeveloperApplication","operatingSystem":"macOS 14+","processorRequirements":"Apple silicon (arm64)","softwareVersion":"0.6.17","releaseNotes":"https://github.com/OpenFabrica/aster/releases/tag/v0.6.17","downloadUrl":"https://github.com/OpenFabrica/aster/releases/latest","installUrl":"https://github.com/OpenFabrica/aster/releases/latest","softwareHelp":{"@type":"CreativeWork","url":"https://aster.foo/docs/"},"codeRepository":"https://github.com/OpenFabrica/aster","license":"https://github.com/OpenFabrica/aster/blob/master/LICENSE","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"CNY","url":"https://github.com/OpenFabrica/aster/releases/latest"},"inLanguage":["zh-CN","zh-TW","en","ja","fr","de"],"featureList":["Terminal VT100/xterm complet basé sur le moteur Ghostty, avec couleurs ANSI en true color, souris, hyperliens et TUI plein écran comme vim, top ou fzf","Onglets multiples, avec trois dispositions d'onglets : verticale, en haut et en bas","Splits récursifs dans toutes les directions pour mêler terminaux, navigateurs de fichiers, éditeurs et aperçus dans une même fenêtre","Le File Pane affiche l'aperçu du code source, du Markdown, des images, des PDF, des diffs, de l'hex et des transcripts d'agents","Les sessions d'agents comme Claude Code et Codex reçoivent automatiquement un titre, un état d'exécution et une notification de fin","Autocomplétion locale : 714 spécifications de commandes Fig intégrées ; la complétion et l'apprentissage restent sur votre Mac","Machines distantes et onglets SSH natifs ; les mots de passe ne sont stockés que dans le trousseau macOS","24 thèmes intégrés, avec aperçu en direct dans le terminal","Import et export d'espaces de travail .asterrecipe, et restauration des sessions au lancement","Mises à jour automatiques via Sparkle 2, avec vérification de la signature EdDSA et de la notarisation macOS avant l'installation","Interface disponible en chinois simplifié, chinois traditionnel, anglais, japonais, français et allemand"],"author":{"@id":"https://aster.foo/#organization"},"publisher":{"@id":"https://aster.foo/#organization"},"sameAs":["https://github.com/OpenFabrica/aster"]},{"@type":"FAQPage","@id":"https://aster.foo/fr/#faq","inLanguage":"fr","mainEntity":[{"@type":"Question","name":"Aster fonctionne-t-il sur mon Mac ?","acceptedAnswer":{"@type":"Answer","text":"Aster nécessite macOS 14 Sonoma ou plus récent. Les paquets actuellement publiés ne contiennent que la version pour puce Apple (arm64) : les Mac à processeur Intel ne peuvent pas l'exécuter."}},{"@type":"Question","name":"Aster est-il gratuit ?","acceptedAnswer":{"@type":"Answer","text":"Oui. Aster est open source sous licence MIT ; le DMG signé et notarié ainsi que tout le code source sont disponibles gratuitement sur GitHub, sans création de compte."}},{"@type":"Question","name":"En quoi Aster diffère-t-il de terminaux comme iTerm2 ou Warp ?","acceptedAnswer":{"@type":"Answer","text":"Aster est un espace de travail natif construit avec AppKit : le terminal, propulsé par le moteur Ghostty, partage la même fenêtre que navigateurs de fichiers, éditeurs et aperçus, organisés en splits récursifs. Il affiche aussi le titre et l'état des sessions d'agents comme Claude Code et Codex, propose une complétion locale avec 714 spécifications de commandes, et des espaces de travail exportables en .asterrecipe et restaurés au lancement."}},{"@type":"Question","name":"Aster prend-il en charge les serveurs distants et SSH ?","acceptedAnswer":{"@type":"Answer","text":"Oui. Vous pouvez enregistrer des hôtes SSH dans « Réglages ▸ Hôte » et ouvrir directement des onglets SSH natifs ; les mots de passe ne sont stockés que dans le trousseau macOS. Vous pouvez aussi ajouter des serveurs Linux comme machines distantes : les terminaux tournent dans un service de sessions en arrière-plan sur la machine distante, si bien que processus et dispositions survivent à la fermeture d'Aster ou à une coupure réseau."}},{"@type":"Question","name":"Aster envoie-t-il mes données ?","acceptedAnswer":{"@type":"Answer","text":"Aster ne collecte aucune donnée d'usage : la complétion, l'apprentissage et le classement des dossiers fréquents se font uniquement en local, et la vérification des mises à jour n'envoie ni données d'usage ni informations système. Les fonctions qui envoient du contenu sur le réseau, comme les rapports de plantage ou la synthèse de la mémoire de projet par un agent CLI, sont désactivées par défaut et ne fonctionnent qu'une fois activées manuellement dans les réglages."}},{"@type":"Question","name":"Comment Aster se met-il à jour ?","acceptedAnswer":{"@type":"Answer","text":"Aster intègre Sparkle 2 : par défaut, il vérifie la source de mises à jour officielle une fois par jour en arrière-plan, et vous pouvez aussi lancer la vérification via « Aster ▸ Rechercher des mises à jour… ». Un paquet n'est installé qu'après avoir passé à la fois la vérification de signature EdDSA et la notarisation macOS. Les versions 0.4.1 et antérieures n'ont pas de module de mise à jour : téléchargez une fois le nouveau DMG manuellement."}}]},{"@type":"WebPage","@id":"https://aster.foo/fr/#webpage","url":"https://aster.foo/fr/","name":"Aster — Espace de travail terminal natif pour macOS","inLanguage":"fr","isPartOf":{"@id":"https://aster.foo/#website"},"about":{"@id":"https://aster.foo/#software"},"mainEntity":{"@id":"https://aster.foo/fr/#faq"}}]}</script>
   <!-- i18n:jsonld:end -->
 </head>
 <body>
@@ -78,7 +78,7 @@
         <a href="#features">Fonctionnalités</a>
         <a href="#voices">Exemples de workflows</a>
         <a href="/docs/en/">Docs (anglais)</a>
-        <a href="https://github.com/rambocode/aster">GitHub</a>
+        <a href="https://github.com/OpenFabrica/aster">GitHub</a>
       </nav>
       <div class="nav-tools">
         <!-- i18n:menu:start -->
@@ -93,7 +93,7 @@
           </div>
         </details>
         <!-- i18n:menu:end -->
-        <a class="pill" href="https://github.com/rambocode/aster/releases/latest">
+        <a class="pill" href="https://github.com/OpenFabrica/aster/releases/latest">
           <span>Télécharger Aster</span>
           <svg><use href="#i-download"/></svg>
         </a>
@@ -106,7 +106,7 @@
       <a href="#features">Fonctionnalités</a>
       <a href="#voices">Exemples de workflows</a>
       <a href="/docs/en/">Docs (anglais)</a>
-      <a href="https://github.com/rambocode/aster">GitHub</a>
+      <a href="https://github.com/OpenFabrica/aster">GitHub</a>
     </nav>
   </header>
 
@@ -118,11 +118,11 @@
         <h1 id="hero-title">De l'idée<br>à la <span class="hero-word">prochaine étape<svg class="hero-underline" viewBox="0 0 300 18" aria-hidden="true"><path d="M3 11Q125-4 293 6"/><path d="M32 17Q174 5 263 13"/></svg></span><span class="type-caret" aria-hidden="true">_</span></h1>
         <p class="hero-lede">Aster est un espace de travail terminal natif et open source pour macOS. Terminal, aperçu de fichiers, sessions d'agents IA et complétion locale partagent une seule fenêtre, pour que vos idées continuent d'avancer.</p>
         <div class="hero-actions">
-          <a class="button button-dark" href="https://github.com/rambocode/aster/releases/latest">
+          <a class="button button-dark" href="https://github.com/OpenFabrica/aster/releases/latest">
             <span>Télécharger pour Mac</span>
             <svg><use href="#i-download"/></svg>
           </a>
-          <a class="quiet-link" href="https://github.com/rambocode/aster">
+          <a class="quiet-link" href="https://github.com/OpenFabrica/aster">
             <svg><use href="#i-github"/></svg>
             <span>GitHub</span>
             <span class="gh-stars mono" id="gh-stars" aria-label="GitHub stars">★</span>
@@ -432,7 +432,7 @@
             <figcaption><span class="voice-avatar" aria-hidden="true">12</span><span>Onglets et Quick Terminal<small>Exemples de workflows</small></span></figcaption>
           </figure>
         </div>
-        <p class="voices-cta">Vous utilisez Aster ? <a href="https://github.com/rambocode/aster/issues">Racontez-nous votre expérience sur GitHub</a> — Les problèmes reproductibles et les retours sur des workflows précis sont les bienvenus.</p>
+        <p class="voices-cta">Vous utilisez Aster ? <a href="https://github.com/OpenFabrica/aster/issues">Racontez-nous votre expérience sur GitHub</a> — Les problèmes reproductibles et les retours sur des workflows précis sont les bienvenus.</p>
       </div>
     </section>
 
@@ -477,7 +477,7 @@
       <div class="closing-main">
         <h2 id="closing-title">Votre prochaine idée<br><span>commence ici.</span><b aria-hidden="true">_</b></h2>
         <div>
-          <a class="button button-light" href="https://github.com/rambocode/aster/releases/latest"><span>Télécharger Aster</span><svg><use href="#i-download"/></svg></a>
+          <a class="button button-light" href="https://github.com/OpenFabrica/aster/releases/latest"><span>Télécharger Aster</span><svg><use href="#i-download"/></svg></a>
           <p class="mono"><span>v0.6.17</span> · <span>macOS 14+ · puce Apple · gratuit et open source</span></p>
         </div>
       </div>
@@ -494,22 +494,22 @@
       <div class="footer-cols">
         <div class="footer-col">
           <span class="col-head">Produit</span>
-          <a href="https://github.com/rambocode/aster/releases/latest">Télécharger</a>
-          <a href="https://github.com/rambocode/aster/releases">Notes de version</a>
+          <a href="https://github.com/OpenFabrica/aster/releases/latest">Télécharger</a>
+          <a href="https://github.com/OpenFabrica/aster/releases">Notes de version</a>
           <a href="/docs/en/themes">Thèmes (anglais)</a>
         </div>
         <div class="footer-col">
           <span class="col-head">Docs (anglais)</span>
           <a href="/docs/en/">Guide utilisateur (anglais)</a>
-          <a href="https://github.com/rambocode/aster/tree/master/docs/developer">Docs développeur (chinois)</a>
+          <a href="https://github.com/OpenFabrica/aster/tree/master/docs/developer">Docs développeur (chinois)</a>
           <a href="/docs/en/faq">Questions fréquentes (anglais)</a>
           <a href="/llms.txt">llms.txt</a>
         </div>
         <div class="footer-col">
           <span class="col-head">Projet</span>
-          <a href="https://github.com/rambocode/aster">GitHub</a>
-          <a href="https://github.com/rambocode/aster/blob/master/LICENSE">Licence MIT</a>
-          <a href="https://github.com/rambocode/aster/blob/master/THIRD-PARTY-NOTICES.md">Mentions tierces</a>
+          <a href="https://github.com/OpenFabrica/aster">GitHub</a>
+          <a href="https://github.com/OpenFabrica/aster/blob/master/LICENSE">Licence MIT</a>
+          <a href="https://github.com/OpenFabrica/aster/blob/master/THIRD-PARTY-NOTICES.md">Mentions tierces</a>
         </div>
       </div>
     </div>

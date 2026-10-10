@@ -969,7 +969,7 @@ final class SettingsViewController: NSViewController, NSSearchFieldDelegate {
   /// 用户指南尚未随应用打包，“打开文档”统一跳转仓库内 docs/user/help.md 的在线版本。
   /// GitHub 的中文标题锚点必须显式百分号编码，否则 `URL(string:)` 直接解析失败。
   private func openUserGuide(anchor: String) {
-    let base = "https://github.com/rambocode/aster/blob/master/docs/user/help.md"
+    let base = "https://github.com/OpenFabrica/aster/blob/master/docs/user/help.md"
     let encoded = anchor.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? ""
     guard let url = URL(string: encoded.isEmpty ? base : "\(base)#\(encoded)") else { return }
     NSWorkspace.shared.open(url)

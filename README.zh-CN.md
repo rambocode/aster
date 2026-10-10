@@ -5,7 +5,7 @@
 **在一个原生 macOS 工作区里并排使用终端、文件和预览。** Aster 以 AppKit 构建，
 用递归分屏把基于 Ghostty 的终端、文件浏览器、编辑器和预览放在一起，当前安装包需要 macOS 14 及以上版本和 Apple 芯片。
 
-[查看官网](https://aster.foo/) · [下载最新 DMG](https://github.com/rambocode/aster/releases/latest) · [阅读使用帮助](docs/user/help.md)
+[查看官网](https://aster.foo/) · [下载最新 DMG](https://github.com/OpenFabrica/aster/releases/latest) · [阅读使用帮助](docs/user/help.md)
 
 新建标签后，用 `⌘D` 或 `⇧⌘D` 分屏，再用 `⌘O` 打开文件。工作区可保存为
 `.asterrecipe`，并在下次启动时恢复。Claude Code、Codex 等 Agent 会话支持标题、运行状态
@@ -37,7 +37,7 @@ Aster 使用独立品牌、图标和从零编写的工作区实现，不包含 O
 
 ## 安装
 
-从[发布页](https://github.com/rambocode/aster/releases)下载已签名并公证的 DMG，打开后把
+从[发布页](https://github.com/OpenFabrica/aster/releases)下载已签名并公证的 DMG，打开后把
 `Aster.app` 拖进 `/Applications`。从“应用程序”打开 Aster，用 `⌘T` 新建标签、
 `⌘D` 向右分屏，再用 `⌘O` 打开 README。
 

@@ -569,7 +569,7 @@ final class AutocompleteService {
   static let maximumReadmeBytes = 2 * 1_024 * 1_024
   /// 手动更新只拉取仓库里由 `scripts/build-fig-specs.mjs` 生成的同一份规格文件。
   static let figSpecsURL = URL(
-    string: "https://raw.githubusercontent.com/rambocode/aster/master/Resources/autocomplete/fig-specs.json")!
+    string: "https://raw.githubusercontent.com/OpenFabrica/aster/master/Resources/autocomplete/fig-specs.json")!
 
   private let baseDirectory: URL
   private let fileManager: FileManager

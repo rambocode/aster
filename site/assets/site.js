@@ -753,7 +753,7 @@
     // 4 秒超时；失败、限流或超时都静默保留 HTML 里的原文
     var controller = "AbortController" in window ? new AbortController() : null;
     var timeout = window.setTimeout(function () { if (controller) controller.abort(); }, 4000);
-    window.fetch("https://api.github.com/repos/rambocode/aster", controller ? { signal: controller.signal } : undefined)
+    window.fetch("https://api.github.com/repos/OpenFabrica/aster", controller ? { signal: controller.signal } : undefined)
       .then(function (response) { return response.ok ? response.json() : null; })
       .then(function (data) {
         if (data && typeof data.stargazers_count === "number") {

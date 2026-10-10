@@ -27,7 +27,7 @@ set -euo pipefail
 
 PROJECT_DIR="${0:A:h:h}"
 BUILD_DIR="${ASTER_BUILD_PATH:-$PROJECT_DIR/.build}"
-REPO="rambocode/aster"
+REPO="OpenFabrica/aster"
 
 die() { echo "release: $1" >&2; exit 1 }
 

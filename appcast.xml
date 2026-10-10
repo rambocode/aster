@@ -5,8 +5,8 @@
         <item>
             <title>0.6.17</title>
             <pubDate>Mon, 05 Oct 2026 13:13:05 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <link>https://github.com/OpenFabrica/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/OpenFabrica/aster/releases</sparkle:fullReleaseNotesLink>
             <sparkle:version>36</sparkle:version>
             <sparkle:shortVersionString>0.6.17</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
@@ -15,13 +15,13 @@
 
 - 修复「设置 ▸ 外观」里看不到「界面文字」分组的问题。0.6.16 加的「界面字号」和「加深界面文字」现在能在设置里找到了。
 ]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.17/Aster-0.6.17.dmg" length="50343404" type="application/octet-stream" sparkle:edSignature="IQ8Yxcuh7KL13P7Ozql8HtSAa1KXxVsPfRpRu6HCkxJyo4/sWuvKvRdoQI8gA/9004hwSPv0uGYyY2h5MTVBBQ=="/>
+            <enclosure url="https://github.com/OpenFabrica/aster/releases/download/v0.6.17/Aster-0.6.17.dmg" length="50343404" type="application/octet-stream" sparkle:edSignature="IQ8Yxcuh7KL13P7Ozql8HtSAa1KXxVsPfRpRu6HCkxJyo4/sWuvKvRdoQI8gA/9004hwSPv0uGYyY2h5MTVBBQ=="/>
         </item>
         <item>
             <title>0.6.16</title>
             <pubDate>Mon, 05 Oct 2026 12:55:32 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <link>https://github.com/OpenFabrica/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/OpenFabrica/aster/releases</sparkle:fullReleaseNotesLink>
             <sparkle:version>35</sparkle:version>
             <sparkle:shortVersionString>0.6.16</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
@@ -45,13 +45,13 @@
 - 修复设置窗口开着时，点侧栏折叠按钮没有反应的问题。
 - 修复界面字号调大后，窗口较小时 Agent 历史、命令面板、全局查找等浮层超出窗口、底部按钮被裁掉的问题。
 ]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.16/Aster-0.6.16.dmg" length="50343282" type="application/octet-stream" sparkle:edSignature="jvWGoYGSzXm85isU9Rhg6KTRHEKOEMZ6HrRcgJBeh4OiMWFHlqR7bHFdnnmL9DDLfXya3qgWnysuqI5PtM7iDA=="/>
+            <enclosure url="https://github.com/OpenFabrica/aster/releases/download/v0.6.16/Aster-0.6.16.dmg" length="50343282" type="application/octet-stream" sparkle:edSignature="jvWGoYGSzXm85isU9Rhg6KTRHEKOEMZ6HrRcgJBeh4OiMWFHlqR7bHFdnnmL9DDLfXya3qgWnysuqI5PtM7iDA=="/>
         </item>
         <item>
             <title>0.6.15</title>
             <pubDate>Thu, 01 Oct 2026 08:31:15 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <link>https://github.com/OpenFabrica/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/OpenFabrica/aster/releases</sparkle:fullReleaseNotesLink>
             <sparkle:version>34</sparkle:version>
             <sparkle:shortVersionString>0.6.15</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
@@ -71,13 +71,13 @@
 
 - Agent 停在确认表单等画面不动时，不再每 0.3 秒读一次屏，长时间等待更省电。
 ]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.15/Aster-0.6.15.dmg" length="49913213" type="application/octet-stream" sparkle:edSignature="Y5cobGi2rO1B/ZQNnV7WrHUwYLWfUCnv6WwvT5q0g+xMqTsEWvJ3xpb/tRCBZ8bFgU/yoWvBaFuGrl0r2BBaCQ=="/>
+            <enclosure url="https://github.com/OpenFabrica/aster/releases/download/v0.6.15/Aster-0.6.15.dmg" length="49913213" type="application/octet-stream" sparkle:edSignature="Y5cobGi2rO1B/ZQNnV7WrHUwYLWfUCnv6WwvT5q0g+xMqTsEWvJ3xpb/tRCBZ8bFgU/yoWvBaFuGrl0r2BBaCQ=="/>
         </item>
         <item>
             <title>0.6.14</title>
             <pubDate>Wed, 30 Sep 2026 19:37:58 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <link>https://github.com/OpenFabrica/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/OpenFabrica/aster/releases</sparkle:fullReleaseNotesLink>
             <sparkle:version>33</sparkle:version>
             <sparkle:shortVersionString>0.6.14</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
@@ -86,13 +86,13 @@
 
 - 修复 Dock 图标右键菜单里窗口名后面多出「(主工作区)」的问题。这是旧版「一个工作区就是一个窗口」留下的，工作区改为窗口内的标签分组后已经没有意义。现在菜单里只显示标签标题。
 ]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.14/Aster-0.6.14.dmg" length="49990381" type="application/octet-stream" sparkle:edSignature="ySRm0myBJgKehmd9fddtMt/Xqso+GRyPGkBJ/6saDpBBC+b24uC84JpD5XTpYReDeTli/7gGC3mVk2P0oOxgDw=="/>
+            <enclosure url="https://github.com/OpenFabrica/aster/releases/download/v0.6.14/Aster-0.6.14.dmg" length="49990381" type="application/octet-stream" sparkle:edSignature="ySRm0myBJgKehmd9fddtMt/Xqso+GRyPGkBJ/6saDpBBC+b24uC84JpD5XTpYReDeTli/7gGC3mVk2P0oOxgDw=="/>
         </item>
         <item>
             <title>0.6.13</title>
             <pubDate>Wed, 30 Sep 2026 19:02:32 +0800</pubDate>
-            <link>https://github.com/rambocode/aster</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/rambocode/aster/releases</sparkle:fullReleaseNotesLink>
+            <link>https://github.com/OpenFabrica/aster</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/OpenFabrica/aster/releases</sparkle:fullReleaseNotesLink>
             <sparkle:version>32</sparkle:version>
             <sparkle:shortVersionString>0.6.13</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
@@ -116,7 +116,7 @@
 - 修复 Codex 退出后光标上移一行的问题，以及恢复的后台保活 Pane 收不到 Agent 状态、Codex 会话标题不显示的问题。
 - 关闭后台保活的 Pane 时不再卡住界面。
 ]]></description>
-            <enclosure url="https://github.com/rambocode/aster/releases/download/v0.6.13/Aster-0.6.13.dmg" length="49990093" type="application/octet-stream" sparkle:edSignature="DViuJ18iuM5tfzLFOYnPRQJfJBBUaZe+2klF3RLEnIlCQrNs+kr8Dmpit2jDL9DWsXZ3b1q33us3AavhBCoFBA=="/>
+            <enclosure url="https://github.com/OpenFabrica/aster/releases/download/v0.6.13/Aster-0.6.13.dmg" length="49990093" type="application/octet-stream" sparkle:edSignature="DViuJ18iuM5tfzLFOYnPRQJfJBBUaZe+2klF3RLEnIlCQrNs+kr8Dmpit2jDL9DWsXZ3b1q33us3AavhBCoFBA=="/>
         </item>
     </channel>
 </rss>
